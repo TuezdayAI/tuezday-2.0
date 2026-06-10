@@ -1,4 +1,4 @@
-import {
+﻿import {
   BRAIN_DOC_TYPES,
   DEFAULT_TOKEN_BUDGET,
   type Channel,
@@ -17,19 +17,19 @@ export const CHANNEL_GUIDANCE: Record<Channel, string> = {
   x: "Channel: X (Twitter). Compressed, punchy, idea-first. One thought per post. Threads only when each post stands alone. No corporate phrasing.",
   email:
     "Channel: Email. One reader at a time. Subject and opener decide everything. Short lines, one clear ask, no marketing gloss. Write like a competent person, not a campaign.",
-  ads: "Channel: Paid ads. Hook, promise, proof, action — in very few words. One message per variant. Clarity beats cleverness.",
+  ads: "Channel: Paid ads. Hook, promise, proof, action - in very few words. One message per variant. Clarity beats cleverness.",
   web: "Channel: Website. Visitors scan. Headline carries the positioning, subhead carries the proof. Concrete claims over adjectives.",
 };
 
 export const TASK_INSTRUCTIONS: Record<TaskType, string> = {
   linkedin_post:
-    "Task: Write one LinkedIn post grounded in the context above. Use the company's voice and the persona's point of view if one is set. Lead with the sharpest insight, keep it under 200 words, end without a cringe call-to-action.",
+    "Task: Write one LinkedIn post grounded in the context above. Use the company's voice and the persona's point of view if one is set. Lead with the sharpest insight, keep it under 200 words, end without a cringe call-to-action. Return only the post text itself - no preamble, labels, or commentary.",
   cold_email_opener:
-    "Task: Write the opening two sentences of a cold email grounded in the context above. Make it specific to the ICP's pain, sound human, and earn the next sentence. No flattery openers, no 'I hope this finds you well'.",
+    "Task: Write the opening two sentences of a cold email grounded in the context above. Make it specific to the ICP's pain, sound human, and earn the next sentence. No flattery openers, no 'I hope this finds you well'. Return only the two sentences - no preamble or commentary.",
   ad_copy_variant:
-    "Task: Write one ad copy variant (headline + primary text) grounded in the context above. One message, one promise, proof if available, plain action.",
+    "Task: Write one ad copy variant (headline + primary text) grounded in the context above. One message, one promise, proof if available, plain action. Return only the headline and primary text - no preamble or commentary.",
   landing_page_hero:
-    "Task: Write a landing page hero (headline + subheadline) grounded in the context above. Headline states the positioning in the company's voice; subheadline makes it concrete and credible.",
+    "Task: Write a landing page hero (headline + subheadline) grounded in the context above. Headline states the positioning in the company's voice; subheadline makes it concrete and credible. Return only the headline and subheadline - no preamble or commentary.",
 };
 
 // ---------------------------------------------------------------------------

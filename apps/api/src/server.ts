@@ -10,8 +10,12 @@ const envFile = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", ".
 if (fs.existsSync(envFile)) {
   for (const line of fs.readFileSync(envFile, "utf8").split(/\r?\n/)) {
     const match = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)\s*$/.exec(line);
-    if (match && process.env[match[1]!] === undefined) {
-      process.env[match[1]!] = match[2]!.replace(/^["']|["']$/g, "");
+    if (!match) continue;
+    const value = match[2]!.replace(/^["']|["']$/g, "").trim();
+    // Skip blank assignments (unfilled .env.example lines) and never
+    // override real environment variables.
+    if (value && process.env[match[1]!] === undefined) {
+      process.env[match[1]!] = value;
     }
   }
 }
