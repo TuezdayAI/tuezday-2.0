@@ -15,6 +15,13 @@
       "when": 1781075489412,
       "tag": "0001_brain-documents",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1781081560718,
+      "tag": "0002_personas",
+      "breakpoints": true
     }
   ]
 }

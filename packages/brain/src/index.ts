@@ -1,5 +1,7 @@
 import { BRAIN_DOC_TYPES, type BrainDocType } from "@tuezday/contracts";
 
+export * from "./resolver";
+
 // ---------------------------------------------------------------------------
 // Doc metadata — canonical order, display titles, descriptions
 // ---------------------------------------------------------------------------

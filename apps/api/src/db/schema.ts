@@ -40,3 +40,17 @@ export const brainDocumentVersions = sqliteTable("brain_document_versions", {
 });
 
 export type BrainDocumentVersionRow = typeof brainDocumentVersions.$inferSelect;
+
+export const personas = sqliteTable("personas", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  overlay: text("overlay").notNull().default(""),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type PersonaRow = typeof personas.$inferSelect;

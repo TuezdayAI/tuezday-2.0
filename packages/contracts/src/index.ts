@@ -23,6 +23,19 @@ export type ApprovalState = (typeof APPROVAL_STATES)[number];
 export const OUTPUT_RATINGS = ["accepted", "needs_edit", "rejected"] as const;
 export type OutputRating = (typeof OUTPUT_RATINGS)[number];
 
+/** GTM task types the resolver and generation sandbox understand. */
+export const TASK_TYPES = [
+  "linkedin_post",
+  "cold_email_opener",
+  "ad_copy_variant",
+  "landing_page_hero",
+] as const;
+export type TaskType = (typeof TASK_TYPES)[number];
+
+/** Channels a task can target. */
+export const CHANNELS = ["linkedin", "x", "email", "ads", "web"] as const;
+export type Channel = (typeof CHANNELS)[number];
+
 // ---------------------------------------------------------------------------
 // Workspace
 // ---------------------------------------------------------------------------
@@ -75,6 +88,51 @@ export const brainDocVersionSchema = z.object({
   createdAt: z.number().int(),
 });
 export type BrainDocVersion = z.infer<typeof brainDocVersionSchema>;
+
+// ---------------------------------------------------------------------------
+// Personas
+// ---------------------------------------------------------------------------
+
+export const PERSONA_OVERLAY_MAX_CHARS = 10_000;
+
+export const personaSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  name: z.string().min(1).max(100),
+  description: z.string().max(500),
+  overlay: z.string().max(PERSONA_OVERLAY_MAX_CHARS),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type Persona = z.infer<typeof personaSchema>;
+
+export const upsertPersonaInputSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Persona name is required")
+    .max(100, "Persona name must be 100 characters or fewer"),
+  description: z.string().trim().max(500, "Description must be 500 characters or fewer").default(""),
+  overlay: z
+    .string()
+    .max(PERSONA_OVERLAY_MAX_CHARS, `Overlay must be ${PERSONA_OVERLAY_MAX_CHARS} characters or fewer`)
+    .default(""),
+});
+export type UpsertPersonaInput = z.infer<typeof upsertPersonaInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Context resolution
+// ---------------------------------------------------------------------------
+
+export const DEFAULT_TOKEN_BUDGET = 8_000;
+
+export const resolveRequestSchema = z.object({
+  taskType: z.enum(TASK_TYPES),
+  channel: z.enum(CHANNELS),
+  personaId: z.string().uuid().optional(),
+  tokenBudget: z.number().int().min(500).max(200_000).optional(),
+});
+export type ResolveRequest = z.infer<typeof resolveRequestSchema>;
 
 // ---------------------------------------------------------------------------
 // API error shape

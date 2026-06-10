@@ -132,9 +132,14 @@ export default function WorkspaceBrainPage() {
             Brain completeness: <strong>{brain.completeness.percent}%</strong>
           </p>
         </div>
-        <a className="button-secondary" href={`${API_URL}/workspaces/${id}/brain/export`}>
-          Export brain (.md)
-        </a>
+        <div className="persona-actions">
+          <Link className="button-secondary" href={`/workspaces/${id}/resolver`}>
+            Context resolver →
+          </Link>
+          <a className="button-secondary" href={`${API_URL}/workspaces/${id}/brain/export`}>
+            Export brain (.md)
+          </a>
+        </div>
       </div>
 
       <div className="brain-layout">

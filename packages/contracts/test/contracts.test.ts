@@ -3,10 +3,15 @@ import {
   APPROVAL_STATES,
   BRAIN_DOC_MAX_CHARS,
   BRAIN_DOC_TYPES,
+  CHANNELS,
   OUTPUT_RATINGS,
+  PERSONA_OVERLAY_MAX_CHARS,
+  TASK_TYPES,
   brainDocumentSchema,
   createWorkspaceInputSchema,
+  resolveRequestSchema,
   updateBrainDocInputSchema,
+  upsertPersonaInputSchema,
   workspaceSchema,
 } from "../src/index";
 
@@ -55,6 +60,67 @@ describe("createWorkspaceInputSchema", () => {
 
   it("rejects a missing name", () => {
     expect(createWorkspaceInputSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe("task types and channels", () => {
+  it("matches the planned sandbox task types", () => {
+    expect(TASK_TYPES).toEqual([
+      "linkedin_post",
+      "cold_email_opener",
+      "ad_copy_variant",
+      "landing_page_hero",
+    ]);
+  });
+
+  it("covers the planned channels", () => {
+    expect(CHANNELS).toEqual(["linkedin", "x", "email", "ads", "web"]);
+  });
+});
+
+describe("upsertPersonaInputSchema", () => {
+  it("accepts a persona and applies defaults", () => {
+    const parsed = upsertPersonaInputSchema.parse({ name: "CEO" });
+    expect(parsed).toEqual({ name: "CEO", description: "", overlay: "" });
+  });
+
+  it("trims name and description", () => {
+    const parsed = upsertPersonaInputSchema.parse({
+      name: "  CEO  ",
+      description: "  Founder voice  ",
+    });
+    expect(parsed.name).toBe("CEO");
+    expect(parsed.description).toBe("Founder voice");
+  });
+
+  it("rejects an empty name", () => {
+    expect(upsertPersonaInputSchema.safeParse({ name: " " }).success).toBe(false);
+  });
+
+  it("rejects an oversized overlay", () => {
+    const overlay = "x".repeat(PERSONA_OVERLAY_MAX_CHARS + 1);
+    expect(upsertPersonaInputSchema.safeParse({ name: "CEO", overlay }).success).toBe(false);
+  });
+});
+
+describe("resolveRequestSchema", () => {
+  it("accepts a minimal request", () => {
+    const result = resolveRequestSchema.safeParse({ taskType: "linkedin_post", channel: "linkedin" });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an unknown task type", () => {
+    const result = resolveRequestSchema.safeParse({ taskType: "tiktok_dance", channel: "linkedin" });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a token budget below the floor", () => {
+    const result = resolveRequestSchema.safeParse({
+      taskType: "linkedin_post",
+      channel: "linkedin",
+      tokenBudget: 100,
+    });
+    expect(result.success).toBe(false);
   });
 });
 
