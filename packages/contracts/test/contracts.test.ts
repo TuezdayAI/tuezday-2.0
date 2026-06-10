@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  APPROVAL_ACTIONS,
   APPROVAL_STATES,
   BRAIN_DOC_MAX_CHARS,
+  canTransition,
+  editDraftInputSchema,
+  transitionTo,
   BRAIN_DOC_TYPES,
   CHANNELS,
   OUTPUT_RATINGS,
@@ -169,6 +173,61 @@ describe("brainDocumentSchema", () => {
       updatedAt: 1765400000000,
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("approval state machine", () => {
+  it("allows the full happy path: submit -> edit -> resubmit -> approve", () => {
+    expect(transitionTo("draft", "submit")).toBe("pending_review");
+    expect(transitionTo("pending_review", "edit")).toBe("edited");
+    expect(transitionTo("edited", "resubmit")).toBe("pending_review");
+    expect(transitionTo("pending_review", "approve")).toBe("approved");
+  });
+
+  it("allows edit-before-approve in one step from edited", () => {
+    expect(transitionTo("edited", "approve")).toBe("approved");
+    expect(transitionTo("edited", "reject")).toBe("rejected");
+  });
+
+  it("allows re-editing an edited draft", () => {
+    expect(transitionTo("edited", "edit")).toBe("edited");
+  });
+
+  it("allows rejection from pending_review", () => {
+    expect(transitionTo("pending_review", "reject")).toBe("rejected");
+  });
+
+  it("treats approved and rejected as terminal", () => {
+    for (const state of ["approved", "rejected"] as const) {
+      for (const action of APPROVAL_ACTIONS) {
+        expect(canTransition(state, action)).toBe(false);
+      }
+    }
+  });
+
+  it("refuses approving or editing an unsubmitted draft", () => {
+    expect(canTransition("draft", "approve")).toBe(false);
+    expect(canTransition("draft", "edit")).toBe(false);
+    expect(canTransition("draft", "reject")).toBe(false);
+  });
+
+  it("refuses resubmitting anything that is not edited", () => {
+    expect(canTransition("draft", "resubmit")).toBe(false);
+    expect(canTransition("pending_review", "resubmit")).toBe(false);
+  });
+
+  it("refuses double submission", () => {
+    expect(canTransition("pending_review", "submit")).toBe(false);
+  });
+});
+
+describe("editDraftInputSchema", () => {
+  it("accepts normal content", () => {
+    expect(editDraftInputSchema.safeParse({ content: "Edited post." }).success).toBe(true);
+  });
+
+  it("rejects empty content", () => {
+    expect(editDraftInputSchema.safeParse({ content: "" }).success).toBe(false);
   });
 });
 

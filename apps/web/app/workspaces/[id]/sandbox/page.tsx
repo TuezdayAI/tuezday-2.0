@@ -52,6 +52,7 @@ export default function SandboxPage() {
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [log, setLog] = useState<GenerationView[]>([]);
+  const [submittedByGeneration, setSubmittedByGeneration] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
   const [taskType, setTaskType] = useState<TaskType>("linkedin_post");
@@ -69,15 +70,22 @@ export default function SandboxPage() {
 
   const load = useCallback(async () => {
     try {
-      const [wsRes, pRes, gRes] = await Promise.all([
+      const [wsRes, pRes, gRes, dRes] = await Promise.all([
         fetch(`${API_URL}/workspaces/${id}`),
         fetch(`${API_URL}/workspaces/${id}/personas`),
         fetch(`${API_URL}/workspaces/${id}/generations`),
+        fetch(`${API_URL}/workspaces/${id}/drafts`),
       ]);
-      if (!wsRes.ok || !pRes.ok || !gRes.ok) throw new Error("not found");
+      if (!wsRes.ok || !pRes.ok || !gRes.ok || !dRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
       setPersonas(await pRes.json());
       setLog(await gRes.json());
+      const drafts: { sourceGenerationId: string | null; id: string }[] = await dRes.json();
+      setSubmittedByGeneration(
+        Object.fromEntries(
+          drafts.filter((d) => d.sourceGenerationId).map((d) => [d.sourceGenerationId!, d.id]),
+        ),
+      );
       setError(null);
     } catch {
       setError(`Could not load this workspace from ${API_URL}. Is "npm run dev" running?`);
@@ -159,6 +167,32 @@ export default function SandboxPage() {
     return personas.find((p) => p.id === pid)?.name ?? "deleted persona";
   }
 
+  async function sendToQueue(generationId: string) {
+    setError(null);
+    const res = await fetch(`${API_URL}/workspaces/${id}/generations/${generationId}/submit`, {
+      method: "POST",
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok && res.status !== 409) {
+      setError(body?.message ?? `API returned ${res.status}`);
+      return;
+    }
+    await load();
+  }
+
+  function queueButton(generationId: string) {
+    const draftId = submittedByGeneration[generationId];
+    return draftId ? (
+      <Link className="link-button" href={`/workspaces/${id}/approvals`}>
+        in approval queue →
+      </Link>
+    ) : (
+      <button className="button-secondary" onClick={() => sendToQueue(generationId)}>
+        Send to approval queue
+      </button>
+    );
+  }
+
   if (error && !workspace) {
     return (
       <>
@@ -190,6 +224,9 @@ export default function SandboxPage() {
           </Link>
           <Link className="button-secondary" href={`/workspaces/${id}/resolver`}>
             Resolver
+          </Link>
+          <Link className="button-secondary" href={`/workspaces/${id}/approvals`}>
+            Approvals →
           </Link>
         </div>
       </div>
@@ -309,6 +346,7 @@ export default function SandboxPage() {
                 </button>
               ))}
               {latest.rating && <span className="meta">stored as training signal</span>}
+              {queueButton(latest.id)}
             </div>
           </div>
         )}
@@ -353,6 +391,7 @@ export default function SandboxPage() {
                           {RATING_LABELS[r]}
                         </button>
                       ))}
+                      {queueButton(g.id)}
                     </div>
                   </>
                 )}

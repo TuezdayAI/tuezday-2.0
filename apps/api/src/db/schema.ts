@@ -75,3 +75,39 @@ export const generations = sqliteTable("generations", {
 });
 
 export type GenerationRow = typeof generations.$inferSelect;
+
+export const drafts = sqliteTable("drafts", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  sourceGenerationId: text("source_generation_id"),
+  taskType: text("task_type").notNull(),
+  channel: text("channel").notNull(),
+  personaId: text("persona_id"),
+  originalContent: text("original_content").notNull(),
+  content: text("content").notNull(),
+  state: text("state").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type DraftRow = typeof drafts.$inferSelect;
+
+export const approvalDecisions = sqliteTable("approval_decisions", {
+  id: text("id").primaryKey(),
+  draftId: text("draft_id")
+    .notNull()
+    .references(() => drafts.id, { onDelete: "cascade" }),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  action: text("action").notNull(),
+  fromState: text("from_state").notNull(),
+  toState: text("to_state").notNull(),
+  contentSnapshot: text("content_snapshot"),
+  actor: text("actor").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type ApprovalDecisionRow = typeof approvalDecisions.$inferSelect;

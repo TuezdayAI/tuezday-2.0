@@ -5,6 +5,7 @@ import type { Db } from "./db";
 import { GeminiGateway } from "./llm/gemini";
 import type { LlmGateway } from "./llm/gateway";
 import { registerBrainRoutes } from "./routes/brain";
+import { registerDraftRoutes } from "./routes/drafts";
 import { registerGenerationRoutes } from "./routes/generations";
 import { registerPersonaRoutes } from "./routes/personas";
 import { registerWorkspaceRoutes } from "./routes/workspaces";
@@ -36,6 +37,7 @@ export async function buildApp({ db, llm = new GeminiGateway() }: BuildAppOption
   registerBrainRoutes(app, db);
   registerPersonaRoutes(app, db);
   registerGenerationRoutes(app, db, llm);
+  registerDraftRoutes(app, db);
 
   return app;
 }

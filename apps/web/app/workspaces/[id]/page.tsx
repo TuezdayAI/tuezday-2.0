@@ -137,7 +137,10 @@ export default function WorkspaceBrainPage() {
             Resolver
           </Link>
           <Link className="button-secondary" href={`/workspaces/${id}/sandbox`}>
-            Sandbox →
+            Sandbox
+          </Link>
+          <Link className="button-secondary" href={`/workspaces/${id}/approvals`}>
+            Approvals →
           </Link>
           <a className="button-secondary" href={`${API_URL}/workspaces/${id}/brain/export`}>
             Export brain (.md)

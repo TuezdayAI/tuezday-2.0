@@ -165,6 +165,70 @@ export const rateGenerationInputSchema = z.object({
 export type RateGenerationInput = z.infer<typeof rateGenerationInputSchema>;
 
 // ---------------------------------------------------------------------------
+// Approval gate
+// ---------------------------------------------------------------------------
+
+export const APPROVAL_ACTIONS = ["submit", "edit", "resubmit", "approve", "reject"] as const;
+export type ApprovalAction = (typeof APPROVAL_ACTIONS)[number];
+
+/**
+ * The approval state machine. Single source of truth for which action is
+ * legal from which state — enforced by the API and mirrored by the UI.
+ */
+const TRANSITIONS: Record<ApprovalAction, Partial<Record<ApprovalState, ApprovalState>>> = {
+  submit: { draft: "pending_review" },
+  edit: { pending_review: "edited", edited: "edited" },
+  resubmit: { edited: "pending_review" },
+  approve: { pending_review: "approved", edited: "approved" },
+  reject: { pending_review: "rejected", edited: "rejected" },
+};
+
+/** The state an action leads to from the given state, or undefined if illegal. */
+export function transitionTo(from: ApprovalState, action: ApprovalAction): ApprovalState | undefined {
+  return TRANSITIONS[action][from];
+}
+
+export function canTransition(from: ApprovalState, action: ApprovalAction): boolean {
+  return transitionTo(from, action) !== undefined;
+}
+
+export const draftSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  sourceGenerationId: z.string().uuid().nullable(),
+  taskType: z.enum(TASK_TYPES),
+  channel: z.enum(CHANNELS),
+  personaId: z.string().uuid().nullable(),
+  originalContent: z.string(),
+  content: z.string(),
+  state: z.enum(APPROVAL_STATES),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type Draft = z.infer<typeof draftSchema>;
+
+export const approvalDecisionSchema = z.object({
+  id: z.string().uuid(),
+  draftId: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  action: z.enum(APPROVAL_ACTIONS),
+  fromState: z.enum(APPROVAL_STATES),
+  toState: z.enum(APPROVAL_STATES),
+  contentSnapshot: z.string().nullable(),
+  actor: z.string(),
+  createdAt: z.number().int(),
+});
+export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>;
+
+export const editDraftInputSchema = z.object({
+  content: z
+    .string()
+    .min(1, "Draft content cannot be empty")
+    .max(BRAIN_DOC_MAX_CHARS, `Draft must be ${BRAIN_DOC_MAX_CHARS} characters or fewer`),
+});
+export type EditDraftInput = z.infer<typeof editDraftInputSchema>;
+
+// ---------------------------------------------------------------------------
 // API error shape
 // ---------------------------------------------------------------------------
 

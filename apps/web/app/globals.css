@@ -536,6 +536,51 @@ a.workspace-card:hover {
 .layer-badge.rating-needs_edit { color: #ffd479; border-color: #6b5524; }
 .layer-badge.rating-rejected { color: #ff9c9c; border-color: #662d2d; }
 
+.filter-tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.filter-tab {
+  padding: 7px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.filter-tab.active {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.layer-badge.state-pending_review { color: #6c8cff; border-color: #2d3d66; }
+.layer-badge.state-edited { color: #ffd479; border-color: #6b5524; }
+.layer-badge.state-approved { color: #7ee2a8; border-color: #2e5d44; }
+.layer-badge.state-rejected { color: #ff9c9c; border-color: #662d2d; }
+
+.original-content summary {
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  margin-bottom: 6px;
+}
+
+.decision-log {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 10px 0 0;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
 .version-preview pre {
   background: var(--panel);
   border: 1px solid var(--border);
