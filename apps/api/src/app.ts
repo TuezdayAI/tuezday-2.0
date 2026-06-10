@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import { sql } from "drizzle-orm";
 import type { Db } from "./db";
+import { registerBrainRoutes } from "./routes/brain";
 import { registerWorkspaceRoutes } from "./routes/workspaces";
 
 export type TuezdayApp = FastifyInstance;
@@ -21,6 +22,7 @@ export async function buildApp({ db }: BuildAppOptions): Promise<TuezdayApp> {
   });
 
   registerWorkspaceRoutes(app, db);
+  registerBrainRoutes(app, db);
 
   return app;
 }

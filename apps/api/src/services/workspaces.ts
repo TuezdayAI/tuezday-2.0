@@ -3,6 +3,7 @@ import { desc, eq } from "drizzle-orm";
 import type { CreateWorkspaceInput, Workspace } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { workspaces } from "../db/schema";
+import { ensureBrainDocs } from "./brain";
 
 export function createWorkspace(db: Db, input: CreateWorkspaceInput): Workspace {
   const now = Date.now();
@@ -13,6 +14,8 @@ export function createWorkspace(db: Db, input: CreateWorkspaceInput): Workspace 
     updatedAt: now,
   };
   db.insert(workspaces).values(row).run();
+  // Every workspace owns its five brain docs from the moment it exists.
+  ensureBrainDocs(db, row.id);
   return row;
 }
 

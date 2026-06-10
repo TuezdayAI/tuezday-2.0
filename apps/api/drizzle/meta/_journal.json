@@ -8,6 +8,13 @@
       "when": 1781074364967,
       "tag": "0000_init-workspaces",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1781075489412,
+      "tag": "0001_brain-documents",
+      "breakpoints": true
     }
   ]
 }

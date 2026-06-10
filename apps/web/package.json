@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@tuezday/brain": "*",
     "@tuezday/contracts": "*",
     "next": "^15.3.0",
     "react": "^19.0.0",

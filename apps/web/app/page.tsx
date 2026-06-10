@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import type { Workspace } from "@tuezday/contracts";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
@@ -78,11 +79,13 @@ export default function HomePage() {
       ) : (
         <ul className="workspace-list">
           {workspaces.map((w) => (
-            <li key={w.id} className="workspace-card">
-              <span className="name">{w.name}</span>
-              <span className="meta">
-                created {new Date(w.createdAt).toLocaleString()}
-              </span>
+            <li key={w.id}>
+              <Link href={`/workspaces/${w.id}`} className="workspace-card">
+                <span className="name">{w.name}</span>
+                <span className="meta">
+                  created {new Date(w.createdAt).toLocaleString()}
+                </span>
+              </Link>
             </li>
           ))}
         </ul>

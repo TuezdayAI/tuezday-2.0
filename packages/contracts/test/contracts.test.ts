@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   APPROVAL_STATES,
+  BRAIN_DOC_MAX_CHARS,
   BRAIN_DOC_TYPES,
   OUTPUT_RATINGS,
+  brainDocumentSchema,
   createWorkspaceInputSchema,
+  updateBrainDocInputSchema,
   workspaceSchema,
 } from "../src/index";
 
@@ -52,6 +55,52 @@ describe("createWorkspaceInputSchema", () => {
 
   it("rejects a missing name", () => {
     expect(createWorkspaceInputSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe("updateBrainDocInputSchema", () => {
+  it("accepts normal markdown content", () => {
+    const result = updateBrainDocInputSchema.safeParse({ content: "# Soul\n\nWe exist to..." });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts empty content (clearing a doc is allowed)", () => {
+    expect(updateBrainDocInputSchema.safeParse({ content: "" }).success).toBe(true);
+  });
+
+  it("rejects content over the max length", () => {
+    const content = "x".repeat(BRAIN_DOC_MAX_CHARS + 1);
+    expect(updateBrainDocInputSchema.safeParse({ content }).success).toBe(false);
+  });
+
+  it("rejects a missing content field", () => {
+    expect(updateBrainDocInputSchema.safeParse({}).success).toBe(false);
+  });
+});
+
+describe("brainDocumentSchema", () => {
+  it("accepts a valid brain document", () => {
+    const result = brainDocumentSchema.safeParse({
+      id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      workspaceId: "9b2c8a44-1d2e-4f5a-8b6c-7d8e9f0a1b2c",
+      docType: "soul",
+      content: "",
+      createdAt: 1765400000000,
+      updatedAt: 1765400000000,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an unknown doc type", () => {
+    const result = brainDocumentSchema.safeParse({
+      id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      workspaceId: "9b2c8a44-1d2e-4f5a-8b6c-7d8e9f0a1b2c",
+      docType: "strategy",
+      content: "",
+      createdAt: 1765400000000,
+      updatedAt: 1765400000000,
+    });
+    expect(result.success).toBe(false);
   });
 });
 

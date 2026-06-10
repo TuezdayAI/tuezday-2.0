@@ -45,6 +45,38 @@ export const createWorkspaceInputSchema = z.object({
 export type CreateWorkspaceInput = z.infer<typeof createWorkspaceInputSchema>;
 
 // ---------------------------------------------------------------------------
+// Brain documents
+// ---------------------------------------------------------------------------
+
+export const BRAIN_DOC_MAX_CHARS = 50_000;
+
+export const brainDocumentSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  docType: z.enum(BRAIN_DOC_TYPES),
+  content: z.string(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type BrainDocument = z.infer<typeof brainDocumentSchema>;
+
+export const updateBrainDocInputSchema = z.object({
+  content: z
+    .string()
+    .max(BRAIN_DOC_MAX_CHARS, `Document must be ${BRAIN_DOC_MAX_CHARS} characters or fewer`),
+});
+export type UpdateBrainDocInput = z.infer<typeof updateBrainDocInputSchema>;
+
+export const brainDocVersionSchema = z.object({
+  id: z.string().uuid(),
+  documentId: z.string().uuid(),
+  version: z.number().int().min(1),
+  content: z.string(),
+  createdAt: z.number().int(),
+});
+export type BrainDocVersion = z.infer<typeof brainDocVersionSchema>;
+
+// ---------------------------------------------------------------------------
 // API error shape
 // ---------------------------------------------------------------------------
 
