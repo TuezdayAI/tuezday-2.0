@@ -9,6 +9,8 @@ import {
   TASK_TYPES,
   brainDocumentSchema,
   createWorkspaceInputSchema,
+  generationSchema,
+  rateGenerationInputSchema,
   resolveRequestSchema,
   updateBrainDocInputSchema,
   upsertPersonaInputSchema,
@@ -167,6 +169,39 @@ describe("brainDocumentSchema", () => {
       updatedAt: 1765400000000,
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("rateGenerationInputSchema", () => {
+  it("accepts each valid rating", () => {
+    for (const rating of OUTPUT_RATINGS) {
+      expect(rateGenerationInputSchema.safeParse({ rating }).success).toBe(true);
+    }
+  });
+
+  it("rejects an unknown rating", () => {
+    expect(rateGenerationInputSchema.safeParse({ rating: "meh" }).success).toBe(false);
+  });
+});
+
+describe("generationSchema", () => {
+  it("accepts a stored generation with nullable rating fields", () => {
+    const result = generationSchema.safeParse({
+      id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      workspaceId: "9b2c8a44-1d2e-4f5a-8b6c-7d8e9f0a1b2c",
+      taskType: "linkedin_post",
+      channel: "linkedin",
+      personaId: null,
+      prompt: "## Soul\n\n...",
+      output: "Here is a post.",
+      model: "gemini-2.5-flash",
+      provider: "gemini",
+      durationMs: 1200,
+      rating: null,
+      ratedAt: null,
+      createdAt: 1765400000000,
+    });
+    expect(result.success).toBe(true);
   });
 });
 

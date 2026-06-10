@@ -134,7 +134,10 @@ export default function WorkspaceBrainPage() {
         </div>
         <div className="persona-actions">
           <Link className="button-secondary" href={`/workspaces/${id}/resolver`}>
-            Context resolver →
+            Resolver
+          </Link>
+          <Link className="button-secondary" href={`/workspaces/${id}/sandbox`}>
+            Sandbox →
           </Link>
           <a className="button-secondary" href={`${API_URL}/workspaces/${id}/brain/export`}>
             Export brain (.md)

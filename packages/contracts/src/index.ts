@@ -135,6 +135,36 @@ export const resolveRequestSchema = z.object({
 export type ResolveRequest = z.infer<typeof resolveRequestSchema>;
 
 // ---------------------------------------------------------------------------
+// Generations (sandbox outputs + training signals)
+// ---------------------------------------------------------------------------
+
+export const generationSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  taskType: z.enum(TASK_TYPES),
+  channel: z.enum(CHANNELS),
+  personaId: z.string().uuid().nullable(),
+  prompt: z.string(),
+  output: z.string(),
+  model: z.string(),
+  provider: z.string(),
+  durationMs: z.number().int(),
+  rating: z.enum(OUTPUT_RATINGS).nullable(),
+  ratedAt: z.number().int().nullable(),
+  createdAt: z.number().int(),
+});
+export type Generation = z.infer<typeof generationSchema>;
+
+/** Generate takes the same inputs as resolve. */
+export const generateRequestSchema = resolveRequestSchema;
+export type GenerateRequest = ResolveRequest;
+
+export const rateGenerationInputSchema = z.object({
+  rating: z.enum(OUTPUT_RATINGS),
+});
+export type RateGenerationInput = z.infer<typeof rateGenerationInputSchema>;
+
+// ---------------------------------------------------------------------------
 // API error shape
 // ---------------------------------------------------------------------------
 

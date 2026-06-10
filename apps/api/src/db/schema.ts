@@ -54,3 +54,24 @@ export const personas = sqliteTable("personas", {
 });
 
 export type PersonaRow = typeof personas.$inferSelect;
+
+export const generations = sqliteTable("generations", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  taskType: text("task_type").notNull(),
+  channel: text("channel").notNull(),
+  personaId: text("persona_id"),
+  prompt: text("prompt").notNull(),
+  sectionsJson: text("sections_json").notNull(),
+  output: text("output").notNull(),
+  model: text("model").notNull(),
+  provider: text("provider").notNull(),
+  durationMs: integer("duration_ms").notNull(),
+  rating: text("rating"),
+  ratedAt: integer("rated_at"),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type GenerationRow = typeof generations.$inferSelect;

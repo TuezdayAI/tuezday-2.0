@@ -26,7 +26,7 @@
 - **DB:** SQLite via Drizzle ORM for v0 (zero-setup local dev for founder testing). Drizzle migrations from day one; the schema is kept Postgres-portable and the swap to Postgres is contained inside `apps/api/src/db` (planned at Sprint 8 / RAG time, when infra grows anyway).
 - **Validation/contracts:** Zod schemas in `packages/contracts`, shared by api and web.
 - **Tests:** Vitest. API tested via Fastify `inject` (no network).
-- **LLM:** Anthropic API behind a native LLM gateway with trace logging (Sprint 4).
+- **LLM:** Google Gemini behind a native, provider-agnostic LLM gateway with trace logging (Sprint 4; founder decision — Gemini key available now). Routes/services/UI depend only on the gateway interface, so adding or switching providers (e.g. Anthropic later) touches one file.
 
 ---
 
@@ -110,7 +110,7 @@ Build:
 **Goal:** test whether the brain produces useful output before building any pipeline.
 
 Build:
-- LLM gateway (Anthropic API) with full prompt/response trace logging.
+- LLM gateway (Gemini first, provider-agnostic interface) with full prompt/response trace logging.
 - "Generate with brain" sandbox for four task types: LinkedIn post, cold email opener, ad copy variant, landing page hero.
 - Resolved context shown before generation (reuses Sprint 3 preview).
 - Output rating: `accepted` / `needs edit` / `rejected`, stored as training signals.

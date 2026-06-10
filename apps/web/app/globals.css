@@ -496,6 +496,46 @@ a.workspace-card:hover {
   overflow: auto;
 }
 
+.link-button {
+  background: none;
+  border: none;
+  color: var(--accent);
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.generation-output {
+  margin-top: 16px;
+}
+
+.output-text {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+  font-size: 14px;
+  font-family: inherit;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  margin: 10px 0;
+}
+
+.rating-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.rating-accepted.active { border-color: #2e5d44; color: #7ee2a8; }
+.rating-needs_edit.active { border-color: #6b5524; color: #ffd479; }
+.rating-rejected.active { border-color: #662d2d; color: #ff9c9c; }
+
+.layer-badge.rating-accepted { color: #7ee2a8; border-color: #2e5d44; }
+.layer-badge.rating-needs_edit { color: #ffd479; border-color: #6b5524; }
+.layer-badge.rating-rejected { color: #ff9c9c; border-color: #662d2d; }
+
 .version-preview pre {
   background: var(--panel);
   border: 1px solid var(--border);
