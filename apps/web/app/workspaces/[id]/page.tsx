@@ -83,7 +83,15 @@ export default function WorkspaceBrainPage() {
       setDraft(content);
       if (showHistory) await loadVersions();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save");
+      // A TypeError from fetch means the request never reached the API
+      // (server down, wrong port, or a blocked CORS preflight).
+      if (err instanceof TypeError) {
+        setError(
+          `Could not reach the API at ${API_URL}. Check that "npm run dev" is running and the browser console for CORS errors.`,
+        );
+      } else {
+        setError(err instanceof Error ? err.message : "Failed to save");
+      }
     } finally {
       setSaving(false);
     }

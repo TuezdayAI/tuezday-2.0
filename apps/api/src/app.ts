@@ -14,7 +14,12 @@ export interface BuildAppOptions {
 export async function buildApp({ db }: BuildAppOptions): Promise<TuezdayApp> {
   const app = Fastify({ logger: false });
 
-  await app.register(cors, { origin: true });
+  // @fastify/cors only allows GET/HEAD/POST by default — the brain editor
+  // saves with PUT, and later slices use PATCH/DELETE.
+  await app.register(cors, {
+    origin: true,
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  });
 
   app.get("/health", async () => {
     db.run(sql`select 1`);

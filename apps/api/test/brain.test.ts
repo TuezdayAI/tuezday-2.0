@@ -58,6 +58,24 @@ describe("brain API", () => {
     });
   });
 
+  describe("CORS preflight", () => {
+    it("allows PUT from the web app origin", async () => {
+      const res = await app.inject({
+        method: "OPTIONS",
+        url: `/workspaces/${workspaceId}/brain/soul`,
+        headers: {
+          origin: "http://localhost:3000",
+          "access-control-request-method": "PUT",
+          "access-control-request-headers": "content-type",
+        },
+      });
+      expect(res.statusCode).toBe(204);
+      expect(res.headers["access-control-allow-origin"]).toBe("http://localhost:3000");
+      expect(res.headers["access-control-allow-methods"]).toContain("PUT");
+      expect(res.headers["access-control-allow-methods"]).toContain("DELETE");
+    });
+  });
+
   describe("PUT /workspaces/:id/brain/:docType", () => {
     it("saves content and returns the updated doc", async () => {
       const res = await app.inject({
