@@ -23,6 +23,7 @@ const TASK_LABELS: Record<TaskType, string> = {
   ad_copy_variant: "Ad copy variant",
   landing_page_hero: "Landing page hero",
   signal_response: "Signal response",
+  outbound_email: "Outbound email",
 };
 
 export default function ResolverPage() {

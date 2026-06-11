@@ -59,6 +59,7 @@ export interface SubmitDraftInput {
   sourceGenerationId: string;
   sourceSignalId?: string | null;
   campaignId?: string | null;
+  leadId?: string | null;
   taskType: TaskType;
   channel: Channel;
   personaId: string | null;
@@ -88,6 +89,7 @@ export function submitDraft(db: Db, input: SubmitDraftInput): Draft {
     sourceGenerationId: input.sourceGenerationId,
     sourceSignalId: input.sourceSignalId ?? null,
     campaignId: input.campaignId ?? null,
+    leadId: input.leadId ?? null,
     taskType: input.taskType,
     channel: input.channel,
     personaId: input.personaId,

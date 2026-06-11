@@ -47,6 +47,7 @@ describe("resolve API", () => {
       "channel",
       "campaign",
       "persona",
+      "lead",
       "signal",
       "evidence",
       "task",

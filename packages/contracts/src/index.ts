@@ -30,6 +30,7 @@ export const TASK_TYPES = [
   "ad_copy_variant",
   "landing_page_hero",
   "signal_response",
+  "outbound_email",
 ] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
@@ -148,6 +149,7 @@ export const generationSchema = z.object({
   channel: z.enum(CHANNELS),
   personaId: z.string().uuid().nullable(),
   campaignId: z.string().uuid().nullable(),
+  leadId: z.string().uuid().nullable(),
   prompt: z.string(),
   output: z.string(),
   model: z.string(),
@@ -408,6 +410,7 @@ export const draftSchema = z.object({
   sourceGenerationId: z.string().uuid().nullable(),
   sourceSignalId: z.string().uuid().nullable(),
   campaignId: z.string().uuid().nullable(),
+  leadId: z.string().uuid().nullable(),
   taskType: z.enum(TASK_TYPES),
   channel: z.enum(CHANNELS),
   personaId: z.string().uuid().nullable(),
@@ -439,6 +442,45 @@ export const editDraftInputSchema = z.object({
     .max(BRAIN_DOC_MAX_CHARS, `Draft must be ${BRAIN_DOC_MAX_CHARS} characters or fewer`),
 });
 export type EditDraftInput = z.infer<typeof editDraftInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Outbound leads
+// ---------------------------------------------------------------------------
+
+export const leadSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  name: z.string().min(1).max(200),
+  email: z.string().email(),
+  company: z.string().max(200),
+  role: z.string().max(200),
+  notes: z.string().max(2000),
+  createdAt: z.number().int(),
+});
+export type Lead = z.infer<typeof leadSchema>;
+
+export const createLeadInputSchema = z.object({
+  name: z.string().trim().min(1, "Lead name is required").max(200),
+  email: z.string().trim().email("A valid email is required"),
+  company: z.string().trim().max(200).default(""),
+  role: z.string().trim().max(200).default(""),
+  notes: z.string().trim().max(2000).default(""),
+});
+export type CreateLeadInput = z.infer<typeof createLeadInputSchema>;
+
+export const importLeadsInputSchema = z.object({
+  csv: z.string().trim().min(1, "CSV content is required").max(500_000),
+});
+export type ImportLeadsInput = z.infer<typeof importLeadsInputSchema>;
+
+export const outboundDraftRequestSchema = z.object({
+  leadIds: z.array(z.string().uuid()).min(1, "Select at least one lead").max(25, "At most 25 leads per batch"),
+  personaId: z.string().uuid().optional(),
+  campaignId: z.string().uuid().optional(),
+  tokenBudget: z.number().int().min(500).max(200_000).optional(),
+  useEvidence: z.boolean().optional(),
+});
+export type OutboundDraftRequest = z.infer<typeof outboundDraftRequestSchema>;
 
 // ---------------------------------------------------------------------------
 // Learning loop

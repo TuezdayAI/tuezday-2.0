@@ -32,6 +32,8 @@ export const TASK_INSTRUCTIONS: Record<TaskType, string> = {
     "Task: Write a landing page hero (headline + subheadline) grounded in the context above. Headline states the positioning in the company's voice; subheadline makes it concrete and credible. Return only the headline and subheadline - no preamble or commentary.",
   signal_response:
     "Task: Write a response to the market signal above, for the requested channel, grounded in the company context. Engage with what the signal actually says - agree, push back, or add the company's earned point of view. Never sound like a brand inserting itself; sound like someone worth listening to. Return only the response text - no preamble or commentary.",
+  outbound_email:
+    "Task: Write a short personalized cold email to the lead above: a subject line (prefix 'Subject: ') and a body of at most 120 words. Personalize ONLY from the lead facts given - never invent meetings, mutual contacts, or details not in the data. Connect the lead's actual situation to the company's point of view, make one clear low-friction ask, and skip flattery openers. Return only the subject and body - no preamble or commentary.",
 };
 
 // ---------------------------------------------------------------------------
@@ -43,6 +45,7 @@ export type ContextLayer =
   | "channel"
   | "campaign"
   | "persona"
+  | "lead"
   | "signal"
   | "evidence"
   | "task";
@@ -62,6 +65,13 @@ export interface ResolveSignal {
   content: string;
   source: string;
   sourceUrl?: string | null;
+}
+
+export interface ResolveLead {
+  name: string;
+  company: string;
+  role: string;
+  notes: string;
 }
 
 export interface EvidenceChunk {
@@ -84,6 +94,7 @@ export interface ResolveInput {
   channel: Channel;
   persona?: ResolvePersona;
   campaign?: ResolveCampaign;
+  lead?: ResolveLead;
   signal?: ResolveSignal;
   evidence?: ResolveEvidence;
   /** Why evidence is absent (store down, no docs, toggled off) — shown in the trace. */
@@ -189,6 +200,36 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       content: "",
       included: false,
       reason: "Excluded: no persona selected; org voice applies.",
+      tokens: 0,
+    });
+  }
+
+  if (input.lead) {
+    const lines = [`To: ${input.lead.name}`];
+    if (input.lead.role.trim() || input.lead.company.trim()) {
+      lines.push(
+        [input.lead.role.trim(), input.lead.company.trim()].filter(Boolean).join(" at "),
+      );
+    }
+    if (input.lead.notes.trim()) lines.push(`What we know: ${input.lead.notes.trim()}`);
+    const leadContent = lines.join("\n");
+    sections.push({
+      key: "lead",
+      layer: "lead",
+      title: `Lead: ${input.lead.name}`,
+      content: leadContent,
+      included: true,
+      reason: "The lead this outbound task addresses. Personalize only from these facts.",
+      tokens: estimateTokens(leadContent),
+    });
+  } else {
+    sections.push({
+      key: "lead",
+      layer: "lead",
+      title: "Lead",
+      content: "",
+      included: false,
+      reason: "Excluded: no lead attached to this task.",
       tokens: 0,
     });
   }

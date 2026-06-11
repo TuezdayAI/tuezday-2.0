@@ -23,6 +23,7 @@ function rowToGeneration(row: GenerationRow): GenerationWithTrace {
     channel: row.channel as Channel,
     personaId: row.personaId,
     campaignId: row.campaignId,
+    leadId: row.leadId,
     prompt: row.prompt,
     output: row.output,
     model: row.model,
@@ -41,6 +42,7 @@ export interface StoreGenerationInput {
   channel: Channel;
   personaId: string | null;
   campaignId?: string | null;
+  leadId?: string | null;
   resolved: ResolvedContext;
   output: string;
   model: string;
@@ -56,6 +58,7 @@ export function storeGeneration(db: Db, input: StoreGenerationInput): Generation
     channel: input.channel,
     personaId: input.personaId,
     campaignId: input.campaignId ?? null,
+    leadId: input.leadId ?? null,
     prompt: input.resolved.prompt,
     sectionsJson: JSON.stringify(input.resolved.sections),
     output: input.output,

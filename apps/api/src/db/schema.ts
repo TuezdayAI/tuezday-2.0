@@ -64,6 +64,7 @@ export const generations = sqliteTable("generations", {
   channel: text("channel").notNull(),
   personaId: text("persona_id"),
   campaignId: text("campaign_id"),
+  leadId: text("lead_id"),
   prompt: text("prompt").notNull(),
   sectionsJson: text("sections_json").notNull(),
   output: text("output").notNull(),
@@ -85,6 +86,7 @@ export const drafts = sqliteTable("drafts", {
   sourceGenerationId: text("source_generation_id"),
   sourceSignalId: text("source_signal_id"),
   campaignId: text("campaign_id"),
+  leadId: text("lead_id"),
   taskType: text("task_type").notNull(),
   channel: text("channel").notNull(),
   personaId: text("persona_id"),
@@ -240,3 +242,18 @@ export const nowSyntheses = sqliteTable("now_syntheses", {
 });
 
 export type NowSynthesisRow = typeof nowSyntheses.$inferSelect;
+
+export const leads = sqliteTable("leads", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  email: text("email").notNull(),
+  company: text("company").notNull().default(""),
+  role: text("role").notNull().default(""),
+  notes: text("notes").notNull().default(""),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type LeadRow = typeof leads.$inferSelect;

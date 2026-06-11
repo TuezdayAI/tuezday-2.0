@@ -64,6 +64,7 @@ describe("resolveContext", () => {
       "channel",
       "campaign",
       "persona",
+      "lead",
       "signal",
       "evidence",
       "task",
@@ -206,6 +207,7 @@ describe("resolveContext", () => {
       "channel",
       "campaign",
       "persona",
+      "lead",
       "signal",
       "evidence",
       "task",
@@ -250,6 +252,7 @@ describe("resolveContext", () => {
       "channel",
       "campaign",
       "persona",
+      "lead",
       "signal",
       "evidence",
       "task",
@@ -278,6 +281,43 @@ describe("resolveContext", () => {
     const evidence = result.sections.find((s) => s.key === "evidence")!;
     expect(evidence.included).toBe(false);
     expect(evidence.reason.length).toBeGreaterThan(0);
+  });
+
+  it("places the lead section after persona and before signal when given", () => {
+    const result = resolveContext(
+      baseInput({
+        taskType: "outbound_email",
+        channel: "email",
+        lead: {
+          name: "Asha Patel",
+          company: "Acme Robotics",
+          role: "Head of Growth",
+          notes: "Complained about generic AI content on LinkedIn last week.",
+        },
+      }),
+    );
+    const keys = result.sections.map((s) => s.key);
+    expect(keys.indexOf("lead")).toBe(keys.indexOf("persona") + 1);
+    expect(keys.indexOf("lead")).toBe(keys.indexOf("signal") - 1);
+    const lead = result.sections.find((s) => s.key === "lead")!;
+    expect(lead.included).toBe(true);
+    expect(lead.layer).toBe("lead");
+    expect(lead.content).toContain("Asha Patel");
+    expect(lead.content).toContain("Acme Robotics");
+    expect(lead.content).toContain("Head of Growth");
+    expect(lead.content).toContain("Complained about generic AI content");
+  });
+
+  it("marks the lead slot excluded when no lead is given", () => {
+    const result = resolveContext(baseInput());
+    const lead = result.sections.find((s) => s.key === "lead")!;
+    expect(lead.included).toBe(false);
+    expect(lead.reason).toMatch(/no lead/i);
+  });
+
+  it("has an outbound_email instruction that forbids invented personalization", () => {
+    expect(TASK_INSTRUCTIONS.outbound_email).toMatch(/subject/i);
+    expect(TASK_INSTRUCTIONS.outbound_email).toMatch(/invent|fabricat|only.*lead/i);
   });
 
   it("is deterministic", () => {

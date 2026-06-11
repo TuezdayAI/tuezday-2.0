@@ -155,7 +155,10 @@ export default function WorkspaceBrainPage() {
             Evidence
           </Link>
           <Link className="button-secondary" href={`/workspaces/${id}/learning`}>
-            Learning →
+            Learning
+          </Link>
+          <Link className="button-secondary" href={`/workspaces/${id}/outbound`}>
+            Outbound →
           </Link>
           <a className="button-secondary" href={`${API_URL}/workspaces/${id}/brain/export`}>
             Export brain (.md)

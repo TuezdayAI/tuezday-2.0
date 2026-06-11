@@ -13,7 +13,9 @@ import {
   TASK_TYPES,
   brainDocumentSchema,
   createDiscoverySourceInputSchema,
+  createLeadInputSchema,
   createMetricInputSchema,
+  outboundDraftRequestSchema,
   createSignalInputSchema,
   DISCOVERY_SOURCE_TYPES,
   createWorkspaceInputSchema,
@@ -82,6 +84,7 @@ describe("task types and channels", () => {
       "ad_copy_variant",
       "landing_page_hero",
       "signal_response",
+      "outbound_email",
     ]);
   });
 
@@ -179,6 +182,29 @@ describe("brainDocumentSchema", () => {
       updatedAt: 1765400000000,
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("lead schemas", () => {
+  it("accepts a lead with defaults", () => {
+    const parsed = createLeadInputSchema.parse({ name: "Asha", email: "asha@acme.io" });
+    expect(parsed.company).toBe("");
+    expect(parsed.notes).toBe("");
+  });
+
+  it("rejects an invalid email", () => {
+    expect(createLeadInputSchema.safeParse({ name: "X", email: "not-an-email" }).success).toBe(
+      false,
+    );
+  });
+
+  it("bounds outbound batches to 25 leads", () => {
+    const leadIds = Array.from({ length: 26 }, () => "7c9e6679-7425-40de-944b-e07fc1f90ae7");
+    expect(outboundDraftRequestSchema.safeParse({ leadIds }).success).toBe(false);
+    expect(outboundDraftRequestSchema.safeParse({ leadIds: [] }).success).toBe(false);
+    expect(
+      outboundDraftRequestSchema.safeParse({ leadIds: leadIds.slice(0, 3) }).success,
+    ).toBe(true);
   });
 });
 
@@ -411,6 +437,7 @@ describe("generationSchema", () => {
       channel: "linkedin",
       personaId: null,
       campaignId: null,
+      leadId: null,
       prompt: "## Soul\n\n...",
       output: "Here is a post.",
       model: "gemini-2.5-flash",
