@@ -232,7 +232,7 @@ Build:
 
 ## Sprint 13+ — Integration Expansion (strict order)
 
-1. CRM read/write (customer's HubSpot/Salesforce/Pipedrive; Twenty as demo fallback).
+1. CRM read/write (customer's HubSpot/Salesforce/Pipedrive; Twenty as demo fallback). *In build: Freshsales first (founder's CRM, api_key auth) behind a provider-agnostic CrmAdapter — see `docs/specs/sprint-13-crm-read-write.md`.*
 2. Lifecycle messaging (Dittofeed).
 3. Ads reporting read-only (Airbyte for sync; Tuezday owns the metric model).
 4. Ad creative generation.

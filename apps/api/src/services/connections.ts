@@ -81,7 +81,13 @@ export async function connectProvider(
     .get();
 
   const nangoConnectionId = `ws-${workspaceId}-${provider.key}`;
-  await fabric.importConnection(integrationKey, nangoConnectionId, credentials);
+  // Some Nango templates resolve their API host from a connection_config
+  // value (freshsales' bundleAlias) — derive it from the founder's base URL.
+  const connectionConfig =
+    provider.baseUrlConfigKey && input.baseUrl
+      ? { [provider.baseUrlConfigKey]: input.baseUrl.replace(/^https?:\/\//, "").replace(/\/$/, "") }
+      : undefined;
+  await fabric.importConnection(integrationKey, nangoConnectionId, credentials, connectionConfig);
 
   const config = JSON.stringify({
     ...(input.baseUrl ? { baseUrl: input.baseUrl } : {}),

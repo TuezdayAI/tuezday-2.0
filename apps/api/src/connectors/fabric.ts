@@ -18,6 +18,12 @@ export interface ProxyResult {
   bodySnippet: string;
 }
 
+export interface ProxyJsonResult {
+  status: number;
+  /** Parsed response body; undefined when the upstream reply is not JSON. */
+  json: unknown;
+}
+
 export class ConnectorFabricError extends Error {
   constructor(message: string) {
     super(message);
@@ -33,6 +39,7 @@ export interface ConnectorFabric {
     providerConfigKey: string,
     connectionId: string,
     credentials: ImportCredentials,
+    connectionConfig?: Record<string, string>,
   ): Promise<void>;
   connectionExists(connectionId: string, providerConfigKey: string): Promise<boolean>;
   deleteConnection(connectionId: string, providerConfigKey: string): Promise<void>;
@@ -42,4 +49,12 @@ export interface ConnectorFabric {
     providerConfigKey: string,
     baseUrlOverride?: string,
   ): Promise<ProxyResult>;
+  /** Full-body JSON proxy for provider API calls (CRM reads/writes). */
+  proxyJson(
+    method: "GET" | "POST",
+    path: string,
+    connectionId: string,
+    providerConfigKey: string,
+    opts?: { body?: unknown; baseUrlOverride?: string },
+  ): Promise<ProxyJsonResult>;
 }

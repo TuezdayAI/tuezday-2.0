@@ -135,11 +135,22 @@
 
 **Gate:** one external provider connects, status is stored, a test request works through the connector, and disconnect/reconnect works.
 
+## Sprint 13 (slice 1) — CRM Read/Write (Freshsales)
+
+- [ ] `npm run nango:up`; Connectors page → connect **Freshsales** with your bundle URL (`https://<yourcompany>.myfreshworks.com/crm/sales`) and API key (Freshsales → Settings → API) → status `connected`, **Test** passes through the proxy.
+- [ ] CRM page → **Sync contacts** → your Freshsales contacts appear with name/email/company/role.
+- [ ] **Import as lead** on one contact → it shows in the leads panel (and on the Outbound page) linked to the contact.
+- [ ] Outbound: draft an email for that lead → approve it in the queue.
+- [ ] CRM page → **Log to CRM** on the approved draft → the note (the email text) is visible on the contact in Freshsales.
+- [ ] **Push to CRM** on a lead that did *not* come from the CRM → the contact appears in Freshsales; the Connectors event log shows `crm.contact.created` and `crm.note.logged`.
+
+**Gate:** the CRM round trip works — contacts in, approved work back out, with the CRM staying the system of record.
+
 ---
 
 ## Cross-cutting things worth re-checking occasionally
 
-- [ ] `npm test` (288 tests) and `npm run typecheck` stay green.
+- [ ] `npm test` (321 tests) and `npm run typecheck` stay green.
 - [ ] Every generation's prompt trace is readable *before* and *after* the LLM call (sandbox → "show prompt trace").
 - [ ] Stopping any external service (R2R, Nango) degrades gracefully — the app never breaks, traces/banners say why.
 - [ ] Gemini occasionally returns 503 "high demand" — a retry succeeds; it surfaces as a clean error, never a crash.

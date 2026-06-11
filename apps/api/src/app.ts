@@ -12,6 +12,7 @@ import type { LlmGateway } from "./llm/gateway";
 import { registerBrainRoutes } from "./routes/brain";
 import { registerCampaignRoutes } from "./routes/campaigns";
 import { registerConnectorRoutes } from "./routes/connectors";
+import { registerCrmRoutes } from "./routes/crm";
 import { registerDiscoveryRoutes } from "./routes/discovery";
 import { registerDraftRoutes } from "./routes/drafts";
 import { registerEvidenceRoutes } from "./routes/evidence";
@@ -69,6 +70,7 @@ export async function buildApp({
   registerLearningRoutes(app, db, llm, fetcher);
   registerOutboundRoutes(app, db, llm, evidence);
   registerConnectorRoutes(app, db, connectors, fetcher);
+  registerCrmRoutes(app, db, connectors, fetcher);
 
   return app;
 }

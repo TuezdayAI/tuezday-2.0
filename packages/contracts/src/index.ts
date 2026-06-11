@@ -535,15 +535,27 @@ export type NowSynthesis = z.infer<typeof nowSynthesisSchema>;
 export const CONNECTOR_AUTH_MODES = ["api_key", "basic", "oauth", "none"] as const;
 export type ConnectorAuthMode = (typeof CONNECTOR_AUTH_MODES)[number];
 
+export const CONNECTOR_CATEGORIES = ["crm", "outbound"] as const;
+export type ConnectorCategory = (typeof CONNECTOR_CATEGORIES)[number];
+
 export interface ConnectorProvider {
   key: string;
   label: string;
   /** Provider template name in Nango's providers.yaml. */
   nangoProvider: string;
   authMode: ConnectorAuthMode;
+  /** Capabilities Tuezday can use this provider for (e.g. CRM sync). */
+  categories?: readonly ConnectorCategory[];
   /** Base URL + path for the connection test request (proxied through Nango). */
   baseUrl?: string;
   testPath?: string;
+  /** The founder must supply the account base URL at connect time. */
+  requiresBaseUrl?: boolean;
+  /**
+   * Nango connection_config key that receives the founder's base URL
+   * (protocol stripped) at import time — e.g. freshsales' bundleAlias.
+   */
+  baseUrlConfigKey?: string;
 }
 
 /**
@@ -557,6 +569,7 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     label: "Smartlead",
     nangoProvider: "smartlead",
     authMode: "api_key",
+    categories: ["outbound"],
     baseUrl: "https://server.smartlead.ai/api/v1",
     testPath: "/campaigns",
   },
@@ -565,20 +578,37 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     label: "Instantly",
     nangoProvider: "instantly",
     authMode: "api_key",
+    categories: ["outbound"],
     baseUrl: "https://api.instantly.ai/api/v2",
     testPath: "/campaigns",
+  },
+  {
+    // The founder's account base URL ("bundle alias", e.g.
+    // https://acme.myfreshworks.com/crm/sales) doubles as Nango's
+    // connection_config.bundleAlias — its template resolves the API host
+    // from it and applies "Authorization: Token token=<apiKey>".
+    key: "freshsales",
+    label: "Freshsales",
+    nangoProvider: "freshsales",
+    authMode: "api_key",
+    categories: ["crm"],
+    testPath: "/api/settings/contacts/fields",
+    requiresBaseUrl: true,
+    baseUrlConfigKey: "bundleAlias",
   },
   {
     key: "pipedrive",
     label: "Pipedrive",
     nangoProvider: "pipedrive",
     authMode: "oauth",
+    categories: ["crm"],
   },
   {
     key: "hubspot",
     label: "HubSpot",
     nangoProvider: "hubspot",
     authMode: "oauth",
+    categories: ["crm"],
   },
   {
     key: "slack",
@@ -593,6 +623,7 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     label: "Custom API (no auth)",
     nangoProvider: "unauthenticated",
     authMode: "none",
+    requiresBaseUrl: true,
   },
 ] as const;
 
@@ -626,6 +657,46 @@ export const connectInputSchema = z.object({
 export type ConnectInput = z.infer<typeof connectInputSchema>;
 
 // ---------------------------------------------------------------------------
+// CRM mirror (Sprint 13)
+// ---------------------------------------------------------------------------
+
+/**
+ * A synced mirror of a CRM contact. The CRM stays the system of record;
+ * Tuezday keeps only what lead generation needs, plus the link back.
+ */
+export const crmContactSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  connectionId: z.string().uuid(),
+  externalId: z.string(),
+  name: z.string(),
+  // CRMs allow contacts without an email address.
+  email: z.string(),
+  company: z.string(),
+  role: z.string(),
+  leadId: z.string().uuid().nullable(),
+  lastSyncedAt: z.number().int(),
+  createdAt: z.number().int(),
+});
+export type CrmContact = z.infer<typeof crmContactSchema>;
+
+export const crmSyncInputSchema = z.object({
+  connectionId: z.string().uuid(),
+});
+export type CrmSyncInput = z.infer<typeof crmSyncInputSchema>;
+
+export const pushLeadInputSchema = z.object({
+  leadId: z.string().uuid(),
+  connectionId: z.string().uuid(),
+});
+export type PushLeadInput = z.infer<typeof pushLeadInputSchema>;
+
+export const logDraftInputSchema = z.object({
+  draftId: z.string().uuid(),
+});
+export type LogDraftInput = z.infer<typeof logDraftInputSchema>;
+
+// ---------------------------------------------------------------------------
 // Events + webhooks
 // ---------------------------------------------------------------------------
 
@@ -634,6 +705,8 @@ export const EVENT_TYPES = [
   "draft.rejected",
   "discovery.item.accepted",
   "synthesis.accepted",
+  "crm.contact.created",
+  "crm.note.logged",
   "webhook.ping",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];

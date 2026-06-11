@@ -81,10 +81,10 @@ export function registerConnectorRoutes(
           message: `${provider.label} needs a username and password.`,
         });
       }
-      if (provider.key === "custom" && !parsed.data.baseUrl) {
+      if (provider.requiresBaseUrl && !parsed.data.baseUrl) {
         return reply.status(400).send({
           error: "invalid_input",
-          message: "A custom API connection needs a baseUrl.",
+          message: `${provider.label} needs a baseUrl.`,
         });
       }
       const existing = listConnections(db, request.params.id).find(

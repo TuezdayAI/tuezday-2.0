@@ -3,6 +3,7 @@ import {
   type ConnectorFabric,
   type FabricHealth,
   type ImportCredentials,
+  type ProxyJsonResult,
   type ProxyResult,
 } from "./fabric";
 
@@ -76,6 +77,7 @@ export class NangoFabric implements ConnectorFabric {
     providerConfigKey: string,
     connectionId: string,
     credentials: ImportCredentials,
+    connectionConfig?: Record<string, string>,
   ): Promise<void> {
     const res = await this.fetcher(`${this.baseUrl}/connections`, {
       method: "POST",
@@ -84,6 +86,7 @@ export class NangoFabric implements ConnectorFabric {
         provider_config_key: providerConfigKey,
         connection_id: connectionId,
         credentials,
+        ...(connectionConfig ? { connection_config: connectionConfig } : {}),
       }),
       signal: AbortSignal.timeout(15_000),
     });
@@ -129,5 +132,33 @@ export class NangoFabric implements ConnectorFabric {
     });
     const body = await res.text().catch(() => "");
     return { status: res.status, bodySnippet: body.slice(0, 300) };
+  }
+
+  async proxyJson(
+    method: "GET" | "POST",
+    path: string,
+    connectionId: string,
+    providerConfigKey: string,
+    opts: { body?: unknown; baseUrlOverride?: string } = {},
+  ): Promise<ProxyJsonResult> {
+    const res = await this.fetcher(`${this.baseUrl}/proxy${path}`, {
+      method,
+      headers: this.headers({
+        "Connection-Id": connectionId,
+        "Provider-Config-Key": providerConfigKey,
+        ...(opts.baseUrlOverride ? { "Base-Url-Override": opts.baseUrlOverride } : {}),
+        ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
+      }),
+      ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const text = await res.text().catch(() => "");
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      json = undefined;
+    }
+    return { status: res.status, json };
   }
 }

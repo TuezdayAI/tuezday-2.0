@@ -11,6 +11,11 @@ import {
   CONNECTOR_PROVIDERS,
   connectInputSchema,
   createWebhookInputSchema,
+  crmContactSchema,
+  crmSyncInputSchema,
+  EVENT_TYPES,
+  logDraftInputSchema,
+  pushLeadInputSchema,
   OUTPUT_RATINGS,
   PERSONA_OVERLAY_MAX_CHARS,
   TASK_TYPES,
@@ -221,6 +226,55 @@ describe("connector contracts", () => {
     expect(
       createWebhookInputSchema.safeParse({ url: "https://x.io", eventTypes: ["bogus.event"] }).success,
     ).toBe(false);
+  });
+});
+
+describe("crm contracts", () => {
+  it("registers freshsales as an api_key CRM provider needing a base url", () => {
+    const freshsales = CONNECTOR_PROVIDERS.find((p) => p.key === "freshsales");
+    expect(freshsales?.authMode).toBe("api_key");
+    expect(freshsales?.nangoProvider).toBe("freshsales");
+    expect(freshsales?.categories).toContain("crm");
+    expect(freshsales?.requiresBaseUrl).toBe(true);
+  });
+
+  it("marks the oauth CRMs with the crm category for later", () => {
+    const byKey = Object.fromEntries(CONNECTOR_PROVIDERS.map((p) => [p.key, p]));
+    expect(byKey.pipedrive?.categories).toContain("crm");
+    expect(byKey.hubspot?.categories).toContain("crm");
+    expect(byKey.smartlead?.categories).not.toContain("crm");
+  });
+
+  it("includes the CRM write events in the event vocabulary", () => {
+    expect(EVENT_TYPES).toContain("crm.contact.created");
+    expect(EVENT_TYPES).toContain("crm.note.logged");
+  });
+
+  it("accepts a mirror contact with empty email and no lead link", () => {
+    const result = crmContactSchema.safeParse({
+      id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      workspaceId: "9b2c8a44-1d2e-4f5a-8b6c-7d8e9f0a1b2c",
+      connectionId: "1c2d3e44-5f6a-4b7c-8d9e-0f1a2b3c4d5e",
+      externalId: "42",
+      name: "No Email",
+      email: "",
+      company: "",
+      role: "",
+      leadId: null,
+      lastSyncedAt: 1765400000000,
+      createdAt: 1765400000000,
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("validates the CRM action inputs", () => {
+    const uuid = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+    expect(crmSyncInputSchema.safeParse({ connectionId: uuid }).success).toBe(true);
+    expect(crmSyncInputSchema.safeParse({}).success).toBe(false);
+    expect(pushLeadInputSchema.safeParse({ leadId: uuid, connectionId: uuid }).success).toBe(true);
+    expect(pushLeadInputSchema.safeParse({ leadId: uuid }).success).toBe(false);
+    expect(logDraftInputSchema.safeParse({ draftId: uuid }).success).toBe(true);
+    expect(logDraftInputSchema.safeParse({ draftId: "nope" }).success).toBe(false);
   });
 });
 

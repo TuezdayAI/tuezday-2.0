@@ -160,6 +160,9 @@ export default function WorkspaceBrainPage() {
           <Link className="button-secondary" href={`/workspaces/${id}/outbound`}>
             Outbound
           </Link>
+          <Link className="button-secondary" href={`/workspaces/${id}/crm`}>
+            CRM
+          </Link>
           <Link className="button-secondary" href={`/workspaces/${id}/connectors`}>
             Connectors →
           </Link>

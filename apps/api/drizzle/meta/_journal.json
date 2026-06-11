@@ -85,6 +85,13 @@
       "when": 1781171895948,
       "tag": "0011_connector-fabric",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1781174404085,
+      "tag": "0012_dusty_scorpion",
+      "breakpoints": true
     }
   ]
 }

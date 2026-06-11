@@ -41,6 +41,9 @@ function fakeFabric(state: FabricState): ConnectorFabric {
     async proxyGet() {
       return { status: state.proxyStatus, bodySnippet: '{"ok":true}' };
     },
+    async proxyJson() {
+      return { status: state.proxyStatus, json: { ok: true } };
+    },
   };
 }
 

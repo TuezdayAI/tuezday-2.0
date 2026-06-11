@@ -274,6 +274,31 @@ export const connections = sqliteTable("connections", {
 
 export type ConnectionRow = typeof connections.$inferSelect;
 
+// Synced mirror of CRM contacts — the CRM stays the system of record.
+export const crmContacts = sqliteTable(
+  "crm_contacts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => connections.id, { onDelete: "cascade" }),
+    externalId: text("external_id").notNull(),
+    name: text("name").notNull().default(""),
+    email: text("email").notNull().default(""),
+    company: text("company").notNull().default(""),
+    role: text("role").notNull().default(""),
+    leadId: text("lead_id").references(() => leads.id, { onDelete: "set null" }),
+    lastSyncedAt: integer("last_synced_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [uniqueIndex("crm_contacts_connection_external").on(table.connectionId, table.externalId)],
+);
+
+export type CrmContactRow = typeof crmContacts.$inferSelect;
+
 export const events = sqliteTable("events", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id")

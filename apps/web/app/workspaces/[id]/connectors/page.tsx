@@ -86,9 +86,8 @@ export default function ConnectorsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
-          ...(provider.key === "custom"
-            ? { baseUrl: baseUrl.trim(), ...(testPath.trim() ? { testPath: testPath.trim() } : {}) }
-            : {}),
+          ...(provider.requiresBaseUrl ? { baseUrl: baseUrl.trim() } : {}),
+          ...(provider.key === "custom" && testPath.trim() ? { testPath: testPath.trim() } : {}),
         }),
       });
       const body = await res.json().catch(() => null);
@@ -270,31 +269,35 @@ export default function ConnectorsPage() {
                         />
                       </label>
                     )}
+                    {provider.requiresBaseUrl && (
+                      <label style={{ flex: 1 }}>
+                        Base URL
+                        <input
+                          value={baseUrl}
+                          onChange={(e) => setBaseUrl(e.target.value)}
+                          placeholder={
+                            provider.key === "freshsales"
+                              ? "https://yourcompany.myfreshworks.com/crm/sales"
+                              : "https://api.example.com"
+                          }
+                        />
+                      </label>
+                    )}
                     {provider.key === "custom" && (
-                      <>
-                        <label style={{ flex: 1 }}>
-                          Base URL
-                          <input
-                            value={baseUrl}
-                            onChange={(e) => setBaseUrl(e.target.value)}
-                            placeholder="https://api.example.com"
-                          />
-                        </label>
-                        <label>
-                          Test path
-                          <input
-                            value={testPath}
-                            onChange={(e) => setTestPath(e.target.value)}
-                            placeholder="/v1/status"
-                          />
-                        </label>
-                      </>
+                      <label>
+                        Test path
+                        <input
+                          value={testPath}
+                          onChange={(e) => setTestPath(e.target.value)}
+                          placeholder="/v1/status"
+                        />
+                      </label>
                     )}
                     <button
                       disabled={
                         busy ||
                         (provider.authMode === "api_key" && !apiKey.trim()) ||
-                        (provider.key === "custom" && !baseUrl.trim())
+                        (Boolean(provider.requiresBaseUrl) && !baseUrl.trim())
                       }
                       onClick={() => connect(provider)}
                     >
