@@ -58,6 +58,7 @@ export interface SubmitDraftInput {
   workspaceId: string;
   sourceGenerationId: string;
   sourceSignalId?: string | null;
+  campaignId?: string | null;
   taskType: TaskType;
   channel: Channel;
   personaId: string | null;
@@ -86,6 +87,7 @@ export function submitDraft(db: Db, input: SubmitDraftInput): Draft {
     workspaceId: input.workspaceId,
     sourceGenerationId: input.sourceGenerationId,
     sourceSignalId: input.sourceSignalId ?? null,
+    campaignId: input.campaignId ?? null,
     taskType: input.taskType,
     channel: input.channel,
     personaId: input.personaId,
@@ -100,11 +102,22 @@ export function submitDraft(db: Db, input: SubmitDraftInput): Draft {
   return rowToDraft(row);
 }
 
-export function listDrafts(db: Db, workspaceId: string, state?: ApprovalState): Draft[] {
-  const where = state
-    ? and(eq(drafts.workspaceId, workspaceId), eq(drafts.state, state))
-    : eq(drafts.workspaceId, workspaceId);
-  return db.select().from(drafts).where(where).orderBy(desc(drafts.createdAt)).all().map(rowToDraft);
+export function listDrafts(
+  db: Db,
+  workspaceId: string,
+  state?: ApprovalState,
+  campaignId?: string,
+): Draft[] {
+  const conditions = [eq(drafts.workspaceId, workspaceId)];
+  if (state) conditions.push(eq(drafts.state, state));
+  if (campaignId) conditions.push(eq(drafts.campaignId, campaignId));
+  return db
+    .select()
+    .from(drafts)
+    .where(and(...conditions))
+    .orderBy(desc(drafts.createdAt))
+    .all()
+    .map(rowToDraft);
 }
 
 export function getDraft(db: Db, workspaceId: string, draftId: string): Draft | undefined {

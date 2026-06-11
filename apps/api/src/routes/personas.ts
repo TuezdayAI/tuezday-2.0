@@ -3,6 +3,7 @@ import { resolveRequestSchema, upsertPersonaInputSchema } from "@tuezday/contrac
 import { resolveContext, type BrainContents } from "@tuezday/brain";
 import type { Db } from "../db";
 import { getBrain } from "../services/brain";
+import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
 import {
   createPersona,
   deletePersona,
@@ -82,6 +83,15 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db): void {
       if (!persona) return reply.status(404).send({ error: "persona_not_found" });
     }
 
+    let campaign;
+    if (parsed.data.campaignId) {
+      campaign = getCampaign(db, request.params.id, parsed.data.campaignId);
+      if (!campaign) return reply.status(404).send({ error: "campaign_not_found" });
+      if (campaign.status === "archived") {
+        return reply.status(409).send({ error: "campaign_archived" });
+      }
+    }
+
     const { docs } = getBrain(db, request.params.id);
     const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
 
@@ -92,6 +102,9 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db): void {
       channel: parsed.data.channel,
       persona: persona
         ? { name: persona.name, description: persona.description, overlay: persona.overlay }
+        : undefined,
+      campaign: campaign
+        ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
         : undefined,
       tokenBudget: parsed.data.tokenBudget,
     });

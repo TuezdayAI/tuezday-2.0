@@ -7,6 +7,7 @@ import {
   CHANNELS,
   SIGNAL_SOURCES,
   type ApprovalState,
+  type Campaign,
   type Channel,
   type Persona,
   type SignalSource,
@@ -59,20 +60,24 @@ export default function ContentPage() {
   const [draftingFor, setDraftingFor] = useState<string | null>(null);
   const [draftChannel, setDraftChannel] = useState<Channel>("linkedin");
   const [draftPersonaId, setDraftPersonaId] = useState("");
+  const [draftCampaignId, setDraftCampaignId] = useState("");
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [generating, setGenerating] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [wsRes, pRes, sRes] = await Promise.all([
+      const [wsRes, pRes, sRes, cRes] = await Promise.all([
         fetch(`${API_URL}/workspaces/${id}`),
         fetch(`${API_URL}/workspaces/${id}/personas`),
         fetch(`${API_URL}/workspaces/${id}/signals`),
+        fetch(`${API_URL}/workspaces/${id}/campaigns`),
       ]);
-      if (!wsRes.ok || !pRes.ok || !sRes.ok) throw new Error("not found");
+      if (!wsRes.ok || !pRes.ok || !sRes.ok || !cRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
       setPersonas(await pRes.json());
       setSignalsList(await sRes.json());
+      setCampaigns(((await cRes.json()) as Campaign[]).filter((c) => c.status === "active"));
       setError(null);
     } catch {
       setError(`Could not load this workspace from ${API_URL}. Is "npm run dev" running?`);
@@ -119,6 +124,7 @@ export default function ContentPage() {
         body: JSON.stringify({
           channel: draftChannel,
           personaId: draftPersonaId || undefined,
+          campaignId: draftCampaignId || undefined,
         }),
       });
       const body = await res.json().catch(() => null);
@@ -317,6 +323,22 @@ export default function ContentPage() {
                         ))}
                       </select>
                     </label>
+                    {campaigns.length > 0 && (
+                      <label>
+                        Campaign
+                        <select
+                          value={draftCampaignId}
+                          onChange={(e) => setDraftCampaignId(e.target.value)}
+                        >
+                          <option value="">(no campaign)</option>
+                          {campaigns.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {c.name}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    )}
                     <button disabled={generating} onClick={() => draftResponse(s.id)}>
                       {generating ? "Drafting…" : "Generate draft"}
                     </button>

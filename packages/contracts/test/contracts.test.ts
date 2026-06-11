@@ -20,6 +20,7 @@ import {
   rateGenerationInputSchema,
   resolveRequestSchema,
   updateBrainDocInputSchema,
+  upsertCampaignInputSchema,
   upsertPersonaInputSchema,
   workspaceSchema,
 } from "../src/index";
@@ -177,6 +178,46 @@ describe("brainDocumentSchema", () => {
       updatedAt: 1765400000000,
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("upsertCampaignInputSchema", () => {
+  it("accepts a name-only campaign with defaults", () => {
+    const parsed = upsertCampaignInputSchema.parse({ name: "Rebuild launch" });
+    expect(parsed.status).toBe("active");
+    expect(parsed.pillars).toEqual([]);
+    expect(parsed.channels).toEqual([]);
+    expect(parsed.overlay).toBe("");
+  });
+
+  it("accepts a full campaign", () => {
+    const result = upsertCampaignInputSchema.safeParse({
+      name: "Q3 GTM memory push",
+      objective: "Position Tuezday as the GTM memory layer",
+      kpi: "20 demo calls",
+      timeframe: "Jul-Sep 2026",
+      audience: "Founder-led SaaS, 5-50 employees",
+      pillars: ["GTM that remembers", "Brain before pipeline"],
+      channels: ["linkedin", "email"],
+      personaIds: [],
+      overlay: "This quarter we lead with the memory problem.",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an empty name", () => {
+    expect(upsertCampaignInputSchema.safeParse({ name: " " }).success).toBe(false);
+  });
+
+  it("rejects more than 10 pillars", () => {
+    const pillars = Array.from({ length: 11 }, (_, i) => `pillar ${i}`);
+    expect(upsertCampaignInputSchema.safeParse({ name: "X", pillars }).success).toBe(false);
+  });
+
+  it("rejects an unknown channel", () => {
+    expect(
+      upsertCampaignInputSchema.safeParse({ name: "X", channels: ["tiktok"] }).success,
+    ).toBe(false);
   });
 });
 
@@ -338,6 +379,7 @@ describe("generationSchema", () => {
       taskType: "linkedin_post",
       channel: "linkedin",
       personaId: null,
+      campaignId: null,
       prompt: "## Soul\n\n...",
       output: "Here is a post.",
       model: "gemini-2.5-flash",

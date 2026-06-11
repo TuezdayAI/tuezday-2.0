@@ -8,6 +8,7 @@ import {
   DEFAULT_TOKEN_BUDGET,
   OUTPUT_RATINGS,
   TASK_TYPES,
+  type Campaign,
   type Channel,
   type OutputRating,
   type Persona,
@@ -59,6 +60,8 @@ export default function SandboxPage() {
   const [taskType, setTaskType] = useState<TaskType>("linkedin_post");
   const [channel, setChannel] = useState<Channel>("linkedin");
   const [personaId, setPersonaId] = useState("");
+  const [campaignId, setCampaignId] = useState("");
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [tokenBudget, setTokenBudget] = useState(DEFAULT_TOKEN_BUDGET);
 
   const [preview, setPreview] = useState<ResolvedContext | null>(null);
@@ -71,16 +74,18 @@ export default function SandboxPage() {
 
   const load = useCallback(async () => {
     try {
-      const [wsRes, pRes, gRes, dRes] = await Promise.all([
+      const [wsRes, pRes, gRes, dRes, cRes] = await Promise.all([
         fetch(`${API_URL}/workspaces/${id}`),
         fetch(`${API_URL}/workspaces/${id}/personas`),
         fetch(`${API_URL}/workspaces/${id}/generations`),
         fetch(`${API_URL}/workspaces/${id}/drafts`),
+        fetch(`${API_URL}/workspaces/${id}/campaigns`),
       ]);
-      if (!wsRes.ok || !pRes.ok || !gRes.ok || !dRes.ok) throw new Error("not found");
+      if (!wsRes.ok || !pRes.ok || !gRes.ok || !dRes.ok || !cRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
       setPersonas(await pRes.json());
       setLog(await gRes.json());
+      setCampaigns(((await cRes.json()) as Campaign[]).filter((c) => c.status === "active"));
       const drafts: { sourceGenerationId: string | null; id: string }[] = await dRes.json();
       setSubmittedByGeneration(
         Object.fromEntries(
@@ -100,7 +105,7 @@ export default function SandboxPage() {
   // Any control change invalidates the preview gate.
   useEffect(() => {
     setPreviewStale(true);
-  }, [taskType, channel, personaId, tokenBudget]);
+  }, [taskType, channel, personaId, campaignId, tokenBudget]);
 
   async function previewContext() {
     setError(null);
@@ -108,7 +113,13 @@ export default function SandboxPage() {
       const res = await fetch(`${API_URL}/workspaces/${id}/resolve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ taskType, channel, personaId: personaId || undefined, tokenBudget }),
+        body: JSON.stringify({
+          taskType,
+          channel,
+          personaId: personaId || undefined,
+          campaignId: campaignId || undefined,
+          tokenBudget,
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -129,7 +140,13 @@ export default function SandboxPage() {
       const res = await fetch(`${API_URL}/workspaces/${id}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ taskType, channel, personaId: personaId || undefined, tokenBudget }),
+        body: JSON.stringify({
+          taskType,
+          channel,
+          personaId: personaId || undefined,
+          campaignId: campaignId || undefined,
+          tokenBudget,
+        }),
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) {
@@ -266,6 +283,19 @@ export default function SandboxPage() {
               ))}
             </select>
           </label>
+          {campaigns.length > 0 && (
+            <label>
+              Campaign
+              <select value={campaignId} onChange={(e) => setCampaignId(e.target.value)}>
+                <option value="">(no campaign)</option>
+                {campaigns.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label>
             Token budget
             <input

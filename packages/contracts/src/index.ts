@@ -131,6 +131,7 @@ export const resolveRequestSchema = z.object({
   taskType: z.enum(TASK_TYPES),
   channel: z.enum(CHANNELS),
   personaId: z.string().uuid().optional(),
+  campaignId: z.string().uuid().optional(),
   tokenBudget: z.number().int().min(500).max(200_000).optional(),
 });
 export type ResolveRequest = z.infer<typeof resolveRequestSchema>;
@@ -145,6 +146,7 @@ export const generationSchema = z.object({
   taskType: z.enum(TASK_TYPES),
   channel: z.enum(CHANNELS),
   personaId: z.string().uuid().nullable(),
+  campaignId: z.string().uuid().nullable(),
   prompt: z.string(),
   output: z.string(),
   model: z.string(),
@@ -164,6 +166,51 @@ export const rateGenerationInputSchema = z.object({
   rating: z.enum(OUTPUT_RATINGS),
 });
 export type RateGenerationInput = z.infer<typeof rateGenerationInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Campaigns
+// ---------------------------------------------------------------------------
+
+export const CAMPAIGN_STATUSES = ["active", "archived"] as const;
+export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number];
+
+export const CAMPAIGN_OVERLAY_MAX_CHARS = 10_000;
+
+export const campaignSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  name: z.string().min(1).max(200),
+  objective: z.string().max(1000),
+  kpi: z.string().max(500),
+  timeframe: z.string().max(200),
+  audience: z.string().max(1000),
+  pillars: z.array(z.string().max(200)).max(10),
+  channels: z.array(z.enum(CHANNELS)),
+  personaIds: z.array(z.string().uuid()),
+  overlay: z.string().max(CAMPAIGN_OVERLAY_MAX_CHARS),
+  status: z.enum(CAMPAIGN_STATUSES),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type Campaign = z.infer<typeof campaignSchema>;
+
+export const upsertCampaignInputSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Campaign name is required")
+    .max(200, "Campaign name must be 200 characters or fewer"),
+  objective: z.string().trim().max(1000).default(""),
+  kpi: z.string().trim().max(500).default(""),
+  timeframe: z.string().trim().max(200).default(""),
+  audience: z.string().trim().max(1000).default(""),
+  pillars: z.array(z.string().trim().min(1).max(200)).max(10, "At most 10 pillars").default([]),
+  channels: z.array(z.enum(CHANNELS)).default([]),
+  personaIds: z.array(z.string().uuid()).default([]),
+  overlay: z.string().max(CAMPAIGN_OVERLAY_MAX_CHARS).default(""),
+  status: z.enum(CAMPAIGN_STATUSES).default("active"),
+});
+export type UpsertCampaignInput = z.infer<typeof upsertCampaignInputSchema>;
 
 // ---------------------------------------------------------------------------
 // Signals (manual market input — source adapters arrive in a later slice)
@@ -199,6 +246,7 @@ export type CreateSignalInput = z.infer<typeof createSignalInputSchema>;
 export const draftSignalRequestSchema = z.object({
   channel: z.enum(CHANNELS),
   personaId: z.string().uuid().optional(),
+  campaignId: z.string().uuid().optional(),
   tokenBudget: z.number().int().min(500).max(200_000).optional(),
 });
 export type DraftSignalRequest = z.infer<typeof draftSignalRequestSchema>;
@@ -322,6 +370,7 @@ export const draftSchema = z.object({
   workspaceId: z.string().uuid(),
   sourceGenerationId: z.string().uuid().nullable(),
   sourceSignalId: z.string().uuid().nullable(),
+  campaignId: z.string().uuid().nullable(),
   taskType: z.enum(TASK_TYPES),
   channel: z.enum(CHANNELS),
   personaId: z.string().uuid().nullable(),

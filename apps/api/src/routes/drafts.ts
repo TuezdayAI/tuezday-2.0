@@ -51,6 +51,7 @@ export function registerDraftRoutes(app: FastifyInstance, db: Db): void {
       const draft = submitDraft(db, {
         workspaceId: request.params.id,
         sourceGenerationId: generation.id,
+        campaignId: generation.campaignId,
         taskType: generation.taskType as TaskType,
         channel: generation.channel as Channel,
         personaId: generation.personaId,
@@ -60,15 +61,15 @@ export function registerDraftRoutes(app: FastifyInstance, db: Db): void {
     },
   );
 
-  app.get<{ Params: { id: string }; Querystring: { state?: string } }>(
+  app.get<{ Params: { id: string }; Querystring: { state?: string; campaignId?: string } }>(
     "/workspaces/:id/drafts",
     async (request, reply) => {
       if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const { state } = request.query;
+      const { state, campaignId } = request.query;
       if (state !== undefined && !(APPROVAL_STATES as readonly string[]).includes(state)) {
         return reply.status(400).send({ error: "invalid_state" });
       }
-      return listDrafts(db, request.params.id, state as ApprovalState | undefined);
+      return listDrafts(db, request.params.id, state as ApprovalState | undefined, campaignId);
     },
   );
 

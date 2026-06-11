@@ -4,6 +4,7 @@ import { resolveContext, type BrainContents } from "@tuezday/brain";
 import type { Db } from "../db";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { getBrain } from "../services/brain";
+import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
 import { storeGeneration } from "../services/generations";
 import { getPersona } from "../services/personas";
 import { createSignal, getSignal, listSignals } from "../services/signals";
@@ -58,6 +59,15 @@ export function registerSignalRoutes(app: FastifyInstance, db: Db, llm: LlmGatew
         if (!persona) return reply.status(404).send({ error: "persona_not_found" });
       }
 
+      let campaign;
+      if (parsed.data.campaignId) {
+        campaign = getCampaign(db, request.params.id, parsed.data.campaignId);
+        if (!campaign) return reply.status(404).send({ error: "campaign_not_found" });
+        if (campaign.status === "archived") {
+          return reply.status(409).send({ error: "campaign_archived" });
+        }
+      }
+
       const { docs } = getBrain(db, request.params.id);
       const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
       const resolved = resolveContext({
@@ -67,6 +77,9 @@ export function registerSignalRoutes(app: FastifyInstance, db: Db, llm: LlmGatew
         channel: parsed.data.channel,
         persona: persona
           ? { name: persona.name, description: persona.description, overlay: persona.overlay }
+          : undefined,
+        campaign: campaign
+          ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
           : undefined,
         signal: { content: signal.content, source: signal.source, sourceUrl: signal.sourceUrl },
         tokenBudget: parsed.data.tokenBudget,
@@ -79,6 +92,7 @@ export function registerSignalRoutes(app: FastifyInstance, db: Db, llm: LlmGatew
           taskType: "signal_response",
           channel: parsed.data.channel,
           personaId: parsed.data.personaId ?? null,
+          campaignId: parsed.data.campaignId ?? null,
           resolved,
           output: result.text,
           model: result.model,
@@ -89,6 +103,7 @@ export function registerSignalRoutes(app: FastifyInstance, db: Db, llm: LlmGatew
           workspaceId: request.params.id,
           sourceGenerationId: generation.id,
           sourceSignalId: signal.id,
+          campaignId: parsed.data.campaignId ?? null,
           taskType: "signal_response",
           channel: parsed.data.channel,
           personaId: parsed.data.personaId ?? null,

@@ -7,6 +7,7 @@ import {
   APPROVAL_STATES,
   type ApprovalDecision,
   type ApprovalState,
+  type Campaign,
   type Draft,
   type Persona,
   type TaskType,
@@ -38,6 +39,7 @@ export default function ApprovalsPage() {
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [personas, setPersonas] = useState<Persona[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [filter, setFilter] = useState<Filter>("pending_review");
   const [error, setError] = useState<string | null>(null);
@@ -50,15 +52,17 @@ export default function ApprovalsPage() {
 
   const load = useCallback(async () => {
     try {
-      const [wsRes, pRes, dRes] = await Promise.all([
+      const [wsRes, pRes, dRes, cRes] = await Promise.all([
         fetch(`${API_URL}/workspaces/${id}`),
         fetch(`${API_URL}/workspaces/${id}/personas`),
         fetch(`${API_URL}/workspaces/${id}/drafts`),
+        fetch(`${API_URL}/workspaces/${id}/campaigns`),
       ]);
-      if (!wsRes.ok || !pRes.ok || !dRes.ok) throw new Error("not found");
+      if (!wsRes.ok || !pRes.ok || !dRes.ok || !cRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
       setPersonas(await pRes.json());
       setDrafts(await dRes.json());
+      setCampaigns(await cRes.json());
       setError(null);
     } catch {
       setError(`Could not load this workspace from ${API_URL}. Is "npm run dev" running?`);
@@ -188,6 +192,11 @@ export default function ApprovalsPage() {
                   <span className={`layer-badge state-${d.state}`}>{STATE_LABELS[d.state]}</span>
                   <span className="section-title">
                     {TASK_LABELS[d.taskType]} · {d.channel} · {personaName(d.personaId)}
+                    {d.campaignId && (
+                      <span className="layer-badge layer-campaign" style={{ marginLeft: 8 }}>
+                        {campaigns.find((c) => c.id === d.campaignId)?.name ?? "campaign"}
+                      </span>
+                    )}
                   </span>
                   <span className="section-tokens">
                     {new Date(d.createdAt).toLocaleString()}

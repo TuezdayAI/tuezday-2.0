@@ -7,6 +7,7 @@ import {
   CHANNELS,
   DEFAULT_TOKEN_BUDGET,
   TASK_TYPES,
+  type Campaign,
   type Channel,
   type Persona,
   type TaskType,
@@ -35,6 +36,8 @@ export default function ResolverPage() {
   const [taskType, setTaskType] = useState<TaskType>("linkedin_post");
   const [channel, setChannel] = useState<Channel>("linkedin");
   const [personaId, setPersonaId] = useState<string>("");
+  const [campaignId, setCampaignId] = useState<string>("");
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [tokenBudget, setTokenBudget] = useState(DEFAULT_TOKEN_BUDGET);
   const [bundle, setBundle] = useState<ResolvedContext | null>(null);
   const [resolving, setResolving] = useState(false);
@@ -49,13 +52,15 @@ export default function ResolverPage() {
 
   const load = useCallback(async () => {
     try {
-      const [wsRes, pRes] = await Promise.all([
+      const [wsRes, pRes, cRes] = await Promise.all([
         fetch(`${API_URL}/workspaces/${id}`),
         fetch(`${API_URL}/workspaces/${id}/personas`),
+        fetch(`${API_URL}/workspaces/${id}/campaigns`),
       ]);
-      if (!wsRes.ok || !pRes.ok) throw new Error("not found");
+      if (!wsRes.ok || !pRes.ok || !cRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
       setPersonas(await pRes.json());
+      setCampaigns(((await cRes.json()) as Campaign[]).filter((c) => c.status === "active"));
       setError(null);
     } catch {
       setError(`Could not load this workspace from ${API_URL}. Is "npm run dev" running?`);
@@ -77,6 +82,7 @@ export default function ResolverPage() {
           taskType,
           channel,
           personaId: personaId || undefined,
+          campaignId: campaignId || undefined,
           tokenBudget,
         }),
       });
@@ -264,6 +270,19 @@ export default function ResolverPage() {
               ))}
             </select>
           </label>
+          {campaigns.length > 0 && (
+            <label>
+              Campaign
+              <select value={campaignId} onChange={(e) => setCampaignId(e.target.value)}>
+                <option value="">(no campaign)</option>
+                {campaigns.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
           <label>
             Token budget
             <input

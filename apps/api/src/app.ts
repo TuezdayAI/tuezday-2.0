@@ -6,6 +6,7 @@ import type { Fetcher } from "./discovery/adapters";
 import { GeminiGateway } from "./llm/gemini";
 import type { LlmGateway } from "./llm/gateway";
 import { registerBrainRoutes } from "./routes/brain";
+import { registerCampaignRoutes } from "./routes/campaigns";
 import { registerDiscoveryRoutes } from "./routes/discovery";
 import { registerDraftRoutes } from "./routes/drafts";
 import { registerGenerationRoutes } from "./routes/generations";
@@ -49,6 +50,7 @@ export async function buildApp({
   registerDraftRoutes(app, db);
   registerSignalRoutes(app, db, llm);
   registerDiscoveryRoutes(app, db, llm, fetcher);
+  registerCampaignRoutes(app, db);
 
   return app;
 }
