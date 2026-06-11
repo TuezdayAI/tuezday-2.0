@@ -3,6 +3,7 @@
 
 const API_URL = process.env.TUEZDAY_API_URL ?? "http://localhost:3001";
 const INTERVAL_MIN = Number(process.env.DISCOVERY_INTERVAL_MIN ?? 30);
+const SYNTHESIS_DAYS = Number(process.env.LEARNING_SYNTHESIS_DAYS ?? 7);
 
 interface Workspace {
   id: string;
@@ -43,11 +44,57 @@ async function runDiscoveryForAllWorkspaces(): Promise<void> {
   }
 }
 
+interface Synthesis {
+  status: string;
+  createdAt: number;
+}
+
+/** The plan's "weekly now synthesis": propose when there is no open proposal
+ * and the newest synthesis is older than SYNTHESIS_DAYS. The founder still
+ * reviews every proposal before it touches the brain. */
+async function maybeSynthesizeForAllWorkspaces(): Promise<void> {
+  const res = await fetch(`${API_URL}/workspaces`);
+  if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
+  const workspaces = (await res.json()) as Workspace[];
+
+  for (const workspace of workspaces) {
+    try {
+      const list = (await (
+        await fetch(`${API_URL}/workspaces/${workspace.id}/learning/syntheses`)
+      ).json()) as Synthesis[];
+      const hasOpenProposal = list.some((s) => s.status === "proposed");
+      const newest = list[0]?.createdAt ?? 0;
+      const due = Date.now() - newest > SYNTHESIS_DAYS * 24 * 60 * 60 * 1000;
+      if (hasOpenProposal || !due) continue;
+
+      const synth = await fetch(`${API_URL}/workspaces/${workspace.id}/learning/synthesize`, {
+        method: "POST",
+      });
+      if (synth.status === 201) {
+        console.log(`[learning] ${workspace.name}: weekly synthesis proposed for review`);
+      } else if (synth.status !== 409) {
+        // 409 = nothing to learn yet; anything else is worth logging
+        console.error(`[learning] ${workspace.name}: synthesize returned ${synth.status}`);
+      }
+    } catch (err) {
+      console.error(
+        `[learning] ${workspace.name}: failed —`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+}
+
 async function tick(): Promise<void> {
   try {
     await runDiscoveryForAllWorkspaces();
   } catch (err) {
     console.error("[discovery] tick failed —", err instanceof Error ? err.message : err);
+  }
+  try {
+    await maybeSynthesizeForAllWorkspaces();
+  } catch (err) {
+    console.error("[learning] tick failed —", err instanceof Error ? err.message : err);
   }
 }
 

@@ -207,3 +207,36 @@ export const evidenceDocuments = sqliteTable("evidence_documents", {
 });
 
 export type EvidenceDocumentRow = typeof evidenceDocuments.$inferSelect;
+
+export const engagementMetrics = sqliteTable("engagement_metrics", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  draftId: text("draft_id"),
+  channel: text("channel").notNull(),
+  description: text("description").notNull().default(""),
+  impressions: integer("impressions"),
+  engagements: integer("engagements"),
+  clicks: integer("clicks"),
+  notes: text("notes").notNull().default(""),
+  recordedAt: integer("recorded_at").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type EngagementMetricRow = typeof engagementMetrics.$inferSelect;
+
+export const nowSyntheses = sqliteTable("now_syntheses", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  proposal: text("proposal").notNull(),
+  rationale: text("rationale").notNull(),
+  basedOnJson: text("based_on_json").notNull(),
+  status: text("status").notNull().default("proposed"),
+  createdAt: integer("created_at").notNull(),
+  decidedAt: integer("decided_at"),
+});
+
+export type NowSynthesisRow = typeof nowSyntheses.$inferSelect;

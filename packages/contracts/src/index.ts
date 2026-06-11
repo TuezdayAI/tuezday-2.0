@@ -441,6 +441,52 @@ export const editDraftInputSchema = z.object({
 export type EditDraftInput = z.infer<typeof editDraftInputSchema>;
 
 // ---------------------------------------------------------------------------
+// Learning loop
+// ---------------------------------------------------------------------------
+
+export const engagementMetricSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  draftId: z.string().uuid().nullable(),
+  channel: z.enum(CHANNELS),
+  description: z.string().max(300),
+  impressions: z.number().int().min(0).nullable(),
+  engagements: z.number().int().min(0).nullable(),
+  clicks: z.number().int().min(0).nullable(),
+  notes: z.string().max(1000),
+  recordedAt: z.number().int(),
+  createdAt: z.number().int(),
+});
+export type EngagementMetric = z.infer<typeof engagementMetricSchema>;
+
+export const createMetricInputSchema = z.object({
+  draftId: z.string().uuid().optional(),
+  channel: z.enum(CHANNELS),
+  description: z.string().trim().max(300).default(""),
+  impressions: z.number().int().min(0).optional(),
+  engagements: z.number().int().min(0).optional(),
+  clicks: z.number().int().min(0).optional(),
+  notes: z.string().trim().max(1000).default(""),
+  recordedAt: z.number().int().optional(),
+});
+export type CreateMetricInput = z.infer<typeof createMetricInputSchema>;
+
+export const SYNTHESIS_STATUSES = ["proposed", "accepted", "dismissed"] as const;
+export type SynthesisStatus = (typeof SYNTHESIS_STATUSES)[number];
+
+export const nowSynthesisSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  proposal: z.string(),
+  rationale: z.string(),
+  basedOnJson: z.string(),
+  status: z.enum(SYNTHESIS_STATUSES),
+  createdAt: z.number().int(),
+  decidedAt: z.number().int().nullable(),
+});
+export type NowSynthesis = z.infer<typeof nowSynthesisSchema>;
+
+// ---------------------------------------------------------------------------
 // API error shape
 // ---------------------------------------------------------------------------
 

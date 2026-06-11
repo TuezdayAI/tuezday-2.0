@@ -12,6 +12,7 @@ import { registerCampaignRoutes } from "./routes/campaigns";
 import { registerDiscoveryRoutes } from "./routes/discovery";
 import { registerDraftRoutes } from "./routes/drafts";
 import { registerEvidenceRoutes } from "./routes/evidence";
+import { registerLearningRoutes } from "./routes/learning";
 import { registerGenerationRoutes } from "./routes/generations";
 import { registerPersonaRoutes } from "./routes/personas";
 import { registerSignalRoutes } from "./routes/signals";
@@ -58,6 +59,7 @@ export async function buildApp({
   registerDiscoveryRoutes(app, db, llm, fetcher);
   registerCampaignRoutes(app, db);
   registerEvidenceRoutes(app, db, evidence);
+  registerLearningRoutes(app, db, llm);
 
   return app;
 }

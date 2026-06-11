@@ -13,6 +13,7 @@ import {
   TASK_TYPES,
   brainDocumentSchema,
   createDiscoverySourceInputSchema,
+  createMetricInputSchema,
   createSignalInputSchema,
   DISCOVERY_SOURCE_TYPES,
   createWorkspaceInputSchema,
@@ -178,6 +179,36 @@ describe("brainDocumentSchema", () => {
       updatedAt: 1765400000000,
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("createMetricInputSchema", () => {
+  it("accepts a minimal metric", () => {
+    const parsed = createMetricInputSchema.parse({ channel: "linkedin" });
+    expect(parsed.description).toBe("");
+    expect(parsed.notes).toBe("");
+  });
+
+  it("accepts full metrics", () => {
+    const result = createMetricInputSchema.safeParse({
+      channel: "linkedin",
+      description: "June launch post",
+      impressions: 12000,
+      engagements: 340,
+      clicks: 85,
+      notes: "Best performer this month",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects negative numbers", () => {
+    expect(
+      createMetricInputSchema.safeParse({ channel: "linkedin", impressions: -1 }).success,
+    ).toBe(false);
+  });
+
+  it("rejects an unknown channel", () => {
+    expect(createMetricInputSchema.safeParse({ channel: "tiktok" }).success).toBe(false);
   });
 });
 
