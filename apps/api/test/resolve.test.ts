@@ -48,6 +48,7 @@ describe("resolve API", () => {
       "campaign",
       "persona",
       "signal",
+      "evidence",
       "task",
     ]);
     expect(bundle.prompt).toContain("We exist to end GTM amnesia.");

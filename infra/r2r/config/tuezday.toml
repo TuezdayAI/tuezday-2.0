@@ -1,0 +1,23 @@
+# Tuezday's R2R config. Based on R2R's built-in gemini.toml, but with
+# current model names: Google retired text-embedding-004 (404s in mid-2026);
+# gemini-embedding-001 is the supported replacement (3072 dims).
+
+[app]
+fast_llm = "gemini/gemini-2.5-flash"
+quality_llm = "gemini/gemini-2.5-flash"
+vlm = "gemini/gemini-2.5-flash"
+audio_lm = "gemini/gemini-2.5-flash"
+
+[embedding]
+provider = "litellm"
+base_model = "gemini/gemini-embedding-001"
+base_dimension = 3072
+batch_size = 32
+concurrent_request_limit = 2
+
+[completion_embedding]
+provider = "litellm"
+base_model = "gemini/gemini-embedding-001"
+base_dimension = 3072
+batch_size = 32
+concurrent_request_limit = 2

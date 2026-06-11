@@ -133,6 +133,7 @@ export const resolveRequestSchema = z.object({
   personaId: z.string().uuid().optional(),
   campaignId: z.string().uuid().optional(),
   tokenBudget: z.number().int().min(500).max(200_000).optional(),
+  useEvidence: z.boolean().optional(),
 });
 export type ResolveRequest = z.infer<typeof resolveRequestSchema>;
 
@@ -248,6 +249,7 @@ export const draftSignalRequestSchema = z.object({
   personaId: z.string().uuid().optional(),
   campaignId: z.string().uuid().optional(),
   tokenBudget: z.number().int().min(500).max(200_000).optional(),
+  useEvidence: z.boolean().optional(),
 });
 export type DraftSignalRequest = z.infer<typeof draftSignalRequestSchema>;
 
@@ -336,6 +338,41 @@ export const discoveredItemSchema = z.object({
   createdAt: z.number().int(),
 });
 export type DiscoveredItem = z.infer<typeof discoveredItemSchema>;
+
+// ---------------------------------------------------------------------------
+// Evidence corpus (RAG behind the Brain Gateway boundary)
+// ---------------------------------------------------------------------------
+
+export const EVIDENCE_STATUSES = ["processing", "ready", "failed"] as const;
+export type EvidenceStatus = (typeof EVIDENCE_STATUSES)[number];
+
+export const EVIDENCE_MAX_CHARS = 200_000;
+
+export const evidenceDocumentSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  r2rDocumentId: z.string().nullable(),
+  title: z.string().min(1).max(200),
+  chars: z.number().int(),
+  status: z.enum(EVIDENCE_STATUSES),
+  error: z.string().nullable(),
+  createdAt: z.number().int(),
+});
+export type EvidenceDocument = z.infer<typeof evidenceDocumentSchema>;
+
+export const createEvidenceInputSchema = z.object({
+  title: z
+    .string()
+    .trim()
+    .min(1, "Evidence title is required")
+    .max(200, "Title must be 200 characters or fewer"),
+  content: z
+    .string()
+    .trim()
+    .min(1, "Evidence content is required")
+    .max(EVIDENCE_MAX_CHARS, `Evidence must be ${EVIDENCE_MAX_CHARS} characters or fewer`),
+});
+export type CreateEvidenceInput = z.infer<typeof createEvidenceInputSchema>;
 
 // ---------------------------------------------------------------------------
 // Approval gate

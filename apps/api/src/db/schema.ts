@@ -192,3 +192,18 @@ export const campaigns = sqliteTable("campaigns", {
 });
 
 export type CampaignRow = typeof campaigns.$inferSelect;
+
+export const evidenceDocuments = sqliteTable("evidence_documents", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  r2rDocumentId: text("r2r_document_id"),
+  title: text("title").notNull(),
+  chars: integer("chars").notNull(),
+  status: text("status").notNull().default("processing"),
+  error: text("error"),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type EvidenceDocumentRow = typeof evidenceDocuments.$inferSelect;

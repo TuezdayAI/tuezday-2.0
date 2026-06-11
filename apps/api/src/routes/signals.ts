@@ -5,6 +5,8 @@ import type { Db } from "../db";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { getBrain } from "../services/brain";
 import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
+import { retrieveEvidence } from "../services/evidence";
+import type { EvidenceStore } from "../evidence/store";
 import { storeGeneration } from "../services/generations";
 import { getPersona } from "../services/personas";
 import { createSignal, getSignal, listSignals } from "../services/signals";
@@ -19,7 +21,12 @@ function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
   return workspace;
 }
 
-export function registerSignalRoutes(app: FastifyInstance, db: Db, llm: LlmGateway): void {
+export function registerSignalRoutes(
+  app: FastifyInstance,
+  db: Db,
+  llm: LlmGateway,
+  evidence: EvidenceStore,
+): void {
   app.post<{ Params: { id: string } }>("/workspaces/:id/signals", async (request, reply) => {
     if (!workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = createSignalInputSchema.safeParse(request.body);
@@ -68,6 +75,19 @@ export function registerSignalRoutes(app: FastifyInstance, db: Db, llm: LlmGatew
         }
       }
 
+      const evidenceResolution = await retrieveEvidence(
+        db,
+        evidence,
+        request.params.id,
+        {
+          taskType: "signal_response",
+          channel: parsed.data.channel,
+          signalContent: signal.content,
+          campaignObjective: campaign?.objective,
+        },
+        parsed.data.useEvidence ?? true,
+      );
+
       const { docs } = getBrain(db, request.params.id);
       const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
       const resolved = resolveContext({
@@ -82,6 +102,8 @@ export function registerSignalRoutes(app: FastifyInstance, db: Db, llm: LlmGatew
           ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
           : undefined,
         signal: { content: signal.content, source: signal.source, sourceUrl: signal.sourceUrl },
+        evidence: evidenceResolution.evidence,
+        evidenceExclusionReason: evidenceResolution.exclusionReason,
         tokenBudget: parsed.data.tokenBudget,
       });
 

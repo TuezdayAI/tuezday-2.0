@@ -5,6 +5,8 @@ import type { Db } from "../db";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { getBrain } from "../services/brain";
 import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
+import { retrieveEvidence } from "../services/evidence";
+import type { EvidenceStore } from "../evidence/store";
 import { listGenerations, rateGeneration, storeGeneration } from "../services/generations";
 import { getPersona } from "../services/personas";
 import { getWorkspace } from "../services/workspaces";
@@ -17,7 +19,12 @@ function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
   return workspace;
 }
 
-export function registerGenerationRoutes(app: FastifyInstance, db: Db, llm: LlmGateway): void {
+export function registerGenerationRoutes(
+  app: FastifyInstance,
+  db: Db,
+  llm: LlmGateway,
+  evidence: EvidenceStore,
+): void {
   app.post<{ Params: { id: string } }>("/workspaces/:id/generate", async (request, reply) => {
     const workspace = workspaceOr404(db, request.params.id, reply);
     if (!workspace) return reply;
@@ -44,6 +51,18 @@ export function registerGenerationRoutes(app: FastifyInstance, db: Db, llm: LlmG
       }
     }
 
+    const evidenceResolution = await retrieveEvidence(
+      db,
+      evidence,
+      request.params.id,
+      {
+        taskType: parsed.data.taskType,
+        channel: parsed.data.channel,
+        campaignObjective: campaign?.objective,
+      },
+      parsed.data.useEvidence ?? true,
+    );
+
     const { docs } = getBrain(db, request.params.id);
     const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
     const resolved = resolveContext({
@@ -57,6 +76,8 @@ export function registerGenerationRoutes(app: FastifyInstance, db: Db, llm: LlmG
       campaign: campaign
         ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
         : undefined,
+      evidence: evidenceResolution.evidence,
+      evidenceExclusionReason: evidenceResolution.exclusionReason,
       tokenBudget: parsed.data.tokenBudget,
     });
 

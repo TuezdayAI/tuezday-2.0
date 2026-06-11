@@ -4,6 +4,8 @@ import { resolveContext, type BrainContents } from "@tuezday/brain";
 import type { Db } from "../db";
 import { getBrain } from "../services/brain";
 import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
+import { retrieveEvidence } from "../services/evidence";
+import type { EvidenceStore } from "../evidence/store";
 import {
   createPersona,
   deletePersona,
@@ -21,7 +23,7 @@ function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
   return workspace;
 }
 
-export function registerPersonaRoutes(app: FastifyInstance, db: Db): void {
+export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: EvidenceStore): void {
   app.post<{ Params: { id: string } }>("/workspaces/:id/personas", async (request, reply) => {
     if (!workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = upsertPersonaInputSchema.safeParse(request.body);
@@ -92,6 +94,18 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db): void {
       }
     }
 
+    const evidenceResolution = await retrieveEvidence(
+      db,
+      evidence,
+      request.params.id,
+      {
+        taskType: parsed.data.taskType,
+        channel: parsed.data.channel,
+        campaignObjective: campaign?.objective,
+      },
+      parsed.data.useEvidence ?? true,
+    );
+
     const { docs } = getBrain(db, request.params.id);
     const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
 
@@ -106,6 +120,8 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db): void {
       campaign: campaign
         ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
         : undefined,
+      evidence: evidenceResolution.evidence,
+      evidenceExclusionReason: evidenceResolution.exclusionReason,
       tokenBudget: parsed.data.tokenBudget,
     });
   });

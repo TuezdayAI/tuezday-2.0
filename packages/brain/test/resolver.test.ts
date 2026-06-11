@@ -65,6 +65,7 @@ describe("resolveContext", () => {
       "campaign",
       "persona",
       "signal",
+      "evidence",
       "task",
     ]);
   });
@@ -206,6 +207,7 @@ describe("resolveContext", () => {
       "campaign",
       "persona",
       "signal",
+      "evidence",
       "task",
     ]);
     const signal = result.sections.find((s) => s.key === "signal")!;
@@ -225,6 +227,57 @@ describe("resolveContext", () => {
 
   it("has a signal_response task instruction that references the signal", () => {
     expect(TASK_INSTRUCTIONS.signal_response).toMatch(/signal/i);
+  });
+
+  it("places the evidence section after signal and before task when chunks are given", () => {
+    const result = resolveContext(
+      baseInput({
+        evidence: {
+          query: "GTM memory layer linkedin_post",
+          chunks: [
+            { text: "Our churn dropped 30% after the brain rollout.", score: 0.82, documentId: "d1", title: "Case study notes" },
+            { text: "Positioning doc: GTM that remembers.", score: 0.74, documentId: "d2", title: "Website copy" },
+          ],
+        },
+      }),
+    );
+    expect(result.sections.map((s) => s.key)).toEqual([
+      "org:soul",
+      "org:icp",
+      "org:voice",
+      "org:history",
+      "org:now",
+      "channel",
+      "campaign",
+      "persona",
+      "signal",
+      "evidence",
+      "task",
+    ]);
+    const evidence = result.sections.find((s) => s.key === "evidence")!;
+    expect(evidence.included).toBe(true);
+    expect(evidence.layer).toBe("evidence");
+    expect(evidence.content).toContain("[1] Our churn dropped 30%");
+    expect(evidence.content).toContain("[2] Positioning doc");
+    expect(evidence.content).toContain("Sources:");
+    expect(evidence.content).toContain("[1] Case study notes");
+    expect(evidence.reason).toContain("GTM memory layer");
+  });
+
+  it("marks the evidence slot excluded with the given reason when absent", () => {
+    const result = resolveContext(
+      baseInput({ evidenceExclusionReason: "Evidence store is not running." }),
+    );
+    const evidence = result.sections.find((s) => s.key === "evidence")!;
+    expect(evidence.included).toBe(false);
+    expect(evidence.reason).toContain("Evidence store is not running");
+  });
+
+  it("uses a default exclusion reason when no evidence and no reason given", () => {
+    const result = resolveContext(baseInput());
+    const evidence = result.sections.find((s) => s.key === "evidence")!;
+    expect(evidence.included).toBe(false);
+    expect(evidence.reason.length).toBeGreaterThan(0);
   });
 
   it("is deterministic", () => {

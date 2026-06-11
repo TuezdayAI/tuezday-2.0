@@ -12,7 +12,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "build": "npm run build --workspaces --if-present"
+    "build": "npm run build --workspaces --if-present",
+    "r2r:up": "docker compose --env-file .env -f infra/r2r/compose.yaml up -d",
+    "r2r:down": "docker compose -f infra/r2r/compose.yaml down"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",

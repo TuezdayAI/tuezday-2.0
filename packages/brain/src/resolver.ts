@@ -38,7 +38,14 @@ export const TASK_INSTRUCTIONS: Record<TaskType, string> = {
 // Resolver
 // ---------------------------------------------------------------------------
 
-export type ContextLayer = "org" | "channel" | "campaign" | "persona" | "signal" | "task";
+export type ContextLayer =
+  | "org"
+  | "channel"
+  | "campaign"
+  | "persona"
+  | "signal"
+  | "evidence"
+  | "task";
 
 export interface ResolvePersona {
   name: string;
@@ -57,6 +64,19 @@ export interface ResolveSignal {
   sourceUrl?: string | null;
 }
 
+export interface EvidenceChunk {
+  text: string;
+  score: number;
+  documentId: string;
+  title: string;
+}
+
+export interface ResolveEvidence {
+  /** The retrieval query Tuezday composed — shown in the trace. */
+  query: string;
+  chunks: EvidenceChunk[];
+}
+
 export interface ResolveInput {
   workspaceName: string;
   docs: BrainContents;
@@ -65,6 +85,9 @@ export interface ResolveInput {
   persona?: ResolvePersona;
   campaign?: ResolveCampaign;
   signal?: ResolveSignal;
+  evidence?: ResolveEvidence;
+  /** Why evidence is absent (store down, no docs, toggled off) — shown in the trace. */
+  evidenceExclusionReason?: string;
   tokenBudget?: number;
 }
 
@@ -191,6 +214,31 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       content: "",
       included: false,
       reason: "Excluded: no signal attached to this task.",
+      tokens: 0,
+    });
+  }
+
+  if (input.evidence && input.evidence.chunks.length > 0) {
+    const lines = input.evidence.chunks.map((c, i) => `[${i + 1}] ${c.text.trim()}`);
+    const sources = input.evidence.chunks.map((c, i) => `[${i + 1}] ${c.title}`);
+    const evidenceContent = `${lines.join("\n\n")}\n\nSources:\n${sources.join("\n")}`;
+    sections.push({
+      key: "evidence",
+      layer: "evidence",
+      title: "Evidence",
+      content: evidenceContent,
+      included: true,
+      reason: `Retrieved ${input.evidence.chunks.length} evidence chunk(s) for query: "${input.evidence.query}". Ground claims in this evidence.`,
+      tokens: estimateTokens(evidenceContent),
+    });
+  } else {
+    sections.push({
+      key: "evidence",
+      layer: "evidence",
+      title: "Evidence",
+      content: "",
+      included: false,
+      reason: `Excluded: ${input.evidenceExclusionReason ?? "no evidence retrieved for this task."}`,
       tokens: 0,
     });
   }

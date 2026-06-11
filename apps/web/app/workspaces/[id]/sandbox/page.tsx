@@ -62,6 +62,7 @@ export default function SandboxPage() {
   const [personaId, setPersonaId] = useState("");
   const [campaignId, setCampaignId] = useState("");
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [useEvidence, setUseEvidence] = useState(true);
   const [tokenBudget, setTokenBudget] = useState(DEFAULT_TOKEN_BUDGET);
 
   const [preview, setPreview] = useState<ResolvedContext | null>(null);
@@ -105,7 +106,7 @@ export default function SandboxPage() {
   // Any control change invalidates the preview gate.
   useEffect(() => {
     setPreviewStale(true);
-  }, [taskType, channel, personaId, campaignId, tokenBudget]);
+  }, [taskType, channel, personaId, campaignId, useEvidence, tokenBudget]);
 
   async function previewContext() {
     setError(null);
@@ -118,6 +119,7 @@ export default function SandboxPage() {
           channel,
           personaId: personaId || undefined,
           campaignId: campaignId || undefined,
+          useEvidence,
           tokenBudget,
         }),
       });
@@ -145,6 +147,7 @@ export default function SandboxPage() {
           channel,
           personaId: personaId || undefined,
           campaignId: campaignId || undefined,
+          useEvidence,
           tokenBudget,
         }),
       });
@@ -305,6 +308,14 @@ export default function SandboxPage() {
               value={tokenBudget}
               onChange={(e) => setTokenBudget(Number(e.target.value))}
             />
+          </label>
+          <label className="checkbox-label" style={{ alignSelf: "center" }}>
+            <input
+              type="checkbox"
+              checked={useEvidence}
+              onChange={(e) => setUseEvidence(e.target.checked)}
+            />
+            Use evidence
           </label>
           <button className="button-secondary" onClick={previewContext}>
             Preview context

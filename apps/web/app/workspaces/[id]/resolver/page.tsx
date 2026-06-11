@@ -38,6 +38,7 @@ export default function ResolverPage() {
   const [personaId, setPersonaId] = useState<string>("");
   const [campaignId, setCampaignId] = useState<string>("");
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [useEvidence, setUseEvidence] = useState(true);
   const [tokenBudget, setTokenBudget] = useState(DEFAULT_TOKEN_BUDGET);
   const [bundle, setBundle] = useState<ResolvedContext | null>(null);
   const [resolving, setResolving] = useState(false);
@@ -83,6 +84,7 @@ export default function ResolverPage() {
           channel,
           personaId: personaId || undefined,
           campaignId: campaignId || undefined,
+          useEvidence,
           tokenBudget,
         }),
       });
@@ -292,6 +294,14 @@ export default function ResolverPage() {
               value={tokenBudget}
               onChange={(e) => setTokenBudget(Number(e.target.value))}
             />
+          </label>
+          <label className="checkbox-label" style={{ alignSelf: "center" }}>
+            <input
+              type="checkbox"
+              checked={useEvidence}
+              onChange={(e) => setUseEvidence(e.target.checked)}
+            />
+            Use evidence
           </label>
           <button onClick={resolve} disabled={resolving}>
             {resolving ? "Resolving…" : "Resolve context"}

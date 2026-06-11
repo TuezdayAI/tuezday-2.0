@@ -3,12 +3,15 @@ import cors from "@fastify/cors";
 import { sql } from "drizzle-orm";
 import type { Db } from "./db";
 import type { Fetcher } from "./discovery/adapters";
+import { R2REvidenceStore } from "./evidence/r2r";
+import type { EvidenceStore } from "./evidence/store";
 import { GeminiGateway } from "./llm/gemini";
 import type { LlmGateway } from "./llm/gateway";
 import { registerBrainRoutes } from "./routes/brain";
 import { registerCampaignRoutes } from "./routes/campaigns";
 import { registerDiscoveryRoutes } from "./routes/discovery";
 import { registerDraftRoutes } from "./routes/drafts";
+import { registerEvidenceRoutes } from "./routes/evidence";
 import { registerGenerationRoutes } from "./routes/generations";
 import { registerPersonaRoutes } from "./routes/personas";
 import { registerSignalRoutes } from "./routes/signals";
@@ -22,12 +25,15 @@ export interface BuildAppOptions {
   llm?: LlmGateway;
   /** HTTP fetcher for discovery adapters; tests inject fixtures. */
   fetcher?: Fetcher;
+  /** Evidence store override; defaults to the R2R client from env. */
+  evidence?: EvidenceStore;
 }
 
 export async function buildApp({
   db,
   llm = new GeminiGateway(),
   fetcher = fetch,
+  evidence = new R2REvidenceStore(),
 }: BuildAppOptions): Promise<TuezdayApp> {
   const app = Fastify({ logger: false });
 
@@ -45,12 +51,13 @@ export async function buildApp({
 
   registerWorkspaceRoutes(app, db);
   registerBrainRoutes(app, db);
-  registerPersonaRoutes(app, db);
-  registerGenerationRoutes(app, db, llm);
+  registerPersonaRoutes(app, db, evidence);
+  registerGenerationRoutes(app, db, llm, evidence);
   registerDraftRoutes(app, db);
-  registerSignalRoutes(app, db, llm);
+  registerSignalRoutes(app, db, llm, evidence);
   registerDiscoveryRoutes(app, db, llm, fetcher);
   registerCampaignRoutes(app, db);
+  registerEvidenceRoutes(app, db, evidence);
 
   return app;
 }
