@@ -3,6 +3,7 @@ import { createMetricInputSchema } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { getDraft } from "../services/drafts";
+import { emitEvent } from "../services/events";
 import {
   NothingToLearnError,
   SynthesisAlreadyDecidedError,
@@ -26,7 +27,12 @@ function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
   return workspace;
 }
 
-export function registerLearningRoutes(app: FastifyInstance, db: Db, llm: LlmGateway): void {
+export function registerLearningRoutes(
+  app: FastifyInstance,
+  db: Db,
+  llm: LlmGateway,
+  fetcher: typeof fetch,
+): void {
   app.get<{ Params: { id: string } }>(
     "/workspaces/:id/learning/examples",
     async (request, reply) => {
@@ -95,7 +101,12 @@ export function registerLearningRoutes(app: FastifyInstance, db: Db, llm: LlmGat
       const synthesis = getSynthesis(db, request.params.id, request.params.synthesisId);
       if (!synthesis) return reply.status(404).send({ error: "synthesis_not_found" });
       try {
-        return acceptSynthesis(db, request.params.id, synthesis);
+        const result = acceptSynthesis(db, request.params.id, synthesis);
+        await emitEvent(db, fetcher, request.params.id, "synthesis.accepted", {
+          synthesisId: result.synthesis.id,
+          proposal: result.synthesis.proposal,
+        });
+        return result;
       } catch (err) {
         if (err instanceof SynthesisAlreadyDecidedError) {
           return reply.status(409).send({ error: "already_decided", message: err.message });

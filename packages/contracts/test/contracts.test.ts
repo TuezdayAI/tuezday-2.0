@@ -8,6 +8,9 @@ import {
   transitionTo,
   BRAIN_DOC_TYPES,
   CHANNELS,
+  CONNECTOR_PROVIDERS,
+  connectInputSchema,
+  createWebhookInputSchema,
   OUTPUT_RATINGS,
   PERSONA_OVERLAY_MAX_CHARS,
   TASK_TYPES,
@@ -182,6 +185,42 @@ describe("brainDocumentSchema", () => {
       updatedAt: 1765400000000,
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("connector contracts", () => {
+  it("registers smartlead and instantly as api_key providers", () => {
+    const byKey = Object.fromEntries(CONNECTOR_PROVIDERS.map((p) => [p.key, p]));
+    expect(byKey.smartlead?.authMode).toBe("api_key");
+    expect(byKey.instantly?.authMode).toBe("api_key");
+    expect(byKey.hubspot?.authMode).toBe("oauth");
+    expect(byKey.custom).toBeDefined();
+  });
+
+  it("connect input accepts api key, basic, or no credentials (enforced per provider)", () => {
+    expect(connectInputSchema.safeParse({}).success).toBe(true);
+    expect(connectInputSchema.safeParse({ apiKey: "sk-123" }).success).toBe(true);
+    expect(connectInputSchema.safeParse({ username: "u", password: "p" }).success).toBe(true);
+    expect(connectInputSchema.safeParse({ baseUrl: "not-a-url" }).success).toBe(false);
+  });
+
+  it("custom provider is credential-less", () => {
+    const custom = CONNECTOR_PROVIDERS.find((p) => p.key === "custom");
+    expect(custom?.authMode).toBe("none");
+  });
+
+  it("webhook input validates url and event types", () => {
+    expect(
+      createWebhookInputSchema.safeParse({ url: "https://hooks.example.com/x", eventTypes: ["draft.approved"] })
+        .success,
+    ).toBe(true);
+    expect(createWebhookInputSchema.safeParse({ url: "nope", eventTypes: ["draft.approved"] }).success).toBe(false);
+    expect(
+      createWebhookInputSchema.safeParse({ url: "https://x.io", eventTypes: [] }).success,
+    ).toBe(false);
+    expect(
+      createWebhookInputSchema.safeParse({ url: "https://x.io", eventTypes: ["bogus.event"] }).success,
+    ).toBe(false);
   });
 });
 

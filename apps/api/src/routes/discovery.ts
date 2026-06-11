@@ -22,6 +22,7 @@ import {
   suggestDiscoverySources,
   updateDiscoverySource,
 } from "../services/discovery";
+import { emitEvent } from "../services/events";
 import { getWorkspace } from "../services/workspaces";
 
 function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
@@ -125,7 +126,15 @@ export function registerDiscoveryRoutes(
       const item = getDiscoveredItem(db, request.params.id, request.params.itemId);
       if (!item) return reply.status(404).send({ error: "item_not_found" });
       try {
-        return acceptDiscoveredItem(db, request.params.id, item);
+        const result = acceptDiscoveredItem(db, request.params.id, item);
+        await emitEvent(db, fetcher, request.params.id, "discovery.item.accepted", {
+          itemId: result.item.id,
+          signalId: result.signal.id,
+          title: result.item.title,
+          url: result.item.url,
+          score: result.item.score,
+        });
+        return result;
       } catch (err) {
         if (err instanceof ItemNotTriagableError) {
           return reply.status(409).send({ error: "already_triaged", message: err.message });

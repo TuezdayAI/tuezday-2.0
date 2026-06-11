@@ -78,6 +78,13 @@
       "when": 1781163426079,
       "tag": "0010_outbound",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1781171895948,
+      "tag": "0011_connector-fabric",
+      "breakpoints": true
     }
   ]
 }

@@ -1,0 +1,46 @@
+# Nango deployed as a separate service (Elastic license boundary: published
+# images only, accessed exclusively over its REST API).
+# Keys come from the repo-root .env via `npm run nango:up`.
+
+volumes:
+  nango_postgres_data:
+    name: nango_postgres_data
+
+services:
+  nango-postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: nango
+      POSTGRES_PASSWORD: nango
+      POSTGRES_DB: nango
+    volumes:
+      - nango_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5434:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nango"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: on-failure
+
+  nango-server:
+    image: nangohq/nango-server:hosted
+    depends_on:
+      nango-postgres:
+        condition: service_healthy
+    environment:
+      NANGO_DB_USER: nango
+      NANGO_DB_PASSWORD: nango
+      NANGO_DB_HOST: nango-postgres
+      NANGO_DB_PORT: 5432
+      NANGO_DB_NAME: nango
+      NANGO_SECRET_KEY_DEV: ${NANGO_SECRET_KEY}
+      NANGO_ENCRYPTION_KEY: ${NANGO_ENCRYPTION_KEY}
+      NANGO_SERVER_URL: http://localhost:3050
+      SERVER_PORT: 3050
+    ports:
+      - "3050:3050"
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    restart: on-failure

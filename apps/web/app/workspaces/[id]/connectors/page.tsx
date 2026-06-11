@@ -1,0 +1,451 @@
+"use client";
+
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
+import { useParams } from "next/navigation";
+import {
+  EVENT_TYPES,
+  type Connection,
+  type ConnectorProvider,
+  type EventType,
+  type WebhookSubscription,
+  type Workspace,
+} from "@tuezday/contracts";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+
+interface ConnectorsView {
+  providers: ConnectorProvider[];
+  connections: Connection[];
+  fabric: { healthy: boolean; detail?: string };
+}
+
+interface EventView {
+  id: string;
+  type: string;
+  payloadJson: string;
+  createdAt: number;
+  deliveries: { status: string; httpStatus: number | null; error: string | null }[];
+}
+
+export default function ConnectorsPage() {
+  const { id } = useParams<{ id: string }>();
+
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [view, setView] = useState<ConnectorsView | null>(null);
+  const [webhooks, setWebhooks] = useState<WebhookSubscription[]>([]);
+  const [eventLog, setEventLog] = useState<EventView[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // connect form state per provider
+  const [connectingKey, setConnectingKey] = useState<string | null>(null);
+  const [apiKey, setApiKey] = useState("");
+  const [baseUrl, setBaseUrl] = useState("");
+  const [testPath, setTestPath] = useState("");
+  const [testResults, setTestResults] = useState<Record<string, string>>({});
+
+  // webhook form
+  const [hookUrl, setHookUrl] = useState("");
+  const [hookSecret, setHookSecret] = useState("");
+  const [hookTypes, setHookTypes] = useState<EventType[]>(["draft.approved"]);
+
+  const load = useCallback(async () => {
+    try {
+      const [wsRes, cRes, wRes, eRes] = await Promise.all([
+        fetch(`${API_URL}/workspaces/${id}`),
+        fetch(`${API_URL}/workspaces/${id}/connectors`),
+        fetch(`${API_URL}/workspaces/${id}/webhooks`),
+        fetch(`${API_URL}/workspaces/${id}/events`),
+      ]);
+      if (!wsRes.ok || !cRes.ok) throw new Error("not found");
+      setWorkspace(await wsRes.json());
+      setView(await cRes.json());
+      setWebhooks(await wRes.json());
+      setEventLog(await eRes.json());
+      setError(null);
+    } catch {
+      setError(`Could not load this workspace from ${API_URL}. Is "npm run dev" running?`);
+    }
+  }, [id]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  function connectionFor(providerKey: string): Connection | undefined {
+    return view?.connections.find((c) => c.providerKey === providerKey);
+  }
+
+  async function connect(provider: ConnectorProvider) {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_URL}/workspaces/${id}/connectors/${provider.key}/connect`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+          ...(provider.key === "custom"
+            ? { baseUrl: baseUrl.trim(), ...(testPath.trim() ? { testPath: testPath.trim() } : {}) }
+            : {}),
+        }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message ?? `API returned ${res.status}`);
+      setConnectingKey(null);
+      setApiKey("");
+      setBaseUrl("");
+      setTestPath("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Connect failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function testConnection(connection: Connection) {
+    setBusy(true);
+    try {
+      const res = await fetch(
+        `${API_URL}/workspaces/${id}/connections/${connection.id}/test`,
+        { method: "POST" },
+      );
+      const body = await res.json().catch(() => null);
+      setTestResults((t) => ({
+        ...t,
+        [connection.id]: body ? `${body.ok ? "✓" : "✗"} ${body.detail}` : "test failed",
+      }));
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disconnect(connection: Connection) {
+    if (!confirm("Disconnect this provider? Credentials are removed from the connector service."))
+      return;
+    await fetch(`${API_URL}/workspaces/${id}/connections/${connection.id}`, { method: "DELETE" });
+    await load();
+  }
+
+  async function addWebhook(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch(`${API_URL}/workspaces/${id}/webhooks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          url: hookUrl,
+          eventTypes: hookTypes,
+          ...(hookSecret.trim() ? { secret: hookSecret.trim() } : {}),
+        }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message ?? `API returned ${res.status}`);
+      setHookUrl("");
+      setHookSecret("");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to add webhook");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function pingWebhook(webhookId: string) {
+    setBusy(true);
+    try {
+      await fetch(`${API_URL}/workspaces/${id}/webhooks/${webhookId}/ping`, { method: "POST" });
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleWebhook(webhook: WebhookSubscription) {
+    await fetch(`${API_URL}/workspaces/${id}/webhooks/${webhook.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: !webhook.enabled }),
+    });
+    await load();
+  }
+
+  async function removeWebhook(webhook: WebhookSubscription) {
+    if (!confirm("Delete this webhook?")) return;
+    await fetch(`${API_URL}/workspaces/${id}/webhooks/${webhook.id}`, { method: "DELETE" });
+    await load();
+  }
+
+  if (error && !workspace) {
+    return (
+      <>
+        <p className="error">{error}</p>
+        <Link href="/">← Back to workspaces</Link>
+      </>
+    );
+  }
+
+  if (!workspace || !view) return <p className="empty">Loading…</p>;
+
+  return (
+    <>
+      <div className="brain-header">
+        <div>
+          <p className="breadcrumb">
+            <Link href="/">Workspaces</Link> /{" "}
+            <Link href={`/workspaces/${id}`}>{workspace.name}</Link> / Connectors
+          </p>
+          <h1>Connector Fabric</h1>
+          <p className="subtitle">
+            Credentials live in the connector service, never in Tuezday. Events flow out with
+            signatures.
+          </p>
+        </div>
+        <Link className="button-secondary" href={`/workspaces/${id}`}>
+          ← Brain
+        </Link>
+      </div>
+
+      {!view.fabric.healthy && (
+        <p className="error">
+          Connector service offline: {view.fabric.detail ?? "Nango is not reachable."}
+        </p>
+      )}
+
+      <section className="panel">
+        <h2>Providers</h2>
+        <ul className="section-list">
+          {view.providers.map((provider) => {
+            const connection = connectionFor(provider.key);
+            const isConnected = connection?.status === "connected";
+            return (
+              <li key={provider.key} className="section-card">
+                <div className="section-head">
+                  <span
+                    className={`layer-badge ${
+                      isConnected
+                        ? "state-approved"
+                        : connection?.status === "error"
+                          ? "state-rejected"
+                          : provider.authMode === "oauth"
+                            ? "state-edited"
+                            : ""
+                    }`}
+                  >
+                    {isConnected
+                      ? "connected"
+                      : connection?.status === "error"
+                        ? "error"
+                        : provider.authMode === "oauth"
+                          ? "needs OAuth app"
+                          : "not connected"}
+                  </span>
+                  <span className="section-title">{provider.label}</span>
+                  {connection?.lastCheckedAt && (
+                    <span className="section-tokens">
+                      checked {new Date(connection.lastCheckedAt).toLocaleString()}
+                    </span>
+                  )}
+                </div>
+                {connection?.lastError && <p className="error">{connection.lastError}</p>}
+                {testResults[connection?.id ?? ""] && (
+                  <p className="section-reason">{testResults[connection!.id]}</p>
+                )}
+
+                {connectingKey === provider.key ? (
+                  <div className="resolve-controls" style={{ marginTop: 10 }}>
+                    {provider.authMode === "api_key" && (
+                      <label style={{ flex: 1 }}>
+                        API key
+                        <input
+                          type="password"
+                          value={apiKey}
+                          onChange={(e) => setApiKey(e.target.value)}
+                          placeholder="Pasted into the connector service, not stored here"
+                        />
+                      </label>
+                    )}
+                    {provider.key === "custom" && (
+                      <>
+                        <label style={{ flex: 1 }}>
+                          Base URL
+                          <input
+                            value={baseUrl}
+                            onChange={(e) => setBaseUrl(e.target.value)}
+                            placeholder="https://api.example.com"
+                          />
+                        </label>
+                        <label>
+                          Test path
+                          <input
+                            value={testPath}
+                            onChange={(e) => setTestPath(e.target.value)}
+                            placeholder="/v1/status"
+                          />
+                        </label>
+                      </>
+                    )}
+                    <button
+                      disabled={
+                        busy ||
+                        (provider.authMode === "api_key" && !apiKey.trim()) ||
+                        (provider.key === "custom" && !baseUrl.trim())
+                      }
+                      onClick={() => connect(provider)}
+                    >
+                      Connect
+                    </button>
+                    <button className="button-secondary" onClick={() => setConnectingKey(null)}>
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <div className="rating-row" style={{ marginTop: 8 }}>
+                    {provider.authMode !== "oauth" && !isConnected && (
+                      <button
+                        className="button-secondary"
+                        disabled={!view.fabric.healthy}
+                        onClick={() => setConnectingKey(provider.key)}
+                      >
+                        Connect
+                      </button>
+                    )}
+                    {connection && connection.status !== "disconnected" && (
+                      <>
+                        <button
+                          className="button-secondary"
+                          disabled={busy}
+                          onClick={() => testConnection(connection)}
+                        >
+                          Test
+                        </button>
+                        <button
+                          className="button-secondary danger"
+                          disabled={busy}
+                          onClick={() => disconnect(connection)}
+                        >
+                          Disconnect
+                        </button>
+                      </>
+                    )}
+                    {connection?.status === "disconnected" && provider.authMode !== "oauth" && (
+                      <button
+                        className="button-secondary"
+                        onClick={() => setConnectingKey(provider.key)}
+                      >
+                        Reconnect
+                      </button>
+                    )}
+                  </div>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      </section>
+
+      <section className="panel">
+        <h2>Webhooks</h2>
+        <form className="persona-form" style={{ borderTop: "none", paddingTop: 0, marginTop: 0 }} onSubmit={addWebhook}>
+          <div className="resolve-controls">
+            <label style={{ flex: 1 }}>
+              Endpoint URL
+              <input
+                value={hookUrl}
+                onChange={(e) => setHookUrl(e.target.value)}
+                placeholder="https://hooks.example.com/tuezday (try webhook.site)"
+              />
+            </label>
+            <label>
+              Secret (optional)
+              <input
+                value={hookSecret}
+                onChange={(e) => setHookSecret(e.target.value)}
+                placeholder="for HMAC signatures"
+              />
+            </label>
+          </div>
+          <div className="checkbox-row">
+            <span className="meta">Events:</span>
+            {EVENT_TYPES.filter((t) => t !== "webhook.ping").map((t) => (
+              <label key={t} className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={hookTypes.includes(t)}
+                  onChange={() =>
+                    setHookTypes((prev) =>
+                      prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t],
+                    )
+                  }
+                />
+                {t}
+              </label>
+            ))}
+          </div>
+          <div className="editor-actions">
+            <button type="submit" disabled={busy || !hookUrl.trim() || hookTypes.length === 0}>
+              Add webhook
+            </button>
+          </div>
+        </form>
+
+        {webhooks.length > 0 && (
+          <ul className="section-list">
+            {webhooks.map((w) => (
+              <li key={w.id} className={`section-card ${w.enabled ? "" : "excluded"}`}>
+                <div className="section-head">
+                  <span className={`layer-badge ${w.enabled ? "state-approved" : ""}`}>
+                    {w.enabled ? "enabled" : "disabled"}
+                  </span>
+                  <span className="section-title">{w.url}</span>
+                </div>
+                <p className="section-reason">{w.eventTypes.join(" · ")}</p>
+                <div className="rating-row" style={{ marginTop: 8 }}>
+                  <button className="button-secondary" disabled={busy} onClick={() => pingWebhook(w.id)}>
+                    Ping
+                  </button>
+                  <button className="button-secondary" onClick={() => toggleWebhook(w)}>
+                    {w.enabled ? "Disable" : "Enable"}
+                  </button>
+                  <button className="button-secondary danger" onClick={() => removeWebhook(w)}>
+                    Delete
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="panel">
+        <h2>Event log</h2>
+        {eventLog.length === 0 ? (
+          <p className="empty">No events yet. Approve a draft or ping a webhook.</p>
+        ) : (
+          <ul className="draft-chain">
+            {eventLog.map((e) => (
+              <li key={e.id}>
+                <span className="layer-badge">{e.type}</span>{" "}
+                <span className="meta">{new Date(e.createdAt).toLocaleString()}</span>{" "}
+                {e.deliveries.map((d, i) => (
+                  <span
+                    key={i}
+                    className={`layer-badge ${d.status === "delivered" ? "state-approved" : "state-rejected"}`}
+                    style={{ marginLeft: 6 }}
+                  >
+                    {d.status === "delivered" ? `delivered (${d.httpStatus})` : `failed${d.httpStatus ? ` (${d.httpStatus})` : ""}`}
+                  </span>
+                ))}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </>
+  );
+}

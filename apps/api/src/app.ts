@@ -1,6 +1,8 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import { sql } from "drizzle-orm";
+import type { ConnectorFabric } from "./connectors/fabric";
+import { NangoFabric } from "./connectors/nango";
 import type { Db } from "./db";
 import type { Fetcher } from "./discovery/adapters";
 import { R2REvidenceStore } from "./evidence/r2r";
@@ -9,6 +11,7 @@ import { GeminiGateway } from "./llm/gemini";
 import type { LlmGateway } from "./llm/gateway";
 import { registerBrainRoutes } from "./routes/brain";
 import { registerCampaignRoutes } from "./routes/campaigns";
+import { registerConnectorRoutes } from "./routes/connectors";
 import { registerDiscoveryRoutes } from "./routes/discovery";
 import { registerDraftRoutes } from "./routes/drafts";
 import { registerEvidenceRoutes } from "./routes/evidence";
@@ -29,6 +32,8 @@ export interface BuildAppOptions {
   fetcher?: Fetcher;
   /** Evidence store override; defaults to the R2R client from env. */
   evidence?: EvidenceStore;
+  /** Connector fabric override; defaults to the Nango client from env. */
+  connectors?: ConnectorFabric;
 }
 
 export async function buildApp({
@@ -36,6 +41,7 @@ export async function buildApp({
   llm = new GeminiGateway(),
   fetcher = fetch,
   evidence = new R2REvidenceStore(),
+  connectors = new NangoFabric(undefined, undefined, fetcher),
 }: BuildAppOptions): Promise<TuezdayApp> {
   const app = Fastify({ logger: false });
 
@@ -55,13 +61,14 @@ export async function buildApp({
   registerBrainRoutes(app, db);
   registerPersonaRoutes(app, db, evidence);
   registerGenerationRoutes(app, db, llm, evidence);
-  registerDraftRoutes(app, db);
+  registerDraftRoutes(app, db, fetcher);
   registerSignalRoutes(app, db, llm, evidence);
   registerDiscoveryRoutes(app, db, llm, fetcher);
   registerCampaignRoutes(app, db);
   registerEvidenceRoutes(app, db, evidence);
-  registerLearningRoutes(app, db, llm);
+  registerLearningRoutes(app, db, llm, fetcher);
   registerOutboundRoutes(app, db, llm, evidence);
+  registerConnectorRoutes(app, db, connectors, fetcher);
 
   return app;
 }

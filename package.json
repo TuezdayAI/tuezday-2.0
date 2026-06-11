@@ -14,7 +14,9 @@
     "typecheck": "npm run typecheck --workspaces --if-present",
     "build": "npm run build --workspaces --if-present",
     "r2r:up": "docker compose --env-file .env -f infra/r2r/compose.yaml up -d",
-    "r2r:down": "docker compose -f infra/r2r/compose.yaml down"
+    "r2r:down": "docker compose -f infra/r2r/compose.yaml down",
+    "nango:up": "docker compose --env-file .env -f infra/nango/compose.yaml up -d",
+    "nango:down": "docker compose -f infra/nango/compose.yaml down"
   },
   "devDependencies": {
     "concurrently": "^9.1.0",

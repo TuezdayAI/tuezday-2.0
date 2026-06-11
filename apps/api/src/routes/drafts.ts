@@ -19,7 +19,10 @@ import {
   listDrafts,
   submitDraft,
 } from "../services/drafts";
+import { emitEvent } from "../services/events";
 import { getWorkspace } from "../services/workspaces";
+
+type Fetcher = typeof fetch;
 
 function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
   const workspace = getWorkspace(db, id);
@@ -29,7 +32,7 @@ function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
   return workspace;
 }
 
-export function registerDraftRoutes(app: FastifyInstance, db: Db): void {
+export function registerDraftRoutes(app: FastifyInstance, db: Db, fetcher: Fetcher): void {
   app.post<{ Params: { id: string; generationId: string } }>(
     "/workspaces/:id/generations/:generationId/submit",
     async (request, reply) => {
@@ -105,7 +108,25 @@ export function registerDraftRoutes(app: FastifyInstance, db: Db): void {
         }
 
         try {
-          return applyDraftAction(db, draft, action, newContent);
+          const updated = applyDraftAction(db, draft, action, newContent);
+          if (action === "approve" || action === "reject") {
+            await emitEvent(
+              db,
+              fetcher,
+              request.params.id,
+              action === "approve" ? "draft.approved" : "draft.rejected",
+              {
+                draftId: updated.id,
+                taskType: updated.taskType,
+                channel: updated.channel,
+                personaId: updated.personaId,
+                campaignId: updated.campaignId,
+                leadId: updated.leadId,
+                content: updated.content,
+              },
+            );
+          }
+          return updated;
         } catch (err) {
           if (err instanceof InvalidTransitionError) {
             return reply.status(409).send({ error: "invalid_transition", message: err.message });

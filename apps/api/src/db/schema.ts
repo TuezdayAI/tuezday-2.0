@@ -257,3 +257,61 @@ export const leads = sqliteTable("leads", {
 });
 
 export type LeadRow = typeof leads.$inferSelect;
+
+export const connections = sqliteTable("connections", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  providerKey: text("provider_key").notNull(),
+  nangoConnectionId: text("nango_connection_id").notNull(),
+  configJson: text("config_json").notNull().default("{}"),
+  status: text("status").notNull().default("connected"),
+  lastCheckedAt: integer("last_checked_at"),
+  lastError: text("last_error"),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type ConnectionRow = typeof connections.$inferSelect;
+
+export const events = sqliteTable("events", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  type: text("type").notNull(),
+  payloadJson: text("payload_json").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type EventRow = typeof events.$inferSelect;
+
+export const webhookSubscriptions = sqliteTable("webhook_subscriptions", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  url: text("url").notNull(),
+  secret: text("secret").notNull(),
+  eventTypesJson: text("event_types_json").notNull(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type WebhookSubscriptionRow = typeof webhookSubscriptions.$inferSelect;
+
+export const webhookDeliveries = sqliteTable("webhook_deliveries", {
+  id: text("id").primaryKey(),
+  subscriptionId: text("subscription_id")
+    .notNull()
+    .references(() => webhookSubscriptions.id, { onDelete: "cascade" }),
+  eventId: text("event_id")
+    .notNull()
+    .references(() => events.id, { onDelete: "cascade" }),
+  status: text("status").notNull(),
+  httpStatus: integer("http_status"),
+  error: text("error"),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type WebhookDeliveryRow = typeof webhookDeliveries.$inferSelect;

@@ -529,6 +529,143 @@ export const nowSynthesisSchema = z.object({
 export type NowSynthesis = z.infer<typeof nowSynthesisSchema>;
 
 // ---------------------------------------------------------------------------
+// Connector fabric
+// ---------------------------------------------------------------------------
+
+export const CONNECTOR_AUTH_MODES = ["api_key", "basic", "oauth", "none"] as const;
+export type ConnectorAuthMode = (typeof CONNECTOR_AUTH_MODES)[number];
+
+export interface ConnectorProvider {
+  key: string;
+  label: string;
+  /** Provider template name in Nango's providers.yaml. */
+  nangoProvider: string;
+  authMode: ConnectorAuthMode;
+  /** Base URL + path for the connection test request (proxied through Nango). */
+  baseUrl?: string;
+  testPath?: string;
+}
+
+/**
+ * The connector registry. OAuth providers are registered infrastructure —
+ * they become connectable once per-provider OAuth apps exist (status
+ * needs_oauth_app until then), same pattern as discovery's needs_api_key.
+ */
+export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
+  {
+    key: "smartlead",
+    label: "Smartlead",
+    nangoProvider: "smartlead",
+    authMode: "api_key",
+    baseUrl: "https://server.smartlead.ai/api/v1",
+    testPath: "/campaigns",
+  },
+  {
+    key: "instantly",
+    label: "Instantly",
+    nangoProvider: "instantly",
+    authMode: "api_key",
+    baseUrl: "https://api.instantly.ai/api/v2",
+    testPath: "/campaigns",
+  },
+  {
+    key: "pipedrive",
+    label: "Pipedrive",
+    nangoProvider: "pipedrive",
+    authMode: "oauth",
+  },
+  {
+    key: "hubspot",
+    label: "HubSpot",
+    nangoProvider: "hubspot",
+    authMode: "oauth",
+  },
+  {
+    key: "slack",
+    label: "Slack",
+    nangoProvider: "slack",
+    authMode: "oauth",
+  },
+  {
+    // Proxy any API without auth (your own services, public APIs). Keyed
+    // custom APIs arrive when a generic API-key template is wired up.
+    key: "custom",
+    label: "Custom API (no auth)",
+    nangoProvider: "unauthenticated",
+    authMode: "none",
+  },
+] as const;
+
+export const CONNECTION_STATUSES = ["connected", "error", "disconnected"] as const;
+export type ConnectionStatus = (typeof CONNECTION_STATUSES)[number];
+
+export const connectionSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  providerKey: z.string(),
+  nangoConnectionId: z.string(),
+  config: z.object({
+    baseUrl: z.string().optional(),
+    testPath: z.string().optional(),
+  }),
+  status: z.enum(CONNECTION_STATUSES),
+  lastCheckedAt: z.number().int().nullable(),
+  lastError: z.string().nullable(),
+  createdAt: z.number().int(),
+});
+export type Connection = z.infer<typeof connectionSchema>;
+
+/** Credential requirements are enforced per provider auth mode at the route. */
+export const connectInputSchema = z.object({
+  apiKey: z.string().trim().min(1).optional(),
+  username: z.string().trim().min(1).optional(),
+  password: z.string().min(1).optional(),
+  baseUrl: z.string().trim().url().optional(),
+  testPath: z.string().trim().startsWith("/", "Test path must start with /").optional(),
+});
+export type ConnectInput = z.infer<typeof connectInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Events + webhooks
+// ---------------------------------------------------------------------------
+
+export const EVENT_TYPES = [
+  "draft.approved",
+  "draft.rejected",
+  "discovery.item.accepted",
+  "synthesis.accepted",
+  "webhook.ping",
+] as const;
+export type EventType = (typeof EVENT_TYPES)[number];
+
+export const tuezdayEventSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  type: z.enum(EVENT_TYPES),
+  payloadJson: z.string(),
+  createdAt: z.number().int(),
+});
+export type TuezdayEvent = z.infer<typeof tuezdayEventSchema>;
+
+export const webhookSubscriptionSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  url: z.string().url(),
+  secret: z.string(),
+  eventTypes: z.array(z.enum(EVENT_TYPES)),
+  enabled: z.boolean(),
+  createdAt: z.number().int(),
+});
+export type WebhookSubscription = z.infer<typeof webhookSubscriptionSchema>;
+
+export const createWebhookInputSchema = z.object({
+  url: z.string().trim().url("A valid URL is required"),
+  eventTypes: z.array(z.enum(EVENT_TYPES)).min(1, "Pick at least one event type"),
+  secret: z.string().trim().min(8, "Secret must be at least 8 characters").optional(),
+});
+export type CreateWebhookInput = z.infer<typeof createWebhookInputSchema>;
+
+// ---------------------------------------------------------------------------
 // API error shape
 // ---------------------------------------------------------------------------
 
