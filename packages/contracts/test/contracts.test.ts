@@ -12,6 +12,7 @@ import {
   PERSONA_OVERLAY_MAX_CHARS,
   TASK_TYPES,
   brainDocumentSchema,
+  createSignalInputSchema,
   createWorkspaceInputSchema,
   generationSchema,
   rateGenerationInputSchema,
@@ -70,12 +71,13 @@ describe("createWorkspaceInputSchema", () => {
 });
 
 describe("task types and channels", () => {
-  it("matches the planned sandbox task types", () => {
+  it("matches the planned task types", () => {
     expect(TASK_TYPES).toEqual([
       "linkedin_post",
       "cold_email_opener",
       "ad_copy_variant",
       "landing_page_hero",
+      "signal_response",
     ]);
   });
 
@@ -173,6 +175,39 @@ describe("brainDocumentSchema", () => {
       updatedAt: 1765400000000,
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("createSignalInputSchema", () => {
+  it("accepts a pasted signal with source and url", () => {
+    const result = createSignalInputSchema.safeParse({
+      content: "Saw this thread complaining about AI content all sounding the same.",
+      source: "reddit",
+      sourceUrl: "https://reddit.com/r/marketing/comments/abc123",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a signal without a url", () => {
+    const result = createSignalInputSchema.safeParse({ content: "Customer quote.", source: "other" });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an empty signal", () => {
+    expect(createSignalInputSchema.safeParse({ content: "  ", source: "x" }).success).toBe(false);
+  });
+
+  it("rejects an unknown source", () => {
+    expect(
+      createSignalInputSchema.safeParse({ content: "hi", source: "tiktok" }).success,
+    ).toBe(false);
+  });
+
+  it("rejects an invalid url", () => {
+    expect(
+      createSignalInputSchema.safeParse({ content: "hi", source: "x", sourceUrl: "not-a-url" })
+        .success,
+    ).toBe(false);
   });
 });
 

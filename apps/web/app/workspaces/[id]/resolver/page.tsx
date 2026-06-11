@@ -21,6 +21,7 @@ const TASK_LABELS: Record<TaskType, string> = {
   cold_email_opener: "Cold email opener",
   ad_copy_variant: "Ad copy variant",
   landing_page_hero: "Landing page hero",
+  signal_response: "Signal response",
 };
 
 export default function ResolverPage() {

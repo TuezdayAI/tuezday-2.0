@@ -30,13 +30,15 @@ export const TASK_INSTRUCTIONS: Record<TaskType, string> = {
     "Task: Write one ad copy variant (headline + primary text) grounded in the context above. One message, one promise, proof if available, plain action. Return only the headline and primary text - no preamble or commentary.",
   landing_page_hero:
     "Task: Write a landing page hero (headline + subheadline) grounded in the context above. Headline states the positioning in the company's voice; subheadline makes it concrete and credible. Return only the headline and subheadline - no preamble or commentary.",
+  signal_response:
+    "Task: Write a response to the market signal above, for the requested channel, grounded in the company context. Engage with what the signal actually says - agree, push back, or add the company's earned point of view. Never sound like a brand inserting itself; sound like someone worth listening to. Return only the response text - no preamble or commentary.",
 };
 
 // ---------------------------------------------------------------------------
 // Resolver
 // ---------------------------------------------------------------------------
 
-export type ContextLayer = "org" | "channel" | "campaign" | "persona" | "task";
+export type ContextLayer = "org" | "channel" | "campaign" | "persona" | "signal" | "task";
 
 export interface ResolvePersona {
   name: string;
@@ -49,6 +51,12 @@ export interface ResolveCampaign {
   overlay: string;
 }
 
+export interface ResolveSignal {
+  content: string;
+  source: string;
+  sourceUrl?: string | null;
+}
+
 export interface ResolveInput {
   workspaceName: string;
   docs: BrainContents;
@@ -56,6 +64,7 @@ export interface ResolveInput {
   channel: Channel;
   persona?: ResolvePersona;
   campaign?: ResolveCampaign;
+  signal?: ResolveSignal;
   tokenBudget?: number;
 }
 
@@ -157,6 +166,31 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       content: "",
       included: false,
       reason: "Excluded: no persona selected; org voice applies.",
+      tokens: 0,
+    });
+  }
+
+  if (input.signal) {
+    const attribution = [`Source: ${input.signal.source}`];
+    if (input.signal.sourceUrl) attribution.push(input.signal.sourceUrl);
+    const signalContent = `${input.signal.content.trim()}\n\n(${attribution.join(" — ")})`;
+    sections.push({
+      key: "signal",
+      layer: "signal",
+      title: "Market signal",
+      content: signalContent,
+      included: true,
+      reason: `The ${input.signal.source} signal this task responds to.`,
+      tokens: estimateTokens(signalContent),
+    });
+  } else {
+    sections.push({
+      key: "signal",
+      layer: "signal",
+      title: "Market signal",
+      content: "",
+      included: false,
+      reason: "Excluded: no signal attached to this task.",
       tokens: 0,
     });
   }

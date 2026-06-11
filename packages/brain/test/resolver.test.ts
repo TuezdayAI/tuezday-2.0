@@ -53,7 +53,7 @@ describe("built-in defaults", () => {
 });
 
 describe("resolveContext", () => {
-  it("orders sections org -> channel -> campaign -> persona -> task", () => {
+  it("orders sections org -> channel -> campaign -> persona -> signal -> task", () => {
     const result = resolveContext(baseInput());
     expect(result.sections.map((s) => s.key)).toEqual([
       "org:soul",
@@ -64,6 +64,7 @@ describe("resolveContext", () => {
       "channel",
       "campaign",
       "persona",
+      "signal",
       "task",
     ]);
   });
@@ -182,6 +183,48 @@ describe("resolveContext", () => {
     expect(result.prompt).toContain(fullDocs.soul.trim());
     expect(result.prompt).not.toContain("## History");
     expect(result.prompt).toContain(TASK_INSTRUCTIONS.linkedin_post);
+  });
+
+  it("places the signal section after persona and before task when given", () => {
+    const result = resolveContext(
+      baseInput({
+        taskType: "signal_response",
+        signal: {
+          content: "Thread: why does all AI content sound identical?",
+          source: "reddit",
+          sourceUrl: "https://reddit.com/r/marketing/abc",
+        },
+      }),
+    );
+    expect(result.sections.map((s) => s.key)).toEqual([
+      "org:soul",
+      "org:icp",
+      "org:voice",
+      "org:history",
+      "org:now",
+      "channel",
+      "campaign",
+      "persona",
+      "signal",
+      "task",
+    ]);
+    const signal = result.sections.find((s) => s.key === "signal")!;
+    expect(signal.included).toBe(true);
+    expect(signal.layer).toBe("signal");
+    expect(signal.content).toContain("why does all AI content sound identical");
+    expect(signal.content).toContain("reddit");
+    expect(signal.content).toContain("https://reddit.com/r/marketing/abc");
+  });
+
+  it("marks the signal slot excluded when no signal is given", () => {
+    const result = resolveContext(baseInput());
+    const signal = result.sections.find((s) => s.key === "signal")!;
+    expect(signal.included).toBe(false);
+    expect(signal.reason).toMatch(/no signal/i);
+  });
+
+  it("has a signal_response task instruction that references the signal", () => {
+    expect(TASK_INSTRUCTIONS.signal_response).toMatch(/signal/i);
   });
 
   it("is deterministic", () => {

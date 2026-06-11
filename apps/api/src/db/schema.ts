@@ -82,6 +82,7 @@ export const drafts = sqliteTable("drafts", {
     .notNull()
     .references(() => workspaces.id, { onDelete: "cascade" }),
   sourceGenerationId: text("source_generation_id"),
+  sourceSignalId: text("source_signal_id"),
   taskType: text("task_type").notNull(),
   channel: text("channel").notNull(),
   personaId: text("persona_id"),
@@ -111,3 +112,16 @@ export const approvalDecisions = sqliteTable("approval_decisions", {
 });
 
 export type ApprovalDecisionRow = typeof approvalDecisions.$inferSelect;
+
+export const signals = sqliteTable("signals", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  content: text("content").notNull(),
+  source: text("source").notNull(),
+  sourceUrl: text("source_url"),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type SignalRow = typeof signals.$inferSelect;

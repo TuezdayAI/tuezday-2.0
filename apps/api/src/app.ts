@@ -8,6 +8,7 @@ import { registerBrainRoutes } from "./routes/brain";
 import { registerDraftRoutes } from "./routes/drafts";
 import { registerGenerationRoutes } from "./routes/generations";
 import { registerPersonaRoutes } from "./routes/personas";
+import { registerSignalRoutes } from "./routes/signals";
 import { registerWorkspaceRoutes } from "./routes/workspaces";
 
 export type TuezdayApp = FastifyInstance;
@@ -38,6 +39,7 @@ export async function buildApp({ db, llm = new GeminiGateway() }: BuildAppOption
   registerPersonaRoutes(app, db);
   registerGenerationRoutes(app, db, llm);
   registerDraftRoutes(app, db);
+  registerSignalRoutes(app, db, llm);
 
   return app;
 }

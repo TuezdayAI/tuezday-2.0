@@ -36,6 +36,13 @@
       "when": 1781089546729,
       "tag": "0004_approval-gate",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1781096840178,
+      "tag": "0005_signals",
+      "breakpoints": true
     }
   ]
 }

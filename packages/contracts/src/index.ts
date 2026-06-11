@@ -29,6 +29,7 @@ export const TASK_TYPES = [
   "cold_email_opener",
   "ad_copy_variant",
   "landing_page_hero",
+  "signal_response",
 ] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
@@ -165,6 +166,44 @@ export const rateGenerationInputSchema = z.object({
 export type RateGenerationInput = z.infer<typeof rateGenerationInputSchema>;
 
 // ---------------------------------------------------------------------------
+// Signals (manual market input — source adapters arrive in a later slice)
+// ---------------------------------------------------------------------------
+
+export const SIGNAL_SOURCES = ["reddit", "x", "linkedin", "other"] as const;
+export type SignalSource = (typeof SIGNAL_SOURCES)[number];
+
+export const SIGNAL_MAX_CHARS = 10_000;
+
+export const signalSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  content: z.string().min(1).max(SIGNAL_MAX_CHARS),
+  source: z.enum(SIGNAL_SOURCES),
+  sourceUrl: z.string().nullable(),
+  createdAt: z.number().int(),
+});
+export type Signal = z.infer<typeof signalSchema>;
+
+export const createSignalInputSchema = z.object({
+  content: z
+    .string()
+    .trim()
+    .min(1, "Signal content is required")
+    .max(SIGNAL_MAX_CHARS, `Signal must be ${SIGNAL_MAX_CHARS} characters or fewer`),
+  source: z.enum(SIGNAL_SOURCES),
+  sourceUrl: z.string().trim().url("Source URL must be a valid URL").optional(),
+});
+export type CreateSignalInput = z.infer<typeof createSignalInputSchema>;
+
+/** Drafting a response to a signal: the task type is implied (signal_response). */
+export const draftSignalRequestSchema = z.object({
+  channel: z.enum(CHANNELS),
+  personaId: z.string().uuid().optional(),
+  tokenBudget: z.number().int().min(500).max(200_000).optional(),
+});
+export type DraftSignalRequest = z.infer<typeof draftSignalRequestSchema>;
+
+// ---------------------------------------------------------------------------
 // Approval gate
 // ---------------------------------------------------------------------------
 
@@ -196,6 +235,7 @@ export const draftSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
   sourceGenerationId: z.string().uuid().nullable(),
+  sourceSignalId: z.string().uuid().nullable(),
   taskType: z.enum(TASK_TYPES),
   channel: z.enum(CHANNELS),
   personaId: z.string().uuid().nullable(),

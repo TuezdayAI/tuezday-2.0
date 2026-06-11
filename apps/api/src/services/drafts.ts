@@ -57,6 +57,7 @@ function logDecision(
 export interface SubmitDraftInput {
   workspaceId: string;
   sourceGenerationId: string;
+  sourceSignalId?: string | null;
   taskType: TaskType;
   channel: Channel;
   personaId: string | null;
@@ -84,6 +85,7 @@ export function submitDraft(db: Db, input: SubmitDraftInput): Draft {
     id: randomUUID(),
     workspaceId: input.workspaceId,
     sourceGenerationId: input.sourceGenerationId,
+    sourceSignalId: input.sourceSignalId ?? null,
     taskType: input.taskType,
     channel: input.channel,
     personaId: input.personaId,

@@ -20,6 +20,7 @@ const TASK_LABELS: Record<TaskType, string> = {
   cold_email_opener: "Cold email opener",
   ad_copy_variant: "Ad copy variant",
   landing_page_hero: "Landing page hero",
+  signal_response: "Signal response",
 };
 
 const STATE_LABELS: Record<ApprovalState, string> = {
@@ -150,6 +151,9 @@ export default function ApprovalsPage() {
           <Link className="button-secondary" href={`/workspaces/${id}/sandbox`}>
             Sandbox
           </Link>
+          <Link className="button-secondary" href={`/workspaces/${id}/content`}>
+            Content
+          </Link>
         </div>
       </div>
 
@@ -223,6 +227,32 @@ export default function ApprovalsPage() {
 
                 {!isEditing && (
                   <div className="rating-row">
+                    {d.state === "approved" && (
+                      <>
+                        <button
+                          className="button-secondary"
+                          onClick={async () => {
+                            await navigator.clipboard.writeText(d.content);
+                          }}
+                        >
+                          ⧉ Copy
+                        </button>
+                        <button
+                          className="button-secondary"
+                          onClick={() => {
+                            const a = document.createElement("a");
+                            a.href = URL.createObjectURL(
+                              new Blob([d.content], { type: "text/markdown" }),
+                            );
+                            a.download = `tuezday-${d.channel}-${d.id.slice(0, 8)}.md`;
+                            a.click();
+                            URL.revokeObjectURL(a.href);
+                          }}
+                        >
+                          ↓ Download .md
+                        </button>
+                      </>
+                    )}
                     {editable && (
                       <>
                         <button
