@@ -12,7 +12,9 @@ import {
   PERSONA_OVERLAY_MAX_CHARS,
   TASK_TYPES,
   brainDocumentSchema,
+  createDiscoverySourceInputSchema,
   createSignalInputSchema,
+  DISCOVERY_SOURCE_TYPES,
   createWorkspaceInputSchema,
   generationSchema,
   rateGenerationInputSchema,
@@ -208,6 +210,56 @@ describe("createSignalInputSchema", () => {
       createSignalInputSchema.safeParse({ content: "hi", source: "x", sourceUrl: "not-a-url" })
         .success,
     ).toBe(false);
+  });
+});
+
+describe("createDiscoverySourceInputSchema", () => {
+  it("accepts an rss source with a feed url", () => {
+    const result = createDiscoverySourceInputSchema.safeParse({
+      type: "rss",
+      config: { feedUrl: "https://example.com/feed.xml" },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an rss source without a feed url", () => {
+    expect(createDiscoverySourceInputSchema.safeParse({ type: "rss", config: {} }).success).toBe(
+      false,
+    );
+  });
+
+  it("accepts a google_news source with a query", () => {
+    const result = createDiscoverySourceInputSchema.safeParse({
+      type: "google_news",
+      config: { query: "GTM orchestration" },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a reddit source with only a subreddit", () => {
+    const result = createDiscoverySourceInputSchema.safeParse({
+      type: "reddit",
+      config: { subreddit: "SaaS" },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a reddit source with neither query nor subreddit", () => {
+    expect(
+      createDiscoverySourceInputSchema.safeParse({ type: "reddit", config: {} }).success,
+    ).toBe(false);
+  });
+
+  it("accepts an x source with a query (infra registered before keys exist)", () => {
+    const result = createDiscoverySourceInputSchema.safeParse({
+      type: "x",
+      config: { query: "GTM memory" },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("covers the planned source types", () => {
+    expect(DISCOVERY_SOURCE_TYPES).toEqual(["rss", "google_news", "reddit", "x", "linkedin"]);
   });
 });
 

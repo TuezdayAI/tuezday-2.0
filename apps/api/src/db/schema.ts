@@ -125,3 +125,47 @@ export const signals = sqliteTable("signals", {
 });
 
 export type SignalRow = typeof signals.$inferSelect;
+
+export const discoverySources = sqliteTable("discovery_sources", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  type: text("type").notNull(),
+  name: text("name").notNull(),
+  configJson: text("config_json").notNull(),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  status: text("status").notNull(),
+  lastError: text("last_error"),
+  lastFetchedAt: integer("last_fetched_at"),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type DiscoverySourceRow = typeof discoverySources.$inferSelect;
+
+export const discoveredItems = sqliteTable(
+  "discovered_items",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => discoverySources.id, { onDelete: "cascade" }),
+    externalId: text("external_id").notNull(),
+    title: text("title").notNull(),
+    url: text("url").notNull(),
+    summary: text("summary").notNull().default(""),
+    publishedAt: integer("published_at"),
+    score: integer("score"),
+    suggestedPersonaId: text("suggested_persona_id"),
+    scoreReason: text("score_reason"),
+    status: text("status").notNull().default("new"),
+    signalId: text("signal_id"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("discovered_items_source_external").on(t.sourceId, t.externalId)],
+);
+
+export type DiscoveredItemRow = typeof discoveredItems.$inferSelect;

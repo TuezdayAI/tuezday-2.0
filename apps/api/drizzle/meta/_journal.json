@@ -43,6 +43,13 @@
       "when": 1781096840178,
       "tag": "0005_signals",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1781153786285,
+      "tag": "0006_discovery",
+      "breakpoints": true
     }
   ]
 }

@@ -19,6 +19,8 @@ const SOURCE_LABELS: Record<SignalSource, string> = {
   reddit: "Reddit",
   x: "X",
   linkedin: "LinkedIn",
+  rss: "RSS",
+  news: "News",
   other: "Other",
 };
 
@@ -182,6 +184,9 @@ export default function ContentPage() {
         <div className="persona-actions">
           <Link className="button-secondary" href={`/workspaces/${id}`}>
             ← Brain
+          </Link>
+          <Link className="button-secondary" href={`/workspaces/${id}/discovery`}>
+            Discovery
           </Link>
           <Link className="button-secondary" href={`/workspaces/${id}/approvals`}>
             Approvals

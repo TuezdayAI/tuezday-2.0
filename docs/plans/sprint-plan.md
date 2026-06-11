@@ -40,9 +40,9 @@
 | 4 | Generation Sandbox (completes **Brain Spine v0**) | Phase 3 (tickets 9–10) | M3 |
 | 5 | Approval Gate | Phase 4 | M4 |
 | 6 | Content Slice v1 | Phase 5 | M5 |
-| 7 | Campaigns | Phase 6 | M6 |
-| 8 | RAG Corpus (R2R) | Phase 7 | M7 |
-| 9 | Signal Discovery | Phase 8 | M8 |
+| 7 | Signal Discovery (pulled forward — founder decision 2026-06-11: ideas must originate from the outside world before campaign/RAG buildout; brain judges and routes, it doesn't generate) | Phase 8 | M8 |
+| 8 | Campaigns | Phase 6 | M6 |
+| 9 | RAG Corpus (R2R) | Phase 7 | M7 |
 | 10 | Learning Loop | Phase 9 | M9 |
 | 11 | Outbound Slice | Phase 10 | M10 |
 | 12 | Connector Fabric (Nango) | Phase 11 | — |

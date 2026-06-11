@@ -169,7 +169,7 @@ export type RateGenerationInput = z.infer<typeof rateGenerationInputSchema>;
 // Signals (manual market input — source adapters arrive in a later slice)
 // ---------------------------------------------------------------------------
 
-export const SIGNAL_SOURCES = ["reddit", "x", "linkedin", "other"] as const;
+export const SIGNAL_SOURCES = ["reddit", "x", "linkedin", "rss", "news", "other"] as const;
 export type SignalSource = (typeof SIGNAL_SOURCES)[number];
 
 export const SIGNAL_MAX_CHARS = 10_000;
@@ -202,6 +202,92 @@ export const draftSignalRequestSchema = z.object({
   tokenBudget: z.number().int().min(500).max(200_000).optional(),
 });
 export type DraftSignalRequest = z.infer<typeof draftSignalRequestSchema>;
+
+// ---------------------------------------------------------------------------
+// Signal discovery (sourcing infrastructure)
+// ---------------------------------------------------------------------------
+
+/**
+ * All registered source types. `rss`, `google_news`, and `reddit` fetch live
+ * today; `x` and `linkedin` are registered infrastructure that flips live
+ * when API credentials exist (status `needs_api_key` until then).
+ */
+export const DISCOVERY_SOURCE_TYPES = ["rss", "google_news", "reddit", "x", "linkedin"] as const;
+export type DiscoverySourceType = (typeof DISCOVERY_SOURCE_TYPES)[number];
+
+export const DISCOVERY_SOURCE_STATUSES = ["active", "needs_api_key", "error"] as const;
+export type DiscoverySourceStatus = (typeof DISCOVERY_SOURCE_STATUSES)[number];
+
+export const DISCOVERED_ITEM_STATUSES = ["new", "accepted", "skipped"] as const;
+export type DiscoveredItemStatus = (typeof DISCOVERED_ITEM_STATUSES)[number];
+
+export const discoverySourceConfigSchema = z.object({
+  feedUrl: z.string().url().optional(),
+  query: z.string().trim().max(200).optional(),
+  subreddit: z.string().trim().max(100).optional(),
+});
+export type DiscoverySourceConfig = z.infer<typeof discoverySourceConfigSchema>;
+
+export const discoverySourceSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  type: z.enum(DISCOVERY_SOURCE_TYPES),
+  name: z.string().min(1).max(200),
+  config: discoverySourceConfigSchema,
+  enabled: z.boolean(),
+  status: z.enum(DISCOVERY_SOURCE_STATUSES),
+  lastError: z.string().nullable(),
+  lastFetchedAt: z.number().int().nullable(),
+  createdAt: z.number().int(),
+});
+export type DiscoverySource = z.infer<typeof discoverySourceSchema>;
+
+export const createDiscoverySourceInputSchema = z
+  .object({
+    type: z.enum(DISCOVERY_SOURCE_TYPES),
+    name: z.string().trim().min(1).max(200).optional(),
+    config: discoverySourceConfigSchema.default({}),
+  })
+  .superRefine((input, ctx) => {
+    if (input.type === "rss" && !input.config.feedUrl) {
+      ctx.addIssue({ code: "custom", message: "An RSS source needs a feedUrl" });
+    }
+    if (input.type === "google_news" && !input.config.query?.trim()) {
+      ctx.addIssue({ code: "custom", message: "A Google News source needs a query" });
+    }
+    if (input.type === "reddit" && !input.config.query?.trim() && !input.config.subreddit?.trim()) {
+      ctx.addIssue({ code: "custom", message: "A Reddit source needs a query or a subreddit" });
+    }
+    if ((input.type === "x" || input.type === "linkedin") && !input.config.query?.trim()) {
+      ctx.addIssue({ code: "custom", message: `An ${input.type} source needs a query` });
+    }
+  });
+export type CreateDiscoverySourceInput = z.infer<typeof createDiscoverySourceInputSchema>;
+
+export const updateDiscoverySourceInputSchema = z.object({
+  name: z.string().trim().min(1).max(200).optional(),
+  enabled: z.boolean().optional(),
+  config: discoverySourceConfigSchema.optional(),
+});
+export type UpdateDiscoverySourceInput = z.infer<typeof updateDiscoverySourceInputSchema>;
+
+export const discoveredItemSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  sourceId: z.string().uuid(),
+  externalId: z.string(),
+  title: z.string(),
+  url: z.string(),
+  summary: z.string(),
+  publishedAt: z.number().int().nullable(),
+  score: z.number().int().min(0).max(100).nullable(),
+  suggestedPersonaId: z.string().uuid().nullable(),
+  scoreReason: z.string().nullable(),
+  status: z.enum(DISCOVERED_ITEM_STATUSES),
+  signalId: z.string().uuid().nullable(),
+  createdAt: z.number().int(),
+});
+export type DiscoveredItem = z.infer<typeof discoveredItemSchema>;
 
 // ---------------------------------------------------------------------------
 // Approval gate
