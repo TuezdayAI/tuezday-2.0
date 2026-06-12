@@ -22,6 +22,10 @@ const TASK_LABELS: Record<TaskType, string> = {
   landing_page_hero: "Landing page hero",
   signal_response: "Signal response",
   outbound_email: "Outbound email",
+  meta_ad_creative: "Meta ad creative",
+  google_rsa: "Google RSA",
+  pr_pitch: "Media pitch",
+  press_boilerplate: "Press boilerplate",
 };
 
 interface TrainingExample {
@@ -178,22 +182,15 @@ export default function LearningPage() {
 
   return (
     <>
-      <div className="brain-header">
+      <div className="page-header">
         <div>
-          <p className="breadcrumb">
-            <Link href="/">Workspaces</Link> /{" "}
-            <Link href={`/workspaces/${id}`}>{workspace.name}</Link> / Learning
-          </p>
-          <h1>Learning Loop</h1>
+          <h1>Learning</h1>
           <p className="subtitle">
-            Decisions, edits, and metrics become proposed updates to the <code>now</code> doc —
-            nothing changes the brain without your review.
+            What Tuezday learns from your decisions, edits, and results — proposed as brain
+            updates that you approve or dismiss.
           </p>
         </div>
-        <div className="persona-actions">
-          <Link className="button-secondary" href={`/workspaces/${id}`}>
-            ← Brain
-          </Link>
+        <div className="page-actions">
           <button disabled={synthesizing} onClick={synthesize}>
             {synthesizing ? "Synthesizing…" : "✨ Synthesize learnings"}
           </button>
@@ -240,7 +237,7 @@ export default function LearningPage() {
                     Synthesis · {new Date(s.createdAt).toLocaleString()}
                   </span>
                   {s.status === "accepted" && (
-                    <Link className="link-button" href={`/workspaces/${id}`}>
+                    <Link className="link-button" href={`/workspaces/${id}/brain`}>
                       view in brain →
                     </Link>
                   )}
@@ -356,7 +353,7 @@ export default function LearningPage() {
         <h2>Training examples ({examples.length})</h2>
         {examples.length === 0 ? (
           <p className="empty">
-            Nothing yet — rate sandbox outputs and decide drafts in the approval queue.
+            Nothing yet — rate outputs in the Playground and decide drafts in Review.
           </p>
         ) : (
           <ul className="section-list">

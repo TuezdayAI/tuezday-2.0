@@ -53,6 +53,11 @@ export default function HomePage() {
 
   return (
     <>
+      <header className="site-header">
+        <span className="logo">Tuezday</span>
+        <span className="tagline">GTM that remembers</span>
+      </header>
+      <main className="site-main">
       <h1>Workspaces</h1>
       <p className="subtitle">
         Each workspace owns one GTM brain: soul, ICP, voice, history, now.
@@ -90,6 +95,7 @@ export default function HomePage() {
           ))}
         </ul>
       )}
+      </main>
     </>
   );
 }

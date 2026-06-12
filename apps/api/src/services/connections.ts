@@ -46,8 +46,67 @@ export function getConnection(
   return row ? rowToConnection(row) : undefined;
 }
 
-function integrationKeyFor(provider: ConnectorProvider): string {
+export function integrationKeyFor(provider: ConnectorProvider): string {
   return `tuezday-${provider.key}`;
+}
+
+// Per-provider OAuth app credentials live in the root .env only — they are
+// provisioned into Nango at connect time and never stored in Tuezday's DB.
+const OAUTH_ENV: Record<string, { id: string; secret: string }> = {
+  reddit: { id: "REDDIT_CLIENT_ID", secret: "REDDIT_CLIENT_SECRET" },
+};
+
+export function oauthAppCredentials(
+  providerKey: string,
+): { clientId: string; clientSecret: string } | undefined {
+  const envKeys = OAUTH_ENV[providerKey];
+  if (!envKeys) return undefined;
+  const clientId = process.env[envKeys.id]?.trim();
+  const clientSecret = process.env[envKeys.secret]?.trim();
+  return clientId && clientSecret ? { clientId, clientSecret } : undefined;
+}
+
+/**
+ * Register a connection the OAuth popup created. Nango generated the
+ * connection id; Tuezday only stores the state row (reviving a disconnected
+ * one, like key-paste reconnect).
+ */
+export function registerOAuthConnection(
+  db: Db,
+  workspaceId: string,
+  provider: ConnectorProvider,
+  nangoConnectionId: string,
+): Connection {
+  const existing = db
+    .select()
+    .from(connections)
+    .where(
+      and(eq(connections.workspaceId, workspaceId), eq(connections.providerKey, provider.key)),
+    )
+    .get();
+  const now = Date.now();
+
+  if (existing) {
+    db.update(connections)
+      .set({ nangoConnectionId, status: "connected", lastError: null, lastCheckedAt: now })
+      .where(eq(connections.id, existing.id))
+      .run();
+    return getConnection(db, workspaceId, existing.id)!;
+  }
+
+  const row: ConnectionRow = {
+    id: randomUUID(),
+    workspaceId,
+    providerKey: provider.key,
+    nangoConnectionId,
+    configJson: "{}",
+    status: "connected",
+    lastCheckedAt: now,
+    lastError: null,
+    createdAt: now,
+  };
+  db.insert(connections).values(row).run();
+  return rowToConnection(row);
 }
 
 /**
@@ -68,9 +127,11 @@ export async function connectProvider(
   const credentials: ImportCredentials =
     provider.authMode === "none"
       ? { type: "NONE" }
-      : input.apiKey
-        ? { type: "API_KEY", apiKey: input.apiKey }
-        : { type: "BASIC", username: input.username!, password: input.password! };
+      : provider.authMode === "access_token"
+        ? { type: "OAUTH2", accessToken: input.accessToken! }
+        : input.apiKey
+          ? { type: "API_KEY", apiKey: input.apiKey }
+          : { type: "BASIC", username: input.username!, password: input.password! };
 
   const existing = db
     .select()

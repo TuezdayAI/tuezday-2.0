@@ -3,6 +3,7 @@ import {
   type ConnectorFabric,
   type FabricHealth,
   type ImportCredentials,
+  type IntegrationOAuthCredentials,
   type ProxyJsonResult,
   type ProxyResult,
 } from "./fabric";
@@ -50,17 +51,44 @@ export class NangoFabric implements ConnectorFabric {
     }
   }
 
-  async ensureIntegration(uniqueKey: string, provider: string): Promise<void> {
+  async ensureIntegration(
+    uniqueKey: string,
+    provider: string,
+    oauth?: IntegrationOAuthCredentials,
+  ): Promise<void> {
+    const credentials = oauth
+      ? {
+          credentials: {
+            type: "OAUTH2",
+            client_id: oauth.clientId,
+            client_secret: oauth.clientSecret,
+            scopes: oauth.scopes,
+          },
+        }
+      : {};
+
     const existing = await this.fetcher(`${this.baseUrl}/integrations/${uniqueKey}`, {
       headers: this.headers(),
       signal: AbortSignal.timeout(10_000),
     });
-    if (existing.ok) return;
+    if (existing.ok) {
+      // Keep the OAuth app creds current (the founder may rotate them in
+      // .env). Best-effort: older Nango builds without PATCH still work.
+      if (oauth) {
+        await this.fetcher(`${this.baseUrl}/integrations/${uniqueKey}`, {
+          method: "PATCH",
+          headers: this.headers({ "Content-Type": "application/json" }),
+          body: JSON.stringify(credentials),
+          signal: AbortSignal.timeout(10_000),
+        }).catch(() => undefined);
+      }
+      return;
+    }
 
     const res = await this.fetcher(`${this.baseUrl}/integrations`, {
       method: "POST",
       headers: this.headers({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ unique_key: uniqueKey, provider }),
+      body: JSON.stringify({ unique_key: uniqueKey, provider, ...credentials }),
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) {
@@ -73,19 +101,54 @@ export class NangoFabric implements ConnectorFabric {
     }
   }
 
+  async createConnectSession(integrationKey: string, endUserId: string): Promise<{ token: string }> {
+    const res = await this.fetcher(`${this.baseUrl}/connect/sessions`, {
+      method: "POST",
+      headers: this.headers({ "Content-Type": "application/json" }),
+      body: JSON.stringify({
+        end_user: { id: endUserId },
+        allowed_integrations: [integrationKey],
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    const text = await res.text().catch(() => "");
+    if (!res.ok) {
+      throw new ConnectorFabricError(
+        `Nango could not create a connect session (${res.status}): ${text.slice(0, 200)}`,
+      );
+    }
+    let token: string | undefined;
+    try {
+      token = (JSON.parse(text) as { data?: { token?: string } }).data?.token;
+    } catch {
+      token = undefined;
+    }
+    if (!token) {
+      throw new ConnectorFabricError("Nango's connect session response had no token.");
+    }
+    return { token };
+  }
+
   async importConnection(
     providerConfigKey: string,
     connectionId: string,
     credentials: ImportCredentials,
     connectionConfig?: Record<string, string>,
   ): Promise<void> {
+    // OAuth2 token imports: Nango's import endpoint reads snake_case
+    // access_token while proxy templates interpolate ${accessToken} — send
+    // both casings (extra keys are harmless on import).
+    const wireCredentials =
+      credentials.type === "OAUTH2"
+        ? { type: "OAUTH2", access_token: credentials.accessToken, accessToken: credentials.accessToken }
+        : credentials;
     const res = await this.fetcher(`${this.baseUrl}/connections`, {
       method: "POST",
       headers: this.headers({ "Content-Type": "application/json" }),
       body: JSON.stringify({
         provider_config_key: providerConfigKey,
         connection_id: connectionId,
-        credentials,
+        credentials: wireCredentials,
         ...(connectionConfig ? { connection_config: connectionConfig } : {}),
       }),
       signal: AbortSignal.timeout(15_000),
@@ -139,17 +202,35 @@ export class NangoFabric implements ConnectorFabric {
     path: string,
     connectionId: string,
     providerConfigKey: string,
-    opts: { body?: unknown; baseUrlOverride?: string } = {},
+    opts: {
+      body?: unknown;
+      form?: Record<string, string>;
+      headers?: Record<string, string>;
+      baseUrlOverride?: string;
+    } = {},
   ): Promise<ProxyJsonResult> {
+    const wireBody =
+      opts.form !== undefined
+        ? new URLSearchParams(opts.form).toString()
+        : opts.body !== undefined
+          ? JSON.stringify(opts.body)
+          : undefined;
+    const contentType =
+      opts.form !== undefined
+        ? "application/x-www-form-urlencoded"
+        : opts.body !== undefined
+          ? "application/json"
+          : undefined;
     const res = await this.fetcher(`${this.baseUrl}/proxy${path}`, {
       method,
       headers: this.headers({
         "Connection-Id": connectionId,
         "Provider-Config-Key": providerConfigKey,
         ...(opts.baseUrlOverride ? { "Base-Url-Override": opts.baseUrlOverride } : {}),
-        ...(opts.body !== undefined ? { "Content-Type": "application/json" } : {}),
+        ...(contentType ? { "Content-Type": contentType } : {}),
+        ...(opts.headers ?? {}),
       }),
-      ...(opts.body !== undefined ? { body: JSON.stringify(opts.body) } : {}),
+      ...(wireBody !== undefined ? { body: wireBody } : {}),
       signal: AbortSignal.timeout(30_000),
     });
     const text = await res.text().catch(() => "");

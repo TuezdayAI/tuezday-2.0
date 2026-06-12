@@ -1,56 +1,75 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import type { BrainDocType, BrainDocVersion, BrainDocument, Workspace } from "@tuezday/contracts";
-import { BRAIN_DOC_META, type BrainScore } from "@tuezday/brain";
+import type {
+  Campaign,
+  Draft,
+  Generation,
+  NowSynthesis,
+  Persona,
+  Workspace,
+} from "@tuezday/contracts";
+import type { BrainScore } from "@tuezday/brain";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 interface BrainView {
-  docs: BrainDocument[];
   completeness: BrainScore;
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  empty: "empty",
+interface HomeData {
+  workspace: Workspace;
+  brain: BrainView;
+  personas: Persona[];
+  generations: Generation[];
+  drafts: Draft[];
+  newSignals: number;
+  syntheses: NowSynthesis[];
+  campaigns: Campaign[];
+}
+
+const STATE_LABEL: Record<string, string> = {
   draft: "draft",
-  complete: "complete",
+  pending_review: "waiting for review",
+  approved: "approved",
+  rejected: "rejected",
+  edited: "edited",
 };
 
-export default function WorkspaceBrainPage() {
+export default function WorkspaceHomePage() {
   const { id } = useParams<{ id: string }>();
-
-  const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const [brain, setBrain] = useState<BrainView | null>(null);
-  const [selected, setSelected] = useState<BrainDocType>("soul");
-  const [draft, setDraft] = useState("");
-  const [saving, setSaving] = useState(false);
+  const [data, setData] = useState<HomeData | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [versions, setVersions] = useState<BrainDocVersion[] | null>(null);
-  const [showHistory, setShowHistory] = useState(false);
-  const [previewVersion, setPreviewVersion] = useState<BrainDocVersion | null>(null);
-
-  const selectedDoc = useMemo(
-    () => brain?.docs.find((d) => d.docType === selected) ?? null,
-    [brain, selected],
-  );
-  const selectedMeta = BRAIN_DOC_META.find((m) => m.docType === selected)!;
-  const dirty = selectedDoc !== null && draft !== selectedDoc.content;
 
   const load = useCallback(async () => {
     try {
-      const [wsRes, brainRes] = await Promise.all([
-        fetch(`${API_URL}/workspaces/${id}`),
-        fetch(`${API_URL}/workspaces/${id}/brain`),
-      ]);
-      if (!wsRes.ok || !brainRes.ok) throw new Error("not found");
-      setWorkspace(await wsRes.json());
-      setBrain(await brainRes.json());
+      const [ws, brain, personas, generations, drafts, signals, syntheses, campaigns] =
+        await Promise.all([
+          fetch(`${API_URL}/workspaces/${id}`),
+          fetch(`${API_URL}/workspaces/${id}/brain`),
+          fetch(`${API_URL}/workspaces/${id}/personas`),
+          fetch(`${API_URL}/workspaces/${id}/generations`),
+          fetch(`${API_URL}/workspaces/${id}/drafts`),
+          fetch(`${API_URL}/workspaces/${id}/discovery/items?status=new`),
+          fetch(`${API_URL}/workspaces/${id}/learning/syntheses`),
+          fetch(`${API_URL}/workspaces/${id}/campaigns`),
+        ]);
+      if (!ws.ok || !brain.ok) throw new Error("not found");
+      setData({
+        workspace: await ws.json(),
+        brain: await brain.json(),
+        personas: personas.ok ? await personas.json() : [],
+        generations: generations.ok ? await generations.json() : [],
+        drafts: drafts.ok ? await drafts.json() : [],
+        newSignals: signals.ok ? ((await signals.json()) as unknown[]).length : 0,
+        syntheses: syntheses.ok ? await syntheses.json() : [],
+        campaigns: campaigns.ok ? await campaigns.json() : [],
+      });
       setError(null);
     } catch {
-      setError(`Could not load this workspace from ${API_URL}.`);
+      setError(`Could not load this workspace from ${API_URL}. Is "npm run dev" running?`);
     }
   }, [id]);
 
@@ -58,58 +77,7 @@ export default function WorkspaceBrainPage() {
     void load();
   }, [load]);
 
-  // When the loaded doc or selection changes, reset the editor to saved content.
-  useEffect(() => {
-    if (selectedDoc) setDraft(selectedDoc.content);
-    setShowHistory(false);
-    setPreviewVersion(null);
-    setVersions(null);
-  }, [selectedDoc?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function save(content: string) {
-    setSaving(true);
-    setError(null);
-    try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/brain/${selected}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.message ?? `API returned ${res.status}`);
-      }
-      await load();
-      setDraft(content);
-      if (showHistory) await loadVersions();
-    } catch (err) {
-      // A TypeError from fetch means the request never reached the API
-      // (server down, wrong port, or a blocked CORS preflight).
-      if (err instanceof TypeError) {
-        setError(
-          `Could not reach the API at ${API_URL}. Check that "npm run dev" is running and the browser console for CORS errors.`,
-        );
-      } else {
-        setError(err instanceof Error ? err.message : "Failed to save");
-      }
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  async function loadVersions() {
-    const res = await fetch(`${API_URL}/workspaces/${id}/brain/${selected}/versions`);
-    if (res.ok) setVersions(await res.json());
-  }
-
-  async function toggleHistory() {
-    const next = !showHistory;
-    setShowHistory(next);
-    setPreviewVersion(null);
-    if (next && versions === null) await loadVersions();
-  }
-
-  if (error && !brain) {
+  if (error) {
     return (
       <>
         <p className="error">{error}</p>
@@ -118,134 +86,147 @@ export default function WorkspaceBrainPage() {
     );
   }
 
-  if (!brain || !workspace) return <p className="empty">Loading…</p>;
+  if (!data) return <p className="empty">Loading…</p>;
+
+  const { workspace, brain, personas, generations, drafts, newSignals, syntheses, campaigns } =
+    data;
+
+  const brainFilled =
+    brain.completeness.percent >= 60 ||
+    brain.completeness.docs.every((d) => d.status !== "empty");
+  const hasVoice = personas.length > 0;
+  const hasDraft = generations.length > 0;
+  const hasDecision = drafts.some((d) => d.state !== "pending_review" && d.state !== "draft");
+
+  const steps = [
+    {
+      done: brainFilled,
+      title: "Teach Tuezday your company",
+      hint: `Fill in the five brain docs — ${brain.completeness.percent}% complete`,
+      href: `/workspaces/${id}/brain`,
+    },
+    {
+      done: hasVoice,
+      title: "Add a voice",
+      hint: "Create a persona Tuezday can write as",
+      href: `/workspaces/${id}/resolver`,
+    },
+    {
+      done: hasDraft,
+      title: "Generate your first draft",
+      hint: "Try the Playground — see exactly what Tuezday used",
+      href: `/workspaces/${id}/sandbox`,
+    },
+    {
+      done: hasDecision,
+      title: "Make your first decision",
+      hint: "Approve, edit, or reject a draft in Review",
+      href: `/workspaces/${id}/approvals`,
+    },
+  ];
+  const setupDone = steps.every((s) => s.done);
+
+  const pendingReview = drafts.filter((d) => d.state === "pending_review").length;
+  const proposedUpdates = syntheses.filter((s) => s.status === "proposed").length;
+  const activeCampaigns = campaigns.filter((c) => c.status === "active").length;
+
+  const recentDrafts = [...drafts].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5);
 
   return (
     <>
-      <div className="brain-header">
+      <div className="page-header">
         <div>
-          <p className="breadcrumb">
-            <Link href="/">Workspaces</Link> / {workspace.name}
-          </p>
-          <h1>{workspace.name} — Brain</h1>
-          <p className="subtitle">
-            Brain completeness: <strong>{brain.completeness.percent}%</strong>
-          </p>
-        </div>
-        <div className="persona-actions">
-          <Link className="button-secondary" href={`/workspaces/${id}/resolver`}>
-            Resolver
-          </Link>
-          <Link className="button-secondary" href={`/workspaces/${id}/sandbox`}>
-            Sandbox
-          </Link>
-          <Link className="button-secondary" href={`/workspaces/${id}/approvals`}>
-            Approvals
-          </Link>
-          <Link className="button-secondary" href={`/workspaces/${id}/content`}>
-            Content
-          </Link>
-          <Link className="button-secondary" href={`/workspaces/${id}/discovery`}>
-            Discovery
-          </Link>
-          <Link className="button-secondary" href={`/workspaces/${id}/campaigns`}>
-            Campaigns
-          </Link>
-          <Link className="button-secondary" href={`/workspaces/${id}/evidence`}>
-            Evidence
-          </Link>
-          <Link className="button-secondary" href={`/workspaces/${id}/learning`}>
-            Learning
-          </Link>
-          <Link className="button-secondary" href={`/workspaces/${id}/outbound`}>
-            Outbound
-          </Link>
-          <Link className="button-secondary" href={`/workspaces/${id}/crm`}>
-            CRM
-          </Link>
-          <Link className="button-secondary" href={`/workspaces/${id}/connectors`}>
-            Connectors →
-          </Link>
-          <a className="button-secondary" href={`${API_URL}/workspaces/${id}/brain/export`}>
-            Export brain (.md)
-          </a>
+          <h1>Home</h1>
+          <p className="subtitle">What needs your attention in {workspace.name} today.</p>
         </div>
       </div>
 
-      <div className="brain-layout">
-        <nav className="doc-nav">
-          {BRAIN_DOC_META.map((meta) => {
-            const score = brain.completeness.docs.find((d) => d.docType === meta.docType);
-            return (
-              <button
-                key={meta.docType}
-                className={`doc-nav-item ${selected === meta.docType ? "active" : ""}`}
-                onClick={() => setSelected(meta.docType)}
-              >
-                <span className="doc-title">{meta.title}</span>
-                <span className={`doc-status status-${score?.status}`}>
-                  {STATUS_LABEL[score?.status ?? "empty"]}
-                </span>
-              </button>
-            );
-          })}
-        </nav>
-
-        <section className="doc-editor">
-          <p className="doc-description">{selectedMeta.description}</p>
-
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder={`Write the ${selectedMeta.title} doc in markdown…`}
-            rows={18}
-          />
-
-          {error && <p className="error">{error}</p>}
-
-          <div className="editor-actions">
-            <button onClick={() => save(draft)} disabled={saving || !dirty}>
-              {saving ? "Saving…" : dirty ? "Save" : "Saved"}
-            </button>
-            <button className="button-secondary" onClick={toggleHistory}>
-              {showHistory ? "Hide history" : "History"}
-            </button>
-            {dirty && <span className="unsaved">Unsaved changes</span>}
-          </div>
-
-          {showHistory && (
-            <div className="history">
-              {versions === null ? (
-                <p className="empty">Loading versions…</p>
-              ) : versions.length === 0 ? (
-                <p className="empty">No saved versions yet. Versions appear after the first save.</p>
-              ) : (
-                <ul className="version-list">
-                  {versions.map((v) => (
-                    <li key={v.id} className={previewVersion?.id === v.id ? "active" : ""}>
-                      <button onClick={() => setPreviewVersion(v)}>
-                        v{v.version} — {new Date(v.createdAt).toLocaleString()}
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              {previewVersion && (
-                <div className="version-preview">
-                  <pre>{previewVersion.content || "(empty)"}</pre>
-                  <button
-                    className="button-secondary"
-                    disabled={saving}
-                    onClick={() => save(previewVersion.content)}
-                  >
-                    Restore v{previewVersion.version}
-                  </button>
-                </div>
-              )}
-            </div>
-          )}
+      {!setupDone && (
+        <section className="panel">
+          <h2>Get set up</h2>
+          <ul className="checklist">
+            {steps.map((step) => (
+              <li key={step.title}>
+                <Link
+                  className={`checklist-item ${step.done ? "done" : ""}`}
+                  href={step.href}
+                >
+                  <span className="check-dot">{step.done ? "✓" : ""}</span>
+                  <span>
+                    <span className="step-title">{step.title}</span>
+                    <br />
+                    <span className="step-hint">{step.hint}</span>
+                  </span>
+                </Link>
+              </li>
+            ))}
+          </ul>
         </section>
+      )}
+
+      <div className="home-grid">
+        <Link
+          className={`stat-card ${pendingReview > 0 ? "attention" : ""}`}
+          href={`/workspaces/${id}/approvals`}
+        >
+          <span className="stat-number">{pendingReview}</span>
+          <span className="stat-label">Waiting for review</span>
+          <span className="stat-hint">Drafts that need a decision from you</span>
+        </Link>
+        <Link className="stat-card" href={`/workspaces/${id}/discovery`}>
+          <span className="stat-number">{newSignals}</span>
+          <span className="stat-label">New signals</span>
+          <span className="stat-hint">Things happening in your market</span>
+        </Link>
+        <Link className="stat-card" href={`/workspaces/${id}/learning`}>
+          <span className="stat-number">{proposedUpdates}</span>
+          <span className="stat-label">Proposed brain updates</span>
+          <span className="stat-hint">What Tuezday learned from your decisions</span>
+        </Link>
+        <Link className="stat-card" href={`/workspaces/${id}/campaigns`}>
+          <span className="stat-number">{activeCampaigns}</span>
+          <span className="stat-label">Active campaigns</span>
+          <span className="stat-hint">GTM goals currently in play</span>
+        </Link>
       </div>
+
+      <section className="panel">
+        <div className="panel-title-row">
+          <h2>Recent drafts</h2>
+          <Link className="button-secondary" href={`/workspaces/${id}/content`}>
+            Create something
+          </Link>
+        </div>
+        {recentDrafts.length === 0 ? (
+          <p className="empty">
+            Nothing here yet. Drafts appear as soon as you create something — try the Playground
+            or paste a signal in Create.
+          </p>
+        ) : (
+          <ul className="section-list">
+            {recentDrafts.map((draft) => (
+              <li key={draft.id} className="section-card">
+                <div className="section-head">
+                  <span className="section-title">
+                    {draft.taskType.replace(/_/g, " ")} · {draft.channel}
+                  </span>
+                  <span className={`layer-badge state-${draft.state}`}>
+                    {STATE_LABEL[draft.state] ?? draft.state}
+                  </span>
+                  <span className="section-tokens">
+                    {new Date(draft.createdAt).toLocaleDateString()}
+                  </span>
+                </div>
+                <p className="section-reason">
+                  {draft.content.length > 160
+                    ? `${draft.content.slice(0, 160)}…`
+                    : draft.content}
+                </p>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
     </>
   );
 }

@@ -139,7 +139,7 @@ export default function OutboundPage() {
       const ok = body.results.filter((r: { draftId?: string }) => r.draftId).length;
       const failed = body.results.length - ok;
       setDraftSummary(
-        `${ok} draft(s) created in the approval queue${failed ? `, ${failed} failed (retry those leads)` : ""}.`,
+        `${ok} draft(s) sent to Review${failed ? `, ${failed} failed (retry those leads)` : ""}.`,
       );
       setSelected({});
       await load();
@@ -170,25 +170,15 @@ export default function OutboundPage() {
 
   return (
     <>
-      <div className="brain-header">
+      <div className="page-header">
         <div>
-          <p className="breadcrumb">
-            <Link href="/">Workspaces</Link> /{" "}
-            <Link href={`/workspaces/${id}`}>{workspace.name}</Link> / Outbound
-          </p>
-          <h1>Outbound</h1>
+          <h1>Audience</h1>
           <p className="subtitle">
-            The same brain, personalized per lead. Drafts flow through the approval queue; sending
-            stays in your sender of choice.
+            Your leads and contacts, with outreach drafted in your voice per person. Drafts go
+            through Review; sending stays in your sender of choice.
           </p>
         </div>
-        <div className="persona-actions">
-          <Link className="button-secondary" href={`/workspaces/${id}`}>
-            ← Brain
-          </Link>
-          <Link className="button-secondary" href={`/workspaces/${id}/approvals`}>
-            Approvals
-          </Link>
+        <div className="page-actions">
           {approvedCount > 0 && (
             <a
               className="button-secondary"

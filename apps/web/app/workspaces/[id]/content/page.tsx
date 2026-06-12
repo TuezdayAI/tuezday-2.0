@@ -6,10 +6,14 @@ import { useParams } from "next/navigation";
 import {
   CHANNELS,
   SIGNAL_SOURCES,
+  SOCIAL_POST_CONSTRAINTS,
   type ApprovalState,
   type Campaign,
   type Channel,
+  type Connection,
+  type ConnectorProvider,
   type Persona,
+  type Publication,
   type SignalSource,
   type Workspace,
 } from "@tuezday/contracts";
@@ -42,6 +46,16 @@ interface SignalView {
   drafts: { id: string; state: ApprovalState; channel: Channel; createdAt: number }[];
 }
 
+interface PublicationView extends Publication {
+  draft: { id: string; taskType: string; channel: string; content: string } | null;
+}
+
+const PUBLICATION_BADGES: Record<Publication["status"], string> = {
+  scheduled: "state-edited",
+  published: "state-approved",
+  failed: "state-rejected",
+};
+
 export default function ContentPage() {
   const { id } = useParams<{ id: string }>();
 
@@ -65,19 +79,45 @@ export default function ContentPage() {
   const [generating, setGenerating] = useState(false);
   const [copied, setCopied] = useState<string | null>(null);
 
+  // publish controls per draft
+  const [socialConnections, setSocialConnections] = useState<Connection[]>([]);
+  const [publications, setPublications] = useState<PublicationView[]>([]);
+  const [publishingFor, setPublishingFor] = useState<string | null>(null);
+  const [pubConnectionId, setPubConnectionId] = useState("");
+  const [pubTarget, setPubTarget] = useState("");
+  const [pubTitle, setPubTitle] = useState("");
+  const [pubSchedule, setPubSchedule] = useState("");
+  const [publishing, setPublishing] = useState(false);
+  const [publishError, setPublishError] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     try {
-      const [wsRes, pRes, sRes, cRes] = await Promise.all([
+      const [wsRes, pRes, sRes, cRes, connRes, pubRes] = await Promise.all([
         fetch(`${API_URL}/workspaces/${id}`),
         fetch(`${API_URL}/workspaces/${id}/personas`),
         fetch(`${API_URL}/workspaces/${id}/signals`),
         fetch(`${API_URL}/workspaces/${id}/campaigns`),
+        fetch(`${API_URL}/workspaces/${id}/connectors`),
+        fetch(`${API_URL}/workspaces/${id}/publications`),
       ]);
       if (!wsRes.ok || !pRes.ok || !sRes.ok || !cRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
       setPersonas(await pRes.json());
       setSignalsList(await sRes.json());
       setCampaigns(((await cRes.json()) as Campaign[]).filter((c) => c.status === "active"));
+      if (connRes.ok) {
+        const view = (await connRes.json()) as {
+          providers: ConnectorProvider[];
+          connections: Connection[];
+        };
+        const socialKeys = new Set(
+          view.providers.filter((p) => p.categories?.includes("social")).map((p) => p.key),
+        );
+        setSocialConnections(
+          view.connections.filter((c) => socialKeys.has(c.providerKey) && c.status === "connected"),
+        );
+      }
+      if (pubRes.ok) setPublications(await pubRes.json());
       setError(null);
     } catch {
       setError(`Could not load this workspace from ${API_URL}. Is "npm run dev" running?`);
@@ -152,6 +192,66 @@ export default function ContentPage() {
     setTimeout(() => setCopied(null), 2000);
   }
 
+  /** Open the publish form, prefilling the title from the draft's first line. */
+  async function openPublish(draftId: string) {
+    const text = await fetchDraftContent(draftId);
+    const constraints = SOCIAL_POST_CONSTRAINTS.reddit;
+    setPubTitle((text ?? "").split("\n")[0]!.trim().slice(0, constraints.titleMaxChars));
+    setPubTarget("");
+    setPubSchedule("");
+    setPubConnectionId(socialConnections[0]?.id ?? "");
+    setPublishError(null);
+    setPublishingFor(draftId);
+  }
+
+  async function publishDraft(draftId: string) {
+    setPublishing(true);
+    setPublishError(null);
+    try {
+      const scheduledFor = pubSchedule ? new Date(pubSchedule).getTime() : undefined;
+      const res = await fetch(`${API_URL}/workspaces/${id}/drafts/${draftId}/publish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          connectionId: pubConnectionId,
+          target: pubTarget.trim().replace(/^r\//, ""),
+          title: pubTitle.trim(),
+          ...(scheduledFor ? { scheduledFor } : {}),
+        }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message ?? `API returned ${res.status}`);
+      if (body.status === "failed") {
+        throw new Error(body.lastError ?? "The platform refused the post.");
+      }
+      setPublishingFor(null);
+      await load();
+    } catch (err) {
+      setPublishError(err instanceof Error ? err.message : "Publish failed");
+      await load(); // a failed attempt still leaves a receipt to show
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  async function retryPublication(publicationId: string) {
+    setPublishing(true);
+    try {
+      await fetch(`${API_URL}/workspaces/${id}/publications/${publicationId}/retry`, {
+        method: "POST",
+      });
+      await load();
+    } finally {
+      setPublishing(false);
+    }
+  }
+
+  async function cancelPublication(publicationId: string) {
+    if (!confirm("Cancel this scheduled post?")) return;
+    await fetch(`${API_URL}/workspaces/${id}/publications/${publicationId}`, { method: "DELETE" });
+    await load();
+  }
+
   async function downloadDraft(draftId: string, channel: string) {
     const text = await fetchDraftContent(draftId);
     if (text === null) return;
@@ -175,28 +275,13 @@ export default function ContentPage() {
 
   return (
     <>
-      <div className="brain-header">
+      <div className="page-header">
         <div>
-          <p className="breadcrumb">
-            <Link href="/">Workspaces</Link> /{" "}
-            <Link href={`/workspaces/${id}`}>{workspace.name}</Link> / Content
-          </p>
-          <h1>Content</h1>
+          <h1>Create</h1>
           <p className="subtitle">
-            Paste a market signal → Tuezday drafts your response through the brain → approve →
-            ship it.
+            Turn a market signal into a post, email, or ad in your voice. Every draft goes to
+            Review before it ships.
           </p>
-        </div>
-        <div className="persona-actions">
-          <Link className="button-secondary" href={`/workspaces/${id}`}>
-            ← Brain
-          </Link>
-          <Link className="button-secondary" href={`/workspaces/${id}/discovery`}>
-            Discovery
-          </Link>
-          <Link className="button-secondary" href={`/workspaces/${id}/approvals`}>
-            Approvals
-          </Link>
         </div>
       </div>
 
@@ -286,8 +371,106 @@ export default function ContentPage() {
                               onClick={() => downloadDraft(d.id, d.channel)}
                             >
                               download .md
+                            </button>{" "}
+                            <button className="link-button" onClick={() => openPublish(d.id)}>
+                              publish…
                             </button>
+                            {publications
+                              .filter((p) => p.draftId === d.id)
+                              .map((p) => (
+                                <span
+                                  key={p.id}
+                                  className={`layer-badge ${PUBLICATION_BADGES[p.status]}`}
+                                  style={{ marginLeft: 6 }}
+                                >
+                                  {p.status === "published" && p.externalUrl ? (
+                                    <a href={p.externalUrl} target="_blank" rel="noreferrer">
+                                      live on r/{p.target}
+                                    </a>
+                                  ) : p.status === "scheduled" ? (
+                                    `scheduled · r/${p.target}`
+                                  ) : (
+                                    `failed · r/${p.target}`
+                                  )}
+                                </span>
+                              ))}
                           </>
+                        )}
+                        {publishingFor === d.id && (
+                          <div className="resolve-controls" style={{ marginTop: 10 }}>
+                            {socialConnections.length === 0 ? (
+                              <p className="empty">
+                                No social account connected.{" "}
+                                <Link href={`/workspaces/${id}/connectors`}>
+                                  Connect Reddit on the Integrations page
+                                </Link>{" "}
+                                first.
+                              </p>
+                            ) : (
+                              <>
+                                <label>
+                                  Account
+                                  <select
+                                    value={pubConnectionId}
+                                    onChange={(e) => setPubConnectionId(e.target.value)}
+                                  >
+                                    {socialConnections.map((c) => (
+                                      <option key={c.id} value={c.id}>
+                                        {c.providerKey}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label>
+                                  Subreddit
+                                  <input
+                                    value={pubTarget}
+                                    onChange={(e) => setPubTarget(e.target.value)}
+                                    placeholder="r/test"
+                                  />
+                                </label>
+                                <label style={{ flex: 1 }}>
+                                  Title ({pubTitle.length}/
+                                  {SOCIAL_POST_CONSTRAINTS.reddit.titleMaxChars})
+                                  <input
+                                    value={pubTitle}
+                                    onChange={(e) => setPubTitle(e.target.value)}
+                                  />
+                                </label>
+                                <label>
+                                  Schedule (optional)
+                                  <input
+                                    type="datetime-local"
+                                    value={pubSchedule}
+                                    onChange={(e) => setPubSchedule(e.target.value)}
+                                  />
+                                </label>
+                                <button
+                                  disabled={
+                                    publishing ||
+                                    !pubConnectionId ||
+                                    !pubTarget.trim() ||
+                                    !pubTitle.trim() ||
+                                    pubTitle.length > SOCIAL_POST_CONSTRAINTS.reddit.titleMaxChars
+                                  }
+                                  onClick={() => publishDraft(d.id)}
+                                >
+                                  {publishing
+                                    ? "Publishing…"
+                                    : pubSchedule
+                                      ? "Schedule"
+                                      : "Post now"}
+                                </button>
+                              </>
+                            )}
+                            <button
+                              className="button-secondary"
+                              onClick={() => setPublishingFor(null)}
+                            >
+                              Cancel
+                            </button>
+                            {publishError && <p className="error">{publishError}</p>}
+                          </div>
                         )}
                       </li>
                     ))}
@@ -356,6 +539,63 @@ export default function ContentPage() {
                     </button>
                   </div>
                 )}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="panel">
+        <h2>Published</h2>
+        {publications.length === 0 ? (
+          <p className="empty">
+            Nothing published yet. Approve a draft, then use publish… to post it to a connected
+            social account.
+          </p>
+        ) : (
+          <ul className="section-list">
+            {publications.map((p) => (
+              <li key={p.id} className="section-card">
+                <div className="section-head">
+                  <span className={`layer-badge ${PUBLICATION_BADGES[p.status]}`}>{p.status}</span>
+                  <span className="section-title">{p.title}</span>
+                  <span className="section-tokens">
+                    {p.providerKey} · r/{p.target}
+                  </span>
+                </div>
+                <p className="section-reason">
+                  {p.status === "published" && p.externalUrl && (
+                    <>
+                      Live at{" "}
+                      <a href={p.externalUrl} target="_blank" rel="noreferrer">
+                        {p.externalUrl}
+                      </a>{" "}
+                      ({new Date(p.publishedAt ?? p.updatedAt).toLocaleString()})
+                    </>
+                  )}
+                  {p.status === "scheduled" &&
+                    `Posts at ${new Date(p.scheduledFor).toLocaleString()}`}
+                  {p.status === "failed" && (p.lastError ?? "The platform refused the post.")}
+                </p>
+                <div className="rating-row" style={{ marginTop: 8 }}>
+                  {p.status === "failed" && (
+                    <button
+                      className="button-secondary"
+                      disabled={publishing}
+                      onClick={() => retryPublication(p.id)}
+                    >
+                      Retry
+                    </button>
+                  )}
+                  {p.status === "scheduled" && (
+                    <button
+                      className="button-secondary danger"
+                      onClick={() => cancelPublication(p.id)}
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
               </li>
             ))}
           </ul>

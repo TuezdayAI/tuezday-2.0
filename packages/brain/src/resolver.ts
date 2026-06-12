@@ -1,7 +1,11 @@
 ﻿import {
+  AD_CREATIVE_FORMATS,
   BRAIN_DOC_TYPES,
   DEFAULT_TOKEN_BUDGET,
+  type AdCreativeTaskType,
   type Channel,
+  type MediaContactType,
+  type PrPitchType,
   type TaskType,
 } from "@tuezday/contracts";
 import { BRAIN_DOC_META, type BrainContents } from "./index";
@@ -19,7 +23,63 @@ export const CHANNEL_GUIDANCE: Record<Channel, string> = {
     "Channel: Email. One reader at a time. Subject and opener decide everything. Short lines, one clear ask, no marketing gloss. Write like a competent person, not a campaign.",
   ads: "Channel: Paid ads. Hook, promise, proof, action - in very few words. One message per variant. Clarity beats cleverness.",
   web: "Channel: Website. Visitors scan. Headline carries the positioning, subhead carries the proof. Concrete claims over adjectives.",
+  pr: "Channel: PR / media pitch. The reader is a journalist triaging a full inbox. The subject line IS the story. Lead with why their readers care, not why the company is proud. Short, factual, zero marketing language - never call your own news exciting. Make the journalist's job easy: the angle, the proof, who they can talk to.",
 };
+
+/**
+ * Compose the pr_pitch task instruction for a pitch type. A shared spine
+ * (subject + short body, personalize only from the contact facts, one
+ * low-friction ask) plus the per-type angle - visible in the context trace
+ * like any other section.
+ */
+export function composePrPitchInstruction(pitchType: PrPitchType): string {
+  const angles: Record<PrPitchType, string> = {
+    announcement:
+      "Frame the company's news (see the campaign and Right Now context) as a story for this contact's beat and their outlet's readers - the angle is what it changes for them, not the announcement itself.",
+    thought_leadership:
+      "Pitch the sender as a source: one sharp, earned point of view from the company's history and convictions, relevant to this contact's beat, offered as expert comment or a contributed piece.",
+    reactive:
+      "Respond to the market signal above: offer the sender's specific take on the developing story, connect it to this contact's beat, and make the timeliness explicit without manufactured urgency.",
+  };
+  return (
+    "Task: Write a short personalized media pitch email to the contact above: a subject line (prefix 'Subject: ') and a body of at most 150 words. " +
+    `${angles[pitchType]} ` +
+    "Personalize ONLY from the contact facts given - never invent past coverage, mutual contacts, or relationships. " +
+    "Reference the contact's beat where it is genuinely relevant. One clear low-friction ask (an interview, a comment, the full story). " +
+    "No flattery openers, no superlatives, no attachments mentioned. Return only the subject and body - no preamble or commentary."
+  );
+}
+
+/**
+ * Compose the task instruction for an ad creative task from the contract's
+ * format table, so the limits in the prompt and the limits enforced at the
+ * approval gate are provably the same numbers.
+ */
+export function composeAdCreativeInstruction(
+  taskType: AdCreativeTaskType,
+  variantCount?: number,
+): string {
+  const format = AD_CREATIVE_FORMATS[taskType];
+  const fieldLines = format.fields.map((f) => {
+    const occurrences =
+      f.maxCount > 1
+        ? `${f.label} 1: through ${f.label} ${f.maxCount}: (${f.maxCount} ${f.label.toLowerCase()}s, max ${f.maxChars} characters each)`
+        : `${f.label}: (max ${f.maxChars} characters)`;
+    return occurrences;
+  });
+  const count = variantCount ?? format.variantCount?.default;
+  const opening = format.variantCount
+    ? `Task: Write ${count} distinct ${format.label} variants grounded in the context above, each taking a different angle on the campaign's offer. Each variant uses exactly these labeled lines:`
+    : `Task: Write one ${format.label} asset set grounded in the context above, as labeled lines (each headline must stand alone — Google mixes them in any order):`;
+  const separator = format.variantCount
+    ? " Separate variants with a line containing only ---."
+    : "";
+  return (
+    `${opening}\n${fieldLines.join("\n")}\n` +
+    `The character limits are hard platform limits - count characters and never exceed them.${separator} ` +
+    `Return only the labeled lines${format.variantCount ? " and separators" : ""} - no preamble, numbering, or commentary.`
+  );
+}
 
 export const TASK_INSTRUCTIONS: Record<TaskType, string> = {
   linkedin_post:
@@ -34,6 +94,11 @@ export const TASK_INSTRUCTIONS: Record<TaskType, string> = {
     "Task: Write a response to the market signal above, for the requested channel, grounded in the company context. Engage with what the signal actually says - agree, push back, or add the company's earned point of view. Never sound like a brand inserting itself; sound like someone worth listening to. Return only the response text - no preamble or commentary.",
   outbound_email:
     "Task: Write a short personalized cold email to the lead above: a subject line (prefix 'Subject: ') and a body of at most 120 words. Personalize ONLY from the lead facts given - never invent meetings, mutual contacts, or details not in the data. Connect the lead's actual situation to the company's point of view, make one clear low-friction ask, and skip flattery openers. Return only the subject and body - no preamble or commentary.",
+  meta_ad_creative: composeAdCreativeInstruction("meta_ad_creative"),
+  google_rsa: composeAdCreativeInstruction("google_rsa"),
+  pr_pitch: composePrPitchInstruction("announcement"),
+  press_boilerplate:
+    "Task: Write press boilerplate for the company from the context above, in three labeled parts: 'One-liner:' (a single factual sentence saying what the company is), 'About:' (a roughly 100-word about paragraph in the third person - factual, concrete, no superlatives), and 'Key facts:' (3-5 bullet lines starting with '- '). Ground every claim in the context - never invent numbers, customers, or dates. Return only the three labeled parts - no preamble or commentary.",
 };
 
 // ---------------------------------------------------------------------------
@@ -46,6 +111,7 @@ export type ContextLayer =
   | "campaign"
   | "persona"
   | "lead"
+  | "contact"
   | "signal"
   | "evidence"
   | "task";
@@ -74,6 +140,14 @@ export interface ResolveLead {
   notes: string;
 }
 
+export interface ResolveMediaContact {
+  name: string;
+  type: MediaContactType;
+  outlet: string;
+  beat: string;
+  coverageNotes: string;
+}
+
 export interface EvidenceChunk {
   text: string;
   score: number;
@@ -95,10 +169,17 @@ export interface ResolveInput {
   persona?: ResolvePersona;
   campaign?: ResolveCampaign;
   lead?: ResolveLead;
+  mediaContact?: ResolveMediaContact;
   signal?: ResolveSignal;
   evidence?: ResolveEvidence;
   /** Why evidence is absent (store down, no docs, toggled off) — shown in the trace. */
   evidenceExclusionReason?: string;
+  /**
+   * Replaces the static TASK_INSTRUCTIONS entry — used when the instruction is
+   * composed per request (e.g. ad creative variant count). Visible in the
+   * trace like any other section.
+   */
+  taskInstruction?: string;
   tokenBudget?: number;
 }
 
@@ -234,6 +315,37 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
     });
   }
 
+  if (input.mediaContact) {
+    const contact = input.mediaContact;
+    const descriptor = [contact.type, contact.outlet.trim() ? `at ${contact.outlet.trim()}` : ""]
+      .filter(Boolean)
+      .join(" ");
+    const lines = [`Pitching: ${contact.name} — ${descriptor}`];
+    if (contact.beat.trim()) lines.push(`Beat: ${contact.beat.trim()}`);
+    if (contact.coverageNotes.trim()) lines.push(`Past coverage notes: ${contact.coverageNotes.trim()}`);
+    const contactContent = lines.join("\n");
+    sections.push({
+      key: "media_contact",
+      layer: "contact",
+      title: `Media contact: ${contact.name}`,
+      content: contactContent,
+      included: true,
+      reason:
+        "The media contact this pitch addresses. Personalize only from these facts — never invent past coverage or relationships.",
+      tokens: estimateTokens(contactContent),
+    });
+  } else {
+    sections.push({
+      key: "media_contact",
+      layer: "contact",
+      title: "Media contact",
+      content: "",
+      included: false,
+      reason: "Excluded: no media contact attached to this task.",
+      tokens: 0,
+    });
+  }
+
   if (input.signal) {
     const attribution = [`Source: ${input.signal.source}`];
     if (input.signal.sourceUrl) attribution.push(input.signal.sourceUrl);
@@ -284,14 +396,16 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
     });
   }
 
-  const taskContent = TASK_INSTRUCTIONS[input.taskType];
+  const taskContent = input.taskInstruction ?? TASK_INSTRUCTIONS[input.taskType];
   sections.push({
     key: "task",
     layer: "task",
     title: `Task: ${input.taskType}`,
     content: taskContent,
     included: true,
-    reason: "Task instruction: always included, always last.",
+    reason: input.taskInstruction
+      ? "Task instruction (composed for this request): always included, always last."
+      : "Task instruction: always included, always last.",
     tokens: estimateTokens(taskContent),
   });
 

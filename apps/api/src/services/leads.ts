@@ -47,7 +47,7 @@ export function deleteLead(db: Db, workspaceId: string, leadId: string): boolean
 // ---------------------------------------------------------------------------
 
 /** Minimal RFC-4180-ish line parser: handles quoted fields and "" escapes. */
-function parseCsvLine(line: string): string[] {
+export function parseCsvLine(line: string): string[] {
   const fields: string[] = [];
   let current = "";
   let inQuotes = false;

@@ -48,6 +48,7 @@ describe("resolve API", () => {
       "campaign",
       "persona",
       "lead",
+      "media_contact",
       "signal",
       "evidence",
       "task",

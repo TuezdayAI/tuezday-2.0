@@ -10,8 +10,11 @@ import {
   connectProvider,
   disconnectConnection,
   getConnection,
+  integrationKeyFor,
   listConnections,
+  oauthAppCredentials,
   providerByKey,
+  registerOAuthConnection,
   testConnection,
 } from "../services/connections";
 import {
@@ -47,8 +50,95 @@ export function registerConnectorRoutes(
       fabric.health(),
       Promise.resolve(listConnections(db, request.params.id)),
     ]);
-    return { providers: CONNECTOR_PROVIDERS, connections, fabric: health };
+    // OAuth providers flip to connectable once their app creds land in .env.
+    const providers = CONNECTOR_PROVIDERS.map((p) =>
+      p.authMode === "oauth" ? { ...p, oauthConfigured: Boolean(oauthAppCredentials(p.key)) } : p,
+    );
+    return { providers, connections, fabric: health };
   });
+
+  // -------------------------------------------------------------------------
+  // OAuth popup flow (Sprint 17): session token out, connection id back in
+  // -------------------------------------------------------------------------
+
+  app.post<{ Params: { id: string; providerKey: string } }>(
+    "/workspaces/:id/connectors/:providerKey/oauth/session",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const provider = providerByKey(request.params.providerKey);
+      if (!provider) return reply.status(404).send({ error: "provider_not_found" });
+      if (provider.authMode !== "oauth") {
+        return reply.status(400).send({
+          error: "not_oauth",
+          message: `${provider.label} does not use the OAuth popup flow.`,
+        });
+      }
+      const oauthApp = oauthAppCredentials(provider.key);
+      if (!oauthApp) {
+        return reply.status(409).send({
+          error: "needs_oauth_app",
+          message: `${provider.label} needs OAuth app credentials in the root .env first.`,
+        });
+      }
+      const health = await fabric.health();
+      if (!health.healthy) {
+        return reply.status(503).send({
+          error: "fabric_unavailable",
+          message: health.detail ?? "The connector service is not reachable.",
+        });
+      }
+      const integrationKey = integrationKeyFor(provider);
+      try {
+        await fabric.ensureIntegration(integrationKey, provider.nangoProvider, {
+          ...oauthApp,
+          scopes: provider.oauthScopes ?? "",
+        });
+        const session = await fabric.createConnectSession(integrationKey, request.params.id);
+        // The browser opens the popup itself, so it needs a host it can reach.
+        const nangoBaseUrl =
+          process.env.NANGO_PUBLIC_URL?.trim() ||
+          process.env.NANGO_BASE_URL?.trim() ||
+          "http://localhost:3050";
+        return { token: session.token, nangoBaseUrl, integrationKey };
+      } catch (err) {
+        if (err instanceof ConnectorFabricError) {
+          return reply.status(502).send({ error: "connect_failed", message: err.message });
+        }
+        throw err;
+      }
+    },
+  );
+
+  app.post<{ Params: { id: string; providerKey: string }; Body: { connectionId?: string } }>(
+    "/workspaces/:id/connectors/:providerKey/oauth/complete",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const provider = providerByKey(request.params.providerKey);
+      if (!provider) return reply.status(404).send({ error: "provider_not_found" });
+      const nangoConnectionId = request.body?.connectionId?.trim();
+      if (!nangoConnectionId) {
+        return reply.status(400).send({
+          error: "invalid_input",
+          message: "The popup result's connectionId is required.",
+        });
+      }
+      const exists = await fabric.connectionExists(nangoConnectionId, integrationKeyFor(provider));
+      if (!exists) {
+        return reply.status(400).send({
+          error: "connection_unknown",
+          message: "The connector service does not know that connection — run the popup again.",
+        });
+      }
+      const connection = registerOAuthConnection(
+        db,
+        request.params.id,
+        provider,
+        nangoConnectionId,
+      );
+      await testConnection(db, fabric, connection);
+      return reply.status(201).send(getConnection(db, request.params.id, connection.id));
+    },
+  );
 
   app.post<{ Params: { id: string; providerKey: string } }>(
     "/workspaces/:id/connectors/:providerKey/connect",
@@ -79,6 +169,12 @@ export function registerConnectorRoutes(
         return reply.status(400).send({
           error: "invalid_input",
           message: `${provider.label} needs a username and password.`,
+        });
+      }
+      if (provider.authMode === "access_token" && !parsed.data.accessToken) {
+        return reply.status(400).send({
+          error: "invalid_input",
+          message: `${provider.label} needs an access token.`,
         });
       }
       if (provider.requiresBaseUrl && !parsed.data.baseUrl) {

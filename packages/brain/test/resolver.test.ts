@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CHANNEL_GUIDANCE,
   TASK_INSTRUCTIONS,
+  composePrPitchInstruction,
   estimateTokens,
   resolveContext,
   type ResolveInput,
@@ -35,7 +36,7 @@ describe("estimateTokens", () => {
 
 describe("built-in defaults", () => {
   it("provides guidance for every channel", () => {
-    for (const channel of ["linkedin", "x", "email", "ads", "web"] as const) {
+    for (const channel of ["linkedin", "x", "email", "ads", "web", "pr"] as const) {
       expect(CHANNEL_GUIDANCE[channel].length).toBeGreaterThan(0);
     }
   });
@@ -65,6 +66,7 @@ describe("resolveContext", () => {
       "campaign",
       "persona",
       "lead",
+      "media_contact",
       "signal",
       "evidence",
       "task",
@@ -208,6 +210,7 @@ describe("resolveContext", () => {
       "campaign",
       "persona",
       "lead",
+      "media_contact",
       "signal",
       "evidence",
       "task",
@@ -253,6 +256,7 @@ describe("resolveContext", () => {
       "campaign",
       "persona",
       "lead",
+      "media_contact",
       "signal",
       "evidence",
       "task",
@@ -298,7 +302,7 @@ describe("resolveContext", () => {
     );
     const keys = result.sections.map((s) => s.key);
     expect(keys.indexOf("lead")).toBe(keys.indexOf("persona") + 1);
-    expect(keys.indexOf("lead")).toBe(keys.indexOf("signal") - 1);
+    expect(keys.indexOf("lead")).toBe(keys.indexOf("media_contact") - 1);
     const lead = result.sections.find((s) => s.key === "lead")!;
     expect(lead.included).toBe(true);
     expect(lead.layer).toBe("lead");
@@ -318,6 +322,65 @@ describe("resolveContext", () => {
   it("has an outbound_email instruction that forbids invented personalization", () => {
     expect(TASK_INSTRUCTIONS.outbound_email).toMatch(/subject/i);
     expect(TASK_INSTRUCTIONS.outbound_email).toMatch(/invent|fabricat|only.*lead/i);
+  });
+
+  it("places the media contact section after lead and before signal when given", () => {
+    const result = resolveContext(
+      baseInput({
+        taskType: "pr_pitch",
+        channel: "pr",
+        mediaContact: {
+          name: "Riya Sen",
+          type: "journalist",
+          outlet: "TechCrunch India",
+          beat: "AI startups and developer tools",
+          coverageNotes: "Wrote about GTM tooling consolidation in May.",
+        },
+      }),
+    );
+    const keys = result.sections.map((s) => s.key);
+    expect(keys.indexOf("media_contact")).toBe(keys.indexOf("lead") + 1);
+    expect(keys.indexOf("media_contact")).toBe(keys.indexOf("signal") - 1);
+    const contact = result.sections.find((s) => s.key === "media_contact")!;
+    expect(contact.included).toBe(true);
+    expect(contact.layer).toBe("contact");
+    expect(contact.content).toContain("Riya Sen");
+    expect(contact.content).toContain("TechCrunch India");
+    expect(contact.content).toContain("AI startups and developer tools");
+    expect(contact.content).toContain("GTM tooling consolidation");
+    expect(contact.reason).toMatch(/never invent/i);
+    expect(result.prompt).toContain("Riya Sen");
+  });
+
+  it("marks the media contact slot excluded when none is given", () => {
+    const result = resolveContext(baseInput());
+    const contact = result.sections.find((s) => s.key === "media_contact")!;
+    expect(contact.included).toBe(false);
+    expect(contact.reason).toMatch(/no media contact/i);
+  });
+
+  it("composes a distinct pr_pitch instruction per pitch type", () => {
+    const announcement = composePrPitchInstruction("announcement");
+    const thought = composePrPitchInstruction("thought_leadership");
+    const reactive = composePrPitchInstruction("reactive");
+    expect(new Set([announcement, thought, reactive]).size).toBe(3);
+    for (const instruction of [announcement, thought, reactive]) {
+      expect(instruction).toMatch(/subject/i);
+      expect(instruction).toMatch(/never invent/i);
+      expect(instruction).toMatch(/beat/i);
+    }
+    expect(announcement).toMatch(/news/i);
+    expect(thought).toMatch(/source|point of view/i);
+    expect(reactive).toMatch(/signal/i);
+    expect(reactive).toMatch(/timeliness/i);
+  });
+
+  it("has static instructions and channel guidance for the PR slice", () => {
+    expect(TASK_INSTRUCTIONS.pr_pitch).toBe(composePrPitchInstruction("announcement"));
+    expect(TASK_INSTRUCTIONS.press_boilerplate).toMatch(/One-liner/);
+    expect(TASK_INSTRUCTIONS.press_boilerplate).toMatch(/About/);
+    expect(TASK_INSTRUCTIONS.press_boilerplate).toMatch(/Key facts/);
+    expect(CHANNEL_GUIDANCE.pr).toMatch(/journalist/i);
   });
 
   it("is deterministic", () => {

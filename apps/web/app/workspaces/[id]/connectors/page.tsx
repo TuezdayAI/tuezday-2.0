@@ -14,8 +14,11 @@ import {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
+/** The API decorates OAuth providers with whether their app creds are set. */
+type ProviderView = ConnectorProvider & { oauthConfigured?: boolean };
+
 interface ConnectorsView {
-  providers: ConnectorProvider[];
+  providers: ProviderView[];
   connections: Connection[];
   fabric: { healthy: boolean; detail?: string };
 }
@@ -41,6 +44,7 @@ export default function ConnectorsPage() {
   // connect form state per provider
   const [connectingKey, setConnectingKey] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState("");
+  const [accessToken, setAccessToken] = useState("");
   const [baseUrl, setBaseUrl] = useState("");
   const [testPath, setTestPath] = useState("");
   const [testResults, setTestResults] = useState<Record<string, string>>({});
@@ -86,6 +90,7 @@ export default function ConnectorsPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+          ...(accessToken.trim() ? { accessToken: accessToken.trim() } : {}),
           ...(provider.requiresBaseUrl ? { baseUrl: baseUrl.trim() } : {}),
           ...(provider.key === "custom" && testPath.trim() ? { testPath: testPath.trim() } : {}),
         }),
@@ -94,11 +99,53 @@ export default function ConnectorsPage() {
       if (!res.ok) throw new Error(body?.message ?? `API returned ${res.status}`);
       setConnectingKey(null);
       setApiKey("");
+      setAccessToken("");
       setBaseUrl("");
       setTestPath("");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Connect failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** OAuth popup flow: session token from the API → Nango popup → register. */
+  async function connectOAuth(provider: ProviderView) {
+    setBusy(true);
+    setError(null);
+    try {
+      const sessionRes = await fetch(
+        `${API_URL}/workspaces/${id}/connectors/${provider.key}/oauth/session`,
+        { method: "POST" },
+      );
+      const session = await sessionRes.json().catch(() => null);
+      if (!sessionRes.ok) throw new Error(session?.message ?? `API returned ${sessionRes.status}`);
+
+      const { default: Nango } = await import("@nangohq/frontend");
+      const nango = new Nango({
+        host: session.nangoBaseUrl,
+        connectSessionToken: session.token,
+      });
+      const result = await nango.auth(session.integrationKey);
+
+      const completeRes = await fetch(
+        `${API_URL}/workspaces/${id}/connectors/${provider.key}/oauth/complete`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ connectionId: result.connectionId }),
+        },
+      );
+      const body = await completeRes.json().catch(() => null);
+      if (!completeRes.ok) throw new Error(body?.message ?? `API returned ${completeRes.status}`);
+      await load();
+    } catch (err) {
+      setError(
+        err instanceof Error && err.message
+          ? err.message
+          : `${provider.label} authorization was not completed.`,
+      );
     } finally {
       setBusy(false);
     }
@@ -193,21 +240,14 @@ export default function ConnectorsPage() {
 
   return (
     <>
-      <div className="brain-header">
+      <div className="page-header">
         <div>
-          <p className="breadcrumb">
-            <Link href="/">Workspaces</Link> /{" "}
-            <Link href={`/workspaces/${id}`}>{workspace.name}</Link> / Connectors
-          </p>
-          <h1>Connector Fabric</h1>
+          <h1>Integrations</h1>
           <p className="subtitle">
-            Credentials live in the connector service, never in Tuezday. Events flow out with
-            signatures.
+            Connect the tools you already use. Credentials stay in a separate connector service,
+            never inside Tuezday.
           </p>
         </div>
-        <Link className="button-secondary" href={`/workspaces/${id}`}>
-          ← Brain
-        </Link>
       </div>
 
       {!view.fabric.healthy && (
@@ -222,6 +262,9 @@ export default function ConnectorsPage() {
           {view.providers.map((provider) => {
             const connection = connectionFor(provider.key);
             const isConnected = connection?.status === "connected";
+            // An OAuth provider with app creds in .env behaves like any other
+            // connectable provider; without them it stays informational.
+            const needsOAuthApp = provider.authMode === "oauth" && !provider.oauthConfigured;
             return (
               <li key={provider.key} className="section-card">
                 <div className="section-head">
@@ -231,7 +274,7 @@ export default function ConnectorsPage() {
                         ? "state-approved"
                         : connection?.status === "error"
                           ? "state-rejected"
-                          : provider.authMode === "oauth"
+                          : needsOAuthApp
                             ? "state-edited"
                             : ""
                     }`}
@@ -240,7 +283,7 @@ export default function ConnectorsPage() {
                       ? "connected"
                       : connection?.status === "error"
                         ? "error"
-                        : provider.authMode === "oauth"
+                        : needsOAuthApp
                           ? "needs OAuth app"
                           : "not connected"}
                   </span>
@@ -266,6 +309,21 @@ export default function ConnectorsPage() {
                           value={apiKey}
                           onChange={(e) => setApiKey(e.target.value)}
                           placeholder="Pasted into the connector service, not stored here"
+                        />
+                      </label>
+                    )}
+                    {provider.authMode === "access_token" && (
+                      <label style={{ flex: 1 }}>
+                        Access token
+                        <input
+                          type="password"
+                          value={accessToken}
+                          onChange={(e) => setAccessToken(e.target.value)}
+                          placeholder={
+                            provider.key === "meta_ads"
+                              ? "System-user token with ads_read (Business settings → System users)"
+                              : "Pasted into the connector service, not stored here"
+                          }
                         />
                       </label>
                     )}
@@ -297,6 +355,7 @@ export default function ConnectorsPage() {
                       disabled={
                         busy ||
                         (provider.authMode === "api_key" && !apiKey.trim()) ||
+                        (provider.authMode === "access_token" && !accessToken.trim()) ||
                         (Boolean(provider.requiresBaseUrl) && !baseUrl.trim())
                       }
                       onClick={() => connect(provider)}
@@ -316,6 +375,15 @@ export default function ConnectorsPage() {
                         onClick={() => setConnectingKey(provider.key)}
                       >
                         Connect
+                      </button>
+                    )}
+                    {provider.authMode === "oauth" && provider.oauthConfigured && !isConnected && (
+                      <button
+                        className="button-secondary"
+                        disabled={busy || !view.fabric.healthy}
+                        onClick={() => connectOAuth(provider)}
+                      >
+                        {connection?.status === "disconnected" ? "Reconnect" : "Connect"}
                       </button>
                     )}
                     {connection && connection.status !== "disconnected" && (
@@ -345,6 +413,14 @@ export default function ConnectorsPage() {
                       </button>
                     )}
                   </div>
+                )}
+                {provider.key === "reddit" && needsOAuthApp && (
+                  <p className="section-reason" style={{ marginTop: 8 }}>
+                    Create a Reddit app (type “web app”, redirect uri{" "}
+                    <code>http://localhost:3050/oauth/callback</code>) at
+                    reddit.com/prefs/apps, then set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in
+                    the root .env and restart the API.
+                  </p>
                 )}
               </li>
             );

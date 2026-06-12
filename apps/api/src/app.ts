@@ -9,6 +9,8 @@ import { R2REvidenceStore } from "./evidence/r2r";
 import type { EvidenceStore } from "./evidence/store";
 import { GeminiGateway } from "./llm/gemini";
 import type { LlmGateway } from "./llm/gateway";
+import { registerAdCreativeRoutes } from "./routes/ad-creatives";
+import { registerAdsRoutes } from "./routes/ads";
 import { registerBrainRoutes } from "./routes/brain";
 import { registerCampaignRoutes } from "./routes/campaigns";
 import { registerConnectorRoutes } from "./routes/connectors";
@@ -18,6 +20,8 @@ import { registerDraftRoutes } from "./routes/drafts";
 import { registerEvidenceRoutes } from "./routes/evidence";
 import { registerLearningRoutes } from "./routes/learning";
 import { registerOutboundRoutes } from "./routes/outbound";
+import { registerPrRoutes } from "./routes/pr";
+import { registerPublicationRoutes } from "./routes/publications";
 import { registerGenerationRoutes } from "./routes/generations";
 import { registerPersonaRoutes } from "./routes/personas";
 import { registerSignalRoutes } from "./routes/signals";
@@ -71,6 +75,10 @@ export async function buildApp({
   registerOutboundRoutes(app, db, llm, evidence);
   registerConnectorRoutes(app, db, connectors, fetcher);
   registerCrmRoutes(app, db, connectors, fetcher);
+  registerAdsRoutes(app, db, connectors, fetcher);
+  registerAdCreativeRoutes(app, db, llm, evidence);
+  registerPrRoutes(app, db, llm, evidence);
+  registerPublicationRoutes(app, db, connectors, fetcher);
 
   return app;
 }

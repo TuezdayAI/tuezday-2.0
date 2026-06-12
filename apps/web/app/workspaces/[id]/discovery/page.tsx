@@ -198,25 +198,13 @@ export default function DiscoveryPage() {
 
   return (
     <>
-      <div className="brain-header">
+      <div className="page-header">
         <div>
-          <p className="breadcrumb">
-            <Link href="/">Workspaces</Link> /{" "}
-            <Link href={`/workspaces/${id}`}>{workspace.name}</Link> / Discovery
-          </p>
-          <h1>Signal Discovery</h1>
+          <h1>Discover</h1>
           <p className="subtitle">
-            Signals come from the outside world. The brain judges relevance and routes them to
-            personas — you decide what becomes content.
+            What is happening in your market right now. Tuezday scans the sources you choose —
+            you decide what becomes content.
           </p>
-        </div>
-        <div className="persona-actions">
-          <Link className="button-secondary" href={`/workspaces/${id}`}>
-            ← Brain
-          </Link>
-          <Link className="button-secondary" href={`/workspaces/${id}/content`}>
-            Content
-          </Link>
         </div>
       </div>
 

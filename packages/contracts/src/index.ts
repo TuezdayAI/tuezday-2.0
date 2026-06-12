@@ -31,11 +31,15 @@ export const TASK_TYPES = [
   "landing_page_hero",
   "signal_response",
   "outbound_email",
+  "meta_ad_creative",
+  "google_rsa",
+  "pr_pitch",
+  "press_boilerplate",
 ] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
 /** Channels a task can target. */
-export const CHANNELS = ["linkedin", "x", "email", "ads", "web"] as const;
+export const CHANNELS = ["linkedin", "x", "email", "ads", "web", "pr"] as const;
 export type Channel = (typeof CHANNELS)[number];
 
 // ---------------------------------------------------------------------------
@@ -150,6 +154,7 @@ export const generationSchema = z.object({
   personaId: z.string().uuid().nullable(),
   campaignId: z.string().uuid().nullable(),
   leadId: z.string().uuid().nullable(),
+  mediaContactId: z.string().uuid().nullable(),
   prompt: z.string(),
   output: z.string(),
   model: z.string(),
@@ -411,6 +416,7 @@ export const draftSchema = z.object({
   sourceSignalId: z.string().uuid().nullable(),
   campaignId: z.string().uuid().nullable(),
   leadId: z.string().uuid().nullable(),
+  mediaContactId: z.string().uuid().nullable(),
   taskType: z.enum(TASK_TYPES),
   channel: z.enum(CHANNELS),
   personaId: z.string().uuid().nullable(),
@@ -532,10 +538,12 @@ export type NowSynthesis = z.infer<typeof nowSynthesisSchema>;
 // Connector fabric
 // ---------------------------------------------------------------------------
 
-export const CONNECTOR_AUTH_MODES = ["api_key", "basic", "oauth", "none"] as const;
+// access_token = the founder pastes an OAuth access token (e.g. a Meta
+// system-user token); oauth = needs a per-provider OAuth app + popup flow.
+export const CONNECTOR_AUTH_MODES = ["api_key", "basic", "oauth", "access_token", "none"] as const;
 export type ConnectorAuthMode = (typeof CONNECTOR_AUTH_MODES)[number];
 
-export const CONNECTOR_CATEGORIES = ["crm", "outbound"] as const;
+export const CONNECTOR_CATEGORIES = ["crm", "outbound", "ads", "social"] as const;
 export type ConnectorCategory = (typeof CONNECTOR_CATEGORIES)[number];
 
 export interface ConnectorProvider {
@@ -551,6 +559,11 @@ export interface ConnectorProvider {
   testPath?: string;
   /** The founder must supply the account base URL at connect time. */
   requiresBaseUrl?: boolean;
+  /**
+   * OAuth scopes provisioned on the Nango integration (comma-separated),
+   * only meaningful for authMode "oauth".
+   */
+  oauthScopes?: string;
   /**
    * Nango connection_config key that receives the founder's base URL
    * (protocol stripped) at import time — e.g. freshsales' bundleAlias.
@@ -611,10 +624,34 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     categories: ["crm"],
   },
   {
+    // Read-only ads reporting (Sprint 14). Token paste (system-user tokens
+    // never expire); the OAuth popup flow arrives with integration expansion.
+    key: "meta_ads",
+    label: "Meta Ads",
+    nangoProvider: "facebook",
+    authMode: "access_token",
+    categories: ["ads"],
+    baseUrl: "https://graph.facebook.com",
+    testPath: "/v23.0/me?fields=id,name",
+  },
+  {
     key: "slack",
     label: "Slack",
     nangoProvider: "slack",
     authMode: "oauth",
+  },
+  {
+    // First social publishing platform (Sprint 17) — OAuth popup via a
+    // Nango connect session; the founder's Reddit app creds come from
+    // REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET in the root .env.
+    key: "reddit",
+    label: "Reddit",
+    nangoProvider: "reddit",
+    authMode: "oauth",
+    categories: ["social"],
+    baseUrl: "https://oauth.reddit.com",
+    testPath: "/api/v1/me",
+    oauthScopes: "identity,submit",
   },
   {
     // Proxy any API without auth (your own services, public APIs). Keyed
@@ -651,6 +688,7 @@ export const connectInputSchema = z.object({
   apiKey: z.string().trim().min(1).optional(),
   username: z.string().trim().min(1).optional(),
   password: z.string().min(1).optional(),
+  accessToken: z.string().trim().min(1).optional(),
   baseUrl: z.string().trim().url().optional(),
   testPath: z.string().trim().startsWith("/", "Test path must start with /").optional(),
 });
@@ -697,6 +735,482 @@ export const logDraftInputSchema = z.object({
 export type LogDraftInput = z.infer<typeof logDraftInputSchema>;
 
 // ---------------------------------------------------------------------------
+// Ads reporting (Sprint 14)
+// ---------------------------------------------------------------------------
+
+/** YYYY-MM-DD — the daily metric grain; stored as text, sorts correctly. */
+export const metricDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
+
+export const AD_METRIC_SOURCES = ["sync", "csv"] as const;
+export type AdMetricSource = (typeof AD_METRIC_SOURCES)[number];
+
+/**
+ * An ad platform account Tuezday reports on. connectionId null = the
+ * workspace's CSV-only account (reporting works with nothing connected).
+ */
+export const adAccountSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  connectionId: z.string().uuid().nullable(),
+  externalId: z.string(),
+  name: z.string(),
+  currency: z.string(),
+  lastSyncedAt: z.number().int().nullable(),
+  lastError: z.string().nullable(),
+  createdAt: z.number().int(),
+});
+export type AdAccount = z.infer<typeof adAccountSchema>;
+
+/** A campaign on the ad platform; campaignId links it to a Tuezday campaign. */
+export const adCampaignSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  adAccountId: z.string().uuid(),
+  externalId: z.string(),
+  name: z.string(),
+  campaignId: z.string().uuid().nullable(),
+  lastSyncedAt: z.number().int(),
+  createdAt: z.number().int(),
+});
+export type AdCampaign = z.infer<typeof adCampaignSchema>;
+
+/** Daily grain. Money is integer cents in the account currency — no floats. */
+export const adDailyMetricSchema = z.object({
+  id: z.string().uuid(),
+  adCampaignId: z.string().uuid(),
+  date: metricDateSchema,
+  spendCents: z.number().int().min(0),
+  impressions: z.number().int().min(0),
+  clicks: z.number().int().min(0),
+  conversions: z.number().int().min(0),
+  source: z.enum(AD_METRIC_SOURCES),
+});
+export type AdDailyMetric = z.infer<typeof adDailyMetricSchema>;
+
+export const importAdAccountsInputSchema = z.object({
+  connectionId: z.string().uuid(),
+});
+export type ImportAdAccountsInput = z.infer<typeof importAdAccountsInputSchema>;
+
+export const adsSyncInputSchema = z.object({
+  since: metricDateSchema.optional(),
+  until: metricDateSchema.optional(),
+});
+export type AdsSyncInput = z.infer<typeof adsSyncInputSchema>;
+
+export const linkAdCampaignInputSchema = z.object({
+  campaignId: z.string().uuid().nullable(),
+});
+export type LinkAdCampaignInput = z.infer<typeof linkAdCampaignInputSchema>;
+
+/** CSV rows arrive parsed (the client splits the file); spend is in currency
+ * units (12.34) and is converted to cents at the service boundary. */
+export const adsCsvRowSchema = z.object({
+  date: metricDateSchema,
+  campaignName: z.string().trim().min(1, "Campaign name is required"),
+  spend: z.number().min(0),
+  impressions: z.number().int().min(0).default(0),
+  clicks: z.number().int().min(0).default(0),
+  conversions: z.number().int().min(0).default(0),
+});
+export type AdsCsvRow = z.infer<typeof adsCsvRowSchema>;
+
+export const adsCsvImportInputSchema = z.object({
+  accountName: z.string().trim().max(100).optional(),
+  currency: z.string().trim().toUpperCase().length(3).default("USD"),
+  rows: z.array(adsCsvRowSchema).min(1, "No rows to import").max(5000, "Import at most 5000 rows at a time"),
+});
+export type AdsCsvImportInput = z.infer<typeof adsCsvImportInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Ad creative generation (Sprint 15)
+// ---------------------------------------------------------------------------
+
+/** Task types whose drafts carry platform ad creative with hard format limits. */
+export const AD_CREATIVE_TASK_TYPES = ["meta_ad_creative", "google_rsa"] as const;
+export type AdCreativeTaskType = (typeof AD_CREATIVE_TASK_TYPES)[number];
+
+export function isAdCreativeTaskType(taskType: string): taskType is AdCreativeTaskType {
+  return (AD_CREATIVE_TASK_TYPES as readonly string[]).includes(taskType);
+}
+
+export interface AdCreativeField {
+  /** Stable field key — column names in exports derive from this. */
+  key: string;
+  /** Canonical label in the draft text format ("Headline 3: ..."). */
+  label: string;
+  maxChars: number;
+  /** Required / allowed occurrences. maxCount > 1 ⇒ numbered labels. */
+  minCount: number;
+  maxCount: number;
+}
+
+export interface AdCreativeFormat {
+  taskType: AdCreativeTaskType;
+  label: string;
+  fields: readonly AdCreativeField[];
+  /** How many drafts one generation produces; null ⇒ one asset set = one draft. */
+  variantCount: { min: number; max: number; default: number } | null;
+}
+
+/**
+ * The single source of truth for platform format constraints. Meta limits are
+ * the display-safe limits (before "…see more" truncation) — the API accepts
+ * more, but "paste without rework" means display-safe. Google RSA limits are
+ * the platform's hard caps.
+ */
+export const AD_CREATIVE_FORMATS: Record<AdCreativeTaskType, AdCreativeFormat> = {
+  meta_ad_creative: {
+    taskType: "meta_ad_creative",
+    label: "Meta ad",
+    fields: [
+      { key: "primary_text", label: "Primary text", maxChars: 125, minCount: 1, maxCount: 1 },
+      { key: "headline", label: "Headline", maxChars: 40, minCount: 1, maxCount: 1 },
+      { key: "description", label: "Description", maxChars: 30, minCount: 1, maxCount: 1 },
+    ],
+    variantCount: { min: 1, max: 10, default: 3 },
+  },
+  google_rsa: {
+    taskType: "google_rsa",
+    label: "Google responsive search ad",
+    fields: [
+      { key: "headline", label: "Headline", maxChars: 30, minCount: 3, maxCount: 15 },
+      { key: "description", label: "Description", maxChars: 90, minCount: 2, maxCount: 4 },
+    ],
+    variantCount: null,
+  },
+};
+
+export interface AdCreativeFieldValue {
+  key: string;
+  /** 1-based; always 1 for single-occurrence fields. */
+  index: number;
+  value: string;
+}
+
+export interface AdCreativeViolation {
+  /** Human field name ("Headline 3") or "content" for parse-level problems. */
+  field: string;
+  message: string;
+}
+
+function fieldDisplayName(field: AdCreativeField, index: number): string {
+  return field.maxCount > 1 ? `${field.label} ${index}` : field.label;
+}
+
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Parse the canonical labeled-text draft format. A line starting with a known
+ * label opens a field; following lines belong to it (multi-line primary text
+ * round-trips). Labels are case-insensitive. Returns null when the content has
+ * no recognizable leading label — i.e. it is not ad creative at all.
+ * (A value line that itself looks like a label splits the field — validation
+ * surfaces that as a count violation for the founder to fix.)
+ */
+export function parseAdCreative(
+  taskType: AdCreativeTaskType,
+  content: string,
+): { fields: AdCreativeFieldValue[] } | null {
+  const format = AD_CREATIVE_FORMATS[taskType];
+  const labelPattern = new RegExp(
+    `^\\s*(${format.fields.map((f) => escapeRegExp(f.label)).join("|")})(?:\\s+(\\d{1,2}))?\\s*:\\s?(.*)$`,
+    "i",
+  );
+  const labelToKey = new Map(format.fields.map((f) => [f.label.toLowerCase(), f.key]));
+
+  const fields: AdCreativeFieldValue[] = [];
+  const seenPerKey = new Map<string, number>();
+  let current: AdCreativeFieldValue | undefined;
+
+  for (const line of content.split(/\r?\n/)) {
+    const match = labelPattern.exec(line);
+    if (match) {
+      const key = labelToKey.get(match[1]!.toLowerCase())!;
+      const occurrence = (seenPerKey.get(key) ?? 0) + 1;
+      seenPerKey.set(key, occurrence);
+      current = {
+        key,
+        index: match[2] ? Number(match[2]) : occurrence,
+        value: match[3] ?? "",
+      };
+      fields.push(current);
+    } else if (current) {
+      current.value += `\n${line}`;
+    } else if (line.trim().length > 0) {
+      return null; // content before any label — not the canonical format
+    }
+  }
+  if (fields.length === 0) return null;
+  for (const field of fields) field.value = field.value.trim();
+  return { fields };
+}
+
+/** Validate draft content against the platform's hard format limits. */
+export function validateAdCreative(
+  taskType: AdCreativeTaskType,
+  content: string,
+): { ok: boolean; violations: AdCreativeViolation[] } {
+  const format = AD_CREATIVE_FORMATS[taskType];
+  const parsed = parseAdCreative(taskType, content);
+  if (!parsed) {
+    const labels = format.fields.map((f) => `"${f.label}:"`).join(", ");
+    return {
+      ok: false,
+      violations: [
+        { field: "content", message: `Not in the ${format.label} format — expected ${labels} lines.` },
+      ],
+    };
+  }
+
+  const violations: AdCreativeViolation[] = [];
+  for (const field of format.fields) {
+    const values = parsed.fields.filter((f) => f.key === field.key);
+    if (values.length < field.minCount || values.length > field.maxCount) {
+      const range =
+        field.minCount === field.maxCount
+          ? `exactly ${field.minCount}`
+          : `${field.minCount}–${field.maxCount}`;
+      violations.push({
+        field: field.label,
+        message: `${format.label} needs ${range} ${field.label.toLowerCase()}${
+          field.maxCount > 1 ? "s" : ""
+        } (got ${values.length}).`,
+      });
+    }
+    const seenIndexes = new Set<number>();
+    for (const value of values) {
+      const name = fieldDisplayName(field, value.index);
+      if (value.index < 1 || value.index > field.maxCount) {
+        violations.push({ field: name, message: `${name} is out of range (max ${field.maxCount}).` });
+      } else if (seenIndexes.has(value.index)) {
+        violations.push({ field: name, message: `${name} appears more than once.` });
+      }
+      seenIndexes.add(value.index);
+      if (value.value.length === 0) {
+        violations.push({ field: name, message: `${name} is empty.` });
+      } else if (value.value.length > field.maxChars) {
+        violations.push({
+          field: name,
+          message: `${name} is ${value.value.length} characters (max ${field.maxChars}).`,
+        });
+      }
+    }
+  }
+  return { ok: violations.length === 0, violations };
+}
+
+/** Serialize field values back to the canonical labeled-text format. */
+export function formatAdCreative(
+  taskType: AdCreativeTaskType,
+  fields: AdCreativeFieldValue[],
+): string {
+  const format = AD_CREATIVE_FORMATS[taskType];
+  const lines: string[] = [];
+  for (const field of format.fields) {
+    const values = fields
+      .filter((f) => f.key === field.key)
+      .sort((a, b) => a.index - b.index);
+    for (const value of values) {
+      lines.push(`${fieldDisplayName(field, value.index)}: ${value.value}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+export const generateAdCreativesInputSchema = z
+  .object({
+    taskType: z.enum(AD_CREATIVE_TASK_TYPES),
+    campaignId: z.string().uuid(),
+    personaId: z.string().uuid().optional(),
+    variantCount: z.number().int().min(1).max(10).optional(),
+    tokenBudget: z.number().int().min(500).max(200_000).optional(),
+    useEvidence: z.boolean().optional(),
+  })
+  .superRefine((input, ctx) => {
+    const counts = AD_CREATIVE_FORMATS[input.taskType].variantCount;
+    if (input.variantCount === undefined) return;
+    if (!counts) {
+      ctx.addIssue({
+        code: "custom",
+        message: `${AD_CREATIVE_FORMATS[input.taskType].label} generates one asset set — variantCount does not apply`,
+      });
+    } else if (input.variantCount < counts.min || input.variantCount > counts.max) {
+      ctx.addIssue({
+        code: "custom",
+        message: `variantCount must be between ${counts.min} and ${counts.max}`,
+      });
+    }
+  });
+export type GenerateAdCreativesInput = z.infer<typeof generateAdCreativesInputSchema>;
+
+// ---------------------------------------------------------------------------
+// PR & media outreach (Sprint 16)
+// ---------------------------------------------------------------------------
+
+export const MEDIA_CONTACT_TYPES = ["journalist", "publication", "podcast"] as const;
+export type MediaContactType = (typeof MEDIA_CONTACT_TYPES)[number];
+
+export const mediaContactSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  name: z.string().min(1).max(200),
+  email: z.string().email(),
+  type: z.enum(MEDIA_CONTACT_TYPES),
+  outlet: z.string().max(200),
+  beat: z.string().max(200),
+  coverageNotes: z.string().max(2000),
+  createdAt: z.number().int(),
+});
+export type MediaContact = z.infer<typeof mediaContactSchema>;
+
+export const createMediaContactInputSchema = z.object({
+  name: z.string().trim().min(1, "Contact name is required").max(200),
+  email: z.string().trim().email("A valid email is required"),
+  type: z.enum(MEDIA_CONTACT_TYPES).default("journalist"),
+  outlet: z.string().trim().max(200).default(""),
+  beat: z.string().trim().max(200).default(""),
+  coverageNotes: z.string().trim().max(2000).default(""),
+});
+export type CreateMediaContactInput = z.infer<typeof createMediaContactInputSchema>;
+
+export const importMediaContactsInputSchema = z.object({
+  csv: z.string().trim().min(1, "CSV content is required").max(500_000),
+});
+export type ImportMediaContactsInput = z.infer<typeof importMediaContactsInputSchema>;
+
+/** What kind of story the pitch tells — selects the composed task instruction. */
+export const PR_PITCH_TYPES = ["announcement", "thought_leadership", "reactive"] as const;
+export type PrPitchType = (typeof PR_PITCH_TYPES)[number];
+
+export const prPitchRequestSchema = z
+  .object({
+    contactIds: z
+      .array(z.string().uuid())
+      .min(1, "Select at least one contact")
+      .max(25, "At most 25 contacts per batch"),
+    pitchType: z.enum(PR_PITCH_TYPES),
+    signalId: z.string().uuid().optional(),
+    personaId: z.string().uuid().optional(),
+    campaignId: z.string().uuid().optional(),
+    tokenBudget: z.number().int().min(500).max(200_000).optional(),
+    useEvidence: z.boolean().optional(),
+  })
+  .superRefine((input, ctx) => {
+    // A stale signal silently steering an announcement pitch is a footgun —
+    // signals pair with the reactive type only, and reactive demands one.
+    if (input.pitchType === "reactive" && !input.signalId) {
+      ctx.addIssue({ code: "custom", message: "A reactive pitch needs a signal" });
+    }
+    if (input.pitchType !== "reactive" && input.signalId) {
+      ctx.addIssue({ code: "custom", message: "Only reactive pitches take a signal" });
+    }
+  });
+export type PrPitchRequest = z.infer<typeof prPitchRequestSchema>;
+
+export const pressKitRequestSchema = z.object({
+  personaId: z.string().uuid().optional(),
+  campaignId: z.string().uuid().optional(),
+  tokenBudget: z.number().int().min(500).max(200_000).optional(),
+  useEvidence: z.boolean().optional(),
+});
+export type PressKitRequest = z.infer<typeof pressKitRequestSchema>;
+
+// ---------------------------------------------------------------------------
+// Social publishing (Sprint 17)
+// ---------------------------------------------------------------------------
+
+/** Hard platform limits checked before any post leaves Tuezday. */
+export interface SocialPostConstraints {
+  /** User-facing name for the platform's destination (e.g. "Subreddit"). */
+  targetLabel: string;
+  titleMaxChars: number;
+  bodyMaxChars: number;
+}
+
+export const SOCIAL_POST_CONSTRAINTS = {
+  // https://www.reddit.com — self (text) posts.
+  reddit: { targetLabel: "Subreddit", titleMaxChars: 300, bodyMaxChars: 40_000 },
+} satisfies Record<string, SocialPostConstraints>;
+
+export interface SocialPostViolation {
+  field: "target" | "title" | "body";
+  message: string;
+}
+
+export interface SocialPostValidation {
+  ok: boolean;
+  violations: SocialPostViolation[];
+}
+
+export function validateSocialPost(
+  providerKey: string,
+  input: { target: string; title: string; body: string },
+): SocialPostValidation {
+  const constraints = (SOCIAL_POST_CONSTRAINTS as Record<string, SocialPostConstraints>)[
+    providerKey
+  ];
+  if (!constraints) {
+    return {
+      ok: false,
+      violations: [{ field: "target", message: `"${providerKey}" is not a publishable platform.` }],
+    };
+  }
+  const violations: SocialPostViolation[] = [];
+  if (!input.target.trim()) {
+    violations.push({ field: "target", message: `${constraints.targetLabel} is required.` });
+  }
+  if (!input.title.trim()) {
+    violations.push({ field: "title", message: "Title is required." });
+  } else if (input.title.length > constraints.titleMaxChars) {
+    violations.push({
+      field: "title",
+      message: `Title is ${input.title.length} characters — the platform limit is ${constraints.titleMaxChars}.`,
+    });
+  }
+  if (input.body.length > constraints.bodyMaxChars) {
+    violations.push({
+      field: "body",
+      message: `Body is ${input.body.length} characters — the platform limit is ${constraints.bodyMaxChars}.`,
+    });
+  }
+  return { ok: violations.length === 0, violations };
+}
+
+export const PUBLICATION_STATUSES = ["scheduled", "published", "failed"] as const;
+export type PublicationStatus = (typeof PUBLICATION_STATUSES)[number];
+
+export const publicationSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  draftId: z.string().uuid(),
+  connectionId: z.string().uuid(),
+  providerKey: z.string(),
+  target: z.string(),
+  title: z.string(),
+  status: z.enum(PUBLICATION_STATUSES),
+  scheduledFor: z.number().int(),
+  publishedAt: z.number().int().nullable(),
+  externalId: z.string().nullable(),
+  externalUrl: z.string().nullable(),
+  lastError: z.string().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type Publication = z.infer<typeof publicationSchema>;
+
+/** scheduledFor must be in the future — enforced at the route against now. */
+export const publishDraftInputSchema = z.object({
+  connectionId: z.string().uuid(),
+  target: z.string().trim().min(1, "Target is required"),
+  title: z.string().trim().min(1, "Title is required"),
+  scheduledFor: z.number().int().positive().optional(),
+});
+export type PublishDraftInput = z.infer<typeof publishDraftInputSchema>;
+
+// ---------------------------------------------------------------------------
 // Events + webhooks
 // ---------------------------------------------------------------------------
 
@@ -707,6 +1221,8 @@ export const EVENT_TYPES = [
   "synthesis.accepted",
   "crm.contact.created",
   "crm.note.logged",
+  "ads.synced",
+  "post.published",
   "webhook.ping",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];

@@ -4,6 +4,8 @@
 const API_URL = process.env.TUEZDAY_API_URL ?? "http://localhost:3001";
 const INTERVAL_MIN = Number(process.env.DISCOVERY_INTERVAL_MIN ?? 30);
 const SYNTHESIS_DAYS = Number(process.env.LEARNING_SYNTHESIS_DAYS ?? 7);
+const ADS_SYNC_HOURS = Number(process.env.ADS_SYNC_HOURS ?? 6);
+const PUBLISH_INTERVAL_MIN = Number(process.env.PUBLISH_INTERVAL_MIN ?? 1);
 
 interface Workspace {
   id: string;
@@ -85,6 +87,99 @@ async function maybeSynthesizeForAllWorkspaces(): Promise<void> {
   }
 }
 
+interface AdsSyncResponse {
+  results: Array<{
+    name: string;
+    ok: boolean;
+    error?: string;
+    rows?: number;
+    created?: number;
+    updated?: number;
+  }>;
+}
+
+/** Re-pull the recent metric window for every connected ad account. Meta
+ * restates conversions retroactively, so re-syncing keeps numbers converging. */
+async function syncAdsForAllWorkspaces(): Promise<void> {
+  const res = await fetch(`${API_URL}/workspaces`);
+  if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
+  const workspaces = (await res.json()) as Workspace[];
+
+  for (const workspace of workspaces) {
+    try {
+      const syncRes = await fetch(`${API_URL}/workspaces/${workspace.id}/ads/sync`, {
+        method: "POST",
+      });
+      if (!syncRes.ok) throw new Error(`sync returned ${syncRes.status}`);
+      const { results } = (await syncRes.json()) as AdsSyncResponse;
+      if (results.length === 0) continue; // nothing connected — stay quiet
+      for (const result of results) {
+        if (result.ok) {
+          console.log(
+            `[ads] ${workspace.name} / ${result.name}: ${result.rows ?? 0} rows (${result.created ?? 0} new, ${result.updated ?? 0} updated)`,
+          );
+        } else {
+          console.error(`[ads] ${workspace.name} / ${result.name}: failed — ${result.error}`);
+        }
+      }
+    } catch (err) {
+      console.error(
+        `[ads] ${workspace.name}: failed —`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+}
+
+interface PublishRunResponse {
+  results: Array<{ id: string; ok: boolean; error?: string }>;
+}
+
+/** Fire scheduled social posts that have come due. */
+async function runDuePublicationsForAllWorkspaces(): Promise<void> {
+  const res = await fetch(`${API_URL}/workspaces`);
+  if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
+  const workspaces = (await res.json()) as Workspace[];
+
+  for (const workspace of workspaces) {
+    try {
+      const runRes = await fetch(`${API_URL}/workspaces/${workspace.id}/publish/run`, {
+        method: "POST",
+      });
+      if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);
+      const { results } = (await runRes.json()) as PublishRunResponse;
+      if (results.length === 0) continue; // nothing due — stay quiet
+      const published = results.filter((r) => r.ok).length;
+      const failed = results.filter((r) => !r.ok);
+      console.log(`[publish] ${workspace.name}: ${published} published, ${failed.length} failed`);
+      for (const failure of failed) {
+        console.error(`[publish] ${workspace.name} / ${failure.id}: ${failure.error}`);
+      }
+    } catch (err) {
+      console.error(
+        `[publish] ${workspace.name}: failed —`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+}
+
+async function publishTick(): Promise<void> {
+  try {
+    await runDuePublicationsForAllWorkspaces();
+  } catch (err) {
+    console.error("[publish] tick failed —", err instanceof Error ? err.message : err);
+  }
+}
+
+async function adsTick(): Promise<void> {
+  try {
+    await syncAdsForAllWorkspaces();
+  } catch (err) {
+    console.error("[ads] tick failed —", err instanceof Error ? err.message : err);
+  }
+}
+
 async function tick(): Promise<void> {
   try {
     await runDiscoveryForAllWorkspaces();
@@ -99,7 +194,11 @@ async function tick(): Promise<void> {
 }
 
 console.log(
-  `Tuezday worker: polling discovery every ${INTERVAL_MIN} min against ${API_URL} (set DISCOVERY_INTERVAL_MIN / TUEZDAY_API_URL to change).`,
+  `Tuezday worker: polling discovery every ${INTERVAL_MIN} min, ads sync every ${ADS_SYNC_HOURS} h, scheduled publishing every ${PUBLISH_INTERVAL_MIN} min against ${API_URL} (set DISCOVERY_INTERVAL_MIN / ADS_SYNC_HOURS / PUBLISH_INTERVAL_MIN / TUEZDAY_API_URL to change).`,
 );
 void tick();
 setInterval(() => void tick(), INTERVAL_MIN * 60 * 1000);
+void adsTick();
+setInterval(() => void adsTick(), ADS_SYNC_HOURS * 60 * 60 * 1000);
+void publishTick();
+setInterval(() => void publishTick(), PUBLISH_INTERVAL_MIN * 60 * 1000);

@@ -24,6 +24,10 @@ const TASK_LABELS: Record<TaskType, string> = {
   landing_page_hero: "Landing page hero",
   signal_response: "Signal response",
   outbound_email: "Outbound email",
+  meta_ad_creative: "Meta ad creative",
+  google_rsa: "Google RSA",
+  pr_pitch: "Media pitch",
+  press_boilerplate: "Press boilerplate",
 };
 
 export default function ResolverPage() {
@@ -153,21 +157,14 @@ export default function ResolverPage() {
 
   return (
     <>
-      <div className="brain-header">
+      <div className="page-header">
         <div>
-          <p className="breadcrumb">
-            <Link href="/">Workspaces</Link> / <Link href={`/workspaces/${id}`}>{workspace.name}</Link>{" "}
-            / Resolver
-          </p>
-          <h1>Context Resolver</h1>
+          <h1>Context inspector</h1>
           <p className="subtitle">
-            Resolve the brain into the exact context bundle a task would receive — before any AI
-            sees it.
+            See the exact context Tuezday would assemble for any task — before any AI sees it.
+            Personas live here too.
           </p>
         </div>
-        <Link className="button-secondary" href={`/workspaces/${id}`}>
-          ← Brain editor
-        </Link>
       </div>
 
       <section className="panel">

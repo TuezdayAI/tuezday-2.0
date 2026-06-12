@@ -2,6 +2,8 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import {
   APPROVAL_STATES,
   editDraftInputSchema,
+  isAdCreativeTaskType,
+  validateAdCreative,
   type ApprovalAction,
   type ApprovalState,
   type Channel,
@@ -105,6 +107,30 @@ export function registerDraftRoutes(app: FastifyInstance, db: Db, fetcher: Fetch
             });
           }
           newContent = parsed.data.content;
+          // Ad creative carries hard platform limits — an edit can never
+          // introduce a violation.
+          if (isAdCreativeTaskType(draft.taskType)) {
+            const validation = validateAdCreative(draft.taskType, newContent);
+            if (!validation.ok) {
+              return reply.status(400).send({
+                error: "format_violation",
+                message: validation.violations.map((v) => v.message).join(" "),
+                violations: validation.violations,
+              });
+            }
+          }
+        }
+
+        // The hard guarantee: an approved ad creative is always platform-valid.
+        if (action === "approve" && isAdCreativeTaskType(draft.taskType)) {
+          const validation = validateAdCreative(draft.taskType, draft.content);
+          if (!validation.ok) {
+            return reply.status(409).send({
+              error: "format_violation",
+              message: validation.violations.map((v) => v.message).join(" "),
+              violations: validation.violations,
+            });
+          }
         }
 
         try {

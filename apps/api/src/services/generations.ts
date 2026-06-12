@@ -24,6 +24,7 @@ function rowToGeneration(row: GenerationRow): GenerationWithTrace {
     personaId: row.personaId,
     campaignId: row.campaignId,
     leadId: row.leadId,
+    mediaContactId: row.mediaContactId,
     prompt: row.prompt,
     output: row.output,
     model: row.model,
@@ -43,6 +44,7 @@ export interface StoreGenerationInput {
   personaId: string | null;
   campaignId?: string | null;
   leadId?: string | null;
+  mediaContactId?: string | null;
   resolved: ResolvedContext;
   output: string;
   model: string;
@@ -59,6 +61,7 @@ export function storeGeneration(db: Db, input: StoreGenerationInput): Generation
     personaId: input.personaId,
     campaignId: input.campaignId ?? null,
     leadId: input.leadId ?? null,
+    mediaContactId: input.mediaContactId ?? null,
     prompt: input.resolved.prompt,
     sectionsJson: JSON.stringify(input.resolved.sections),
     output: input.output,

@@ -23,6 +23,10 @@ const TASK_LABELS: Record<TaskType, string> = {
   landing_page_hero: "Landing page hero",
   signal_response: "Signal response",
   outbound_email: "Outbound email",
+  meta_ad_creative: "Meta ad creative",
+  google_rsa: "Google RSA",
+  pr_pitch: "Media pitch",
+  press_boilerplate: "Press boilerplate",
 };
 
 const STATE_LABELS: Record<ApprovalState, string> = {
@@ -138,27 +142,13 @@ export default function ApprovalsPage() {
 
   return (
     <>
-      <div className="brain-header">
+      <div className="page-header">
         <div>
-          <p className="breadcrumb">
-            <Link href="/">Workspaces</Link> /{" "}
-            <Link href={`/workspaces/${id}`}>{workspace.name}</Link> / Approvals
-          </p>
-          <h1>Approval Queue</h1>
+          <h1>Review</h1>
           <p className="subtitle">
-            Nothing ships without a human decision. Every action here is recorded.
+            Approve, edit, or reject before anything goes out. Nothing ships without your
+            decision, and every decision is recorded.
           </p>
-        </div>
-        <div className="persona-actions">
-          <Link className="button-secondary" href={`/workspaces/${id}`}>
-            ← Brain
-          </Link>
-          <Link className="button-secondary" href={`/workspaces/${id}/sandbox`}>
-            Sandbox
-          </Link>
-          <Link className="button-secondary" href={`/workspaces/${id}/content`}>
-            Content
-          </Link>
         </div>
       </div>
 

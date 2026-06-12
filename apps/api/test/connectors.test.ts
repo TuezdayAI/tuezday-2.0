@@ -28,6 +28,9 @@ function fakeFabric(state: FabricState): ConnectorFabric {
       if (!state.healthy) throw new ConnectorFabricError("nango is down");
       state.integrations.add(uniqueKey);
     },
+    async createConnectSession() {
+      return { token: "session-token" };
+    },
     async importConnection(providerConfigKey, connectionId, credentials) {
       if (!state.healthy) throw new ConnectorFabricError("nango is down");
       state.connections.set(connectionId, { providerConfigKey, credentials });

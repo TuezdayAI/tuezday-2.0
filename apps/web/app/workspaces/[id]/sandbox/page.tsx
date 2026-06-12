@@ -6,6 +6,7 @@ import { useParams } from "next/navigation";
 import {
   CHANNELS,
   DEFAULT_TOKEN_BUDGET,
+  isAdCreativeTaskType,
   OUTPUT_RATINGS,
   TASK_TYPES,
   type Campaign,
@@ -26,7 +27,18 @@ const TASK_LABELS: Record<TaskType, string> = {
   landing_page_hero: "Landing page hero",
   signal_response: "Signal response",
   outbound_email: "Outbound email",
+  meta_ad_creative: "Meta ad creative",
+  google_rsa: "Google RSA",
+  pr_pitch: "Media pitch",
+  press_boilerplate: "Press boilerplate",
 };
+
+/** Ad creative variant sets are generated on the Ad creatives page; a media
+ * pitch without a contact is meaningless (PR page). press_boilerplate stays —
+ * it is a sandbox-shaped task. */
+const SANDBOX_TASK_TYPES = TASK_TYPES.filter(
+  (t) => !isAdCreativeTaskType(t) && t !== "pr_pitch",
+);
 
 const RATING_LABELS: Record<OutputRating, string> = {
   accepted: "✓ Accept",
@@ -206,11 +218,11 @@ export default function SandboxPage() {
     const draftId = submittedByGeneration[generationId];
     return draftId ? (
       <Link className="link-button" href={`/workspaces/${id}/approvals`}>
-        in approval queue →
+        in Review →
       </Link>
     ) : (
       <button className="button-secondary" onClick={() => sendToQueue(generationId)}>
-        Send to approval queue
+        Send to Review
       </button>
     );
   }
@@ -228,28 +240,13 @@ export default function SandboxPage() {
 
   return (
     <>
-      <div className="brain-header">
+      <div className="page-header">
         <div>
-          <p className="breadcrumb">
-            <Link href="/">Workspaces</Link> /{" "}
-            <Link href={`/workspaces/${id}`}>{workspace.name}</Link> / Sandbox
-          </p>
-          <h1>Generation Sandbox</h1>
+          <h1>Playground</h1>
           <p className="subtitle">
-            Preview the context, generate with the brain, rate the output. Ratings are stored as
-            training signals.
+            Try a one-off generation: see exactly what Tuezday will use, generate, then rate the
+            result. Your ratings teach it what good looks like.
           </p>
-        </div>
-        <div className="persona-actions">
-          <Link className="button-secondary" href={`/workspaces/${id}`}>
-            ← Brain
-          </Link>
-          <Link className="button-secondary" href={`/workspaces/${id}/resolver`}>
-            Resolver
-          </Link>
-          <Link className="button-secondary" href={`/workspaces/${id}/approvals`}>
-            Approvals →
-          </Link>
         </div>
       </div>
 
@@ -259,7 +256,7 @@ export default function SandboxPage() {
           <label>
             Task
             <select value={taskType} onChange={(e) => setTaskType(e.target.value as TaskType)}>
-              {TASK_TYPES.map((t) => (
+              {SANDBOX_TASK_TYPES.map((t) => (
                 <option key={t} value={t}>
                   {TASK_LABELS[t]}
                 </option>

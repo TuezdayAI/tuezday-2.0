@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@nangohq/frontend": "^0.70.6",
     "@tuezday/brain": "*",
     "@tuezday/contracts": "*",
     "next": "^15.3.0",

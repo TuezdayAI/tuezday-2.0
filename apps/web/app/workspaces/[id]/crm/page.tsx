@@ -169,28 +169,13 @@ export default function CrmPage() {
 
   return (
     <>
-      <div className="brain-header">
+      <div className="page-header">
         <div>
-          <p className="breadcrumb">
-            <Link href="/">Workspaces</Link> /{" "}
-            <Link href={`/workspaces/${id}`}>{workspace.name}</Link> / CRM
-          </p>
           <h1>CRM</h1>
           <p className="subtitle">
-            Your CRM stays the system of record. Pull contacts in as leads; approved outbound
-            emails flow back as notes.
+            Your CRM stays the system of record. Pull contacts in as leads; approved emails flow
+            back as notes.
           </p>
-        </div>
-        <div className="persona-actions">
-          <Link className="button-secondary" href={`/workspaces/${id}`}>
-            ← Brain
-          </Link>
-          <Link className="button-secondary" href={`/workspaces/${id}/outbound`}>
-            Outbound
-          </Link>
-          <Link className="button-secondary" href={`/workspaces/${id}/connectors`}>
-            Connectors
-          </Link>
         </div>
       </div>
 

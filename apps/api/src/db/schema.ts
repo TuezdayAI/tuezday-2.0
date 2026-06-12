@@ -65,6 +65,7 @@ export const generations = sqliteTable("generations", {
   personaId: text("persona_id"),
   campaignId: text("campaign_id"),
   leadId: text("lead_id"),
+  mediaContactId: text("media_contact_id"),
   prompt: text("prompt").notNull(),
   sectionsJson: text("sections_json").notNull(),
   output: text("output").notNull(),
@@ -87,6 +88,7 @@ export const drafts = sqliteTable("drafts", {
   sourceSignalId: text("source_signal_id"),
   campaignId: text("campaign_id"),
   leadId: text("lead_id"),
+  mediaContactId: text("media_contact_id"),
   taskType: text("task_type").notNull(),
   channel: text("channel").notNull(),
   personaId: text("persona_id"),
@@ -258,6 +260,23 @@ export const leads = sqliteTable("leads", {
 
 export type LeadRow = typeof leads.$inferSelect;
 
+// PR & media outreach (Sprint 16) — the founder's media list, not a media DB.
+export const mediaContacts = sqliteTable("media_contacts", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  email: text("email").notNull(),
+  type: text("type").notNull().default("journalist"),
+  outlet: text("outlet").notNull().default(""),
+  beat: text("beat").notNull().default(""),
+  coverageNotes: text("coverage_notes").notNull().default(""),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type MediaContactRow = typeof mediaContacts.$inferSelect;
+
 export const connections = sqliteTable("connections", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id")
@@ -298,6 +317,105 @@ export const crmContacts = sqliteTable(
 );
 
 export type CrmContactRow = typeof crmContacts.$inferSelect;
+
+// Ads reporting (Sprint 14). Tuezday owns this metric model regardless of
+// source; connectionId null marks the workspace's CSV-only account.
+export const adAccounts = sqliteTable(
+  "ad_accounts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    connectionId: text("connection_id").references(() => connections.id, { onDelete: "set null" }),
+    externalId: text("external_id").notNull(),
+    name: text("name").notNull(),
+    currency: text("currency").notNull().default("USD"),
+    lastSyncedAt: integer("last_synced_at"),
+    lastError: text("last_error"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("ad_accounts_workspace_external").on(t.workspaceId, t.externalId)],
+);
+
+export type AdAccountRow = typeof adAccounts.$inferSelect;
+
+export const adCampaigns = sqliteTable(
+  "ad_campaigns",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    adAccountId: text("ad_account_id")
+      .notNull()
+      .references(() => adAccounts.id, { onDelete: "cascade" }),
+    externalId: text("external_id").notNull(),
+    name: text("name").notNull(),
+    // The link that puts paid numbers on a Tuezday campaign's page.
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+    lastSyncedAt: integer("last_synced_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("ad_campaigns_account_external").on(t.adAccountId, t.externalId)],
+);
+
+export type AdCampaignRow = typeof adCampaigns.$inferSelect;
+
+export const adCampaignMetrics = sqliteTable(
+  "ad_campaign_metrics",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    adCampaignId: text("ad_campaign_id")
+      .notNull()
+      .references(() => adCampaigns.id, { onDelete: "cascade" }),
+    // YYYY-MM-DD as the platform reports it — portable and sortable as text.
+    date: text("date").notNull(),
+    // Integer cents in the account currency — no floats in the DB.
+    spendCents: integer("spend_cents").notNull().default(0),
+    impressions: integer("impressions").notNull().default(0),
+    clicks: integer("clicks").notNull().default(0),
+    conversions: integer("conversions").notNull().default(0),
+    source: text("source").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("ad_campaign_metrics_campaign_date").on(t.adCampaignId, t.date)],
+);
+
+export type AdCampaignMetricRow = typeof adCampaignMetrics.$inferSelect;
+
+// Social publishing receipts (Sprint 17) — one row per publish attempt (now
+// or scheduled); the post lives on the platform, Tuezday keeps status + URL.
+export const publications = sqliteTable("publications", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  draftId: text("draft_id")
+    .notNull()
+    .references(() => drafts.id, { onDelete: "cascade" }),
+  connectionId: text("connection_id")
+    .notNull()
+    .references(() => connections.id, { onDelete: "cascade" }),
+  providerKey: text("provider_key").notNull(),
+  target: text("target").notNull(),
+  title: text("title").notNull(),
+  status: text("status").notNull().default("scheduled"),
+  // The requested publish time; "post now" stamps the request time.
+  scheduledFor: integer("scheduled_for").notNull(),
+  publishedAt: integer("published_at"),
+  externalId: text("external_id"),
+  externalUrl: text("external_url"),
+  lastError: text("last_error"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type PublicationRow = typeof publications.$inferSelect;
 
 export const events = sqliteTable("events", {
   id: text("id").primaryKey(),

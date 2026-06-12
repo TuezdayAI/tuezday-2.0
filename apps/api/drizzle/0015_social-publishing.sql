@@ -1,0 +1,20 @@
+CREATE TABLE `publications` (
+	`id` text PRIMARY KEY NOT NULL,
+	`workspace_id` text NOT NULL,
+	`draft_id` text NOT NULL,
+	`connection_id` text NOT NULL,
+	`provider_key` text NOT NULL,
+	`target` text NOT NULL,
+	`title` text NOT NULL,
+	`status` text DEFAULT 'scheduled' NOT NULL,
+	`scheduled_for` integer NOT NULL,
+	`published_at` integer,
+	`external_id` text,
+	`external_url` text,
+	`last_error` text,
+	`created_at` integer NOT NULL,
+	`updated_at` integer NOT NULL,
+	FOREIGN KEY (`workspace_id`) REFERENCES `workspaces`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`draft_id`) REFERENCES `drafts`(`id`) ON UPDATE no action ON DELETE cascade,
+	FOREIGN KEY (`connection_id`) REFERENCES `connections`(`id`) ON UPDATE no action ON DELETE cascade
+);

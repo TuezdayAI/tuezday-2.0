@@ -9,6 +9,7 @@ import type {
 } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { campaigns, drafts, type CampaignRow } from "../db/schema";
+import { getCampaignAdMetrics, type CampaignAdMetrics } from "./ads";
 
 function rowToCampaign(row: CampaignRow): Campaign {
   return {
@@ -119,6 +120,8 @@ export interface CampaignDetail {
     channel: string;
     createdAt: number;
   }>;
+  /** Paid totals from linked ad campaigns (Sprint 14); null when none. */
+  adMetrics: CampaignAdMetrics | null;
 }
 
 export function getCampaignDetail(db: Db, campaign: Campaign): CampaignDetail {
@@ -148,5 +151,6 @@ export function getCampaignDetail(db: Db, campaign: Campaign): CampaignDetail {
     campaign,
     draftCounts,
     drafts: rows.map((r) => ({ ...r, state: r.state as ApprovalState })),
+    adMetrics: getCampaignAdMetrics(db, campaign),
   };
 }

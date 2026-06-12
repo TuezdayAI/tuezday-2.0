@@ -83,21 +83,14 @@ export default function EvidencePage() {
 
   return (
     <>
-      <div className="brain-header">
+      <div className="page-header">
         <div>
-          <p className="breadcrumb">
-            <Link href="/">Workspaces</Link> /{" "}
-            <Link href={`/workspaces/${id}`}>{workspace.name}</Link> / Evidence
-          </p>
-          <h1>Evidence Corpus</h1>
+          <h1>Evidence library</h1>
           <p className="subtitle">
-            Long-tail proof the brain retrieves on demand — website copy, past posts, research,
-            call notes. Cited in every bundle that uses it.
+            Supporting material Tuezday can pull in and cite — website copy, past posts,
+            research, call notes.
           </p>
         </div>
-        <Link className="button-secondary" href={`/workspaces/${id}`}>
-          ← Brain
-        </Link>
       </div>
 
       {!view.store.healthy && (

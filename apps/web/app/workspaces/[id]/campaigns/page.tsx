@@ -22,10 +22,29 @@ const STATE_LABELS: Record<ApprovalState, string> = {
   rejected: "rejected",
 };
 
+interface AdTotals {
+  spendCents: number;
+  impressions: number;
+  clicks: number;
+  conversions: number;
+}
+
 interface CampaignDetail {
   campaign: Campaign;
   draftCounts: Record<ApprovalState, number>;
   drafts: { id: string; state: ApprovalState; taskType: string; channel: string; createdAt: number }[];
+  adMetrics: {
+    totals: AdTotals;
+    adCampaigns: { id: string; name: string; accountName: string; currency: string; totals: AdTotals }[];
+  } | null;
+}
+
+function money(cents: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat(undefined, { style: "currency", currency }).format(cents / 100);
+  } catch {
+    return `${(cents / 100).toFixed(2)} ${currency}`;
+  }
 }
 
 const EMPTY_FORM = {
@@ -193,22 +212,15 @@ export default function CampaignsPage() {
 
   return (
     <>
-      <div className="brain-header">
+      <div className="page-header">
         <div>
-          <p className="breadcrumb">
-            <Link href="/">Workspaces</Link> /{" "}
-            <Link href={`/workspaces/${id}`}>{workspace.name}</Link> / Campaigns
-          </p>
           <h1>Campaigns</h1>
           <p className="subtitle">
-            Goal-scoped GTM. A campaign layers its objective, pillars, and now-overlay into every
-            context resolved under it.
+            Your GTM goals and everything attached to them. A campaign shapes every draft
+            created under it.
           </p>
         </div>
-        <div className="persona-actions">
-          <Link className="button-secondary" href={`/workspaces/${id}`}>
-            ← Brain
-          </Link>
+        <div className="page-actions">
           <button onClick={() => startEdit()}>+ New campaign</button>
         </div>
       </div>
@@ -356,6 +368,36 @@ export default function CampaignsPage() {
                           </li>
                         ))}
                       </ul>
+                    )}
+                    {detail.adMetrics && (
+                      <>
+                        <p className="bundle-summary" style={{ marginTop: 10 }}>
+                          Paid performance:{" "}
+                          {money(
+                            detail.adMetrics.totals.spendCents,
+                            detail.adMetrics.adCampaigns[0]?.currency ?? "USD",
+                          )}{" "}
+                          spend · {detail.adMetrics.totals.impressions.toLocaleString()} impressions
+                          · {detail.adMetrics.totals.clicks.toLocaleString()} clicks ·{" "}
+                          {detail.adMetrics.totals.conversions} conversions
+                        </p>
+                        <ul className="draft-chain">
+                          {detail.adMetrics.adCampaigns.map((ac) => (
+                            <li key={ac.id}>
+                              <span className="meta">
+                                {ac.name} ({ac.accountName}) —{" "}
+                                {money(ac.totals.spendCents, ac.currency)} ·{" "}
+                                {ac.totals.impressions.toLocaleString()} imp ·{" "}
+                                {ac.totals.clicks.toLocaleString()} clicks ·{" "}
+                                {ac.totals.conversions} conv
+                              </span>{" "}
+                              <Link className="link-button" href={`/workspaces/${id}/ads`}>
+                                open ads
+                              </Link>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
                     )}
                   </div>
                 )}

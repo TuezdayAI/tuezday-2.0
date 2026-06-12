@@ -1,5 +1,13 @@
 import type { Metadata } from "next";
+import { Inter, Instrument_Serif } from "next/font/google";
 import "./globals.css";
+
+const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
+const instrumentSerif = Instrument_Serif({
+  weight: "400",
+  subsets: ["latin"],
+  variable: "--font-instrument-serif",
+});
 
 export const metadata: Metadata = {
   title: "Tuezday",
@@ -8,14 +16,8 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
-      <body>
-        <header className="site-header">
-          <span className="logo">Tuezday</span>
-          <span className="tagline">GTM that remembers</span>
-        </header>
-        <main className="site-main">{children}</main>
-      </body>
+    <html lang="en" className={`${inter.variable} ${instrumentSerif.variable}`}>
+      <body>{children}</body>
     </html>
   );
 }
