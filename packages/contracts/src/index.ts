@@ -64,6 +64,74 @@ export const createWorkspaceInputSchema = z.object({
 export type CreateWorkspaceInput = z.infer<typeof createWorkspaceInputSchema>;
 
 // ---------------------------------------------------------------------------
+// Users, teams & auth (Sprint 19)
+// ---------------------------------------------------------------------------
+
+/** Workspace membership roles. Deliberately just two — no role matrices yet. */
+export const WORKSPACE_ROLES = ["owner", "member"] as const;
+export type WorkspaceRole = (typeof WORKSPACE_ROLES)[number];
+
+export const INVITE_STATUSES = ["pending", "accepted", "revoked"] as const;
+export type InviteStatus = (typeof INVITE_STATUSES)[number];
+
+export const PASSWORD_MIN_CHARS = 8;
+
+/** Public user shape — never includes the password hash. */
+export const userSchema = z.object({
+  id: z.string().uuid(),
+  email: z.string().email(),
+  name: z.string().max(100),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type User = z.infer<typeof userSchema>;
+
+export const registerInputSchema = z.object({
+  email: z.string().trim().toLowerCase().email("A valid email is required"),
+  password: z
+    .string()
+    .min(PASSWORD_MIN_CHARS, `Password must be at least ${PASSWORD_MIN_CHARS} characters`)
+    .max(200),
+  name: z.string().trim().max(100).default(""),
+});
+export type RegisterInput = z.infer<typeof registerInputSchema>;
+
+export const loginInputSchema = z.object({
+  email: z.string().trim().toLowerCase().email(),
+  password: z.string().min(1),
+});
+export type LoginInput = z.infer<typeof loginInputSchema>;
+
+export const workspaceMemberSchema = z.object({
+  userId: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  email: z.string().email(),
+  name: z.string(),
+  role: z.enum(WORKSPACE_ROLES),
+  createdAt: z.number().int(),
+});
+export type WorkspaceMember = z.infer<typeof workspaceMemberSchema>;
+
+export const workspaceInviteSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  email: z.string().email(),
+  role: z.enum(WORKSPACE_ROLES),
+  token: z.string(),
+  status: z.enum(INVITE_STATUSES),
+  invitedBy: z.string().uuid(),
+  createdAt: z.number().int(),
+  expiresAt: z.number().int(),
+  acceptedAt: z.number().int().nullable(),
+});
+export type WorkspaceInvite = z.infer<typeof workspaceInviteSchema>;
+
+export const createInviteInputSchema = z.object({
+  email: z.string().trim().toLowerCase().email("A valid email is required"),
+});
+export type CreateInviteInput = z.infer<typeof createInviteInputSchema>;
+
+// ---------------------------------------------------------------------------
 // Brain documents
 // ---------------------------------------------------------------------------
 
@@ -91,6 +159,9 @@ export const brainDocVersionSchema = z.object({
   documentId: z.string().uuid(),
   version: z.number().int().min(1),
   content: z.string(),
+  // Nullable: versions written before auth existed (Sprint 19) have no actor.
+  actor: z.string().nullable(),
+  actorId: z.string().uuid().nullable(),
   createdAt: z.number().int(),
 });
 export type BrainDocVersion = z.infer<typeof brainDocVersionSchema>;
@@ -437,6 +508,8 @@ export const approvalDecisionSchema = z.object({
   toState: z.enum(APPROVAL_STATES),
   contentSnapshot: z.string().nullable(),
   actor: z.string(),
+  // Nullable: decisions logged before auth existed (Sprint 19), or by the worker.
+  actorId: z.string().uuid().nullable(),
   createdAt: z.number().int(),
 });
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>;
@@ -1211,6 +1284,186 @@ export const publishDraftInputSchema = z.object({
 export type PublishDraftInput = z.infer<typeof publishDraftInputSchema>;
 
 // ---------------------------------------------------------------------------
+// Native ads execution (Sprint 20)
+// ---------------------------------------------------------------------------
+
+/**
+ * Launch approval statuses. `launched` is terminal in the approval machine —
+ * runtime platform state (active/paused/disapproved) lives in platformStatus.
+ */
+export const AD_LAUNCH_STATUSES = [
+  "draft",
+  "pending_review",
+  "approved",
+  "rejected",
+  "launched",
+] as const;
+export type AdLaunchStatus = (typeof AD_LAUNCH_STATUSES)[number];
+
+export const AD_LAUNCH_ACTIONS = ["submit", "approve", "reject", "revise"] as const;
+export type AdLaunchAction = (typeof AD_LAUNCH_ACTIONS)[number];
+
+/** Decision-log actions: the machine moves plus the launch trigger itself. */
+export const AD_LAUNCH_DECISION_ACTIONS = [...AD_LAUNCH_ACTIONS, "launch"] as const;
+export type AdLaunchDecisionAction = (typeof AD_LAUNCH_DECISION_ACTIONS)[number];
+
+/**
+ * The launch state machine — spend is gated on `approved`. `revise` pulls a
+ * launch back to draft from anywhere short of launched.
+ */
+const AD_LAUNCH_TRANSITIONS: Record<
+  AdLaunchAction,
+  Partial<Record<AdLaunchStatus, AdLaunchStatus>>
+> = {
+  submit: { draft: "pending_review" },
+  approve: { pending_review: "approved" },
+  reject: { pending_review: "rejected" },
+  revise: { pending_review: "draft", rejected: "draft", approved: "draft" },
+};
+
+export function adLaunchTransitionTo(
+  from: AdLaunchStatus,
+  action: AdLaunchAction,
+): AdLaunchStatus | undefined {
+  return AD_LAUNCH_TRANSITIONS[action][from];
+}
+
+/**
+ * v1 objectives launch with just a Page + link. Leads/Sales need form/pixel
+ * setup on the Meta side — they arrive under integration expansion.
+ */
+export const AD_LAUNCH_OBJECTIVES = ["OUTCOME_TRAFFIC", "OUTCOME_AWARENESS"] as const;
+export type AdLaunchObjective = (typeof AD_LAUNCH_OBJECTIVES)[number];
+
+export const AD_LAUNCH_OBJECTIVE_LABELS: Record<AdLaunchObjective, string> = {
+  OUTCOME_TRAFFIC: "Traffic",
+  OUTCOME_AWARENESS: "Awareness",
+};
+
+export const adLaunchSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  adAccountId: z.string().uuid(),
+  // Copied from the creative draft — the Tuezday campaign reporting links to.
+  campaignId: z.string().uuid().nullable(),
+  creativeDraftId: z.string().uuid(),
+  name: z.string(),
+  objective: z.enum(AD_LAUNCH_OBJECTIVES),
+  pageId: z.string(),
+  linkUrl: z.string(),
+  dailyBudgetCents: z.number().int().min(100),
+  startAt: z.number().int().nullable(),
+  endAt: z.number().int().nullable(),
+  countries: z.array(z.string()),
+  ageMin: z.number().int(),
+  ageMax: z.number().int(),
+  status: z.enum(AD_LAUNCH_STATUSES),
+  externalCampaignId: z.string().nullable(),
+  externalAdSetId: z.string().nullable(),
+  externalCreativeId: z.string().nullable(),
+  externalAdId: z.string().nullable(),
+  // The Sprint 14 ad_campaigns mirror row created on launch.
+  adCampaignId: z.string().uuid().nullable(),
+  // Raw platform effective_status, stamped by the sync job and pause/resume.
+  platformStatus: z.string().nullable(),
+  launchedAt: z.number().int().nullable(),
+  lastError: z.string().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type AdLaunch = z.infer<typeof adLaunchSchema>;
+
+export const adLaunchDecisionSchema = z.object({
+  id: z.string().uuid(),
+  launchId: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  action: z.enum(AD_LAUNCH_DECISION_ACTIONS),
+  fromState: z.enum(AD_LAUNCH_STATUSES),
+  toState: z.enum(AD_LAUNCH_STATUSES),
+  actor: z.string(),
+  actorId: z.string().uuid().nullable(),
+  createdAt: z.number().int(),
+});
+export type AdLaunchDecision = z.infer<typeof adLaunchDecisionSchema>;
+
+const countryCodeSchema = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z]{2}$/, "Use 2-letter country codes (e.g. US, DE)");
+
+const adLaunchFieldsSchema = z.object({
+  adAccountId: z.string().uuid(),
+  creativeDraftId: z.string().uuid(),
+  name: z.string().trim().min(1, "Name is required").max(100),
+  objective: z.enum(AD_LAUNCH_OBJECTIVES),
+  pageId: z.string().trim().regex(/^\d+$/, "Page ID is the numeric Facebook Page id"),
+  linkUrl: z
+    .string()
+    .trim()
+    .url("A valid destination URL is required")
+    .regex(/^https:\/\//, "Use an https destination URL"),
+  // Meta's minimum daily budget is on the order of $1/day.
+  dailyBudgetCents: z
+    .number()
+    .int()
+    .min(100, "Daily budget must be at least 100 cents")
+    .max(100_000_000),
+  startAt: z.number().int().positive().optional(),
+  endAt: z.number().int().positive().optional(),
+  countries: z.array(countryCodeSchema).min(1, "Target at least one country").max(25),
+  ageMin: z.number().int().min(18).max(65).default(18),
+  ageMax: z.number().int().min(18).max(65).default(65),
+});
+
+function refineAdLaunch(
+  value: { ageMin?: number; ageMax?: number; startAt?: number; endAt?: number },
+  ctx: z.RefinementCtx,
+): void {
+  if (value.ageMin !== undefined && value.ageMax !== undefined && value.ageMin > value.ageMax) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["ageMax"],
+      message: "Maximum age must be at least the minimum age",
+    });
+  }
+  if (value.endAt !== undefined && value.endAt <= (value.startAt ?? Date.now())) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["endAt"],
+      message: "End must be after the start",
+    });
+  }
+}
+
+export const createAdLaunchInputSchema = adLaunchFieldsSchema.superRefine(refineAdLaunch);
+export type CreateAdLaunchInput = z.infer<typeof createAdLaunchInputSchema>;
+
+/** Draft-only edits; absent fields stay unchanged. */
+export const updateAdLaunchInputSchema = adLaunchFieldsSchema.partial().superRefine(refineAdLaunch);
+export type UpdateAdLaunchInput = z.infer<typeof updateAdLaunchInputSchema>;
+
+/**
+ * Workspace spend guardrails. The daily cap bounds the summed daily budgets
+ * of currently-spending Tuezday launches (committed budgets, not observed
+ * spend — deterministic and immediate). Compared in integer cents across
+ * accounts regardless of currency.
+ */
+export const adSettingsSchema = z.object({
+  workspaceId: z.string().uuid(),
+  dailyCapCents: z.number().int().min(0),
+  killSwitch: z.boolean(),
+  updatedAt: z.number().int(),
+});
+export type AdSettings = z.infer<typeof adSettingsSchema>;
+
+export const updateAdSettingsInputSchema = z.object({
+  dailyCapCents: z.number().int().min(0).max(100_000_000).optional(),
+  killSwitch: z.boolean().optional(),
+});
+export type UpdateAdSettingsInput = z.infer<typeof updateAdSettingsInputSchema>;
+
+// ---------------------------------------------------------------------------
 // Events + webhooks
 // ---------------------------------------------------------------------------
 
@@ -1222,6 +1475,7 @@ export const EVENT_TYPES = [
   "crm.contact.created",
   "crm.note.logged",
   "ads.synced",
+  "ad.launched",
   "post.published",
   "webhook.ping",
 ] as const;

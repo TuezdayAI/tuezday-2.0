@@ -1,5 +1,7 @@
 "use client";
 
+import { API_URL, apiFetch } from "@/lib/api";
+
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -13,8 +15,6 @@ import {
   type TaskType,
   type Workspace,
 } from "@tuezday/contracts";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 const TASK_LABELS: Record<TaskType, string> = {
   linkedin_post: "LinkedIn post",
@@ -58,10 +58,10 @@ export default function ApprovalsPage() {
   const load = useCallback(async () => {
     try {
       const [wsRes, pRes, dRes, cRes] = await Promise.all([
-        fetch(`${API_URL}/workspaces/${id}`),
-        fetch(`${API_URL}/workspaces/${id}/personas`),
-        fetch(`${API_URL}/workspaces/${id}/drafts`),
-        fetch(`${API_URL}/workspaces/${id}/campaigns`),
+        apiFetch(`/workspaces/${id}`),
+        apiFetch(`/workspaces/${id}/personas`),
+        apiFetch(`/workspaces/${id}/drafts`),
+        apiFetch(`/workspaces/${id}/campaigns`),
       ]);
       if (!wsRes.ok || !pRes.ok || !dRes.ok || !cRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
@@ -84,7 +84,7 @@ export default function ApprovalsPage() {
     try {
       // Only set the JSON header when there is a body — Fastify rejects an
       // empty body that claims to be JSON.
-      const res = await fetch(`${API_URL}/workspaces/${id}/drafts/${draftId}/${name}`, {
+      const res = await apiFetch(`/workspaces/${id}/drafts/${draftId}/${name}`, {
         method: "POST",
         ...(payload
           ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }
@@ -103,7 +103,7 @@ export default function ApprovalsPage() {
   }
 
   async function loadHistory(draftId: string) {
-    const res = await fetch(`${API_URL}/workspaces/${id}/drafts/${draftId}`);
+    const res = await apiFetch(`/workspaces/${id}/drafts/${draftId}`);
     if (res.ok) {
       const detail = await res.json();
       setDecisions((d) => ({ ...d, [draftId]: detail.decisions }));

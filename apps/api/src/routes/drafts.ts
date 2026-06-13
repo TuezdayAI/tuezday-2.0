@@ -10,6 +10,7 @@ import {
   type TaskType,
 } from "@tuezday/contracts";
 import { eq } from "drizzle-orm";
+import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
 import { generations } from "../db/schema";
 import {
@@ -61,7 +62,7 @@ export function registerDraftRoutes(app: FastifyInstance, db: Db, fetcher: Fetch
         channel: generation.channel as Channel,
         personaId: generation.personaId,
         content: generation.output,
-      });
+      }, actorOf(request));
       return reply.status(201).send(draft);
     },
   );
@@ -134,7 +135,7 @@ export function registerDraftRoutes(app: FastifyInstance, db: Db, fetcher: Fetch
         }
 
         try {
-          const updated = applyDraftAction(db, draft, action, newContent);
+          const updated = applyDraftAction(db, draft, action, actorOf(request), newContent);
           if (action === "approve" || action === "reject") {
             await emitEvent(
               db,

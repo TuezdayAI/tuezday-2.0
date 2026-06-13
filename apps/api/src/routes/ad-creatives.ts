@@ -9,6 +9,7 @@ import {
 } from "@tuezday/contracts";
 import { composeAdCreativeInstruction, resolveContext, type BrainContents } from "@tuezday/brain";
 import { and, eq } from "drizzle-orm";
+import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
 import { drafts } from "../db/schema";
 import type { EvidenceStore } from "../evidence/store";
@@ -133,7 +134,7 @@ export function registerAdCreativeRoutes(
           channel: "ads",
           personaId: parsed.data.personaId ?? null,
           content,
-        }),
+        }, actorOf(request)),
       );
       return reply.status(201).send({
         generationId: generation.id,

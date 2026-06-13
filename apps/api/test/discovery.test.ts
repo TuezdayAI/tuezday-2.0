@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { discoverySourceSchema, discoveredItemSchema } from "@tuezday/contracts";
-import { buildApp, type TuezdayApp } from "../src/app";
+import type { TuezdayApp } from "../src/app";
 import type { Fetcher } from "../src/discovery/adapters";
 import type { LlmGateway } from "../src/llm/gateway";
-import { createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb } from "./helpers";
 
 const RSS_FIXTURE = `<?xml version="1.0"?>
 <rss version="2.0"><channel><title>Feed</title>
@@ -76,7 +76,7 @@ describe("discovery API", () => {
   beforeEach(async () => {
     personaRef = { id: null };
     const { fetcher } = makeFetcher();
-    app = await buildApp({ db: createTestDb(), llm: scoringGateway(personaRef), fetcher });
+    app = await buildAuthedApp({ db: createTestDb(), llm: scoringGateway(personaRef), fetcher });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Disco" } })
     ).json().id;

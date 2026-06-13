@@ -2,10 +2,9 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, usePathname } from "next/navigation";
+import { useParams, usePathname, useRouter } from "next/navigation";
 import type { Workspace } from "@tuezday/contracts";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+import { apiFetch, clearToken } from "@/lib/api";
 
 interface NavChild {
   label: string;
@@ -46,6 +45,7 @@ const NAV: NavItem[] = [
     children: [
       { label: "Ads", path: "/ads" },
       { label: "Ad creatives", path: "/ad-creatives" },
+      { label: "Launch ads", path: "/ad-launches" },
     ],
   },
   {
@@ -57,25 +57,40 @@ const NAV: NavItem[] = [
     ],
   },
   { label: "Integrations", path: "/connectors" },
+  { label: "Team", path: "/team" },
 ];
 
 export default function WorkspaceLayout({ children }: { children: React.ReactNode }) {
   const { id } = useParams<{ id: string }>();
   const pathname = usePathname();
+  const router = useRouter();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [userLabel, setUserLabel] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    fetch(`${API_URL}/workspaces/${id}`)
+    apiFetch(`/workspaces/${id}`)
       .then((res) => (res.ok ? res.json() : null))
       .then((ws) => {
         if (!cancelled) setWorkspace(ws);
+      })
+      .catch(() => {});
+    apiFetch("/auth/me")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((me) => {
+        if (!cancelled && me) setUserLabel(me.user.name || me.user.email);
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, [id]);
+
+  async function logout() {
+    await apiFetch("/auth/logout", { method: "POST" }).catch(() => {});
+    clearToken();
+    router.push("/login");
+  }
 
   const base = `/workspaces/${id}`;
   const isActive = (path: string) =>
@@ -111,6 +126,14 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
         </nav>
         <div className="ws-sidebar-foot">
           <Link href="/">← All workspaces</Link>
+          {userLabel && (
+            <div className="ws-user">
+              <span>{userLabel}</span>
+              <button type="button" className="link-button" onClick={logout}>
+                Log out
+              </button>
+            </div>
+          )}
         </div>
       </aside>
       <main className="ws-content">{children}</main>

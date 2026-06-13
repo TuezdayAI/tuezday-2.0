@@ -1,5 +1,7 @@
 "use client";
 
+import { API_URL, apiDownload, apiFetch } from "@/lib/api";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -17,8 +19,6 @@ import {
   type Persona,
   type Workspace,
 } from "@tuezday/contracts";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 const STATE_LABELS: Record<ApprovalState, string> = {
   draft: "Draft",
@@ -98,10 +98,10 @@ export default function AdCreativesPage() {
   const load = useCallback(async () => {
     try {
       const [wsRes, cRes, pRes, sRes] = await Promise.all([
-        fetch(`${API_URL}/workspaces/${id}`),
-        fetch(`${API_URL}/workspaces/${id}/campaigns`),
-        fetch(`${API_URL}/workspaces/${id}/personas`),
-        fetch(`${API_URL}/workspaces/${id}/ad-creatives`),
+        apiFetch(`/workspaces/${id}`),
+        apiFetch(`/workspaces/${id}/campaigns`),
+        apiFetch(`/workspaces/${id}/personas`),
+        apiFetch(`/workspaces/${id}/ad-creatives`),
       ]);
       if (!wsRes.ok || !cRes.ok || !pRes.ok || !sRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
@@ -126,7 +126,7 @@ export default function AdCreativesPage() {
   const format = AD_CREATIVE_FORMATS[taskType];
 
   async function post(path: string, payload?: Record<string, unknown>) {
-    const res = await fetch(`${API_URL}/workspaces/${id}${path}`, {
+    const res = await apiFetch(`/workspaces/${id}${path}`, {
       method: "POST",
       ...(payload
         ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) }
@@ -321,12 +321,18 @@ export default function AdCreativesPage() {
                 <option value="edited">edited</option>
                 <option value="pending_review">pending review</option>
               </select>
-              <a
+              <button
+                type="button"
                 className="button-secondary"
-                href={`${API_URL}/workspaces/${id}/ad-creatives/export.csv?taskType=${exportTaskType}&state=${exportState}`}
+                onClick={() =>
+                  void apiDownload(
+                    `/workspaces/${id}/ad-creatives/export.csv?taskType=${exportTaskType}&state=${exportState}`,
+                    "ad-creatives.csv",
+                  )
+                }
               >
                 ↓ Export CSV
-              </a>
+              </button>
             </div>
           )}
         </div>

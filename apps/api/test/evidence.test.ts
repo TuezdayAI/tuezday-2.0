@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { evidenceDocumentSchema } from "@tuezday/contracts";
-import { buildApp, type TuezdayApp } from "../src/app";
+import type { TuezdayApp } from "../src/app";
 import { EvidenceStoreError, type EvidenceStore } from "../src/evidence/store";
 import type { LlmGateway } from "../src/llm/gateway";
-import { createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb } from "./helpers";
 
 const fakeLlm: LlmGateway = {
   async generate() {
@@ -58,7 +58,7 @@ describe("evidence API", () => {
 
   beforeEach(async () => {
     state = { healthy: true, documents: new Map(), lastQuery: null, lastDocumentIds: null };
-    app = await buildApp({ db: createTestDb(), llm: fakeLlm, evidence: fakeStore(state) });
+    app = await buildAuthedApp({ db: createTestDb(), llm: fakeLlm, evidence: fakeStore(state) });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Evi" } })
     ).json().id;

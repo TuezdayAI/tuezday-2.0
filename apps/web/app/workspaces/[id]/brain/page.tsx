@@ -1,12 +1,12 @@
 "use client";
 
+import { API_URL, apiDownload, apiFetch } from "@/lib/api";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { BrainDocType, BrainDocVersion, BrainDocument, Workspace } from "@tuezday/contracts";
 import { BRAIN_DOC_META, type BrainScore } from "@tuezday/brain";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 interface BrainView {
   docs: BrainDocument[];
@@ -42,8 +42,8 @@ export default function WorkspaceBrainPage() {
   const load = useCallback(async () => {
     try {
       const [wsRes, brainRes] = await Promise.all([
-        fetch(`${API_URL}/workspaces/${id}`),
-        fetch(`${API_URL}/workspaces/${id}/brain`),
+        apiFetch(`/workspaces/${id}`),
+        apiFetch(`/workspaces/${id}/brain`),
       ]);
       if (!wsRes.ok || !brainRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
@@ -70,7 +70,7 @@ export default function WorkspaceBrainPage() {
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/brain/${selected}`, {
+      const res = await apiFetch(`/workspaces/${id}/brain/${selected}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content }),
@@ -98,7 +98,7 @@ export default function WorkspaceBrainPage() {
   }
 
   async function loadVersions() {
-    const res = await fetch(`${API_URL}/workspaces/${id}/brain/${selected}/versions`);
+    const res = await apiFetch(`/workspaces/${id}/brain/${selected}/versions`);
     if (res.ok) setVersions(await res.json());
   }
 
@@ -131,9 +131,13 @@ export default function WorkspaceBrainPage() {
           </p>
         </div>
         <div className="page-actions">
-          <a className="button-secondary" href={`${API_URL}/workspaces/${id}/brain/export`}>
+          <button
+            type="button"
+            className="button-secondary"
+            onClick={() => void apiDownload(`/workspaces/${id}/brain/export`, "gtm-brain.md")}
+          >
             Export brain (.md)
-          </a>
+          </button>
         </div>
       </div>
 
@@ -190,6 +194,7 @@ export default function WorkspaceBrainPage() {
                     <li key={v.id} className={previewVersion?.id === v.id ? "active" : ""}>
                       <button onClick={() => setPreviewVersion(v)}>
                         v{v.version} — {new Date(v.createdAt).toLocaleString()}
+                        {v.actor ? ` · ${v.actor}` : ""}
                       </button>
                     </li>
                   ))}

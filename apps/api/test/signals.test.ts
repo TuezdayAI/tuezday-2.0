@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { draftSchema, signalSchema } from "@tuezday/contracts";
-import { buildApp, type TuezdayApp } from "../src/app";
+import type { TuezdayApp } from "../src/app";
 import { GatewayError, type LlmGateway } from "../src/llm/gateway";
-import { createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb } from "./helpers";
 
 function fakeGateway(): LlmGateway {
   return {
@@ -22,7 +22,7 @@ describe("signals API", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    app = await buildApp({ db: createTestDb(), llm: fakeGateway() });
+    app = await buildAuthedApp({ db: createTestDb(), llm: fakeGateway() });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Signals Co" } })
     ).json().id;
@@ -156,7 +156,7 @@ describe("signals API", () => {
     });
 
     it("returns 502 and stores nothing when the provider fails", async () => {
-      const failApp = await buildApp({
+      const failApp = await buildAuthedApp({
         db: createTestDb(),
         llm: {
           async generate() {

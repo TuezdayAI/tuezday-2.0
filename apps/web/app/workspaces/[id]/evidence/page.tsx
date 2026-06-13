@@ -1,11 +1,11 @@
 "use client";
 
+import { API_URL, apiFetch } from "@/lib/api";
+
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { EvidenceDocument, Workspace } from "@tuezday/contracts";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 interface EvidenceView {
   documents: EvidenceDocument[];
@@ -26,8 +26,8 @@ export default function EvidencePage() {
   const load = useCallback(async () => {
     try {
       const [wsRes, eRes] = await Promise.all([
-        fetch(`${API_URL}/workspaces/${id}`),
-        fetch(`${API_URL}/workspaces/${id}/evidence`),
+        apiFetch(`/workspaces/${id}`),
+        apiFetch(`/workspaces/${id}/evidence`),
       ]);
       if (!wsRes.ok || !eRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
@@ -47,7 +47,7 @@ export default function EvidencePage() {
     setUploading(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/evidence`, {
+      const res = await apiFetch(`/workspaces/${id}/evidence`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, content }),
@@ -66,7 +66,7 @@ export default function EvidencePage() {
 
   async function remove(doc: EvidenceDocument) {
     if (!confirm(`Delete "${doc.title}" from the evidence corpus?`)) return;
-    await fetch(`${API_URL}/workspaces/${id}/evidence/${doc.id}`, { method: "DELETE" });
+    await apiFetch(`/workspaces/${id}/evidence/${doc.id}`, { method: "DELETE" });
     await load();
   }
 

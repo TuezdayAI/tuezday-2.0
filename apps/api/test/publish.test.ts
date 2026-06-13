@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { publicationSchema, validateSocialPost } from "@tuezday/contracts";
-import { buildApp, type TuezdayApp } from "../src/app";
+import type { TuezdayApp } from "../src/app";
 import {
   ConnectorFabricError,
   type ConnectorFabric,
@@ -9,7 +9,7 @@ import {
 import { RedditAdapter } from "../src/connectors/social/reddit";
 import { NangoFabric } from "../src/connectors/nango";
 import type { LlmGateway } from "../src/llm/gateway";
-import { createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb } from "./helpers";
 
 const fakeLlm: LlmGateway = {
   async generate() {
@@ -387,7 +387,7 @@ describe("social publishing API", () => {
     vi.stubEnv("REDDIT_CLIENT_SECRET", "csecret");
     state = fabricState();
     received = [];
-    app = await buildApp({
+    app = await buildAuthedApp({
       db: createTestDb(),
       llm: fakeLlm,
       connectors: fakeFabric(state),

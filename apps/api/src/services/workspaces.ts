@@ -1,11 +1,15 @@
 import { randomUUID } from "node:crypto";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, inArray, notInArray, or } from "drizzle-orm";
 import type { CreateWorkspaceInput, Workspace } from "@tuezday/contracts";
 import type { Db } from "../db";
-import { workspaces } from "../db/schema";
+import { workspaceMembers, workspaces } from "../db/schema";
 import { ensureBrainDocs } from "./brain";
 
-export function createWorkspace(db: Db, input: CreateWorkspaceInput): Workspace {
+export function createWorkspace(
+  db: Db,
+  input: CreateWorkspaceInput,
+  ownerId?: string | null,
+): Workspace {
   const now = Date.now();
   const row = {
     id: randomUUID(),
@@ -16,11 +20,43 @@ export function createWorkspace(db: Db, input: CreateWorkspaceInput): Workspace 
   db.insert(workspaces).values(row).run();
   // Every workspace owns its five brain docs from the moment it exists.
   ensureBrainDocs(db, row.id);
+  if (ownerId) {
+    db.insert(workspaceMembers)
+      .values({ id: randomUUID(), workspaceId: row.id, userId: ownerId, role: "owner", createdAt: now })
+      .run();
+  }
   return row;
 }
 
 export function listWorkspaces(db: Db): Workspace[] {
   return db.select().from(workspaces).orderBy(desc(workspaces.createdAt)).all();
+}
+
+/**
+ * Workspaces the user can see on the home page, newest first: ones they belong
+ * to, plus legacy memberless workspaces created before auth existed. Surfacing
+ * the legacy ones is what lets the founder reach (and silently claim, via
+ * `claimIfMemberless`) dev data that predates the membership model.
+ */
+export function listWorkspacesForUser(db: Db, userId: string): Workspace[] {
+  const memberOf = db
+    .select({ id: workspaceMembers.workspaceId })
+    .from(workspaceMembers)
+    .where(eq(workspaceMembers.userId, userId));
+  const everyMemberedWorkspace = db
+    .select({ id: workspaceMembers.workspaceId })
+    .from(workspaceMembers);
+  return db
+    .select({
+      id: workspaces.id,
+      name: workspaces.name,
+      createdAt: workspaces.createdAt,
+      updatedAt: workspaces.updatedAt,
+    })
+    .from(workspaces)
+    .where(or(inArray(workspaces.id, memberOf), notInArray(workspaces.id, everyMemberedWorkspace)))
+    .orderBy(desc(workspaces.createdAt))
+    .all();
 }
 
 export function getWorkspace(db: Db, id: string): Workspace | undefined {

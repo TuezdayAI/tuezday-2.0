@@ -1,11 +1,11 @@
 "use client";
 
+import { API_URL, apiDownload, apiFetch } from "@/lib/api";
+
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { ApprovalState, Campaign, Draft, Lead, Persona, Workspace } from "@tuezday/contracts";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 const STATE_LABELS: Record<ApprovalState, string> = {
   draft: "draft",
@@ -44,11 +44,11 @@ export default function OutboundPage() {
   const load = useCallback(async () => {
     try {
       const [wsRes, lRes, pRes, cRes, dRes] = await Promise.all([
-        fetch(`${API_URL}/workspaces/${id}`),
-        fetch(`${API_URL}/workspaces/${id}/leads`),
-        fetch(`${API_URL}/workspaces/${id}/personas`),
-        fetch(`${API_URL}/workspaces/${id}/campaigns`),
-        fetch(`${API_URL}/workspaces/${id}/drafts`),
+        apiFetch(`/workspaces/${id}`),
+        apiFetch(`/workspaces/${id}/leads`),
+        apiFetch(`/workspaces/${id}/personas`),
+        apiFetch(`/workspaces/${id}/campaigns`),
+        apiFetch(`/workspaces/${id}/drafts`),
       ]);
       if (!wsRes.ok || !lRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
@@ -71,7 +71,7 @@ export default function OutboundPage() {
     setError(null);
     setImportResult(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/leads/import`, {
+      const res = await apiFetch(`/workspaces/${id}/leads/import`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ csv }),
@@ -95,7 +95,7 @@ export default function OutboundPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/leads`, {
+      const res = await apiFetch(`/workspaces/${id}/leads`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(newLead),
@@ -114,7 +114,7 @@ export default function OutboundPage() {
 
   async function removeLead(lead: Lead) {
     if (!confirm(`Delete lead "${lead.name}"?`)) return;
-    await fetch(`${API_URL}/workspaces/${id}/leads/${lead.id}`, { method: "DELETE" });
+    await apiFetch(`/workspaces/${id}/leads/${lead.id}`, { method: "DELETE" });
     await load();
   }
 
@@ -124,7 +124,7 @@ export default function OutboundPage() {
     setError(null);
     setDraftSummary(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/outbound/draft`, {
+      const res = await apiFetch(`/workspaces/${id}/outbound/draft`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -180,12 +180,13 @@ export default function OutboundPage() {
         </div>
         <div className="page-actions">
           {approvedCount > 0 && (
-            <a
+            <button
+              type="button"
               className="button-secondary"
-              href={`${API_URL}/workspaces/${id}/outbound/export.csv`}
+              onClick={() => void apiDownload(`/workspaces/${id}/outbound/export.csv`, "outbound.csv")}
             >
               ↓ Export approved CSV ({approvedCount})
-            </a>
+            </button>
           )}
         </div>
       </div>

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { nowSynthesisSchema } from "@tuezday/contracts";
-import { buildApp, type TuezdayApp } from "../src/app";
+import type { TuezdayApp } from "../src/app";
 import type { LlmGateway } from "../src/llm/gateway";
-import { createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb } from "./helpers";
 
 function fakeGateway(captured: { prompts: string[] }): LlmGateway {
   return {
@@ -28,7 +28,7 @@ describe("learning API", () => {
 
   beforeEach(async () => {
     captured = { prompts: [] };
-    app = await buildApp({ db: createTestDb(), llm: fakeGateway(captured) });
+    app = await buildAuthedApp({ db: createTestDb(), llm: fakeGateway(captured) });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Learner" } })
     ).json().id;

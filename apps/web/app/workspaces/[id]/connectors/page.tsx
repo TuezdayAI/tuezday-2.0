@@ -1,5 +1,7 @@
 "use client";
 
+import { API_URL, apiFetch } from "@/lib/api";
+
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -11,8 +13,6 @@ import {
   type WebhookSubscription,
   type Workspace,
 } from "@tuezday/contracts";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 /** The API decorates OAuth providers with whether their app creds are set. */
 type ProviderView = ConnectorProvider & { oauthConfigured?: boolean };
@@ -57,10 +57,10 @@ export default function ConnectorsPage() {
   const load = useCallback(async () => {
     try {
       const [wsRes, cRes, wRes, eRes] = await Promise.all([
-        fetch(`${API_URL}/workspaces/${id}`),
-        fetch(`${API_URL}/workspaces/${id}/connectors`),
-        fetch(`${API_URL}/workspaces/${id}/webhooks`),
-        fetch(`${API_URL}/workspaces/${id}/events`),
+        apiFetch(`/workspaces/${id}`),
+        apiFetch(`/workspaces/${id}/connectors`),
+        apiFetch(`/workspaces/${id}/webhooks`),
+        apiFetch(`/workspaces/${id}/events`),
       ]);
       if (!wsRes.ok || !cRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
@@ -85,7 +85,7 @@ export default function ConnectorsPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/connectors/${provider.key}/connect`, {
+      const res = await apiFetch(`/workspaces/${id}/connectors/${provider.key}/connect`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -115,8 +115,7 @@ export default function ConnectorsPage() {
     setBusy(true);
     setError(null);
     try {
-      const sessionRes = await fetch(
-        `${API_URL}/workspaces/${id}/connectors/${provider.key}/oauth/session`,
+      const sessionRes = await apiFetch(`/workspaces/${id}/connectors/${provider.key}/oauth/session`,
         { method: "POST" },
       );
       const session = await sessionRes.json().catch(() => null);
@@ -129,8 +128,7 @@ export default function ConnectorsPage() {
       });
       const result = await nango.auth(session.integrationKey);
 
-      const completeRes = await fetch(
-        `${API_URL}/workspaces/${id}/connectors/${provider.key}/oauth/complete`,
+      const completeRes = await apiFetch(`/workspaces/${id}/connectors/${provider.key}/oauth/complete`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -154,8 +152,7 @@ export default function ConnectorsPage() {
   async function testConnection(connection: Connection) {
     setBusy(true);
     try {
-      const res = await fetch(
-        `${API_URL}/workspaces/${id}/connections/${connection.id}/test`,
+      const res = await apiFetch(`/workspaces/${id}/connections/${connection.id}/test`,
         { method: "POST" },
       );
       const body = await res.json().catch(() => null);
@@ -172,7 +169,7 @@ export default function ConnectorsPage() {
   async function disconnect(connection: Connection) {
     if (!confirm("Disconnect this provider? Credentials are removed from the connector service."))
       return;
-    await fetch(`${API_URL}/workspaces/${id}/connections/${connection.id}`, { method: "DELETE" });
+    await apiFetch(`/workspaces/${id}/connections/${connection.id}`, { method: "DELETE" });
     await load();
   }
 
@@ -181,7 +178,7 @@ export default function ConnectorsPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/webhooks`, {
+      const res = await apiFetch(`/workspaces/${id}/webhooks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -205,7 +202,7 @@ export default function ConnectorsPage() {
   async function pingWebhook(webhookId: string) {
     setBusy(true);
     try {
-      await fetch(`${API_URL}/workspaces/${id}/webhooks/${webhookId}/ping`, { method: "POST" });
+      await apiFetch(`/workspaces/${id}/webhooks/${webhookId}/ping`, { method: "POST" });
       await load();
     } finally {
       setBusy(false);
@@ -213,7 +210,7 @@ export default function ConnectorsPage() {
   }
 
   async function toggleWebhook(webhook: WebhookSubscription) {
-    await fetch(`${API_URL}/workspaces/${id}/webhooks/${webhook.id}`, {
+    await apiFetch(`/workspaces/${id}/webhooks/${webhook.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: !webhook.enabled }),
@@ -223,7 +220,7 @@ export default function ConnectorsPage() {
 
   async function removeWebhook(webhook: WebhookSubscription) {
     if (!confirm("Delete this webhook?")) return;
-    await fetch(`${API_URL}/workspaces/${id}/webhooks/${webhook.id}`, { method: "DELETE" });
+    await apiFetch(`/workspaces/${id}/webhooks/${webhook.id}`, { method: "DELETE" });
     await load();
   }
 

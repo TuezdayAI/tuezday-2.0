@@ -62,11 +62,17 @@ export function getBrain(db: Db, workspaceId: string): BrainView {
   return { docs, completeness: scoreBrain(contents) };
 }
 
+export interface BrainActor {
+  userId: string | null;
+  label: string;
+}
+
 export function updateBrainDoc(
   db: Db,
   workspaceId: string,
   docType: BrainDocType,
   content: string,
+  actor: BrainActor | null = null,
 ): BrainDocument {
   ensureBrainDocs(db, workspaceId);
   const doc = db
@@ -93,6 +99,8 @@ export function updateBrainDoc(
       documentId: doc.id,
       version: (latest?.version ?? 0) + 1,
       content,
+      actor: actor?.label ?? null,
+      actorId: actor?.userId ?? null,
       createdAt: now,
     })
     .run();

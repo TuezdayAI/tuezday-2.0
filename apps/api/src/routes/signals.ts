@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { createSignalInputSchema, draftSignalRequestSchema } from "@tuezday/contracts";
 import { resolveContext, type BrainContents } from "@tuezday/brain";
+import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { getBrain } from "../services/brain";
@@ -130,7 +131,7 @@ export function registerSignalRoutes(
           channel: parsed.data.channel,
           personaId: parsed.data.personaId ?? null,
           content: result.text,
-        });
+        }, actorOf(request));
         return reply.status(201).send(draft);
       } catch (err) {
         if (err instanceof GatewayError) {

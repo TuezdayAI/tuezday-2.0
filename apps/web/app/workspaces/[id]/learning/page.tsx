@@ -1,5 +1,7 @@
 "use client";
 
+import { API_URL, apiFetch } from "@/lib/api";
+
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -12,8 +14,6 @@ import {
   type TaskType,
   type Workspace,
 } from "@tuezday/contracts";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 const TASK_LABELS: Record<TaskType, string> = {
   linkedin_post: "LinkedIn post",
@@ -75,12 +75,12 @@ export default function LearningPage() {
   const load = useCallback(async () => {
     try {
       const [wsRes, sRes, eRes, synRes, mRes, dRes] = await Promise.all([
-        fetch(`${API_URL}/workspaces/${id}`),
-        fetch(`${API_URL}/workspaces/${id}/learning/stats`),
-        fetch(`${API_URL}/workspaces/${id}/learning/examples`),
-        fetch(`${API_URL}/workspaces/${id}/learning/syntheses`),
-        fetch(`${API_URL}/workspaces/${id}/metrics`),
-        fetch(`${API_URL}/workspaces/${id}/drafts?state=approved`),
+        apiFetch(`/workspaces/${id}`),
+        apiFetch(`/workspaces/${id}/learning/stats`),
+        apiFetch(`/workspaces/${id}/learning/examples`),
+        apiFetch(`/workspaces/${id}/learning/syntheses`),
+        apiFetch(`/workspaces/${id}/metrics`),
+        apiFetch(`/workspaces/${id}/drafts?state=approved`),
       ]);
       if (!wsRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
@@ -103,7 +103,7 @@ export default function LearningPage() {
     setSynthesizing(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/learning/synthesize`, {
+      const res = await apiFetch(`/workspaces/${id}/learning/synthesize`, {
         method: "POST",
       });
       const body = await res.json().catch(() => null);
@@ -120,8 +120,7 @@ export default function LearningPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(
-        `${API_URL}/workspaces/${id}/learning/syntheses/${synthesisId}/${action}`,
+      const res = await apiFetch(`/workspaces/${id}/learning/syntheses/${synthesisId}/${action}`,
         { method: "POST" },
       );
       const body = await res.json().catch(() => null);
@@ -139,7 +138,7 @@ export default function LearningPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/metrics`, {
+      const res = await apiFetch(`/workspaces/${id}/metrics`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({

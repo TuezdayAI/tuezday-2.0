@@ -2,6 +2,15 @@
 // interval. The API owns all DB access — the worker only calls HTTP endpoints.
 
 const API_URL = process.env.TUEZDAY_API_URL ?? "http://localhost:3001";
+// Shared secret that authenticates the worker as the API's `system` actor
+// (Sprint 19). Must match TUEZDAY_WORKER_TOKEN on the API process.
+const WORKER_TOKEN = process.env.TUEZDAY_WORKER_TOKEN ?? "";
+
+function api(path: string, init?: RequestInit): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  if (WORKER_TOKEN) headers.set("Authorization", `Bearer ${WORKER_TOKEN}`);
+  return fetch(`${API_URL}${path}`, { ...init, headers });
+}
 const INTERVAL_MIN = Number(process.env.DISCOVERY_INTERVAL_MIN ?? 30);
 const SYNTHESIS_DAYS = Number(process.env.LEARNING_SYNTHESIS_DAYS ?? 7);
 const ADS_SYNC_HOURS = Number(process.env.ADS_SYNC_HOURS ?? 6);
@@ -18,13 +27,13 @@ interface RunResult {
 }
 
 async function runDiscoveryForAllWorkspaces(): Promise<void> {
-  const res = await fetch(`${API_URL}/workspaces`);
+  const res = await api(`/workspaces`);
   if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
   const workspaces = (await res.json()) as Workspace[];
 
   for (const workspace of workspaces) {
     try {
-      const runRes = await fetch(`${API_URL}/workspaces/${workspace.id}/discovery/run`, {
+      const runRes = await api(`/workspaces/${workspace.id}/discovery/run`, {
         method: "POST",
       });
       if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);
@@ -55,21 +64,21 @@ interface Synthesis {
  * and the newest synthesis is older than SYNTHESIS_DAYS. The founder still
  * reviews every proposal before it touches the brain. */
 async function maybeSynthesizeForAllWorkspaces(): Promise<void> {
-  const res = await fetch(`${API_URL}/workspaces`);
+  const res = await api(`/workspaces`);
   if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
   const workspaces = (await res.json()) as Workspace[];
 
   for (const workspace of workspaces) {
     try {
       const list = (await (
-        await fetch(`${API_URL}/workspaces/${workspace.id}/learning/syntheses`)
+        await api(`/workspaces/${workspace.id}/learning/syntheses`)
       ).json()) as Synthesis[];
       const hasOpenProposal = list.some((s) => s.status === "proposed");
       const newest = list[0]?.createdAt ?? 0;
       const due = Date.now() - newest > SYNTHESIS_DAYS * 24 * 60 * 60 * 1000;
       if (hasOpenProposal || !due) continue;
 
-      const synth = await fetch(`${API_URL}/workspaces/${workspace.id}/learning/synthesize`, {
+      const synth = await api(`/workspaces/${workspace.id}/learning/synthesize`, {
         method: "POST",
       });
       if (synth.status === 201) {
@@ -101,13 +110,13 @@ interface AdsSyncResponse {
 /** Re-pull the recent metric window for every connected ad account. Meta
  * restates conversions retroactively, so re-syncing keeps numbers converging. */
 async function syncAdsForAllWorkspaces(): Promise<void> {
-  const res = await fetch(`${API_URL}/workspaces`);
+  const res = await api(`/workspaces`);
   if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
   const workspaces = (await res.json()) as Workspace[];
 
   for (const workspace of workspaces) {
     try {
-      const syncRes = await fetch(`${API_URL}/workspaces/${workspace.id}/ads/sync`, {
+      const syncRes = await api(`/workspaces/${workspace.id}/ads/sync`, {
         method: "POST",
       });
       if (!syncRes.ok) throw new Error(`sync returned ${syncRes.status}`);
@@ -137,13 +146,13 @@ interface PublishRunResponse {
 
 /** Fire scheduled social posts that have come due. */
 async function runDuePublicationsForAllWorkspaces(): Promise<void> {
-  const res = await fetch(`${API_URL}/workspaces`);
+  const res = await api(`/workspaces`);
   if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
   const workspaces = (await res.json()) as Workspace[];
 
   for (const workspace of workspaces) {
     try {
-      const runRes = await fetch(`${API_URL}/workspaces/${workspace.id}/publish/run`, {
+      const runRes = await api(`/workspaces/${workspace.id}/publish/run`, {
         method: "POST",
       });
       if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);

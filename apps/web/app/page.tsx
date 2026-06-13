@@ -2,22 +2,29 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import type { Workspace } from "@tuezday/contracts";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
+import { API_URL, apiFetch, clearToken, getToken } from "@/lib/api";
 
 export default function HomePage() {
+  const router = useRouter();
   const [workspaces, setWorkspaces] = useState<Workspace[] | null>(null);
+  const [userLabel, setUserLabel] = useState<string | null>(null);
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch(`${API_URL}/workspaces`);
+      const res = await apiFetch("/workspaces");
       if (!res.ok) throw new Error(`API returned ${res.status}`);
       setWorkspaces(await res.json());
       setError(null);
+      const me = await apiFetch("/auth/me");
+      if (me.ok) {
+        const body = await me.json();
+        setUserLabel(body.user.name || body.user.email);
+      }
     } catch {
       setWorkspaces([]);
       setError(`Could not reach the API at ${API_URL}. Is "npm run dev" running?`);
@@ -25,15 +32,25 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
+    if (!getToken()) {
+      router.push("/login");
+      return;
+    }
     void load();
-  }, [load]);
+  }, [load, router]);
+
+  async function logout() {
+    await apiFetch("/auth/logout", { method: "POST" }).catch(() => {});
+    clearToken();
+    router.push("/login");
+  }
 
   async function createWorkspace(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces`, {
+      const res = await apiFetch("/workspaces", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
@@ -56,6 +73,14 @@ export default function HomePage() {
       <header className="site-header">
         <span className="logo">Tuezday</span>
         <span className="tagline">GTM that remembers</span>
+        {userLabel && (
+          <span className="header-user">
+            {userLabel}{" "}
+            <button type="button" className="link-button" onClick={logout}>
+              Log out
+            </button>
+          </span>
+        )}
       </header>
       <main className="site-main">
       <h1>Workspaces</h1>

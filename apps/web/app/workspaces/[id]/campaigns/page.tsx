@@ -1,5 +1,7 @@
 "use client";
 
+import { API_URL, apiFetch } from "@/lib/api";
+
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -11,8 +13,6 @@ import {
   type Persona,
   type Workspace,
 } from "@tuezday/contracts";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 const STATE_LABELS: Record<ApprovalState, string> = {
   draft: "draft",
@@ -77,9 +77,9 @@ export default function CampaignsPage() {
   const load = useCallback(async () => {
     try {
       const [wsRes, pRes, cRes] = await Promise.all([
-        fetch(`${API_URL}/workspaces/${id}`),
-        fetch(`${API_URL}/workspaces/${id}/personas`),
-        fetch(`${API_URL}/workspaces/${id}/campaigns`),
+        apiFetch(`/workspaces/${id}`),
+        apiFetch(`/workspaces/${id}/personas`),
+        apiFetch(`/workspaces/${id}/campaigns`),
       ]);
       if (!wsRes.ok || !pRes.ok || !cRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
@@ -141,9 +141,9 @@ export default function CampaignsPage() {
     try {
       const editing = editingId ? campaignsList.find((c) => c.id === editingId) : undefined;
       const url = editingId
-        ? `${API_URL}/workspaces/${id}/campaigns/${editingId}`
-        : `${API_URL}/workspaces/${id}/campaigns`;
-      const res = await fetch(url, {
+        ? `/workspaces/${id}/campaigns/${editingId}`
+        : `/workspaces/${id}/campaigns`;
+      const res = await apiFetch(url, {
         method: editingId ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payloadFromForm(editing?.status ?? "active")),
@@ -161,7 +161,7 @@ export default function CampaignsPage() {
   }
 
   async function setStatus(c: Campaign, status: "active" | "archived") {
-    await fetch(`${API_URL}/workspaces/${id}/campaigns/${c.id}`, {
+    await apiFetch(`/workspaces/${id}/campaigns/${c.id}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -187,7 +187,7 @@ export default function CampaignsPage() {
     }
     setExpandedId(campaignId);
     if (!details[campaignId]) {
-      const res = await fetch(`${API_URL}/workspaces/${id}/campaigns/${campaignId}`);
+      const res = await apiFetch(`/workspaces/${id}/campaigns/${campaignId}`);
       if (res.ok) {
         const detail = await res.json();
         setDetails((d) => ({ ...d, [campaignId]: detail }));

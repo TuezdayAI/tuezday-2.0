@@ -1,14 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { personaSchema } from "@tuezday/contracts";
-import { buildApp, type TuezdayApp } from "../src/app";
-import { createTestDb } from "./helpers";
+import type { TuezdayApp } from "../src/app";
+import { buildAuthedApp, createTestDb } from "./helpers";
 
 describe("personas API", () => {
   let app: TuezdayApp;
   let workspaceId: string;
 
   beforeEach(async () => {
-    app = await buildApp({ db: createTestDb() });
+    app = await buildAuthedApp({ db: createTestDb() });
     const res = await app.inject({
       method: "POST",
       url: "/workspaces",

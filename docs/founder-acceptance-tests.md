@@ -6,6 +6,10 @@
 > **Prerequisites:** `npm install`, then `npm run dev` (web :3000, api :3001).
 > For Sprint 9 tests: Docker Desktop running + `npm run r2r:up` (R2R on :7272).
 > For Sprint 12 tests: `npm run nango:up` (Nango on :3050).
+> For Sprint 14 tests: Meta Ads `ads_read` system-user token; `npm run nango:up`.
+> For Sprint 17 tests: Reddit app credentials (`REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`) in `.env`; `npm run nango:up`.
+> For Sprint 19 tests: two browsers (or one + incognito); `TUEZDAY_WORKER_TOKEN` in `.env`.
+> For Sprint 20 tests: Meta Ads `ads_management` token; Sprint 14 + 15 acceptance done first; `TUEZDAY_WORKER_TOKEN` in `.env`.
 > Your dev workspace: "tuezday".
 
 ---
@@ -145,6 +149,94 @@
 - [ ] **Push to CRM** on a lead that did *not* come from the CRM → the contact appears in Freshsales; the Connectors event log shows `crm.contact.created` and `crm.note.logged`.
 
 **Gate:** the CRM round trip works — contacts in, approved work back out, with the CRM staying the system of record.
+
+## Sprint 14 — Ads Reporting (read-only)
+
+- [ ] `npm run nango:up`; Connectors page → connect **Meta Ads** with an `ads_read` system-user token → status `connected`, **Test** passes (Graph `/me` through the proxy).
+- [ ] Ads page → **Import ad accounts** → your Meta ad account appears with its currency.
+- [ ] **Sync now** → per-campaign spend/impressions/clicks/conversions for the last 28 days appear.
+- [ ] Open the same date range in Ads Manager and compare a closed day — numbers match.
+- [ ] **Link** one ad campaign to an existing Tuezday campaign → the campaign page shows a "Paid performance" section with real numbers.
+- [ ] CSV path: download the import template, fill 3–5 rows, import → they appear under the "CSV import" account in the same report view.
+- [ ] Leave the worker running → metrics refresh on schedule without manual intervention; event log shows `ads.synced`.
+
+**Gate:** the numbers in Tuezday match what the platform shows for the same closed day.
+
+## Sprint 15 — Ad Creative Generation
+
+- [ ] Ad creatives page → pick a campaign + **Meta** + a persona → **Generate** → 3 distinct variants appear, in the workspace voice, every field within its character-limit counter.
+- [ ] Push a field over its limit in the editor → save is refused with the exact violation; fix it → resubmit → approve in the approval queue.
+- [ ] Try to approve a variant that already violates a limit (without editing it) → Tuezday blocks with a clear message.
+- [ ] Variants also appear in **Review & approve** alongside other drafts; approving from there works identically.
+- [ ] **Export CSV** (approved only) → open it → paste the fields into Ads Manager with zero rework. Per-variant copy link also pastes cleanly.
+- [ ] Generate a **Google RSA** set → 15 headlines ≤30 chars, 4 descriptions ≤90 → export CSV → columns match the RSA editor field structure.
+- [ ] With Sprint 14's Meta ad campaign linked to the same Tuezday campaign → the creative set shows a "Paid performance" chip with real spend numbers.
+
+**Gate:** a non-technical person could paste the export directly into the ad platform without reformatting anything.
+
+## Sprint 16 — PR & Media Outreach
+
+- [ ] PR page → paste a 5-contact CSV (mixed journalists/podcasts, some fields quoted) → all 5 appear with outlet and beat; re-importing the same file adds zero duplicates.
+- [ ] Select all 5 → pitch type **announcement** + launch campaign + founder persona → **Draft pitches** → 5 drafts appear, each referencing the contact's actual beat, in the workspace voice, nothing invented.
+- [ ] Open one pitch in **Review & approve** → edit a line → resubmit → approve; decision history shows the edit.
+- [ ] Accept a discovered signal from the Discovery inbox → back in PR, pitch type **reactive** → the pitch responds to the actual story and reads timely.
+- [ ] **Generate press kit** → one-liner, about paragraph, and key facts match the brain docs → edit → approve. Tweak the `now` doc → generate again → a new version appears, the previous remains in history.
+- [ ] Export approved pitches as CSV → contact columns + pitch text intact. Click **Open in email client** → your mail app opens with subject and body pre-filled.
+
+**Gate:** each pitch references something real about that contact and reads like the founder wrote it.
+
+## Sprint 17 — Social Publishing (Reddit)
+
+> Prereq: create a Reddit app at reddit.com/prefs/apps (type: **web app**, redirect `http://localhost:3050/oauth/callback`). Add `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` to `.env` and restart.
+
+- [ ] `npm run nango:up`; Integrations page → Reddit → **Connect** → Reddit OAuth popup → authorize → card shows `connected`, **Test** passes (`/api/v1/me` through the proxy).
+- [ ] Approve a content draft → **Publish…** → pick the Reddit account + subreddit `r/test` (or your own), keep the suggested title → **Post now** → the post is live on Reddit; Tuezday shows `published` + working link; event log shows `post.published`.
+- [ ] Publish another approved draft **scheduled 2 minutes out** → status shows `scheduled`; the worker posts it on time; status flips to `published`.
+- [ ] Publish to a nonexistent subreddit → row shows `failed` with Reddit's error message. Fix the subreddit → **Retry** → succeeds.
+- [ ] **Disconnect** Reddit → reconnect via the popup → publishing works again.
+
+**Gate:** approved content appears on an actual Reddit thread via Tuezday — the loop from brain to published post is closed end to end.
+
+## Sprint 18 — Dashboard UX Redesign
+
+- [ ] Open a workspace: the sidebar shows eight plain-language nav items; none of the internal words ("resolver", "connector", "sandbox") appear at the nav level.
+- [ ] Every page has a serif h1 title and a one-line subtitle that explains what the page is for.
+- [ ] A new empty workspace lands on **Home** with a four-step setup checklist (fill brain, add persona, generate a draft, make a decision); completing each step checks it off; the checklist hides once all four are done.
+- [ ] Home attention cards update: drafts waiting for review, new signals, proposed brain updates, active campaign count — each links to the right page.
+- [ ] Visual feel matches tavus.io: cream background (`#f7f4ef`), serif headings, coral accent (`#ff6183`) on primary actions, pill-shaped buttons, pastel chips on state labels.
+- [ ] `npm run typecheck` and `npm test` pass.
+
+**Gate:** someone who has never seen Tuezday can open the dashboard and describe what each section does without being told. You recognise the visual feel from the reference.
+
+## Sprint 19 — Users, Teams & Auth
+
+> Two browsers (or one browser + one incognito window) required.
+
+- [ ] Register a new account (email + password) → log out → log back in.
+- [ ] Pre-existing workspaces appear and open normally (the legacy claim silently makes you owner).
+- [ ] Team page → invite a teammate's email → copy the invite link.
+- [ ] In a second browser (incognito), register with that exact email → open the invite link → accept → the workspace appears; you are listed as a member.
+- [ ] Teammate approves a pending draft → the decision log on that draft shows the teammate's name, not "founder".
+- [ ] Edit a brain doc as each user → brain version history shows who wrote each version by name.
+- [ ] A third account that was never invited visits the workspace URL → 403; the workspace never appears in their list.
+- [ ] Worker continues polling normally with `TUEZDAY_WORKER_TOKEN` set.
+
+**Gate:** every action in the decision log and brain history carries a real name; a non-member cannot see or touch the workspace.
+
+## Sprint 20 — Native Ads Execution
+
+> Prereqs: Sprint 14 Meta Ads connected; at least one approved Sprint 15 creative exists.
+
+- [ ] Reconnect Meta Ads using an `ads_management` system-user token (a Page must be assigned to the system user).
+- [ ] Ads settings → set a daily spend cap you're comfortable with (e.g. $10/day).
+- [ ] Launch ads page → **New launch** → pick ad account + approved creative set, Traffic objective, Page ID + landing URL, small daily budget ($2), target countries → **Create** → launch appears as `draft`.
+- [ ] **Submit** → `pending_review`; **Approve** (decision log records your name) → **Launch** → campaign appears in Ads Manager: correct name, PAUSED-then-ACTIVE history, correct budget and targeting; ad preview shows your approved copy.
+- [ ] **Pause from Tuezday** → Ads Manager shows the campaign paused. **Resume** → it goes active again.
+- [ ] Attempt a second launch whose daily budget would exceed the workspace cap → Tuezday blocks with a clear message before any API call is made.
+- [ ] Flip the **kill switch** → the live campaign pauses immediately; launching or resuming anything is blocked until the switch is off.
+- [ ] After the next sync (or **Sync now** on the Ads page) → spend from the launched campaign appears in the Sprint 14 report, attributed to the linked Tuezday campaign.
+
+**Gate:** spend and control are fully bidirectional — you can start and stop real ad spend from inside Tuezday, every approval is logged with the approver's name, and the kill switch is instant.
 
 ---
 

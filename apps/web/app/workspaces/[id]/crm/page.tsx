@@ -1,5 +1,7 @@
 "use client";
 
+import { API_URL, apiFetch } from "@/lib/api";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -11,8 +13,6 @@ import type {
   Lead,
   Workspace,
 } from "@tuezday/contracts";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 interface ConnectorsView {
   providers: ConnectorProvider[];
@@ -49,11 +49,11 @@ export default function CrmPage() {
   const load = useCallback(async () => {
     try {
       const [wsRes, cRes, ctRes, lRes, dRes] = await Promise.all([
-        fetch(`${API_URL}/workspaces/${id}`),
-        fetch(`${API_URL}/workspaces/${id}/connectors`),
-        fetch(`${API_URL}/workspaces/${id}/crm/contacts`),
-        fetch(`${API_URL}/workspaces/${id}/leads`),
-        fetch(`${API_URL}/workspaces/${id}/drafts`),
+        apiFetch(`/workspaces/${id}`),
+        apiFetch(`/workspaces/${id}/connectors`),
+        apiFetch(`/workspaces/${id}/crm/contacts`),
+        apiFetch(`/workspaces/${id}/leads`),
+        apiFetch(`/workspaces/${id}/drafts`),
       ]);
       if (!wsRes.ok || !cRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
@@ -93,7 +93,7 @@ export default function CrmPage() {
   }
 
   async function post(path: string, payload?: Record<string, unknown>) {
-    const res = await fetch(`${API_URL}/workspaces/${id}${path}`, {
+    const res = await apiFetch(`/workspaces/${id}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       ...(payload ? { body: JSON.stringify(payload) } : {}),

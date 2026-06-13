@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import { sql } from "drizzle-orm";
+import { registerAuthGuard } from "./auth/guard";
 import type { ConnectorFabric } from "./connectors/fabric";
 import { NangoFabric } from "./connectors/nango";
 import type { Db } from "./db";
@@ -10,7 +11,9 @@ import type { EvidenceStore } from "./evidence/store";
 import { GeminiGateway } from "./llm/gemini";
 import type { LlmGateway } from "./llm/gateway";
 import { registerAdCreativeRoutes } from "./routes/ad-creatives";
+import { registerAdLaunchRoutes } from "./routes/ad-launches";
 import { registerAdsRoutes } from "./routes/ads";
+import { registerAuthRoutes } from "./routes/auth";
 import { registerBrainRoutes } from "./routes/brain";
 import { registerCampaignRoutes } from "./routes/campaigns";
 import { registerConnectorRoutes } from "./routes/connectors";
@@ -25,6 +28,7 @@ import { registerPublicationRoutes } from "./routes/publications";
 import { registerGenerationRoutes } from "./routes/generations";
 import { registerPersonaRoutes } from "./routes/personas";
 import { registerSignalRoutes } from "./routes/signals";
+import { registerTeamRoutes } from "./routes/teams";
 import { registerWorkspaceRoutes } from "./routes/workspaces";
 
 export type TuezdayApp = FastifyInstance;
@@ -39,6 +43,11 @@ export interface BuildAppOptions {
   evidence?: EvidenceStore;
   /** Connector fabric override; defaults to the Nango client from env. */
   connectors?: ConnectorFabric;
+  /**
+   * Shared secret that authenticates the worker as the `system` actor with
+   * access to every workspace. Defaults to TUEZDAY_WORKER_TOKEN.
+   */
+  workerToken?: string;
 }
 
 export async function buildApp({
@@ -47,6 +56,7 @@ export async function buildApp({
   fetcher = fetch,
   evidence = new R2REvidenceStore(),
   connectors = new NangoFabric(undefined, undefined, fetcher),
+  workerToken = process.env.TUEZDAY_WORKER_TOKEN,
 }: BuildAppOptions): Promise<TuezdayApp> {
   const app = Fastify({ logger: false });
 
@@ -57,12 +67,18 @@ export async function buildApp({
     methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   });
 
+  // Must come before any routes: every route registered after this needs a
+  // session (or the worker token), except the guard's public allowlist.
+  registerAuthGuard(app, db, workerToken);
+
   app.get("/health", async () => {
     db.run(sql`select 1`);
     return { status: "ok", db: "ok" };
   });
 
+  registerAuthRoutes(app, db);
   registerWorkspaceRoutes(app, db);
+  registerTeamRoutes(app, db);
   registerBrainRoutes(app, db);
   registerPersonaRoutes(app, db, evidence);
   registerGenerationRoutes(app, db, llm, evidence);
@@ -76,6 +92,7 @@ export async function buildApp({
   registerConnectorRoutes(app, db, connectors, fetcher);
   registerCrmRoutes(app, db, connectors, fetcher);
   registerAdsRoutes(app, db, connectors, fetcher);
+  registerAdLaunchRoutes(app, db, connectors, fetcher);
   registerAdCreativeRoutes(app, db, llm, evidence);
   registerPrRoutes(app, db, llm, evidence);
   registerPublicationRoutes(app, db, connectors, fetcher);

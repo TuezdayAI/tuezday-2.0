@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { adAccountSchema } from "@tuezday/contracts";
-import { buildApp, type TuezdayApp } from "../src/app";
+import type { TuezdayApp } from "../src/app";
 import {
   ConnectorFabricError,
   type ConnectorFabric,
@@ -9,7 +9,7 @@ import {
 import { DEFAULT_CONVERSION_ACTIONS, MetaAdsAdapter } from "../src/connectors/ads/meta";
 import { NangoFabric } from "../src/connectors/nango";
 import type { LlmGateway } from "../src/llm/gateway";
-import { createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb } from "./helpers";
 
 const fakeLlm: LlmGateway = {
   async generate() {
@@ -374,7 +374,7 @@ describe("Ads reporting API", () => {
       }),
     );
     received = [];
-    app = await buildApp({
+    app = await buildAuthedApp({
       db: createTestDb(),
       llm: fakeLlm,
       connectors: fakeFabric(state),

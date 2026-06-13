@@ -1,10 +1,12 @@
+import type { AdLaunchObjective } from "@tuezday/contracts";
 import { ConnectorFabricError, type ConnectorFabric } from "../fabric";
-import type { AdAccountRecord, AdDailyMetricRecord, AdsAdapter } from "./index";
+import type { AdAccountRecord, AdDailyMetricRecord, AdsAdapter, AdsExecutionAdapter } from "./index";
 
 /**
- * Meta Ads (Graph API Insights) over the Nango proxy, read-only. Every call
- * pins the Graph base URL so nothing depends on the facebook template's proxy
- * config, and the version is pinned here in one place.
+ * Meta Ads (Graph API) over the Nango proxy — Insights reads (Sprint 14) and
+ * campaign execution writes (Sprint 20). Every call pins the Graph base URL
+ * so nothing depends on the facebook template's proxy config, and the version
+ * is pinned here in one place.
  */
 
 const GRAPH_BASE = "https://graph.facebook.com";
@@ -65,7 +67,13 @@ function conversionsFrom(actions: RawInsightRow["actions"]): number {
   return total;
 }
 
-export class MetaAdsAdapter implements AdsAdapter {
+/** optimization_goal per launch objective (billing is always impressions). */
+const OPTIMIZATION_GOALS: Record<AdLaunchObjective, string> = {
+  OUTCOME_TRAFFIC: "LINK_CLICKS",
+  OUTCOME_AWARENESS: "REACH",
+};
+
+export class MetaAdsAdapter implements AdsAdapter, AdsExecutionAdapter {
   constructor(
     private readonly fabric: ConnectorFabric,
     private readonly opts: MetaAdsOpts,
@@ -86,6 +94,31 @@ export class MetaAdsAdapter implements AdsAdapter {
       );
     }
     return (result.json ?? {}) as GraphPage<T>;
+  }
+
+  private async post(path: string, body: Record<string, unknown>): Promise<{ id?: string }> {
+    const result = await this.fabric.proxyJson(
+      "POST",
+      path,
+      this.opts.nangoConnectionId,
+      this.opts.integrationKey,
+      { body, baseUrlOverride: GRAPH_BASE },
+    );
+    if (result.status < 200 || result.status >= 300) {
+      const detail = result.json !== undefined ? JSON.stringify(result.json).slice(0, 200) : "";
+      throw new ConnectorFabricError(
+        `Meta Ads returned ${result.status} for POST ${path.split("?")[0]}${detail ? `: ${detail}` : ""}`,
+      );
+    }
+    return (result.json ?? {}) as { id?: string };
+  }
+
+  private async createObject(path: string, body: Record<string, unknown>): Promise<{ externalId: string }> {
+    const json = await this.post(path, body);
+    if (!json.id) {
+      throw new ConnectorFabricError(`Meta Ads did not return an id for POST ${path.split("?")[0]}.`);
+    }
+    return { externalId: String(json.id) };
   }
 
   /** Walks Graph cursor pagination; returns whether the cap truncated it. */
@@ -141,5 +174,106 @@ export class MetaAdsAdapter implements AdsAdapter {
       });
     }
     return { metrics, truncated };
+  }
+
+  // --- Execution (Sprint 20) ---
+
+  async createCampaign(
+    externalAccountId: string,
+    input: { name: string; objective: AdLaunchObjective },
+  ): Promise<{ externalId: string }> {
+    return this.createObject(`/${GRAPH_VERSION}/${externalAccountId}/campaigns`, {
+      name: input.name,
+      objective: input.objective,
+      // Born PAUSED — the chain activates the campaign only once it's whole.
+      status: "PAUSED",
+      special_ad_categories: [],
+    });
+  }
+
+  async createAdSet(
+    externalAccountId: string,
+    input: {
+      campaignExternalId: string;
+      name: string;
+      objective: AdLaunchObjective;
+      dailyBudgetCents: number;
+      countries: string[];
+      ageMin: number;
+      ageMax: number;
+      startAt?: number | null;
+      endAt?: number | null;
+    },
+  ): Promise<{ externalId: string }> {
+    return this.createObject(`/${GRAPH_VERSION}/${externalAccountId}/adsets`, {
+      name: input.name,
+      campaign_id: input.campaignExternalId,
+      // Meta's daily_budget is in the account currency's minor units — cents.
+      daily_budget: input.dailyBudgetCents,
+      billing_event: "IMPRESSIONS",
+      optimization_goal: OPTIMIZATION_GOALS[input.objective],
+      targeting: {
+        geo_locations: { countries: input.countries },
+        age_min: input.ageMin,
+        age_max: input.ageMax,
+      },
+      status: "ACTIVE",
+      ...(input.startAt ? { start_time: new Date(input.startAt).toISOString() } : {}),
+      ...(input.endAt ? { end_time: new Date(input.endAt).toISOString() } : {}),
+    });
+  }
+
+  async createAdCreative(
+    externalAccountId: string,
+    input: {
+      name: string;
+      pageId: string;
+      linkUrl: string;
+      primaryText: string;
+      headline: string;
+      description: string;
+    },
+  ): Promise<{ externalId: string }> {
+    return this.createObject(`/${GRAPH_VERSION}/${externalAccountId}/adcreatives`, {
+      name: input.name,
+      // Link ad — Meta scrapes the link preview image; media upload is later.
+      object_story_spec: {
+        page_id: input.pageId,
+        link_data: {
+          link: input.linkUrl,
+          message: input.primaryText,
+          name: input.headline,
+          description: input.description,
+        },
+      },
+    });
+  }
+
+  async createAd(
+    externalAccountId: string,
+    input: { name: string; adSetExternalId: string; creativeExternalId: string },
+  ): Promise<{ externalId: string }> {
+    return this.createObject(`/${GRAPH_VERSION}/${externalAccountId}/ads`, {
+      name: input.name,
+      adset_id: input.adSetExternalId,
+      creative: { creative_id: input.creativeExternalId },
+      status: "ACTIVE",
+    });
+  }
+
+  async setCampaignStatus(campaignExternalId: string, status: "ACTIVE" | "PAUSED"): Promise<void> {
+    await this.post(`/${GRAPH_VERSION}/${campaignExternalId}`, { status });
+  }
+
+  async listCampaignStatuses(
+    externalAccountId: string,
+  ): Promise<Array<{ externalCampaignId: string; status: string }>> {
+    const { items } = await this.pages<{ id: string; effective_status?: string }>(
+      `/${GRAPH_VERSION}/${externalAccountId}/campaigns?fields=effective_status&limit=200`,
+      ACCOUNT_PAGE_CAP,
+    );
+    return items
+      .filter((raw) => raw.id)
+      .map((raw) => ({ externalCampaignId: raw.id, status: raw.effective_status ?? "UNKNOWN" }));
   }
 }

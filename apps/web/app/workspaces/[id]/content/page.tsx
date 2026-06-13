@@ -1,5 +1,7 @@
 "use client";
 
+import { API_URL, apiFetch } from "@/lib/api";
+
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -17,8 +19,6 @@ import {
   type SignalSource,
   type Workspace,
 } from "@tuezday/contracts";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 const SOURCE_LABELS: Record<SignalSource, string> = {
   reddit: "Reddit",
@@ -93,12 +93,12 @@ export default function ContentPage() {
   const load = useCallback(async () => {
     try {
       const [wsRes, pRes, sRes, cRes, connRes, pubRes] = await Promise.all([
-        fetch(`${API_URL}/workspaces/${id}`),
-        fetch(`${API_URL}/workspaces/${id}/personas`),
-        fetch(`${API_URL}/workspaces/${id}/signals`),
-        fetch(`${API_URL}/workspaces/${id}/campaigns`),
-        fetch(`${API_URL}/workspaces/${id}/connectors`),
-        fetch(`${API_URL}/workspaces/${id}/publications`),
+        apiFetch(`/workspaces/${id}`),
+        apiFetch(`/workspaces/${id}/personas`),
+        apiFetch(`/workspaces/${id}/signals`),
+        apiFetch(`/workspaces/${id}/campaigns`),
+        apiFetch(`/workspaces/${id}/connectors`),
+        apiFetch(`/workspaces/${id}/publications`),
       ]);
       if (!wsRes.ok || !pRes.ok || !sRes.ok || !cRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
@@ -133,7 +133,7 @@ export default function ContentPage() {
     setSaving(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/signals`, {
+      const res = await apiFetch(`/workspaces/${id}/signals`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -158,7 +158,7 @@ export default function ContentPage() {
     setGenerating(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/signals/${signalId}/draft`, {
+      const res = await apiFetch(`/workspaces/${id}/signals/${signalId}/draft`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -179,7 +179,7 @@ export default function ContentPage() {
   }
 
   async function fetchDraftContent(draftId: string): Promise<string | null> {
-    const res = await fetch(`${API_URL}/workspaces/${id}/drafts/${draftId}`);
+    const res = await apiFetch(`/workspaces/${id}/drafts/${draftId}`);
     if (!res.ok) return null;
     return (await res.json()).content;
   }
@@ -209,7 +209,7 @@ export default function ContentPage() {
     setPublishError(null);
     try {
       const scheduledFor = pubSchedule ? new Date(pubSchedule).getTime() : undefined;
-      const res = await fetch(`${API_URL}/workspaces/${id}/drafts/${draftId}/publish`, {
+      const res = await apiFetch(`/workspaces/${id}/drafts/${draftId}/publish`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -237,7 +237,7 @@ export default function ContentPage() {
   async function retryPublication(publicationId: string) {
     setPublishing(true);
     try {
-      await fetch(`${API_URL}/workspaces/${id}/publications/${publicationId}/retry`, {
+      await apiFetch(`/workspaces/${id}/publications/${publicationId}/retry`, {
         method: "POST",
       });
       await load();
@@ -248,7 +248,7 @@ export default function ContentPage() {
 
   async function cancelPublication(publicationId: string) {
     if (!confirm("Cancel this scheduled post?")) return;
-    await fetch(`${API_URL}/workspaces/${id}/publications/${publicationId}`, { method: "DELETE" });
+    await apiFetch(`/workspaces/${id}/publications/${publicationId}`, { method: "DELETE" });
     await load();
   }
 

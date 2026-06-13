@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { workspaceSchema } from "@tuezday/contracts";
-import { buildApp, type TuezdayApp } from "../src/app";
-import { createTestDb } from "./helpers";
+import type { TuezdayApp } from "../src/app";
+import { buildAuthedApp, createTestDb } from "./helpers";
 
 describe("workspaces API", () => {
   let app: TuezdayApp;
 
   beforeEach(async () => {
-    app = await buildApp({ db: createTestDb() });
+    app = await buildAuthedApp({ db: createTestDb() });
   });
 
   afterEach(async () => {

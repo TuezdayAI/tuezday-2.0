@@ -1,5 +1,7 @@
 "use client";
 
+import { API_URL, apiFetch } from "@/lib/api";
+
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -17,8 +19,6 @@ import {
   type Workspace,
 } from "@tuezday/contracts";
 import type { ContextSection, ResolvedContext } from "@tuezday/brain";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 const TASK_LABELS: Record<TaskType, string> = {
   linkedin_post: "LinkedIn post",
@@ -89,11 +89,11 @@ export default function SandboxPage() {
   const load = useCallback(async () => {
     try {
       const [wsRes, pRes, gRes, dRes, cRes] = await Promise.all([
-        fetch(`${API_URL}/workspaces/${id}`),
-        fetch(`${API_URL}/workspaces/${id}/personas`),
-        fetch(`${API_URL}/workspaces/${id}/generations`),
-        fetch(`${API_URL}/workspaces/${id}/drafts`),
-        fetch(`${API_URL}/workspaces/${id}/campaigns`),
+        apiFetch(`/workspaces/${id}`),
+        apiFetch(`/workspaces/${id}/personas`),
+        apiFetch(`/workspaces/${id}/generations`),
+        apiFetch(`/workspaces/${id}/drafts`),
+        apiFetch(`/workspaces/${id}/campaigns`),
       ]);
       if (!wsRes.ok || !pRes.ok || !gRes.ok || !dRes.ok || !cRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
@@ -124,7 +124,7 @@ export default function SandboxPage() {
   async function previewContext() {
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/resolve`, {
+      const res = await apiFetch(`/workspaces/${id}/resolve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -152,7 +152,7 @@ export default function SandboxPage() {
     setGenerating(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/generate`, {
+      const res = await apiFetch(`/workspaces/${id}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -184,7 +184,7 @@ export default function SandboxPage() {
 
   async function rate(generationId: string, rating: OutputRating) {
     setError(null);
-    const res = await fetch(`${API_URL}/workspaces/${id}/generations/${generationId}/rating`, {
+    const res = await apiFetch(`/workspaces/${id}/generations/${generationId}/rating`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ rating }),
@@ -203,7 +203,7 @@ export default function SandboxPage() {
 
   async function sendToQueue(generationId: string) {
     setError(null);
-    const res = await fetch(`${API_URL}/workspaces/${id}/generations/${generationId}/submit`, {
+    const res = await apiFetch(`/workspaces/${id}/generations/${generationId}/submit`, {
       method: "POST",
     });
     const body = await res.json().catch(() => null);

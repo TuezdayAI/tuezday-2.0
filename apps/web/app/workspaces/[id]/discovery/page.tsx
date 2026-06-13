@@ -1,5 +1,7 @@
 "use client";
 
+import { API_URL, apiFetch } from "@/lib/api";
+
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -11,8 +13,6 @@ import {
   type Persona,
   type Workspace,
 } from "@tuezday/contracts";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 const TYPE_LABELS: Record<DiscoverySourceType, string> = {
   rss: "RSS feed",
@@ -59,10 +59,10 @@ export default function DiscoveryPage() {
   const load = useCallback(async () => {
     try {
       const [wsRes, pRes, sRes, iRes] = await Promise.all([
-        fetch(`${API_URL}/workspaces/${id}`),
-        fetch(`${API_URL}/workspaces/${id}/personas`),
-        fetch(`${API_URL}/workspaces/${id}/discovery/sources`),
-        fetch(`${API_URL}/workspaces/${id}/discovery/items?status=new`),
+        apiFetch(`/workspaces/${id}`),
+        apiFetch(`/workspaces/${id}/personas`),
+        apiFetch(`/workspaces/${id}/discovery/sources`),
+        apiFetch(`/workspaces/${id}/discovery/items?status=new`),
       ]);
       if (!wsRes.ok || !pRes.ok || !sRes.ok || !iRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
@@ -87,7 +87,7 @@ export default function DiscoveryPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/discovery/sources`, {
+      const res = await apiFetch(`/workspaces/${id}/discovery/sources`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
@@ -120,7 +120,7 @@ export default function DiscoveryPage() {
   }
 
   async function toggleSource(source: DiscoverySource) {
-    await fetch(`${API_URL}/workspaces/${id}/discovery/sources/${source.id}`, {
+    await apiFetch(`/workspaces/${id}/discovery/sources/${source.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ enabled: !source.enabled }),
@@ -130,7 +130,7 @@ export default function DiscoveryPage() {
 
   async function removeSource(source: DiscoverySource) {
     if (!confirm(`Delete source "${source.name}"? Its discovered items go with it.`)) return;
-    await fetch(`${API_URL}/workspaces/${id}/discovery/sources/${source.id}`, {
+    await apiFetch(`/workspaces/${id}/discovery/sources/${source.id}`, {
       method: "DELETE",
     });
     await load();
@@ -141,7 +141,7 @@ export default function DiscoveryPage() {
     setError(null);
     setRunSummary(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/discovery/run`, { method: "POST" });
+      const res = await apiFetch(`/workspaces/${id}/discovery/run`, { method: "POST" });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.message ?? `API returned ${res.status}`);
       setRunSummary(body);
@@ -157,7 +157,7 @@ export default function DiscoveryPage() {
     setSuggesting(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/discovery/suggest`, { method: "POST" });
+      const res = await apiFetch(`/workspaces/${id}/discovery/suggest`, { method: "POST" });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.message ?? `API returned ${res.status}`);
       setProposals(body);
@@ -171,7 +171,7 @@ export default function DiscoveryPage() {
   async function triage(itemId: string, action: "accept" | "skip") {
     setBusy(true);
     try {
-      await fetch(`${API_URL}/workspaces/${id}/discovery/items/${itemId}/${action}`, {
+      await apiFetch(`/workspaces/${id}/discovery/items/${itemId}/${action}`, {
         method: "POST",
       });
       await load();

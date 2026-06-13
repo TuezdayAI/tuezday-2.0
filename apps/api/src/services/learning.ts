@@ -20,7 +20,7 @@ import {
   type NowSynthesisRow,
 } from "../db/schema";
 import type { LlmGateway } from "../llm/gateway";
-import { getBrain, updateBrainDoc } from "./brain";
+import { getBrain, updateBrainDoc, type BrainActor } from "./brain";
 
 // ---------------------------------------------------------------------------
 // Training examples (derived from what already happened — no new storage)
@@ -277,6 +277,7 @@ export function acceptSynthesis(
   db: Db,
   workspaceId: string,
   synthesis: NowSynthesis,
+  actor: BrainActor | null = null,
 ): { synthesis: NowSynthesis; nowContent: string } {
   if (synthesis.status !== "proposed") throw new SynthesisAlreadyDecidedError(synthesis.status);
 
@@ -286,7 +287,7 @@ export function acceptSynthesis(
   const block = `## Learnings (synthesized ${date})\n\n${synthesis.proposal}`;
   const updated = current.trim() ? `${current.trimEnd()}\n\n${block}` : block;
   // Through the standard brain update path: creates a version like any edit.
-  const doc = updateBrainDoc(db, workspaceId, "now", updated);
+  const doc = updateBrainDoc(db, workspaceId, "now", updated, actor);
 
   const decidedAt = Date.now();
   db.update(nowSyntheses)

@@ -335,6 +335,8 @@ Build:
 
 ## Sprint 19 — Users, Teams & Auth
 
+> Built 2026-06-12, awaiting founder acceptance. Email + password (no mailer yet, so no magic links and invites are copyable links bound to the invitee's email), opaque bearer sessions, owner/member roles, decision log + brain versions record the acting user, all routes behind workspace membership. The worker authenticates with a shared `TUEZDAY_WORKER_TOKEN` as the `system` actor. Pre-auth workspaces are claimed by the first signed-in user who opens them — **the founder should register and open their workspaces before inviting anyone**. Spec: `docs/specs/sprint-19-users-teams-auth.md`.
+
 **Goal:** more than one human per workspace. Minimum viable identity — not an enterprise auth project.
 
 Scope note (founder comment 2026-06-11: "individual user IDs, I don't think we need user IDs for this now"): team invites are impossible without *some* user identity — the invite has to land on an account, and the approval-gate decision log needs a real "who". The minimum is built here; anything beyond it (SSO, granular permissions, billing seats) is explicitly out.
@@ -353,6 +355,8 @@ Explicitly out: SSO/SAML, role matrices, per-module permissions, billing/plans (
 ---
 
 ## Sprint 20 — Native Ads Execution
+
+> Built 2026-06-13, awaiting founder acceptance. Meta-only. An `ad_launches` object (assembled from an approved Sprint 15 creative) clears the approval gate `draft → pending_review → approved` before any spend; an explicit Launch then builds the Meta object chain (campaign created PAUSED → ad set → creative → ad, campaign flipped ACTIVE last so a partial chain never spends) and registers the campaign in the Sprint 14 reporting mirror. Guardrails: per-workspace daily spend cap (default $50/day, over committed daily budgets), kill switch (pauses every live campaign + blocks launch/resume). Platform status syncs back on the existing Sprint 14 tick. The Meta connection now needs an `ads_management` token. Spec: `docs/specs/sprint-20-native-ads-execution.md`.
 
 **Goal:** launch and manage ad campaigns from inside Tuezday. Kept last deliberately — the rebuild plan marks ads execution "much later", and spending real money requires the approval gate *and* real user identity (Sprint 19) to be in place first.
 

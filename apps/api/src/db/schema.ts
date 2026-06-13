@@ -12,6 +12,80 @@ export const workspaces = sqliteTable("workspaces", {
 
 export type WorkspaceRow = typeof workspaces.$inferSelect;
 
+export const users = sqliteTable(
+  "users",
+  {
+    id: text("id").primaryKey(),
+    email: text("email").notNull(),
+    name: text("name").notNull().default(""),
+    // Format: scrypt$<salt-hex>$<hash-hex> — see services/auth.ts.
+    passwordHash: text("password_hash").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("users_email").on(t.email)],
+);
+
+export type UserRow = typeof users.$inferSelect;
+
+export const sessions = sqliteTable(
+  "sessions",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    // SHA-256 of the bearer token; the raw token is only ever returned once.
+    tokenHash: text("token_hash").notNull(),
+    createdAt: integer("created_at").notNull(),
+    expiresAt: integer("expires_at").notNull(),
+  },
+  (t) => [uniqueIndex("sessions_token_hash").on(t.tokenHash)],
+);
+
+export type SessionRow = typeof sessions.$inferSelect;
+
+export const workspaceMembers = sqliteTable(
+  "workspace_members",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("workspace_members_workspace_user").on(t.workspaceId, t.userId)],
+);
+
+export type WorkspaceMemberRow = typeof workspaceMembers.$inferSelect;
+
+export const workspaceInvites = sqliteTable(
+  "workspace_invites",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    email: text("email").notNull(),
+    role: text("role").notNull().default("member"),
+    token: text("token").notNull(),
+    status: text("status").notNull().default("pending"),
+    invitedBy: text("invited_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at").notNull(),
+    expiresAt: integer("expires_at").notNull(),
+    acceptedAt: integer("accepted_at"),
+  },
+  (t) => [uniqueIndex("workspace_invites_token").on(t.token)],
+);
+
+export type WorkspaceInviteRow = typeof workspaceInvites.$inferSelect;
+
 export const brainDocuments = sqliteTable(
   "brain_documents",
   {
@@ -36,6 +110,9 @@ export const brainDocumentVersions = sqliteTable("brain_document_versions", {
     .references(() => brainDocuments.id, { onDelete: "cascade" }),
   version: integer("version").notNull(),
   content: text("content").notNull(),
+  // Nullable: versions written before auth existed (Sprint 19).
+  actor: text("actor"),
+  actorId: text("actor_id"),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -114,6 +191,8 @@ export const approvalDecisions = sqliteTable("approval_decisions", {
   toState: text("to_state").notNull(),
   contentSnapshot: text("content_snapshot"),
   actor: text("actor").notNull(),
+  // Nullable: decisions logged before auth existed, or by the system actor.
+  actorId: text("actor_id"),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -416,6 +495,81 @@ export const publications = sqliteTable("publications", {
 });
 
 export type PublicationRow = typeof publications.$inferSelect;
+
+// Native ads execution (Sprint 20) — a launch is a draft ad campaign that
+// must clear the approval gate before any API call that can spend money.
+export const adLaunches = sqliteTable("ad_launches", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  adAccountId: text("ad_account_id")
+    .notNull()
+    .references(() => adAccounts.id, { onDelete: "cascade" }),
+  // The Tuezday campaign reporting links to — copied from the creative draft.
+  campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+  creativeDraftId: text("creative_draft_id")
+    .notNull()
+    .references(() => drafts.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  objective: text("objective").notNull(),
+  pageId: text("page_id").notNull(),
+  linkUrl: text("link_url").notNull(),
+  // Integer cents in the account currency, like all ad money columns.
+  dailyBudgetCents: integer("daily_budget_cents").notNull(),
+  startAt: integer("start_at"),
+  endAt: integer("end_at"),
+  countriesJson: text("countries_json").notNull(),
+  ageMin: integer("age_min").notNull(),
+  ageMax: integer("age_max").notNull(),
+  status: text("status").notNull().default("draft"),
+  // External ids are persisted per step so a failed launch resumes, not dupes.
+  externalCampaignId: text("external_campaign_id"),
+  externalAdSetId: text("external_ad_set_id"),
+  externalCreativeId: text("external_creative_id"),
+  externalAdId: text("external_ad_id"),
+  // The Sprint 14 reporting mirror row created on a successful launch.
+  adCampaignId: text("ad_campaign_id").references(() => adCampaigns.id, { onDelete: "set null" }),
+  platformStatus: text("platform_status"),
+  launchedAt: integer("launched_at"),
+  lastError: text("last_error"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type AdLaunchRow = typeof adLaunches.$inferSelect;
+
+// The spend decision log — who moved a launch through the gate, and who
+// pulled the launch trigger. Structurally identical to approval_decisions.
+export const adLaunchDecisions = sqliteTable("ad_launch_decisions", {
+  id: text("id").primaryKey(),
+  launchId: text("launch_id")
+    .notNull()
+    .references(() => adLaunches.id, { onDelete: "cascade" }),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  action: text("action").notNull(),
+  fromState: text("from_state").notNull(),
+  toState: text("to_state").notNull(),
+  actor: text("actor").notNull(),
+  actorId: text("actor_id"),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type AdLaunchDecisionRow = typeof adLaunchDecisions.$inferSelect;
+
+// Per-workspace spend guardrails; reads fall back to defaults when unset.
+export const adSettings = sqliteTable("ad_settings", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  dailyCapCents: integer("daily_cap_cents").notNull().default(5000),
+  killSwitch: integer("kill_switch").notNull().default(0),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type AdSettingsRow = typeof adSettings.$inferSelect;
 
 export const events = sqliteTable("events", {
   id: text("id").primaryKey(),

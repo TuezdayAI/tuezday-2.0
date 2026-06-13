@@ -1,5 +1,7 @@
 "use client";
 
+import { API_URL, apiDownload, apiFetch } from "@/lib/api";
+
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -16,8 +18,6 @@ import {
   type Signal,
   type Workspace,
 } from "@tuezday/contracts";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 const STATE_LABELS: Record<ApprovalState, string> = {
   draft: "draft",
@@ -89,12 +89,12 @@ export default function PrPage() {
   const load = useCallback(async () => {
     try {
       const [wsRes, cRes, pRes, campRes, sRes, dRes] = await Promise.all([
-        fetch(`${API_URL}/workspaces/${id}`),
-        fetch(`${API_URL}/workspaces/${id}/media-contacts`),
-        fetch(`${API_URL}/workspaces/${id}/personas`),
-        fetch(`${API_URL}/workspaces/${id}/campaigns`),
-        fetch(`${API_URL}/workspaces/${id}/signals`),
-        fetch(`${API_URL}/workspaces/${id}/drafts`),
+        apiFetch(`/workspaces/${id}`),
+        apiFetch(`/workspaces/${id}/media-contacts`),
+        apiFetch(`/workspaces/${id}/personas`),
+        apiFetch(`/workspaces/${id}/campaigns`),
+        apiFetch(`/workspaces/${id}/signals`),
+        apiFetch(`/workspaces/${id}/drafts`),
       ]);
       if (!wsRes.ok || !cRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
@@ -122,7 +122,7 @@ export default function PrPage() {
     setError(null);
     setImportResult(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/media-contacts/import`, {
+      const res = await apiFetch(`/workspaces/${id}/media-contacts/import`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ csv }),
@@ -146,7 +146,7 @@ export default function PrPage() {
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/media-contacts`, {
+      const res = await apiFetch(`/workspaces/${id}/media-contacts`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(newContact),
@@ -165,7 +165,7 @@ export default function PrPage() {
 
   async function removeContact(contact: MediaContact) {
     if (!confirm(`Delete contact "${contact.name}"?`)) return;
-    await fetch(`${API_URL}/workspaces/${id}/media-contacts/${contact.id}`, { method: "DELETE" });
+    await apiFetch(`/workspaces/${id}/media-contacts/${contact.id}`, { method: "DELETE" });
     await load();
   }
 
@@ -175,7 +175,7 @@ export default function PrPage() {
     setError(null);
     setDraftSummary(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/pr/pitch`, {
+      const res = await apiFetch(`/workspaces/${id}/pr/pitch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -207,7 +207,7 @@ export default function PrPage() {
     setKitBusy(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/pr/press-kit`, {
+      const res = await apiFetch(`/workspaces/${id}/pr/press-kit`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -260,9 +260,13 @@ export default function PrPage() {
         </div>
         <div className="page-actions">
           {approvedPitches.length > 0 && (
-            <a className="button-secondary" href={`${API_URL}/workspaces/${id}/pr/export.csv`}>
+            <button
+              type="button"
+              className="button-secondary"
+              onClick={() => void apiDownload(`/workspaces/${id}/pr/export.csv`, "pr-pitches.csv")}
+            >
               ↓ Export approved CSV ({approvedPitches.length})
-            </a>
+            </button>
           )}
         </div>
       </div>

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { generationSchema } from "@tuezday/contracts";
-import { buildApp, type TuezdayApp } from "../src/app";
+import type { TuezdayApp } from "../src/app";
 import { GatewayError, type LlmGateway } from "../src/llm/gateway";
-import { createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb } from "./helpers";
 
 function fakeGateway(): LlmGateway {
   return {
@@ -30,7 +30,7 @@ describe("generations API", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    app = await buildApp({ db: createTestDb(), llm: fakeGateway() });
+    app = await buildAuthedApp({ db: createTestDb(), llm: fakeGateway() });
     const res = await app.inject({
       method: "POST",
       url: "/workspaces",
@@ -97,7 +97,7 @@ describe("generations API", () => {
     });
 
     it("returns 502 and stores nothing when the provider fails", async () => {
-      const failApp = await buildApp({ db: createTestDb(), llm: failingGateway() });
+      const failApp = await buildAuthedApp({ db: createTestDb(), llm: failingGateway() });
       const ws = (
         await failApp.inject({ method: "POST", url: "/workspaces", payload: { name: "X" } })
       ).json();

@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { campaignSchema } from "@tuezday/contracts";
-import { buildApp, type TuezdayApp } from "../src/app";
+import type { TuezdayApp } from "../src/app";
 import type { LlmGateway } from "../src/llm/gateway";
-import { createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb } from "./helpers";
 
 const fakeGateway: LlmGateway = {
   async generate() {
@@ -26,7 +26,7 @@ describe("campaigns API", () => {
   let workspaceId: string;
 
   beforeEach(async () => {
-    app = await buildApp({ db: createTestDb(), llm: fakeGateway });
+    app = await buildAuthedApp({ db: createTestDb(), llm: fakeGateway });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Campy" } })
     ).json().id;

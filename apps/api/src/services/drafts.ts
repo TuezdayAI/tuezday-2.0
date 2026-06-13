@@ -12,8 +12,11 @@ import {
 import type { Db } from "../db";
 import { approvalDecisions, drafts, type DraftRow } from "../db/schema";
 
-/** Single actor until auth exists. */
-const ACTOR = "founder";
+/** Who performed a draft action — a user, or the worker's system identity. */
+export interface DraftActor {
+  userId: string | null;
+  label: string;
+}
 
 export class InvalidTransitionError extends Error {
   constructor(from: ApprovalState, action: ApprovalAction) {
@@ -34,6 +37,7 @@ function rowToDraft(row: DraftRow): Draft {
 function logDecision(
   db: Db,
   draft: { id: string; workspaceId: string },
+  actor: DraftActor,
   action: ApprovalAction,
   fromState: ApprovalState,
   toState: ApprovalState,
@@ -48,7 +52,8 @@ function logDecision(
       fromState,
       toState,
       contentSnapshot,
-      actor: ACTOR,
+      actor: actor.label,
+      actorId: actor.userId,
       createdAt: Date.now(),
     })
     .run();
@@ -81,7 +86,7 @@ export function draftForGeneration(
 }
 
 /** Create a draft from a generation and submit it into review in one step. */
-export function submitDraft(db: Db, input: SubmitDraftInput): Draft {
+export function submitDraft(db: Db, input: SubmitDraftInput, actor: DraftActor): Draft {
   const now = Date.now();
   const toState = transitionTo("draft", "submit")!;
   const row: DraftRow = {
@@ -102,7 +107,7 @@ export function submitDraft(db: Db, input: SubmitDraftInput): Draft {
     updatedAt: now,
   };
   db.insert(drafts).values(row).run();
-  logDecision(db, row, "submit", "draft", toState);
+  logDecision(db, row, actor, "submit", "draft", toState);
   return rowToDraft(row);
 }
 
@@ -156,6 +161,7 @@ export function applyDraftAction(
   db: Db,
   draft: Draft,
   action: ApprovalAction,
+  actor: DraftActor,
   newContent?: string,
 ): Draft {
   const toState = transitionTo(draft.state, action);
@@ -167,6 +173,6 @@ export function applyDraftAction(
     .set({ state: toState, content, updatedAt: now })
     .where(eq(drafts.id, draft.id))
     .run();
-  logDecision(db, draft, action, draft.state, toState, action === "edit" ? content : null);
+  logDecision(db, draft, actor, action, draft.state, toState, action === "edit" ? content : null);
   return { ...draft, state: toState, content, updatedAt: now };
 }

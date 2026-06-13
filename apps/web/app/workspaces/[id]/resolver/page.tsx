@@ -1,5 +1,7 @@
 "use client";
 
+import { API_URL, apiFetch } from "@/lib/api";
+
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -14,8 +16,6 @@ import {
   type Workspace,
 } from "@tuezday/contracts";
 import type { ContextSection, ResolvedContext } from "@tuezday/brain";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 const TASK_LABELS: Record<TaskType, string> = {
   linkedin_post: "LinkedIn post",
@@ -59,9 +59,9 @@ export default function ResolverPage() {
   const load = useCallback(async () => {
     try {
       const [wsRes, pRes, cRes] = await Promise.all([
-        fetch(`${API_URL}/workspaces/${id}`),
-        fetch(`${API_URL}/workspaces/${id}/personas`),
-        fetch(`${API_URL}/workspaces/${id}/campaigns`),
+        apiFetch(`/workspaces/${id}`),
+        apiFetch(`/workspaces/${id}/personas`),
+        apiFetch(`/workspaces/${id}/campaigns`),
       ]);
       if (!wsRes.ok || !pRes.ok || !cRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
@@ -81,7 +81,7 @@ export default function ResolverPage() {
     setResolving(true);
     setError(null);
     try {
-      const res = await fetch(`${API_URL}/workspaces/${id}/resolve`, {
+      const res = await apiFetch(`/workspaces/${id}/resolve`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -119,9 +119,9 @@ export default function ResolverPage() {
     setError(null);
     try {
       const url = editingId
-        ? `${API_URL}/workspaces/${id}/personas/${editingId}`
-        : `${API_URL}/workspaces/${id}/personas`;
-      const res = await fetch(url, {
+        ? `/workspaces/${id}/personas/${editingId}`
+        : `/workspaces/${id}/personas`;
+      const res = await apiFetch(url, {
         method: editingId ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: pName, description: pDescription, overlay: pOverlay }),
@@ -139,7 +139,7 @@ export default function ResolverPage() {
 
   async function removePersona(persona: Persona) {
     if (!confirm(`Delete persona "${persona.name}"?`)) return;
-    await fetch(`${API_URL}/workspaces/${id}/personas/${persona.id}`, { method: "DELETE" });
+    await apiFetch(`/workspaces/${id}/personas/${persona.id}`, { method: "DELETE" });
     if (personaId === persona.id) setPersonaId("");
     await load();
   }

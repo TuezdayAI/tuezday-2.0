@@ -1,0 +1,393 @@
+import type { FastifyInstance, FastifyReply } from "fastify";
+import {
+  AD_LAUNCH_ACTIONS,
+  createAdLaunchInputSchema,
+  updateAdLaunchInputSchema,
+  updateAdSettingsInputSchema,
+  type AdLaunchAction,
+  type CreateAdLaunchInput,
+} from "@tuezday/contracts";
+import { actorOf } from "../auth/guard";
+import type { Db } from "../db";
+import { adsExecutionAdapterFor, type AdsExecutionAdapter } from "../connectors/ads";
+import { ConnectorFabricError, type ConnectorFabric } from "../connectors/fabric";
+import {
+  applyLaunchAction,
+  checkSpendGuardrails,
+  createLaunch,
+  creativeFieldsFrom,
+  deleteLaunch,
+  getAdSettings,
+  getLaunch,
+  getLaunchWithContext,
+  isSpending,
+  InvalidLaunchTransitionError,
+  listLaunchDecisions,
+  listLaunches,
+  listSpendingLaunches,
+  performLaunch,
+  recordLaunchError,
+  setLaunchPlatformStatus,
+  updateAdSettings,
+  updateLaunch,
+  type LaunchCreativeFields,
+} from "../services/ad-launches";
+import { getAdAccount } from "../services/ads";
+import { getConnection, providerByKey } from "../services/connections";
+import { getDraft } from "../services/drafts";
+import { emitEvent } from "../services/events";
+import { getWorkspace } from "../services/workspaces";
+
+type Fetcher = typeof fetch;
+
+function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = getWorkspace(db, id);
+  if (!workspace) {
+    void reply.status(404).send({ error: "workspace_not_found" });
+  }
+  return workspace;
+}
+
+function invalidInput(reply: FastifyReply, message: string) {
+  return reply.status(400).send({ error: "invalid_input", message });
+}
+
+export function registerAdLaunchRoutes(
+  app: FastifyInstance,
+  db: Db,
+  fabric: ConnectorFabric,
+  fetcher: Fetcher,
+): void {
+  /** Resolve a launch's ad account to its connected execution adapter. */
+  function executionAdapterOrError(
+    workspaceId: string,
+    adAccountId: string,
+  ):
+    | { ok: true; adapter: AdsExecutionAdapter; externalAccountId: string }
+    | { ok: false; status: number; error: string; message: string } {
+    const account = getAdAccount(db, workspaceId, adAccountId);
+    if (!account) {
+      return { ok: false, status: 404, error: "account_not_found", message: "No such ad account." };
+    }
+    const connection = account.connectionId
+      ? getConnection(db, workspaceId, account.connectionId)
+      : undefined;
+    const provider = connection ? providerByKey(connection.providerKey) : undefined;
+    const adapter =
+      connection && provider && connection.status === "connected"
+        ? adsExecutionAdapterFor(fabric, provider, connection)
+        : undefined;
+    if (!adapter) {
+      return {
+        ok: false,
+        status: 400,
+        error: "account_not_launchable",
+        message:
+          "This ad account has no connected ads platform behind it — launches need a live connection.",
+      };
+    }
+    return { ok: true, adapter, externalAccountId: account.externalId };
+  }
+
+  /** Shared create/edit reference checks; returns the creative's campaign. */
+  function validateReferences(
+    workspaceId: string,
+    input: Partial<CreateAdLaunchInput>,
+    reply: FastifyReply,
+  ): { ok: true; campaignId: string | null } | { ok: false } {
+    if (input.adAccountId !== undefined) {
+      const account = getAdAccount(db, workspaceId, input.adAccountId);
+      if (!account) {
+        void reply.status(404).send({ error: "account_not_found" });
+        return { ok: false };
+      }
+      const resolved = executionAdapterOrError(workspaceId, input.adAccountId);
+      if (!resolved.ok) {
+        void reply.status(resolved.status).send({ error: resolved.error, message: resolved.message });
+        return { ok: false };
+      }
+    }
+    let campaignId: string | null = null;
+    if (input.creativeDraftId !== undefined) {
+      const draft = getDraft(db, workspaceId, input.creativeDraftId);
+      if (!draft) {
+        void reply.status(404).send({ error: "draft_not_found" });
+        return { ok: false };
+      }
+      if (draft.taskType !== "meta_ad_creative") {
+        void reply.status(400).send({
+          error: "creative_not_meta",
+          message: "Launches take a Meta ad creative draft.",
+        });
+        return { ok: false };
+      }
+      if (draft.state !== "approved") {
+        void reply.status(409).send({
+          error: "creative_not_approved",
+          message: "Only an approved creative can be launched.",
+        });
+        return { ok: false };
+      }
+      if (!creativeFieldsFrom(draft.content)) {
+        void reply.status(400).send({
+          error: "creative_unparseable",
+          message: "The creative draft is not in the Meta ad format.",
+        });
+        return { ok: false };
+      }
+      campaignId = draft.campaignId;
+    }
+    return { ok: true, campaignId };
+  }
+
+  // --- Guardrail settings ---
+
+  app.get<{ Params: { id: string } }>("/workspaces/:id/ads/settings", async (request, reply) => {
+    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    return getAdSettings(db, request.params.id);
+  });
+
+  app.put<{ Params: { id: string } }>("/workspaces/:id/ads/settings", async (request, reply) => {
+    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    const parsed = updateAdSettingsInputSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return invalidInput(reply, parsed.error.issues.map((i) => i.message).join("; "));
+    }
+
+    // Flipping the kill switch on pauses every spending launch, best-effort —
+    // one platform failure never leaves the rest running unreported.
+    const paused: Array<{ launchId: string; ok: boolean; error?: string }> = [];
+    if (parsed.data.killSwitch === true) {
+      for (const launch of listSpendingLaunches(db, request.params.id)) {
+        const resolved = executionAdapterOrError(request.params.id, launch.adAccountId);
+        if (!resolved.ok) {
+          recordLaunchError(db, launch.id, resolved.message);
+          paused.push({ launchId: launch.id, ok: false, error: resolved.message });
+          continue;
+        }
+        try {
+          await setLaunchPlatformStatus(db, resolved.adapter, launch, "PAUSED");
+          paused.push({ launchId: launch.id, ok: true });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          recordLaunchError(db, launch.id, message);
+          paused.push({ launchId: launch.id, ok: false, error: message });
+        }
+      }
+    }
+    const settings = updateAdSettings(db, request.params.id, parsed.data);
+    return { settings, paused };
+  });
+
+  // --- Launch CRUD ---
+
+  app.get<{ Params: { id: string } }>("/workspaces/:id/ads/launches", async (request, reply) => {
+    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    return listLaunches(db, request.params.id);
+  });
+
+  app.post<{ Params: { id: string } }>("/workspaces/:id/ads/launches", async (request, reply) => {
+    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    const parsed = createAdLaunchInputSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return invalidInput(reply, parsed.error.issues.map((i) => i.message).join("; "));
+    }
+    const refs = validateReferences(request.params.id, parsed.data, reply);
+    if (!refs.ok) return reply;
+    return reply.status(201).send(createLaunch(db, request.params.id, parsed.data, refs.campaignId));
+  });
+
+  app.get<{ Params: { id: string; launchId: string } }>(
+    "/workspaces/:id/ads/launches/:launchId",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const launch = getLaunchWithContext(db, request.params.id, request.params.launchId);
+      if (!launch) return reply.status(404).send({ error: "launch_not_found" });
+      return { ...launch, decisions: listLaunchDecisions(db, launch.id) };
+    },
+  );
+
+  app.patch<{ Params: { id: string; launchId: string } }>(
+    "/workspaces/:id/ads/launches/:launchId",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const launch = getLaunch(db, request.params.id, request.params.launchId);
+      if (!launch) return reply.status(404).send({ error: "launch_not_found" });
+      if (launch.status !== "draft") {
+        return reply.status(409).send({
+          error: "not_editable",
+          message: "Only a draft launch can be edited — revise it back to draft first.",
+        });
+      }
+      const parsed = updateAdLaunchInputSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return invalidInput(reply, parsed.error.issues.map((i) => i.message).join("; "));
+      }
+      const refs = validateReferences(request.params.id, parsed.data, reply);
+      if (!refs.ok) return reply;
+      return updateLaunch(db, launch, parsed.data, refs.campaignId);
+    },
+  );
+
+  app.delete<{ Params: { id: string; launchId: string } }>(
+    "/workspaces/:id/ads/launches/:launchId",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const launch = getLaunch(db, request.params.id, request.params.launchId);
+      if (!launch) return reply.status(404).send({ error: "launch_not_found" });
+      if (launch.status === "launched") {
+        return reply.status(409).send({
+          error: "already_launched",
+          message: "A launched campaign stays on record — pause it instead.",
+        });
+      }
+      deleteLaunch(db, launch.id);
+      return reply.status(204).send();
+    },
+  );
+
+  // --- Approval gate ---
+
+  for (const action of AD_LAUNCH_ACTIONS) {
+    app.post<{ Params: { id: string; launchId: string } }>(
+      `/workspaces/:id/ads/launches/:launchId/${action}`,
+      async (request, reply) => {
+        if (!workspaceOr404(db, request.params.id, reply)) return reply;
+        const launch = getLaunch(db, request.params.id, request.params.launchId);
+        if (!launch) return reply.status(404).send({ error: "launch_not_found" });
+        try {
+          return applyLaunchAction(db, launch, action as AdLaunchAction, actorOf(request));
+        } catch (err) {
+          if (err instanceof InvalidLaunchTransitionError) {
+            return reply.status(409).send({ error: "invalid_transition", message: err.message });
+          }
+          throw err;
+        }
+      },
+    );
+  }
+
+  // --- The money moment ---
+
+  app.post<{ Params: { id: string; launchId: string } }>(
+    "/workspaces/:id/ads/launches/:launchId/launch",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const launch = getLaunch(db, request.params.id, request.params.launchId);
+      if (!launch) return reply.status(404).send({ error: "launch_not_found" });
+      if (launch.status === "launched") {
+        return reply.status(409).send({ error: "already_launched" });
+      }
+      if (launch.status !== "approved") {
+        return reply.status(409).send({
+          error: "launch_not_approved",
+          message: "A launch must clear the approval gate before it can spend.",
+        });
+      }
+      const guardrails = checkSpendGuardrails(db, launch);
+      if (!guardrails.ok) {
+        return reply.status(409).send({ error: guardrails.error, message: guardrails.message });
+      }
+      const resolved = executionAdapterOrError(request.params.id, launch.adAccountId);
+      if (!resolved.ok) {
+        return reply.status(resolved.status).send({ error: resolved.error, message: resolved.message });
+      }
+      const draft = getDraft(db, request.params.id, launch.creativeDraftId);
+      const creative: LaunchCreativeFields | null = draft ? creativeFieldsFrom(draft.content) : null;
+      if (!creative) {
+        return reply.status(400).send({
+          error: "creative_unparseable",
+          message: "The creative draft behind this launch is gone or no longer parses.",
+        });
+      }
+
+      let launched;
+      try {
+        launched = await performLaunch(
+          db,
+          resolved.adapter,
+          launch,
+          resolved.externalAccountId,
+          creative,
+          actorOf(request),
+        );
+      } catch (err) {
+        if (err instanceof ConnectorFabricError) {
+          return reply.status(502).send({ error: "launch_failed", message: err.message });
+        }
+        throw err;
+      }
+      await emitEvent(db, fetcher, request.params.id, "ad.launched", {
+        launchId: launched.id,
+        name: launched.name,
+        objective: launched.objective,
+        dailyBudgetCents: launched.dailyBudgetCents,
+        externalCampaignId: launched.externalCampaignId,
+        campaignId: launched.campaignId,
+        actor: request.actor.label,
+      });
+      return launched;
+    },
+  );
+
+  // --- Pause / resume ---
+
+  app.post<{ Params: { id: string; launchId: string } }>(
+    "/workspaces/:id/ads/launches/:launchId/pause",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const launch = getLaunch(db, request.params.id, request.params.launchId);
+      if (!launch) return reply.status(404).send({ error: "launch_not_found" });
+      if (launch.status !== "launched") {
+        return reply.status(409).send({ error: "not_launched" });
+      }
+      if (!isSpending(launch)) {
+        return reply.status(409).send({ error: "already_paused" });
+      }
+      const resolved = executionAdapterOrError(request.params.id, launch.adAccountId);
+      if (!resolved.ok) {
+        return reply.status(resolved.status).send({ error: resolved.error, message: resolved.message });
+      }
+      try {
+        return await setLaunchPlatformStatus(db, resolved.adapter, launch, "PAUSED");
+      } catch (err) {
+        if (err instanceof ConnectorFabricError) {
+          return reply.status(502).send({ error: "pause_failed", message: err.message });
+        }
+        throw err;
+      }
+    },
+  );
+
+  app.post<{ Params: { id: string; launchId: string } }>(
+    "/workspaces/:id/ads/launches/:launchId/resume",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const launch = getLaunch(db, request.params.id, request.params.launchId);
+      if (!launch) return reply.status(404).send({ error: "launch_not_found" });
+      if (launch.status !== "launched") {
+        return reply.status(409).send({ error: "not_launched" });
+      }
+      if (isSpending(launch)) {
+        return reply.status(409).send({ error: "already_active" });
+      }
+      // Resuming makes money flow again — same guardrails as a launch.
+      const guardrails = checkSpendGuardrails(db, launch);
+      if (!guardrails.ok) {
+        return reply.status(409).send({ error: guardrails.error, message: guardrails.message });
+      }
+      const resolved = executionAdapterOrError(request.params.id, launch.adAccountId);
+      if (!resolved.ok) {
+        return reply.status(resolved.status).send({ error: resolved.error, message: resolved.message });
+      }
+      try {
+        return await setLaunchPlatformStatus(db, resolved.adapter, launch, "ACTIVE");
+      } catch (err) {
+        if (err instanceof ConnectorFabricError) {
+          return reply.status(502).send({ error: "resume_failed", message: err.message });
+        }
+        throw err;
+      }
+    },
+  );
+}

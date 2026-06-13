@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { crmContactSchema } from "@tuezday/contracts";
-import { buildApp, type TuezdayApp } from "../src/app";
+import type { TuezdayApp } from "../src/app";
 import {
   ConnectorFabricError,
   type ConnectorFabric,
@@ -9,7 +9,7 @@ import {
 import { FreshsalesAdapter } from "../src/connectors/crm/freshsales";
 import { NangoFabric } from "../src/connectors/nango";
 import type { LlmGateway } from "../src/llm/gateway";
-import { createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb } from "./helpers";
 
 const fakeLlm: LlmGateway = {
   async generate() {
@@ -376,7 +376,7 @@ describe("CRM read/write API", () => {
       { id: 3, first_name: "NoEmail" },
     ]);
     received = [];
-    app = await buildApp({
+    app = await buildAuthedApp({
       db: createTestDb(),
       llm: fakeLlm,
       connectors: fakeFabric(state),

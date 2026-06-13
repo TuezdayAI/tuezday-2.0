@@ -4,6 +4,7 @@ import {
   type BrainDocType,
   updateBrainDocInputSchema,
 } from "@tuezday/contracts";
+import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
 import { exportBrainMarkdown, getBrain, listDocVersions, updateBrainDoc } from "../services/brain";
 import { getWorkspace } from "../services/workspaces";
@@ -40,7 +41,7 @@ export function registerBrainRoutes(app: FastifyInstance, db: Db): void {
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      return updateBrainDoc(db, request.params.id, request.params.docType, parsed.data.content);
+      return updateBrainDoc(db, request.params.id, request.params.docType, parsed.data.content, actorOf(request));
     },
   );
 

@@ -953,3 +953,70 @@ a.workspace-card:hover {
   overflow: auto;
   margin: 0 0 8px;
 }
+
+/* --- Sprint 19: auth & team --- */
+
+.header-user {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--muted);
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.ws-user {
+  margin-top: 8px;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+}
+
+.ws-user span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.auth-form {
+  flex-direction: column;
+  align-items: stretch;
+  max-width: 360px;
+}
+
+/* Ads execution (Sprint 20) */
+.button-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+.button-danger:hover {
+  filter: brightness(0.95);
+}
+
+.layer-badge.badge-danger {
+  color: var(--rose-ink);
+  background: var(--rose);
+}
+
+.layer-badge.badge-active {
+  color: var(--mint-ink);
+  background: var(--mint);
+}
+
+.budget-meter {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  overflow: hidden;
+  margin-top: 8px;
+}
+
+.budget-meter-fill {
+  height: 100%;
+  background: var(--mint-ink);
+  transition: width 0.2s ease;
+}

@@ -9,6 +9,7 @@ import {
 } from "@tuezday/contracts";
 import { composePrPitchInstruction, resolveContext, type BrainContents } from "@tuezday/brain";
 import { and, eq, isNotNull } from "drizzle-orm";
+import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
 import { drafts } from "../db/schema";
 import type { EvidenceStore } from "../evidence/store";
@@ -195,7 +196,7 @@ export function registerPrRoutes(
           channel: "pr",
           personaId: parsed.data.personaId ?? null,
           content: result.text,
-        });
+        }, actorOf(request));
         results.push({ contactId: contact.id, generationId: generation.id, draftId: draft.id });
       } catch (err) {
         if (err instanceof GatewayError) {
@@ -284,7 +285,7 @@ export function registerPrRoutes(
         channel: "pr",
         personaId: parsed.data.personaId ?? null,
         content: result.text,
-      });
+      }, actorOf(request));
       return reply.status(201).send(draft);
     } catch (err) {
       if (err instanceof GatewayError) {

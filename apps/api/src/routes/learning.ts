@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { createMetricInputSchema } from "@tuezday/contracts";
+import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { getDraft } from "../services/drafts";
@@ -101,7 +102,7 @@ export function registerLearningRoutes(
       const synthesis = getSynthesis(db, request.params.id, request.params.synthesisId);
       if (!synthesis) return reply.status(404).send({ error: "synthesis_not_found" });
       try {
-        const result = acceptSynthesis(db, request.params.id, synthesis);
+        const result = acceptSynthesis(db, request.params.id, synthesis, actorOf(request));
         await emitEvent(db, fetcher, request.params.id, "synthesis.accepted", {
           synthesisId: result.synthesis.id,
           proposal: result.synthesis.proposal,

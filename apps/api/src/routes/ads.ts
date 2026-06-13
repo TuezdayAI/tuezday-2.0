@@ -8,7 +8,7 @@ import {
   type Connection,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
-import { adsAdapterFor, type AdsAdapter } from "../connectors/ads";
+import { adsAdapterFor, adsExecutionAdapterFor, type AdsAdapter } from "../connectors/ads";
 import { ConnectorFabricError, type ConnectorFabric } from "../connectors/fabric";
 import {
   defaultMetricRange,
@@ -22,6 +22,7 @@ import {
   syncAdAccount,
   type AdsSyncResult,
 } from "../services/ads";
+import { syncLaunchStatuses } from "../services/ad-launches";
 import { getCampaign } from "../services/campaigns";
 import { getConnection, providerByKey } from "../services/connections";
 import { emitEvent } from "../services/events";
@@ -136,6 +137,19 @@ export function registerAdsRoutes(
     if (!resolved.ok) return resolved;
     try {
       const result = await syncAdAccount(db, resolved.adapter, workspaceId, account, since, until);
+      // Sprint 20: stamp platform statuses on this account's launches.
+      // Best-effort — a status-listing failure never breaks the metric sync.
+      const provider = providerByKey(resolved.connection.providerKey);
+      const exec = provider
+        ? adsExecutionAdapterFor(fabric, provider, resolved.connection)
+        : undefined;
+      if (exec) {
+        try {
+          await syncLaunchStatuses(db, exec, workspaceId, account.id, account.externalId);
+        } catch {
+          // swallowed by design
+        }
+      }
       if (result.created + result.updated > 0) {
         await emitEvent(db, fetcher, workspaceId, "ads.synced", {
           adAccountId: account.id,

@@ -1,5 +1,7 @@
 "use client";
 
+import { API_URL, apiFetch } from "@/lib/api";
+
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -12,8 +14,6 @@ import type {
   Workspace,
 } from "@tuezday/contracts";
 import type { BrainScore } from "@tuezday/brain";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 interface BrainView {
   completeness: BrainScore;
@@ -47,14 +47,14 @@ export default function WorkspaceHomePage() {
     try {
       const [ws, brain, personas, generations, drafts, signals, syntheses, campaigns] =
         await Promise.all([
-          fetch(`${API_URL}/workspaces/${id}`),
-          fetch(`${API_URL}/workspaces/${id}/brain`),
-          fetch(`${API_URL}/workspaces/${id}/personas`),
-          fetch(`${API_URL}/workspaces/${id}/generations`),
-          fetch(`${API_URL}/workspaces/${id}/drafts`),
-          fetch(`${API_URL}/workspaces/${id}/discovery/items?status=new`),
-          fetch(`${API_URL}/workspaces/${id}/learning/syntheses`),
-          fetch(`${API_URL}/workspaces/${id}/campaigns`),
+          apiFetch(`/workspaces/${id}`),
+          apiFetch(`/workspaces/${id}/brain`),
+          apiFetch(`/workspaces/${id}/personas`),
+          apiFetch(`/workspaces/${id}/generations`),
+          apiFetch(`/workspaces/${id}/drafts`),
+          apiFetch(`/workspaces/${id}/discovery/items?status=new`),
+          apiFetch(`/workspaces/${id}/learning/syntheses`),
+          apiFetch(`/workspaces/${id}/campaigns`),
         ]);
       if (!ws.ok || !brain.ok) throw new Error("not found");
       setData({

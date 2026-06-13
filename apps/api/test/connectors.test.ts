@@ -1,10 +1,10 @@
 import { createHmac } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { connectionSchema } from "@tuezday/contracts";
-import { buildApp, type TuezdayApp } from "../src/app";
+import type { TuezdayApp } from "../src/app";
 import { ConnectorFabricError, type ConnectorFabric } from "../src/connectors/fabric";
 import type { LlmGateway } from "../src/llm/gateway";
-import { createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb } from "./helpers";
 
 const fakeLlm: LlmGateway = {
   async generate() {
@@ -81,7 +81,7 @@ describe("connector fabric API", () => {
   beforeEach(async () => {
     state = { healthy: true, integrations: new Set(), connections: new Map(), proxyStatus: 200 };
     received = [];
-    app = await buildApp({
+    app = await buildAuthedApp({
       db: createTestDb(),
       llm: fakeLlm,
       connectors: fakeFabric(state),

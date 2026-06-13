@@ -1,5 +1,7 @@
 "use client";
 
+import { API_URL, apiFetch } from "@/lib/api";
+
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -12,8 +14,6 @@ import type {
   ConnectorProvider,
   Workspace,
 } from "@tuezday/contracts";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3001";
 
 interface ConnectorsView {
   providers: ConnectorProvider[];
@@ -147,8 +147,7 @@ export default function AdsPage() {
 
   const loadReport = useCallback(
     async (since: string, until: string) => {
-      const res = await fetch(
-        `${API_URL}/workspaces/${id}/ads/report?since=${since}&until=${until}`,
+      const res = await apiFetch(`/workspaces/${id}/ads/report?since=${since}&until=${until}`,
       );
       if (res.ok) setReport(await res.json());
     },
@@ -158,10 +157,10 @@ export default function AdsPage() {
   const load = useCallback(async () => {
     try {
       const [wsRes, cRes, aRes, cpRes] = await Promise.all([
-        fetch(`${API_URL}/workspaces/${id}`),
-        fetch(`${API_URL}/workspaces/${id}/connectors`),
-        fetch(`${API_URL}/workspaces/${id}/ads/accounts`),
-        fetch(`${API_URL}/workspaces/${id}/campaigns`),
+        apiFetch(`/workspaces/${id}`),
+        apiFetch(`/workspaces/${id}/connectors`),
+        apiFetch(`/workspaces/${id}/ads/accounts`),
+        apiFetch(`/workspaces/${id}/campaigns`),
       ]);
       if (!wsRes.ok || !cRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
@@ -199,7 +198,7 @@ export default function AdsPage() {
   }
 
   async function post(path: string, payload?: Record<string, unknown>) {
-    const res = await fetch(`${API_URL}/workspaces/${id}${path}`, {
+    const res = await apiFetch(`/workspaces/${id}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       ...(payload ? { body: JSON.stringify(payload) } : {}),

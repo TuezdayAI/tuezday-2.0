@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildApp, type TuezdayApp } from "../src/app";
-import { createTestDb } from "./helpers";
+import type { TuezdayApp } from "../src/app";
+import { buildAuthedApp, createTestDb } from "./helpers";
 
 describe("GET /health", () => {
   let app: TuezdayApp;
 
   beforeEach(async () => {
-    app = await buildApp({ db: createTestDb() });
+    app = await buildAuthedApp({ db: createTestDb() });
   });
 
   afterEach(async () => {

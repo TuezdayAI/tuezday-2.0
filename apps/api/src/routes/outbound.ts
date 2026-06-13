@@ -8,6 +8,7 @@ import {
 } from "@tuezday/contracts";
 import { resolveContext, type BrainContents } from "@tuezday/brain";
 import { and, eq, isNotNull } from "drizzle-orm";
+import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
 import { drafts } from "../db/schema";
 import type { EvidenceStore } from "../evidence/store";
@@ -163,7 +164,7 @@ export function registerOutboundRoutes(
           channel: "email",
           personaId: parsed.data.personaId ?? null,
           content: result.text,
-        });
+        }, actorOf(request));
         results.push({ leadId: lead.id, generationId: generation.id, draftId: draft.id });
       } catch (err) {
         if (err instanceof GatewayError) {
