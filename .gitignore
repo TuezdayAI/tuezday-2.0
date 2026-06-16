@@ -6,6 +6,8 @@ dist/
 .env.local
 *.db
 *.db-journal
+*.db-shm
+*.db-wal
 *.sqlite
 .DS_Store
 coverage/
