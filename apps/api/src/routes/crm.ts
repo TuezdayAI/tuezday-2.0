@@ -1,20 +1,26 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import {
+  crmSyncFilterInputSchema,
   crmSyncInputSchema,
   logDraftInputSchema,
   pushLeadInputSchema,
   type Connection,
+  type ConnectorProvider,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { crmAdapterFor, type CrmAdapter } from "../connectors/crm";
 import { ConnectorFabricError, type ConnectorFabric } from "../connectors/fabric";
 import { getConnection, providerByKey } from "../services/connections";
 import {
+  discardCrmContact,
   getCrmContact,
   getCrmContactByLead,
+  getCrmSyncFilter,
   importCrmContactAsLead,
   listCrmContacts,
   pushLeadToCrm,
+  restoreCrmContact,
+  setCrmSyncFilter,
   syncCrmContacts,
 } from "../services/crm";
 import { getDraft } from "../services/drafts";
@@ -75,6 +81,28 @@ export function registerCrmRoutes(
     return { adapter, connection };
   }
 
+  /** A CRM-capable connection (any status) for filter config — no live adapter. */
+  function crmConnectionOrReply(
+    workspaceId: string,
+    connectionId: string,
+    reply: FastifyReply,
+  ): { connection: Connection; provider: ConnectorProvider } | undefined {
+    const connection = getConnection(db, workspaceId, connectionId);
+    if (!connection) {
+      void reply.status(404).send({ error: "connection_not_found" });
+      return undefined;
+    }
+    const provider = providerByKey(connection.providerKey);
+    if (!provider?.categories?.includes("crm")) {
+      void reply.status(400).send({
+        error: "not_a_crm_connection",
+        message: `${provider?.label ?? connection.providerKey} is not a CRM connection.`,
+      });
+      return undefined;
+    }
+    return { connection, provider };
+  }
+
   function crmFailure(reply: FastifyReply, err: unknown) {
     if (err instanceof ConnectorFabricError) {
       return reply.status(502).send({ error: "crm_request_failed", message: err.message });
@@ -82,9 +110,80 @@ export function registerCrmRoutes(
     throw err;
   }
 
-  app.get<{ Params: { id: string } }>("/workspaces/:id/crm/contacts", async (request, reply) => {
+  app.get<{ Params: { id: string }; Querystring: { discarded?: string } }>(
+    "/workspaces/:id/crm/contacts",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      return listCrmContacts(db, request.params.id, {
+        discarded: request.query.discarded === "true",
+      });
+    },
+  );
+
+  app.post<{ Params: { id: string; crmContactId: string } }>(
+    "/workspaces/:id/crm/contacts/:crmContactId/discard",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!discardCrmContact(db, request.params.id, request.params.crmContactId)) {
+        return reply.status(404).send({ error: "contact_not_found" });
+      }
+      return { ok: true };
+    },
+  );
+
+  app.post<{ Params: { id: string; crmContactId: string } }>(
+    "/workspaces/:id/crm/contacts/:crmContactId/restore",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!restoreCrmContact(db, request.params.id, request.params.crmContactId)) {
+        return reply.status(404).send({ error: "contact_not_found" });
+      }
+      return { ok: true };
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: { connectionId?: string } }>(
+    "/workspaces/:id/crm/views",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!request.query.connectionId) {
+        return reply.status(400).send({ error: "invalid_input", message: "connectionId is required." });
+      }
+      const resolved = adapterOrReply(request.params.id, request.query.connectionId, reply);
+      if (!resolved) return reply;
+      try {
+        return await resolved.adapter.listViews();
+      } catch (err) {
+        return crmFailure(reply, err);
+      }
+    },
+  );
+
+  app.get<{ Params: { id: string }; Querystring: { connectionId?: string } }>(
+    "/workspaces/:id/crm/sync-filter",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!request.query.connectionId) {
+        return reply.status(400).send({ error: "invalid_input", message: "connectionId is required." });
+      }
+      const resolved = crmConnectionOrReply(request.params.id, request.query.connectionId, reply);
+      if (!resolved) return reply;
+      return getCrmSyncFilter(db, resolved.connection.id);
+    },
+  );
+
+  app.put<{ Params: { id: string } }>("/workspaces/:id/crm/sync-filter", async (request, reply) => {
     if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return listCrmContacts(db, request.params.id);
+    const parsed = crmSyncFilterInputSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({
+        error: "invalid_input",
+        message: parsed.error.issues.map((i) => i.message).join("; "),
+      });
+    }
+    const resolved = crmConnectionOrReply(request.params.id, parsed.data.connectionId, reply);
+    if (!resolved) return reply;
+    return setCrmSyncFilter(db, request.params.id, resolved.connection.id, parsed.data.filter);
   });
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/crm/sync", async (request, reply) => {
@@ -98,8 +197,15 @@ export function registerCrmRoutes(
     }
     const resolved = adapterOrReply(request.params.id, parsed.data.connectionId, reply);
     if (!resolved) return reply;
+    const filter = getCrmSyncFilter(db, resolved.connection.id);
     try {
-      return await syncCrmContacts(db, resolved.adapter, request.params.id, resolved.connection.id);
+      return await syncCrmContacts(
+        db,
+        resolved.adapter,
+        request.params.id,
+        resolved.connection.id,
+        filter,
+      );
     } catch (err) {
       return crmFailure(reply, err);
     }

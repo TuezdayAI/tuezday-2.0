@@ -30,6 +30,7 @@ interface FreshsalesContact {
   emails?: Array<{ value: string; is_primary?: boolean }>;
   job_title?: string;
   sales_accounts?: Array<{ id: number; name: string; is_primary?: boolean }>;
+  updated_at?: string;
 }
 
 interface FreshsalesState {
@@ -37,6 +38,8 @@ interface FreshsalesState {
   notes: Array<{ description: string; targetable_type: string; targetable_id: number }>;
   nextId: number;
   perPage: number;
+  /** Optional per-view contact sets; the chosen view id selects the subset. */
+  viewContacts?: Record<string, FreshsalesContact[]>;
   /** When set, every proxied request returns this status with an error body. */
   failStatus: number | null;
 }
@@ -76,9 +79,11 @@ function handleFreshsales(state: FreshsalesState, method: string, path: string, 
     };
   }
   if (method === "GET" && path.startsWith("/api/contacts/view/")) {
+    const viewId = path.split("/api/contacts/view/")[1]!.split("?")[0]!;
+    const source = state.viewContacts?.[viewId] ?? state.contacts;
     const page = Number(new URLSearchParams(path.split("?")[1] ?? "").get("page") ?? "1");
-    const totalPages = Math.max(1, Math.ceil(state.contacts.length / state.perPage));
-    const slice = state.contacts.slice((page - 1) * state.perPage, page * state.perPage);
+    const totalPages = Math.max(1, Math.ceil(source.length / state.perPage));
+    const slice = source.slice((page - 1) * state.perPage, page * state.perPage);
     return { status: 200, json: { contacts: slice, meta: { total_pages: totalPages } } };
   }
   if (method === "POST" && path.startsWith("/api/contacts")) {
@@ -332,6 +337,32 @@ describe("FreshsalesAdapter", () => {
     await expect(
       adapterFor(state).createContact({ name: "X", email: "x@x.io" }),
     ).rejects.toThrow(ConnectorFabricError);
+  });
+
+  it("lists the CRM views from the filters endpoint", async () => {
+    const views = await adapterFor(freshsalesState()).listViews();
+    expect(views).toEqual([
+      { id: "9", name: "My Contacts" },
+      { id: "4", name: "All Contacts" },
+    ]);
+  });
+
+  it("pulls from the chosen view id instead of All Contacts", async () => {
+    const state = freshsalesState([{ id: 1, display_name: "Default" }]);
+    state.viewContacts = { "9": [{ id: 7, display_name: "From View 9", email: "v9@x.io" }] };
+    const { contacts } = await adapterFor(state).listContacts({ viewId: "9" });
+    expect(contacts.map((c) => c.externalId)).toEqual(["7"]);
+  });
+
+  it("drops contacts updated before the cutoff and keeps undatable ones", async () => {
+    const cutoff = Date.parse("2026-06-01T00:00:00Z");
+    const state = freshsalesState([
+      { id: 1, display_name: "Fresh", email: "f@x.io", updated_at: "2026-06-10T00:00:00Z" },
+      { id: 2, display_name: "Stale", email: "s@x.io", updated_at: "2026-05-01T00:00:00Z" },
+      { id: 3, display_name: "Undated", email: "u@x.io" },
+    ]);
+    const { contacts } = await adapterFor(state).listContacts({ updatedSince: cutoff });
+    expect(contacts.map((c) => c.externalId).sort()).toEqual(["1", "3"]);
   });
 });
 
@@ -740,6 +771,176 @@ describe("CRM read/write API", () => {
       });
       expect(res.statusCode).toBe(400);
       expect(res.json().error).toBe("lead_not_linked");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Sprint 23: discard + filtered sync
+  // -------------------------------------------------------------------------
+
+  type CV = {
+    id: string;
+    externalId: string;
+    discardedAt: number | null;
+    lead: { id: string; name: string } | null;
+  };
+
+  describe("discard + restore (Sprint 23)", () => {
+    async function synced() {
+      const connection = await connectFreshsales();
+      await sync(connection.id);
+      return { connection, contacts: (await listContacts()) as CV[] };
+    }
+    function listDiscarded(): Promise<CV[]> {
+      return app
+        .inject({ method: "GET", url: `/workspaces/${workspaceId}/crm/contacts?discarded=true` })
+        .then((r) => r.json());
+    }
+    const discard = (contactId: string) =>
+      app.inject({ method: "POST", url: `/workspaces/${workspaceId}/crm/contacts/${contactId}/discard` });
+    const restore = (contactId: string) =>
+      app.inject({ method: "POST", url: `/workspaces/${workspaceId}/crm/contacts/${contactId}/restore` });
+
+    it("discards a contact, hides it, and a re-sync does not resurrect it", async () => {
+      const { connection, contacts } = await synced();
+      const asha = contacts.find((c) => c.externalId === "1")!;
+      expect((await discard(asha.id)).statusCode).toBe(200);
+
+      const active = (await listContacts()) as CV[];
+      expect(active.map((c) => c.externalId)).not.toContain("1");
+      expect(active).toHaveLength(2);
+
+      const discardedList = await listDiscarded();
+      expect(discardedList.map((c) => c.externalId)).toEqual(["1"]);
+      expect(discardedList[0]!.discardedAt).toBeTypeOf("number");
+
+      // Re-sync: the tombstone holds — not resurrected, not counted.
+      const again = await sync(connection.id);
+      expect(again.json()).toEqual({ fetched: 3, created: 0, updated: 0, truncated: false });
+      expect(((await listContacts()) as CV[]).map((c) => c.externalId)).not.toContain("1");
+      expect(await listDiscarded()).toHaveLength(1);
+    });
+
+    it("restores a discarded contact so it syncs again", async () => {
+      const { contacts } = await synced();
+      const asha = contacts.find((c) => c.externalId === "1")!;
+      await discard(asha.id);
+      expect((await restore(asha.id)).statusCode).toBe(200);
+      expect(((await listContacts()) as CV[]).map((c) => c.externalId)).toContain("1");
+      expect(await listDiscarded()).toEqual([]);
+    });
+
+    it("404s discarding or restoring an unknown contact", async () => {
+      const ghost = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+      expect((await discard(ghost)).statusCode).toBe(404);
+      expect((await restore(ghost)).statusCode).toBe(404);
+    });
+
+    it("keeps an imported lead and unlinks the contact when discarded", async () => {
+      const { contacts } = await synced();
+      const asha = contacts.find((c) => c.externalId === "1")!;
+      const imported = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/crm/contacts/${asha.id}/import-lead`,
+      });
+      const lead = imported.json().lead;
+      await discard(asha.id);
+
+      // The lead survives the discard.
+      const leads = (
+        await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/leads` })
+      ).json();
+      expect(leads.some((l: { id: string }) => l.id === lead.id)).toBe(true);
+
+      // The discarded contact stops linking — log-draft can no longer find it.
+      const draftId = await approvedOutboundDraftFor(lead.id);
+      const logRes = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/crm/log-draft`,
+        payload: { draftId },
+      });
+      expect(logRes.statusCode).toBe(400);
+      expect(logRes.json().error).toBe("lead_not_linked");
+    });
+  });
+
+  describe("filtered sync (Sprint 23)", () => {
+    const getFilter = (connectionId: string) =>
+      app
+        .inject({
+          method: "GET",
+          url: `/workspaces/${workspaceId}/crm/sync-filter?connectionId=${connectionId}`,
+        })
+        .then((r) => r.json());
+    const setFilter = (connectionId: string, filter: Record<string, unknown>) =>
+      app.inject({
+        method: "PUT",
+        url: `/workspaces/${workspaceId}/crm/sync-filter`,
+        payload: { connectionId, filter },
+      });
+
+    it("lists the connection's CRM views", async () => {
+      const connection = await connectFreshsales();
+      const res = await app.inject({
+        method: "GET",
+        url: `/workspaces/${workspaceId}/crm/views?connectionId=${connection.id}`,
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual([
+        { id: "9", name: "My Contacts" },
+        { id: "4", name: "All Contacts" },
+      ]);
+    });
+
+    it("stores a filter per connection and applies the chosen view on sync", async () => {
+      const connection = await connectFreshsales();
+      state.freshsales.viewContacts = {
+        "9": [
+          {
+            id: 99,
+            display_name: "Only In View 9",
+            emails: [{ value: "v9@x.io", is_primary: true }],
+          },
+        ],
+      };
+      expect(await getFilter(connection.id)).toEqual({});
+
+      const saved = await setFilter(connection.id, { viewId: "9", viewName: "My Contacts" });
+      expect(saved.statusCode).toBe(200);
+      expect(saved.json()).toEqual({ viewId: "9", viewName: "My Contacts" });
+      expect(await getFilter(connection.id)).toEqual({ viewId: "9", viewName: "My Contacts" });
+
+      const res = await sync(connection.id);
+      expect(res.json().fetched).toBe(1);
+      expect(((await listContacts()) as CV[]).map((c) => c.externalId)).toEqual(["99"]);
+    });
+
+    it("narrows the sync by updated-since", async () => {
+      const connection = await connectFreshsales();
+      state.freshsales.contacts = [
+        { id: 1, display_name: "Fresh", email: "f@x.io", updated_at: "2026-06-10T00:00:00Z" },
+        { id: 2, display_name: "Stale", email: "s@x.io", updated_at: "2026-01-01T00:00:00Z" },
+      ];
+      await setFilter(connection.id, { updatedSince: Date.parse("2026-06-01T00:00:00Z") });
+      const res = await sync(connection.id);
+      expect(res.json().fetched).toBe(1);
+      expect(((await listContacts()) as CV[]).map((c) => c.externalId)).toEqual(["1"]);
+    });
+
+    it("refuses filter config and views on a non-CRM connection", async () => {
+      const smartlead = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/connectors/smartlead/connect`,
+          payload: { apiKey: "sk" },
+        })
+      ).json();
+      expect((await setFilter(smartlead.id, { viewId: "9" })).statusCode).toBe(400);
+      const views = await app.inject({
+        method: "GET",
+        url: `/workspaces/${workspaceId}/crm/views?connectionId=${smartlead.id}`,
+      });
+      expect(views.statusCode).toBe(400);
     });
   });
 });

@@ -763,6 +763,12 @@ a.workspace-card:hover {
   flex: 1;
 }
 
+.section-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .section-tokens {
   font-size: 12px;
   color: var(--muted);
