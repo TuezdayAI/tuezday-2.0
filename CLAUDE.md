@@ -37,6 +37,18 @@ Tuezday's moat is the **Central Brain**: five human-readable, editable brain doc
 3. **No module may depend on a fake brain contract**, and no integration gets added until the native boundary it plugs into exists.
 4. Every slice must produce something a human can see and test.
 
+## Sprint Delivery Workflow (Sprints 21+)
+
+The post-Sprint-20 roadmap lives in `docs/plans/sprint-guide-21-onward.md`. Sprints 1–20 are already on `main`. Deliver each subsequent sprint as follows (founder decision, 2026-06-17):
+
+1. **One branch per sprint.** Branch from `main`, named `sprint-NN-<slug>` (e.g. `sprint-21-runtime-editable-guidance`).
+2. **Dependency caveat.** If a sprint's "Builds on" includes an earlier **21+** sprint not yet merged into `main`, branch off that predecessor's branch instead and state the required merge order at the top of the sprint's spec. (Phase A — 21/22/23 — only depends on already-merged sprints, so each is independent off `main`.)
+3. **Detailed spec first.** Write a self-contained `docs/specs/sprint-NN-*.md` (spec + step-by-step plan + Progress log) before implementing, and ask the founder any clarifying questions first. The founder resets the session between sprints, so the spec must stand alone.
+4. **Tests before/with implementation; verify green.** `npm test` and `npm run typecheck` must pass.
+5. **Commit to the sprint branch, then push it to GitHub** (`git push -u origin sprint-NN-<slug>`). End commit messages with the `Co-Authored-By: Claude Opus 4.8` trailer.
+6. **Do NOT merge into `main`.** The founder reviews, accepts, and merges each branch himself, one at a time, when he has time. Roadmap/planning docs and this file live on `main`; per-sprint specs travel on their sprint branch.
+7. One sprint at a time; do not start the next until asked.
+
 ## Architecture (planned)
 
 Monorepo layout:
