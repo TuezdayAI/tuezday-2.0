@@ -127,6 +127,13 @@
       "when": 1781268401440,
       "tag": "0017_bitter_daimon_hellstrom",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1781697305395,
+      "tag": "0018_rapid_carmella_unuscione",
+      "breakpoints": true
     }
   ]
 }
