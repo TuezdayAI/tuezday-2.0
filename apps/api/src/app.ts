@@ -21,6 +21,7 @@ import { registerCrmRoutes } from "./routes/crm";
 import { registerDiscoveryRoutes } from "./routes/discovery";
 import { registerDraftRoutes } from "./routes/drafts";
 import { registerEvidenceRoutes } from "./routes/evidence";
+import { registerGuidanceRoutes } from "./routes/guidance";
 import { registerLearningRoutes } from "./routes/learning";
 import { registerOutboundRoutes } from "./routes/outbound";
 import { registerPrRoutes } from "./routes/pr";
@@ -80,6 +81,7 @@ export async function buildApp({
   registerWorkspaceRoutes(app, db);
   registerTeamRoutes(app, db);
   registerBrainRoutes(app, db);
+  registerGuidanceRoutes(app, db);
   registerPersonaRoutes(app, db, evidence);
   registerGenerationRoutes(app, db, llm, evidence);
   registerDraftRoutes(app, db, fetcher);

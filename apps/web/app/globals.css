@@ -1020,3 +1020,64 @@ a.workspace-card:hover {
   background: var(--mint-ink);
   transition: width 0.2s ease;
 }
+
+/* ---------- Channel guidance (Sprint 21) ---------- */
+
+.guidance-section {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+}
+
+.guidance-section h2 {
+  font-size: 18px;
+  margin: 0 0 6px;
+}
+
+.guidance-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+.guidance-item {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.guidance-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.guidance-source {
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.guidance-source.source-workspace {
+  color: var(--mint-ink);
+  background: var(--mint);
+  border-color: transparent;
+}
+
+.guidance-item textarea {
+  width: 100%;
+  padding: 12px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--panel);
+  color: var(--text);
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.6;
+  resize: vertical;
+  margin-bottom: 10px;
+}

@@ -43,6 +43,55 @@ export const CHANNELS = ["linkedin", "x", "email", "ads", "web", "pr"] as const;
 export type Channel = (typeof CHANNELS)[number];
 
 // ---------------------------------------------------------------------------
+// Channel guidance (Sprint 21)
+//
+// Built-in per-channel guidance the resolver injects. This is the single source
+// of truth and the global fallback; a workspace may override any channel's text
+// at runtime (DB holds overrides only). Moved verbatim from the resolver so
+// generation behavior is unchanged until a founder edits something.
+// ---------------------------------------------------------------------------
+
+export const CHANNEL_GUIDANCE_DEFAULTS: Record<Channel, string> = {
+  linkedin:
+    "Channel: LinkedIn. Professional but human feed. Strong first line (it gets truncated). Short paragraphs, no hashtag walls, no engagement bait. Posts that read like a person, not a brand bulletin.",
+  x: "Channel: X (Twitter). Compressed, punchy, idea-first. One thought per post. Threads only when each post stands alone. No corporate phrasing.",
+  email:
+    "Channel: Email. One reader at a time. Subject and opener decide everything. Short lines, one clear ask, no marketing gloss. Write like a competent person, not a campaign.",
+  ads: "Channel: Paid ads. Hook, promise, proof, action - in very few words. One message per variant. Clarity beats cleverness.",
+  web: "Channel: Website. Visitors scan. Headline carries the positioning, subhead carries the proof. Concrete claims over adjectives.",
+  pr: "Channel: PR / media pitch. The reader is a journalist triaging a full inbox. The subject line IS the story. Lead with why their readers care, not why the company is proud. Short, factual, zero marketing language - never call your own news exciting. Make the journalist's job easy: the angle, the proof, who they can talk to.",
+};
+
+/** Human label per channel for the guidance editor. */
+export const CHANNEL_LABELS: Record<Channel, string> = {
+  linkedin: "LinkedIn",
+  x: "X (Twitter)",
+  email: "Email",
+  ads: "Paid ads",
+  web: "Website",
+  pr: "PR / media",
+};
+
+/** Where a channel's resolved guidance came from. */
+export const GUIDANCE_SOURCES = ["default", "workspace"] as const;
+export type GuidanceSource = (typeof GUIDANCE_SOURCES)[number];
+
+/** A channel's resolved guidance + its source (read model for the editor). */
+export const channelGuidanceSchema = z.object({
+  channel: z.enum(CHANNELS),
+  content: z.string(),
+  source: z.enum(GUIDANCE_SOURCES),
+  // null when source === "default" (no override row exists).
+  updatedAt: z.number().int().nullable(),
+});
+export type ChannelGuidance = z.infer<typeof channelGuidanceSchema>;
+
+export const updateGuidanceInputSchema = z.object({
+  content: z.string().trim().min(1, "Guidance cannot be empty").max(4000),
+});
+export type UpdateGuidanceInput = z.infer<typeof updateGuidanceInputSchema>;
+
+// ---------------------------------------------------------------------------
 // Workspace
 // ---------------------------------------------------------------------------
 

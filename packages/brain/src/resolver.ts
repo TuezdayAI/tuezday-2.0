@@ -1,9 +1,11 @@
 ﻿import {
   AD_CREATIVE_FORMATS,
   BRAIN_DOC_TYPES,
+  CHANNEL_GUIDANCE_DEFAULTS,
   DEFAULT_TOKEN_BUDGET,
   type AdCreativeTaskType,
   type Channel,
+  type GuidanceSource,
   type MediaContactType,
   type PrPitchType,
   type TaskType,
@@ -11,20 +13,13 @@
 import { BRAIN_DOC_META, type BrainContents } from "./index";
 
 // ---------------------------------------------------------------------------
-// Built-in defaults. Channel guidance becomes editable in a later slice;
-// task instructions are shared with the Sprint 4 generation sandbox.
+// Built-in defaults. Channel guidance defaults now live in @tuezday/contracts
+// (CHANNEL_GUIDANCE_DEFAULTS) and are editable per workspace at runtime
+// (Sprint 21); re-exported here so brain consumers keep one import site. Task
+// instructions are shared with the Sprint 4 generation sandbox.
 // ---------------------------------------------------------------------------
 
-export const CHANNEL_GUIDANCE: Record<Channel, string> = {
-  linkedin:
-    "Channel: LinkedIn. Professional but human feed. Strong first line (it gets truncated). Short paragraphs, no hashtag walls, no engagement bait. Posts that read like a person, not a brand bulletin.",
-  x: "Channel: X (Twitter). Compressed, punchy, idea-first. One thought per post. Threads only when each post stands alone. No corporate phrasing.",
-  email:
-    "Channel: Email. One reader at a time. Subject and opener decide everything. Short lines, one clear ask, no marketing gloss. Write like a competent person, not a campaign.",
-  ads: "Channel: Paid ads. Hook, promise, proof, action - in very few words. One message per variant. Clarity beats cleverness.",
-  web: "Channel: Website. Visitors scan. Headline carries the positioning, subhead carries the proof. Concrete claims over adjectives.",
-  pr: "Channel: PR / media pitch. The reader is a journalist triaging a full inbox. The subject line IS the story. Lead with why their readers care, not why the company is proud. Short, factual, zero marketing language - never call your own news exciting. Make the journalist's job easy: the angle, the proof, who they can talk to.",
-};
+export { CHANNEL_GUIDANCE_DEFAULTS } from "@tuezday/contracts";
 
 /**
  * Compose the pr_pitch task instruction for a pitch type. A shared spine
@@ -180,6 +175,12 @@ export interface ResolveInput {
    * trace like any other section.
    */
   taskInstruction?: string;
+  /**
+   * The channel guidance to use and where it came from (Sprint 21). Omitted →
+   * the resolver falls back to the built-in default for `channel`. The API
+   * passes the workspace override here when one exists. Surfaced in the trace.
+   */
+  channelGuidance?: { content: string; source: GuidanceSource };
   tokenBudget?: number;
 }
 
@@ -234,15 +235,21 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
     });
   }
 
-  const channelContent = CHANNEL_GUIDANCE[input.channel];
+  const guidance = input.channelGuidance ?? {
+    content: CHANNEL_GUIDANCE_DEFAULTS[input.channel],
+    source: "default" as const,
+  };
   sections.push({
     key: "channel",
     layer: "channel",
     title: `Channel: ${input.channel}`,
-    content: channelContent,
+    content: guidance.content,
     included: true,
-    reason: `Built-in default guidance for the ${input.channel} channel.`,
-    tokens: estimateTokens(channelContent),
+    reason:
+      guidance.source === "workspace"
+        ? `Channel guidance for ${input.channel} (workspace override).`
+        : `Channel guidance for ${input.channel} (built-in default).`,
+    tokens: estimateTokens(guidance.content),
   });
 
   const campaignContent = input.campaign?.overlay.trim() ?? "";

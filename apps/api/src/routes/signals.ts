@@ -9,6 +9,7 @@ import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
 import { retrieveEvidence } from "../services/evidence";
 import type { EvidenceStore } from "../evidence/store";
 import { storeGeneration } from "../services/generations";
+import { resolveChannelGuidance } from "../services/guidance";
 import { getPersona } from "../services/personas";
 import { createSignal, getSignal, listSignals } from "../services/signals";
 import { submitDraft } from "../services/drafts";
@@ -91,11 +92,13 @@ export function registerSignalRoutes(
 
       const { docs } = getBrain(db, request.params.id);
       const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
+      const channelGuidance = resolveChannelGuidance(db, request.params.id, parsed.data.channel);
       const resolved = resolveContext({
         workspaceName: workspace.name,
         docs: contents,
         taskType: "signal_response",
         channel: parsed.data.channel,
+        channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
         persona: persona
           ? { name: persona.name, description: persona.description, overlay: persona.overlay }
           : undefined,

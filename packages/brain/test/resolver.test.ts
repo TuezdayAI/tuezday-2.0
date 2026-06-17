@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  CHANNEL_GUIDANCE,
+  CHANNEL_GUIDANCE_DEFAULTS,
   TASK_INSTRUCTIONS,
   composePrPitchInstruction,
   estimateTokens,
@@ -37,7 +37,7 @@ describe("estimateTokens", () => {
 describe("built-in defaults", () => {
   it("provides guidance for every channel", () => {
     for (const channel of ["linkedin", "x", "email", "ads", "web", "pr"] as const) {
-      expect(CHANNEL_GUIDANCE[channel].length).toBeGreaterThan(0);
+      expect(CHANNEL_GUIDANCE_DEFAULTS[channel].length).toBeGreaterThan(0);
     }
   });
 
@@ -143,11 +143,24 @@ describe("resolveContext", () => {
     expect(last.content).toBe(TASK_INSTRUCTIONS.cold_email_opener);
   });
 
-  it("uses the channel guidance for the requested channel", () => {
+  it("falls back to the built-in default channel guidance when none is provided", () => {
     const result = resolveContext(baseInput({ channel: "email" }));
     const channel = result.sections.find((s) => s.key === "channel")!;
     expect(channel.included).toBe(true);
-    expect(channel.content).toBe(CHANNEL_GUIDANCE.email);
+    expect(channel.content).toBe(CHANNEL_GUIDANCE_DEFAULTS.email);
+    expect(channel.reason).toMatch(/built-in default/i);
+  });
+
+  it("uses a provided channel guidance override and labels its source in the trace", () => {
+    const override = "Channel: LinkedIn. Always open with a contrarian one-liner.";
+    const result = resolveContext(
+      baseInput({ channel: "linkedin", channelGuidance: { content: override, source: "workspace" } }),
+    );
+    const channel = result.sections.find((s) => s.key === "channel")!;
+    expect(channel.content).toBe(override);
+    expect(channel.reason).toMatch(/workspace override/i);
+    // The override text must actually reach the assembled prompt.
+    expect(result.prompt).toContain(override);
   });
 
   it("drops history first to fit a tight token budget", () => {
@@ -380,7 +393,7 @@ describe("resolveContext", () => {
     expect(TASK_INSTRUCTIONS.press_boilerplate).toMatch(/One-liner/);
     expect(TASK_INSTRUCTIONS.press_boilerplate).toMatch(/About/);
     expect(TASK_INSTRUCTIONS.press_boilerplate).toMatch(/Key facts/);
-    expect(CHANNEL_GUIDANCE.pr).toMatch(/journalist/i);
+    expect(CHANNEL_GUIDANCE_DEFAULTS.pr).toMatch(/journalist/i);
   });
 
   it("is deterministic", () => {

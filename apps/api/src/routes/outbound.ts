@@ -18,6 +18,7 @@ import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
 import { submitDraft } from "../services/drafts";
 import { retrieveEvidence } from "../services/evidence";
 import { storeGeneration } from "../services/generations";
+import { resolveChannelGuidance } from "../services/guidance";
 import { createLead, csvField, deleteLead, getLead, importLeadsCsv, listLeads } from "../services/leads";
 import { getPersona } from "../services/personas";
 import { getWorkspace } from "../services/workspaces";
@@ -121,6 +122,7 @@ export function registerOutboundRoutes(
       parsed.data.useEvidence ?? true,
     );
 
+    const channelGuidance = resolveChannelGuidance(db, request.params.id, "email");
     const results = [];
     for (const lead of leadRecords) {
       const resolved = resolveContext({
@@ -128,6 +130,7 @@ export function registerOutboundRoutes(
         docs: contents,
         taskType: "outbound_email",
         channel: "email",
+        channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
         persona: persona
           ? { name: persona.name, description: persona.description, overlay: persona.overlay }
           : undefined,
