@@ -238,6 +238,66 @@
 
 **Gate:** spend and control are fully bidirectional — you can start and stop real ad spend from inside Tuezday, every approval is logged with the approver's name, and the kill switch is instant.
 
+---
+
+## Sprint 21 — Runtime-editable channel/platform guidance
+
+> Spec: `docs/specs/sprint-21-runtime-editable-guidance.md` (on the
+> `sprint-21-runtime-editable-guidance` branch). Channel guidance defaults moved out of code
+> into `packages/contracts`; per-workspace, per-channel overrides live in the DB and are read at
+> resolve time. Editor lives on the **Brain** page.
+
+- [ ] Brain page → **Channel guidance** → each of the six channels (LinkedIn, X, Email, Paid ads, Website, PR) shows its current text with a **Default** badge.
+- [ ] Edit **LinkedIn** guidance (e.g. add "Always open with a contrarian one-liner.") → **Save** → the badge flips to **Workspace override**; no redeploy happened.
+- [ ] Sandbox/Content → generate a **LinkedIn post** → the output reflects the edited guidance.
+- [ ] Show the prompt trace for that generation → the **Channel: linkedin** section shows the edited text and its reason reads **"workspace override."** Generate for a different channel → its reason still reads **"built-in default."**
+- [ ] **Reset to default** on LinkedIn → the badge returns to **Default**; the next generation uses the original guidance again.
+- [ ] `npm run typecheck` and `npm test` pass.
+
+**Gate:** channel guidance is editable per workspace with zero redeploy, and the resolved-context trace always tells you whether the model saw the built-in default or your workspace override.
+
+---
+
+## Sprint 22 — Generation quality: angle-first + dual-LLM pre-review
+
+> Spec: `docs/specs/sprint-22-generation-quality.md` (on the `sprint-22-generation-quality` branch).
+> Prereq: a working `GEMINI_API_KEY` — review adds ~2 gateway calls per generation. New-workspace
+> defaults: **review ON, angle step OFF**, both per-workspace toggleable; flag threshold default 70.
+
+- [ ] Sandbox → the **quality settings** card shows review **on** and the angle step **off** by default; turn the angle step on and set an angle count.
+- [ ] **Suggest angles** → several distinct angles appear → pick one → generate a **LinkedIn post**.
+- [ ] The generation shows a **brand-voice score** and a **channel-fit score** (0–100 each), each with specific issues.
+- [ ] A draft that scores below the flag threshold shows a **"flagged"** badge *before* it reaches Review.
+- [ ] Send it to **Review** → the same scores/issues appear on the draft, with a **Re-run review** button → Re-run re-checks the draft's *current* content.
+- [ ] Approve / edit / reject still work exactly as before — flags are **advisory only and never block approval** (your override always wins).
+- [ ] Confirm automated review also runs on an **outbound email**, a **PR pitch**, and a **signal-response** draft — but **not** on ad creatives.
+- [ ] Turn **review off** in settings → a fresh generation carries no scores. Turn the **angle step off** → generation goes straight to a draft.
+- [ ] Show the prompt trace → the angle and reviewer prompts are brain-resolved (soul/voice for brand, channel guidance for fit), not hardcoded; every extra call is traced.
+- [ ] `npm run typecheck` and `npm test` pass.
+
+**Gate:** weak drafts are scored and flagged before you spend attention on them, every reviewer/angle prompt is resolved through the brain and visible in the trace, and a flag never blocks your decision.
+
+---
+
+## Sprint 23 — CRM contact management: discard + filtered sync
+
+> Spec: `docs/specs/sprint-23-crm-discard-filtered-sync.md` (on the
+> `sprint-23-crm-discard-filtered-sync` branch). Both controls are **local working state** — the CRM
+> stays the system of record; nothing here writes to or deletes from Freshsales.
+> Prereq: Freshsales connected (see Sprint 13) and at least one Sync done.
+
+- [ ] CRM page → **Sync** (Freshsales) → contacts appear.
+- [ ] **Discard** two contacts → they leave the list and appear under **Discarded**.
+- [ ] **Sync** again → the discarded two **do not** come back; everything else refreshes.
+- [ ] **Restore** one → it returns to the contacts list; the next sync refreshes it.
+- [ ] Set a **Sync filter**: choose a specific Freshsales view (and/or an "updated since" date) → **Save** → **Sync** → only matching contacts come in; the synced count reflects the smaller set.
+- [ ] Confirm nothing changed in Freshsales itself (no contact deleted there); a lead you imported from a now-discarded contact still exists on the Outbound/Leads page.
+- [ ] `npm run typecheck` and `npm test` pass.
+
+**Gate:** you control which CRM contacts live in Tuezday — a discard stays gone across re-syncs, a filter scopes what comes in, and the CRM remains the system of record with nothing deleted on its side.
+
+---
+
 ## Sprint 24 — Lead lists & segments
 
 > Spec: `docs/specs/sprint-24-lead-lists-segments.md` (on the
