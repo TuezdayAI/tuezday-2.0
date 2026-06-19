@@ -612,3 +612,66 @@ export const webhookDeliveries = sqliteTable("webhook_deliveries", {
 });
 
 export type WebhookDeliveryRow = typeof webhookDeliveries.$inferSelect;
+
+// Lead lists & segments (Sprint 24). An audience is a static hand-picked list
+// or a dynamic segment whose members are computed live from rulesJson.
+export const audiences = sqliteTable("audiences", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  kind: text("kind").notNull(),
+  // The AND/OR rule tree (SegmentRuleGroup JSON) for dynamic segments; null for
+  // static lists.
+  rulesJson: text("rules_json"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type AudienceRow = typeof audiences.$inferSelect;
+
+// Static-list membership, polymorphic over leads and crm_contacts. memberId has
+// no FK (it points at one of two tables); the service validates on add and
+// filters dangling rows on read.
+export const audienceMembers = sqliteTable(
+  "audience_members",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    audienceId: text("audience_id")
+      .notNull()
+      .references(() => audiences.id, { onDelete: "cascade" }),
+    memberType: text("member_type").notNull(),
+    memberId: text("member_id").notNull(),
+    addedAt: integer("added_at").notNull(),
+  },
+  (t) => [uniqueIndex("audience_members_unique").on(t.audienceId, t.memberType, t.memberId)],
+);
+
+export type AudienceMemberRow = typeof audienceMembers.$inferSelect;
+
+// A campaign's structured audience(s); many-to-many. The free-text
+// campaigns.audience field stays as the human description.
+export const campaignAudiences = sqliteTable(
+  "campaign_audiences",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    audienceId: text("audience_id")
+      .notNull()
+      .references(() => audiences.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("campaign_audiences_unique").on(t.campaignId, t.audienceId)],
+);
+
+export type CampaignAudienceRow = typeof campaignAudiences.$inferSelect;

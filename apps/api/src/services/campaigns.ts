@@ -3,6 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 import type {
   ApprovalState,
   Campaign,
+  CampaignAudience,
   CampaignStatus,
   Channel,
   UpsertCampaignInput,
@@ -10,6 +11,7 @@ import type {
 import type { Db } from "../db";
 import { campaigns, drafts, type CampaignRow } from "../db/schema";
 import { getCampaignAdMetrics, type CampaignAdMetrics } from "./ads";
+import { listCampaignAudiences } from "./audiences";
 
 function rowToCampaign(row: CampaignRow): Campaign {
   return {
@@ -122,6 +124,8 @@ export interface CampaignDetail {
   }>;
   /** Paid totals from linked ad campaigns (Sprint 14); null when none. */
   adMetrics: CampaignAdMetrics | null;
+  /** Audiences attached as this campaign's targets (Sprint 24). */
+  audiences: CampaignAudience[];
 }
 
 export function getCampaignDetail(db: Db, campaign: Campaign): CampaignDetail {
@@ -152,5 +156,6 @@ export function getCampaignDetail(db: Db, campaign: Campaign): CampaignDetail {
     draftCounts,
     drafts: rows.map((r) => ({ ...r, state: r.state as ApprovalState })),
     adMetrics: getCampaignAdMetrics(db, campaign),
+    audiences: listCampaignAudiences(db, campaign.workspaceId, campaign.id),
   };
 }

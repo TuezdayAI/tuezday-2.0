@@ -238,11 +238,47 @@
 
 **Gate:** spend and control are fully bidirectional — you can start and stop real ad spend from inside Tuezday, every approval is logged with the approver's name, and the kill switch is instant.
 
+## Sprint 24 — Lead lists & segments
+
+> Spec: `docs/specs/sprint-24-lead-lists-segments.md` (on the
+> `sprint-24-lead-lists-segments` branch). Find it under **Audience → Lists &
+> segments** in the sidebar.
+> Prep: have a handful of leads in the workspace (Outbound page → import or add a
+> few, ideally with varied `role`/`company`). A couple of synced CRM contacts
+> (CRM page) make the unified leads+contacts behaviour visible but are optional.
+
+- [ ] Lists & segments page → **New audience** → **Static list**, name it, create
+      it → open its card → the people picker lists your leads **and** any CRM
+      contacts not yet imported as a lead; tick a few → **Add** → they appear as
+      members with a lead/contact badge; **remove** one and it leaves.
+- [ ] A CRM contact you already imported as a lead shows **once** (as the lead),
+      never twice, in the picker and in segments.
+- [ ] **New audience → Dynamic segment** "VPs at fintech": rule = `role` *contains*
+      `VP` **AND** a nested **ANY of (OR)** group [`company` *contains* `fintech`
+      **OR** `email domain` *contains* `fintech`] → save → its members resolve
+      live to exactly the people who match; the count matches.
+- [ ] Edit the segment (broaden the rule, e.g. drop the fintech group) → reopen →
+      membership has changed with no other action — it is computed live.
+- [ ] Adding members by hand to a **dynamic** segment is not offered (segments are
+      rule-driven); a static list offers no rule builder.
+- [ ] Open a member's card → **Attach to campaign** → pick an active campaign →
+      confirmation. Go to **Campaigns**, expand that campaign → an **Audiences**
+      line lists the attached list/segment with its kind and member count.
+- [ ] Attach a second audience to the same campaign → both show; detach is
+      reflected on the campaign. (Sending to an audience arrives in Sprint 25.)
+- [ ] Delete a lead that sits in a static list → it disappears from the list’s
+      members.
+- [ ] `npm run typecheck` and `npm test` pass.
+
+**Gate:** you can carve your leads/contacts into a reusable list and a live
+"VPs at fintech" segment, see exactly who is in each, and point a campaign at
+them — the targeting primitive Sprint 25 will send through.
+
 ---
 
 ## Cross-cutting things worth re-checking occasionally
 
-- [ ] `npm test` (321 tests) and `npm run typecheck` stay green.
+- [ ] `npm test` (537 tests) and `npm run typecheck` stay green.
 - [ ] Every generation's prompt trace is readable *before* and *after* the LLM call (sandbox → "show prompt trace").
 - [ ] Stopping any external service (R2R, Nango) degrades gracefully — the app never breaks, traces/banners say why.
 - [ ] Gemini occasionally returns 503 "high demand" — a retry succeeds; it surfaces as a clean error, never a crash.
