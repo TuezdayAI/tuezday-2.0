@@ -10,6 +10,7 @@
 > For Sprint 17 tests: Reddit app credentials (`REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`) in `.env`; `npm run nango:up`.
 > For Sprint 19 tests: two browsers (or one + incognito); `TUEZDAY_WORKER_TOKEN` in `.env`.
 > For Sprint 20 tests: Meta Ads `ads_management` token; Sprint 14 + 15 acceptance done first; `TUEZDAY_WORKER_TOKEN` in `.env`.
+> For Sprint 25 tests: LinkedIn / X / Instagram OAuth apps; their `*_CLIENT_ID` / `*_CLIENT_SECRET` in `.env`; `npm run nango:up`.
 > Your dev workspace: "tuezday".
 
 ---
@@ -237,6 +238,24 @@
 - [ ] After the next sync (or **Sync now** on the Ads page) → spend from the launched campaign appears in the Sprint 14 report, attributed to the linked Tuezday campaign.
 
 **Gate:** spend and control are fully bidirectional — you can start and stop real ad spend from inside Tuezday, every approval is logged with the approver's name, and the kill switch is instant.
+
+## Sprint 25 — Connect LinkedIn / X / Instagram
+
+> Prereqs (one-time per platform, all using the Nango callback `http://localhost:3050/oauth/callback`):
+> - **LinkedIn** app at linkedin.com/developers/apps with "Sign In with LinkedIn using OpenID Connect" + "Share on LinkedIn"; set `LINKEDIN_CLIENT_ID` / `LINKEDIN_CLIENT_SECRET`.
+> - **X** OAuth 2.0 app at developer.x.com with tweet/users/dm scopes; set `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` (the OAuth 2.0 client id/secret, not the API key/secret).
+> - **Instagram** — a **Facebook** app at developers.facebook.com with the Instagram Graph API; publishing needs an Instagram **Business/Creator** account linked to a Facebook Page + `instagram_content_publish` via App Review; set `INSTAGRAM_CLIENT_ID` / `INSTAGRAM_CLIENT_SECRET` (the Facebook app id/secret).
+> Restart the API after editing `.env`.
+
+- [ ] `npm run nango:up`; Integrations page → LinkedIn / X / Instagram each show **Connect** (not "needs OAuth app") once their `.env` creds are set; with creds missing they show the per-platform setup hint instead.
+- [ ] **Connect LinkedIn** → OAuth popup → authorize → card shows `connected`; **Test** passes (`/v2/userinfo` identity through the proxy).
+- [ ] **Connect X** → OAuth popup → authorize → `connected`; **Test** passes (`/2/users/me`).
+- [ ] **Connect Instagram** → Facebook OAuth popup → authorize → `connected`; **Test** passes (`/v23.0/me`). (If `instagram_content_publish` isn't approved yet, identity still verifies — publishing is gated until Sprint 26.)
+- [ ] **Disconnect** one platform → **Reconnect** via the popup → it returns to `connected` (same row revived).
+- [ ] **Reddit** still shows as parked / "needs OAuth app" (its key hasn't been issued) — confirm it wasn't removed.
+- [ ] No posting/DM controls appear yet — that's Sprint 26.
+
+**Gate:** all three social accounts reach a verified `connected` state through the OAuth popup, with the scopes needed for Sprint 26's posts and X DMs already granted — no reconnect required later.
 
 ---
 

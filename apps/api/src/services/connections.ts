@@ -54,6 +54,11 @@ export function integrationKeyFor(provider: ConnectorProvider): string {
 // provisioned into Nango at connect time and never stored in Tuezday's DB.
 const OAUTH_ENV: Record<string, { id: string; secret: string }> = {
   reddit: { id: "REDDIT_CLIENT_ID", secret: "REDDIT_CLIENT_SECRET" },
+  // Sprint 25 social trio. Each becomes connectable only when both vars are
+  // set in the root .env; until then it stays needs_oauth_app, like Reddit.
+  linkedin: { id: "LINKEDIN_CLIENT_ID", secret: "LINKEDIN_CLIENT_SECRET" },
+  twitter: { id: "TWITTER_CLIENT_ID", secret: "TWITTER_CLIENT_SECRET" },
+  instagram: { id: "INSTAGRAM_CLIENT_ID", secret: "INSTAGRAM_CLIENT_SECRET" }, // Facebook app id/secret
 };
 
 export function oauthAppCredentials(

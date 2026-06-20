@@ -17,6 +17,44 @@ import {
 /** The API decorates OAuth providers with whether their app creds are set. */
 type ProviderView = ConnectorProvider & { oauthConfigured?: boolean };
 
+/**
+ * Per-provider setup hint shown when an OAuth provider has no app creds in
+ * .env yet (status "needs OAuth app"). Each registers the same Nango callback
+ * URL — http://localhost:3050/oauth/callback — on the provider's OAuth app.
+ */
+const OAUTH_APP_HINTS: Record<string, React.ReactNode> = {
+  reddit: (
+    <>
+      Create a Reddit app (type “web app”, redirect uri{" "}
+      <code>http://localhost:3050/oauth/callback</code>) at reddit.com/prefs/apps, then set
+      REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in the root .env and restart the API.
+    </>
+  ),
+  linkedin: (
+    <>
+      Create a LinkedIn app at linkedin.com/developers/apps with the “Sign In with LinkedIn using
+      OpenID Connect” + “Share on LinkedIn” products and redirect uri{" "}
+      <code>http://localhost:3050/oauth/callback</code>, then set LINKEDIN_CLIENT_ID and
+      LINKEDIN_CLIENT_SECRET in the root .env and restart the API.
+    </>
+  ),
+  twitter: (
+    <>
+      Create an OAuth 2.0 app at developer.x.com with tweet/users/dm scopes and callback uri{" "}
+      <code>http://localhost:3050/oauth/callback</code>, then set TWITTER_CLIENT_ID and
+      TWITTER_CLIENT_SECRET (the OAuth 2.0 client id/secret) in the root .env and restart the API.
+    </>
+  ),
+  instagram: (
+    <>
+      Create a Facebook app at developers.facebook.com with the Instagram Graph API (publishing
+      needs an Instagram Business/Creator account on a Facebook Page) and callback uri{" "}
+      <code>http://localhost:3050/oauth/callback</code>, then set INSTAGRAM_CLIENT_ID and
+      INSTAGRAM_CLIENT_SECRET (the Facebook app id/secret) in the root .env and restart the API.
+    </>
+  ),
+};
+
 interface ConnectorsView {
   providers: ProviderView[];
   connections: Connection[];
@@ -411,12 +449,9 @@ export default function ConnectorsPage() {
                     )}
                   </div>
                 )}
-                {provider.key === "reddit" && needsOAuthApp && (
+                {needsOAuthApp && OAUTH_APP_HINTS[provider.key] && (
                   <p className="section-reason" style={{ marginTop: 8 }}>
-                    Create a Reddit app (type “web app”, redirect uri{" "}
-                    <code>http://localhost:3050/oauth/callback</code>) at
-                    reddit.com/prefs/apps, then set REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET in
-                    the root .env and restart the API.
+                    {OAUTH_APP_HINTS[provider.key]}
                   </p>
                 )}
               </li>

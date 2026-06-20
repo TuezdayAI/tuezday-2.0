@@ -727,6 +727,52 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     oauthScopes: "identity,submit",
   },
   {
+    // Sprint 25 social trio. OAuth popup like Reddit; creds come from
+    // LINKEDIN_CLIENT_ID / LINKEDIN_CLIENT_SECRET in the root .env. testPath
+    // hits /v2/userinfo (OpenID) so a connection verifies the member identity.
+    // w_member_social is provisioned now so Sprint 26 can broadcast posts
+    // (LinkedIn's API forbids cold per-person DMs) without a reconnect.
+    key: "linkedin",
+    label: "LinkedIn",
+    nangoProvider: "linkedin",
+    authMode: "oauth",
+    categories: ["social"],
+    baseUrl: "https://api.linkedin.com",
+    testPath: "/v2/userinfo",
+    oauthScopes: "openid,profile,email,w_member_social",
+  },
+  {
+    // Key stays "twitter" to match Nango's twitter-v2 template family; the UI
+    // shows the "X (Twitter)" label. tweet.* + dm.* are provisioned now so
+    // Sprint 26 can post AND send per-recipient DMs; offline.access keeps the
+    // token refreshable. Scopes are stored comma-separated like every other
+    // provider — Nango's twitter-v2 template emits the space separator X wants.
+    key: "twitter",
+    label: "X (Twitter)",
+    nangoProvider: "twitter-v2",
+    authMode: "oauth",
+    categories: ["social"],
+    baseUrl: "https://api.twitter.com",
+    testPath: "/2/users/me",
+    oauthScopes: "tweet.read,tweet.write,users.read,dm.read,dm.write,offline.access",
+  },
+  {
+    // Instagram content publishing runs through the Facebook Graph API and
+    // needs an Instagram Business/Creator account linked to a Facebook Page,
+    // plus a Facebook app with instagram_content_publish approved. Creds are
+    // the Facebook app's INSTAGRAM_CLIENT_ID / INSTAGRAM_CLIENT_SECRET.
+    // testPath hits /me to verify identity; Sprint 26 does the broadcast post.
+    key: "instagram",
+    label: "Instagram",
+    nangoProvider: "facebook",
+    authMode: "oauth",
+    categories: ["social"],
+    baseUrl: "https://graph.facebook.com",
+    testPath: "/v23.0/me",
+    oauthScopes:
+      "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement,business_management",
+  },
+  {
     // Proxy any API without auth (your own services, public APIs). Keyed
     // custom APIs arrive when a generic API-key template is wired up.
     key: "custom",
