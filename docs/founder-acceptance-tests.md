@@ -395,6 +395,21 @@ them — the targeting primitive Sprint 26 sends through.
 per-person email + X DM and a LinkedIn + Instagram broadcast — each written in
 your voice and cleared through Review — without leaving Tuezday.
 
+## Sprint 27 — Recurring cadence, calendar + transactional mailer
+
+> Branch `sprint-27-cadence-calendar-mailer` (off `main`). With Reddit connected (Sprint 17) and a
+> campaign that has a few **approved** drafts. LinkedIn/X/Instagram cadences light up the same way once
+> those adapters merge.
+
+- [ ] **Cadence → New cadence:** name it, pick the campaign + channel, pick the connected Reddit account, target `test` (an `r/test`-style subreddit), check **Mon/Wed/Fri**, time `09:00`, your timezone → **Create** → it lists with the matching approved-draft count and the next slot time.
+- [ ] **Fill now** → the matching approved drafts auto-slot. **Calendar** shows them on the right days/times as `scheduled`, with the remaining open slots marked `open`.
+- [ ] Wait for (or force, via the worker / a near-future time) a slot to come due → the post publishes to Reddit; the calendar entry flips to `published` with a working link (the same receipt the Content page already shows).
+- [ ] **Pause** the cadence → no new slots fill; **Resume** → filling continues. **Delete** a cadence → its still-scheduled posts are canceled (nothing unexpected goes out).
+- [ ] **Team → Send a test email** to yourself → it arrives (or, without a `RESEND_API_KEY`, logs to the API console and reports as delivered).
+- [ ] **Invite a teammate** → they receive the invite link by email (or it logs to the console); the copyable link still works as a backup.
+
+**Gate:** approved content schedules itself onto a calendar and publishes on a recurring cadence with no manual publish step, and transactional email (invites + a test send) goes out through the mailer.
+
 ---
 
 ## Cross-cutting things worth re-checking occasionally

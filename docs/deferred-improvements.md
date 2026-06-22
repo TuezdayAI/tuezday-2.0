@@ -45,6 +45,40 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
 - **Trigger to revisit:** When founders publish reels regularly and the retry step becomes annoying.
 - **Origin:** Sprint 26.
 
+### 4. Cadence fill is synchronous on a worker tick
+- **What we shipped (Sprint 27):** Each fill creates scheduled `publication` rows inline (one round
+  trip per draft), bounded to a 14-day horizon and run every few minutes by the worker. Fine for modest
+  volumes.
+- **The better version:** Run fill on a dedicated scheduler with sub-minute precision and back-pressure
+  for large fan-out.
+- **Trigger to revisit:** Large cadence fan-out or a need for sub-minute precision.
+- **Origin:** Sprint 27.
+
+### 5. DST-gap wall-clock times resolve to the adjacent valid instant
+- **What we shipped (Sprint 27):** The slot math handles normal DST transitions, but the ~1 hour per
+  year that *doesn't exist* locally (spring-forward gap) is mapped to the nearest valid instant rather
+  than skipped or flagged. Acceptable for a posting scheduler.
+- **The better version:** A library-backed implementation that surfaces the ambiguity.
+- **Trigger to revisit:** If a customer reports a mis-fired post around a DST boundary.
+- **Origin:** Sprint 27.
+
+### 6. Cadence doesn't pre-validate posts at fill time
+- **What we shipped (Sprint 27):** Fill derives a title from the draft's first line (covers Reddit's
+  title requirement) but doesn't run `validateSocialPost` before scheduling — an invalid post fails its
+  receipt at fire time with the platform error (the existing failed-receipt + retry path).
+- **The better version:** A pre-flight check that warns before the slot fires.
+- **Trigger to revisit:** When fire-time failures on auto-slotted posts become noisy.
+- **Origin:** Sprint 27.
+
+### 7. Mailer is fire-and-log behind the interface
+- **What we shipped (Sprint 27):** `Mailer` (Resend impl + Console default) has no delivery-tracking
+  table, retries, bounce/open webhooks, or templating engine. Invite emails are best-effort (a failure
+  never blocks invite creation).
+- **The better version:** Delivery tracking + retries + a real template layer.
+- **Trigger to revisit:** Arrives with the email-approvals (S39) and billing (S37) sprints that also
+  depend on this seam.
+- **Origin:** Sprint 27.
+
 ---
 
 ## Done (upgraded)

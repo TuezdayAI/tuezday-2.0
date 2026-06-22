@@ -1343,6 +1343,9 @@ export const publicationSchema = z.object({
   providerKey: z.string(),
   target: z.string(),
   title: z.string(),
+  // The posting cadence that auto-slotted this receipt (Sprint 27); null for a
+  // manual one-off publish.
+  cadenceId: z.string().uuid().nullable(),
   status: z.enum(PUBLICATION_STATUSES),
   scheduledFor: z.number().int(),
   publishedAt: z.number().int().nullable(),
@@ -1362,6 +1365,123 @@ export const publishDraftInputSchema = z.object({
   scheduledFor: z.number().int().positive().optional(),
 });
 export type PublishDraftInput = z.infer<typeof publishDraftInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Posting cadence + calendar (Sprint 27)
+// ---------------------------------------------------------------------------
+
+export const CADENCE_STATUSES = ["active", "paused"] as const;
+export type CadenceStatus = (typeof CADENCE_STATUSES)[number];
+
+/** Day-of-week integers, Sunday = 0 — matches JS Date.getUTCDay(). */
+export const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+const timeOfDaySchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a HH:MM 24-hour time");
+
+/** True when the runtime recognises the IANA time-zone id (Node + browser). */
+export function isValidTimeZone(tz: string): boolean {
+  if (!tz) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const timeZoneSchema = z.string().min(1, "A time zone is required").refine(isValidTimeZone, {
+  message: "Unknown time zone",
+});
+
+const daysOfWeekSchema = z
+  .array(z.number().int().min(0).max(6))
+  .min(1, "Pick at least one day")
+  .transform((days) => [...new Set(days)].sort((a, b) => a - b));
+
+export const postingCadenceSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  name: z.string().min(1).max(120),
+  campaignId: z.string().uuid().nullable(),
+  personaId: z.string().uuid().nullable(),
+  channel: z.enum(CHANNELS),
+  connectionId: z.string().uuid(),
+  target: z.string(),
+  daysOfWeek: z.array(z.number().int().min(0).max(6)),
+  timeOfDay: timeOfDaySchema,
+  timezone: z.string(),
+  status: z.enum(CADENCE_STATUSES),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type PostingCadence = z.infer<typeof postingCadenceSchema>;
+
+export const createPostingCadenceInputSchema = z.object({
+  name: z.string().trim().min(1, "A cadence name is required").max(120),
+  campaignId: z.string().uuid(),
+  personaId: z.string().uuid().optional(),
+  channel: z.enum(CHANNELS),
+  connectionId: z.string().uuid(),
+  target: z.string().trim().min(1, "A target is required").max(200),
+  daysOfWeek: daysOfWeekSchema,
+  timeOfDay: timeOfDaySchema,
+  timezone: timeZoneSchema,
+  status: z.enum(CADENCE_STATUSES).default("active"),
+});
+export type CreatePostingCadenceInput = z.infer<typeof createPostingCadenceInputSchema>;
+
+export const updatePostingCadenceInputSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    campaignId: z.string().uuid(),
+    personaId: z.string().uuid().nullable(),
+    channel: z.enum(CHANNELS),
+    connectionId: z.string().uuid(),
+    target: z.string().trim().min(1).max(200),
+    daysOfWeek: daysOfWeekSchema,
+    timeOfDay: timeOfDaySchema,
+    timezone: timeZoneSchema,
+    status: z.enum(CADENCE_STATUSES),
+  })
+  .partial();
+export type UpdatePostingCadenceInput = z.infer<typeof updatePostingCadenceInputSchema>;
+
+/** A calendar cell: either a published/scheduled receipt or an empty slot. */
+export const CALENDAR_ENTRY_STATUSES = ["open", "scheduled", "published", "failed"] as const;
+export type CalendarEntryStatus = (typeof CALENDAR_ENTRY_STATUSES)[number];
+
+export const calendarEntrySchema = z.object({
+  kind: z.enum(["slot", "publication"]),
+  at: z.number().int(),
+  cadenceId: z.string().uuid().nullable(),
+  cadenceName: z.string().nullable(),
+  channel: z.enum(CHANNELS).nullable(),
+  providerKey: z.string().nullable(),
+  status: z.enum(CALENDAR_ENTRY_STATUSES),
+  title: z.string(),
+  draftId: z.string().uuid().nullable(),
+  publicationId: z.string().uuid().nullable(),
+  url: z.string().nullable(),
+});
+export type CalendarEntry = z.infer<typeof calendarEntrySchema>;
+
+// ---------------------------------------------------------------------------
+// Transactional mail (Sprint 27)
+// ---------------------------------------------------------------------------
+
+export const mailResultSchema = z.object({
+  delivered: z.boolean(),
+  id: z.string().nullable(),
+  detail: z.string(),
+});
+export type MailResultDto = z.infer<typeof mailResultSchema>;
+
+export const sendTestMailInputSchema = z.object({
+  to: z.string().trim().email("A valid email address is required"),
+});
+export type SendTestMailInput = z.infer<typeof sendTestMailInputSchema>;
 
 // ---------------------------------------------------------------------------
 // Native ads execution (Sprint 20)

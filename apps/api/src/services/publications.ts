@@ -34,6 +34,21 @@ export function listPublications(db: Db, workspaceId: string): PublicationWithDr
   }));
 }
 
+/** Every receipt a cadence has created, soonest scheduled first. */
+export function listCadencePublications(
+  db: Db,
+  workspaceId: string,
+  cadenceId: string,
+): Publication[] {
+  return db
+    .select()
+    .from(publications)
+    .where(and(eq(publications.workspaceId, workspaceId), eq(publications.cadenceId, cadenceId)))
+    .orderBy(publications.scheduledFor)
+    .all()
+    .map(rowToPublication);
+}
+
 export function getPublication(
   db: Db,
   workspaceId: string,
@@ -87,6 +102,7 @@ export async function createPublication(
   connection: Connection,
   input: PublishDraftInput,
   media?: PublishMedia[],
+  cadenceId: string | null = null,
 ): Promise<Publication> {
   const now = Date.now();
   const row: PublicationRow = {
@@ -98,6 +114,7 @@ export async function createPublication(
     target: input.target,
     title: input.title,
     mediaJson: media && media.length > 0 ? JSON.stringify(media) : null,
+    cadenceId,
     status: "scheduled",
     scheduledFor: input.scheduledFor ?? now,
     publishedAt: null,
