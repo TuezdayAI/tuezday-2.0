@@ -1,5 +1,13 @@
 import { ConnectorFabricError, type ConnectorFabric } from "../fabric";
-import type { PublishMedia, PublishPostInput, SocialAdapter, SocialPostResult } from "./index";
+import type {
+  InboundReply,
+  PostEngagement,
+  PostRef,
+  PublishMedia,
+  PublishPostInput,
+  SocialAdapter,
+  SocialPostResult,
+} from "./index";
 import type { SocialAdapterConfig } from "./linkedin";
 
 const GRAPH = "https://graph.facebook.com";
@@ -136,5 +144,54 @@ export class InstagramAdapter implements SocialAdapter {
       url = (link.json as PermalinkResponse)?.permalink ?? "";
     }
     return { externalId: mediaId, url };
+  }
+
+  // --- Sprint 29 (engagement inbox). Real Graph shape; needs an IG Business
+  // account + App Review for comment access — verified-when-creds. ---
+
+  async fetchEngagement(post: PostRef): Promise<PostEngagement> {
+    const res = await this.fabric.proxyJson(
+      "GET",
+      `/${V}/${post.externalId}?fields=like_count,comments_count`,
+      this.config.nangoConnectionId,
+      this.config.integrationKey,
+      { baseUrlOverride: GRAPH },
+    );
+    if (res.status < 200 || res.status >= 300) {
+      throw new ConnectorFabricError(`Instagram media lookup returned ${res.status}.`);
+    }
+    const json = (res.json ?? {}) as { like_count?: number; comments_count?: number };
+    return { likes: json.like_count, comments: json.comments_count };
+  }
+
+  async fetchReplies(post: PostRef): Promise<InboundReply[]> {
+    const res = await this.fabric.proxyJson(
+      "GET",
+      `/${V}/${post.externalId}/comments?fields=id,text,username,timestamp`,
+      this.config.nangoConnectionId,
+      this.config.integrationKey,
+      { baseUrlOverride: GRAPH },
+    );
+    if (res.status < 200 || res.status >= 300) {
+      throw new ConnectorFabricError(`Instagram comments returned ${res.status}.`);
+    }
+    const data =
+      ((res.json ?? {}) as { data?: Array<{ id?: string; text?: string; username?: string; timestamp?: string }> })
+        .data ?? [];
+    return data
+      .filter((c) => c.id && c.text)
+      .map((c) => ({
+        externalId: c.id!,
+        parentExternalId: post.externalId,
+        authorHandle: c.username ?? "",
+        authorName: c.username ?? "",
+        body: c.text!,
+        createdAt: c.timestamp ? Date.parse(c.timestamp) : Date.now(),
+      }));
+  }
+
+  async postReply(input: { parentExternalId: string; body: string }): Promise<SocialPostResult> {
+    const created = await this.post(`/${V}/${input.parentExternalId}/replies`, { message: input.body });
+    return { externalId: created.id!, url: "" };
   }
 }

@@ -1,5 +1,12 @@
 import { ConnectorFabricError, type ConnectorFabric } from "../fabric";
-import type { PublishPostInput, SocialAdapter, SocialPostResult } from "./index";
+import type {
+  InboundReply,
+  PostEngagement,
+  PostRef,
+  PublishPostInput,
+  SocialAdapter,
+  SocialPostResult,
+} from "./index";
 
 const LINKEDIN_API = "https://api.linkedin.com";
 
@@ -13,6 +20,27 @@ interface UserInfoResponse {
 }
 
 interface UgcPostResponse {
+  id?: string;
+}
+
+interface SocialActionsSummary {
+  likesSummary?: { totalLikes?: number };
+  commentsSummary?: { aggregatedTotalComments?: number };
+}
+
+interface SocialActionComment {
+  id?: string;
+  actor?: string;
+  parentComment?: string;
+  message?: { text?: string };
+  created?: { time?: number };
+}
+
+interface CommentsListResponse {
+  elements?: SocialActionComment[];
+}
+
+interface CreatedCommentResponse {
   id?: string;
 }
 
@@ -69,5 +97,76 @@ export class LinkedInAdapter implements SocialAdapter {
     const id = (result.json as UgcPostResponse)?.id;
     if (!id) throw new ConnectorFabricError("LinkedIn's response had no post id.");
     return { externalId: id, url: `https://www.linkedin.com/feed/update/${id}` };
+  }
+
+  // --- Sprint 29 (engagement inbox). Real /v2/socialActions shape; needs
+  // r_member_social/w_member_social — verified-when-creds (untested without a
+  // live LinkedIn Marketing app). ---
+
+  async fetchEngagement(post: PostRef): Promise<PostEngagement> {
+    const urn = encodeURIComponent(post.externalId);
+    const res = await this.fabric.proxyJson(
+      "GET",
+      `/v2/socialActions/${urn}`,
+      this.config.nangoConnectionId,
+      this.config.integrationKey,
+      { headers: { "X-Restli-Protocol-Version": "2.0.0" }, baseUrlOverride: LINKEDIN_API },
+    );
+    if (res.status < 200 || res.status >= 300) {
+      throw new ConnectorFabricError(`LinkedIn socialActions returned ${res.status}.`);
+    }
+    const summary = (res.json ?? {}) as SocialActionsSummary;
+    return {
+      likes: summary.likesSummary?.totalLikes,
+      comments: summary.commentsSummary?.aggregatedTotalComments,
+    };
+  }
+
+  async fetchReplies(post: PostRef): Promise<InboundReply[]> {
+    const urn = encodeURIComponent(post.externalId);
+    const res = await this.fabric.proxyJson(
+      "GET",
+      `/v2/socialActions/${urn}/comments`,
+      this.config.nangoConnectionId,
+      this.config.integrationKey,
+      { headers: { "X-Restli-Protocol-Version": "2.0.0" }, baseUrlOverride: LINKEDIN_API },
+    );
+    if (res.status < 200 || res.status >= 300) {
+      throw new ConnectorFabricError(`LinkedIn comments returned ${res.status}.`);
+    }
+    const elements = ((res.json ?? {}) as CommentsListResponse).elements ?? [];
+    return elements
+      .filter((c) => c.id && c.message?.text)
+      .map((c) => ({
+        externalId: c.id!,
+        parentExternalId: c.parentComment ?? post.externalId,
+        authorHandle: c.actor ?? "",
+        authorName: c.actor ?? "",
+        body: c.message!.text!,
+        createdAt: c.created?.time ?? Date.now(),
+      }));
+  }
+
+  async postReply(input: { parentExternalId: string; body: string }): Promise<SocialPostResult> {
+    const author = await this.authorUrn();
+    const urn = encodeURIComponent(input.parentExternalId);
+    const res = await this.fabric.proxyJson(
+      "POST",
+      `/v2/socialActions/${urn}/comments`,
+      this.config.nangoConnectionId,
+      this.config.integrationKey,
+      {
+        body: { actor: author, message: { text: input.body } },
+        headers: { "X-Restli-Protocol-Version": "2.0.0" },
+        baseUrlOverride: LINKEDIN_API,
+      },
+    );
+    if (res.status < 200 || res.status >= 300) {
+      const snippet = res.json ? JSON.stringify(res.json).slice(0, 200) : "";
+      throw new ConnectorFabricError(`LinkedIn comment returned ${res.status}: ${snippet}`);
+    }
+    const id = (res.json as CreatedCommentResponse)?.id;
+    if (!id) throw new ConnectorFabricError("LinkedIn's comment response had no id.");
+    return { externalId: id, url: "" };
   }
 }

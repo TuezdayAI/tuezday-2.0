@@ -48,6 +48,7 @@ export function getSocialAutomationSettings(db: Db, workspaceId: string): Social
         killSwitch: row.killSwitch === 1,
         perConnectionDailyCap: row.perConnectionDailyCap,
         perCampaignDailyCap: row.perCampaignDailyCap,
+        autoReplyEnabled: row.autoReplyEnabled === 1,
         updatedAt: row.updatedAt,
       }
     : {
@@ -55,6 +56,7 @@ export function getSocialAutomationSettings(db: Db, workspaceId: string): Social
         killSwitch: false,
         perConnectionDailyCap: DEFAULT_PER_CONNECTION_DAILY_CAP,
         perCampaignDailyCap: DEFAULT_PER_CAMPAIGN_DAILY_CAP,
+        autoReplyEnabled: false,
         updatedAt: 0,
       };
 }
@@ -70,25 +72,19 @@ export function updateSocialAutomationSettings(
     killSwitch: patch.killSwitch ?? current.killSwitch,
     perConnectionDailyCap: patch.perConnectionDailyCap ?? current.perConnectionDailyCap,
     perCampaignDailyCap: patch.perCampaignDailyCap ?? current.perCampaignDailyCap,
+    autoReplyEnabled: patch.autoReplyEnabled ?? current.autoReplyEnabled,
     updatedAt: Date.now(),
   };
+  const columns = {
+    killSwitch: next.killSwitch ? 1 : 0,
+    perConnectionDailyCap: next.perConnectionDailyCap,
+    perCampaignDailyCap: next.perCampaignDailyCap,
+    autoReplyEnabled: next.autoReplyEnabled ? 1 : 0,
+    updatedAt: next.updatedAt,
+  };
   db.insert(socialAutomationSettings)
-    .values({
-      workspaceId,
-      killSwitch: next.killSwitch ? 1 : 0,
-      perConnectionDailyCap: next.perConnectionDailyCap,
-      perCampaignDailyCap: next.perCampaignDailyCap,
-      updatedAt: next.updatedAt,
-    })
-    .onConflictDoUpdate({
-      target: socialAutomationSettings.workspaceId,
-      set: {
-        killSwitch: next.killSwitch ? 1 : 0,
-        perConnectionDailyCap: next.perConnectionDailyCap,
-        perCampaignDailyCap: next.perCampaignDailyCap,
-        updatedAt: next.updatedAt,
-      },
-    })
+    .values({ workspaceId, ...columns })
+    .onConflictDoUpdate({ target: socialAutomationSettings.workspaceId, set: columns })
     .run();
   return next;
 }

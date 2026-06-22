@@ -623,6 +623,8 @@ export const socialAutomationSettings = sqliteTable("social_automation_settings"
   killSwitch: integer("kill_switch").notNull().default(0),
   perConnectionDailyCap: integer("per_connection_daily_cap").notNull().default(10),
   perCampaignDailyCap: integer("per_campaign_daily_cap").notNull().default(5),
+  // Sprint 29: master switch for auto-posting engagement replies (off by default).
+  autoReplyEnabled: integer("auto_reply_enabled").notNull().default(0),
   updatedAt: integer("updated_at").notNull(),
 });
 
@@ -786,3 +788,71 @@ export const launchMessages = sqliteTable("launch_messages", {
 });
 
 export type LaunchMessageRow = typeof launchMessages.$inferSelect;
+
+// Unified engagement inbox (Sprint 29). One row per inbound comment on our
+// published posts or reply to our outbound DMs, polled per connection. The
+// reply (if any) is a normal gated draft linked via replyDraftId.
+export const inboxItems = sqliteTable(
+  "inbox_items",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => connections.id, { onDelete: "cascade" }),
+    providerKey: text("provider_key").notNull(),
+    // An InboxItemKind: comment (on our post) | dm (reply to our outbound DM).
+    kind: text("kind").notNull(),
+    channel: text("channel").notNull(),
+    // Platform id of the inbound item — idempotency key per connection.
+    externalId: text("external_id").notNull(),
+    // Platform id of the thing it replies to (our post/comment/DM).
+    parentExternalId: text("parent_external_id"),
+    publicationId: text("publication_id").references(() => publications.id, { onDelete: "set null" }),
+    launchMessageId: text("launch_message_id").references(() => launchMessages.id, { onDelete: "set null" }),
+    authorHandle: text("author_handle").notNull().default(""),
+    authorName: text("author_name").notNull().default(""),
+    content: text("content").notNull(),
+    url: text("url"),
+    status: text("status").notNull().default("unread"),
+    // The gated reply draft, once generated.
+    replyDraftId: text("reply_draft_id").references(() => drafts.id, { onDelete: "set null" }),
+    postedReplyExternalId: text("posted_reply_external_id"),
+    postedReplyUrl: text("posted_reply_url"),
+    externalCreatedAt: integer("external_created_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [uniqueIndex("inbox_items_connection_external").on(table.connectionId, table.externalId)],
+);
+
+export type InboxItemRow = typeof inboxItems.$inferSelect;
+
+// Platform-pulled engagement snapshots on a published post (Sprint 29). One row
+// per (publication, window); separate from the learning-loop engagement_metrics.
+export const publicationMetrics = sqliteTable(
+  "publication_metrics",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    publicationId: text("publication_id")
+      .notNull()
+      .references(() => publications.id, { onDelete: "cascade" }),
+    // A MetricWindow: "24h" | "7d".
+    window: text("window").notNull(),
+    likes: integer("likes"),
+    comments: integer("comments"),
+    shares: integer("shares"),
+    impressions: integer("impressions"),
+    clicks: integer("clicks"),
+    capturedAt: integer("captured_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [uniqueIndex("publication_metrics_pub_window").on(table.publicationId, table.window)],
+);
+
+export type PublicationMetricRow = typeof publicationMetrics.$inferSelect;

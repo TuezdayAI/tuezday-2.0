@@ -30,10 +30,46 @@ export interface PublishPostInput {
   media?: PublishMedia[];
 }
 
+/** A reference to one of our published posts on the platform. */
+export interface PostRef {
+  externalId: string;
+  target?: string;
+}
+
+/** An inbound comment/DM reply pulled from the platform (Sprint 29). */
+export interface InboundReply {
+  externalId: string;
+  parentExternalId?: string;
+  authorHandle: string;
+  authorName?: string;
+  body: string;
+  url?: string;
+  /** When the reply was created on the platform, epoch ms. */
+  createdAt: number;
+}
+
+/** Engagement counts on a post; fields the platform doesn't expose are omitted. */
+export interface PostEngagement {
+  likes?: number;
+  comments?: number;
+  shares?: number;
+  impressions?: number;
+  clicks?: number;
+}
+
 export interface SocialAdapter {
   publishPost(input: PublishPostInput): Promise<SocialPostResult>;
   /** Per-recipient direct message (X only this sprint). */
   sendDm?(input: { recipientHandle: string; body: string }): Promise<SocialPostResult>;
+  // --- Sprint 29 (engagement inbox) — all optional; the poller feature-detects. ---
+  /** Comments/replies on one of our published posts. */
+  fetchReplies?(post: PostRef): Promise<InboundReply[]>;
+  /** Engagement counts for one of our published posts. */
+  fetchEngagement?(post: PostRef): Promise<PostEngagement>;
+  /** Post a reply to a comment/post we received. */
+  postReply?(input: { parentExternalId: string; body: string; target?: string }): Promise<SocialPostResult>;
+  /** Inbound replies in an outbound DM thread (X). */
+  fetchDmReplies?(input: { recipientHandle: string; sinceMs?: number }): Promise<InboundReply[]>;
 }
 
 export function socialAdapterFor(

@@ -108,8 +108,62 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
   automated campaign, with no scoring of which signal actually fits which campaign/persona.
 - **The better version:** Score signal↔campaign/persona fit and route only relevant signals (extends
   `suggestedPersonaId` / `scoreReason`).
-- **Trigger to revisit:** **Sprint 29** owns this (discovery source expansion + auto-mapping).
+- **Trigger to revisit:** **Sprint 31** owns this (discovery source expansion + auto-mapping); the
+  post-2026-06-21 reorg moved discovery expansion to S31 (Sprint 29 became the reply inbox).
 - **Origin:** Sprint 28.
+
+### 12. Inbox polls synchronously on a worker tick
+- **What we shipped (Sprint 29):** `pollInbox` fetches replies + engagement per published post/DM
+  inline on the inbox tick, one platform call at a time, with no per-post cursors.
+- **The better version:** A queue with per-post cursors so high comment/DM volume doesn't serialize
+  behind one slow account, and reads resume from the last-seen id instead of re-scanning.
+- **Trigger to revisit:** When a workspace has enough published posts / inbound volume that a tick
+  takes too long or brushes platform rate limits.
+- **Origin:** Sprint 29.
+
+### 13. LinkedIn / X / Instagram read + reply methods are verified-when-creds
+- **What we shipped (Sprint 29):** Reddit's `fetchReplies` / `fetchEngagement` / `postReply` are
+  tested end to end. LinkedIn, X (DM), and Instagram are written to each platform's real API shape
+  but are **untested** without live OAuth apps and elevated access (LinkedIn `r_member_social`, IG
+  Business + App Review, X elevated DM access).
+- **The better version:** Live-credential verification of each platform's inbound + reply path, with
+  fixtures captured from real responses.
+- **Trigger to revisit:** When each platform's app + scopes exist (mirrors the S26/S28 social pattern).
+- **Origin:** Sprint 29.
+
+### 14. Engagement metrics captured once at the 24h and 7d marks
+- **What we shipped (Sprint 29):** `refreshEngagement` upserts one `publication_metrics` row per
+  window when its mark passes — a coarse snapshot, not a live curve.
+- **The better version:** A polling window that tracks the engagement curve over time (early velocity,
+  decay) rather than two point samples.
+- **Trigger to revisit:** When the engagement *trend* (not just the 24h/7d totals) drives a decision.
+- **Origin:** Sprint 29.
+
+### 15. Auto-reply is per-workspace × per-campaign-mode only
+- **What we shipped (Sprint 29):** Auto-reply fires when the workspace master switch is on **and** the
+  originating campaign is `scheduled_auto`, within the kill switch + per-connection cap. There is no
+  per-channel, per-item-type, or per-sentiment control.
+- **The better version:** Finer-grained gating (e.g. auto-reply on LinkedIn comments but never DMs, or
+  only on positive-sentiment items).
+- **Trigger to revisit:** When a customer wants different auto-reply behavior across channels/sentiment.
+- **Origin:** Sprint 29.
+
+### 16. Email reply detection is out of scope
+- **What we shipped (Sprint 29):** The inbox covers social comments + X DMs. Outbound email is
+  CSV-exported to Smartlead/Instantly — there is no inbound-mail channel, so email replies aren't
+  detected.
+- **The better version:** An inbound-mail integration so email replies land in the same inbox.
+- **Trigger to revisit:** **Sprint 30** (stop-on-reply) needs this first — wire inbound mail before
+  reply-driven cadence stops can react to email.
+- **Origin:** Sprint 29.
+
+### 17. Per-connection reply cap counts replies + publications together per UTC day
+- **What we shipped (Sprint 29):** The per-connection daily cap on auto-replies counts posted replies
+  **plus** publications on that connection in the UTC calendar day — a coarse account-level safety net.
+- **The better version:** A timezone-aware budget that distinguishes action types (posts vs replies).
+- **Trigger to revisit:** If replies and posts need separate budgets, or the UTC boundary surprises a
+  customer (see also #9).
+- **Origin:** Sprint 29.
 
 ---
 

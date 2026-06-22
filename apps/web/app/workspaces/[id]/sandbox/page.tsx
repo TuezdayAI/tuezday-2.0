@@ -33,13 +33,15 @@ const TASK_LABELS: Record<TaskType, string> = {
   press_boilerplate: "Press boilerplate",
   x_dm: "X DM",
   instagram_post: "Instagram post",
+  engagement_reply: "Reply",
 };
 
 /** Ad creative variant sets are generated on the Ad creatives page; a media
  * pitch without a contact is meaningless (PR page). press_boilerplate stays —
  * it is a sandbox-shaped task. */
 const SANDBOX_TASK_TYPES = TASK_TYPES.filter(
-  (t) => !isAdCreativeTaskType(t) && t !== "pr_pitch",
+  // engagement_reply needs an inbound conversation — it's generated from the Inbox, not here.
+  (t) => !isAdCreativeTaskType(t) && t !== "pr_pitch" && t !== "engagement_reply",
 );
 
 const RATING_LABELS: Record<OutputRating, string> = {

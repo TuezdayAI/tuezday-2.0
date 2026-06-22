@@ -26,6 +26,7 @@ import { registerCrmRoutes } from "./routes/crm";
 import { registerDiscoveryRoutes } from "./routes/discovery";
 import { registerDraftRoutes } from "./routes/drafts";
 import { registerEvidenceRoutes } from "./routes/evidence";
+import { registerInboxRoutes } from "./routes/inbox";
 import { registerLaunchRoutes } from "./routes/launches";
 import { registerLearningRoutes } from "./routes/learning";
 import { registerMailRoutes } from "./routes/mail";
@@ -114,6 +115,7 @@ export async function buildApp({
   registerCadenceRoutes(app, db, connectors, fetcher);
   registerMailRoutes(app, db, mailer);
   registerAutomationRoutes(app, db, llm, evidence);
+  registerInboxRoutes(app, db, llm, evidence, connectors, fetcher);
 
   return app;
 }

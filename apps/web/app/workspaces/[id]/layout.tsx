@@ -37,7 +37,10 @@ const NAV: NavItem[] = [
   {
     label: "Review",
     path: "/approvals",
-    children: [{ label: "Learning", path: "/learning" }],
+    children: [
+      { label: "Inbox", path: "/inbox" },
+      { label: "Learning", path: "/learning" },
+    ],
   },
   {
     label: "Campaigns",

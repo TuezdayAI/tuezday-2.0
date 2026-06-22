@@ -88,6 +88,23 @@ export default function AutomationPage() {
       </section>
 
       <section className="panel">
+        <h2>Auto-reply</h2>
+        <p className="subtitle">
+          When on, inbox replies on <strong>scheduled-auto</strong> campaigns are auto-approved and
+          posted automatically — within the kill switch and per-connection cap. When off (the
+          default), every reply waits for your approval on Review, whatever the campaign's mode.
+        </p>
+        <label className="checkbox-label" style={{ fontSize: "1rem" }}>
+          <input
+            type="checkbox"
+            checked={settings.autoReplyEnabled}
+            onChange={(e) => patch({ autoReplyEnabled: e.target.checked })}
+          />
+          {settings.autoReplyEnabled ? "Replies on auto campaigns post automatically" : "All replies wait for approval"}
+        </label>
+      </section>
+
+      <section className="panel">
         <h2>Daily caps</h2>
         <p className="subtitle">
           Maximum auto-posts per UTC day. The per-connection cap protects an account's posting

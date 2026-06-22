@@ -425,6 +425,23 @@ your voice and cleared through Review — without leaving Tuezday.
 
 **Gate:** a campaign drives its own distribution — discovery signals become channel posts that either wait at the gate (human-in-the-loop) or auto-approve and post on the cadence (scheduled-auto), with a kill switch and daily caps as the safety net, and every auto-approval is logged as a `system` gate decision.
 
+## Sprint 29 — Unified engagement & reply inbox
+
+> Branch `sprint-29-engagement-reply-inbox` (off `sprint-28-social-automation`; founder merges
+> S25→S26, S27, S28 before this). Reddit works end to end today; LinkedIn/X/Instagram light up once
+> their creds + API access exist. Needs a connected social account and at least one **published** post.
+> Use **Inbox → Run inbox now** instead of waiting for the worker tick during testing.
+
+- [ ] **A reply appears in the inbox.** Reply to one of your published Reddit posts from another account → **Inbox → Run inbox now** (or wait for the tick) → the comment appears as **Unread**, with the author, the inbound text, and a link to the post it answers.
+- [ ] **AI-drafted, gated reply.** Open the item → **Draft reply** → a brain-resolved reply draft appears inline at `pending review` (and on **Review** as an `engagement_reply` draft). It has not posted yet.
+- [ ] **Approve & post.** **Approve & post reply** on the item (or approve on Review, then **Post reply**) → the reply posts back on Reddit, the item flips to **Replied** with a working "view reply" link. Trying to post twice is refused.
+- [ ] **Engagement numbers.** After ~24h (or with the clock advanced in dev) → **Run inbox now** → the **Create → Published** panel shows the post's `24h` likes/comments line; after ~7d a `7d` snapshot appears.
+- [ ] **Auto-reply (opt-in).** **Automation → Auto-reply on**; set a campaign that owns a post to **Scheduled-auto** → a new comment on that post → **Run inbox now** → the reply is **auto-approved** (decision log on Review shows `system`) and **posts automatically**, within the kill switch + per-connection cap.
+- [ ] **Auto-reply stays gated when it should.** With Auto-reply **off** (default), a new comment on a scheduled-auto campaign's post does **not** auto-reply (stays Unread, no draft). Turn the **kill switch on** → auto-replies stop entirely; manual **Draft reply → Approve & post** still works.
+- [ ] **Status.** **Mark read** / **Dismiss** on an item persists across a reload; a replied item can't be reopened by hand.
+
+**Gate:** a reply to a posted comment appears in the inbox → AI drafts a brain-resolved reply → approve → it posts back to the platform and the item flips to *replied*; engagement numbers show on the post; and auto-reply is opt-in (master switch × scheduled-auto campaign) inside the same kill switch + caps that bound auto-posting.
+
 ---
 
 ## Cross-cutting things worth re-checking occasionally

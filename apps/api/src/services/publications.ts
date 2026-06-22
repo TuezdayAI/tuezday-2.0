@@ -1,12 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, lte } from "drizzle-orm";
-import type { Connection, Publication, PublicationStatus, PublishDraftInput } from "@tuezday/contracts";
+import type {
+  Connection,
+  Publication,
+  PublicationMetric,
+  PublicationStatus,
+  PublishDraftInput,
+} from "@tuezday/contracts";
 import type { Db } from "../db";
 import { drafts, publications, type PublicationRow } from "../db/schema";
 import type { ConnectorFabric } from "../connectors/fabric";
 import { socialAdapterFor, type PublishMedia } from "../connectors/social";
 import { getConnection, providerByKey } from "./connections";
 import { emitEvent } from "./events";
+import { metricsByPublication } from "./inbox";
 
 type Fetcher = typeof fetch;
 
@@ -16,6 +23,8 @@ function rowToPublication(row: PublicationRow): Publication {
 
 export interface PublicationWithDraft extends Publication {
   draft: { id: string; taskType: string; channel: string; content: string } | null;
+  /** Engagement snapshots (24h/7d) on a published post (Sprint 29). */
+  metrics: PublicationMetric[];
 }
 
 export function listPublications(db: Db, workspaceId: string): PublicationWithDraft[] {
@@ -26,11 +35,13 @@ export function listPublications(db: Db, workspaceId: string): PublicationWithDr
     .where(eq(publications.workspaceId, workspaceId))
     .orderBy(desc(publications.createdAt))
     .all();
+  const metrics = metricsByPublication(db, workspaceId);
   return rows.map(({ publication, draft }) => ({
     ...rowToPublication(publication),
     draft: draft
       ? { id: draft.id, taskType: draft.taskType, channel: draft.channel, content: draft.content }
       : null,
+    metrics: metrics.get(publication.id) ?? [],
   }));
 }
 

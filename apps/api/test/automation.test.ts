@@ -192,6 +192,7 @@ describe("social automation", () => {
           killSwitch: false,
           perConnectionDailyCap: 10,
           perCampaignDailyCap: 5,
+          autoReplyEnabled: false,
           updatedAt: 0,
         }).success,
       ).toBe(true);

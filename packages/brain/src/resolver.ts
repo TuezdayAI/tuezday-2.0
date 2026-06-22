@@ -105,6 +105,8 @@ export const TASK_INSTRUCTIONS: Record<TaskType, string> = {
     "Task: Write a short personalized first-touch X (Twitter) direct message to the recipient above (treated as the lead). Two or three sentences, plain and human, like a real person sliding into DMs - not a marketing blast. Personalize ONLY from the recipient facts given; never invent shared history. One clear, low-friction ask. No links unless essential, no hashtags, no emoji spam. Return only the DM text - no preamble, greeting label, or commentary.",
   instagram_post:
     "Task: Write one Instagram caption grounded in the context above, to accompany the launch's image/video. Open with a scroll-stopping first line, then a few short, punchy lines in the company's voice. End with one light call to action and 3-5 relevant hashtags on the final line. Keep it under 2200 characters. The caption supports the visual - don't describe the image literally. Return only the caption text - no preamble or commentary.",
+  engagement_reply:
+    "Task: Write a reply to the inbound comment/message in the conversation above, for the requested channel, in the company's voice. Respond to what the person actually said - answer their question, address their point, or thank them specifically - grounded in the company context and our original post. Keep it short and human, like a real person replying in a thread, not a brand statement. No links unless they asked, no hard sell. Return only the reply text - no preamble, greeting label, or commentary.",
 };
 
 // ---------------------------------------------------------------------------
@@ -119,6 +121,7 @@ export type ContextLayer =
   | "lead"
   | "contact"
   | "signal"
+  | "conversation"
   | "evidence"
   | "task";
 
@@ -137,6 +140,16 @@ export interface ResolveSignal {
   content: string;
   source: string;
   sourceUrl?: string | null;
+}
+
+/** An inbound comment/DM we're replying to, plus our original post (Sprint 29). */
+export interface ResolveConversation {
+  /** The body of our post/DM that drew the reply, when known. */
+  originalPost?: string;
+  inboundAuthor: string;
+  inboundMessage: string;
+  /** Platform the conversation is on (reddit/linkedin/x/instagram). */
+  source: string;
 }
 
 export interface ResolveLead {
@@ -177,6 +190,7 @@ export interface ResolveInput {
   lead?: ResolveLead;
   mediaContact?: ResolveMediaContact;
   signal?: ResolveSignal;
+  conversation?: ResolveConversation;
   evidence?: ResolveEvidence;
   /** Why evidence is absent (store down, no docs, toggled off) — shown in the trace. */
   evidenceExclusionReason?: string;
@@ -374,6 +388,25 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       included: false,
       reason: "Excluded: no signal attached to this task.",
       tokens: 0,
+    });
+  }
+
+  // The inbound conversation we're replying to (Sprint 29). Only present for a
+  // reply task — pushed conditionally so other tasks' section lists are unchanged.
+  if (input.conversation) {
+    const convo = input.conversation;
+    const lines: string[] = [];
+    if (convo.originalPost?.trim()) lines.push(`Our post:\n${convo.originalPost.trim()}`);
+    lines.push(`Reply from ${convo.inboundAuthor} (on ${convo.source}):\n${convo.inboundMessage.trim()}`);
+    const conversationContent = lines.join("\n\n");
+    sections.push({
+      key: "conversation",
+      layer: "conversation",
+      title: "Conversation to reply to",
+      content: conversationContent,
+      included: true,
+      reason: `The inbound ${convo.source} message this reply answers, plus our original post.`,
+      tokens: estimateTokens(conversationContent),
     });
   }
 

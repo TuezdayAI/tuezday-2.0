@@ -17,6 +17,7 @@ const ADS_SYNC_HOURS = Number(process.env.ADS_SYNC_HOURS ?? 6);
 const PUBLISH_INTERVAL_MIN = Number(process.env.PUBLISH_INTERVAL_MIN ?? 1);
 const CADENCE_FILL_INTERVAL_MIN = Number(process.env.CADENCE_FILL_INTERVAL_MIN ?? 5);
 const AUTOMATION_INTERVAL_MIN = Number(process.env.AUTOMATION_INTERVAL_MIN ?? 5);
+const INBOX_INTERVAL_MIN = Number(process.env.INBOX_INTERVAL_MIN ?? 5);
 
 interface Workspace {
   id: string;
@@ -265,6 +266,42 @@ async function automationTick(): Promise<void> {
   }
 }
 
+interface InboxRunResponse {
+  newItems: number;
+  metricsCaptured: number;
+  repliesPosted: number;
+}
+
+/** Poll inbound comments/DMs, refresh engagement metrics, then auto-generate +
+ * post replies for scheduled_auto campaigns (when the master switch is on). */
+async function runInboxForAllWorkspaces(): Promise<void> {
+  const res = await api(`/workspaces`);
+  if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
+  const workspaces = (await res.json()) as Workspace[];
+
+  for (const workspace of workspaces) {
+    try {
+      const runRes = await api(`/workspaces/${workspace.id}/inbox/run`, { method: "POST" });
+      if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);
+      const { newItems, metricsCaptured, repliesPosted } = (await runRes.json()) as InboxRunResponse;
+      if (newItems === 0 && metricsCaptured === 0 && repliesPosted === 0) continue; // quiet
+      console.log(
+        `[inbox] ${workspace.name}: ${newItems} new item(s), ${metricsCaptured} metric(s) captured, ${repliesPosted} repl(y/ies) posted`,
+      );
+    } catch (err) {
+      console.error("[inbox] ", workspace.name, "failed —", err instanceof Error ? err.message : err);
+    }
+  }
+}
+
+async function inboxTick(): Promise<void> {
+  try {
+    await runInboxForAllWorkspaces();
+  } catch (err) {
+    console.error("[inbox] tick failed —", err instanceof Error ? err.message : err);
+  }
+}
+
 async function adsTick(): Promise<void> {
   try {
     await syncAdsForAllWorkspaces();
@@ -287,7 +324,7 @@ async function tick(): Promise<void> {
 }
 
 console.log(
-  `Tuezday worker: polling discovery every ${INTERVAL_MIN} min, ads sync every ${ADS_SYNC_HOURS} h, automation every ${AUTOMATION_INTERVAL_MIN} min, cadence fill every ${CADENCE_FILL_INTERVAL_MIN} min, scheduled publishing every ${PUBLISH_INTERVAL_MIN} min against ${API_URL} (set DISCOVERY_INTERVAL_MIN / ADS_SYNC_HOURS / AUTOMATION_INTERVAL_MIN / CADENCE_FILL_INTERVAL_MIN / PUBLISH_INTERVAL_MIN / TUEZDAY_API_URL to change).`,
+  `Tuezday worker: polling discovery every ${INTERVAL_MIN} min, ads sync every ${ADS_SYNC_HOURS} h, automation every ${AUTOMATION_INTERVAL_MIN} min, cadence fill every ${CADENCE_FILL_INTERVAL_MIN} min, scheduled publishing every ${PUBLISH_INTERVAL_MIN} min, inbox every ${INBOX_INTERVAL_MIN} min against ${API_URL} (set DISCOVERY_INTERVAL_MIN / ADS_SYNC_HOURS / AUTOMATION_INTERVAL_MIN / CADENCE_FILL_INTERVAL_MIN / PUBLISH_INTERVAL_MIN / INBOX_INTERVAL_MIN / TUEZDAY_API_URL to change).`,
 );
 void tick();
 setInterval(() => void tick(), INTERVAL_MIN * 60 * 1000);
@@ -301,3 +338,6 @@ void cadenceTick();
 setInterval(() => void cadenceTick(), CADENCE_FILL_INTERVAL_MIN * 60 * 1000);
 void publishTick();
 setInterval(() => void publishTick(), PUBLISH_INTERVAL_MIN * 60 * 1000);
+// Inbox runs after publish — replies react to what's already posted.
+void inboxTick();
+setInterval(() => void inboxTick(), INBOX_INTERVAL_MIN * 60 * 1000);

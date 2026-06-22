@@ -38,6 +38,8 @@ export const TASK_TYPES = [
   // Sprint 26 (targeted launch): a per-recipient X DM and a broadcast IG post.
   "x_dm",
   "instagram_post",
+  // Sprint 29 (engagement inbox): a reply to an inbound comment/DM.
+  "engagement_reply",
 ] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
@@ -1703,6 +1705,9 @@ export const socialAutomationSettingsSchema = z.object({
   killSwitch: z.boolean(),
   perConnectionDailyCap: z.number().int().positive(),
   perCampaignDailyCap: z.number().int().positive(),
+  // Sprint 29: master switch for auto-posting engagement replies. Off by default —
+  // even scheduled_auto campaigns gate their replies until the founder opts in.
+  autoReplyEnabled: z.boolean(),
   updatedAt: z.number().int(),
 });
 export type SocialAutomationSettings = z.infer<typeof socialAutomationSettingsSchema>;
@@ -1711,6 +1716,7 @@ export const updateSocialAutomationSettingsInputSchema = z.object({
   killSwitch: z.boolean().optional(),
   perConnectionDailyCap: z.number().int().positive().max(1000).optional(),
   perCampaignDailyCap: z.number().int().positive().max(1000).optional(),
+  autoReplyEnabled: z.boolean().optional(),
 });
 export type UpdateSocialAutomationSettingsInput = z.infer<
   typeof updateSocialAutomationSettingsInputSchema
@@ -1733,6 +1739,99 @@ export const automationRunResultSchema = z.object({
   ranAt: z.number().int(),
 });
 export type AutomationRunResult = z.infer<typeof automationRunResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Engagement & reply inbox (Sprint 29)
+// ---------------------------------------------------------------------------
+
+/** A comment on one of our posts, or a reply to one of our outbound DMs. */
+export const INBOX_ITEM_KINDS = ["comment", "dm"] as const;
+export type InboxItemKind = (typeof INBOX_ITEM_KINDS)[number];
+
+export const INBOX_ITEM_STATUSES = ["unread", "read", "replied", "dismissed"] as const;
+export type InboxItemStatus = (typeof INBOX_ITEM_STATUSES)[number];
+
+export const inboxItemSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  connectionId: z.string().uuid(),
+  providerKey: z.string(),
+  kind: z.enum(INBOX_ITEM_KINDS),
+  channel: z.enum(CHANNELS),
+  /** Platform id of the inbound item — the idempotency key per connection. */
+  externalId: z.string(),
+  /** Platform id of the thing it replies to (our post/comment/DM). */
+  parentExternalId: z.string().nullable(),
+  /** The published post this engages, when mappable. */
+  publicationId: z.string().uuid().nullable(),
+  /** The outbound DM this replies to (X). */
+  launchMessageId: z.string().uuid().nullable(),
+  authorHandle: z.string(),
+  authorName: z.string(),
+  content: z.string(),
+  url: z.string().nullable(),
+  status: z.enum(INBOX_ITEM_STATUSES),
+  /** The gated reply draft, once one is generated. */
+  replyDraftId: z.string().uuid().nullable(),
+  postedReplyExternalId: z.string().nullable(),
+  postedReplyUrl: z.string().nullable(),
+  externalCreatedAt: z.number().int(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type InboxItem = z.infer<typeof inboxItemSchema>;
+
+/** An inbox item joined with its reply draft + the post it answers, for the UI. */
+export const inboxItemWithContextSchema = inboxItemSchema.extend({
+  replyDraft: z
+    .object({ id: z.string().uuid(), state: z.enum(APPROVAL_STATES), content: z.string() })
+    .nullable(),
+  post: z
+    .object({
+      publicationId: z.string().uuid(),
+      title: z.string(),
+      url: z.string().nullable(),
+    })
+    .nullable(),
+});
+export type InboxItemWithContext = z.infer<typeof inboxItemWithContextSchema>;
+
+/** Only `read`/`dismissed` are hand-settable; `replied` is system-set on a posted reply. */
+export const updateInboxItemStatusInputSchema = z.object({
+  status: z.enum(["read", "dismissed"]),
+});
+export type UpdateInboxItemStatusInput = z.infer<typeof updateInboxItemStatusInputSchema>;
+
+/** Engagement snapshot windows after publish. */
+export const METRIC_WINDOWS = ["24h", "7d"] as const;
+export type MetricWindow = (typeof METRIC_WINDOWS)[number];
+
+export const publicationMetricSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  publicationId: z.string().uuid(),
+  window: z.enum(METRIC_WINDOWS),
+  likes: z.number().int().nullable(),
+  comments: z.number().int().nullable(),
+  shares: z.number().int().nullable(),
+  impressions: z.number().int().nullable(),
+  clicks: z.number().int().nullable(),
+  capturedAt: z.number().int(),
+  createdAt: z.number().int(),
+});
+export type PublicationMetric = z.infer<typeof publicationMetricSchema>;
+
+/** What one inbox orchestrator run did. */
+export const inboxRunResultSchema = z.object({
+  polled: z.number().int(),
+  newItems: z.number().int(),
+  metricsCaptured: z.number().int(),
+  repliesGenerated: z.number().int(),
+  repliesAutoApproved: z.number().int(),
+  repliesPosted: z.number().int(),
+  ranAt: z.number().int(),
+});
+export type InboxRunResult = z.infer<typeof inboxRunResultSchema>;
 
 // ---------------------------------------------------------------------------
 // Lead lists & segments (Sprint 24)
@@ -1986,6 +2085,7 @@ export const EVENT_TYPES = [
   "ads.synced",
   "ad.launched",
   "post.published",
+  "reply.posted",
   "webhook.ping",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];

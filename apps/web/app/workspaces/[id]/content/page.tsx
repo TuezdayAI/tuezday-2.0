@@ -16,6 +16,7 @@ import {
   type ConnectorProvider,
   type Persona,
   type Publication,
+  type PublicationMetric,
   type SignalSource,
   type Workspace,
 } from "@tuezday/contracts";
@@ -48,6 +49,18 @@ interface SignalView {
 
 interface PublicationView extends Publication {
   draft: { id: string; taskType: string; channel: string; content: string } | null;
+  metrics: PublicationMetric[];
+}
+
+/** Compact "12 likes · 3 comments" style line for one engagement snapshot. */
+function metricSummary(m: PublicationMetric): string {
+  const parts: string[] = [];
+  if (m.likes != null) parts.push(`${m.likes} likes`);
+  if (m.comments != null) parts.push(`${m.comments} comments`);
+  if (m.shares != null) parts.push(`${m.shares} shares`);
+  if (m.impressions != null) parts.push(`${m.impressions} impressions`);
+  if (m.clicks != null) parts.push(`${m.clicks} clicks`);
+  return parts.length > 0 ? parts.join(" · ") : "no counts available";
 }
 
 const PUBLICATION_BADGES: Record<Publication["status"], string> = {
@@ -577,6 +590,19 @@ export default function ContentPage() {
                     `Posts at ${new Date(p.scheduledFor).toLocaleString()}`}
                   {p.status === "failed" && (p.lastError ?? "The platform refused the post.")}
                 </p>
+                {p.status === "published" && p.metrics.length > 0 && (
+                  <ul className="draft-chain" style={{ marginTop: 8 }}>
+                    {p.metrics
+                      .slice()
+                      .sort((a, b) => a.window.localeCompare(b.window))
+                      .map((m) => (
+                        <li key={m.id}>
+                          <span className="layer-badge">{m.window}</span>{" "}
+                          <span className="meta">{metricSummary(m)}</span>
+                        </li>
+                      ))}
+                  </ul>
+                )}
                 <div className="rating-row" style={{ marginTop: 8 }}>
                   {p.status === "failed" && (
                     <button

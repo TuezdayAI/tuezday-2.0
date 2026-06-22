@@ -29,6 +29,7 @@ const TASK_LABELS: Record<TaskType, string> = {
   press_boilerplate: "Press boilerplate",
   x_dm: "X DM",
   instagram_post: "Instagram post",
+  engagement_reply: "Reply",
 };
 
 const STATE_LABELS: Record<ApprovalState, string> = {

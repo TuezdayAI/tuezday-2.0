@@ -127,6 +127,7 @@ describe("task types and channels", () => {
       "press_boilerplate",
       "x_dm",
       "instagram_post",
+      "engagement_reply",
     ]);
   });
 
