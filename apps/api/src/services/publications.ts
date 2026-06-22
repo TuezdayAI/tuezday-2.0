@@ -4,7 +4,7 @@ import type { Connection, Publication, PublicationStatus, PublishDraftInput } fr
 import type { Db } from "../db";
 import { drafts, publications, type PublicationRow } from "../db/schema";
 import type { ConnectorFabric } from "../connectors/fabric";
-import { socialAdapterFor } from "../connectors/social";
+import { socialAdapterFor, type PublishMedia } from "../connectors/social";
 import { getConnection, providerByKey } from "./connections";
 import { emitEvent } from "./events";
 
@@ -86,6 +86,7 @@ export async function createPublication(
   draftId: string,
   connection: Connection,
   input: PublishDraftInput,
+  media?: PublishMedia[],
 ): Promise<Publication> {
   const now = Date.now();
   const row: PublicationRow = {
@@ -96,6 +97,7 @@ export async function createPublication(
     providerKey: connection.providerKey,
     target: input.target,
     title: input.title,
+    mediaJson: media && media.length > 0 ? JSON.stringify(media) : null,
     status: "scheduled",
     scheduledFor: input.scheduledFor ?? now,
     publishedAt: null,
@@ -143,6 +145,7 @@ export async function attemptPublication(
       target: row.target,
       title: row.title,
       body: draft.content,
+      media: row.mediaJson ? (JSON.parse(row.mediaJson) as PublishMedia[]) : undefined,
     });
     db.update(publications)
       .set({

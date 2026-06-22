@@ -25,6 +25,26 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
 - **Origin:** Sprint 26 (Targeted campaign launch). Boundary held: we still never build
   deliverability/warmup infra ourselves.
 
+### 2. Launch generation is synchronous (one LLM call per recipient, inline)
+- **What we shipped (Sprint 26):** `generateLaunch` loops the audience and calls the LLM once per
+  recipient (email + X DM) plus once per broadcast channel, all inside the request — the same shape
+  the Sprint 11 outbound drafter uses. Fine for modest segments; a large audience makes the
+  `/generate` call slow.
+- **The better version:** Enqueue generation on `apps/worker` (the system actor already calls the API
+  cross-workspace) and stream/poll progress; the launch sits in `generating` until done.
+- **Trigger to revisit:** When a real launch targets more than a few dozen recipients, or `/generate`
+  starts timing out.
+- **Origin:** Sprint 26.
+
+### 3. Instagram video/reel finalize uses a bounded in-request poll, not async worker finalize
+- **What we shipped (Sprint 26):** `InstagramAdapter` publishes images and carousels synchronously;
+  for a video/reel it polls the container `status_code` a bounded number of times, then errors with
+  "still processing — retry" (the existing publication **retry** route finishes it). No fake success.
+- **The better version:** A worker-driven async finalize — create the container, return immediately,
+  and let the worker poll + publish when the reel is ready (the same scheduled-publication machinery).
+- **Trigger to revisit:** When founders publish reels regularly and the retry step becomes annoying.
+- **Origin:** Sprint 26.
+
 ---
 
 ## Done (upgraded)

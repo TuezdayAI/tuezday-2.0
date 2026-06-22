@@ -125,11 +125,13 @@ describe("task types and channels", () => {
       "google_rsa",
       "pr_pitch",
       "press_boilerplate",
+      "x_dm",
+      "instagram_post",
     ]);
   });
 
   it("covers the planned channels", () => {
-    expect(CHANNELS).toEqual(["linkedin", "x", "email", "ads", "web", "pr"]);
+    expect(CHANNELS).toEqual(["linkedin", "x", "email", "ads", "web", "pr", "instagram"]);
   });
 });
 

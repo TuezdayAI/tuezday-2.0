@@ -334,6 +334,8 @@ export const leads = sqliteTable("leads", {
   company: text("company").notNull().default(""),
   role: text("role").notNull().default(""),
   notes: text("notes").notNull().default(""),
+  // X (Twitter) handle without the leading "@" — for per-recipient X DMs (Sprint 26).
+  xHandle: text("x_handle").notNull().default(""),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -483,6 +485,9 @@ export const publications = sqliteTable("publications", {
   providerKey: text("provider_key").notNull(),
   target: text("target").notNull(),
   title: text("title").notNull(),
+  // Attached media for platforms that need it (Instagram). JSON array of
+  // { url, type } or null. Posted alongside the draft body/caption.
+  mediaJson: text("media_json"),
   status: text("status").notNull().default("scheduled"),
   // The requested publish time; "post now" stamps the request time.
   scheduledFor: integer("scheduled_for").notNull(),
@@ -675,3 +680,57 @@ export const campaignAudiences = sqliteTable(
 );
 
 export type CampaignAudienceRow = typeof campaignAudiences.$inferSelect;
+
+// Targeted campaign launch (Sprint 26). A launch targets an audience and
+// produces per-recipient personalized first-touches (email, X DM) plus
+// per-platform broadcast posts (LinkedIn, Instagram), each gated as a draft.
+export const launches = sqliteTable("launches", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  // Recipients are snapshotted onto launch_messages at generate time, so a
+  // later audience/campaign/persona delete never breaks the launch record.
+  audienceId: text("audience_id").references(() => audiences.id, { onDelete: "set null" }),
+  campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+  personaId: text("persona_id").references(() => personas.id, { onDelete: "set null" }),
+  channelsJson: text("channels_json").notNull(),
+  status: text("status").notNull().default("draft"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type LaunchRow = typeof launches.$inferSelect;
+
+// One row per personalized recipient message, or one per platform broadcast.
+// Recipient identity is a snapshot (polymorphic memberId, no FK). The draft
+// carries the gated content; this row carries the dispatch outcome.
+export const launchMessages = sqliteTable("launch_messages", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  launchId: text("launch_id")
+    .notNull()
+    .references(() => launches.id, { onDelete: "cascade" }),
+  channel: text("channel").notNull(),
+  kind: text("kind").notNull(),
+  recipientType: text("recipient_type"),
+  recipientId: text("recipient_id"),
+  recipientName: text("recipient_name").notNull().default(""),
+  recipientEmail: text("recipient_email").notNull().default(""),
+  recipientHandle: text("recipient_handle"),
+  draftId: text("draft_id").references(() => drafts.id, { onDelete: "set null" }),
+  status: text("status").notNull().default("pending"),
+  skipReason: text("skip_reason"),
+  externalId: text("external_id"),
+  externalUrl: text("external_url"),
+  publicationId: text("publication_id").references(() => publications.id, { onDelete: "set null" }),
+  sentAt: integer("sent_at"),
+  lastError: text("last_error"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type LaunchMessageRow = typeof launchMessages.$inferSelect;

@@ -24,6 +24,8 @@ export const CHANNEL_GUIDANCE: Record<Channel, string> = {
   ads: "Channel: Paid ads. Hook, promise, proof, action - in very few words. One message per variant. Clarity beats cleverness.",
   web: "Channel: Website. Visitors scan. Headline carries the positioning, subhead carries the proof. Concrete claims over adjectives.",
   pr: "Channel: PR / media pitch. The reader is a journalist triaging a full inbox. The subject line IS the story. Lead with why their readers care, not why the company is proud. Short, factual, zero marketing language - never call your own news exciting. Make the journalist's job easy: the angle, the proof, who they can talk to.",
+  instagram:
+    "Channel: Instagram. Visual-first feed; the caption supports the image/video, it doesn't carry the whole message. Open with a hook in the first line (the rest is hidden behind 'more'). Conversational, concrete, a little personality. Light, meaningful emoji use is fine; a few topical hashtags at the end, not a wall. No LinkedIn-style corporate phrasing.",
 };
 
 /**
@@ -99,6 +101,10 @@ export const TASK_INSTRUCTIONS: Record<TaskType, string> = {
   pr_pitch: composePrPitchInstruction("announcement"),
   press_boilerplate:
     "Task: Write press boilerplate for the company from the context above, in three labeled parts: 'One-liner:' (a single factual sentence saying what the company is), 'About:' (a roughly 100-word about paragraph in the third person - factual, concrete, no superlatives), and 'Key facts:' (3-5 bullet lines starting with '- '). Ground every claim in the context - never invent numbers, customers, or dates. Return only the three labeled parts - no preamble or commentary.",
+  x_dm:
+    "Task: Write a short personalized first-touch X (Twitter) direct message to the recipient above (treated as the lead). Two or three sentences, plain and human, like a real person sliding into DMs - not a marketing blast. Personalize ONLY from the recipient facts given; never invent shared history. One clear, low-friction ask. No links unless essential, no hashtags, no emoji spam. Return only the DM text - no preamble, greeting label, or commentary.",
+  instagram_post:
+    "Task: Write one Instagram caption grounded in the context above, to accompany the launch's image/video. Open with a scroll-stopping first line, then a few short, punchy lines in the company's voice. End with one light call to action and 3-5 relevant hashtags on the final line. Keep it under 2200 characters. The caption supports the visual - don't describe the image literally. Return only the caption text - no preamble or commentary.",
 };
 
 // ---------------------------------------------------------------------------

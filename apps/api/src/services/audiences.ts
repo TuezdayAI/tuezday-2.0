@@ -44,7 +44,15 @@ export function loadPeople(db: Db, workspaceId: string): Person[] {
 
   const people: Person[] = [];
   for (const l of leadRows) {
-    people.push({ type: "lead", id: l.id, name: l.name, email: l.email, company: l.company, role: l.role });
+    people.push({
+      type: "lead",
+      id: l.id,
+      name: l.name,
+      email: l.email,
+      company: l.company,
+      role: l.role,
+      xHandle: l.xHandle || undefined,
+    });
   }
   for (const c of contactRows) {
     people.push({ type: "contact", id: c.id, name: c.name, email: c.email, company: c.company, role: c.role });

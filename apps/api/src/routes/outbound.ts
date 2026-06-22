@@ -4,6 +4,7 @@ import {
   createLeadInputSchema,
   importLeadsInputSchema,
   outboundDraftRequestSchema,
+  updateLeadInputSchema,
   type ApprovalState,
 } from "@tuezday/contracts";
 import { resolveContext, type BrainContents } from "@tuezday/brain";
@@ -18,7 +19,15 @@ import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
 import { submitDraft } from "../services/drafts";
 import { retrieveEvidence } from "../services/evidence";
 import { storeGeneration } from "../services/generations";
-import { createLead, csvField, deleteLead, getLead, importLeadsCsv, listLeads } from "../services/leads";
+import {
+  createLead,
+  csvField,
+  deleteLead,
+  getLead,
+  importLeadsCsv,
+  listLeads,
+  updateLead,
+} from "../services/leads";
 import { getPersona } from "../services/personas";
 import { getWorkspace } from "../services/workspaces";
 
@@ -52,6 +61,23 @@ export function registerOutboundRoutes(
     if (!workspaceOr404(db, request.params.id, reply)) return reply;
     return listLeads(db, request.params.id);
   });
+
+  app.patch<{ Params: { id: string; leadId: string } }>(
+    "/workspaces/:id/leads/:leadId",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const parsed = updateLeadInputSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.status(400).send({
+          error: "invalid_input",
+          message: parsed.error.issues.map((i) => i.message).join("; "),
+        });
+      }
+      const updated = updateLead(db, request.params.id, request.params.leadId, parsed.data);
+      if (!updated) return reply.status(404).send({ error: "lead_not_found" });
+      return updated;
+    },
+  );
 
   app.delete<{ Params: { id: string; leadId: string } }>(
     "/workspaces/:id/leads/:leadId",

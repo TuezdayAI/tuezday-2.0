@@ -35,11 +35,14 @@ export const TASK_TYPES = [
   "google_rsa",
   "pr_pitch",
   "press_boilerplate",
+  // Sprint 26 (targeted launch): a per-recipient X DM and a broadcast IG post.
+  "x_dm",
+  "instagram_post",
 ] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
 /** Channels a task can target. */
-export const CHANNELS = ["linkedin", "x", "email", "ads", "web", "pr"] as const;
+export const CHANNELS = ["linkedin", "x", "email", "ads", "web", "pr", "instagram"] as const;
 export type Channel = (typeof CHANNELS)[number];
 
 // ---------------------------------------------------------------------------
@@ -534,9 +537,20 @@ export const leadSchema = z.object({
   company: z.string().max(200),
   role: z.string().max(200),
   notes: z.string().max(2000),
+  // X (Twitter) handle without the leading "@" — used for per-recipient X DMs
+  // in a launch (Sprint 26). Empty when unknown.
+  xHandle: z.string().max(50),
   createdAt: z.number().int(),
 });
 export type Lead = z.infer<typeof leadSchema>;
+
+/** Normalize an X handle: strip a leading "@" and surrounding whitespace. */
+const xHandleSchema = z
+  .string()
+  .trim()
+  .max(51)
+  .transform((v) => v.replace(/^@+/, "").trim())
+  .pipe(z.string().max(50));
 
 export const createLeadInputSchema = z.object({
   name: z.string().trim().min(1, "Lead name is required").max(200),
@@ -544,8 +558,22 @@ export const createLeadInputSchema = z.object({
   company: z.string().trim().max(200).default(""),
   role: z.string().trim().max(200).default(""),
   notes: z.string().trim().max(2000).default(""),
+  xHandle: xHandleSchema.default(""),
 });
 export type CreateLeadInput = z.infer<typeof createLeadInputSchema>;
+
+/** Partial edit of an existing lead (e.g. setting an X handle). */
+export const updateLeadInputSchema = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    email: z.string().trim().email(),
+    company: z.string().trim().max(200),
+    role: z.string().trim().max(200),
+    notes: z.string().trim().max(2000),
+    xHandle: xHandleSchema,
+  })
+  .partial();
+export type UpdateLeadInput = z.infer<typeof updateLeadInputSchema>;
 
 export const importLeadsInputSchema = z.object({
   csv: z.string().trim().min(1, "CSV content is required").max(500_000),
@@ -1247,11 +1275,17 @@ export interface SocialPostConstraints {
   targetLabel: string;
   titleMaxChars: number;
   bodyMaxChars: number;
+  /** The platform cannot publish without at least one media item (Instagram). */
+  requiresMedia?: boolean;
 }
 
 export const SOCIAL_POST_CONSTRAINTS = {
   // https://www.reddit.com — self (text) posts.
   reddit: { targetLabel: "Subreddit", titleMaxChars: 300, bodyMaxChars: 40_000 },
+  // Member share via /v2/ugcPosts (w_member_social) — no title; ~3000 char body.
+  linkedin: { targetLabel: "LinkedIn feed", titleMaxChars: 200, bodyMaxChars: 3000 },
+  // IG Graph API publish — caption max 2200 chars; needs ≥1 image/video.
+  instagram: { targetLabel: "Instagram", titleMaxChars: 200, bodyMaxChars: 2200, requiresMedia: true },
 } satisfies Record<string, SocialPostConstraints>;
 
 export interface SocialPostViolation {
@@ -1559,6 +1593,8 @@ export const personSchema = z.object({
   email: z.string(),
   company: z.string(),
   role: z.string(),
+  // Only populated for `lead` people (Sprint 26) — contacts have no handle.
+  xHandle: z.string().optional(),
 });
 export type Person = z.infer<typeof personSchema>;
 
@@ -1789,6 +1825,101 @@ export const createWebhookInputSchema = z.object({
   secret: z.string().trim().min(8, "Secret must be at least 8 characters").optional(),
 });
 export type CreateWebhookInput = z.infer<typeof createWebhookInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Targeted campaign launch (Sprint 26)
+// ---------------------------------------------------------------------------
+
+/** The channels a launch can drive: per-recipient email/X, broadcast LinkedIn/IG. */
+export const LAUNCH_CHANNELS = ["email", "linkedin", "instagram", "x"] as const;
+export type LaunchChannel = (typeof LAUNCH_CHANNELS)[number];
+
+/** Coarse launch lifecycle; per-message detail lives on launch_messages. */
+export const LAUNCH_STATUSES = ["draft", "generating", "ready", "completed"] as const;
+export type LaunchStatus = (typeof LAUNCH_STATUSES)[number];
+
+/** Per-recipient personalized message, or one platform-wide broadcast post. */
+export const LAUNCH_MESSAGE_KINDS = ["personalized", "broadcast"] as const;
+export type LaunchMessageKind = (typeof LAUNCH_MESSAGE_KINDS)[number];
+
+/** Dispatch lifecycle of one message (approval state is read from its draft). */
+export const LAUNCH_MESSAGE_STATUSES = ["pending", "sent", "failed", "skipped"] as const;
+export type LaunchMessageStatus = (typeof LAUNCH_MESSAGE_STATUSES)[number];
+
+export const LAUNCH_MEDIA_TYPES = ["image", "video"] as const;
+export type LaunchMediaType = (typeof LAUNCH_MEDIA_TYPES)[number];
+
+export const launchMediaSchema = z.object({
+  url: z.string().trim().url("A valid media URL is required"),
+  type: z.enum(LAUNCH_MEDIA_TYPES),
+});
+export type LaunchMedia = z.infer<typeof launchMediaSchema>;
+
+export const launchSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  name: z.string(),
+  audienceId: z.string().uuid().nullable(),
+  campaignId: z.string().uuid().nullable(),
+  personaId: z.string().uuid().nullable(),
+  channels: z.array(z.enum(LAUNCH_CHANNELS)),
+  status: z.enum(LAUNCH_STATUSES),
+  messageCount: z.number().int(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type Launch = z.infer<typeof launchSchema>;
+
+export const launchMessageSchema = z.object({
+  id: z.string().uuid(),
+  launchId: z.string().uuid(),
+  channel: z.enum(LAUNCH_CHANNELS),
+  kind: z.enum(LAUNCH_MESSAGE_KINDS),
+  recipientType: z.enum(AUDIENCE_MEMBER_TYPES).nullable(),
+  recipientId: z.string().nullable(),
+  recipientName: z.string(),
+  recipientEmail: z.string(),
+  recipientHandle: z.string().nullable(),
+  draftId: z.string().uuid().nullable(),
+  status: z.enum(LAUNCH_MESSAGE_STATUSES),
+  skipReason: z.string().nullable(),
+  externalId: z.string().nullable(),
+  externalUrl: z.string().nullable(),
+  sentAt: z.number().int().nullable(),
+  lastError: z.string().nullable(),
+  // The linked draft's current approval state + content, for the launch UI.
+  draftState: z.enum(APPROVAL_STATES).nullable(),
+  draftContent: z.string().nullable(),
+});
+export type LaunchMessage = z.infer<typeof launchMessageSchema>;
+
+export const launchDetailSchema = z.object({
+  launch: launchSchema,
+  messages: z.array(launchMessageSchema),
+  recipientCount: z.number().int(),
+});
+export type LaunchDetail = z.infer<typeof launchDetailSchema>;
+
+export const createLaunchInputSchema = z.object({
+  name: z.string().trim().min(1, "Launch name is required").max(200),
+  audienceId: z.string().uuid("Pick an audience to target"),
+  campaignId: z.string().uuid().optional(),
+  personaId: z.string().uuid().optional(),
+  channels: z.array(z.enum(LAUNCH_CHANNELS)).min(1, "Pick at least one channel"),
+});
+export type CreateLaunchInput = z.infer<typeof createLaunchInputSchema>;
+
+export const generateLaunchInputSchema = z.object({
+  tokenBudget: z.number().int().min(500).max(200_000).optional(),
+  useEvidence: z.boolean().optional(),
+});
+export type GenerateLaunchInput = z.infer<typeof generateLaunchInputSchema>;
+
+export const dispatchChannelInputSchema = z.object({
+  connectionId: z.string().uuid().optional(),
+  media: z.array(launchMediaSchema).max(10, "At most 10 media items").optional(),
+});
+export type DispatchChannelInput = z.infer<typeof dispatchChannelInputSchema>;
 
 // ---------------------------------------------------------------------------
 // API error shape

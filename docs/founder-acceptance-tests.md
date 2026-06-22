@@ -351,7 +351,49 @@
 
 **Gate:** you can carve your leads/contacts into a reusable list and a live
 "VPs at fintech" segment, see exactly who is in each, and point a campaign at
-them — the targeting primitive Sprint 25 will send through.
+them — the targeting primitive Sprint 26 sends through.
+
+---
+
+## Sprint 26 — Targeted campaign launch at a segment
+
+> Branch `sprint-26-targeted-launch` (built on Sprint 24 + Sprint 25; merge order
+> 24 → 25 → 26). Prereqs: LinkedIn / X / Instagram connected (Sprint 25) with
+> their creds in `.env`; a segment/list with a few leads, some carrying an X
+> handle. Instagram needs an IG **Business/Creator** account linked to a Page,
+> via the Facebook app (`INSTAGRAM_CLIENT_ID/SECRET`), with `instagram_content_publish`.
+
+- [ ] **Set X handles:** Audience → a lead → **+ X handle** (or edit) → save → the
+      handle shows on the lead (the leading `@` is stripped). CSV import with an
+      `x`/`twitter` column also fills it.
+- [ ] **Create a launch:** Audience → **Launches** → **New launch** → name it, pick
+      the segment, optionally a campaign + persona, tick **Email, LinkedIn,
+      Instagram, X** (a channel whose account isn't connected is disabled with a
+      hint) → Create.
+- [ ] **Generate:** open the launch → **Generate** → it goes to `ready` showing:
+      one **personalized email** + one **personalized X DM** per recipient (leads
+      without a handle, and all contacts, show **skipped — no X handle**), plus one
+      **LinkedIn** and one **Instagram** broadcast draft. Every draft is
+      `pending_review`.
+- [ ] **Review/approve:** approve the drafts (inline **approve**, or in Review).
+- [ ] **Email:** Download CSV → open it → one row per approved recipient with the
+      personalized body in `personalized_message` (ready for Smartlead/Instantly);
+      those messages flip to `sent`.
+- [ ] **LinkedIn:** **Publish** → the broadcast appears on the connected LinkedIn
+      feed; the **view** link resolves; it also appears under Publications.
+- [ ] **Instagram:** paste an image URL (try 2–3 for a carousel, a `.mp4` for a
+      reel) → **Publish** → the post appears on the IG Business account. Publishing
+      with no media is refused (`media_required`).
+- [ ] **X:** **Send DMs** → recipients with a valid handle receive the DM; a
+      bad/closed handle shows a clear per-recipient error without aborting the
+      rest; skipped recipients are untouched.
+- [ ] No social account connected for a channel → dispatch returns a clear
+      "connect it first"; a channel the launch didn't select can't be dispatched.
+- [ ] `npm run typecheck` and `npm test` pass.
+
+**Gate:** you can point a launch at a segment and, in one place, ship a
+per-person email + X DM and a LinkedIn + Instagram broadcast — each written in
+your voice and cleared through Review — without leaving Tuezday.
 
 ---
 

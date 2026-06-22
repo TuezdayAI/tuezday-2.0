@@ -10,6 +10,7 @@ import { R2REvidenceStore } from "./evidence/r2r";
 import type { EvidenceStore } from "./evidence/store";
 import { GeminiGateway } from "./llm/gemini";
 import type { LlmGateway } from "./llm/gateway";
+import { CsvOutboundExporter, type OutboundExporter } from "./outbound/exporter";
 import { registerAdCreativeRoutes } from "./routes/ad-creatives";
 import { registerAdLaunchRoutes } from "./routes/ad-launches";
 import { registerAdsRoutes } from "./routes/ads";
@@ -22,6 +23,7 @@ import { registerCrmRoutes } from "./routes/crm";
 import { registerDiscoveryRoutes } from "./routes/discovery";
 import { registerDraftRoutes } from "./routes/drafts";
 import { registerEvidenceRoutes } from "./routes/evidence";
+import { registerLaunchRoutes } from "./routes/launches";
 import { registerLearningRoutes } from "./routes/learning";
 import { registerOutboundRoutes } from "./routes/outbound";
 import { registerPrRoutes } from "./routes/pr";
@@ -44,6 +46,8 @@ export interface BuildAppOptions {
   evidence?: EvidenceStore;
   /** Connector fabric override; defaults to the Nango client from env. */
   connectors?: ConnectorFabric;
+  /** Outbound-email exporter (Sprint 26); defaults to a Smartlead/Instantly CSV. */
+  exporter?: OutboundExporter;
   /**
    * Shared secret that authenticates the worker as the `system` actor with
    * access to every workspace. Defaults to TUEZDAY_WORKER_TOKEN.
@@ -57,6 +61,7 @@ export async function buildApp({
   fetcher = fetch,
   evidence = new R2REvidenceStore(),
   connectors = new NangoFabric(undefined, undefined, fetcher),
+  exporter = new CsvOutboundExporter(),
   workerToken = process.env.TUEZDAY_WORKER_TOKEN,
 }: BuildAppOptions): Promise<TuezdayApp> {
   const app = Fastify({ logger: false });
@@ -91,6 +96,7 @@ export async function buildApp({
   registerEvidenceRoutes(app, db, evidence);
   registerLearningRoutes(app, db, llm, fetcher);
   registerOutboundRoutes(app, db, llm, evidence);
+  registerLaunchRoutes(app, db, llm, evidence, connectors, fetcher, exporter);
   registerConnectorRoutes(app, db, connectors, fetcher);
   registerCrmRoutes(app, db, connectors, fetcher);
   registerAdsRoutes(app, db, connectors, fetcher);
