@@ -259,9 +259,105 @@
 
 ---
 
+## Sprint 21 — Runtime-editable channel/platform guidance
+
+> Spec: `docs/specs/sprint-21-runtime-editable-guidance.md` (on the
+> `sprint-21-runtime-editable-guidance` branch). Channel guidance defaults moved out of code
+> into `packages/contracts`; per-workspace, per-channel overrides live in the DB and are read at
+> resolve time. Editor lives on the **Brain** page.
+
+- [ ] Brain page → **Channel guidance** → each of the six channels (LinkedIn, X, Email, Paid ads, Website, PR) shows its current text with a **Default** badge.
+- [ ] Edit **LinkedIn** guidance (e.g. add "Always open with a contrarian one-liner.") → **Save** → the badge flips to **Workspace override**; no redeploy happened.
+- [ ] Sandbox/Content → generate a **LinkedIn post** → the output reflects the edited guidance.
+- [ ] Show the prompt trace for that generation → the **Channel: linkedin** section shows the edited text and its reason reads **"workspace override."** Generate for a different channel → its reason still reads **"built-in default."**
+- [ ] **Reset to default** on LinkedIn → the badge returns to **Default**; the next generation uses the original guidance again.
+- [ ] `npm run typecheck` and `npm test` pass.
+
+**Gate:** channel guidance is editable per workspace with zero redeploy, and the resolved-context trace always tells you whether the model saw the built-in default or your workspace override.
+
+---
+
+## Sprint 22 — Generation quality: angle-first + dual-LLM pre-review
+
+> Spec: `docs/specs/sprint-22-generation-quality.md` (on the `sprint-22-generation-quality` branch).
+> Prereq: a working `GEMINI_API_KEY` — review adds ~2 gateway calls per generation. New-workspace
+> defaults: **review ON, angle step OFF**, both per-workspace toggleable; flag threshold default 70.
+
+- [ ] Sandbox → the **quality settings** card shows review **on** and the angle step **off** by default; turn the angle step on and set an angle count.
+- [ ] **Suggest angles** → several distinct angles appear → pick one → generate a **LinkedIn post**.
+- [ ] The generation shows a **brand-voice score** and a **channel-fit score** (0–100 each), each with specific issues.
+- [ ] A draft that scores below the flag threshold shows a **"flagged"** badge *before* it reaches Review.
+- [ ] Send it to **Review** → the same scores/issues appear on the draft, with a **Re-run review** button → Re-run re-checks the draft's *current* content.
+- [ ] Approve / edit / reject still work exactly as before — flags are **advisory only and never block approval** (your override always wins).
+- [ ] Confirm automated review also runs on an **outbound email**, a **PR pitch**, and a **signal-response** draft — but **not** on ad creatives.
+- [ ] Turn **review off** in settings → a fresh generation carries no scores. Turn the **angle step off** → generation goes straight to a draft.
+- [ ] Show the prompt trace → the angle and reviewer prompts are brain-resolved (soul/voice for brand, channel guidance for fit), not hardcoded; every extra call is traced.
+- [ ] `npm run typecheck` and `npm test` pass.
+
+**Gate:** weak drafts are scored and flagged before you spend attention on them, every reviewer/angle prompt is resolved through the brain and visible in the trace, and a flag never blocks your decision.
+
+---
+
+## Sprint 23 — CRM contact management: discard + filtered sync
+
+> Spec: `docs/specs/sprint-23-crm-discard-filtered-sync.md` (on the
+> `sprint-23-crm-discard-filtered-sync` branch). Both controls are **local working state** — the CRM
+> stays the system of record; nothing here writes to or deletes from Freshsales.
+> Prereq: Freshsales connected (see Sprint 13) and at least one Sync done.
+
+- [ ] CRM page → **Sync** (Freshsales) → contacts appear.
+- [ ] **Discard** two contacts → they leave the list and appear under **Discarded**.
+- [ ] **Sync** again → the discarded two **do not** come back; everything else refreshes.
+- [ ] **Restore** one → it returns to the contacts list; the next sync refreshes it.
+- [ ] Set a **Sync filter**: choose a specific Freshsales view (and/or an "updated since" date) → **Save** → **Sync** → only matching contacts come in; the synced count reflects the smaller set.
+- [ ] Confirm nothing changed in Freshsales itself (no contact deleted there); a lead you imported from a now-discarded contact still exists on the Outbound/Leads page.
+- [ ] `npm run typecheck` and `npm test` pass.
+
+**Gate:** you control which CRM contacts live in Tuezday — a discard stays gone across re-syncs, a filter scopes what comes in, and the CRM remains the system of record with nothing deleted on its side.
+
+---
+
+## Sprint 24 — Lead lists & segments
+
+> Spec: `docs/specs/sprint-24-lead-lists-segments.md` (on the
+> `sprint-24-lead-lists-segments` branch). Find it under **Audience → Lists &
+> segments** in the sidebar.
+> Prep: have a handful of leads in the workspace (Outbound page → import or add a
+> few, ideally with varied `role`/`company`). A couple of synced CRM contacts
+> (CRM page) make the unified leads+contacts behaviour visible but are optional.
+
+- [ ] Lists & segments page → **New audience** → **Static list**, name it, create
+      it → open its card → the people picker lists your leads **and** any CRM
+      contacts not yet imported as a lead; tick a few → **Add** → they appear as
+      members with a lead/contact badge; **remove** one and it leaves.
+- [ ] A CRM contact you already imported as a lead shows **once** (as the lead),
+      never twice, in the picker and in segments.
+- [ ] **New audience → Dynamic segment** "VPs at fintech": rule = `role` *contains*
+      `VP` **AND** a nested **ANY of (OR)** group [`company` *contains* `fintech`
+      **OR** `email domain` *contains* `fintech`] → save → its members resolve
+      live to exactly the people who match; the count matches.
+- [ ] Edit the segment (broaden the rule, e.g. drop the fintech group) → reopen →
+      membership has changed with no other action — it is computed live.
+- [ ] Adding members by hand to a **dynamic** segment is not offered (segments are
+      rule-driven); a static list offers no rule builder.
+- [ ] Open a member's card → **Attach to campaign** → pick an active campaign →
+      confirmation. Go to **Campaigns**, expand that campaign → an **Audiences**
+      line lists the attached list/segment with its kind and member count.
+- [ ] Attach a second audience to the same campaign → both show; detach is
+      reflected on the campaign. (Sending to an audience arrives in Sprint 25.)
+- [ ] Delete a lead that sits in a static list → it disappears from the list’s
+      members.
+- [ ] `npm run typecheck` and `npm test` pass.
+
+**Gate:** you can carve your leads/contacts into a reusable list and a live
+"VPs at fintech" segment, see exactly who is in each, and point a campaign at
+them — the targeting primitive Sprint 25 will send through.
+
+---
+
 ## Cross-cutting things worth re-checking occasionally
 
-- [ ] `npm test` (321 tests) and `npm run typecheck` stay green.
+- [ ] `npm test` (537 tests) and `npm run typecheck` stay green.
 - [ ] Every generation's prompt trace is readable *before* and *after* the LLM call (sandbox → "show prompt trace").
 - [ ] Stopping any external service (R2R, Nango) degrades gracefully — the app never breaks, traces/banners say why.
 - [ ] Gemini occasionally returns 503 "high demand" — a retry succeeds; it surfaces as a clean error, never a crash.

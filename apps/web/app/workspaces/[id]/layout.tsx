@@ -52,6 +52,7 @@ const NAV: NavItem[] = [
     label: "Audience",
     path: "/outbound",
     children: [
+      { label: "Lists & segments", path: "/lists" },
       { label: "CRM", path: "/crm" },
       { label: "PR & media", path: "/pr" },
     ],

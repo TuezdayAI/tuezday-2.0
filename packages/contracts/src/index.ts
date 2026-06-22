@@ -1510,6 +1510,242 @@ export const updateAdSettingsInputSchema = z.object({
 export type UpdateAdSettingsInput = z.infer<typeof updateAdSettingsInputSchema>;
 
 // ---------------------------------------------------------------------------
+// Lead lists & segments (Sprint 24)
+// ---------------------------------------------------------------------------
+
+/**
+ * An audience is either a hand-picked `static` list or a `dynamic` segment
+ * whose members are computed live from a rule tree. Both group the same unified
+ * "people pool": all leads plus CRM contacts not yet linked to a lead.
+ */
+export const AUDIENCE_KINDS = ["static", "dynamic"] as const;
+export type AudienceKind = (typeof AUDIENCE_KINDS)[number];
+
+/** A person in an audience is either a lead or a synced CRM contact. */
+export const AUDIENCE_MEMBER_TYPES = ["lead", "contact"] as const;
+export type AudienceMemberType = (typeof AUDIENCE_MEMBER_TYPES)[number];
+
+/**
+ * Fields a segment rule can test. Common to both member types so rules apply
+ * uniformly — `notes` (leads only) is deliberately excluded. `email_domain` is
+ * derived (everything after the first `@`); `type` is the member type itself.
+ */
+export const SEGMENT_FIELDS = ["name", "email", "email_domain", "company", "role", "type"] as const;
+export type SegmentField = (typeof SEGMENT_FIELDS)[number];
+
+export const SEGMENT_OPERATORS = [
+  "equals",
+  "not_equals",
+  "contains",
+  "not_contains",
+  "starts_with",
+  "is_set",
+  "is_empty",
+] as const;
+export type SegmentOperator = (typeof SEGMENT_OPERATORS)[number];
+
+/** Operators that ignore `value` — presence checks. */
+const VALUELESS_OPERATORS: readonly SegmentOperator[] = ["is_set", "is_empty"];
+
+/** Bounds that keep "simple rule-based" honest — guarded by the schema. */
+export const SEGMENT_MAX_DEPTH = 5;
+export const SEGMENT_MAX_CONDITIONS = 50;
+
+/** A unified person drawn from the workspace's people pool. */
+export const personSchema = z.object({
+  type: z.enum(AUDIENCE_MEMBER_TYPES),
+  id: z.string().uuid(),
+  name: z.string(),
+  email: z.string(),
+  company: z.string(),
+  role: z.string(),
+});
+export type Person = z.infer<typeof personSchema>;
+
+export const segmentConditionSchema = z
+  .object({
+    field: z.enum(SEGMENT_FIELDS),
+    operator: z.enum(SEGMENT_OPERATORS),
+    // Optional: presence operators (is_set/is_empty) ignore it. Absent === "".
+    value: z.string().max(500).optional(),
+  })
+  .superRefine((cond, ctx) => {
+    const needsValue = !VALUELESS_OPERATORS.includes(cond.operator);
+    const value = (cond.value ?? "").trim();
+    if (needsValue && value.length === 0) {
+      ctx.addIssue({ code: "custom", message: `"${cond.operator}" needs a value` });
+    }
+    if (cond.field === "type" && needsValue && value.length > 0) {
+      if (!(AUDIENCE_MEMBER_TYPES as readonly string[]).includes(value)) {
+        ctx.addIssue({ code: "custom", message: `type must be one of: ${AUDIENCE_MEMBER_TYPES.join(", ")}` });
+      }
+    }
+  });
+export type SegmentCondition = z.infer<typeof segmentConditionSchema>;
+
+export const SEGMENT_COMBINATORS = ["and", "or"] as const;
+export type SegmentCombinator = (typeof SEGMENT_COMBINATORS)[number];
+
+/** A rule node is either a leaf condition or a nested group. */
+export type SegmentRuleNode = SegmentCondition | SegmentRuleGroup;
+export interface SegmentRuleGroup {
+  combinator: SegmentCombinator;
+  rules: SegmentRuleNode[];
+}
+
+/** Recursive AND/OR rule tree. A group with no rules matches everyone. */
+export const segmentRuleGroupSchema: z.ZodType<SegmentRuleGroup> = z.lazy(() =>
+  z.object({
+    combinator: z.enum(SEGMENT_COMBINATORS),
+    rules: z.array(z.union([segmentConditionSchema, segmentRuleGroupSchema])).max(SEGMENT_MAX_CONDITIONS),
+  }),
+);
+
+function isRuleGroup(node: SegmentRuleNode): node is SegmentRuleGroup {
+  return (node as SegmentRuleGroup).combinator !== undefined;
+}
+
+/** Depth and total-condition guards, run as a refinement on whole trees. */
+function ruleTreeStats(node: SegmentRuleNode, depth = 1): { depth: number; conditions: number } {
+  if (!isRuleGroup(node)) return { depth, conditions: 1 };
+  let maxDepth = depth;
+  let conditions = 0;
+  for (const child of node.rules) {
+    const stats = ruleTreeStats(child, depth + 1);
+    maxDepth = Math.max(maxDepth, stats.depth);
+    conditions += stats.conditions;
+  }
+  return { depth: maxDepth, conditions };
+}
+
+export const segmentRulesSchema = segmentRuleGroupSchema.superRefine((group, ctx) => {
+  const stats = ruleTreeStats(group);
+  if (stats.depth > SEGMENT_MAX_DEPTH) {
+    ctx.addIssue({ code: "custom", message: `Rules nest too deep (max ${SEGMENT_MAX_DEPTH} levels)` });
+  }
+  if (stats.conditions > SEGMENT_MAX_CONDITIONS) {
+    ctx.addIssue({ code: "custom", message: `Too many conditions (max ${SEGMENT_MAX_CONDITIONS})` });
+  }
+});
+
+function fieldValue(person: Person, field: SegmentField): string {
+  switch (field) {
+    case "email_domain":
+      return person.email.includes("@") ? person.email.slice(person.email.indexOf("@") + 1) : "";
+    case "type":
+      return person.type;
+    default:
+      return person[field];
+  }
+}
+
+function matchesCondition(person: Person, cond: SegmentCondition): boolean {
+  const actual = fieldValue(person, cond.field).toLowerCase().trim();
+  const expected = (cond.value ?? "").toLowerCase().trim();
+  switch (cond.operator) {
+    case "equals":
+      return actual === expected;
+    case "not_equals":
+      return actual !== expected;
+    case "contains":
+      return actual.includes(expected);
+    case "not_contains":
+      return !actual.includes(expected);
+    case "starts_with":
+      return actual.startsWith(expected);
+    case "is_set":
+      return actual.length > 0;
+    case "is_empty":
+      return actual.length === 0;
+  }
+}
+
+/**
+ * Evaluate a person against a rule tree. Pure and case-insensitive. An empty
+ * group is vacuously true (a brand-new segment matches everyone until rules are
+ * added). Shared by the service (live resolution) and the UI preview.
+ */
+export function evaluateSegment(person: Person, group: SegmentRuleGroup): boolean {
+  if (group.rules.length === 0) return true;
+  const results = group.rules.map((node) =>
+    isRuleGroup(node) ? evaluateSegment(person, node) : matchesCondition(person, node),
+  );
+  return group.combinator === "and" ? results.every(Boolean) : results.some(Boolean);
+}
+
+export const audienceSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  name: z.string().min(1).max(200),
+  description: z.string().max(1000),
+  kind: z.enum(AUDIENCE_KINDS),
+  // The rule tree for dynamic segments; null for static lists.
+  rules: segmentRuleGroupSchema.nullable(),
+  memberCount: z.number().int().min(0),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type Audience = z.infer<typeof audienceSchema>;
+
+/** A resolved member: a pool Person, plus when it was added (static lists). */
+export const audienceMemberSchema = personSchema.extend({
+  addedAt: z.number().int().nullable(),
+});
+export type AudienceMember = z.infer<typeof audienceMemberSchema>;
+
+export const audienceDetailSchema = z.object({
+  audience: audienceSchema,
+  members: z.array(audienceMemberSchema),
+});
+export type AudienceDetail = z.infer<typeof audienceDetailSchema>;
+
+export const upsertAudienceInputSchema = z
+  .object({
+    name: z
+      .string()
+      .trim()
+      .min(1, "Audience name is required")
+      .max(200, "Name must be 200 characters or fewer"),
+    description: z.string().trim().max(1000).default(""),
+    kind: z.enum(AUDIENCE_KINDS),
+    rules: segmentRulesSchema.nullable().default(null),
+  })
+  .superRefine((input, ctx) => {
+    if (input.kind === "dynamic" && !input.rules) {
+      ctx.addIssue({ code: "custom", path: ["rules"], message: "A segment needs rules" });
+    }
+    if (input.kind === "static" && input.rules) {
+      ctx.addIssue({ code: "custom", path: ["rules"], message: "A static list cannot have rules" });
+    }
+  });
+export type UpsertAudienceInput = z.infer<typeof upsertAudienceInputSchema>;
+
+const audienceMemberRefSchema = z.object({
+  type: z.enum(AUDIENCE_MEMBER_TYPES),
+  id: z.string().uuid(),
+});
+export type AudienceMemberRef = z.infer<typeof audienceMemberRefSchema>;
+
+export const addAudienceMembersInputSchema = z.object({
+  members: z.array(audienceMemberRefSchema).min(1, "Select at least one member").max(500),
+});
+export type AddAudienceMembersInput = z.infer<typeof addAudienceMembersInputSchema>;
+
+export const attachAudienceInputSchema = z.object({
+  audienceId: z.string().uuid(),
+});
+export type AttachAudienceInput = z.infer<typeof attachAudienceInputSchema>;
+
+/** A campaign's attached audience, summarised for the campaign detail view. */
+export const campaignAudienceSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  kind: z.enum(AUDIENCE_KINDS),
+  memberCount: z.number().int().min(0),
+});
+export type CampaignAudience = z.infer<typeof campaignAudienceSchema>;
+
+// ---------------------------------------------------------------------------
 // Events + webhooks
 // ---------------------------------------------------------------------------
 

@@ -37,6 +37,7 @@ interface CampaignDetail {
     totals: AdTotals;
     adCampaigns: { id: string; name: string; accountName: string; currency: string; totals: AdTotals }[];
   } | null;
+  audiences: { id: string; name: string; kind: "static" | "dynamic"; memberCount: number }[];
 }
 
 function money(cents: number, currency: string): string {
@@ -368,6 +369,14 @@ export default function CampaignsPage() {
                           </li>
                         ))}
                       </ul>
+                    )}
+                    {detail.audiences.length > 0 && (
+                      <p className="bundle-summary" style={{ marginTop: 10 }}>
+                        Audiences:{" "}
+                        {detail.audiences
+                          .map((a) => `${a.name} (${a.kind}, ${a.memberCount} members)`)
+                          .join(" · ")}
+                      </p>
                     )}
                     {detail.adMetrics && (
                       <>

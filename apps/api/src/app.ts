@@ -13,6 +13,7 @@ import type { LlmGateway } from "./llm/gateway";
 import { registerAdCreativeRoutes } from "./routes/ad-creatives";
 import { registerAdLaunchRoutes } from "./routes/ad-launches";
 import { registerAdsRoutes } from "./routes/ads";
+import { registerAudienceRoutes } from "./routes/audiences";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerBrainRoutes } from "./routes/brain";
 import { registerCampaignRoutes } from "./routes/campaigns";
@@ -86,6 +87,7 @@ export async function buildApp({
   registerSignalRoutes(app, db, llm, evidence);
   registerDiscoveryRoutes(app, db, llm, fetcher);
   registerCampaignRoutes(app, db);
+  registerAudienceRoutes(app, db);
   registerEvidenceRoutes(app, db, evidence);
   registerLearningRoutes(app, db, llm, fetcher);
   registerOutboundRoutes(app, db, llm, evidence);

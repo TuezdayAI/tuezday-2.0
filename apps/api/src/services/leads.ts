@@ -3,6 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 import { createLeadInputSchema, type CreateLeadInput, type Lead } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { leads, type LeadRow } from "../db/schema";
+import { removeLeadFromAudiences } from "./audiences";
 
 export function createLead(db: Db, workspaceId: string, input: CreateLeadInput): Lead {
   const row: LeadRow = {
@@ -38,6 +39,7 @@ export function getLead(db: Db, workspaceId: string, leadId: string): Lead | und
 
 export function deleteLead(db: Db, workspaceId: string, leadId: string): boolean {
   if (!getLead(db, workspaceId, leadId)) return false;
+  removeLeadFromAudiences(db, workspaceId, leadId);
   db.delete(leads).where(eq(leads.id, leadId)).run();
   return true;
 }
