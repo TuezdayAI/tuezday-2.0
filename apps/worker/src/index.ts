@@ -15,6 +15,7 @@ const INTERVAL_MIN = Number(process.env.DISCOVERY_INTERVAL_MIN ?? 30);
 const SYNTHESIS_DAYS = Number(process.env.LEARNING_SYNTHESIS_DAYS ?? 7);
 const ADS_SYNC_HOURS = Number(process.env.ADS_SYNC_HOURS ?? 6);
 const PUBLISH_INTERVAL_MIN = Number(process.env.PUBLISH_INTERVAL_MIN ?? 1);
+const CADENCE_FILL_INTERVAL_MIN = Number(process.env.CADENCE_FILL_INTERVAL_MIN ?? 5);
 
 interface Workspace {
   id: string;
@@ -181,6 +182,42 @@ async function publishTick(): Promise<void> {
   }
 }
 
+interface CadenceRunResponse {
+  results: Array<{ cadenceId: string; filled: number }>;
+}
+
+/** Top up every active cadence's queue: approved drafts → scheduled posts. The
+ * publish tick then fires those when their slot comes due. */
+async function fillCadencesForAllWorkspaces(): Promise<void> {
+  const res = await api(`/workspaces`);
+  if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
+  const workspaces = (await res.json()) as Workspace[];
+
+  for (const workspace of workspaces) {
+    try {
+      const runRes = await api(`/workspaces/${workspace.id}/cadences/run`, { method: "POST" });
+      if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);
+      const { results } = (await runRes.json()) as CadenceRunResponse;
+      const filled = results.reduce((sum, r) => sum + r.filled, 0);
+      if (filled === 0) continue; // nothing to slot — stay quiet
+      console.log(`[cadence] ${workspace.name}: ${filled} draft(s) slotted across ${results.length} cadence(s)`);
+    } catch (err) {
+      console.error(
+        `[cadence] ${workspace.name}: failed —`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+}
+
+async function cadenceTick(): Promise<void> {
+  try {
+    await fillCadencesForAllWorkspaces();
+  } catch (err) {
+    console.error("[cadence] tick failed —", err instanceof Error ? err.message : err);
+  }
+}
+
 async function adsTick(): Promise<void> {
   try {
     await syncAdsForAllWorkspaces();
@@ -203,11 +240,13 @@ async function tick(): Promise<void> {
 }
 
 console.log(
-  `Tuezday worker: polling discovery every ${INTERVAL_MIN} min, ads sync every ${ADS_SYNC_HOURS} h, scheduled publishing every ${PUBLISH_INTERVAL_MIN} min against ${API_URL} (set DISCOVERY_INTERVAL_MIN / ADS_SYNC_HOURS / PUBLISH_INTERVAL_MIN / TUEZDAY_API_URL to change).`,
+  `Tuezday worker: polling discovery every ${INTERVAL_MIN} min, ads sync every ${ADS_SYNC_HOURS} h, cadence fill every ${CADENCE_FILL_INTERVAL_MIN} min, scheduled publishing every ${PUBLISH_INTERVAL_MIN} min against ${API_URL} (set DISCOVERY_INTERVAL_MIN / ADS_SYNC_HOURS / CADENCE_FILL_INTERVAL_MIN / PUBLISH_INTERVAL_MIN / TUEZDAY_API_URL to change).`,
 );
 void tick();
 setInterval(() => void tick(), INTERVAL_MIN * 60 * 1000);
 void adsTick();
 setInterval(() => void adsTick(), ADS_SYNC_HOURS * 60 * 60 * 1000);
+void cadenceTick();
+setInterval(() => void cadenceTick(), CADENCE_FILL_INTERVAL_MIN * 60 * 1000);
 void publishTick();
 setInterval(() => void publishTick(), PUBLISH_INTERVAL_MIN * 60 * 1000);

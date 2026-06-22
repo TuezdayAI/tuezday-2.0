@@ -1108,6 +1108,7 @@ describe("social publishing contracts (Sprint 17)", () => {
       providerKey: "reddit",
       target: "test",
       title: "Hello",
+      cadenceId: null,
       status: "published",
       scheduledFor: 1765500000000,
       publishedAt: 1765500001000,

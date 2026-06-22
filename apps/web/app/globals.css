@@ -1020,3 +1020,94 @@ a.workspace-card:hover {
   background: var(--mint-ink);
   transition: width 0.2s ease;
 }
+
+/* ---------- Posting cadence + calendar (Sprint 27) ---------- */
+
+.cadence-days {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  margin: 14px 0;
+}
+
+.cadence-day {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.calendar-day {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 8px;
+  min-height: 120px;
+}
+
+.calendar-day-head {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.calendar-empty {
+  text-align: center;
+  margin: 0;
+}
+
+.calendar-entry {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 8px;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.calendar-entry-time {
+  color: var(--muted);
+  margin: 2px 0;
+}
+
+.calendar-entry-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.cal-chip {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.cal-open {
+  color: var(--muted);
+  background: var(--panel-2);
+  border: 1px dashed var(--border-strong);
+}
+
+.cal-scheduled {
+  color: var(--lavender-ink);
+  background: var(--lavender);
+}
+
+.cal-published {
+  color: var(--mint-ink);
+  background: var(--mint);
+}
+
+.cal-failed {
+  color: var(--rose-ink);
+  background: var(--rose);
+}

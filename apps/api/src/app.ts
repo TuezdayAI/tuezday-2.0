@@ -10,11 +10,13 @@ import { R2REvidenceStore } from "./evidence/r2r";
 import type { EvidenceStore } from "./evidence/store";
 import { GeminiGateway } from "./llm/gemini";
 import type { LlmGateway } from "./llm/gateway";
+import { createDefaultMailer, type Mailer } from "./mail/mailer";
 import { registerAdCreativeRoutes } from "./routes/ad-creatives";
 import { registerAdLaunchRoutes } from "./routes/ad-launches";
 import { registerAdsRoutes } from "./routes/ads";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerBrainRoutes } from "./routes/brain";
+import { registerCadenceRoutes } from "./routes/cadences";
 import { registerCampaignRoutes } from "./routes/campaigns";
 import { registerConnectorRoutes } from "./routes/connectors";
 import { registerCrmRoutes } from "./routes/crm";
@@ -22,6 +24,7 @@ import { registerDiscoveryRoutes } from "./routes/discovery";
 import { registerDraftRoutes } from "./routes/drafts";
 import { registerEvidenceRoutes } from "./routes/evidence";
 import { registerLearningRoutes } from "./routes/learning";
+import { registerMailRoutes } from "./routes/mail";
 import { registerOutboundRoutes } from "./routes/outbound";
 import { registerPrRoutes } from "./routes/pr";
 import { registerPublicationRoutes } from "./routes/publications";
@@ -43,6 +46,8 @@ export interface BuildAppOptions {
   evidence?: EvidenceStore;
   /** Connector fabric override; defaults to the Nango client from env. */
   connectors?: ConnectorFabric;
+  /** Transactional mailer (Sprint 27); defaults to Resend, else a console logger. */
+  mailer?: Mailer;
   /**
    * Shared secret that authenticates the worker as the `system` actor with
    * access to every workspace. Defaults to TUEZDAY_WORKER_TOKEN.
@@ -56,6 +61,7 @@ export async function buildApp({
   fetcher = fetch,
   evidence = new R2REvidenceStore(),
   connectors = new NangoFabric(undefined, undefined, fetcher),
+  mailer = createDefaultMailer(fetcher),
   workerToken = process.env.TUEZDAY_WORKER_TOKEN,
 }: BuildAppOptions): Promise<TuezdayApp> {
   const app = Fastify({ logger: false });
@@ -78,7 +84,7 @@ export async function buildApp({
 
   registerAuthRoutes(app, db);
   registerWorkspaceRoutes(app, db);
-  registerTeamRoutes(app, db);
+  registerTeamRoutes(app, db, mailer);
   registerBrainRoutes(app, db);
   registerPersonaRoutes(app, db, evidence);
   registerGenerationRoutes(app, db, llm, evidence);
@@ -96,6 +102,8 @@ export async function buildApp({
   registerAdCreativeRoutes(app, db, llm, evidence);
   registerPrRoutes(app, db, llm, evidence);
   registerPublicationRoutes(app, db, connectors, fetcher);
+  registerCadenceRoutes(app, db, connectors, fetcher);
+  registerMailRoutes(app, db, mailer);
 
   return app;
 }

@@ -483,6 +483,9 @@ export const publications = sqliteTable("publications", {
   providerKey: text("provider_key").notNull(),
   target: text("target").notNull(),
   title: text("title").notNull(),
+  // The posting cadence that auto-slotted this receipt (Sprint 27); null for a
+  // manual one-off publish. Set null when the cadence is deleted.
+  cadenceId: text("cadence_id").references(() => postingCadences.id, { onDelete: "set null" }),
   status: text("status").notNull().default("scheduled"),
   // The requested publish time; "post now" stamps the request time.
   scheduledFor: integer("scheduled_for").notNull(),
@@ -495,6 +498,36 @@ export const publications = sqliteTable("publications", {
 });
 
 export type PublicationRow = typeof publications.$inferSelect;
+
+// Recurring posting cadence (Sprint 27). Defines repeating slots (days-of-week
+// + time-of-day in an IANA timezone) bound to a campaign/channel/account;
+// approved matching drafts auto-fill the next open slots as scheduled
+// publications, which the Sprint 17 worker fires on time.
+export const postingCadences = sqliteTable("posting_cadences", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  // Matching + context. Null (e.g. after a campaign delete) leaves the cadence
+  // unable to match, so it effectively pauses.
+  campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+  personaId: text("persona_id").references(() => personas.id, { onDelete: "set null" }),
+  channel: text("channel").notNull(),
+  connectionId: text("connection_id")
+    .notNull()
+    .references(() => connections.id, { onDelete: "cascade" }),
+  target: text("target").notNull(),
+  // JSON number[] of 0..6 (Sun=0); HH:MM interpreted in `timezone`.
+  daysOfWeekJson: text("days_of_week_json").notNull(),
+  timeOfDay: text("time_of_day").notNull(),
+  timezone: text("timezone").notNull(),
+  status: text("status").notNull().default("active"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type PostingCadenceRow = typeof postingCadences.$inferSelect;
 
 // Native ads execution (Sprint 20) — a launch is a draft ad campaign that
 // must clear the approval gate before any API call that can spend money.

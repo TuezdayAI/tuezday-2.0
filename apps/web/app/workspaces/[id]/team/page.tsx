@@ -15,6 +15,8 @@ export default function TeamPage() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [testEmail, setTestEmail] = useState("");
+  const [testing, setTesting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -62,8 +64,31 @@ export default function TeamPage() {
       return;
     }
     setInviteEmail("");
-    setNotice(`Invite created for ${body.email} — copy the link below and send it to them.`);
+    setNotice(`Invite created for ${body.email} — we emailed them the link (copy it below as a backup).`);
     await load();
+  }
+
+  async function sendTestEmail(e: React.FormEvent) {
+    e.preventDefault();
+    setTesting(true);
+    setError(null);
+    setNotice(null);
+    const res = await apiFetch(`/workspaces/${id}/mail/test`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ to: testEmail }),
+    });
+    const body = await res.json().catch(() => null);
+    setTesting(false);
+    if (!res.ok) {
+      setError(body?.message ?? "Could not send the test email.");
+      return;
+    }
+    setNotice(
+      body?.delivered
+        ? `Test email sent to ${testEmail}. ${body.detail ?? ""}`
+        : `The mailer did not deliver: ${body?.detail ?? "unknown error"}`,
+    );
   }
 
   async function copyLink(invite: WorkspaceInvite) {
@@ -134,8 +159,9 @@ export default function TeamPage() {
         <section className="panel">
           <h2>Invite a teammate</h2>
           <p className="subtitle">
-            Invites are links, not emails — create one, copy it, send it yourself. The invitee
-            signs up with the same email and accepts. Links expire in 7 days.
+            Creating an invite emails the person a join link. The invitee signs up with the same
+            email and accepts. You can also copy the link below to share it yourself. Links expire
+            in 7 days.
           </p>
           <form className="create-form" onSubmit={sendInvite}>
             <input
@@ -178,6 +204,26 @@ export default function TeamPage() {
           )}
         </section>
       )}
+
+      <section className="panel">
+        <h2>Send a test email</h2>
+        <p className="subtitle">
+          Check that transactional email is configured. With a Resend key set it sends for real;
+          otherwise it logs to the API console and reports as delivered.
+        </p>
+        <form className="create-form" onSubmit={sendTestEmail}>
+          <input
+            type="email"
+            value={testEmail}
+            onChange={(e) => setTestEmail(e.target.value)}
+            placeholder="you@company.com"
+            required
+          />
+          <button type="submit" disabled={testing || !testEmail}>
+            {testing ? "Sending…" : "Send test email"}
+          </button>
+        </form>
+      </section>
     </>
   );
 }
