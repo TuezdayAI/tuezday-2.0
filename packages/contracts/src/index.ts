@@ -258,6 +258,20 @@ export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number];
 
 export const CAMPAIGN_OVERLAY_MAX_CHARS = 10_000;
 
+/**
+ * Per-campaign social automation mode (Sprint 28). `manual` = the founder drives
+ * generation/approval/publishing by hand. `human_in_the_loop` = discovery signals
+ * auto-generate drafts that wait at the approval gate. `scheduled_auto` = drafts are
+ * auto-approved (a real, logged `system` approval) and posted on the campaign's
+ * cadence, bounded by the social-automation guardrails.
+ */
+export const AUTOMATION_MODES = ["manual", "human_in_the_loop", "scheduled_auto"] as const;
+export type AutomationMode = (typeof AUTOMATION_MODES)[number];
+
+/** Default daily auto-post caps (Sprint 28) when a workspace hasn't set its own. */
+export const DEFAULT_PER_CONNECTION_DAILY_CAP = 10;
+export const DEFAULT_PER_CAMPAIGN_DAILY_CAP = 5;
+
 export const campaignSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
@@ -271,6 +285,9 @@ export const campaignSchema = z.object({
   personaIds: z.array(z.string().uuid()),
   overlay: z.string().max(CAMPAIGN_OVERLAY_MAX_CHARS),
   status: z.enum(CAMPAIGN_STATUSES),
+  automationMode: z.enum(AUTOMATION_MODES),
+  /** Per-campaign override of the daily auto-post cap; null = use the workspace default. */
+  autoDailyCap: z.number().int().positive().max(1000).nullable(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 });
@@ -291,8 +308,17 @@ export const upsertCampaignInputSchema = z.object({
   personaIds: z.array(z.string().uuid()).default([]),
   overlay: z.string().max(CAMPAIGN_OVERLAY_MAX_CHARS).default(""),
   status: z.enum(CAMPAIGN_STATUSES).default("active"),
+  automationMode: z.enum(AUTOMATION_MODES).default("manual"),
+  autoDailyCap: z.number().int().positive().max(1000).nullable().default(null),
 });
 export type UpsertCampaignInput = z.infer<typeof upsertCampaignInputSchema>;
+
+/** Focused payload for the campaign automation toggle (Sprint 28). */
+export const updateCampaignAutomationInputSchema = z.object({
+  automationMode: z.enum(AUTOMATION_MODES),
+  autoDailyCap: z.number().int().positive().max(1000).nullable().default(null),
+});
+export type UpdateCampaignAutomationInput = z.infer<typeof updateCampaignAutomationInputSchema>;
 
 // ---------------------------------------------------------------------------
 // Signals (manual market input — source adapters arrive in a later slice)
@@ -1662,6 +1688,51 @@ export const updateAdSettingsInputSchema = z.object({
   killSwitch: z.boolean().optional(),
 });
 export type UpdateAdSettingsInput = z.infer<typeof updateAdSettingsInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Social automation guardrails + run results (Sprint 28)
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-workspace guardrails for `scheduled_auto` campaigns — the safety net that
+ * replaces the human gate. The kill switch is the hard stop; the caps bound how
+ * many auto-posts land per UTC day. Mirrors `ad_settings`.
+ */
+export const socialAutomationSettingsSchema = z.object({
+  workspaceId: z.string().uuid(),
+  killSwitch: z.boolean(),
+  perConnectionDailyCap: z.number().int().positive(),
+  perCampaignDailyCap: z.number().int().positive(),
+  updatedAt: z.number().int(),
+});
+export type SocialAutomationSettings = z.infer<typeof socialAutomationSettingsSchema>;
+
+export const updateSocialAutomationSettingsInputSchema = z.object({
+  killSwitch: z.boolean().optional(),
+  perConnectionDailyCap: z.number().int().positive().max(1000).optional(),
+  perCampaignDailyCap: z.number().int().positive().max(1000).optional(),
+});
+export type UpdateSocialAutomationSettingsInput = z.infer<
+  typeof updateSocialAutomationSettingsInputSchema
+>;
+
+/** What the orchestrator did for one campaign in a run. */
+export const automationCampaignResultSchema = z.object({
+  campaignId: z.string().uuid(),
+  campaignName: z.string(),
+  mode: z.enum(AUTOMATION_MODES),
+  generated: z.number().int(),
+  autoApproved: z.number().int(),
+  skipped: z.number().int(),
+  blocked: z.string().nullable(),
+});
+export type AutomationCampaignResult = z.infer<typeof automationCampaignResultSchema>;
+
+export const automationRunResultSchema = z.object({
+  results: z.array(automationCampaignResultSchema),
+  ranAt: z.number().int(),
+});
+export type AutomationRunResult = z.infer<typeof automationRunResultSchema>;
 
 // ---------------------------------------------------------------------------
 // Lead lists & segments (Sprint 24)

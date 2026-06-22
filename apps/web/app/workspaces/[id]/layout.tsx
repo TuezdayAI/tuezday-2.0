@@ -51,7 +51,10 @@ const NAV: NavItem[] = [
   {
     label: "Calendar",
     path: "/calendar",
-    children: [{ label: "Cadence", path: "/cadence" }],
+    children: [
+      { label: "Cadence", path: "/cadence" },
+      { label: "Automation", path: "/automation" },
+    ],
   },
   {
     label: "Audience",

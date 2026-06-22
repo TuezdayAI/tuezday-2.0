@@ -17,6 +17,7 @@ import { registerAdLaunchRoutes } from "./routes/ad-launches";
 import { registerAdsRoutes } from "./routes/ads";
 import { registerAudienceRoutes } from "./routes/audiences";
 import { registerAuthRoutes } from "./routes/auth";
+import { registerAutomationRoutes } from "./routes/automation";
 import { registerBrainRoutes } from "./routes/brain";
 import { registerCadenceRoutes } from "./routes/cadences";
 import { registerCampaignRoutes } from "./routes/campaigns";
@@ -112,6 +113,7 @@ export async function buildApp({
   registerPublicationRoutes(app, db, connectors, fetcher);
   registerCadenceRoutes(app, db, connectors, fetcher);
   registerMailRoutes(app, db, mailer);
+  registerAutomationRoutes(app, db, llm, evidence);
 
   return app;
 }

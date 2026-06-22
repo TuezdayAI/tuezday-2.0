@@ -79,6 +79,38 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
   depend on this seam.
 - **Origin:** Sprint 27.
 
+### 8. Automation runs synchronously on a worker tick
+- **What we shipped (Sprint 28):** `runAutomation` loops each active automated campaign × channel ×
+  new signal and calls the LLM inline (one generation per draft), bounded by new-signal volume and run
+  every few minutes by the worker. Fine for modest volumes.
+- **The better version:** Enqueue generation on a worker queue with back-pressure and progress, so a
+  burst of signals across many campaigns doesn't block a single request.
+- **Trigger to revisit:** When automated campaigns × channels × signal volume makes a run slow.
+- **Origin:** Sprint 28.
+
+### 9. Auto-post guardrail caps are per UTC day
+- **What we shipped (Sprint 28):** The per-connection and per-campaign daily caps count posts in the
+  UTC calendar day of each candidate slot, ignoring the cadence's own timezone.
+- **The better version:** A timezone-aware (per-account-local) daily window.
+- **Trigger to revisit:** If a customer's posting day spans a UTC boundary in a way that surprises them.
+- **Origin:** Sprint 28.
+
+### 10. Kill switch clears pending auto-posts on the next cadence tick, not instantly
+- **What we shipped (Sprint 28):** Turning the kill switch on stops new auto-posting and cancels a
+  cadence's pending `scheduled` auto-posts the next time that cadence is filled (≤ the fill interval).
+- **The better version:** A check at the publish-fire path so a flipped kill switch halts a due
+  auto-post immediately, regardless of the fill cadence.
+- **Trigger to revisit:** If the few-minute lag between flipping the switch and a due post matters.
+- **Origin:** Sprint 28.
+
+### 11. No relevance triage — every signal fans out to every automated campaign's channels
+- **What we shipped (Sprint 28):** A new signal generates a draft for each channel of every active
+  automated campaign, with no scoring of which signal actually fits which campaign/persona.
+- **The better version:** Score signal↔campaign/persona fit and route only relevant signals (extends
+  `suggestedPersonaId` / `scoreReason`).
+- **Trigger to revisit:** **Sprint 29** owns this (discovery source expansion + auto-mapping).
+- **Origin:** Sprint 28.
+
 ---
 
 ## Done (upgraded)

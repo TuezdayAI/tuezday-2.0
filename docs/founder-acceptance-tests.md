@@ -410,11 +410,26 @@ your voice and cleared through Review — without leaving Tuezday.
 
 **Gate:** approved content schedules itself onto a calendar and publishes on a recurring cadence with no manual publish step, and transactional email (invites + a test send) goes out through the mailer.
 
+## Sprint 28 — Campaign-configured social automation (modes)
+
+> Branch `sprint-28-social-automation` (built on a merge of S26 social adapters + S27 cadence — founder
+> merges S25→S26 and S27 before this). Reddit works today; LinkedIn/X/Instagram light up once their
+> creds are set. Needs a campaign with one or more channels and at least one discovery signal.
+
+- [ ] **Campaigns → a campaign's Automation = Human-in-the-loop.** Add a signal (Discovery) → **Automation → Run automation now** (or wait for the worker) → a draft per campaign channel appears in **Review** at `pending`. Nothing posts on its own.
+- [ ] Approve one of those drafts → with a **Cadence** on that campaign/channel it slots on the **Calendar** and publishes on schedule (the Sprint 27 flow).
+- [ ] **Switch the campaign to Scheduled-auto.** Add a new signal → **Run automation now** → the new draft is **auto-approved** — it shows as `approved` with an **"Auto-approved"** badge in Review and its decision log shows `system` (submit → approve). The campaign cadence then slots it and it publishes automatically with a working link.
+- [ ] **Automation → Kill switch on.** Run again → nothing new auto-posts; a scheduled-auto cadence's pending auto-slots clear on its next fill. Manual publishing and human-approved cadences keep working. Turn it back off → auto resumes.
+- [ ] **Daily caps.** Lower the per-connection or per-campaign daily cap → confirm auto-posts stop at the cap for the day while manual posting is never blocked.
+- [ ] Set a campaign back to **Manual** → automation ignores it entirely (today's behavior).
+
+**Gate:** a campaign drives its own distribution — discovery signals become channel posts that either wait at the gate (human-in-the-loop) or auto-approve and post on the cadence (scheduled-auto), with a kill switch and daily caps as the safety net, and every auto-approval is logged as a `system` gate decision.
+
 ---
 
 ## Cross-cutting things worth re-checking occasionally
 
-- [ ] `npm test` (537 tests) and `npm run typecheck` stay green.
+- [ ] `npm test` (600 tests) and `npm run typecheck` stay green.
 - [ ] Every generation's prompt trace is readable *before* and *after* the LLM call (sandbox → "show prompt trace").
 - [ ] Stopping any external service (R2R, Nango) degrades gracefully — the app never breaks, traces/banners say why.
 - [ ] Gemini occasionally returns 503 "high demand" — a retry succeeds; it surfaces as a clean error, never a crash.

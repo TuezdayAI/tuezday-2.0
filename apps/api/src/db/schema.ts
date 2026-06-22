@@ -270,6 +270,10 @@ export const campaigns = sqliteTable("campaigns", {
   personaIdsJson: text("persona_ids_json").notNull().default("[]"),
   overlay: text("overlay").notNull().default(""),
   status: text("status").notNull().default("active"),
+  // Social automation mode (Sprint 28): manual | human_in_the_loop | scheduled_auto.
+  automationMode: text("automation_mode").notNull().default("manual"),
+  // Per-campaign override of the daily auto-post cap; null = workspace default.
+  autoDailyCap: integer("auto_daily_cap"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -608,6 +612,21 @@ export const adSettings = sqliteTable("ad_settings", {
 });
 
 export type AdSettingsRow = typeof adSettings.$inferSelect;
+
+// Social automation guardrails (Sprint 28) — one row per workspace, like
+// ad_settings. killSwitch is the hard stop for scheduled_auto posting; the caps
+// bound auto-posts per UTC day (per connection and per campaign).
+export const socialAutomationSettings = sqliteTable("social_automation_settings", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  killSwitch: integer("kill_switch").notNull().default(0),
+  perConnectionDailyCap: integer("per_connection_daily_cap").notNull().default(10),
+  perCampaignDailyCap: integer("per_campaign_daily_cap").notNull().default(5),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type SocialAutomationSettingsRow = typeof socialAutomationSettings.$inferSelect;
 
 export const events = sqliteTable("events", {
   id: text("id").primaryKey(),

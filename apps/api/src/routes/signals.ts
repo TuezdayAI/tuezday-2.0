@@ -1,17 +1,13 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { createSignalInputSchema, draftSignalRequestSchema } from "@tuezday/contracts";
-import { resolveContext, type BrainContents } from "@tuezday/brain";
 import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
-import { getBrain } from "../services/brain";
-import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
-import { retrieveEvidence } from "../services/evidence";
+import { getCampaign } from "../services/campaigns";
 import type { EvidenceStore } from "../evidence/store";
-import { storeGeneration } from "../services/generations";
 import { getPersona } from "../services/personas";
 import { createSignal, getSignal, listSignals } from "../services/signals";
-import { submitDraft } from "../services/drafts";
+import { generateSignalDraft } from "../services/signal-drafting";
 import { getWorkspace } from "../services/workspaces";
 
 function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
@@ -76,62 +72,22 @@ export function registerSignalRoutes(
         }
       }
 
-      const evidenceResolution = await retrieveEvidence(
-        db,
-        evidence,
-        request.params.id,
-        {
-          taskType: "signal_response",
-          channel: parsed.data.channel,
-          signalContent: signal.content,
-          campaignObjective: campaign?.objective,
-        },
-        parsed.data.useEvidence ?? true,
-      );
-
-      const { docs } = getBrain(db, request.params.id);
-      const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
-      const resolved = resolveContext({
-        workspaceName: workspace.name,
-        docs: contents,
-        taskType: "signal_response",
-        channel: parsed.data.channel,
-        persona: persona
-          ? { name: persona.name, description: persona.description, overlay: persona.overlay }
-          : undefined,
-        campaign: campaign
-          ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
-          : undefined,
-        signal: { content: signal.content, source: signal.source, sourceUrl: signal.sourceUrl },
-        evidence: evidenceResolution.evidence,
-        evidenceExclusionReason: evidenceResolution.exclusionReason,
-        tokenBudget: parsed.data.tokenBudget,
-      });
-
       try {
-        const result = await llm.generate({ prompt: resolved.prompt });
-        const generation = storeGeneration(db, {
-          workspaceId: request.params.id,
-          taskType: "signal_response",
-          channel: parsed.data.channel,
-          personaId: parsed.data.personaId ?? null,
-          campaignId: parsed.data.campaignId ?? null,
-          resolved,
-          output: result.text,
-          model: result.model,
-          provider: result.provider,
-          durationMs: result.durationMs,
-        });
-        const draft = submitDraft(db, {
-          workspaceId: request.params.id,
-          sourceGenerationId: generation.id,
-          sourceSignalId: signal.id,
-          campaignId: parsed.data.campaignId ?? null,
-          taskType: "signal_response",
-          channel: parsed.data.channel,
-          personaId: parsed.data.personaId ?? null,
-          content: result.text,
-        }, actorOf(request));
+        const draft = await generateSignalDraft(
+          db,
+          llm,
+          evidence,
+          workspace,
+          signal,
+          {
+            channel: parsed.data.channel,
+            persona,
+            campaign,
+            useEvidence: parsed.data.useEvidence,
+            tokenBudget: parsed.data.tokenBudget,
+          },
+          actorOf(request),
+        );
         return reply.status(201).send(draft);
       } catch (err) {
         if (err instanceof GatewayError) {

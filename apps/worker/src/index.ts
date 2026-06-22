@@ -16,6 +16,7 @@ const SYNTHESIS_DAYS = Number(process.env.LEARNING_SYNTHESIS_DAYS ?? 7);
 const ADS_SYNC_HOURS = Number(process.env.ADS_SYNC_HOURS ?? 6);
 const PUBLISH_INTERVAL_MIN = Number(process.env.PUBLISH_INTERVAL_MIN ?? 1);
 const CADENCE_FILL_INTERVAL_MIN = Number(process.env.CADENCE_FILL_INTERVAL_MIN ?? 5);
+const AUTOMATION_INTERVAL_MIN = Number(process.env.AUTOMATION_INTERVAL_MIN ?? 5);
 
 interface Workspace {
   id: string;
@@ -218,6 +219,52 @@ async function cadenceTick(): Promise<void> {
   }
 }
 
+interface AutomationRunResponse {
+  results: Array<{
+    campaignName: string;
+    generated: number;
+    autoApproved: number;
+    blocked: string | null;
+  }>;
+}
+
+/** Turn new discovery signals into channel drafts per each campaign's automation
+ * mode: human_in_the_loop queues at the gate, scheduled_auto auto-approves so the
+ * cadence tick can post them. */
+async function runAutomationForAllWorkspaces(): Promise<void> {
+  const res = await api(`/workspaces`);
+  if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
+  const workspaces = (await res.json()) as Workspace[];
+
+  for (const workspace of workspaces) {
+    try {
+      const runRes = await api(`/workspaces/${workspace.id}/automation/run`, { method: "POST" });
+      if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);
+      const { results } = (await runRes.json()) as AutomationRunResponse;
+      const generated = results.reduce((sum, r) => sum + r.generated, 0);
+      const autoApproved = results.reduce((sum, r) => sum + r.autoApproved, 0);
+      const blocked = results.filter((r) => r.blocked).length;
+      if (generated === 0 && blocked === 0) continue; // nothing happened — stay quiet
+      console.log(
+        `[automation] ${workspace.name}: ${generated} draft(s) generated, ${autoApproved} auto-approved${blocked ? `, ${blocked} campaign(s) blocked` : ""}`,
+      );
+    } catch (err) {
+      console.error(
+        `[automation] ${workspace.name}: failed —`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+}
+
+async function automationTick(): Promise<void> {
+  try {
+    await runAutomationForAllWorkspaces();
+  } catch (err) {
+    console.error("[automation] tick failed —", err instanceof Error ? err.message : err);
+  }
+}
+
 async function adsTick(): Promise<void> {
   try {
     await syncAdsForAllWorkspaces();
@@ -240,12 +287,16 @@ async function tick(): Promise<void> {
 }
 
 console.log(
-  `Tuezday worker: polling discovery every ${INTERVAL_MIN} min, ads sync every ${ADS_SYNC_HOURS} h, cadence fill every ${CADENCE_FILL_INTERVAL_MIN} min, scheduled publishing every ${PUBLISH_INTERVAL_MIN} min against ${API_URL} (set DISCOVERY_INTERVAL_MIN / ADS_SYNC_HOURS / CADENCE_FILL_INTERVAL_MIN / PUBLISH_INTERVAL_MIN / TUEZDAY_API_URL to change).`,
+  `Tuezday worker: polling discovery every ${INTERVAL_MIN} min, ads sync every ${ADS_SYNC_HOURS} h, automation every ${AUTOMATION_INTERVAL_MIN} min, cadence fill every ${CADENCE_FILL_INTERVAL_MIN} min, scheduled publishing every ${PUBLISH_INTERVAL_MIN} min against ${API_URL} (set DISCOVERY_INTERVAL_MIN / ADS_SYNC_HOURS / AUTOMATION_INTERVAL_MIN / CADENCE_FILL_INTERVAL_MIN / PUBLISH_INTERVAL_MIN / TUEZDAY_API_URL to change).`,
 );
 void tick();
 setInterval(() => void tick(), INTERVAL_MIN * 60 * 1000);
 void adsTick();
 setInterval(() => void adsTick(), ADS_SYNC_HOURS * 60 * 60 * 1000);
+// Automation (generate + auto-approve) runs before cadence fill (slot approved)
+// before publish (fire due), so a new signal can progress each cycle.
+void automationTick();
+setInterval(() => void automationTick(), AUTOMATION_INTERVAL_MIN * 60 * 1000);
 void cadenceTick();
 setInterval(() => void cadenceTick(), CADENCE_FILL_INTERVAL_MIN * 60 * 1000);
 void publishTick();

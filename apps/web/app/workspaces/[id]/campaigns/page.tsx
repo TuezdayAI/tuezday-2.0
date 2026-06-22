@@ -8,6 +8,7 @@ import { useParams } from "next/navigation";
 import {
   CHANNELS,
   type ApprovalState,
+  type AutomationMode,
   type Campaign,
   type Channel,
   type Persona,
@@ -20,6 +21,19 @@ const STATE_LABELS: Record<ApprovalState, string> = {
   edited: "edited",
   approved: "approved",
   rejected: "rejected",
+};
+
+const AUTOMATION_LABELS: Record<AutomationMode, string> = {
+  manual: "Manual",
+  human_in_the_loop: "Human-in-the-loop",
+  scheduled_auto: "Scheduled-auto",
+};
+
+const AUTOMATION_HINTS: Record<AutomationMode, string> = {
+  manual: "You generate, approve, and publish by hand.",
+  human_in_the_loop: "New signals draft to each channel and wait in Review for your approval.",
+  scheduled_auto:
+    "New signals draft, auto-approve, and post on this campaign's cadence — within the Automation guardrails.",
 };
 
 interface AdTotals {
@@ -177,6 +191,19 @@ export default function CampaignsPage() {
         overlay: c.overlay,
         status,
       }),
+    });
+    await load();
+  }
+
+  async function saveAutomation(
+    c: Campaign,
+    automationMode: AutomationMode,
+    autoDailyCap: number | null,
+  ) {
+    await apiFetch(`/workspaces/${id}/campaigns/${c.id}/automation`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ automationMode, autoDailyCap }),
     });
     await load();
   }
@@ -410,6 +437,44 @@ export default function CampaignsPage() {
                     )}
                   </div>
                 )}
+
+                <div
+                  className="automation-row"
+                  style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
+                >
+                  <span className="meta">Automation:</span>
+                  <select
+                    value={c.automationMode}
+                    onChange={(e) =>
+                      saveAutomation(c, e.target.value as AutomationMode, c.autoDailyCap)
+                    }
+                  >
+                    {(Object.keys(AUTOMATION_LABELS) as AutomationMode[]).map((m) => (
+                      <option key={m} value={m}>
+                        {AUTOMATION_LABELS[m]}
+                      </option>
+                    ))}
+                  </select>
+                  {c.automationMode === "scheduled_auto" && (
+                    <label className="meta" style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                      Daily cap
+                      <input
+                        type="number"
+                        min={1}
+                        max={1000}
+                        defaultValue={c.autoDailyCap ?? ""}
+                        placeholder="default"
+                        style={{ width: 80 }}
+                        onBlur={(e) => {
+                          const v = e.target.value.trim();
+                          const cap = v === "" ? null : Math.max(1, Math.min(1000, Number(v)));
+                          if (cap !== c.autoDailyCap) saveAutomation(c, c.automationMode, cap);
+                        }}
+                      />
+                    </label>
+                  )}
+                  <span className="meta">{AUTOMATION_HINTS[c.automationMode]}</span>
+                </div>
 
                 <div className="rating-row" style={{ marginTop: 8 }}>
                   <button className="button-secondary" onClick={() => startEdit(c)}>

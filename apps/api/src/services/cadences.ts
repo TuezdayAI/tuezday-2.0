@@ -11,6 +11,11 @@ import type {
 import type { Db } from "../db";
 import { postingCadences, publications, type PostingCadenceRow } from "../db/schema";
 import type { ConnectorFabric } from "../connectors/fabric";
+import {
+  checkPostGuardrails,
+  getSocialAutomationSettings,
+} from "./automation";
+import { getCampaign } from "./campaigns";
 import { getConnection } from "./connections";
 import { listDrafts } from "./drafts";
 import { createPublication, listCadencePublications } from "./publications";
@@ -294,6 +299,19 @@ export async function fillCadence(
   const connection = getConnection(db, workspaceId, cadence.connectionId);
   if (!connection || connection.status !== "connected") return { filled: 0 };
 
+  // scheduled_auto cadences post without a human gate, so they run under the
+  // social-automation guardrails. manual/human_in_the_loop cadences only ever
+  // hold human-approved drafts, so they fill exactly as before (no guardrail).
+  const campaign = getCampaign(db, workspaceId, cadence.campaignId);
+  const isAuto = campaign?.automationMode === "scheduled_auto";
+  const settings = isAuto ? getSocialAutomationSettings(db, workspaceId) : null;
+  if (isAuto && settings!.killSwitch) {
+    // The kill switch is a hard stop: slot nothing and clear this cadence's
+    // pending auto-posts so flipping it stops the queue.
+    cancelScheduledPublicationsForCadence(db, workspaceId, cadence.id);
+    return { filled: 0 };
+  }
+
   const taken = takenSlots(db, workspaceId, cadence.id);
   const openSlots = slotsBetween(cadence, nowMs, nowMs + CADENCE_HORIZON_DAYS * DAY_MS).filter(
     (s) => !taken.has(s),
@@ -301,9 +319,21 @@ export async function fillCadence(
   if (openSlots.length === 0) return { filled: 0 };
 
   const queue = eligibleDrafts(db, workspaceId, cadence);
-  const count = Math.min(openSlots.length, queue.length);
-  for (let i = 0; i < count; i++) {
-    const draft = queue[i]!;
+  let qi = 0;
+  let filled = 0;
+  for (const slot of openSlots) {
+    if (qi >= queue.length) break;
+    // Re-check per slot so caps account for posts created earlier in this run;
+    // a capped day is skipped while a later, less-busy day can still fill.
+    if (isAuto) {
+      const check = checkPostGuardrails(db, settings!, {
+        campaign: campaign!,
+        connectionId: connection.id,
+        slotMs: slot,
+      });
+      if (!check.ok) continue;
+    }
+    const draft = queue[qi++]!;
     await createPublication(
       db,
       fabric,
@@ -315,13 +345,32 @@ export async function fillCadence(
         connectionId: connection.id,
         target: cadence.target,
         title: deriveTitle(draft.content),
-        scheduledFor: openSlots[i]!,
+        scheduledFor: slot,
       },
       undefined,
       cadence.id,
     );
+    filled += 1;
   }
-  return { filled: count };
+  return { filled };
+}
+
+/** Delete a cadence's not-yet-published (`scheduled`) publications — used to
+ * clear pending auto-posts when the kill switch goes on. Published history stays. */
+function cancelScheduledPublicationsForCadence(
+  db: Db,
+  workspaceId: string,
+  cadenceId: string,
+): void {
+  db.delete(publications)
+    .where(
+      and(
+        eq(publications.workspaceId, workspaceId),
+        eq(publications.cadenceId, cadenceId),
+        eq(publications.status, "scheduled"),
+      ),
+    )
+    .run();
 }
 
 export interface CadenceFillRun {
