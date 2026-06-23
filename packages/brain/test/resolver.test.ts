@@ -256,8 +256,8 @@ describe("resolveContext", () => {
         evidence: {
           query: "GTM memory layer linkedin_post",
           chunks: [
-            { text: "Our churn dropped 30% after the brain rollout.", score: 0.82, documentId: "d1", title: "Case study notes" },
-            { text: "Positioning doc: GTM that remembers.", score: 0.74, documentId: "d2", title: "Website copy" },
+            { text: "Our churn dropped 30% after the brain rollout.", title: "Case study notes", documentId: "d1", kind: "manual", score: 0.82, recencyScore: 0.9, sourceWeight: 1, finalScore: 0.8 },
+            { text: "Positioning doc: GTM that remembers.", title: "Website copy", documentId: "d2", kind: "manual", score: 0.74, recencyScore: 0.8, sourceWeight: 1, finalScore: 0.7 },
           ],
         },
       }),
@@ -301,6 +301,50 @@ describe("resolveContext", () => {
     const evidence = result.sections.find((s) => s.key === "evidence")!;
     expect(evidence.included).toBe(false);
     expect(evidence.reason.length).toBeGreaterThan(0);
+  });
+
+  const evChunk = (id: string, finalScore: number) => ({
+    text: `evidence ${id} ` + "lorem ipsum dolor ".repeat(20),
+    title: `Doc ${id}`,
+    documentId: id,
+    kind: "manual" as const,
+    score: 0.9,
+    recencyScore: 1,
+    sourceWeight: 1,
+    finalScore,
+  });
+
+  it("degrades evidence chunk-by-chunk under a tight budget, keeping protected sections", () => {
+    const chunks = [evChunk("a", 0.95), evChunk("b", 0.9), evChunk("c", 0.85)];
+    const base = resolveContext(baseInput({ tokenBudget: 100_000 })).includedTokens;
+    const evAll = resolveContext(
+      baseInput({ evidence: { query: "q", chunks }, tokenBudget: 100_000 }),
+    ).sections.find((s) => s.key === "evidence")!.tokens;
+
+    const result = resolveContext(
+      baseInput({ evidence: { query: "q", chunks }, tokenBudget: base + Math.floor(evAll / 2) }),
+    );
+    const evidence = result.sections.find((s) => s.key === "evidence")!;
+    const trace = evidence.evidence!.chunks;
+    expect(evidence.included).toBe(true);
+    expect(trace.filter((c) => c.kept).length).toBeGreaterThan(0);
+    expect(trace.filter((c) => c.kept).length).toBeLessThan(3);
+    expect(trace[0]!.kept).toBe(true); // top-ranked survives
+    expect(trace[2]!.kept).toBe(false); // lowest-ranked dropped first
+    expect(trace.find((c) => !c.kept)!.exclusionReason).toMatch(/budget/i);
+    expect(result.sections.find((s) => s.key === "org:soul")!.included).toBe(true);
+  });
+
+  it("excludes evidence entirely when no chunk fits, leaving protected sections", () => {
+    const chunks = [evChunk("only", 0.9)];
+    const base = resolveContext(baseInput({ tokenBudget: 100_000 })).includedTokens;
+    const result = resolveContext(
+      baseInput({ evidence: { query: "q", chunks }, tokenBudget: base }),
+    );
+    const evidence = result.sections.find((s) => s.key === "evidence")!;
+    expect(evidence.included).toBe(false);
+    expect(evidence.reason).toMatch(/budget/i);
+    expect(result.sections.find((s) => s.key === "org:soul")!.included).toBe(true);
   });
 
   it("places the lead section after persona and before signal when given", () => {
