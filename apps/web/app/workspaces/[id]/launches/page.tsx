@@ -4,17 +4,37 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
+  AUTOMATION_MODES,
   LAUNCH_CHANNELS,
+  SEQUENCE_CHANNELS,
   type Audience,
+  type AutomationMode,
   type Campaign,
   type Launch,
   type LaunchChannel,
   type LaunchDetail,
   type LaunchMessage,
   type Persona,
+  type SequenceChannel,
+  type SequenceRecipient,
+  type SequenceStep,
   type Workspace,
 } from "@tuezday/contracts";
 import { API_URL, apiDownload, apiFetch } from "@/lib/api";
+
+const MODE_LABELS: Record<AutomationMode, string> = {
+  manual: "Manual (you drive every step)",
+  human_in_the_loop: "Review each step (auto-generates, waits at the gate)",
+  scheduled_auto: "Fully automated (generates, approves & sends on schedule)",
+};
+
+const RECIPIENT_STATUS_LABELS: Record<string, string> = {
+  active: "active",
+  replied: "replied — stopped",
+  stopped: "stopped",
+  completed: "completed",
+  failed: "failed",
+};
 
 const CHANNEL_LABELS: Record<LaunchChannel, string> = {
   email: "Email (CSV)",
@@ -375,6 +395,7 @@ export default function LaunchesPage() {
                     channelConnected={channelConnected}
                     onApprove={(draftId) => approve(draftId, launch.id)}
                     onDispatch={(channel) => dispatch(launch.id, channel)}
+                    onRefresh={() => refreshDetail(launch.id)}
                   />
                 )}
               </li>
@@ -396,6 +417,7 @@ function LaunchDetailView({
   channelConnected,
   onApprove,
   onDispatch,
+  onRefresh,
 }: {
   detail: LaunchDetail;
   workspaceId: string;
@@ -406,8 +428,9 @@ function LaunchDetailView({
   channelConnected: (c: LaunchChannel) => boolean;
   onApprove: (draftId: string) => void;
   onDispatch: (channel: LaunchChannel) => void;
+  onRefresh: () => void;
 }) {
-  const { launch, messages, recipientCount } = detail;
+  const { launch, messages, steps, sequenceRecipients, recipientCount } = detail;
   const byChannel = (channel: LaunchChannel) => messages.filter((m) => m.channel === channel);
   const approvedCount = (channel: LaunchChannel) =>
     byChannel(channel).filter((m) => m.draftState === "approved").length;
@@ -418,6 +441,14 @@ function LaunchDetailView({
         {recipientCount} recipient(s) · status {launch.status}
       </p>
       {dispatchNote && <p className="bundle-summary">{dispatchNote}</p>}
+
+      <SequenceSection
+        workspaceId={workspaceId}
+        launch={launch}
+        steps={steps}
+        recipients={sequenceRecipients}
+        onChanged={onRefresh}
+      />
 
       {launch.channels.map((channel) => {
         const rows = byChannel(channel);
@@ -507,5 +538,259 @@ function MessageRow({
       {message.draftContent && <p className="section-reason">{message.draftContent.slice(0, 200)}</p>}
       {message.lastError && <p className="error">{message.lastError}</p>}
     </li>
+  );
+}
+
+interface EditStep {
+  channel: SequenceChannel;
+  instruction: string;
+  delayHours: number;
+}
+
+// Multi-step follow-up sequence (Sprint 30): mode + steps + per-recipient progress.
+function SequenceSection({
+  workspaceId,
+  launch,
+  steps,
+  recipients,
+  onChanged,
+}: {
+  workspaceId: string;
+  launch: Launch;
+  steps: SequenceStep[];
+  recipients: SequenceRecipient[];
+  onChanged: () => void;
+}) {
+  // Only the launch's personalized channels (email / x) can be sequenced.
+  const seqChannels = launch.channels.filter((c): c is SequenceChannel =>
+    (SEQUENCE_CHANNELS as readonly string[]).includes(c),
+  );
+
+  const seed = useCallback((): Record<string, EditStep[]> => {
+    const byChan: Record<string, EditStep[]> = {};
+    for (const c of seqChannels) byChan[c] = [];
+    for (const s of [...steps].sort((a, b) => a.stepNumber - b.stepNumber)) {
+      (byChan[s.channel] ??= []).push({ channel: s.channel, instruction: s.instruction, delayHours: s.delayHours });
+    }
+    // Always offer step 1 to start with.
+    for (const c of seqChannels) if (byChan[c]!.length === 0) byChan[c] = [{ channel: c, instruction: "", delayHours: 0 }];
+    return byChan;
+  }, [steps, seqChannels.join(",")]);
+
+  const [edit, setEdit] = useState<Record<string, EditStep[]>>(seed);
+  const [mode, setMode] = useState<AutomationMode>(launch.automationMode);
+  const [stopOnReply, setStopOnReply] = useState(launch.stopOnReply);
+  const [stopEmails, setStopEmails] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    setEdit(seed());
+    setMode(launch.automationMode);
+    setStopOnReply(launch.stopOnReply);
+  }, [seed, launch.automationMode, launch.stopOnReply]);
+
+  if (seqChannels.length === 0) return null;
+
+  const call = async (path: string, init: RequestInit, ok: string) => {
+    setBusy(true);
+    setNote(null);
+    try {
+      const res = await apiFetch(`/workspaces/${workspaceId}/launches/${launch.id}${path}`, init);
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message ?? body?.error ?? `API returned ${res.status}`);
+      setNote(ok);
+      onChanged();
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : "Failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveSteps = () => {
+    const payload = seqChannels.flatMap((c) =>
+      (edit[c] ?? []).map((s, i) => ({
+        channel: c,
+        stepNumber: i + 1,
+        instruction: s.instruction,
+        delayHours: i === 0 ? 0 : Number(s.delayHours) || 0,
+      })),
+    );
+    return call("/sequence", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ steps: payload }),
+    }, "Sequence saved.");
+  };
+
+  const saveConfig = () =>
+    call("/sequence-config", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ automationMode: mode, stopOnReply }),
+    }, "Automation settings saved.");
+
+  const start = () => call("/sequence/start", { method: "POST" }, "Sequence started.");
+  const runNow = () => call("/sequence/run", { method: "POST" }, "Sequence advanced.");
+  const stopWhole = () => call("/sequence/stop", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ all: true }),
+  }, "Stopped all recipients.");
+  const stopEmailList = () => {
+    const emails = stopEmails.split(/[\n,]/).map((e) => e.trim()).filter(Boolean);
+    if (emails.length === 0) return;
+    return call("/sequence/stop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ emails }),
+    }, "Suppressed the pasted recipients.");
+  };
+
+  const setStepField = (channel: string, i: number, patch: Partial<EditStep>) => {
+    setEdit((prev) => {
+      const arr = [...(prev[channel] ?? [])];
+      const cur = arr[i];
+      if (!cur) return prev;
+      arr[i] = { ...cur, ...patch };
+      return { ...prev, [channel]: arr };
+    });
+  };
+  const addStep = (channel: SequenceChannel) =>
+    setEdit((prev) => ({ ...prev, [channel]: [...(prev[channel] ?? []), { channel, instruction: "", delayHours: 48 }] }));
+  const removeStep = (channel: string) =>
+    setEdit((prev) => ({ ...prev, [channel]: (prev[channel] ?? []).slice(0, -1) }));
+
+  return (
+    <div className="panel" style={{ marginTop: 10 }}>
+      <div className="panel-title-row">
+        <h3 style={{ margin: 0 }}>Follow-up sequence</h3>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button className="button-secondary" disabled={busy} onClick={start}>
+            Start
+          </button>
+          <button className="button-secondary" disabled={busy} onClick={runNow}>
+            Run now
+          </button>
+        </div>
+      </div>
+      <p className="meta">
+        Steps auto-advance on the scheduler. X DMs auto-stop when a recipient replies; email replies
+        aren&apos;t visible to Tuezday, so stop email recipients manually below.
+      </p>
+      {note && <p className="bundle-summary">{note}</p>}
+
+      <div className="resolve-controls" style={{ marginTop: 8 }}>
+        <label>
+          Automation
+          <select value={mode} onChange={(e) => setMode(e.target.value as AutomationMode)}>
+            {AUTOMATION_MODES.map((m) => (
+              <option key={m} value={m}>
+                {MODE_LABELS[m]}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="checkbox-label">
+          <input type="checkbox" checked={stopOnReply} onChange={(e) => setStopOnReply(e.target.checked)} />
+          Stop on reply (X DMs)
+        </label>
+        <button className="button-secondary" disabled={busy} onClick={saveConfig}>
+          Save settings
+        </button>
+      </div>
+
+      {seqChannels.map((channel) => (
+        <div key={channel} style={{ marginTop: 10 }}>
+          <p className="meta">{CHANNEL_LABELS[channel]} steps</p>
+          <ol className="section-list">
+            {(edit[channel] ?? []).map((s, i) => (
+              <li key={i} className="section-card">
+                <div className="resolve-controls">
+                  <span className="meta">Step {i + 1}</span>
+                  {i > 0 && (
+                    <label>
+                      Delay (hours after previous)
+                      <input
+                        type="number"
+                        min={0}
+                        value={s.delayHours}
+                        onChange={(e) => setStepField(channel, i, { delayHours: Number(e.target.value) })}
+                        style={{ width: 90 }}
+                      />
+                    </label>
+                  )}
+                </div>
+                <textarea
+                  value={s.instruction}
+                  onChange={(e) => setStepField(channel, i, { instruction: e.target.value })}
+                  placeholder={i === 0 ? "First touch — leave blank for the default cold message" : "Follow-up angle (optional) — e.g. add the case study"}
+                  rows={2}
+                  style={{ width: "100%", marginTop: 4 }}
+                />
+              </li>
+            ))}
+          </ol>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="link-button" onClick={() => addStep(channel)}>
+              + add step
+            </button>
+            {(edit[channel]?.length ?? 0) > 1 && (
+              <button className="link-button" onClick={() => removeStep(channel)}>
+                remove last
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+      <div className="editor-actions" style={{ marginTop: 8 }}>
+        <button disabled={busy} onClick={saveSteps}>
+          Save sequence
+        </button>
+      </div>
+
+      {recipients.length > 0 && (
+        <div style={{ marginTop: 12 }}>
+          <p className="meta">Per-recipient progress ({recipients.length})</p>
+          <ul className="section-list">
+            {recipients.map((r) => (
+              <li key={r.id} className="section-card">
+                <div className="section-head">
+                  <span className="section-title">{r.recipientName}</span>
+                  <span className="meta">{CHANNEL_LABELS[r.channel]}</span>
+                  <span className="meta">
+                    step {r.currentStep}/{r.totalSteps}
+                  </span>
+                  <span className={`layer-badge state-${r.status}`}>
+                    {RECIPIENT_STATUS_LABELS[r.status] ?? r.status}
+                  </span>
+                  {r.nextDueAt && r.status === "active" && (
+                    <span className="meta">next: {new Date(r.nextDueAt).toLocaleString()}</span>
+                  )}
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="resolve-controls" style={{ marginTop: 6 }}>
+            <textarea
+              value={stopEmails}
+              onChange={(e) => setStopEmails(e.target.value)}
+              placeholder="Paste emails to stop (one per line) — for recipients who replied by email"
+              rows={2}
+              style={{ width: "100%" }}
+            />
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="button-secondary" disabled={busy || !stopEmails.trim()} onClick={stopEmailList}>
+              Stop pasted recipients
+            </button>
+            <button className="button-danger" disabled={busy} onClick={stopWhole}>
+              Stop whole launch
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

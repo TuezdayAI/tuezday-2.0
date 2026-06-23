@@ -17,6 +17,7 @@ import {
   type LaunchMessageStatus,
   type Person,
   type TaskType,
+  type UpdateLaunchSequenceConfigInput,
 } from "@tuezday/contracts";
 import { resolveContext, type BrainContents } from "@tuezday/brain";
 import type { Db } from "../db";
@@ -43,6 +44,7 @@ import { storeGeneration } from "./generations";
 import type { OutboundExporter, OutboundExport } from "../outbound/exporter";
 import { getPersona } from "./personas";
 import { createPublication } from "./publications";
+import { hasSequence, listSequenceRecipients, listSequenceSteps } from "./launch-sequences";
 import { getWorkspace } from "./workspaces";
 
 type Fetcher = typeof fetch;
@@ -84,6 +86,9 @@ function rowToLaunch(row: LaunchRow, messageCount: number): Launch {
     personaId: row.personaId,
     channels: parseChannels(row),
     status: row.status as Launch["status"],
+    automationMode: row.automationMode as Launch["automationMode"],
+    stopOnReply: row.stopOnReply === 1,
+    xConnectionId: row.xConnectionId,
     messageCount,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -108,6 +113,7 @@ function rowToMessage(row: LaunchMessageRow, draft: DraftRow | null): LaunchMess
     externalUrl: row.externalUrl,
     sentAt: row.sentAt,
     lastError: row.lastError,
+    stepNumber: row.stepNumber,
     draftState: draft ? (draft.state as LaunchMessage["draftState"]) : null,
     draftContent: draft ? draft.content : null,
   };
@@ -140,6 +146,9 @@ export function createLaunch(db: Db, workspaceId: string, input: CreateLaunchInp
     personaId: input.personaId ?? null,
     channelsJson: JSON.stringify(input.channels),
     status: "draft",
+    automationMode: input.automationMode,
+    stopOnReply: input.stopOnReply ? 1 : 0,
+    xConnectionId: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -180,7 +189,31 @@ export function getLaunchDetail(
   const recipientCount = new Set(
     messages.filter((m) => m.recipientId).map((m) => `${m.recipientType}:${m.recipientId}`),
   ).size;
-  return { launch: rowToLaunch(row, messages.length), messages, recipientCount };
+  return {
+    launch: rowToLaunch(row, messages.length),
+    messages,
+    steps: listSequenceSteps(db, launchId),
+    sequenceRecipients: listSequenceRecipients(db, launchId),
+    recipientCount,
+  };
+}
+
+/** Patch the launch's sequence config (mode / stop-on-reply / X connection) without
+ * touching anything else — a name edit never resets automation (the S28 pattern). */
+export function updateLaunchSequenceConfig(
+  db: Db,
+  workspaceId: string,
+  launchId: string,
+  input: UpdateLaunchSequenceConfigInput,
+): Launch | undefined {
+  const row = getLaunchRow(db, workspaceId, launchId);
+  if (!row) return undefined;
+  const set: Partial<LaunchRow> = { updatedAt: Date.now() };
+  if (input.automationMode !== undefined) set.automationMode = input.automationMode;
+  if (input.stopOnReply !== undefined) set.stopOnReply = input.stopOnReply ? 1 : 0;
+  if (input.xConnectionId !== undefined) set.xConnectionId = input.xConnectionId;
+  db.update(launches).set(set).where(eq(launches.id, launchId)).run();
+  return getLaunch(db, workspaceId, launchId);
 }
 
 export function deleteLaunch(db: Db, workspaceId: string, launchId: string): boolean {
@@ -229,7 +262,7 @@ function setStatus(db: Db, launchId: string, status: Launch["status"]): void {
 
 export type GenerateLaunchResult =
   | { ok: true; detail: LaunchDetail }
-  | { ok: false; error: "launch_not_found" | "not_draft" | "audience_not_found" };
+  | { ok: false; error: "launch_not_found" | "not_draft" | "audience_not_found" | "is_sequence" };
 
 /**
  * Resolve the audience to recipients, then per channel: a brain-resolved,
@@ -247,6 +280,7 @@ export async function generateLaunch(
 ): Promise<GenerateLaunchResult> {
   const launchRow = getLaunchRow(db, workspaceId, launchId);
   if (!launchRow) return { ok: false, error: "launch_not_found" };
+  if (hasSequence(db, launchId)) return { ok: false, error: "is_sequence" };
   if (launchRow.status !== "draft") return { ok: false, error: "not_draft" };
   const audience = launchRow.audienceId
     ? getAudienceDetail(db, workspaceId, launchRow.audienceId)

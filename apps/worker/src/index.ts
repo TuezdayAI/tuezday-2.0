@@ -18,6 +18,7 @@ const PUBLISH_INTERVAL_MIN = Number(process.env.PUBLISH_INTERVAL_MIN ?? 1);
 const CADENCE_FILL_INTERVAL_MIN = Number(process.env.CADENCE_FILL_INTERVAL_MIN ?? 5);
 const AUTOMATION_INTERVAL_MIN = Number(process.env.AUTOMATION_INTERVAL_MIN ?? 5);
 const INBOX_INTERVAL_MIN = Number(process.env.INBOX_INTERVAL_MIN ?? 5);
+const SEQUENCE_INTERVAL_MIN = Number(process.env.SEQUENCE_INTERVAL_MIN ?? 5);
 
 interface Workspace {
   id: string;
@@ -294,6 +295,44 @@ async function runInboxForAllWorkspaces(): Promise<void> {
   }
 }
 
+interface SequenceRunResponse {
+  generated: number;
+  sent: number;
+  stopped: number;
+  completed: number;
+}
+
+/** Advance every launch's multi-step sequence: generate due steps, auto-send X
+ * DMs (scheduled_auto), stop X chains on reply. Runs after inbox so a reply
+ * detected this cycle stops the chain before the next step generates. */
+async function runSequencesForAllWorkspaces(): Promise<void> {
+  const res = await api(`/workspaces`);
+  if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
+  const workspaces = (await res.json()) as Workspace[];
+
+  for (const workspace of workspaces) {
+    try {
+      const runRes = await api(`/workspaces/${workspace.id}/sequences/run`, { method: "POST" });
+      if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);
+      const { generated, sent, stopped, completed } = (await runRes.json()) as SequenceRunResponse;
+      if (generated === 0 && sent === 0 && stopped === 0 && completed === 0) continue; // quiet
+      console.log(
+        `[sequences] ${workspace.name}: ${generated} generated, ${sent} sent, ${stopped} stopped, ${completed} completed`,
+      );
+    } catch (err) {
+      console.error("[sequences] ", workspace.name, "failed —", err instanceof Error ? err.message : err);
+    }
+  }
+}
+
+async function sequenceTick(): Promise<void> {
+  try {
+    await runSequencesForAllWorkspaces();
+  } catch (err) {
+    console.error("[sequences] tick failed —", err instanceof Error ? err.message : err);
+  }
+}
+
 async function inboxTick(): Promise<void> {
   try {
     await runInboxForAllWorkspaces();
@@ -341,3 +380,7 @@ setInterval(() => void publishTick(), PUBLISH_INTERVAL_MIN * 60 * 1000);
 // Inbox runs after publish — replies react to what's already posted.
 void inboxTick();
 setInterval(() => void inboxTick(), INBOX_INTERVAL_MIN * 60 * 1000);
+// Sequences run after inbox — a reply detected this cycle stops the chain
+// before the next follow-up step generates.
+void sequenceTick();
+setInterval(() => void sequenceTick(), SEQUENCE_INTERVAL_MIN * 60 * 1000);

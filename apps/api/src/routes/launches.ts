@@ -4,6 +4,9 @@ import {
   createLaunchInputSchema,
   dispatchChannelInputSchema,
   generateLaunchInputSchema,
+  setSequenceInputSchema,
+  stopSequenceInputSchema,
+  updateLaunchSequenceConfigInputSchema,
   type LaunchChannel,
 } from "@tuezday/contracts";
 import { actorOf } from "../auth/guard";
@@ -24,7 +27,15 @@ import {
   generateLaunch,
   getLaunchDetail,
   listLaunches,
+  updateLaunchSequenceConfig,
 } from "../services/launches";
+import {
+  runLaunchSequence,
+  runSequences,
+  setSequence,
+  startSequence,
+  stopSequence,
+} from "../services/launch-sequences";
 
 type Fetcher = typeof fetch;
 
@@ -123,7 +134,8 @@ export function registerLaunchRoutes(
         actorOf(request),
       );
       if (!result.ok) {
-        const status = result.error === "not_draft" ? 409 : 404;
+        const status =
+          result.error === "not_draft" || result.error === "is_sequence" ? 409 : 404;
         return reply.status(status).send({ error: result.error });
       }
       return result.detail;
@@ -182,6 +194,125 @@ export function registerLaunchRoutes(
           .send({ error: result.error, message: result.message });
       }
       return { results: result.results };
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // Multi-step sequences (Sprint 30)
+  // -------------------------------------------------------------------------
+
+  // Define / replace the follow-up chain (steps per personalized channel).
+  app.put<{ Params: { id: string; launchId: string } }>(
+    "/workspaces/:id/launches/:launchId/sequence",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const parsed = setSequenceInputSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.status(400).send({
+          error: "invalid_input",
+          message: parsed.error.issues.map((i) => i.message).join("; "),
+        });
+      }
+      const result = setSequence(db, request.params.id, request.params.launchId, parsed.data);
+      if (!result.ok) {
+        const status = result.error === "launch_not_found" ? 404 : 400;
+        return reply.status(status).send({ error: result.error });
+      }
+      return { steps: result.steps };
+    },
+  );
+
+  // Automation mode / stop-on-reply / X connection — never reset on a name edit.
+  app.patch<{ Params: { id: string; launchId: string } }>(
+    "/workspaces/:id/launches/:launchId/sequence-config",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const parsed = updateLaunchSequenceConfigInputSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.status(400).send({
+          error: "invalid_input",
+          message: parsed.error.issues.map((i) => i.message).join("; "),
+        });
+      }
+      const launch = updateLaunchSequenceConfig(
+        db,
+        request.params.id,
+        request.params.launchId,
+        parsed.data,
+      );
+      if (!launch) return reply.status(404).send({ error: "launch_not_found" });
+      return launch;
+    },
+  );
+
+  // Enroll the audience + run the first tick.
+  app.post<{ Params: { id: string; launchId: string } }>(
+    "/workspaces/:id/launches/:launchId/sequence/start",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const result = await startSequence(
+        db,
+        llm,
+        evidence,
+        fabric,
+        fetcher,
+        request.params.id,
+        request.params.launchId,
+      );
+      if (!result.ok) {
+        const status = result.error === "launch_not_found" ? 404 : 409;
+        return reply.status(status).send({ error: result.error });
+      }
+      return result.result;
+    },
+  );
+
+  // Advance this launch's sequence now ("Run now" + tests).
+  app.post<{ Params: { id: string; launchId: string } }>(
+    "/workspaces/:id/launches/:launchId/sequence/run",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const result = await runLaunchSequence(
+        db,
+        llm,
+        evidence,
+        fabric,
+        fetcher,
+        request.params.id,
+        request.params.launchId,
+      );
+      if (!result.ok) {
+        const status = result.error === "launch_not_found" ? 404 : 409;
+        return reply.status(status).send({ error: result.error });
+      }
+      return result.result;
+    },
+  );
+
+  // Manual stop (email's only stop path; also a manual stop on any channel).
+  app.post<{ Params: { id: string; launchId: string } }>(
+    "/workspaces/:id/launches/:launchId/sequence/stop",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const parsed = stopSequenceInputSchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        return reply.status(400).send({
+          error: "invalid_input",
+          message: parsed.error.issues.map((i) => i.message).join("; "),
+        });
+      }
+      const result = stopSequence(db, request.params.id, request.params.launchId, parsed.data);
+      if (!result.ok) return reply.status(404).send({ error: result.error });
+      return { stopped: result.stopped };
+    },
+  );
+
+  // Worker entry: advance every sequence launch in the workspace.
+  app.post<{ Params: { id: string } }>(
+    "/workspaces/:id/sequences/run",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      return runSequences(db, llm, evidence, fabric, fetcher, request.params.id);
     },
   );
 }

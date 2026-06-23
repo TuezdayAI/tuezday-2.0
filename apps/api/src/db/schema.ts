@@ -751,6 +751,10 @@ export const launches = sqliteTable("launches", {
   personaId: text("persona_id").references(() => personas.id, { onDelete: "set null" }),
   channelsJson: text("channels_json").notNull(),
   status: text("status").notNull().default("draft"),
+  // Sequence config (Sprint 30). Ignored unless the launch has sequence_steps.
+  automationMode: text("automation_mode").notNull().default("manual"),
+  stopOnReply: integer("stop_on_reply").notNull().default(1),
+  xConnectionId: text("x_connection_id").references(() => connections.id, { onDelete: "set null" }),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -783,6 +787,13 @@ export const launchMessages = sqliteTable("launch_messages", {
   publicationId: text("publication_id").references(() => publications.id, { onDelete: "set null" }),
   sentAt: integer("sent_at"),
   lastError: text("last_error"),
+  // Sequence wiring (Sprint 30). Step-1 / S26 first-touch rows default to step 1.
+  stepNumber: integer("step_number").notNull().default(1),
+  sequenceRecipientId: text("sequence_recipient_id").references(() => sequenceRecipients.id, {
+    onDelete: "set null",
+  }),
+  // The connection an X DM was dispatched on (for the per-connection daily cap).
+  connectionId: text("connection_id").references(() => connections.id, { onDelete: "set null" }),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -856,3 +867,72 @@ export const publicationMetrics = sqliteTable(
 );
 
 export type PublicationMetricRow = typeof publicationMetrics.$inferSelect;
+
+// Multi-step outbound sequences (Sprint 30). A launch's follow-up chain template:
+// an ordered list of steps per personalized channel (email / x). Step 1 is the
+// first-touch; steps 2..N are follow-ups with a delay + optional founder angle.
+export const sequenceSteps = sqliteTable(
+  "sequence_steps",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    launchId: text("launch_id")
+      .notNull()
+      .references(() => launches.id, { onDelete: "cascade" }),
+    // A SequenceChannel: "email" | "x".
+    channel: text("channel").notNull(),
+    // 1-based, per channel.
+    stepNumber: integer("step_number").notNull(),
+    // Founder angle for this step; "" = the model writes a natural follow-up.
+    instruction: text("instruction").notNull().default(""),
+    // Delay (hours) after the previous step's actual send for that recipient.
+    delayHours: integer("delay_hours").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [uniqueIndex("sequence_steps_launch_channel_step").on(table.launchId, table.channel, table.stepNumber)],
+);
+
+export type SequenceStepRow = typeof sequenceSteps.$inferSelect;
+
+// Per-recipient enrollment + progression through one channel's chain. The
+// engine's source of truth for "who is where, and when the next step fires".
+export const sequenceRecipients = sqliteTable(
+  "sequence_recipients",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    launchId: text("launch_id")
+      .notNull()
+      .references(() => launches.id, { onDelete: "cascade" }),
+    channel: text("channel").notNull(),
+    recipientType: text("recipient_type").notNull(),
+    recipientId: text("recipient_id").notNull(),
+    recipientName: text("recipient_name").notNull().default(""),
+    recipientEmail: text("recipient_email").notNull().default(""),
+    recipientHandle: text("recipient_handle"),
+    // Highest step started for this recipient; 0 = enrolled, not yet generated.
+    currentStep: integer("current_step").notNull().default(0),
+    // A SequenceRecipientStatus.
+    status: text("status").notNull().default("active"),
+    nextDueAt: integer("next_due_at"),
+    lastSentAt: integer("last_sent_at"),
+    stoppedReason: text("stopped_reason"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("sequence_recipients_unique").on(
+      table.launchId,
+      table.channel,
+      table.recipientType,
+      table.recipientId,
+    ),
+  ],
+);
+
+export type SequenceRecipientRow = typeof sequenceRecipients.$inferSelect;

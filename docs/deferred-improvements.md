@@ -148,14 +148,18 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
 - **Trigger to revisit:** When a customer wants different auto-reply behavior across channels/sentiment.
 - **Origin:** Sprint 29.
 
-### 16. Email reply detection is out of scope
-- **What we shipped (Sprint 29):** The inbox covers social comments + X DMs. Outbound email is
+### 16. Email reply detection is out of scope (email sequences stop manually)
+- **What we shipped (Sprint 29 + 30):** The inbox covers social comments + X DMs. Outbound email is
   CSV-exported to Smartlead/Instantly — there is no inbound-mail channel, so email replies aren't
-  detected.
-- **The better version:** An inbound-mail integration so email replies land in the same inbox.
-- **Trigger to revisit:** **Sprint 30** (stop-on-reply) needs this first — wire inbound mail before
-  reply-driven cadence stops can react to email.
-- **Origin:** Sprint 29.
+  detected. Sprint 30's stop-on-reply is therefore **automatic for X DMs** (via the inbox) and
+  **manual for email** (a Stop button per recipient / per launch / paste a suppression list of emails).
+  Nothing is faked — we never invent an email reply signal we cannot observe.
+- **The better version:** An inbound-mail integration (Smartlead/Instantly reply webhook or IMAP) so
+  email replies land in the same inbox and stop the chain automatically, like X DMs do.
+- **Trigger to revisit:** When real email sequences run at volume and clicking Stop per replied
+  recipient becomes painful — build inbound-mail ingest as its own slice, then flip email stop-on-reply
+  to automatic.
+- **Origin:** Sprint 29 (gap); Sprint 30 (manual stop shipped on top of it).
 
 ### 17. Per-connection reply cap counts replies + publications together per UTC day
 - **What we shipped (Sprint 29):** The per-connection daily cap on auto-replies counts posted replies
@@ -164,6 +168,44 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
 - **Trigger to revisit:** If replies and posts need separate budgets, or the UTC boundary surprises a
   customer (see also #9).
 - **Origin:** Sprint 29.
+
+### 18. Email sequence steps still require a manual CSV export per batch
+- **What we shipped (Sprint 30):** Even in `scheduled_auto`, the engine auto-generates + auto-approves
+  each email step, but the **send** is the founder's manual CSV export → upload to Smartlead/Instantly
+  (the deliverability boundary we never cross — ties to #1). The next step's delay clock starts at the
+  export (real send) moment, so the engine never gets ahead of actual sends.
+- **The better version:** The one-click API push from #1 — approved email steps post straight into the
+  Smartlead/Instantly campaign, no manual CSV per batch; the engine learns the send time from the API.
+- **Trigger to revisit:** Same as #1 — when manual CSV upload per step becomes the bottleneck.
+- **Origin:** Sprint 30.
+
+### 19. The sequence engine advances synchronously on the worker tick
+- **What we shipped (Sprint 30):** `runSequences` walks every active recipient inline on each
+  worker tick (`SEQUENCE_INTERVAL_MIN`, default 5), generating due steps one per tick per recipient —
+  the same synchronous shape as cadence fill (#4) and the inbox poll (#12). Fine for modest audiences.
+- **The better version:** A dedicated scheduler with back-pressure for large fan-out and sub-minute
+  precision.
+- **Trigger to revisit:** Large audiences, many concurrent sequences, or a need for tighter timing.
+- **Origin:** Sprint 30.
+
+### 20. Step delays are whole hours, evaluated on the tick
+- **What we shipped (Sprint 30):** `delayHours` is a whole-hour integer, and a step fires on the first
+  worker tick after `previousStepSentAt + delayHours`. So effective precision is the tick interval
+  (≈5 min), and sub-hour cadences aren't expressible.
+- **The better version:** Minute-granular delays (and/or send-time-of-day windows) with tick precision
+  to match.
+- **Trigger to revisit:** A customer needs minute-level or business-hours-aware follow-up timing.
+- **Origin:** Sprint 30.
+
+### 21. Sequences cover only the personalized channels (email + X DM)
+- **What we shipped (Sprint 30):** A launch's follow-up chain runs on `email` and `x` only. Broadcast
+  channels (LinkedIn/Instagram) on the same launch are **not** sequenced — they stay the Sprint 26
+  single-shot post. X DM auto-send guardrails reuse the workspace kill switch + per-connection daily
+  cap (counting sent DMs), but there's no per-launch DM cadence cap beyond that.
+- **The better version:** Multi-channel sequences (e.g. email → LinkedIn touch → email) and richer
+  per-step conditions (opened/clicked) once those signals exist.
+- **Trigger to revisit:** Demand for cross-channel cadences, or once open/click tracking lands.
+- **Origin:** Sprint 30.
 
 ---
 

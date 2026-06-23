@@ -2155,6 +2155,11 @@ export const launchSchema = z.object({
   personaId: z.string().uuid().nullable(),
   channels: z.array(z.enum(LAUNCH_CHANNELS)),
   status: z.enum(LAUNCH_STATUSES),
+  // Sequence config (Sprint 30): the control level + stop-on-reply + the X
+  // connection auto-dispatch uses. A launch with no sequence_steps ignores these.
+  automationMode: z.enum(AUTOMATION_MODES),
+  stopOnReply: z.boolean(),
+  xConnectionId: z.string().uuid().nullable(),
   messageCount: z.number().int(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
@@ -2178,18 +2183,13 @@ export const launchMessageSchema = z.object({
   externalUrl: z.string().nullable(),
   sentAt: z.number().int().nullable(),
   lastError: z.string().nullable(),
+  // Which sequence step produced this message (Sprint 30). First-touch = 1.
+  stepNumber: z.number().int(),
   // The linked draft's current approval state + content, for the launch UI.
   draftState: z.enum(APPROVAL_STATES).nullable(),
   draftContent: z.string().nullable(),
 });
 export type LaunchMessage = z.infer<typeof launchMessageSchema>;
-
-export const launchDetailSchema = z.object({
-  launch: launchSchema,
-  messages: z.array(launchMessageSchema),
-  recipientCount: z.number().int(),
-});
-export type LaunchDetail = z.infer<typeof launchDetailSchema>;
 
 export const createLaunchInputSchema = z.object({
   name: z.string().trim().min(1, "Launch name is required").max(200),
@@ -2197,6 +2197,8 @@ export const createLaunchInputSchema = z.object({
   campaignId: z.string().uuid().optional(),
   personaId: z.string().uuid().optional(),
   channels: z.array(z.enum(LAUNCH_CHANNELS)).min(1, "Pick at least one channel"),
+  automationMode: z.enum(AUTOMATION_MODES).default("manual"),
+  stopOnReply: z.boolean().default(true),
 });
 export type CreateLaunchInput = z.infer<typeof createLaunchInputSchema>;
 
@@ -2211,6 +2213,137 @@ export const dispatchChannelInputSchema = z.object({
   media: z.array(launchMediaSchema).max(10, "At most 10 media items").optional(),
 });
 export type DispatchChannelInput = z.infer<typeof dispatchChannelInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Multi-step outbound sequences (Sprint 30) — follow-up chains on a launch
+// ---------------------------------------------------------------------------
+
+/** The personalized launch channels that can be sequenced into follow-up chains. */
+export const SEQUENCE_CHANNELS = ["email", "x"] as const;
+export type SequenceChannel = (typeof SEQUENCE_CHANNELS)[number];
+
+/** Per-recipient progression through a launch's follow-up chain. */
+export const SEQUENCE_RECIPIENT_STATUSES = [
+  "active",
+  "replied",
+  "stopped",
+  "completed",
+  "failed",
+] as const;
+export type SequenceRecipientStatus = (typeof SEQUENCE_RECIPIENT_STATUSES)[number];
+
+/** Hard cap on steps per channel — keeps a chain comprehensible and bounds fan-out. */
+export const MAX_SEQUENCE_STEPS = 10;
+
+export const sequenceStepSchema = z.object({
+  id: z.string().uuid(),
+  launchId: z.string().uuid(),
+  channel: z.enum(SEQUENCE_CHANNELS),
+  stepNumber: z.number().int().min(1),
+  instruction: z.string(),
+  delayHours: z.number().int().min(0),
+});
+export type SequenceStep = z.infer<typeof sequenceStepSchema>;
+
+export const sequenceStepInputSchema = z.object({
+  channel: z.enum(SEQUENCE_CHANNELS),
+  stepNumber: z.number().int().min(1).max(MAX_SEQUENCE_STEPS),
+  instruction: z.string().trim().max(1000).default(""),
+  delayHours: z.number().int().min(0).max(8760).default(0),
+});
+export type SequenceStepInput = z.infer<typeof sequenceStepInputSchema>;
+
+export const setSequenceInputSchema = z
+  .object({
+    steps: z
+      .array(sequenceStepInputSchema)
+      .min(1, "Add at least one step")
+      .max(MAX_SEQUENCE_STEPS * SEQUENCE_CHANNELS.length),
+  })
+  .superRefine((val, ctx) => {
+    // Per channel, step numbers must be a contiguous 1..N with no gaps/duplicates.
+    for (const channel of SEQUENCE_CHANNELS) {
+      const nums = val.steps
+        .filter((s) => s.channel === channel)
+        .map((s) => s.stepNumber)
+        .sort((a, b) => a - b);
+      for (let i = 0; i < nums.length; i++) {
+        if (nums[i] !== i + 1) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `${channel} steps must be numbered 1..N with no gaps or duplicates.`,
+          });
+          break;
+        }
+      }
+    }
+  });
+export type SetSequenceInput = z.infer<typeof setSequenceInputSchema>;
+
+export const sequenceRecipientSchema = z.object({
+  id: z.string().uuid(),
+  launchId: z.string().uuid(),
+  channel: z.enum(SEQUENCE_CHANNELS),
+  recipientType: z.enum(AUDIENCE_MEMBER_TYPES),
+  recipientId: z.string(),
+  recipientName: z.string(),
+  recipientEmail: z.string(),
+  recipientHandle: z.string().nullable(),
+  currentStep: z.number().int(),
+  totalSteps: z.number().int(),
+  status: z.enum(SEQUENCE_RECIPIENT_STATUSES),
+  nextDueAt: z.number().int().nullable(),
+  lastSentAt: z.number().int().nullable(),
+  stoppedReason: z.string().nullable(),
+  updatedAt: z.number().int(),
+});
+export type SequenceRecipient = z.infer<typeof sequenceRecipientSchema>;
+
+/** Focused payload for the launch's automation toggle — never resets on a name edit. */
+export const updateLaunchSequenceConfigInputSchema = z.object({
+  automationMode: z.enum(AUTOMATION_MODES).optional(),
+  stopOnReply: z.boolean().optional(),
+  xConnectionId: z.string().uuid().nullable().optional(),
+});
+export type UpdateLaunchSequenceConfigInput = z.infer<typeof updateLaunchSequenceConfigInputSchema>;
+
+export const stopSequenceInputSchema = z
+  .object({
+    channel: z.enum(SEQUENCE_CHANNELS).optional(),
+    recipients: z.array(audienceMemberRefSchema).optional(),
+    emails: z.array(z.string().trim().toLowerCase().email()).optional(),
+    all: z.boolean().optional(),
+    reason: z.enum(["manual", "replied"]).default("manual"),
+  })
+  .superRefine((v, ctx) => {
+    if (!v.all && !v.recipients?.length && !v.emails?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Select recipients, paste emails to suppress, or set all=true.",
+      });
+    }
+  });
+export type StopSequenceInput = z.infer<typeof stopSequenceInputSchema>;
+
+export const sequenceRunResultSchema = z.object({
+  enrolled: z.number().int(),
+  generated: z.number().int(),
+  autoApproved: z.number().int(),
+  sent: z.number().int(),
+  stopped: z.number().int(),
+  completed: z.number().int(),
+  ranAt: z.number().int(),
+});
+export type SequenceRunResult = z.infer<typeof sequenceRunResultSchema>;
+
+export const launchDetailSchema = z.object({
+  launch: launchSchema,
+  messages: z.array(launchMessageSchema),
+  steps: z.array(sequenceStepSchema),
+  sequenceRecipients: z.array(sequenceRecipientSchema),
+  recipientCount: z.number().int(),
+});
+export type LaunchDetail = z.infer<typeof launchDetailSchema>;
 
 // ---------------------------------------------------------------------------
 // API error shape

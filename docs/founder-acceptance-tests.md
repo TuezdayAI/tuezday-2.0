@@ -444,9 +444,29 @@ your voice and cleared through Review — without leaving Tuezday.
 
 ---
 
+## Sprint 30 — Multi-step outbound sequences (follow-up chains)
+
+> Branch `sprint-30-outbound-sequences` (off `sprint-29-engagement-reply-inbox`; founder merges
+> S25→S26, S27, S28, S29 before this). Sequences run on the **email** and **X DM** channels only; a
+> launch's LinkedIn/Instagram broadcast stays the Sprint 26 single post. Use **Launches → open a launch
+> → Run now** instead of waiting for the worker tick during testing. Set the automation level on the
+> launch (Manual / Review each step / Fully automated).
+
+- [ ] **Define a 3-step email sequence.** Create a launch at a segment with the **Email** channel and **Fully automated** mode. In the launch's **Follow-up sequence** panel, add 3 email steps (step 2 delay e.g. 24h with angle "add the case study"; step 3 delay 24h "breakup note"). **Save sequence**.
+- [ ] **Step 1 fires.** **Start** → each recipient's step-1 draft appears **approved** (auto). Download the email CSV (Email panel → Download CSV) — that's the real send; it marks step 1 *sent* and starts the delay clock.
+- [ ] **Step 2 fires on schedule.** Advance time past the step-2 delay (or wait) → **Run now** → step-2 drafts generate + auto-approve for recipients who haven't been stopped. Export again. No reply → step 3 follows the same way, then the recipient shows **completed**.
+- [ ] **Manual stop (email).** Paste a recipient's email into the **Stop pasted recipients** box → that recipient flips to **stopped** and gets no further steps; everyone else continues. (Email replies aren't visible to Tuezday — this is the honest stop path.)
+- [ ] **X DM auto-stop on reply.** With X connected, make a 2-step **X DM** sequence (Fully automated, **Stop on reply** on) → **Start** → DM 1 sends to each recipient. Have one recipient reply (it appears in the **Inbox**) → advance time + **Run now** → that recipient shows **replied** and receives **no** DM 2; a non-replying recipient still gets DM 2 on schedule.
+- [ ] **Review each step.** Set a launch to **Review each step** → due steps generate but wait at the approval gate (Review); approving lets the chain continue on the next run; nothing sends without approval.
+- [ ] **Manual mode + guardrails.** A **Manual** launch never advances on its own (the worker skips it) — only your **Run now** advances it. With the **kill switch** on (Automation settings), an auto X DM is held (the step stays pending, the recipient stays active); turning it off and running again sends it.
+
+**Gate:** define a 3-step email sequence at a segment → step 1 sends (export) → no reply → step 2 fires on schedule → step 3 follows; a manual stop halts one email recipient while others continue; and an X DM reply automatically stops that recipient's chain while others proceed — every step brain-resolved, per-recipient, and approval-gated, at the automation level you chose.
+
+---
+
 ## Cross-cutting things worth re-checking occasionally
 
-- [ ] `npm test` (600 tests) and `npm run typecheck` stay green.
+- [ ] `npm test` (619 tests) and `npm run typecheck` stay green.
 - [ ] Every generation's prompt trace is readable *before* and *after* the LLM call (sandbox → "show prompt trace").
 - [ ] Stopping any external service (R2R, Nango) degrades gracefully — the app never breaks, traces/banners say why.
 - [ ] Gemini occasionally returns 503 "high demand" — a retry succeeds; it surfaces as a clean error, never a crash.

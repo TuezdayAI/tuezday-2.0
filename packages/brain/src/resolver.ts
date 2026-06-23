@@ -6,6 +6,7 @@
   type Channel,
   type MediaContactType,
   type PrPitchType,
+  type SequenceChannel,
   type TaskType,
 } from "@tuezday/contracts";
 import { BRAIN_DOC_META, type BrainContents } from "./index";
@@ -50,6 +51,45 @@ export function composePrPitchInstruction(pitchType: PrPitchType): string {
     "Reference the contact's beat where it is genuinely relevant. One clear low-friction ask (an interview, a comment, the full story). " +
     "No flattery openers, no superlatives, no attachments mentioned. Return only the subject and body - no preamble or commentary."
   );
+}
+
+/**
+ * Compose the task instruction for a follow-up step in an outbound sequence
+ * (Sprint 30). Step 1 uses the channel's default instruction; steps 2+ get this
+ * framing — a genuine follow-up that adds a fresh angle and never repeats the
+ * earlier touches it is told about. Rides on the resolver's `taskInstruction`
+ * override, so the full follow-up prompt shows up in the context trace.
+ */
+export function composeFollowupInstruction(args: {
+  channel: SequenceChannel;
+  stepNumber: number;
+  instruction: string;
+  priorBodies: string[];
+}): string {
+  const { channel, stepNumber, instruction, priorBodies } = args;
+  const medium = channel === "email" ? "cold email" : "X (Twitter) direct message";
+  const base =
+    channel === "email"
+      ? "Write a short follow-up email to the same lead: a subject line (prefix 'Subject: ') and a body of at most 100 words."
+      : "Write a short follow-up X DM to the same person: at most one or two sentences, friendly and low-friction.";
+  const angle = instruction.trim()
+    ? `Angle for this follow-up: ${instruction.trim()}`
+    : "Add a fresh, useful angle - do not merely 'bump' the thread with 'just checking in'.";
+  const prior = priorBodies.length
+    ? `You already sent these earlier messages to this person (do NOT repeat them):\n${priorBodies
+        .map((b, i) => `(${i + 1}) ${b.trim()}`)
+        .join("\n")}`
+    : "";
+  return [
+    `Task: This is message #${stepNumber} in an outbound ${medium} follow-up sequence to the same person.`,
+    base,
+    angle,
+    "Personalize ONLY from the lead facts above - never invent meetings, prior replies, or details not in the data. Make one clear, low-friction ask. Skip flattery and 'circling back' clichés.",
+    prior,
+    "Return only the message - no preamble or commentary.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 /**
