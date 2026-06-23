@@ -1,8 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { evidenceDocumentSchema } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
+import type { Db } from "../src/db";
+import { connections, drafts, evidenceDocuments, publications } from "../src/db/schema";
 import { EvidenceStoreError, type EvidenceStore } from "../src/evidence/store";
 import type { LlmGateway } from "../src/llm/gateway";
+import { backfillCollections } from "../src/services/evidence";
 import { buildAuthedApp, createTestDb } from "./helpers";
 
 const fakeLlm: LlmGateway = {
@@ -13,34 +17,48 @@ const fakeLlm: LlmGateway = {
 
 interface FakeStoreState {
   healthy: boolean;
-  documents: Map<string, { title: string; content: string }>;
+  collections: Map<string, string>;
+  documents: Map<string, { title: string; content: string; collectionId: string }>;
   lastQuery: string | null;
-  lastDocumentIds: string[] | null;
+  lastCollectionId: string | null;
 }
 
 function fakeStore(state: FakeStoreState): EvidenceStore {
-  let counter = 0;
+  let docCounter = 0;
+  let colCounter = 0;
   return {
     async health() {
       return state.healthy
         ? { healthy: true }
         : { healthy: false, detail: "fake store is down" };
     },
-    async addDocument({ title, content }) {
+    async createCollection(name) {
+      if (!state.healthy) throw new EvidenceStoreError("store down");
+      const existing = state.collections.get(name);
+      if (existing) return existing;
+      const id = `col-${++colCounter}`;
+      state.collections.set(name, id);
+      return id;
+    },
+    async addDocument({ title, content, collectionId }) {
       if (!state.healthy) throw new EvidenceStoreError("store down");
       if (title === "FAIL") throw new EvidenceStoreError("ingestion exploded");
-      const id = `r2r-${++counter}`;
-      state.documents.set(id, { title, content });
+      const id = `r2r-${++docCounter}`;
+      state.documents.set(id, { title, content, collectionId });
       return id;
+    },
+    async attachDocument(collectionId, documentId) {
+      const doc = state.documents.get(documentId);
+      if (doc) doc.collectionId = collectionId;
     },
     async deleteDocument(documentId) {
       state.documents.delete(documentId);
     },
-    async search(query, documentIds, limit) {
+    async search(query, collectionId, limit) {
       state.lastQuery = query;
-      state.lastDocumentIds = documentIds;
+      state.lastCollectionId = collectionId;
       return [...state.documents.entries()]
-        .filter(([id]) => documentIds.includes(id))
+        .filter(([, doc]) => doc.collectionId === collectionId)
         .slice(0, limit)
         .map(([id, doc]) => ({
           text: doc.content.slice(0, 100),
@@ -53,12 +71,22 @@ function fakeStore(state: FakeStoreState): EvidenceStore {
 
 describe("evidence API", () => {
   let app: TuezdayApp;
+  let db: Db;
+  let store: EvidenceStore;
   let workspaceId: string;
   let state: FakeStoreState;
 
   beforeEach(async () => {
-    state = { healthy: true, documents: new Map(), lastQuery: null, lastDocumentIds: null };
-    app = await buildAuthedApp({ db: createTestDb(), llm: fakeLlm, evidence: fakeStore(state) });
+    state = {
+      healthy: true,
+      collections: new Map(),
+      documents: new Map(),
+      lastQuery: null,
+      lastCollectionId: null,
+    };
+    db = createTestDb();
+    store = fakeStore(state);
+    app = await buildAuthedApp({ db, llm: fakeLlm, evidence: store });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Evi" } })
     ).json().id;
@@ -159,9 +187,9 @@ describe("evidence API", () => {
       expect(section.content).toContain("Website copy");
     });
 
-    it("scopes search to this workspace's documents only", async () => {
+    it("scopes search to this workspace's own collection only", async () => {
       await upload();
-      // a second workspace with its own document
+      // a second workspace with its own document in a different collection
       const other = (
         await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Other" } })
       ).json();
@@ -171,8 +199,13 @@ describe("evidence API", () => {
         payload: { title: "Other doc", content: "Other workspace content." },
       });
 
-      await resolve();
-      expect(state.lastDocumentIds).toEqual(["r2r-1"]);
+      const res = await resolve();
+      const section = res.json().sections.find((s: { key: string }) => s.key === "evidence");
+      // Search ran against this workspace's collection; the other workspace's
+      // document never appears.
+      expect(state.lastCollectionId).toBe(state.collections.get(workspaceId));
+      expect(section.content).toContain("Website copy");
+      expect(section.content).not.toContain("Other workspace content");
     });
 
     it("excludes evidence with a reason when no documents exist", async () => {
@@ -233,6 +266,215 @@ describe("evidence API", () => {
       });
       expect(res.statusCode).toBe(201);
       expect(res.json().prompt).toContain("## Evidence");
+    });
+
+    it("exposes the per-chunk retrieval trace on the evidence section", async () => {
+      await upload();
+      const res = await resolve();
+      const section = res.json().sections.find((s: { key: string }) => s.key === "evidence");
+      expect(section.included).toBe(true);
+      expect(section.evidence.query).toBeTruthy();
+      expect(section.evidence.chunks.length).toBeGreaterThan(0);
+      const chunk = section.evidence.chunks[0];
+      expect(chunk).toHaveProperty("finalScore");
+      expect(chunk).toHaveProperty("recencyScore");
+      expect(chunk.kept).toBe(true);
+    });
+  });
+
+  describe("ingest candidates (Sprint 30)", () => {
+    async function createSignal(content = "Churn spikes after onboarding friction", source = "reddit") {
+      return (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/signals`,
+          payload: { content, source },
+        })
+      ).json();
+    }
+
+    /** Seed a published post directly (connection + draft + publication). */
+    function seedPublishedPost(title = "Our launch post", content = "We shipped the memory layer.") {
+      const ts = Date.now();
+      const connectionId = randomUUID();
+      db.insert(connections)
+        .values({ id: connectionId, workspaceId, providerKey: "reddit", nangoConnectionId: "n-1", createdAt: ts })
+        .run();
+      const draftId = randomUUID();
+      db.insert(drafts)
+        .values({
+          id: draftId,
+          workspaceId,
+          taskType: "linkedin_post",
+          channel: "linkedin",
+          originalContent: content,
+          content,
+          state: "approved",
+          createdAt: ts,
+          updatedAt: ts,
+        })
+        .run();
+      const pubId = randomUUID();
+      db.insert(publications)
+        .values({
+          id: pubId,
+          workspaceId,
+          draftId,
+          connectionId,
+          providerKey: "reddit",
+          target: "r/test",
+          title,
+          status: "published",
+          scheduledFor: ts,
+          publishedAt: ts,
+          createdAt: ts,
+          updatedAt: ts,
+        })
+        .run();
+      return { pubId, content, title, publishedAt: ts };
+    }
+
+    async function sweep() {
+      return app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/evidence/candidates/sweep`,
+      });
+    }
+
+    async function listCandidates(status = "pending") {
+      return (
+        await app.inject({
+          method: "GET",
+          url: `/workspaces/${workspaceId}/evidence/candidates?status=${status}`,
+        })
+      ).json();
+    }
+
+    it("proposes every signal and published post once, idempotently", async () => {
+      await createSignal();
+      seedPublishedPost();
+
+      expect((await sweep()).json()).toEqual({ signal: { proposed: 1 }, published: { proposed: 1 } });
+      // a second sweep proposes nothing new
+      expect((await sweep()).json()).toEqual({ signal: { proposed: 0 }, published: { proposed: 0 } });
+
+      const { candidates } = await listCandidates();
+      expect(candidates).toHaveLength(2);
+      expect(candidates.map((c: { kind: string }) => c.kind).sort()).toEqual(["published", "signal"]);
+    });
+
+    it("pulls a signal's source/date and the draft's content into candidates", async () => {
+      const signal = await createSignal("Unique churn insight", "reddit");
+      const { content: postContent } = seedPublishedPost("Launch", "Shipped today.");
+      await sweep();
+
+      const { candidates } = await listCandidates();
+      const signalCand = candidates.find((c: { kind: string }) => c.kind === "signal");
+      const publishedCand = candidates.find((c: { kind: string }) => c.kind === "published");
+      expect(signalCand.content).toBe("Unique churn insight");
+      expect(signalCand.sourceRef).toBe(signal.id);
+      expect(signalCand.title).toContain("reddit");
+      expect(publishedCand.content).toBe(postContent);
+      expect(publishedCand.sourceCreatedAt).toBeGreaterThan(0);
+    });
+
+    it("accepts a candidate into the corpus with provenance and links it", async () => {
+      await createSignal("Insight to ground future posts");
+      await sweep();
+      const candidate = (await listCandidates()).candidates[0];
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/evidence/candidates/${candidate.id}/accept`,
+      });
+      expect(res.statusCode).toBe(201);
+      const doc = res.json();
+      expect(doc.kind).toBe("signal");
+      expect(doc.sourceRef).toBe(candidate.sourceRef);
+      expect(doc.status).toBe("ready");
+
+      const list = (
+        await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/evidence` })
+      ).json();
+      expect(list.documents.find((d: { kind: string }) => d.kind === "signal")).toBeDefined();
+
+      expect((await listCandidates()).candidates).toHaveLength(0);
+      expect((await listCandidates("accepted")).candidates[0].evidenceDocumentId).toBe(doc.id);
+    });
+
+    it("keeps the candidate pending and returns 503 when the store is down", async () => {
+      await createSignal();
+      await sweep();
+      const candidate = (await listCandidates()).candidates[0];
+      state.healthy = false;
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/evidence/candidates/${candidate.id}/accept`,
+      });
+      expect(res.statusCode).toBe(503);
+      expect((await listCandidates()).candidates).toHaveLength(1);
+    });
+
+    it("dismisses a candidate and never re-proposes it", async () => {
+      await createSignal();
+      await sweep();
+      const candidate = (await listCandidates()).candidates[0];
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/evidence/candidates/${candidate.id}/dismiss`,
+      });
+      expect(res.statusCode).toBe(204);
+      expect((await listCandidates()).candidates).toHaveLength(0);
+
+      await sweep();
+      expect((await listCandidates()).candidates).toHaveLength(0);
+    });
+
+    it("rejects deciding the same candidate twice (409)", async () => {
+      await createSignal();
+      await sweep();
+      const candidate = (await listCandidates()).candidates[0];
+      const url = `/workspaces/${workspaceId}/evidence/candidates/${candidate.id}/dismiss`;
+      await app.inject({ method: "POST", url });
+      expect((await app.inject({ method: "POST", url })).statusCode).toBe(409);
+    });
+  });
+
+  describe("collection backfill (Sprint 30)", () => {
+    function seedReadyDoc(r2rId: string, title = "Old copy", content = "Legacy website copy.") {
+      state.documents.set(r2rId, { title, content, collectionId: "" });
+      db.insert(evidenceDocuments)
+        .values({
+          id: randomUUID(),
+          workspaceId,
+          r2rDocumentId: r2rId,
+          title,
+          chars: content.length,
+          status: "ready",
+          error: null,
+          kind: "manual",
+          sourceRef: null,
+          sourceCreatedAt: null,
+          createdAt: Date.now(),
+        })
+        .run();
+    }
+
+    it("attaches pre-existing ready documents to the workspace collection", async () => {
+      seedReadyDoc("r2r-pre");
+      await backfillCollections(db, store);
+
+      const collectionId = state.collections.get(workspaceId);
+      expect(collectionId).toBeTruthy();
+      expect(state.documents.get("r2r-pre")!.collectionId).toBe(collectionId);
+    });
+
+    it("is graceful when the store is unavailable", async () => {
+      seedReadyDoc("r2r-pre");
+      state.healthy = false;
+      await expect(backfillCollections(db, store)).resolves.toBeUndefined();
     });
   });
 });

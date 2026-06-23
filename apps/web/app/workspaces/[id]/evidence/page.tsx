@@ -5,11 +5,15 @@ import { API_URL, apiFetch } from "@/lib/api";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import type { EvidenceDocument, Workspace } from "@tuezday/contracts";
+import type { EvidenceCandidate, EvidenceDocument, Workspace } from "@tuezday/contracts";
 
 interface EvidenceView {
   documents: EvidenceDocument[];
   store: { healthy: boolean; detail?: string };
+}
+
+function originLabel(kind: EvidenceDocument["kind"]): string {
+  return kind === "signal" ? "From signal" : kind === "published" ? "From published" : "Manual";
 }
 
 export default function EvidencePage() {
@@ -17,6 +21,7 @@ export default function EvidencePage() {
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [view, setView] = useState<EvidenceView | null>(null);
+  const [candidates, setCandidates] = useState<EvidenceCandidate[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const [title, setTitle] = useState("");
@@ -25,13 +30,15 @@ export default function EvidencePage() {
 
   const load = useCallback(async () => {
     try {
-      const [wsRes, eRes] = await Promise.all([
+      const [wsRes, eRes, cRes] = await Promise.all([
         apiFetch(`/workspaces/${id}`),
         apiFetch(`/workspaces/${id}/evidence`),
+        apiFetch(`/workspaces/${id}/evidence/candidates`),
       ]);
       if (!wsRes.ok || !eRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
       setView(await eRes.json());
+      setCandidates(cRes.ok ? (await cRes.json()).candidates : []);
       setError(null);
     } catch {
       setError(`Could not load this workspace from ${API_URL}. Is "npm run dev" running?`);
@@ -67,6 +74,24 @@ export default function EvidencePage() {
   async function remove(doc: EvidenceDocument) {
     if (!confirm(`Delete "${doc.title}" from the evidence corpus?`)) return;
     await apiFetch(`/workspaces/${id}/evidence/${doc.id}`, { method: "DELETE" });
+    await load();
+  }
+
+  async function acceptCandidate(c: EvidenceCandidate) {
+    setError(null);
+    const res = await apiFetch(`/workspaces/${id}/evidence/candidates/${c.id}/accept`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      setError(body?.message ?? `Could not accept this candidate (${res.status}).`);
+      return;
+    }
+    await load();
+  }
+
+  async function dismissCandidate(c: EvidenceCandidate) {
+    await apiFetch(`/workspaces/${id}/evidence/candidates/${c.id}/dismiss`, { method: "POST" });
     await load();
   }
 
@@ -140,6 +165,48 @@ export default function EvidencePage() {
       </section>
 
       <section className="panel">
+        <h2>Ingest candidates ({candidates.length})</h2>
+        <p className="subtitle" style={{ marginTop: 0 }}>
+          Signals and published posts the worker proposes for the corpus. Accept the useful ones —
+          nothing is ingested until you do.
+        </p>
+        {candidates.length === 0 ? (
+          <p className="empty">
+            No pending candidates. The worker proposes your signals and published posts here as they
+            appear.
+          </p>
+        ) : (
+          <ul className="section-list">
+            {candidates.map((c) => (
+              <li key={c.id} className="section-card">
+                <div className="section-head">
+                  <span className="layer-badge">
+                    {c.kind === "signal" ? "From signal" : "From published"}
+                  </span>
+                  <span className="section-title">{c.title}</span>
+                  <span className="section-tokens">
+                    {new Date(c.sourceCreatedAt).toLocaleDateString()}
+                  </span>
+                </div>
+                <p className="meta" style={{ whiteSpace: "pre-wrap" }}>
+                  {c.content.slice(0, 240)}
+                  {c.content.length > 240 ? "…" : ""}
+                </p>
+                <div className="rating-row" style={{ marginTop: 8 }}>
+                  <button onClick={() => acceptCandidate(c)} disabled={!view.store.healthy}>
+                    Accept into corpus
+                  </button>
+                  <button className="button-secondary" onClick={() => dismissCandidate(c)}>
+                    Dismiss
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="panel">
         <h2>Corpus ({view.documents.length})</h2>
         {view.documents.length === 0 ? (
           <p className="empty">
@@ -162,6 +229,7 @@ export default function EvidencePage() {
                   >
                     {doc.status}
                   </span>
+                  <span className="layer-badge">{originLabel(doc.kind)}</span>
                   <span className="section-title">{doc.title}</span>
                   <span className="section-tokens">
                     {doc.chars.toLocaleString()} chars ·{" "}

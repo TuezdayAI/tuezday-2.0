@@ -15,6 +15,7 @@ const INTERVAL_MIN = Number(process.env.DISCOVERY_INTERVAL_MIN ?? 30);
 const SYNTHESIS_DAYS = Number(process.env.LEARNING_SYNTHESIS_DAYS ?? 7);
 const ADS_SYNC_HOURS = Number(process.env.ADS_SYNC_HOURS ?? 6);
 const PUBLISH_INTERVAL_MIN = Number(process.env.PUBLISH_INTERVAL_MIN ?? 1);
+const EVIDENCE_SWEEP_MIN = Number(process.env.EVIDENCE_SWEEP_MIN ?? 30);
 
 interface Workspace {
   id: string;
@@ -189,6 +190,47 @@ async function adsTick(): Promise<void> {
   }
 }
 
+/** Propose each workspace's signals + published posts as ingest candidates.
+ * Founder-gated: the sweep only queues candidates; nothing enters the corpus
+ * until the founder accepts them. */
+async function sweepEvidenceForAllWorkspaces(): Promise<void> {
+  const res = await api(`/workspaces`);
+  if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
+  const workspaces = (await res.json()) as Workspace[];
+
+  for (const workspace of workspaces) {
+    try {
+      const sweepRes = await api(`/workspaces/${workspace.id}/evidence/candidates/sweep`, {
+        method: "POST",
+      });
+      if (!sweepRes.ok) throw new Error(`sweep returned ${sweepRes.status}`);
+      const { signal, published } = (await sweepRes.json()) as {
+        signal: { proposed: number };
+        published: { proposed: number };
+      };
+      const total = signal.proposed + published.proposed;
+      if (total > 0) {
+        console.log(
+          `[evidence] ${workspace.name}: ${total} new candidate(s) (${signal.proposed} signal, ${published.proposed} published)`,
+        );
+      }
+    } catch (err) {
+      console.error(
+        `[evidence] ${workspace.name}: failed —`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+}
+
+async function evidenceTick(): Promise<void> {
+  try {
+    await sweepEvidenceForAllWorkspaces();
+  } catch (err) {
+    console.error("[evidence] tick failed —", err instanceof Error ? err.message : err);
+  }
+}
+
 async function tick(): Promise<void> {
   try {
     await runDiscoveryForAllWorkspaces();
@@ -203,7 +245,7 @@ async function tick(): Promise<void> {
 }
 
 console.log(
-  `Tuezday worker: polling discovery every ${INTERVAL_MIN} min, ads sync every ${ADS_SYNC_HOURS} h, scheduled publishing every ${PUBLISH_INTERVAL_MIN} min against ${API_URL} (set DISCOVERY_INTERVAL_MIN / ADS_SYNC_HOURS / PUBLISH_INTERVAL_MIN / TUEZDAY_API_URL to change).`,
+  `Tuezday worker: polling discovery every ${INTERVAL_MIN} min, ads sync every ${ADS_SYNC_HOURS} h, scheduled publishing every ${PUBLISH_INTERVAL_MIN} min, evidence sweep every ${EVIDENCE_SWEEP_MIN} min against ${API_URL} (set DISCOVERY_INTERVAL_MIN / ADS_SYNC_HOURS / PUBLISH_INTERVAL_MIN / EVIDENCE_SWEEP_MIN / TUEZDAY_API_URL to change).`,
 );
 void tick();
 setInterval(() => void tick(), INTERVAL_MIN * 60 * 1000);
@@ -211,3 +253,5 @@ void adsTick();
 setInterval(() => void adsTick(), ADS_SYNC_HOURS * 60 * 60 * 1000);
 void publishTick();
 setInterval(() => void publishTick(), PUBLISH_INTERVAL_MIN * 60 * 1000);
+void evidenceTick();
+setInterval(() => void evidenceTick(), EVIDENCE_SWEEP_MIN * 60 * 1000);

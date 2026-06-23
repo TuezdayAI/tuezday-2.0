@@ -4,6 +4,7 @@
   DEFAULT_TOKEN_BUDGET,
   type AdCreativeTaskType,
   type Channel,
+  type EvidenceKind,
   type MediaContactType,
   type PrPitchType,
   type TaskType,
@@ -150,9 +151,17 @@ export interface ResolveMediaContact {
 
 export interface EvidenceChunk {
   text: string;
-  score: number;
-  documentId: string;
   title: string;
+  documentId: string;
+  kind: EvidenceKind;
+  /** R2R similarity score (0–1). */
+  score: number;
+  /** Recency decay applied by the retrieval policy (0–1). */
+  recencyScore: number;
+  /** Per-origin weight (manual > published > signal). */
+  sourceWeight: number;
+  /** Blended rank used for ordering and budget trimming. */
+  finalScore: number;
 }
 
 export interface ResolveEvidence {
@@ -183,6 +192,13 @@ export interface ResolveInput {
   tokenBudget?: number;
 }
 
+export interface EvidenceChunkTrace extends EvidenceChunk {
+  /** Whether this chunk survived the token budget into the prompt. */
+  kept: boolean;
+  /** Why a chunk was dropped (budget), when applicable. */
+  exclusionReason?: string;
+}
+
 export interface ContextSection {
   key: string;
   layer: ContextLayer;
@@ -191,6 +207,12 @@ export interface ContextSection {
   included: boolean;
   reason: string;
   tokens: number;
+  /**
+   * Per-chunk retrieval trace, present only on the evidence section: the
+   * composed query and every candidate chunk with its scores + kept/dropped
+   * status. Powers the Evidence-retrieval inspection view.
+   */
+  evidence?: { query: string; chunks: EvidenceChunkTrace[] };
 }
 
 export interface ResolvedContext {
@@ -212,6 +234,13 @@ export function estimateTokens(text: string): number {
  * instead of silently cutting the docs that define the company.
  */
 const BUDGET_SACRIFICE_ORDER = ["org:history", "channel"] as const;
+
+/** Render evidence chunks as `[n]` citations followed by a numbered source list. */
+function renderEvidence(chunks: EvidenceChunk[]): string {
+  const lines = chunks.map((c, i) => `[${i + 1}] ${c.text.trim()}`);
+  const sources = chunks.map((c, i) => `[${i + 1}] ${c.title}`);
+  return `${lines.join("\n\n")}\n\nSources:\n${sources.join("\n")}`;
+}
 
 export function resolveContext(input: ResolveInput): ResolvedContext {
   const tokenBudget = input.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
@@ -372,9 +401,7 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
   }
 
   if (input.evidence && input.evidence.chunks.length > 0) {
-    const lines = input.evidence.chunks.map((c, i) => `[${i + 1}] ${c.text.trim()}`);
-    const sources = input.evidence.chunks.map((c, i) => `[${i + 1}] ${c.title}`);
-    const evidenceContent = `${lines.join("\n\n")}\n\nSources:\n${sources.join("\n")}`;
+    const evidenceContent = renderEvidence(input.evidence.chunks);
     sections.push({
       key: "evidence",
       layer: "evidence",
@@ -383,6 +410,10 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       included: true,
       reason: `Retrieved ${input.evidence.chunks.length} evidence chunk(s) for query: "${input.evidence.query}". Ground claims in this evidence.`,
       tokens: estimateTokens(evidenceContent),
+      evidence: {
+        query: input.evidence.query,
+        chunks: input.evidence.chunks.map((c) => ({ ...c, kept: true })),
+      },
     });
   } else {
     sections.push({
@@ -409,10 +440,34 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
     tokens: estimateTokens(taskContent),
   });
 
-  // Token budget: drop sacrificial sections whole, in order, until we fit.
+  // Token budget. Evidence is the lowest-priority layer: it degrades
+  // chunk-by-chunk (lowest-ranked dropped first) before any whole section is.
   const includedTotal = () =>
     sections.filter((s) => s.included).reduce((sum, s) => sum + s.tokens, 0);
 
+  const evidenceSection = sections.find((s) => s.key === "evidence");
+  if (evidenceSection?.included && input.evidence) {
+    const allChunks = input.evidence.chunks;
+    const traces = evidenceSection.evidence!.chunks;
+    let keptCount = allChunks.length;
+    while (keptCount > 0 && includedTotal() > tokenBudget) {
+      keptCount--;
+      traces[keptCount]!.kept = false;
+      traces[keptCount]!.exclusionReason = "dropped to fit the token budget";
+      if (keptCount === 0) {
+        evidenceSection.included = false;
+        evidenceSection.content = "";
+        evidenceSection.tokens = 0;
+        evidenceSection.reason = "Excluded: no evidence chunks fit the token budget.";
+      } else {
+        evidenceSection.content = renderEvidence(allChunks.slice(0, keptCount));
+        evidenceSection.tokens = estimateTokens(evidenceSection.content);
+        evidenceSection.reason = `Retrieved ${allChunks.length} evidence chunk(s) for query: "${input.evidence.query}"; kept the top ${keptCount} within the token budget. Ground claims in this evidence.`;
+      }
+    }
+  }
+
+  // Then drop whole sacrificial sections, in order, until we fit.
   for (const key of BUDGET_SACRIFICE_ORDER) {
     if (includedTotal() <= tokenBudget) break;
     const section = sections.find((s) => s.key === key)!;

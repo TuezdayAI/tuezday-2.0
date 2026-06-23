@@ -61,6 +61,42 @@ interface GenerationView {
   sections: ContextSection[];
 }
 
+/** Retrieval-quality inspection: the composed query and every candidate chunk
+ * with its similarity / recency / source / final scores and kept-vs-dropped
+ * status. Renders only for the evidence section (which carries `evidence`). */
+function EvidenceRetrieval({ section }: { section: ContextSection }) {
+  if (!section.evidence) return null;
+  const { query, chunks } = section.evidence;
+  return (
+    <div style={{ marginTop: 8 }}>
+      <p className="meta">
+        Retrieval query: <em>{query}</em>
+      </p>
+      <ul className="section-list" style={{ marginTop: 4 }}>
+        {chunks.map((c, i) => (
+          <li
+            key={`${c.documentId}-${i}`}
+            className={`section-card ${c.kept ? "" : "excluded"}`}
+            style={{ padding: 8 }}
+          >
+            <div className="section-head">
+              <span className="layer-badge">{c.kind}</span>
+              <span className="section-title" style={{ fontSize: "0.85rem" }}>
+                {c.title}
+              </span>
+              <span className="section-tokens">{c.kept ? "Kept" : "Dropped (budget)"}</span>
+            </div>
+            <p className="meta" style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>
+              sim {c.score.toFixed(2)} · rec {c.recencyScore.toFixed(2)} · src{" "}
+              {c.sourceWeight.toFixed(2)} · final {c.finalScore.toFixed(2)}
+            </p>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export default function SandboxPage() {
   const { id } = useParams<{ id: string }>();
 
@@ -345,6 +381,7 @@ export default function SandboxPage() {
                       </span>
                     </div>
                     <p className="section-reason">{s.reason}</p>
+                    {s.evidence && <EvidenceRetrieval section={s} />}
                   </li>
                 ))}
               </ol>
@@ -373,7 +410,16 @@ export default function SandboxPage() {
                 {showTrace ? "hide" : "show"} prompt trace
               </button>
             </p>
-            {showTrace && <pre className="section-content">{latest.prompt}</pre>}
+            {showTrace && (
+              <>
+                {latest.sections
+                  ?.filter((s) => s.key === "evidence" && s.evidence)
+                  .map((s) => (
+                    <EvidenceRetrieval key={s.key} section={s} />
+                  ))}
+                <pre className="section-content">{latest.prompt}</pre>
+              </>
+            )}
             <pre className="output-text">{latest.output}</pre>
             <div className="rating-row">
               {OUTPUT_RATINGS.map((r) => (

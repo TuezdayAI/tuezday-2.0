@@ -286,10 +286,51 @@ export const evidenceDocuments = sqliteTable("evidence_documents", {
   chars: integer("chars").notNull(),
   status: text("status").notNull().default("processing"),
   error: text("error"),
+  // Provenance (Sprint 30): manual paste vs accepted ingest candidate.
+  kind: text("kind").notNull().default("manual"),
+  sourceRef: text("source_ref"),
+  sourceCreatedAt: integer("source_created_at"),
   createdAt: integer("created_at").notNull(),
 });
 
 export type EvidenceDocumentRow = typeof evidenceDocuments.$inferSelect;
+
+// One R2R collection per workspace (Sprint 30) — replaces document-id-filter
+// scoping with real per-workspace isolation inside the store.
+export const evidenceCollections = sqliteTable("evidence_collections", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  r2rCollectionId: text("r2r_collection_id").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type EvidenceCollectionRow = typeof evidenceCollections.$inferSelect;
+
+// Founder-gated ingest queue (Sprint 30): the worker proposes signals +
+// published posts; the founder accepts them into the corpus. Unique on
+// (workspace, kind, sourceRef) so a source is proposed at most once.
+export const evidenceCandidates = sqliteTable(
+  "evidence_candidates",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    sourceRef: text("source_ref").notNull(),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    sourceCreatedAt: integer("source_created_at").notNull(),
+    status: text("status").notNull().default("pending"),
+    evidenceDocumentId: text("evidence_document_id"),
+    createdAt: integer("created_at").notNull(),
+    decidedAt: integer("decided_at"),
+  },
+  (t) => [uniqueIndex("evidence_candidates_source").on(t.workspaceId, t.kind, t.sourceRef)],
+);
+
+export type EvidenceCandidateRow = typeof evidenceCandidates.$inferSelect;
 
 export const engagementMetrics = sqliteTable("engagement_metrics", {
   id: text("id").primaryKey(),

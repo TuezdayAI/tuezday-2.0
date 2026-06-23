@@ -30,6 +30,9 @@ import {
   crmContactSchema,
   crmSyncInputSchema,
   EVENT_TYPES,
+  EVIDENCE_KINDS,
+  EVIDENCE_CANDIDATE_KINDS,
+  evidenceCandidateSchema,
   logDraftInputSchema,
   pushLeadInputSchema,
   OUTPUT_RATINGS,
@@ -85,6 +88,43 @@ describe("approval states", () => {
 describe("output ratings", () => {
   it("matches the planned training signal vocabulary", () => {
     expect(OUTPUT_RATINGS).toEqual(["accepted", "needs_edit", "rejected"]);
+  });
+});
+
+describe("evidence kinds (Sprint 30)", () => {
+  it("lists manual plus the two candidate origins", () => {
+    expect(EVIDENCE_KINDS).toEqual(["manual", "signal", "published"]);
+  });
+  it("restricts candidate origins to signal + published (never manual)", () => {
+    expect(EVIDENCE_CANDIDATE_KINDS).toEqual(["signal", "published"]);
+  });
+});
+
+describe("evidenceCandidateSchema", () => {
+  const valid = {
+    id: "11111111-1111-1111-1111-111111111111",
+    workspaceId: "22222222-2222-2222-2222-222222222222",
+    kind: "signal" as const,
+    sourceRef: "sig-1",
+    title: "Signal — reddit — 2026-06-23",
+    content: "Something worth grounding future drafts in.",
+    sourceCreatedAt: 1_700_000_000_000,
+    status: "pending" as const,
+    evidenceDocumentId: null,
+    createdAt: 1_700_000_000_000,
+    decidedAt: null,
+  };
+
+  it("accepts a well-formed pending candidate", () => {
+    expect(evidenceCandidateSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it("rejects manual as a candidate kind", () => {
+    expect(evidenceCandidateSchema.safeParse({ ...valid, kind: "manual" }).success).toBe(false);
+  });
+
+  it("rejects an unknown status", () => {
+    expect(evidenceCandidateSchema.safeParse({ ...valid, status: "queued" }).success).toBe(false);
   });
 });
 

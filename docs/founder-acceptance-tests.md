@@ -10,6 +10,7 @@
 > For Sprint 17 tests: Reddit app credentials (`REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`) in `.env`; `npm run nango:up`.
 > For Sprint 19 tests: two browsers (or one + incognito); `TUEZDAY_WORKER_TOKEN` in `.env`.
 > For Sprint 20 tests: Meta Ads `ads_management` token; Sprint 14 + 15 acceptance done first; `TUEZDAY_WORKER_TOKEN` in `.env`.
+> For Sprint 30 tests: Docker + `npm run r2r:up` (as Sprint 9); a few signals and at least one published post in the workspace; `TUEZDAY_WORKER_TOKEN` in `.env` for the worker sweep.
 > Your dev workspace: "tuezday".
 
 ---
@@ -237,6 +238,30 @@
 - [ ] After the next sync (or **Sync now** on the Ads page) → spend from the launched campaign appears in the Sprint 14 report, attributed to the linked Tuezday campaign.
 
 **Gate:** spend and control are fully bidirectional — you can start and stop real ad spend from inside Tuezday, every approval is logged with the approver's name, and the kill switch is instant.
+
+## Sprint 30 — RAG Hardening for Scale
+
+> Prereq: Docker + `npm run r2r:up` (R2R on :7272), as for Sprint 9. Have a workspace with a few signals and at least one published post (Sprint 17), plus 2–3 evidence documents already uploaded. `TUEZDAY_WORKER_TOKEN` in `.env` for the worker sweep.
+
+**Slice A — Feed & isolate**
+
+- [ ] `npm run r2r:up`; open Evidence → store healthy; existing documents still list, now tagged `Manual`.
+- [ ] Resolve or generate a task → evidence still retrieves and cites correctly (boot backfill attached your old docs to the new per-workspace R2R collection).
+- [ ] Run the worker (or `POST /workspaces/<id>/evidence/candidates/sweep`) → the Evidence page **Ingest candidates** section fills with your signals (`From signal`) and published posts (`From published`), each once.
+- [ ] Sweep again → no duplicates appear.
+- [ ] **Accept** a candidate → it moves into the Corpus tagged by origin and is retrievable; it leaves the queue.
+- [ ] **Dismiss** a candidate → it leaves the queue and never returns on re-sweep.
+- [ ] `npm run r2r:down`, try to accept a candidate → clear "store unavailable" message, candidate stays pending; `npm run r2r:up` → accept succeeds.
+
+**Slice B — Sharpen & inspect**
+
+- [ ] Sandbox → preview context for a task with evidence → expand sections → the Evidence section shows an **Evidence retrieval** panel: the query and each candidate chunk with sim / rec / src / final scores and Kept/Dropped.
+- [ ] Have a fresh document and an older one on the same topic → the fresher / higher-origin-weight chunk ranks above the stale low-weight one.
+- [ ] Two chunks from one long document → at most two appear; a near-duplicate paste is deduped.
+- [ ] Set a small token budget in the sandbox → lower-ranked evidence chunks show **Dropped (budget)** while top chunks stay **Kept**; the brain docs (soul/icp/voice/now) are never dropped.
+- [ ] Generate → "show prompt trace" → the same Evidence retrieval panel is reproduced from the stored generation.
+
+**Gate:** the corpus grows from your own signals and posts under your control (nothing ingested without your accept), retrieval favours fresher and stronger sources, and you can always see exactly what was retrieved, how it scored, and what reached the prompt.
 
 ---
 

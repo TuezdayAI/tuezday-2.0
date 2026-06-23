@@ -127,6 +127,13 @@
       "when": 1781268401440,
       "tag": "0017_bitter_daimon_hellstrom",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1782219025239,
+      "tag": "0018_lame_chameleon",
+      "breakpoints": true
     }
   ]
 }

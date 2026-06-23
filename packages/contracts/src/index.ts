@@ -424,6 +424,11 @@ export type DiscoveredItem = z.infer<typeof discoveredItemSchema>;
 export const EVIDENCE_STATUSES = ["processing", "ready", "failed"] as const;
 export type EvidenceStatus = (typeof EVIDENCE_STATUSES)[number];
 
+// Provenance (Sprint 30): where an evidence document came from. `manual` is
+// pasted by hand; `signal`/`published` are accepted from the ingest queue.
+export const EVIDENCE_KINDS = ["manual", "signal", "published"] as const;
+export type EvidenceKind = (typeof EVIDENCE_KINDS)[number];
+
 export const EVIDENCE_MAX_CHARS = 200_000;
 
 export const evidenceDocumentSchema = z.object({
@@ -434,6 +439,9 @@ export const evidenceDocumentSchema = z.object({
   chars: z.number().int(),
   status: z.enum(EVIDENCE_STATUSES),
   error: z.string().nullable(),
+  kind: z.enum(EVIDENCE_KINDS),
+  sourceRef: z.string().nullable(),
+  sourceCreatedAt: z.number().int().nullable(),
   createdAt: z.number().int(),
 });
 export type EvidenceDocument = z.infer<typeof evidenceDocumentSchema>;
@@ -451,6 +459,31 @@ export const createEvidenceInputSchema = z.object({
     .max(EVIDENCE_MAX_CHARS, `Evidence must be ${EVIDENCE_MAX_CHARS} characters or fewer`),
 });
 export type CreateEvidenceInput = z.infer<typeof createEvidenceInputSchema>;
+
+// Founder-gated ingest queue (Sprint 30). The worker proposes signals +
+// published posts as candidates; the founder accepts them into the corpus.
+// Eligible candidate kinds are a subset of EVIDENCE_KINDS (manual is never a
+// candidate — it is only ever a hand-pasted document).
+export const EVIDENCE_CANDIDATE_KINDS = ["signal", "published"] as const;
+export type EvidenceCandidateKind = (typeof EVIDENCE_CANDIDATE_KINDS)[number];
+
+export const EVIDENCE_CANDIDATE_STATUSES = ["pending", "accepted", "dismissed"] as const;
+export type EvidenceCandidateStatus = (typeof EVIDENCE_CANDIDATE_STATUSES)[number];
+
+export const evidenceCandidateSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  kind: z.enum(EVIDENCE_CANDIDATE_KINDS),
+  sourceRef: z.string(),
+  title: z.string(),
+  content: z.string(),
+  sourceCreatedAt: z.number().int(),
+  status: z.enum(EVIDENCE_CANDIDATE_STATUSES),
+  evidenceDocumentId: z.string().nullable(),
+  createdAt: z.number().int(),
+  decidedAt: z.number().int().nullable(),
+});
+export type EvidenceCandidate = z.infer<typeof evidenceCandidateSchema>;
 
 // ---------------------------------------------------------------------------
 // Approval gate
