@@ -409,6 +409,8 @@ export const crmContacts = sqliteTable(
     company: text("company").notNull().default(""),
     role: text("role").notNull().default(""),
     leadId: text("lead_id").references(() => leads.id, { onDelete: "set null" }),
+    // Tombstone for local discard (Sprint 23): set = hidden + skipped by sync.
+    discardedAt: integer("discarded_at"),
     lastSyncedAt: integer("last_synced_at").notNull(),
     createdAt: integer("created_at").notNull(),
   },
@@ -416,6 +418,21 @@ export const crmContacts = sqliteTable(
 );
 
 export type CrmContactRow = typeof crmContacts.$inferSelect;
+
+// Per-connection CRM sync filter (Sprint 23). Stored separately so the generic
+// connection config stays provider-agnostic; cascades with its connection.
+export const crmSyncSettings = sqliteTable("crm_sync_settings", {
+  connectionId: text("connection_id")
+    .primaryKey()
+    .references(() => connections.id, { onDelete: "cascade" }),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  filterJson: text("filter_json").notNull().default("{}"),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type CrmSyncSettingsRow = typeof crmSyncSettings.$inferSelect;
 
 // Ads reporting (Sprint 14). Tuezday owns this metric model regardless of
 // source; connectionId null marks the workspace's CSV-only account.

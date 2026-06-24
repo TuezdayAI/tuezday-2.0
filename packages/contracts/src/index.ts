@@ -835,6 +835,10 @@ export const crmContactSchema = z.object({
   company: z.string(),
   role: z.string(),
   leadId: z.string().uuid().nullable(),
+  // Set when the founder discards the contact locally (Sprint 23). A discarded
+  // row is a tombstone: hidden from the working set and skipped by re-sync so
+  // it is not resurrected; restore clears it. Discard never touches the CRM.
+  discardedAt: z.number().int().nullable(),
   lastSyncedAt: z.number().int(),
   createdAt: z.number().int(),
 });
@@ -844,6 +848,34 @@ export const crmSyncInputSchema = z.object({
   connectionId: z.string().uuid(),
 });
 export type CrmSyncInput = z.infer<typeof crmSyncInputSchema>;
+
+/**
+ * Per-connection sync filter (Sprint 23). Empty object = today's behavior
+ * (the CRM's default "all contacts" view, all dates). The CRM stays the system
+ * of record — the filter only controls what is pulled into Tuezday's mirror.
+ */
+export const crmSyncFilterSchema = z.object({
+  /** CRM view/list/segment id to pull from instead of the default view. */
+  viewId: z.string().optional(),
+  /** Human label for the chosen view, stored for display. */
+  viewName: z.string().optional(),
+  /** Epoch ms; only sync contacts whose CRM updated_at is at/after this. */
+  updatedSince: z.number().int().optional(),
+});
+export type CrmSyncFilter = z.infer<typeof crmSyncFilterSchema>;
+
+export const crmSyncFilterInputSchema = z.object({
+  connectionId: z.string().uuid(),
+  filter: crmSyncFilterSchema,
+});
+export type CrmSyncFilterInput = z.infer<typeof crmSyncFilterInputSchema>;
+
+/** A CRM view/list/segment the founder can scope a sync to. */
+export const crmViewSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+});
+export type CrmView = z.infer<typeof crmViewSchema>;
 
 export const pushLeadInputSchema = z.object({
   leadId: z.string().uuid(),

@@ -33,7 +33,10 @@ import {
   connectInputSchema,
   createWebhookInputSchema,
   crmContactSchema,
+  crmSyncFilterInputSchema,
+  crmSyncFilterSchema,
   crmSyncInputSchema,
+  crmViewSchema,
   EVENT_TYPES,
   logDraftInputSchema,
   pushLeadInputSchema,
@@ -458,6 +461,7 @@ describe("crm contracts", () => {
       company: "",
       role: "",
       leadId: null,
+      discardedAt: null,
       lastSyncedAt: 1765400000000,
       createdAt: 1765400000000,
     });
@@ -472,6 +476,23 @@ describe("crm contracts", () => {
     expect(pushLeadInputSchema.safeParse({ leadId: uuid }).success).toBe(false);
     expect(logDraftInputSchema.safeParse({ draftId: uuid }).success).toBe(true);
     expect(logDraftInputSchema.safeParse({ draftId: "nope" }).success).toBe(false);
+  });
+
+  it("validates the sync filter, its input wrapper, and views (Sprint 23)", () => {
+    const uuid = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+    // Empty filter is valid (no scoping); populated filter is valid.
+    expect(crmSyncFilterSchema.safeParse({}).success).toBe(true);
+    expect(
+      crmSyncFilterSchema.safeParse({ viewId: "9", viewName: "Hot leads", updatedSince: 1765400000000 })
+        .success,
+    ).toBe(true);
+    expect(crmSyncFilterSchema.safeParse({ updatedSince: "yesterday" }).success).toBe(false);
+    expect(
+      crmSyncFilterInputSchema.safeParse({ connectionId: uuid, filter: { viewId: "9" } }).success,
+    ).toBe(true);
+    expect(crmSyncFilterInputSchema.safeParse({ filter: {} }).success).toBe(false);
+    expect(crmViewSchema.safeParse({ id: "9", name: "Hot leads" }).success).toBe(true);
+    expect(crmViewSchema.safeParse({ id: 9, name: "Hot leads" }).success).toBe(false);
   });
 });
 

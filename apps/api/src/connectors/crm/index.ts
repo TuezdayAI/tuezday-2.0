@@ -1,4 +1,4 @@
-import type { Connection, ConnectorProvider } from "@tuezday/contracts";
+import type { Connection, ConnectorProvider, CrmSyncFilter, CrmView } from "@tuezday/contracts";
 import type { ConnectorFabric } from "../fabric";
 import { FreshsalesAdapter } from "./freshsales";
 
@@ -16,7 +16,10 @@ export interface CrmContactRecord {
 }
 
 export interface CrmAdapter {
-  listContacts(): Promise<{ contacts: CrmContactRecord[]; truncated: boolean }>;
+  /** Optional filter (Sprint 23) scopes which contacts are pulled in. */
+  listContacts(filter?: CrmSyncFilter): Promise<{ contacts: CrmContactRecord[]; truncated: boolean }>;
+  /** CRM views/lists/segments a sync can be scoped to. */
+  listViews(): Promise<CrmView[]>;
   /** Create a contact in the CRM; returns its external id. */
   createContact(input: { name: string; email: string; role?: string }): Promise<string>;
   createNote(externalContactId: string, body: string): Promise<void>;
