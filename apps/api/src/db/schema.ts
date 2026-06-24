@@ -118,6 +118,26 @@ export const brainDocumentVersions = sqliteTable("brain_document_versions", {
 
 export type BrainDocumentVersionRow = typeof brainDocumentVersions.$inferSelect;
 
+// Per-workspace, per-channel guidance overrides (Sprint 21). The built-in
+// defaults live in @tuezday/contracts; this table holds overrides only. A
+// missing row means "use the default" for that channel.
+export const guidanceOverrides = sqliteTable(
+  "guidance_overrides",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    channel: text("channel").notNull(),
+    content: text("content").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("guidance_overrides_workspace_channel").on(t.workspaceId, t.channel)],
+);
+
+export type GuidanceOverrideRow = typeof guidanceOverrides.$inferSelect;
+
 export const personas = sqliteTable("personas", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id")

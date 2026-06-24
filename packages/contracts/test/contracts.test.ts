@@ -22,6 +22,11 @@ import {
   transitionTo,
   BRAIN_DOC_TYPES,
   CHANNELS,
+  CHANNEL_GUIDANCE_DEFAULTS,
+  CHANNEL_LABELS,
+  GUIDANCE_SOURCES,
+  channelGuidanceSchema,
+  updateGuidanceInputSchema,
   CONNECTOR_AUTH_MODES,
   CONNECTOR_CATEGORIES,
   CONNECTOR_PROVIDERS,
@@ -130,6 +135,58 @@ describe("task types and channels", () => {
 
   it("covers the planned channels", () => {
     expect(CHANNELS).toEqual(["linkedin", "x", "email", "ads", "web", "pr"]);
+  });
+});
+
+describe("channel guidance (Sprint 21)", () => {
+  it("provides a built-in default and a label for every channel", () => {
+    for (const channel of CHANNELS) {
+      expect(CHANNEL_GUIDANCE_DEFAULTS[channel].length).toBeGreaterThan(0);
+      expect(CHANNEL_LABELS[channel].length).toBeGreaterThan(0);
+    }
+  });
+
+  it("defines the guidance source vocabulary", () => {
+    expect(GUIDANCE_SOURCES).toEqual(["default", "workspace"]);
+  });
+
+  it("validates a resolved guidance row, including a null updatedAt for defaults", () => {
+    expect(
+      channelGuidanceSchema.safeParse({
+        channel: "linkedin",
+        content: CHANNEL_GUIDANCE_DEFAULTS.linkedin,
+        source: "default",
+        updatedAt: null,
+      }).success,
+    ).toBe(true);
+    expect(
+      channelGuidanceSchema.safeParse({
+        channel: "linkedin",
+        content: "Override.",
+        source: "workspace",
+        updatedAt: 1765400000000,
+      }).success,
+    ).toBe(true);
+    expect(
+      channelGuidanceSchema.safeParse({
+        channel: "tiktok",
+        content: "x",
+        source: "workspace",
+        updatedAt: 1,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires non-empty guidance content within the length cap", () => {
+    expect(updateGuidanceInputSchema.safeParse({ content: "Open with a contrarian line." }).success).toBe(
+      true,
+    );
+    expect(updateGuidanceInputSchema.safeParse({ content: "   " }).success).toBe(false);
+    expect(updateGuidanceInputSchema.safeParse({ content: "x".repeat(4001) }).success).toBe(false);
+  });
+
+  it("trims guidance content", () => {
+    expect(updateGuidanceInputSchema.parse({ content: "  hello  " }).content).toBe("hello");
   });
 });
 

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { BrainDocType, BrainDocVersion, BrainDocument, Workspace } from "@tuezday/contracts";
+import { CHANNEL_LABELS, type Channel, type ChannelGuidance } from "@tuezday/contracts";
 import { BRAIN_DOC_META, type BrainScore } from "@tuezday/brain";
 
 interface BrainView {
@@ -31,6 +32,12 @@ export default function WorkspaceBrainPage() {
   const [versions, setVersions] = useState<BrainDocVersion[] | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [previewVersion, setPreviewVersion] = useState<BrainDocVersion | null>(null);
+
+  // Channel guidance (Sprint 21) — editable per channel, overrides the built-in default.
+  const [guidance, setGuidance] = useState<ChannelGuidance[] | null>(null);
+  const [guidanceDrafts, setGuidanceDrafts] = useState<Record<string, string>>({});
+  const [guidanceSaving, setGuidanceSaving] = useState<string | null>(null);
+  const [guidanceError, setGuidanceError] = useState<string | null>(null);
 
   const selectedDoc = useMemo(
     () => brain?.docs.find((d) => d.docType === selected) ?? null,
@@ -107,6 +114,54 @@ export default function WorkspaceBrainPage() {
     setShowHistory(next);
     setPreviewVersion(null);
     if (next && versions === null) await loadVersions();
+  }
+
+  const loadGuidance = useCallback(async () => {
+    const res = await apiFetch(`/workspaces/${id}/guidance`);
+    if (res.ok) {
+      const rows: ChannelGuidance[] = await res.json();
+      setGuidance(rows);
+      setGuidanceDrafts(Object.fromEntries(rows.map((r) => [r.channel, r.content])));
+    }
+  }, [id]);
+
+  useEffect(() => {
+    void loadGuidance();
+  }, [loadGuidance]);
+
+  async function saveGuidance(channel: Channel) {
+    setGuidanceSaving(channel);
+    setGuidanceError(null);
+    try {
+      const res = await apiFetch(`/workspaces/${id}/guidance/${channel}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: guidanceDrafts[channel] ?? "" }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message ?? `API returned ${res.status}`);
+      }
+      await loadGuidance();
+    } catch (err) {
+      setGuidanceError(err instanceof Error ? err.message : "Failed to save guidance");
+    } finally {
+      setGuidanceSaving(null);
+    }
+  }
+
+  async function resetGuidance(channel: Channel) {
+    setGuidanceSaving(channel);
+    setGuidanceError(null);
+    try {
+      const res = await apiFetch(`/workspaces/${id}/guidance/${channel}`, { method: "DELETE" });
+      if (!res.ok) throw new Error(`API returned ${res.status}`);
+      await loadGuidance();
+    } catch (err) {
+      setGuidanceError(err instanceof Error ? err.message : "Failed to reset guidance");
+    } finally {
+      setGuidanceSaving(null);
+    }
   }
 
   if (error && !brain) {
@@ -216,6 +271,60 @@ export default function WorkspaceBrainPage() {
           )}
         </section>
       </div>
+
+      <section className="guidance-section">
+        <h2>Channel guidance</h2>
+        <p className="subtitle">
+          Per-channel writing guidance the resolver injects into every generation. Override any
+          channel here — no redeploy. Reset restores the built-in default.
+        </p>
+
+        {guidanceError && <p className="error">{guidanceError}</p>}
+
+        {guidance === null ? (
+          <p className="empty">Loading guidance…</p>
+        ) : (
+          <div className="guidance-list">
+            {guidance.map((g) => {
+              const value = guidanceDrafts[g.channel] ?? "";
+              const dirty = value !== g.content;
+              const busy = guidanceSaving === g.channel;
+              return (
+                <div key={g.channel} className="guidance-item">
+                  <div className="guidance-head">
+                    <span className="doc-title">{CHANNEL_LABELS[g.channel]}</span>
+                    <span className={`guidance-source source-${g.source}`}>
+                      {g.source === "workspace" ? "Workspace override" : "Default"}
+                    </span>
+                  </div>
+                  <textarea
+                    value={value}
+                    onChange={(e) =>
+                      setGuidanceDrafts((d) => ({ ...d, [g.channel]: e.target.value }))
+                    }
+                    rows={4}
+                  />
+                  <div className="editor-actions">
+                    <button onClick={() => void saveGuidance(g.channel)} disabled={busy || !dirty}>
+                      {busy ? "Saving…" : dirty ? "Save" : "Saved"}
+                    </button>
+                    {g.source === "workspace" && (
+                      <button
+                        className="button-secondary"
+                        onClick={() => void resetGuidance(g.channel)}
+                        disabled={busy}
+                      >
+                        Reset to default
+                      </button>
+                    )}
+                    {dirty && <span className="unsaved">Unsaved changes</span>}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </>
   );
 }

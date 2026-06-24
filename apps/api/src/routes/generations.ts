@@ -5,6 +5,7 @@ import type { Db } from "../db";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { getBrain } from "../services/brain";
 import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
+import { resolveChannelGuidance } from "../services/guidance";
 import { retrieveEvidence } from "../services/evidence";
 import type { EvidenceStore } from "../evidence/store";
 import { listGenerations, rateGeneration, storeGeneration } from "../services/generations";
@@ -65,11 +66,13 @@ export function registerGenerationRoutes(
 
     const { docs } = getBrain(db, request.params.id);
     const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
+    const channelGuidance = resolveChannelGuidance(db, request.params.id, parsed.data.channel);
     const resolved = resolveContext({
       workspaceName: workspace.name,
       docs: contents,
       taskType: parsed.data.taskType,
       channel: parsed.data.channel,
+      channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
       persona: persona
         ? { name: persona.name, description: persona.description, overlay: persona.overlay }
         : undefined,

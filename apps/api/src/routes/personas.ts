@@ -5,6 +5,7 @@ import type { Db } from "../db";
 import { getBrain } from "../services/brain";
 import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
 import { retrieveEvidence } from "../services/evidence";
+import { resolveChannelGuidance } from "../services/guidance";
 import type { EvidenceStore } from "../evidence/store";
 import {
   createPersona,
@@ -108,12 +109,14 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
 
     const { docs } = getBrain(db, request.params.id);
     const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
+    const channelGuidance = resolveChannelGuidance(db, request.params.id, parsed.data.channel);
 
     return resolveContext({
       workspaceName: workspace.name,
       docs: contents,
       taskType: parsed.data.taskType,
       channel: parsed.data.channel,
+      channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
       persona: persona
         ? { name: persona.name, description: persona.description, overlay: persona.overlay }
         : undefined,
