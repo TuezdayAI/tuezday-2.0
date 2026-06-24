@@ -148,6 +148,13 @@
       "when": 1782287391671,
       "tag": "0020_flaky_tattoo",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1782288213269,
+      "tag": "0021_huge_captain_flint",
+      "breakpoints": true
     }
   ]
 }
