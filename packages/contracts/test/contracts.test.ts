@@ -142,11 +142,14 @@ describe("task types and channels", () => {
       "google_rsa",
       "pr_pitch",
       "press_boilerplate",
+      "x_dm",
+      "instagram_post",
+      "engagement_reply",
     ]);
   });
 
   it("covers the planned channels", () => {
-    expect(CHANNELS).toEqual(["linkedin", "x", "email", "ads", "web", "pr"]);
+    expect(CHANNELS).toEqual(["linkedin", "x", "email", "ads", "web", "pr", "instagram"]);
   });
 });
 
@@ -1195,6 +1198,7 @@ describe("social publishing contracts (Sprint 17)", () => {
       providerKey: "reddit",
       target: "test",
       title: "Hello",
+      cadenceId: null,
       status: "published",
       scheduledFor: 1765500000000,
       publishedAt: 1765500001000,

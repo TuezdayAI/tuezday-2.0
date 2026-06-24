@@ -1,8 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
-import { createLeadInputSchema, type CreateLeadInput, type Lead } from "@tuezday/contracts";
+import {
+  createLeadInputSchema,
+  type CreateLeadInput,
+  type Lead,
+  type UpdateLeadInput,
+} from "@tuezday/contracts";
 import type { Db } from "../db";
 import { leads, type LeadRow } from "../db/schema";
+import { removeLeadFromAudiences } from "./audiences";
 
 export function createLead(db: Db, workspaceId: string, input: CreateLeadInput): Lead {
   const row: LeadRow = {
@@ -13,10 +19,27 @@ export function createLead(db: Db, workspaceId: string, input: CreateLeadInput):
     company: input.company,
     role: input.role,
     notes: input.notes,
+    xHandle: input.xHandle,
     createdAt: Date.now(),
   };
   db.insert(leads).values(row).run();
   return row;
+}
+
+/** Partial edit of a lead (e.g. setting an X handle). Email is re-lowercased. */
+export function updateLead(
+  db: Db,
+  workspaceId: string,
+  leadId: string,
+  input: UpdateLeadInput,
+): Lead | undefined {
+  if (!getLead(db, workspaceId, leadId)) return undefined;
+  const patch: Partial<LeadRow> = { ...input };
+  if (input.email !== undefined) patch.email = input.email.toLowerCase();
+  if (Object.keys(patch).length > 0) {
+    db.update(leads).set(patch).where(eq(leads.id, leadId)).run();
+  }
+  return getLead(db, workspaceId, leadId);
 }
 
 export function listLeads(db: Db, workspaceId: string): Lead[] {
@@ -38,6 +61,7 @@ export function getLead(db: Db, workspaceId: string, leadId: string): Lead | und
 
 export function deleteLead(db: Db, workspaceId: string, leadId: string): boolean {
   if (!getLead(db, workspaceId, leadId)) return false;
+  removeLeadFromAudiences(db, workspaceId, leadId);
   db.delete(leads).where(eq(leads.id, leadId)).run();
   return true;
 }
@@ -94,6 +118,11 @@ const HEADER_ALIASES: Record<string, string> = {
   "job title": "role",
   notes: "notes",
   note: "notes",
+  x: "xHandle",
+  "x handle": "xHandle",
+  twitter: "xHandle",
+  "twitter handle": "xHandle",
+  handle: "xHandle",
 };
 
 export function importLeadsCsv(db: Db, workspaceId: string, csv: string): ImportResult {
@@ -126,6 +155,7 @@ export function importLeadsCsv(db: Db, workspaceId: string, csv: string): Import
       company: record.company ?? "",
       role: record.role ?? "",
       notes: record.notes ?? "",
+      xHandle: record.xHandle ?? "",
     });
     if (!parsed.success) {
       result.skipped += 1;

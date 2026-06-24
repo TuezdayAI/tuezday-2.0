@@ -198,6 +198,7 @@ export function importCrmContactAsLead(
       company: contact.company,
       role: contact.role,
       notes: `Imported from ${providerLabel}`,
+      xHandle: "",
     });
 
   db.update(crmContacts).set({ leadId: lead.id }).where(eq(crmContacts.id, contact.id)).run();

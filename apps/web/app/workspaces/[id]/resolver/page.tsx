@@ -28,6 +28,9 @@ const TASK_LABELS: Record<TaskType, string> = {
   google_rsa: "Google RSA",
   pr_pitch: "Media pitch",
   press_boilerplate: "Press boilerplate",
+  x_dm: "X DM",
+  instagram_post: "Instagram post",
+  engagement_reply: "Reply",
 };
 
 export default function ResolverPage() {

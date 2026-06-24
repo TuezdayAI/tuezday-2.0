@@ -31,7 +31,7 @@ export default function OutboundPage() {
   const [csv, setCsv] = useState("");
   const [importResult, setImportResult] = useState<string | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
-  const [newLead, setNewLead] = useState({ name: "", email: "", company: "", role: "", notes: "" });
+  const [newLead, setNewLead] = useState({ name: "", email: "", company: "", role: "", notes: "", xHandle: "" });
 
   const [selected, setSelected] = useState<Record<string, boolean>>({});
   const [personaId, setPersonaId] = useState("");
@@ -102,7 +102,7 @@ export default function OutboundPage() {
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.message ?? `API returned ${res.status}`);
-      setNewLead({ name: "", email: "", company: "", role: "", notes: "" });
+      setNewLead({ name: "", email: "", company: "", role: "", notes: "", xHandle: "" });
       setShowAddForm(false);
       await load();
     } catch (err) {
@@ -115,6 +115,17 @@ export default function OutboundPage() {
   async function removeLead(lead: Lead) {
     if (!confirm(`Delete lead "${lead.name}"?`)) return;
     await apiFetch(`/workspaces/${id}/leads/${lead.id}`, { method: "DELETE" });
+    await load();
+  }
+
+  async function editHandle(lead: Lead) {
+    const next = prompt(`X (Twitter) handle for ${lead.name} (without @):`, lead.xHandle ?? "");
+    if (next === null) return;
+    await apiFetch(`/workspaces/${id}/leads/${lead.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ xHandle: next }),
+    });
     await load();
   }
 
@@ -258,6 +269,11 @@ export default function OutboundPage() {
               onChange={(e) => setNewLead({ ...newLead, notes: e.target.value })}
               placeholder="Notes — what do you actually know about them?"
             />
+            <input
+              value={newLead.xHandle}
+              onChange={(e) => setNewLead({ ...newLead, xHandle: e.target.value })}
+              placeholder="X (Twitter) handle for DMs — e.g. @founder (optional)"
+            />
             <div className="editor-actions">
               <button type="submit" disabled={busy}>
                 Add lead
@@ -293,7 +309,11 @@ export default function OutboundPage() {
                           — {[lead.role, lead.company].filter(Boolean).join(" at ")}
                         </span>
                       )}
+                      {lead.xHandle && <span className="meta"> · X @{lead.xHandle}</span>}
                     </span>
+                    <button className="link-button" onClick={() => editHandle(lead)}>
+                      {lead.xHandle ? "edit X handle" : "+ X handle"}
+                    </button>
                     <button className="link-button" onClick={() => removeLead(lead)}>
                       delete
                     </button>

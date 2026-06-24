@@ -2,14 +2,18 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import type {
   ApprovalState,
+  AutomationMode,
   Campaign,
+  CampaignAudience,
   CampaignStatus,
   Channel,
+  UpdateCampaignAutomationInput,
   UpsertCampaignInput,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { campaigns, drafts, type CampaignRow } from "../db/schema";
 import { getCampaignAdMetrics, type CampaignAdMetrics } from "./ads";
+import { listCampaignAudiences } from "./audiences";
 
 function rowToCampaign(row: CampaignRow): Campaign {
   return {
@@ -25,6 +29,8 @@ function rowToCampaign(row: CampaignRow): Campaign {
     personaIds: JSON.parse(row.personaIdsJson) as string[],
     overlay: row.overlay,
     status: row.status as CampaignStatus,
+    automationMode: row.automationMode as AutomationMode,
+    autoDailyCap: row.autoDailyCap,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -51,6 +57,10 @@ export function createCampaign(db: Db, workspaceId: string, input: UpsertCampaig
     id: randomUUID(),
     workspaceId,
     ...inputToColumns(input),
+    // Automation is set only via the dedicated toggle, never reset by a general
+    // campaign edit; a new campaign starts from the input defaults (manual / null).
+    automationMode: input.automationMode,
+    autoDailyCap: input.autoDailyCap,
     createdAt: now,
     updatedAt: now,
   };
@@ -93,6 +103,33 @@ export function updateCampaign(
   return getCampaign(db, workspaceId, campaignId);
 }
 
+/** Set a campaign's automation mode + per-campaign daily cap (Sprint 28). */
+export function setCampaignAutomation(
+  db: Db,
+  workspaceId: string,
+  campaignId: string,
+  input: UpdateCampaignAutomationInput,
+): Campaign | undefined {
+  const existing = getCampaign(db, workspaceId, campaignId);
+  if (!existing) return undefined;
+  db.update(campaigns)
+    .set({
+      automationMode: input.automationMode,
+      autoDailyCap: input.autoDailyCap,
+      updatedAt: Date.now(),
+    })
+    .where(eq(campaigns.id, campaignId))
+    .run();
+  return getCampaign(db, workspaceId, campaignId);
+}
+
+/** Active campaigns whose automation is on (human_in_the_loop or scheduled_auto). */
+export function listAutomatedCampaigns(db: Db, workspaceId: string): Campaign[] {
+  return listCampaigns(db, workspaceId).filter(
+    (c) => c.status === "active" && c.automationMode !== "manual",
+  );
+}
+
 /**
  * Compose the campaign's resolver overlay from its structured fields plus the
  * free-form overlay. Deterministic; empty fields are omitted so the context
@@ -122,6 +159,8 @@ export interface CampaignDetail {
   }>;
   /** Paid totals from linked ad campaigns (Sprint 14); null when none. */
   adMetrics: CampaignAdMetrics | null;
+  /** Audiences attached as this campaign's targets (Sprint 24). */
+  audiences: CampaignAudience[];
 }
 
 export function getCampaignDetail(db: Db, campaign: Campaign): CampaignDetail {
@@ -152,5 +191,6 @@ export function getCampaignDetail(db: Db, campaign: Campaign): CampaignDetail {
     draftCounts,
     drafts: rows.map((r) => ({ ...r, state: r.state as ApprovalState })),
     adMetrics: getCampaignAdMetrics(db, campaign),
+    audiences: listCampaignAudiences(db, campaign.workspaceId, campaign.id),
   };
 }

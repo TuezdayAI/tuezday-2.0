@@ -15,6 +15,10 @@ const INTERVAL_MIN = Number(process.env.DISCOVERY_INTERVAL_MIN ?? 30);
 const SYNTHESIS_DAYS = Number(process.env.LEARNING_SYNTHESIS_DAYS ?? 7);
 const ADS_SYNC_HOURS = Number(process.env.ADS_SYNC_HOURS ?? 6);
 const PUBLISH_INTERVAL_MIN = Number(process.env.PUBLISH_INTERVAL_MIN ?? 1);
+const CADENCE_FILL_INTERVAL_MIN = Number(process.env.CADENCE_FILL_INTERVAL_MIN ?? 5);
+const AUTOMATION_INTERVAL_MIN = Number(process.env.AUTOMATION_INTERVAL_MIN ?? 5);
+const INBOX_INTERVAL_MIN = Number(process.env.INBOX_INTERVAL_MIN ?? 5);
+const SEQUENCE_INTERVAL_MIN = Number(process.env.SEQUENCE_INTERVAL_MIN ?? 5);
 
 interface Workspace {
   id: string;
@@ -181,6 +185,162 @@ async function publishTick(): Promise<void> {
   }
 }
 
+interface CadenceRunResponse {
+  results: Array<{ cadenceId: string; filled: number }>;
+}
+
+/** Top up every active cadence's queue: approved drafts → scheduled posts. The
+ * publish tick then fires those when their slot comes due. */
+async function fillCadencesForAllWorkspaces(): Promise<void> {
+  const res = await api(`/workspaces`);
+  if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
+  const workspaces = (await res.json()) as Workspace[];
+
+  for (const workspace of workspaces) {
+    try {
+      const runRes = await api(`/workspaces/${workspace.id}/cadences/run`, { method: "POST" });
+      if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);
+      const { results } = (await runRes.json()) as CadenceRunResponse;
+      const filled = results.reduce((sum, r) => sum + r.filled, 0);
+      if (filled === 0) continue; // nothing to slot — stay quiet
+      console.log(`[cadence] ${workspace.name}: ${filled} draft(s) slotted across ${results.length} cadence(s)`);
+    } catch (err) {
+      console.error(
+        `[cadence] ${workspace.name}: failed —`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+}
+
+async function cadenceTick(): Promise<void> {
+  try {
+    await fillCadencesForAllWorkspaces();
+  } catch (err) {
+    console.error("[cadence] tick failed —", err instanceof Error ? err.message : err);
+  }
+}
+
+interface AutomationRunResponse {
+  results: Array<{
+    campaignName: string;
+    generated: number;
+    autoApproved: number;
+    blocked: string | null;
+  }>;
+}
+
+/** Turn new discovery signals into channel drafts per each campaign's automation
+ * mode: human_in_the_loop queues at the gate, scheduled_auto auto-approves so the
+ * cadence tick can post them. */
+async function runAutomationForAllWorkspaces(): Promise<void> {
+  const res = await api(`/workspaces`);
+  if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
+  const workspaces = (await res.json()) as Workspace[];
+
+  for (const workspace of workspaces) {
+    try {
+      const runRes = await api(`/workspaces/${workspace.id}/automation/run`, { method: "POST" });
+      if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);
+      const { results } = (await runRes.json()) as AutomationRunResponse;
+      const generated = results.reduce((sum, r) => sum + r.generated, 0);
+      const autoApproved = results.reduce((sum, r) => sum + r.autoApproved, 0);
+      const blocked = results.filter((r) => r.blocked).length;
+      if (generated === 0 && blocked === 0) continue; // nothing happened — stay quiet
+      console.log(
+        `[automation] ${workspace.name}: ${generated} draft(s) generated, ${autoApproved} auto-approved${blocked ? `, ${blocked} campaign(s) blocked` : ""}`,
+      );
+    } catch (err) {
+      console.error(
+        `[automation] ${workspace.name}: failed —`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+}
+
+async function automationTick(): Promise<void> {
+  try {
+    await runAutomationForAllWorkspaces();
+  } catch (err) {
+    console.error("[automation] tick failed —", err instanceof Error ? err.message : err);
+  }
+}
+
+interface InboxRunResponse {
+  newItems: number;
+  metricsCaptured: number;
+  repliesPosted: number;
+}
+
+/** Poll inbound comments/DMs, refresh engagement metrics, then auto-generate +
+ * post replies for scheduled_auto campaigns (when the master switch is on). */
+async function runInboxForAllWorkspaces(): Promise<void> {
+  const res = await api(`/workspaces`);
+  if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
+  const workspaces = (await res.json()) as Workspace[];
+
+  for (const workspace of workspaces) {
+    try {
+      const runRes = await api(`/workspaces/${workspace.id}/inbox/run`, { method: "POST" });
+      if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);
+      const { newItems, metricsCaptured, repliesPosted } = (await runRes.json()) as InboxRunResponse;
+      if (newItems === 0 && metricsCaptured === 0 && repliesPosted === 0) continue; // quiet
+      console.log(
+        `[inbox] ${workspace.name}: ${newItems} new item(s), ${metricsCaptured} metric(s) captured, ${repliesPosted} repl(y/ies) posted`,
+      );
+    } catch (err) {
+      console.error("[inbox] ", workspace.name, "failed —", err instanceof Error ? err.message : err);
+    }
+  }
+}
+
+interface SequenceRunResponse {
+  generated: number;
+  sent: number;
+  stopped: number;
+  completed: number;
+}
+
+/** Advance every launch's multi-step sequence: generate due steps, auto-send X
+ * DMs (scheduled_auto), stop X chains on reply. Runs after inbox so a reply
+ * detected this cycle stops the chain before the next step generates. */
+async function runSequencesForAllWorkspaces(): Promise<void> {
+  const res = await api(`/workspaces`);
+  if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
+  const workspaces = (await res.json()) as Workspace[];
+
+  for (const workspace of workspaces) {
+    try {
+      const runRes = await api(`/workspaces/${workspace.id}/sequences/run`, { method: "POST" });
+      if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);
+      const { generated, sent, stopped, completed } = (await runRes.json()) as SequenceRunResponse;
+      if (generated === 0 && sent === 0 && stopped === 0 && completed === 0) continue; // quiet
+      console.log(
+        `[sequences] ${workspace.name}: ${generated} generated, ${sent} sent, ${stopped} stopped, ${completed} completed`,
+      );
+    } catch (err) {
+      console.error("[sequences] ", workspace.name, "failed —", err instanceof Error ? err.message : err);
+    }
+  }
+}
+
+async function sequenceTick(): Promise<void> {
+  try {
+    await runSequencesForAllWorkspaces();
+  } catch (err) {
+    console.error("[sequences] tick failed —", err instanceof Error ? err.message : err);
+  }
+}
+
+async function inboxTick(): Promise<void> {
+  try {
+    await runInboxForAllWorkspaces();
+  } catch (err) {
+    console.error("[inbox] tick failed —", err instanceof Error ? err.message : err);
+  }
+}
+
 async function adsTick(): Promise<void> {
   try {
     await syncAdsForAllWorkspaces();
@@ -203,11 +363,24 @@ async function tick(): Promise<void> {
 }
 
 console.log(
-  `Tuezday worker: polling discovery every ${INTERVAL_MIN} min, ads sync every ${ADS_SYNC_HOURS} h, scheduled publishing every ${PUBLISH_INTERVAL_MIN} min against ${API_URL} (set DISCOVERY_INTERVAL_MIN / ADS_SYNC_HOURS / PUBLISH_INTERVAL_MIN / TUEZDAY_API_URL to change).`,
+  `Tuezday worker: polling discovery every ${INTERVAL_MIN} min, ads sync every ${ADS_SYNC_HOURS} h, automation every ${AUTOMATION_INTERVAL_MIN} min, cadence fill every ${CADENCE_FILL_INTERVAL_MIN} min, scheduled publishing every ${PUBLISH_INTERVAL_MIN} min, inbox every ${INBOX_INTERVAL_MIN} min against ${API_URL} (set DISCOVERY_INTERVAL_MIN / ADS_SYNC_HOURS / AUTOMATION_INTERVAL_MIN / CADENCE_FILL_INTERVAL_MIN / PUBLISH_INTERVAL_MIN / INBOX_INTERVAL_MIN / TUEZDAY_API_URL to change).`,
 );
 void tick();
 setInterval(() => void tick(), INTERVAL_MIN * 60 * 1000);
 void adsTick();
 setInterval(() => void adsTick(), ADS_SYNC_HOURS * 60 * 60 * 1000);
+// Automation (generate + auto-approve) runs before cadence fill (slot approved)
+// before publish (fire due), so a new signal can progress each cycle.
+void automationTick();
+setInterval(() => void automationTick(), AUTOMATION_INTERVAL_MIN * 60 * 1000);
+void cadenceTick();
+setInterval(() => void cadenceTick(), CADENCE_FILL_INTERVAL_MIN * 60 * 1000);
 void publishTick();
 setInterval(() => void publishTick(), PUBLISH_INTERVAL_MIN * 60 * 1000);
+// Inbox runs after publish — replies react to what's already posted.
+void inboxTick();
+setInterval(() => void inboxTick(), INBOX_INTERVAL_MIN * 60 * 1000);
+// Sequences run after inbox — a reply detected this cycle stops the chain
+// before the next follow-up step generates.
+void sequenceTick();
+setInterval(() => void sequenceTick(), SEQUENCE_INTERVAL_MIN * 60 * 1000);

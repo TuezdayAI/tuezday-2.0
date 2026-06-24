@@ -297,6 +297,10 @@ export const campaigns = sqliteTable("campaigns", {
   personaIdsJson: text("persona_ids_json").notNull().default("[]"),
   overlay: text("overlay").notNull().default(""),
   status: text("status").notNull().default("active"),
+  // Social automation mode (Sprint 28): manual | human_in_the_loop | scheduled_auto.
+  automationMode: text("automation_mode").notNull().default("manual"),
+  // Per-campaign override of the daily auto-post cap; null = workspace default.
+  autoDailyCap: integer("auto_daily_cap"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -361,6 +365,8 @@ export const leads = sqliteTable("leads", {
   company: text("company").notNull().default(""),
   role: text("role").notNull().default(""),
   notes: text("notes").notNull().default(""),
+  // X (Twitter) handle without the leading "@" — for per-recipient X DMs (Sprint 26).
+  xHandle: text("x_handle").notNull().default(""),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -527,6 +533,12 @@ export const publications = sqliteTable("publications", {
   providerKey: text("provider_key").notNull(),
   target: text("target").notNull(),
   title: text("title").notNull(),
+  // Attached media for platforms that need it (Instagram). JSON array of
+  // { url, type } or null. Posted alongside the draft body/caption.
+  mediaJson: text("media_json"),
+  // The posting cadence that auto-slotted this receipt (Sprint 27); null for a
+  // manual one-off publish. Set null when the cadence is deleted.
+  cadenceId: text("cadence_id").references(() => postingCadences.id, { onDelete: "set null" }),
   status: text("status").notNull().default("scheduled"),
   // The requested publish time; "post now" stamps the request time.
   scheduledFor: integer("scheduled_for").notNull(),
@@ -539,6 +551,36 @@ export const publications = sqliteTable("publications", {
 });
 
 export type PublicationRow = typeof publications.$inferSelect;
+
+// Recurring posting cadence (Sprint 27). Defines repeating slots (days-of-week
+// + time-of-day in an IANA timezone) bound to a campaign/channel/account;
+// approved matching drafts auto-fill the next open slots as scheduled
+// publications, which the Sprint 17 worker fires on time.
+export const postingCadences = sqliteTable("posting_cadences", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  // Matching + context. Null (e.g. after a campaign delete) leaves the cadence
+  // unable to match, so it effectively pauses.
+  campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+  personaId: text("persona_id").references(() => personas.id, { onDelete: "set null" }),
+  channel: text("channel").notNull(),
+  connectionId: text("connection_id")
+    .notNull()
+    .references(() => connections.id, { onDelete: "cascade" }),
+  target: text("target").notNull(),
+  // JSON number[] of 0..6 (Sun=0); HH:MM interpreted in `timezone`.
+  daysOfWeekJson: text("days_of_week_json").notNull(),
+  timeOfDay: text("time_of_day").notNull(),
+  timezone: text("timezone").notNull(),
+  status: text("status").notNull().default("active"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type PostingCadenceRow = typeof postingCadences.$inferSelect;
 
 // Native ads execution (Sprint 20) — a launch is a draft ad campaign that
 // must clear the approval gate before any API call that can spend money.
@@ -630,6 +672,23 @@ export const generationSettings = sqliteTable("generation_settings", {
 
 export type GenerationSettingsRow = typeof generationSettings.$inferSelect;
 
+// Social automation guardrails (Sprint 28) — one row per workspace, like
+// ad_settings. killSwitch is the hard stop for scheduled_auto posting; the caps
+// bound auto-posts per UTC day (per connection and per campaign).
+export const socialAutomationSettings = sqliteTable("social_automation_settings", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  killSwitch: integer("kill_switch").notNull().default(0),
+  perConnectionDailyCap: integer("per_connection_daily_cap").notNull().default(10),
+  perCampaignDailyCap: integer("per_campaign_daily_cap").notNull().default(5),
+  // Sprint 29: master switch for auto-posting engagement replies (off by default).
+  autoReplyEnabled: integer("auto_reply_enabled").notNull().default(0),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type SocialAutomationSettingsRow = typeof socialAutomationSettings.$inferSelect;
+
 export const events = sqliteTable("events", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id")
@@ -671,3 +730,268 @@ export const webhookDeliveries = sqliteTable("webhook_deliveries", {
 });
 
 export type WebhookDeliveryRow = typeof webhookDeliveries.$inferSelect;
+
+// Lead lists & segments (Sprint 24). An audience is a static hand-picked list
+// or a dynamic segment whose members are computed live from rulesJson.
+export const audiences = sqliteTable("audiences", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  description: text("description").notNull().default(""),
+  kind: text("kind").notNull(),
+  // The AND/OR rule tree (SegmentRuleGroup JSON) for dynamic segments; null for
+  // static lists.
+  rulesJson: text("rules_json"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type AudienceRow = typeof audiences.$inferSelect;
+
+// Static-list membership, polymorphic over leads and crm_contacts. memberId has
+// no FK (it points at one of two tables); the service validates on add and
+// filters dangling rows on read.
+export const audienceMembers = sqliteTable(
+  "audience_members",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    audienceId: text("audience_id")
+      .notNull()
+      .references(() => audiences.id, { onDelete: "cascade" }),
+    memberType: text("member_type").notNull(),
+    memberId: text("member_id").notNull(),
+    addedAt: integer("added_at").notNull(),
+  },
+  (t) => [uniqueIndex("audience_members_unique").on(t.audienceId, t.memberType, t.memberId)],
+);
+
+export type AudienceMemberRow = typeof audienceMembers.$inferSelect;
+
+// A campaign's structured audience(s); many-to-many. The free-text
+// campaigns.audience field stays as the human description.
+export const campaignAudiences = sqliteTable(
+  "campaign_audiences",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    audienceId: text("audience_id")
+      .notNull()
+      .references(() => audiences.id, { onDelete: "cascade" }),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("campaign_audiences_unique").on(t.campaignId, t.audienceId)],
+);
+
+export type CampaignAudienceRow = typeof campaignAudiences.$inferSelect;
+
+// Targeted campaign launch (Sprint 26). A launch targets an audience and
+// produces per-recipient personalized first-touches (email, X DM) plus
+// per-platform broadcast posts (LinkedIn, Instagram), each gated as a draft.
+export const launches = sqliteTable("launches", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  // Recipients are snapshotted onto launch_messages at generate time, so a
+  // later audience/campaign/persona delete never breaks the launch record.
+  audienceId: text("audience_id").references(() => audiences.id, { onDelete: "set null" }),
+  campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+  personaId: text("persona_id").references(() => personas.id, { onDelete: "set null" }),
+  channelsJson: text("channels_json").notNull(),
+  status: text("status").notNull().default("draft"),
+  // Sequence config (Sprint 30). Ignored unless the launch has sequence_steps.
+  automationMode: text("automation_mode").notNull().default("manual"),
+  stopOnReply: integer("stop_on_reply").notNull().default(1),
+  xConnectionId: text("x_connection_id").references(() => connections.id, { onDelete: "set null" }),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type LaunchRow = typeof launches.$inferSelect;
+
+// One row per personalized recipient message, or one per platform broadcast.
+// Recipient identity is a snapshot (polymorphic memberId, no FK). The draft
+// carries the gated content; this row carries the dispatch outcome.
+export const launchMessages = sqliteTable("launch_messages", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  launchId: text("launch_id")
+    .notNull()
+    .references(() => launches.id, { onDelete: "cascade" }),
+  channel: text("channel").notNull(),
+  kind: text("kind").notNull(),
+  recipientType: text("recipient_type"),
+  recipientId: text("recipient_id"),
+  recipientName: text("recipient_name").notNull().default(""),
+  recipientEmail: text("recipient_email").notNull().default(""),
+  recipientHandle: text("recipient_handle"),
+  draftId: text("draft_id").references(() => drafts.id, { onDelete: "set null" }),
+  status: text("status").notNull().default("pending"),
+  skipReason: text("skip_reason"),
+  externalId: text("external_id"),
+  externalUrl: text("external_url"),
+  publicationId: text("publication_id").references(() => publications.id, { onDelete: "set null" }),
+  sentAt: integer("sent_at"),
+  lastError: text("last_error"),
+  // Sequence wiring (Sprint 30). Step-1 / S26 first-touch rows default to step 1.
+  stepNumber: integer("step_number").notNull().default(1),
+  sequenceRecipientId: text("sequence_recipient_id").references(() => sequenceRecipients.id, {
+    onDelete: "set null",
+  }),
+  // The connection an X DM was dispatched on (for the per-connection daily cap).
+  connectionId: text("connection_id").references(() => connections.id, { onDelete: "set null" }),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type LaunchMessageRow = typeof launchMessages.$inferSelect;
+
+// Unified engagement inbox (Sprint 29). One row per inbound comment on our
+// published posts or reply to our outbound DMs, polled per connection. The
+// reply (if any) is a normal gated draft linked via replyDraftId.
+export const inboxItems = sqliteTable(
+  "inbox_items",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => connections.id, { onDelete: "cascade" }),
+    providerKey: text("provider_key").notNull(),
+    // An InboxItemKind: comment (on our post) | dm (reply to our outbound DM).
+    kind: text("kind").notNull(),
+    channel: text("channel").notNull(),
+    // Platform id of the inbound item — idempotency key per connection.
+    externalId: text("external_id").notNull(),
+    // Platform id of the thing it replies to (our post/comment/DM).
+    parentExternalId: text("parent_external_id"),
+    publicationId: text("publication_id").references(() => publications.id, { onDelete: "set null" }),
+    launchMessageId: text("launch_message_id").references(() => launchMessages.id, { onDelete: "set null" }),
+    authorHandle: text("author_handle").notNull().default(""),
+    authorName: text("author_name").notNull().default(""),
+    content: text("content").notNull(),
+    url: text("url"),
+    status: text("status").notNull().default("unread"),
+    // The gated reply draft, once generated.
+    replyDraftId: text("reply_draft_id").references(() => drafts.id, { onDelete: "set null" }),
+    postedReplyExternalId: text("posted_reply_external_id"),
+    postedReplyUrl: text("posted_reply_url"),
+    externalCreatedAt: integer("external_created_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [uniqueIndex("inbox_items_connection_external").on(table.connectionId, table.externalId)],
+);
+
+export type InboxItemRow = typeof inboxItems.$inferSelect;
+
+// Platform-pulled engagement snapshots on a published post (Sprint 29). One row
+// per (publication, window); separate from the learning-loop engagement_metrics.
+export const publicationMetrics = sqliteTable(
+  "publication_metrics",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    publicationId: text("publication_id")
+      .notNull()
+      .references(() => publications.id, { onDelete: "cascade" }),
+    // A MetricWindow: "24h" | "7d".
+    window: text("window").notNull(),
+    likes: integer("likes"),
+    comments: integer("comments"),
+    shares: integer("shares"),
+    impressions: integer("impressions"),
+    clicks: integer("clicks"),
+    capturedAt: integer("captured_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (table) => [uniqueIndex("publication_metrics_pub_window").on(table.publicationId, table.window)],
+);
+
+export type PublicationMetricRow = typeof publicationMetrics.$inferSelect;
+
+// Multi-step outbound sequences (Sprint 30). A launch's follow-up chain template:
+// an ordered list of steps per personalized channel (email / x). Step 1 is the
+// first-touch; steps 2..N are follow-ups with a delay + optional founder angle.
+export const sequenceSteps = sqliteTable(
+  "sequence_steps",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    launchId: text("launch_id")
+      .notNull()
+      .references(() => launches.id, { onDelete: "cascade" }),
+    // A SequenceChannel: "email" | "x".
+    channel: text("channel").notNull(),
+    // 1-based, per channel.
+    stepNumber: integer("step_number").notNull(),
+    // Founder angle for this step; "" = the model writes a natural follow-up.
+    instruction: text("instruction").notNull().default(""),
+    // Delay (hours) after the previous step's actual send for that recipient.
+    delayHours: integer("delay_hours").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [uniqueIndex("sequence_steps_launch_channel_step").on(table.launchId, table.channel, table.stepNumber)],
+);
+
+export type SequenceStepRow = typeof sequenceSteps.$inferSelect;
+
+// Per-recipient enrollment + progression through one channel's chain. The
+// engine's source of truth for "who is where, and when the next step fires".
+export const sequenceRecipients = sqliteTable(
+  "sequence_recipients",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    launchId: text("launch_id")
+      .notNull()
+      .references(() => launches.id, { onDelete: "cascade" }),
+    channel: text("channel").notNull(),
+    recipientType: text("recipient_type").notNull(),
+    recipientId: text("recipient_id").notNull(),
+    recipientName: text("recipient_name").notNull().default(""),
+    recipientEmail: text("recipient_email").notNull().default(""),
+    recipientHandle: text("recipient_handle"),
+    // Highest step started for this recipient; 0 = enrolled, not yet generated.
+    currentStep: integer("current_step").notNull().default(0),
+    // A SequenceRecipientStatus.
+    status: text("status").notNull().default("active"),
+    nextDueAt: integer("next_due_at"),
+    lastSentAt: integer("last_sent_at"),
+    stoppedReason: text("stopped_reason"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("sequence_recipients_unique").on(
+      table.launchId,
+      table.channel,
+      table.recipientType,
+      table.recipientId,
+    ),
+  ],
+);
+
+export type SequenceRecipientRow = typeof sequenceRecipients.$inferSelect;

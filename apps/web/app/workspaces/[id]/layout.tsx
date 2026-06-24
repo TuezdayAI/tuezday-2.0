@@ -37,7 +37,10 @@ const NAV: NavItem[] = [
   {
     label: "Review",
     path: "/approvals",
-    children: [{ label: "Learning", path: "/learning" }],
+    children: [
+      { label: "Inbox", path: "/inbox" },
+      { label: "Learning", path: "/learning" },
+    ],
   },
   {
     label: "Campaigns",
@@ -49,9 +52,19 @@ const NAV: NavItem[] = [
     ],
   },
   {
+    label: "Calendar",
+    path: "/calendar",
+    children: [
+      { label: "Cadence", path: "/cadence" },
+      { label: "Automation", path: "/automation" },
+    ],
+  },
+  {
     label: "Audience",
     path: "/outbound",
     children: [
+      { label: "Lists & segments", path: "/lists" },
+      { label: "Launches", path: "/launches" },
       { label: "CRM", path: "/crm" },
       { label: "PR & media", path: "/pr" },
     ],

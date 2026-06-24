@@ -35,11 +35,16 @@ export const TASK_TYPES = [
   "google_rsa",
   "pr_pitch",
   "press_boilerplate",
+  // Sprint 26 (targeted launch): a per-recipient X DM and a broadcast IG post.
+  "x_dm",
+  "instagram_post",
+  // Sprint 29 (engagement inbox): a reply to an inbound comment/DM.
+  "engagement_reply",
 ] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
 /** Channels a task can target. */
-export const CHANNELS = ["linkedin", "x", "email", "ads", "web", "pr"] as const;
+export const CHANNELS = ["linkedin", "x", "email", "ads", "web", "pr", "instagram"] as const;
 export type Channel = (typeof CHANNELS)[number];
 
 // ---------------------------------------------------------------------------
@@ -396,6 +401,20 @@ export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number];
 
 export const CAMPAIGN_OVERLAY_MAX_CHARS = 10_000;
 
+/**
+ * Per-campaign social automation mode (Sprint 28). `manual` = the founder drives
+ * generation/approval/publishing by hand. `human_in_the_loop` = discovery signals
+ * auto-generate drafts that wait at the approval gate. `scheduled_auto` = drafts are
+ * auto-approved (a real, logged `system` approval) and posted on the campaign's
+ * cadence, bounded by the social-automation guardrails.
+ */
+export const AUTOMATION_MODES = ["manual", "human_in_the_loop", "scheduled_auto"] as const;
+export type AutomationMode = (typeof AUTOMATION_MODES)[number];
+
+/** Default daily auto-post caps (Sprint 28) when a workspace hasn't set its own. */
+export const DEFAULT_PER_CONNECTION_DAILY_CAP = 10;
+export const DEFAULT_PER_CAMPAIGN_DAILY_CAP = 5;
+
 export const campaignSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
@@ -409,6 +428,9 @@ export const campaignSchema = z.object({
   personaIds: z.array(z.string().uuid()),
   overlay: z.string().max(CAMPAIGN_OVERLAY_MAX_CHARS),
   status: z.enum(CAMPAIGN_STATUSES),
+  automationMode: z.enum(AUTOMATION_MODES),
+  /** Per-campaign override of the daily auto-post cap; null = use the workspace default. */
+  autoDailyCap: z.number().int().positive().max(1000).nullable(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 });
@@ -429,8 +451,17 @@ export const upsertCampaignInputSchema = z.object({
   personaIds: z.array(z.string().uuid()).default([]),
   overlay: z.string().max(CAMPAIGN_OVERLAY_MAX_CHARS).default(""),
   status: z.enum(CAMPAIGN_STATUSES).default("active"),
+  automationMode: z.enum(AUTOMATION_MODES).default("manual"),
+  autoDailyCap: z.number().int().positive().max(1000).nullable().default(null),
 });
 export type UpsertCampaignInput = z.infer<typeof upsertCampaignInputSchema>;
+
+/** Focused payload for the campaign automation toggle (Sprint 28). */
+export const updateCampaignAutomationInputSchema = z.object({
+  automationMode: z.enum(AUTOMATION_MODES),
+  autoDailyCap: z.number().int().positive().max(1000).nullable().default(null),
+});
+export type UpdateCampaignAutomationInput = z.infer<typeof updateCampaignAutomationInputSchema>;
 
 // ---------------------------------------------------------------------------
 // Signals (manual market input — source adapters arrive in a later slice)
@@ -678,9 +709,20 @@ export const leadSchema = z.object({
   company: z.string().max(200),
   role: z.string().max(200),
   notes: z.string().max(2000),
+  // X (Twitter) handle without the leading "@" — used for per-recipient X DMs
+  // in a launch (Sprint 26). Empty when unknown.
+  xHandle: z.string().max(50),
   createdAt: z.number().int(),
 });
 export type Lead = z.infer<typeof leadSchema>;
+
+/** Normalize an X handle: strip a leading "@" and surrounding whitespace. */
+const xHandleSchema = z
+  .string()
+  .trim()
+  .max(51)
+  .transform((v) => v.replace(/^@+/, "").trim())
+  .pipe(z.string().max(50));
 
 export const createLeadInputSchema = z.object({
   name: z.string().trim().min(1, "Lead name is required").max(200),
@@ -688,8 +730,22 @@ export const createLeadInputSchema = z.object({
   company: z.string().trim().max(200).default(""),
   role: z.string().trim().max(200).default(""),
   notes: z.string().trim().max(2000).default(""),
+  xHandle: xHandleSchema.default(""),
 });
 export type CreateLeadInput = z.infer<typeof createLeadInputSchema>;
+
+/** Partial edit of an existing lead (e.g. setting an X handle). */
+export const updateLeadInputSchema = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    email: z.string().trim().email(),
+    company: z.string().trim().max(200),
+    role: z.string().trim().max(200),
+    notes: z.string().trim().max(2000),
+    xHandle: xHandleSchema,
+  })
+  .partial();
+export type UpdateLeadInput = z.infer<typeof updateLeadInputSchema>;
 
 export const importLeadsInputSchema = z.object({
   csv: z.string().trim().min(1, "CSV content is required").max(500_000),
@@ -869,6 +925,52 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     baseUrl: "https://oauth.reddit.com",
     testPath: "/api/v1/me",
     oauthScopes: "identity,submit",
+  },
+  {
+    // Sprint 25 social trio. OAuth popup like Reddit; creds come from
+    // LINKEDIN_CLIENT_ID / LINKEDIN_CLIENT_SECRET in the root .env. testPath
+    // hits /v2/userinfo (OpenID) so a connection verifies the member identity.
+    // w_member_social is provisioned now so Sprint 26 can broadcast posts
+    // (LinkedIn's API forbids cold per-person DMs) without a reconnect.
+    key: "linkedin",
+    label: "LinkedIn",
+    nangoProvider: "linkedin",
+    authMode: "oauth",
+    categories: ["social"],
+    baseUrl: "https://api.linkedin.com",
+    testPath: "/v2/userinfo",
+    oauthScopes: "openid,profile,email,w_member_social",
+  },
+  {
+    // Key stays "twitter" to match Nango's twitter-v2 template family; the UI
+    // shows the "X (Twitter)" label. tweet.* + dm.* are provisioned now so
+    // Sprint 26 can post AND send per-recipient DMs; offline.access keeps the
+    // token refreshable. Scopes are stored comma-separated like every other
+    // provider — Nango's twitter-v2 template emits the space separator X wants.
+    key: "twitter",
+    label: "X (Twitter)",
+    nangoProvider: "twitter-v2",
+    authMode: "oauth",
+    categories: ["social"],
+    baseUrl: "https://api.twitter.com",
+    testPath: "/2/users/me",
+    oauthScopes: "tweet.read,tweet.write,users.read,dm.read,dm.write,offline.access",
+  },
+  {
+    // Instagram content publishing runs through the Facebook Graph API and
+    // needs an Instagram Business/Creator account linked to a Facebook Page,
+    // plus a Facebook app with instagram_content_publish approved. Creds are
+    // the Facebook app's INSTAGRAM_CLIENT_ID / INSTAGRAM_CLIENT_SECRET.
+    // testPath hits /me to verify identity; Sprint 26 does the broadcast post.
+    key: "instagram",
+    label: "Instagram",
+    nangoProvider: "facebook",
+    authMode: "oauth",
+    categories: ["social"],
+    baseUrl: "https://graph.facebook.com",
+    testPath: "/v23.0/me",
+    oauthScopes:
+      "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement,business_management",
   },
   {
     // Proxy any API without auth (your own services, public APIs). Keyed
@@ -1377,11 +1479,17 @@ export interface SocialPostConstraints {
   targetLabel: string;
   titleMaxChars: number;
   bodyMaxChars: number;
+  /** The platform cannot publish without at least one media item (Instagram). */
+  requiresMedia?: boolean;
 }
 
 export const SOCIAL_POST_CONSTRAINTS = {
   // https://www.reddit.com — self (text) posts.
   reddit: { targetLabel: "Subreddit", titleMaxChars: 300, bodyMaxChars: 40_000 },
+  // Member share via /v2/ugcPosts (w_member_social) — no title; ~3000 char body.
+  linkedin: { targetLabel: "LinkedIn feed", titleMaxChars: 200, bodyMaxChars: 3000 },
+  // IG Graph API publish — caption max 2200 chars; needs ≥1 image/video.
+  instagram: { targetLabel: "Instagram", titleMaxChars: 200, bodyMaxChars: 2200, requiresMedia: true },
 } satisfies Record<string, SocialPostConstraints>;
 
 export interface SocialPostViolation {
@@ -1439,6 +1547,9 @@ export const publicationSchema = z.object({
   providerKey: z.string(),
   target: z.string(),
   title: z.string(),
+  // The posting cadence that auto-slotted this receipt (Sprint 27); null for a
+  // manual one-off publish.
+  cadenceId: z.string().uuid().nullable(),
   status: z.enum(PUBLICATION_STATUSES),
   scheduledFor: z.number().int(),
   publishedAt: z.number().int().nullable(),
@@ -1458,6 +1569,123 @@ export const publishDraftInputSchema = z.object({
   scheduledFor: z.number().int().positive().optional(),
 });
 export type PublishDraftInput = z.infer<typeof publishDraftInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Posting cadence + calendar (Sprint 27)
+// ---------------------------------------------------------------------------
+
+export const CADENCE_STATUSES = ["active", "paused"] as const;
+export type CadenceStatus = (typeof CADENCE_STATUSES)[number];
+
+/** Day-of-week integers, Sunday = 0 — matches JS Date.getUTCDay(). */
+export const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
+const timeOfDaySchema = z
+  .string()
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a HH:MM 24-hour time");
+
+/** True when the runtime recognises the IANA time-zone id (Node + browser). */
+export function isValidTimeZone(tz: string): boolean {
+  if (!tz) return false;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const timeZoneSchema = z.string().min(1, "A time zone is required").refine(isValidTimeZone, {
+  message: "Unknown time zone",
+});
+
+const daysOfWeekSchema = z
+  .array(z.number().int().min(0).max(6))
+  .min(1, "Pick at least one day")
+  .transform((days) => [...new Set(days)].sort((a, b) => a - b));
+
+export const postingCadenceSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  name: z.string().min(1).max(120),
+  campaignId: z.string().uuid().nullable(),
+  personaId: z.string().uuid().nullable(),
+  channel: z.enum(CHANNELS),
+  connectionId: z.string().uuid(),
+  target: z.string(),
+  daysOfWeek: z.array(z.number().int().min(0).max(6)),
+  timeOfDay: timeOfDaySchema,
+  timezone: z.string(),
+  status: z.enum(CADENCE_STATUSES),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type PostingCadence = z.infer<typeof postingCadenceSchema>;
+
+export const createPostingCadenceInputSchema = z.object({
+  name: z.string().trim().min(1, "A cadence name is required").max(120),
+  campaignId: z.string().uuid(),
+  personaId: z.string().uuid().optional(),
+  channel: z.enum(CHANNELS),
+  connectionId: z.string().uuid(),
+  target: z.string().trim().min(1, "A target is required").max(200),
+  daysOfWeek: daysOfWeekSchema,
+  timeOfDay: timeOfDaySchema,
+  timezone: timeZoneSchema,
+  status: z.enum(CADENCE_STATUSES).default("active"),
+});
+export type CreatePostingCadenceInput = z.infer<typeof createPostingCadenceInputSchema>;
+
+export const updatePostingCadenceInputSchema = z
+  .object({
+    name: z.string().trim().min(1).max(120),
+    campaignId: z.string().uuid(),
+    personaId: z.string().uuid().nullable(),
+    channel: z.enum(CHANNELS),
+    connectionId: z.string().uuid(),
+    target: z.string().trim().min(1).max(200),
+    daysOfWeek: daysOfWeekSchema,
+    timeOfDay: timeOfDaySchema,
+    timezone: timeZoneSchema,
+    status: z.enum(CADENCE_STATUSES),
+  })
+  .partial();
+export type UpdatePostingCadenceInput = z.infer<typeof updatePostingCadenceInputSchema>;
+
+/** A calendar cell: either a published/scheduled receipt or an empty slot. */
+export const CALENDAR_ENTRY_STATUSES = ["open", "scheduled", "published", "failed"] as const;
+export type CalendarEntryStatus = (typeof CALENDAR_ENTRY_STATUSES)[number];
+
+export const calendarEntrySchema = z.object({
+  kind: z.enum(["slot", "publication"]),
+  at: z.number().int(),
+  cadenceId: z.string().uuid().nullable(),
+  cadenceName: z.string().nullable(),
+  channel: z.enum(CHANNELS).nullable(),
+  providerKey: z.string().nullable(),
+  status: z.enum(CALENDAR_ENTRY_STATUSES),
+  title: z.string(),
+  draftId: z.string().uuid().nullable(),
+  publicationId: z.string().uuid().nullable(),
+  url: z.string().nullable(),
+});
+export type CalendarEntry = z.infer<typeof calendarEntrySchema>;
+
+// ---------------------------------------------------------------------------
+// Transactional mail (Sprint 27)
+// ---------------------------------------------------------------------------
+
+export const mailResultSchema = z.object({
+  delivered: z.boolean(),
+  id: z.string().nullable(),
+  detail: z.string(),
+});
+export type MailResultDto = z.infer<typeof mailResultSchema>;
+
+export const sendTestMailInputSchema = z.object({
+  to: z.string().trim().email("A valid email address is required"),
+});
+export type SendTestMailInput = z.infer<typeof sendTestMailInputSchema>;
 
 // ---------------------------------------------------------------------------
 // Native ads execution (Sprint 20)
@@ -1640,6 +1868,386 @@ export const updateAdSettingsInputSchema = z.object({
 export type UpdateAdSettingsInput = z.infer<typeof updateAdSettingsInputSchema>;
 
 // ---------------------------------------------------------------------------
+// Social automation guardrails + run results (Sprint 28)
+// ---------------------------------------------------------------------------
+
+/**
+ * Per-workspace guardrails for `scheduled_auto` campaigns — the safety net that
+ * replaces the human gate. The kill switch is the hard stop; the caps bound how
+ * many auto-posts land per UTC day. Mirrors `ad_settings`.
+ */
+export const socialAutomationSettingsSchema = z.object({
+  workspaceId: z.string().uuid(),
+  killSwitch: z.boolean(),
+  perConnectionDailyCap: z.number().int().positive(),
+  perCampaignDailyCap: z.number().int().positive(),
+  // Sprint 29: master switch for auto-posting engagement replies. Off by default —
+  // even scheduled_auto campaigns gate their replies until the founder opts in.
+  autoReplyEnabled: z.boolean(),
+  updatedAt: z.number().int(),
+});
+export type SocialAutomationSettings = z.infer<typeof socialAutomationSettingsSchema>;
+
+export const updateSocialAutomationSettingsInputSchema = z.object({
+  killSwitch: z.boolean().optional(),
+  perConnectionDailyCap: z.number().int().positive().max(1000).optional(),
+  perCampaignDailyCap: z.number().int().positive().max(1000).optional(),
+  autoReplyEnabled: z.boolean().optional(),
+});
+export type UpdateSocialAutomationSettingsInput = z.infer<
+  typeof updateSocialAutomationSettingsInputSchema
+>;
+
+/** What the orchestrator did for one campaign in a run. */
+export const automationCampaignResultSchema = z.object({
+  campaignId: z.string().uuid(),
+  campaignName: z.string(),
+  mode: z.enum(AUTOMATION_MODES),
+  generated: z.number().int(),
+  autoApproved: z.number().int(),
+  skipped: z.number().int(),
+  blocked: z.string().nullable(),
+});
+export type AutomationCampaignResult = z.infer<typeof automationCampaignResultSchema>;
+
+export const automationRunResultSchema = z.object({
+  results: z.array(automationCampaignResultSchema),
+  ranAt: z.number().int(),
+});
+export type AutomationRunResult = z.infer<typeof automationRunResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Engagement & reply inbox (Sprint 29)
+// ---------------------------------------------------------------------------
+
+/** A comment on one of our posts, or a reply to one of our outbound DMs. */
+export const INBOX_ITEM_KINDS = ["comment", "dm"] as const;
+export type InboxItemKind = (typeof INBOX_ITEM_KINDS)[number];
+
+export const INBOX_ITEM_STATUSES = ["unread", "read", "replied", "dismissed"] as const;
+export type InboxItemStatus = (typeof INBOX_ITEM_STATUSES)[number];
+
+export const inboxItemSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  connectionId: z.string().uuid(),
+  providerKey: z.string(),
+  kind: z.enum(INBOX_ITEM_KINDS),
+  channel: z.enum(CHANNELS),
+  /** Platform id of the inbound item — the idempotency key per connection. */
+  externalId: z.string(),
+  /** Platform id of the thing it replies to (our post/comment/DM). */
+  parentExternalId: z.string().nullable(),
+  /** The published post this engages, when mappable. */
+  publicationId: z.string().uuid().nullable(),
+  /** The outbound DM this replies to (X). */
+  launchMessageId: z.string().uuid().nullable(),
+  authorHandle: z.string(),
+  authorName: z.string(),
+  content: z.string(),
+  url: z.string().nullable(),
+  status: z.enum(INBOX_ITEM_STATUSES),
+  /** The gated reply draft, once one is generated. */
+  replyDraftId: z.string().uuid().nullable(),
+  postedReplyExternalId: z.string().nullable(),
+  postedReplyUrl: z.string().nullable(),
+  externalCreatedAt: z.number().int(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type InboxItem = z.infer<typeof inboxItemSchema>;
+
+/** An inbox item joined with its reply draft + the post it answers, for the UI. */
+export const inboxItemWithContextSchema = inboxItemSchema.extend({
+  replyDraft: z
+    .object({ id: z.string().uuid(), state: z.enum(APPROVAL_STATES), content: z.string() })
+    .nullable(),
+  post: z
+    .object({
+      publicationId: z.string().uuid(),
+      title: z.string(),
+      url: z.string().nullable(),
+    })
+    .nullable(),
+});
+export type InboxItemWithContext = z.infer<typeof inboxItemWithContextSchema>;
+
+/** Only `read`/`dismissed` are hand-settable; `replied` is system-set on a posted reply. */
+export const updateInboxItemStatusInputSchema = z.object({
+  status: z.enum(["read", "dismissed"]),
+});
+export type UpdateInboxItemStatusInput = z.infer<typeof updateInboxItemStatusInputSchema>;
+
+/** Engagement snapshot windows after publish. */
+export const METRIC_WINDOWS = ["24h", "7d"] as const;
+export type MetricWindow = (typeof METRIC_WINDOWS)[number];
+
+export const publicationMetricSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  publicationId: z.string().uuid(),
+  window: z.enum(METRIC_WINDOWS),
+  likes: z.number().int().nullable(),
+  comments: z.number().int().nullable(),
+  shares: z.number().int().nullable(),
+  impressions: z.number().int().nullable(),
+  clicks: z.number().int().nullable(),
+  capturedAt: z.number().int(),
+  createdAt: z.number().int(),
+});
+export type PublicationMetric = z.infer<typeof publicationMetricSchema>;
+
+/** What one inbox orchestrator run did. */
+export const inboxRunResultSchema = z.object({
+  polled: z.number().int(),
+  newItems: z.number().int(),
+  metricsCaptured: z.number().int(),
+  repliesGenerated: z.number().int(),
+  repliesAutoApproved: z.number().int(),
+  repliesPosted: z.number().int(),
+  ranAt: z.number().int(),
+});
+export type InboxRunResult = z.infer<typeof inboxRunResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Lead lists & segments (Sprint 24)
+// ---------------------------------------------------------------------------
+
+/**
+ * An audience is either a hand-picked `static` list or a `dynamic` segment
+ * whose members are computed live from a rule tree. Both group the same unified
+ * "people pool": all leads plus CRM contacts not yet linked to a lead.
+ */
+export const AUDIENCE_KINDS = ["static", "dynamic"] as const;
+export type AudienceKind = (typeof AUDIENCE_KINDS)[number];
+
+/** A person in an audience is either a lead or a synced CRM contact. */
+export const AUDIENCE_MEMBER_TYPES = ["lead", "contact"] as const;
+export type AudienceMemberType = (typeof AUDIENCE_MEMBER_TYPES)[number];
+
+/**
+ * Fields a segment rule can test. Common to both member types so rules apply
+ * uniformly — `notes` (leads only) is deliberately excluded. `email_domain` is
+ * derived (everything after the first `@`); `type` is the member type itself.
+ */
+export const SEGMENT_FIELDS = ["name", "email", "email_domain", "company", "role", "type"] as const;
+export type SegmentField = (typeof SEGMENT_FIELDS)[number];
+
+export const SEGMENT_OPERATORS = [
+  "equals",
+  "not_equals",
+  "contains",
+  "not_contains",
+  "starts_with",
+  "is_set",
+  "is_empty",
+] as const;
+export type SegmentOperator = (typeof SEGMENT_OPERATORS)[number];
+
+/** Operators that ignore `value` — presence checks. */
+const VALUELESS_OPERATORS: readonly SegmentOperator[] = ["is_set", "is_empty"];
+
+/** Bounds that keep "simple rule-based" honest — guarded by the schema. */
+export const SEGMENT_MAX_DEPTH = 5;
+export const SEGMENT_MAX_CONDITIONS = 50;
+
+/** A unified person drawn from the workspace's people pool. */
+export const personSchema = z.object({
+  type: z.enum(AUDIENCE_MEMBER_TYPES),
+  id: z.string().uuid(),
+  name: z.string(),
+  email: z.string(),
+  company: z.string(),
+  role: z.string(),
+  // Only populated for `lead` people (Sprint 26) — contacts have no handle.
+  xHandle: z.string().optional(),
+});
+export type Person = z.infer<typeof personSchema>;
+
+export const segmentConditionSchema = z
+  .object({
+    field: z.enum(SEGMENT_FIELDS),
+    operator: z.enum(SEGMENT_OPERATORS),
+    // Optional: presence operators (is_set/is_empty) ignore it. Absent === "".
+    value: z.string().max(500).optional(),
+  })
+  .superRefine((cond, ctx) => {
+    const needsValue = !VALUELESS_OPERATORS.includes(cond.operator);
+    const value = (cond.value ?? "").trim();
+    if (needsValue && value.length === 0) {
+      ctx.addIssue({ code: "custom", message: `"${cond.operator}" needs a value` });
+    }
+    if (cond.field === "type" && needsValue && value.length > 0) {
+      if (!(AUDIENCE_MEMBER_TYPES as readonly string[]).includes(value)) {
+        ctx.addIssue({ code: "custom", message: `type must be one of: ${AUDIENCE_MEMBER_TYPES.join(", ")}` });
+      }
+    }
+  });
+export type SegmentCondition = z.infer<typeof segmentConditionSchema>;
+
+export const SEGMENT_COMBINATORS = ["and", "or"] as const;
+export type SegmentCombinator = (typeof SEGMENT_COMBINATORS)[number];
+
+/** A rule node is either a leaf condition or a nested group. */
+export type SegmentRuleNode = SegmentCondition | SegmentRuleGroup;
+export interface SegmentRuleGroup {
+  combinator: SegmentCombinator;
+  rules: SegmentRuleNode[];
+}
+
+/** Recursive AND/OR rule tree. A group with no rules matches everyone. */
+export const segmentRuleGroupSchema: z.ZodType<SegmentRuleGroup> = z.lazy(() =>
+  z.object({
+    combinator: z.enum(SEGMENT_COMBINATORS),
+    rules: z.array(z.union([segmentConditionSchema, segmentRuleGroupSchema])).max(SEGMENT_MAX_CONDITIONS),
+  }),
+);
+
+function isRuleGroup(node: SegmentRuleNode): node is SegmentRuleGroup {
+  return (node as SegmentRuleGroup).combinator !== undefined;
+}
+
+/** Depth and total-condition guards, run as a refinement on whole trees. */
+function ruleTreeStats(node: SegmentRuleNode, depth = 1): { depth: number; conditions: number } {
+  if (!isRuleGroup(node)) return { depth, conditions: 1 };
+  let maxDepth = depth;
+  let conditions = 0;
+  for (const child of node.rules) {
+    const stats = ruleTreeStats(child, depth + 1);
+    maxDepth = Math.max(maxDepth, stats.depth);
+    conditions += stats.conditions;
+  }
+  return { depth: maxDepth, conditions };
+}
+
+export const segmentRulesSchema = segmentRuleGroupSchema.superRefine((group, ctx) => {
+  const stats = ruleTreeStats(group);
+  if (stats.depth > SEGMENT_MAX_DEPTH) {
+    ctx.addIssue({ code: "custom", message: `Rules nest too deep (max ${SEGMENT_MAX_DEPTH} levels)` });
+  }
+  if (stats.conditions > SEGMENT_MAX_CONDITIONS) {
+    ctx.addIssue({ code: "custom", message: `Too many conditions (max ${SEGMENT_MAX_CONDITIONS})` });
+  }
+});
+
+function fieldValue(person: Person, field: SegmentField): string {
+  switch (field) {
+    case "email_domain":
+      return person.email.includes("@") ? person.email.slice(person.email.indexOf("@") + 1) : "";
+    case "type":
+      return person.type;
+    default:
+      return person[field];
+  }
+}
+
+function matchesCondition(person: Person, cond: SegmentCondition): boolean {
+  const actual = fieldValue(person, cond.field).toLowerCase().trim();
+  const expected = (cond.value ?? "").toLowerCase().trim();
+  switch (cond.operator) {
+    case "equals":
+      return actual === expected;
+    case "not_equals":
+      return actual !== expected;
+    case "contains":
+      return actual.includes(expected);
+    case "not_contains":
+      return !actual.includes(expected);
+    case "starts_with":
+      return actual.startsWith(expected);
+    case "is_set":
+      return actual.length > 0;
+    case "is_empty":
+      return actual.length === 0;
+  }
+}
+
+/**
+ * Evaluate a person against a rule tree. Pure and case-insensitive. An empty
+ * group is vacuously true (a brand-new segment matches everyone until rules are
+ * added). Shared by the service (live resolution) and the UI preview.
+ */
+export function evaluateSegment(person: Person, group: SegmentRuleGroup): boolean {
+  if (group.rules.length === 0) return true;
+  const results = group.rules.map((node) =>
+    isRuleGroup(node) ? evaluateSegment(person, node) : matchesCondition(person, node),
+  );
+  return group.combinator === "and" ? results.every(Boolean) : results.some(Boolean);
+}
+
+export const audienceSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  name: z.string().min(1).max(200),
+  description: z.string().max(1000),
+  kind: z.enum(AUDIENCE_KINDS),
+  // The rule tree for dynamic segments; null for static lists.
+  rules: segmentRuleGroupSchema.nullable(),
+  memberCount: z.number().int().min(0),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type Audience = z.infer<typeof audienceSchema>;
+
+/** A resolved member: a pool Person, plus when it was added (static lists). */
+export const audienceMemberSchema = personSchema.extend({
+  addedAt: z.number().int().nullable(),
+});
+export type AudienceMember = z.infer<typeof audienceMemberSchema>;
+
+export const audienceDetailSchema = z.object({
+  audience: audienceSchema,
+  members: z.array(audienceMemberSchema),
+});
+export type AudienceDetail = z.infer<typeof audienceDetailSchema>;
+
+export const upsertAudienceInputSchema = z
+  .object({
+    name: z
+      .string()
+      .trim()
+      .min(1, "Audience name is required")
+      .max(200, "Name must be 200 characters or fewer"),
+    description: z.string().trim().max(1000).default(""),
+    kind: z.enum(AUDIENCE_KINDS),
+    rules: segmentRulesSchema.nullable().default(null),
+  })
+  .superRefine((input, ctx) => {
+    if (input.kind === "dynamic" && !input.rules) {
+      ctx.addIssue({ code: "custom", path: ["rules"], message: "A segment needs rules" });
+    }
+    if (input.kind === "static" && input.rules) {
+      ctx.addIssue({ code: "custom", path: ["rules"], message: "A static list cannot have rules" });
+    }
+  });
+export type UpsertAudienceInput = z.infer<typeof upsertAudienceInputSchema>;
+
+const audienceMemberRefSchema = z.object({
+  type: z.enum(AUDIENCE_MEMBER_TYPES),
+  id: z.string().uuid(),
+});
+export type AudienceMemberRef = z.infer<typeof audienceMemberRefSchema>;
+
+export const addAudienceMembersInputSchema = z.object({
+  members: z.array(audienceMemberRefSchema).min(1, "Select at least one member").max(500),
+});
+export type AddAudienceMembersInput = z.infer<typeof addAudienceMembersInputSchema>;
+
+export const attachAudienceInputSchema = z.object({
+  audienceId: z.string().uuid(),
+});
+export type AttachAudienceInput = z.infer<typeof attachAudienceInputSchema>;
+
+/** A campaign's attached audience, summarised for the campaign detail view. */
+export const campaignAudienceSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  kind: z.enum(AUDIENCE_KINDS),
+  memberCount: z.number().int().min(0),
+});
+export type CampaignAudience = z.infer<typeof campaignAudienceSchema>;
+
+// ---------------------------------------------------------------------------
 // Events + webhooks
 // ---------------------------------------------------------------------------
 
@@ -1653,6 +2261,7 @@ export const EVENT_TYPES = [
   "ads.synced",
   "ad.launched",
   "post.published",
+  "reply.posted",
   "webhook.ping",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
@@ -1683,6 +2292,234 @@ export const createWebhookInputSchema = z.object({
   secret: z.string().trim().min(8, "Secret must be at least 8 characters").optional(),
 });
 export type CreateWebhookInput = z.infer<typeof createWebhookInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Targeted campaign launch (Sprint 26)
+// ---------------------------------------------------------------------------
+
+/** The channels a launch can drive: per-recipient email/X, broadcast LinkedIn/IG. */
+export const LAUNCH_CHANNELS = ["email", "linkedin", "instagram", "x"] as const;
+export type LaunchChannel = (typeof LAUNCH_CHANNELS)[number];
+
+/** Coarse launch lifecycle; per-message detail lives on launch_messages. */
+export const LAUNCH_STATUSES = ["draft", "generating", "ready", "completed"] as const;
+export type LaunchStatus = (typeof LAUNCH_STATUSES)[number];
+
+/** Per-recipient personalized message, or one platform-wide broadcast post. */
+export const LAUNCH_MESSAGE_KINDS = ["personalized", "broadcast"] as const;
+export type LaunchMessageKind = (typeof LAUNCH_MESSAGE_KINDS)[number];
+
+/** Dispatch lifecycle of one message (approval state is read from its draft). */
+export const LAUNCH_MESSAGE_STATUSES = ["pending", "sent", "failed", "skipped"] as const;
+export type LaunchMessageStatus = (typeof LAUNCH_MESSAGE_STATUSES)[number];
+
+export const LAUNCH_MEDIA_TYPES = ["image", "video"] as const;
+export type LaunchMediaType = (typeof LAUNCH_MEDIA_TYPES)[number];
+
+export const launchMediaSchema = z.object({
+  url: z.string().trim().url("A valid media URL is required"),
+  type: z.enum(LAUNCH_MEDIA_TYPES),
+});
+export type LaunchMedia = z.infer<typeof launchMediaSchema>;
+
+export const launchSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  name: z.string(),
+  audienceId: z.string().uuid().nullable(),
+  campaignId: z.string().uuid().nullable(),
+  personaId: z.string().uuid().nullable(),
+  channels: z.array(z.enum(LAUNCH_CHANNELS)),
+  status: z.enum(LAUNCH_STATUSES),
+  // Sequence config (Sprint 30): the control level + stop-on-reply + the X
+  // connection auto-dispatch uses. A launch with no sequence_steps ignores these.
+  automationMode: z.enum(AUTOMATION_MODES),
+  stopOnReply: z.boolean(),
+  xConnectionId: z.string().uuid().nullable(),
+  messageCount: z.number().int(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type Launch = z.infer<typeof launchSchema>;
+
+export const launchMessageSchema = z.object({
+  id: z.string().uuid(),
+  launchId: z.string().uuid(),
+  channel: z.enum(LAUNCH_CHANNELS),
+  kind: z.enum(LAUNCH_MESSAGE_KINDS),
+  recipientType: z.enum(AUDIENCE_MEMBER_TYPES).nullable(),
+  recipientId: z.string().nullable(),
+  recipientName: z.string(),
+  recipientEmail: z.string(),
+  recipientHandle: z.string().nullable(),
+  draftId: z.string().uuid().nullable(),
+  status: z.enum(LAUNCH_MESSAGE_STATUSES),
+  skipReason: z.string().nullable(),
+  externalId: z.string().nullable(),
+  externalUrl: z.string().nullable(),
+  sentAt: z.number().int().nullable(),
+  lastError: z.string().nullable(),
+  // Which sequence step produced this message (Sprint 30). First-touch = 1.
+  stepNumber: z.number().int(),
+  // The linked draft's current approval state + content, for the launch UI.
+  draftState: z.enum(APPROVAL_STATES).nullable(),
+  draftContent: z.string().nullable(),
+});
+export type LaunchMessage = z.infer<typeof launchMessageSchema>;
+
+export const createLaunchInputSchema = z.object({
+  name: z.string().trim().min(1, "Launch name is required").max(200),
+  audienceId: z.string().uuid("Pick an audience to target"),
+  campaignId: z.string().uuid().optional(),
+  personaId: z.string().uuid().optional(),
+  channels: z.array(z.enum(LAUNCH_CHANNELS)).min(1, "Pick at least one channel"),
+  automationMode: z.enum(AUTOMATION_MODES).default("manual"),
+  stopOnReply: z.boolean().default(true),
+});
+export type CreateLaunchInput = z.infer<typeof createLaunchInputSchema>;
+
+export const generateLaunchInputSchema = z.object({
+  tokenBudget: z.number().int().min(500).max(200_000).optional(),
+  useEvidence: z.boolean().optional(),
+});
+export type GenerateLaunchInput = z.infer<typeof generateLaunchInputSchema>;
+
+export const dispatchChannelInputSchema = z.object({
+  connectionId: z.string().uuid().optional(),
+  media: z.array(launchMediaSchema).max(10, "At most 10 media items").optional(),
+});
+export type DispatchChannelInput = z.infer<typeof dispatchChannelInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Multi-step outbound sequences (Sprint 30) — follow-up chains on a launch
+// ---------------------------------------------------------------------------
+
+/** The personalized launch channels that can be sequenced into follow-up chains. */
+export const SEQUENCE_CHANNELS = ["email", "x"] as const;
+export type SequenceChannel = (typeof SEQUENCE_CHANNELS)[number];
+
+/** Per-recipient progression through a launch's follow-up chain. */
+export const SEQUENCE_RECIPIENT_STATUSES = [
+  "active",
+  "replied",
+  "stopped",
+  "completed",
+  "failed",
+] as const;
+export type SequenceRecipientStatus = (typeof SEQUENCE_RECIPIENT_STATUSES)[number];
+
+/** Hard cap on steps per channel — keeps a chain comprehensible and bounds fan-out. */
+export const MAX_SEQUENCE_STEPS = 10;
+
+export const sequenceStepSchema = z.object({
+  id: z.string().uuid(),
+  launchId: z.string().uuid(),
+  channel: z.enum(SEQUENCE_CHANNELS),
+  stepNumber: z.number().int().min(1),
+  instruction: z.string(),
+  delayHours: z.number().int().min(0),
+});
+export type SequenceStep = z.infer<typeof sequenceStepSchema>;
+
+export const sequenceStepInputSchema = z.object({
+  channel: z.enum(SEQUENCE_CHANNELS),
+  stepNumber: z.number().int().min(1).max(MAX_SEQUENCE_STEPS),
+  instruction: z.string().trim().max(1000).default(""),
+  delayHours: z.number().int().min(0).max(8760).default(0),
+});
+export type SequenceStepInput = z.infer<typeof sequenceStepInputSchema>;
+
+export const setSequenceInputSchema = z
+  .object({
+    steps: z
+      .array(sequenceStepInputSchema)
+      .min(1, "Add at least one step")
+      .max(MAX_SEQUENCE_STEPS * SEQUENCE_CHANNELS.length),
+  })
+  .superRefine((val, ctx) => {
+    // Per channel, step numbers must be a contiguous 1..N with no gaps/duplicates.
+    for (const channel of SEQUENCE_CHANNELS) {
+      const nums = val.steps
+        .filter((s) => s.channel === channel)
+        .map((s) => s.stepNumber)
+        .sort((a, b) => a - b);
+      for (let i = 0; i < nums.length; i++) {
+        if (nums[i] !== i + 1) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `${channel} steps must be numbered 1..N with no gaps or duplicates.`,
+          });
+          break;
+        }
+      }
+    }
+  });
+export type SetSequenceInput = z.infer<typeof setSequenceInputSchema>;
+
+export const sequenceRecipientSchema = z.object({
+  id: z.string().uuid(),
+  launchId: z.string().uuid(),
+  channel: z.enum(SEQUENCE_CHANNELS),
+  recipientType: z.enum(AUDIENCE_MEMBER_TYPES),
+  recipientId: z.string(),
+  recipientName: z.string(),
+  recipientEmail: z.string(),
+  recipientHandle: z.string().nullable(),
+  currentStep: z.number().int(),
+  totalSteps: z.number().int(),
+  status: z.enum(SEQUENCE_RECIPIENT_STATUSES),
+  nextDueAt: z.number().int().nullable(),
+  lastSentAt: z.number().int().nullable(),
+  stoppedReason: z.string().nullable(),
+  updatedAt: z.number().int(),
+});
+export type SequenceRecipient = z.infer<typeof sequenceRecipientSchema>;
+
+/** Focused payload for the launch's automation toggle — never resets on a name edit. */
+export const updateLaunchSequenceConfigInputSchema = z.object({
+  automationMode: z.enum(AUTOMATION_MODES).optional(),
+  stopOnReply: z.boolean().optional(),
+  xConnectionId: z.string().uuid().nullable().optional(),
+});
+export type UpdateLaunchSequenceConfigInput = z.infer<typeof updateLaunchSequenceConfigInputSchema>;
+
+export const stopSequenceInputSchema = z
+  .object({
+    channel: z.enum(SEQUENCE_CHANNELS).optional(),
+    recipients: z.array(audienceMemberRefSchema).optional(),
+    emails: z.array(z.string().trim().toLowerCase().email()).optional(),
+    all: z.boolean().optional(),
+    reason: z.enum(["manual", "replied"]).default("manual"),
+  })
+  .superRefine((v, ctx) => {
+    if (!v.all && !v.recipients?.length && !v.emails?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Select recipients, paste emails to suppress, or set all=true.",
+      });
+    }
+  });
+export type StopSequenceInput = z.infer<typeof stopSequenceInputSchema>;
+
+export const sequenceRunResultSchema = z.object({
+  enrolled: z.number().int(),
+  generated: z.number().int(),
+  autoApproved: z.number().int(),
+  sent: z.number().int(),
+  stopped: z.number().int(),
+  completed: z.number().int(),
+  ranAt: z.number().int(),
+});
+export type SequenceRunResult = z.infer<typeof sequenceRunResultSchema>;
+
+export const launchDetailSchema = z.object({
+  launch: launchSchema,
+  messages: z.array(launchMessageSchema),
+  steps: z.array(sequenceStepSchema),
+  sequenceRecipients: z.array(sequenceRecipientSchema),
+  recipientCount: z.number().int(),
+});
+export type LaunchDetail = z.infer<typeof launchDetailSchema>;
 
 // ---------------------------------------------------------------------------
 // API error shape

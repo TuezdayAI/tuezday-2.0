@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createInviteInputSchema } from "@tuezday/contracts";
 import type { Db } from "../db";
+import { appBaseUrl, type Mailer } from "../mail/mailer";
 import { getUser } from "../services/auth";
 import {
   acceptInvite,
@@ -22,7 +23,7 @@ function ownerOr403(request: FastifyRequest, reply: FastifyReply): boolean {
   return false;
 }
 
-export function registerTeamRoutes(app: FastifyInstance, db: Db): void {
+export function registerTeamRoutes(app: FastifyInstance, db: Db, mailer: Mailer): void {
   app.get<{ Params: { id: string } }>("/workspaces/:id/members", async (request) =>
     listMembers(db, request.params.id),
   );
@@ -61,6 +62,20 @@ export function registerTeamRoutes(app: FastifyInstance, db: Db): void {
         // acting user when there is one.
         request.actor.userId ?? "system",
       );
+      // Email the invite link. Best-effort: a mailer failure must never fail
+      // invite creation — the response still carries the token for manual share.
+      const workspace = getWorkspace(db, request.params.id);
+      const link = `${appBaseUrl()}/invites/${invite.token}`;
+      void mailer
+        .send({
+          to: invite.email,
+          subject: `You're invited to ${workspace?.name ?? "a workspace"} on Tuezday`,
+          text: `You've been invited to join ${workspace?.name ?? "a workspace"} on Tuezday.\n\nAccept your invite: ${link}\n\nIf you didn't expect this, you can ignore this email.`,
+          html: `<p>You've been invited to join <strong>${workspace?.name ?? "a workspace"}</strong> on Tuezday.</p><p><a href="${link}">Accept your invite</a></p><p>If you didn't expect this, you can ignore this email.</p>`,
+        })
+        .catch((err) => {
+          app.log.error(`invite email failed: ${err instanceof Error ? err.message : String(err)}`);
+        });
       return reply.status(201).send(invite);
     } catch (err) {
       if (err instanceof AlreadyMemberError) {

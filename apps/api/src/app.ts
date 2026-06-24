@@ -10,11 +10,16 @@ import { R2REvidenceStore } from "./evidence/r2r";
 import type { EvidenceStore } from "./evidence/store";
 import { GeminiGateway } from "./llm/gemini";
 import type { LlmGateway } from "./llm/gateway";
+import { CsvOutboundExporter, type OutboundExporter } from "./outbound/exporter";
+import { createDefaultMailer, type Mailer } from "./mail/mailer";
 import { registerAdCreativeRoutes } from "./routes/ad-creatives";
 import { registerAdLaunchRoutes } from "./routes/ad-launches";
 import { registerAdsRoutes } from "./routes/ads";
+import { registerAudienceRoutes } from "./routes/audiences";
 import { registerAuthRoutes } from "./routes/auth";
+import { registerAutomationRoutes } from "./routes/automation";
 import { registerBrainRoutes } from "./routes/brain";
+import { registerCadenceRoutes } from "./routes/cadences";
 import { registerCampaignRoutes } from "./routes/campaigns";
 import { registerConnectorRoutes } from "./routes/connectors";
 import { registerCrmRoutes } from "./routes/crm";
@@ -23,7 +28,10 @@ import { registerDraftRoutes } from "./routes/drafts";
 import { registerEvidenceRoutes } from "./routes/evidence";
 import { registerGuidanceRoutes } from "./routes/guidance";
 import { registerGenerationSettingsRoutes } from "./routes/generation-settings";
+import { registerInboxRoutes } from "./routes/inbox";
+import { registerLaunchRoutes } from "./routes/launches";
 import { registerLearningRoutes } from "./routes/learning";
+import { registerMailRoutes } from "./routes/mail";
 import { registerOutboundRoutes } from "./routes/outbound";
 import { registerPrRoutes } from "./routes/pr";
 import { registerPublicationRoutes } from "./routes/publications";
@@ -45,6 +53,10 @@ export interface BuildAppOptions {
   evidence?: EvidenceStore;
   /** Connector fabric override; defaults to the Nango client from env. */
   connectors?: ConnectorFabric;
+  /** Outbound-email exporter (Sprint 26); defaults to a Smartlead/Instantly CSV. */
+  exporter?: OutboundExporter;
+  /** Transactional mailer (Sprint 27); defaults to Resend, else a console logger. */
+  mailer?: Mailer;
   /**
    * Shared secret that authenticates the worker as the `system` actor with
    * access to every workspace. Defaults to TUEZDAY_WORKER_TOKEN.
@@ -58,6 +70,8 @@ export async function buildApp({
   fetcher = fetch,
   evidence = new R2REvidenceStore(),
   connectors = new NangoFabric(undefined, undefined, fetcher),
+  exporter = new CsvOutboundExporter(),
+  mailer = createDefaultMailer(fetcher),
   workerToken = process.env.TUEZDAY_WORKER_TOKEN,
 }: BuildAppOptions): Promise<TuezdayApp> {
   const app = Fastify({ logger: false });
@@ -80,7 +94,7 @@ export async function buildApp({
 
   registerAuthRoutes(app, db);
   registerWorkspaceRoutes(app, db);
-  registerTeamRoutes(app, db);
+  registerTeamRoutes(app, db, mailer);
   registerBrainRoutes(app, db);
   registerGuidanceRoutes(app, db);
   registerGenerationSettingsRoutes(app, db);
@@ -90,9 +104,11 @@ export async function buildApp({
   registerSignalRoutes(app, db, llm, evidence);
   registerDiscoveryRoutes(app, db, llm, fetcher);
   registerCampaignRoutes(app, db);
+  registerAudienceRoutes(app, db);
   registerEvidenceRoutes(app, db, evidence);
   registerLearningRoutes(app, db, llm, fetcher);
   registerOutboundRoutes(app, db, llm, evidence);
+  registerLaunchRoutes(app, db, llm, evidence, connectors, fetcher, exporter);
   registerConnectorRoutes(app, db, connectors, fetcher);
   registerCrmRoutes(app, db, connectors, fetcher);
   registerAdsRoutes(app, db, connectors, fetcher);
@@ -100,6 +116,10 @@ export async function buildApp({
   registerAdCreativeRoutes(app, db, llm, evidence);
   registerPrRoutes(app, db, llm, evidence);
   registerPublicationRoutes(app, db, connectors, fetcher);
+  registerCadenceRoutes(app, db, connectors, fetcher);
+  registerMailRoutes(app, db, mailer);
+  registerAutomationRoutes(app, db, llm, evidence);
+  registerInboxRoutes(app, db, llm, evidence, connectors, fetcher);
 
   return app;
 }

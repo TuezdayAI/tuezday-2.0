@@ -10,6 +10,7 @@
 > For Sprint 17 tests: Reddit app credentials (`REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`) in `.env`; `npm run nango:up`.
 > For Sprint 19 tests: two browsers (or one + incognito); `TUEZDAY_WORKER_TOKEN` in `.env`.
 > For Sprint 20 tests: Meta Ads `ads_management` token; Sprint 14 + 15 acceptance done first; `TUEZDAY_WORKER_TOKEN` in `.env`.
+> For Sprint 25 tests: LinkedIn / X / Instagram OAuth apps; their `*_CLIENT_ID` / `*_CLIENT_SECRET` in `.env`; `npm run nango:up`.
 > Your dev workspace: "tuezday".
 
 ---
@@ -238,11 +239,234 @@
 
 **Gate:** spend and control are fully bidirectional — you can start and stop real ad spend from inside Tuezday, every approval is logged with the approver's name, and the kill switch is instant.
 
+## Sprint 25 — Connect LinkedIn / X / Instagram
+
+> Prereqs (one-time per platform, all using the Nango callback `http://localhost:3050/oauth/callback`):
+> - **LinkedIn** app at linkedin.com/developers/apps with "Sign In with LinkedIn using OpenID Connect" + "Share on LinkedIn"; set `LINKEDIN_CLIENT_ID` / `LINKEDIN_CLIENT_SECRET`.
+> - **X** OAuth 2.0 app at developer.x.com with tweet/users/dm scopes; set `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` (the OAuth 2.0 client id/secret, not the API key/secret).
+> - **Instagram** — a **Facebook** app at developers.facebook.com with the Instagram Graph API; publishing needs an Instagram **Business/Creator** account linked to a Facebook Page + `instagram_content_publish` via App Review; set `INSTAGRAM_CLIENT_ID` / `INSTAGRAM_CLIENT_SECRET` (the Facebook app id/secret).
+> Restart the API after editing `.env`.
+
+- [ ] `npm run nango:up`; Integrations page → LinkedIn / X / Instagram each show **Connect** (not "needs OAuth app") once their `.env` creds are set; with creds missing they show the per-platform setup hint instead.
+- [ ] **Connect LinkedIn** → OAuth popup → authorize → card shows `connected`; **Test** passes (`/v2/userinfo` identity through the proxy).
+- [ ] **Connect X** → OAuth popup → authorize → `connected`; **Test** passes (`/2/users/me`).
+- [ ] **Connect Instagram** → Facebook OAuth popup → authorize → `connected`; **Test** passes (`/v23.0/me`). (If `instagram_content_publish` isn't approved yet, identity still verifies — publishing is gated until Sprint 26.)
+- [ ] **Disconnect** one platform → **Reconnect** via the popup → it returns to `connected` (same row revived).
+- [ ] **Reddit** still shows as parked / "needs OAuth app" (its key hasn't been issued) — confirm it wasn't removed.
+- [ ] No posting/DM controls appear yet — that's Sprint 26.
+
+**Gate:** all three social accounts reach a verified `connected` state through the OAuth popup, with the scopes needed for Sprint 26's posts and X DMs already granted — no reconnect required later.
+
+---
+
+## Sprint 21 — Runtime-editable channel/platform guidance
+
+> Spec: `docs/specs/sprint-21-runtime-editable-guidance.md` (on the
+> `sprint-21-runtime-editable-guidance` branch). Channel guidance defaults moved out of code
+> into `packages/contracts`; per-workspace, per-channel overrides live in the DB and are read at
+> resolve time. Editor lives on the **Brain** page.
+
+- [ ] Brain page → **Channel guidance** → each of the six channels (LinkedIn, X, Email, Paid ads, Website, PR) shows its current text with a **Default** badge.
+- [ ] Edit **LinkedIn** guidance (e.g. add "Always open with a contrarian one-liner.") → **Save** → the badge flips to **Workspace override**; no redeploy happened.
+- [ ] Sandbox/Content → generate a **LinkedIn post** → the output reflects the edited guidance.
+- [ ] Show the prompt trace for that generation → the **Channel: linkedin** section shows the edited text and its reason reads **"workspace override."** Generate for a different channel → its reason still reads **"built-in default."**
+- [ ] **Reset to default** on LinkedIn → the badge returns to **Default**; the next generation uses the original guidance again.
+- [ ] `npm run typecheck` and `npm test` pass.
+
+**Gate:** channel guidance is editable per workspace with zero redeploy, and the resolved-context trace always tells you whether the model saw the built-in default or your workspace override.
+
+---
+
+## Sprint 22 — Generation quality: angle-first + dual-LLM pre-review
+
+> Spec: `docs/specs/sprint-22-generation-quality.md` (on the `sprint-22-generation-quality` branch).
+> Prereq: a working `GEMINI_API_KEY` — review adds ~2 gateway calls per generation. New-workspace
+> defaults: **review ON, angle step OFF**, both per-workspace toggleable; flag threshold default 70.
+
+- [ ] Sandbox → the **quality settings** card shows review **on** and the angle step **off** by default; turn the angle step on and set an angle count.
+- [ ] **Suggest angles** → several distinct angles appear → pick one → generate a **LinkedIn post**.
+- [ ] The generation shows a **brand-voice score** and a **channel-fit score** (0–100 each), each with specific issues.
+- [ ] A draft that scores below the flag threshold shows a **"flagged"** badge *before* it reaches Review.
+- [ ] Send it to **Review** → the same scores/issues appear on the draft, with a **Re-run review** button → Re-run re-checks the draft's *current* content.
+- [ ] Approve / edit / reject still work exactly as before — flags are **advisory only and never block approval** (your override always wins).
+- [ ] Confirm automated review also runs on an **outbound email**, a **PR pitch**, and a **signal-response** draft — but **not** on ad creatives.
+- [ ] Turn **review off** in settings → a fresh generation carries no scores. Turn the **angle step off** → generation goes straight to a draft.
+- [ ] Show the prompt trace → the angle and reviewer prompts are brain-resolved (soul/voice for brand, channel guidance for fit), not hardcoded; every extra call is traced.
+- [ ] `npm run typecheck` and `npm test` pass.
+
+**Gate:** weak drafts are scored and flagged before you spend attention on them, every reviewer/angle prompt is resolved through the brain and visible in the trace, and a flag never blocks your decision.
+
+---
+
+## Sprint 23 — CRM contact management: discard + filtered sync
+
+> Spec: `docs/specs/sprint-23-crm-discard-filtered-sync.md` (on the
+> `sprint-23-crm-discard-filtered-sync` branch). Both controls are **local working state** — the CRM
+> stays the system of record; nothing here writes to or deletes from Freshsales.
+> Prereq: Freshsales connected (see Sprint 13) and at least one Sync done.
+
+- [ ] CRM page → **Sync** (Freshsales) → contacts appear.
+- [ ] **Discard** two contacts → they leave the list and appear under **Discarded**.
+- [ ] **Sync** again → the discarded two **do not** come back; everything else refreshes.
+- [ ] **Restore** one → it returns to the contacts list; the next sync refreshes it.
+- [ ] Set a **Sync filter**: choose a specific Freshsales view (and/or an "updated since" date) → **Save** → **Sync** → only matching contacts come in; the synced count reflects the smaller set.
+- [ ] Confirm nothing changed in Freshsales itself (no contact deleted there); a lead you imported from a now-discarded contact still exists on the Outbound/Leads page.
+- [ ] `npm run typecheck` and `npm test` pass.
+
+**Gate:** you control which CRM contacts live in Tuezday — a discard stays gone across re-syncs, a filter scopes what comes in, and the CRM remains the system of record with nothing deleted on its side.
+
+---
+
+## Sprint 24 — Lead lists & segments
+
+> Spec: `docs/specs/sprint-24-lead-lists-segments.md` (on the
+> `sprint-24-lead-lists-segments` branch). Find it under **Audience → Lists &
+> segments** in the sidebar.
+> Prep: have a handful of leads in the workspace (Outbound page → import or add a
+> few, ideally with varied `role`/`company`). A couple of synced CRM contacts
+> (CRM page) make the unified leads+contacts behaviour visible but are optional.
+
+- [ ] Lists & segments page → **New audience** → **Static list**, name it, create
+      it → open its card → the people picker lists your leads **and** any CRM
+      contacts not yet imported as a lead; tick a few → **Add** → they appear as
+      members with a lead/contact badge; **remove** one and it leaves.
+- [ ] A CRM contact you already imported as a lead shows **once** (as the lead),
+      never twice, in the picker and in segments.
+- [ ] **New audience → Dynamic segment** "VPs at fintech": rule = `role` *contains*
+      `VP` **AND** a nested **ANY of (OR)** group [`company` *contains* `fintech`
+      **OR** `email domain` *contains* `fintech`] → save → its members resolve
+      live to exactly the people who match; the count matches.
+- [ ] Edit the segment (broaden the rule, e.g. drop the fintech group) → reopen →
+      membership has changed with no other action — it is computed live.
+- [ ] Adding members by hand to a **dynamic** segment is not offered (segments are
+      rule-driven); a static list offers no rule builder.
+- [ ] Open a member's card → **Attach to campaign** → pick an active campaign →
+      confirmation. Go to **Campaigns**, expand that campaign → an **Audiences**
+      line lists the attached list/segment with its kind and member count.
+- [ ] Attach a second audience to the same campaign → both show; detach is
+      reflected on the campaign. (Sending to an audience arrives in Sprint 25.)
+- [ ] Delete a lead that sits in a static list → it disappears from the list’s
+      members.
+- [ ] `npm run typecheck` and `npm test` pass.
+
+**Gate:** you can carve your leads/contacts into a reusable list and a live
+"VPs at fintech" segment, see exactly who is in each, and point a campaign at
+them — the targeting primitive Sprint 26 sends through.
+
+---
+
+## Sprint 26 — Targeted campaign launch at a segment
+
+> Branch `sprint-26-targeted-launch` (built on Sprint 24 + Sprint 25; merge order
+> 24 → 25 → 26). Prereqs: LinkedIn / X / Instagram connected (Sprint 25) with
+> their creds in `.env`; a segment/list with a few leads, some carrying an X
+> handle. Instagram needs an IG **Business/Creator** account linked to a Page,
+> via the Facebook app (`INSTAGRAM_CLIENT_ID/SECRET`), with `instagram_content_publish`.
+
+- [ ] **Set X handles:** Audience → a lead → **+ X handle** (or edit) → save → the
+      handle shows on the lead (the leading `@` is stripped). CSV import with an
+      `x`/`twitter` column also fills it.
+- [ ] **Create a launch:** Audience → **Launches** → **New launch** → name it, pick
+      the segment, optionally a campaign + persona, tick **Email, LinkedIn,
+      Instagram, X** (a channel whose account isn't connected is disabled with a
+      hint) → Create.
+- [ ] **Generate:** open the launch → **Generate** → it goes to `ready` showing:
+      one **personalized email** + one **personalized X DM** per recipient (leads
+      without a handle, and all contacts, show **skipped — no X handle**), plus one
+      **LinkedIn** and one **Instagram** broadcast draft. Every draft is
+      `pending_review`.
+- [ ] **Review/approve:** approve the drafts (inline **approve**, or in Review).
+- [ ] **Email:** Download CSV → open it → one row per approved recipient with the
+      personalized body in `personalized_message` (ready for Smartlead/Instantly);
+      those messages flip to `sent`.
+- [ ] **LinkedIn:** **Publish** → the broadcast appears on the connected LinkedIn
+      feed; the **view** link resolves; it also appears under Publications.
+- [ ] **Instagram:** paste an image URL (try 2–3 for a carousel, a `.mp4` for a
+      reel) → **Publish** → the post appears on the IG Business account. Publishing
+      with no media is refused (`media_required`).
+- [ ] **X:** **Send DMs** → recipients with a valid handle receive the DM; a
+      bad/closed handle shows a clear per-recipient error without aborting the
+      rest; skipped recipients are untouched.
+- [ ] No social account connected for a channel → dispatch returns a clear
+      "connect it first"; a channel the launch didn't select can't be dispatched.
+- [ ] `npm run typecheck` and `npm test` pass.
+
+**Gate:** you can point a launch at a segment and, in one place, ship a
+per-person email + X DM and a LinkedIn + Instagram broadcast — each written in
+your voice and cleared through Review — without leaving Tuezday.
+
+## Sprint 27 — Recurring cadence, calendar + transactional mailer
+
+> Branch `sprint-27-cadence-calendar-mailer` (off `main`). With Reddit connected (Sprint 17) and a
+> campaign that has a few **approved** drafts. LinkedIn/X/Instagram cadences light up the same way once
+> those adapters merge.
+
+- [ ] **Cadence → New cadence:** name it, pick the campaign + channel, pick the connected Reddit account, target `test` (an `r/test`-style subreddit), check **Mon/Wed/Fri**, time `09:00`, your timezone → **Create** → it lists with the matching approved-draft count and the next slot time.
+- [ ] **Fill now** → the matching approved drafts auto-slot. **Calendar** shows them on the right days/times as `scheduled`, with the remaining open slots marked `open`.
+- [ ] Wait for (or force, via the worker / a near-future time) a slot to come due → the post publishes to Reddit; the calendar entry flips to `published` with a working link (the same receipt the Content page already shows).
+- [ ] **Pause** the cadence → no new slots fill; **Resume** → filling continues. **Delete** a cadence → its still-scheduled posts are canceled (nothing unexpected goes out).
+- [ ] **Team → Send a test email** to yourself → it arrives (or, without a `RESEND_API_KEY`, logs to the API console and reports as delivered).
+- [ ] **Invite a teammate** → they receive the invite link by email (or it logs to the console); the copyable link still works as a backup.
+
+**Gate:** approved content schedules itself onto a calendar and publishes on a recurring cadence with no manual publish step, and transactional email (invites + a test send) goes out through the mailer.
+
+## Sprint 28 — Campaign-configured social automation (modes)
+
+> Branch `sprint-28-social-automation` (built on a merge of S26 social adapters + S27 cadence — founder
+> merges S25→S26 and S27 before this). Reddit works today; LinkedIn/X/Instagram light up once their
+> creds are set. Needs a campaign with one or more channels and at least one discovery signal.
+
+- [ ] **Campaigns → a campaign's Automation = Human-in-the-loop.** Add a signal (Discovery) → **Automation → Run automation now** (or wait for the worker) → a draft per campaign channel appears in **Review** at `pending`. Nothing posts on its own.
+- [ ] Approve one of those drafts → with a **Cadence** on that campaign/channel it slots on the **Calendar** and publishes on schedule (the Sprint 27 flow).
+- [ ] **Switch the campaign to Scheduled-auto.** Add a new signal → **Run automation now** → the new draft is **auto-approved** — it shows as `approved` with an **"Auto-approved"** badge in Review and its decision log shows `system` (submit → approve). The campaign cadence then slots it and it publishes automatically with a working link.
+- [ ] **Automation → Kill switch on.** Run again → nothing new auto-posts; a scheduled-auto cadence's pending auto-slots clear on its next fill. Manual publishing and human-approved cadences keep working. Turn it back off → auto resumes.
+- [ ] **Daily caps.** Lower the per-connection or per-campaign daily cap → confirm auto-posts stop at the cap for the day while manual posting is never blocked.
+- [ ] Set a campaign back to **Manual** → automation ignores it entirely (today's behavior).
+
+**Gate:** a campaign drives its own distribution — discovery signals become channel posts that either wait at the gate (human-in-the-loop) or auto-approve and post on the cadence (scheduled-auto), with a kill switch and daily caps as the safety net, and every auto-approval is logged as a `system` gate decision.
+
+## Sprint 29 — Unified engagement & reply inbox
+
+> Branch `sprint-29-engagement-reply-inbox` (off `sprint-28-social-automation`; founder merges
+> S25→S26, S27, S28 before this). Reddit works end to end today; LinkedIn/X/Instagram light up once
+> their creds + API access exist. Needs a connected social account and at least one **published** post.
+> Use **Inbox → Run inbox now** instead of waiting for the worker tick during testing.
+
+- [ ] **A reply appears in the inbox.** Reply to one of your published Reddit posts from another account → **Inbox → Run inbox now** (or wait for the tick) → the comment appears as **Unread**, with the author, the inbound text, and a link to the post it answers.
+- [ ] **AI-drafted, gated reply.** Open the item → **Draft reply** → a brain-resolved reply draft appears inline at `pending review` (and on **Review** as an `engagement_reply` draft). It has not posted yet.
+- [ ] **Approve & post.** **Approve & post reply** on the item (or approve on Review, then **Post reply**) → the reply posts back on Reddit, the item flips to **Replied** with a working "view reply" link. Trying to post twice is refused.
+- [ ] **Engagement numbers.** After ~24h (or with the clock advanced in dev) → **Run inbox now** → the **Create → Published** panel shows the post's `24h` likes/comments line; after ~7d a `7d` snapshot appears.
+- [ ] **Auto-reply (opt-in).** **Automation → Auto-reply on**; set a campaign that owns a post to **Scheduled-auto** → a new comment on that post → **Run inbox now** → the reply is **auto-approved** (decision log on Review shows `system`) and **posts automatically**, within the kill switch + per-connection cap.
+- [ ] **Auto-reply stays gated when it should.** With Auto-reply **off** (default), a new comment on a scheduled-auto campaign's post does **not** auto-reply (stays Unread, no draft). Turn the **kill switch on** → auto-replies stop entirely; manual **Draft reply → Approve & post** still works.
+- [ ] **Status.** **Mark read** / **Dismiss** on an item persists across a reload; a replied item can't be reopened by hand.
+
+**Gate:** a reply to a posted comment appears in the inbox → AI drafts a brain-resolved reply → approve → it posts back to the platform and the item flips to *replied*; engagement numbers show on the post; and auto-reply is opt-in (master switch × scheduled-auto campaign) inside the same kill switch + caps that bound auto-posting.
+
+---
+
+## Sprint 30 — Multi-step outbound sequences (follow-up chains)
+
+> Branch `sprint-30-outbound-sequences` (off `sprint-29-engagement-reply-inbox`; founder merges
+> S25→S26, S27, S28, S29 before this). Sequences run on the **email** and **X DM** channels only; a
+> launch's LinkedIn/Instagram broadcast stays the Sprint 26 single post. Use **Launches → open a launch
+> → Run now** instead of waiting for the worker tick during testing. Set the automation level on the
+> launch (Manual / Review each step / Fully automated).
+
+- [ ] **Define a 3-step email sequence.** Create a launch at a segment with the **Email** channel and **Fully automated** mode. In the launch's **Follow-up sequence** panel, add 3 email steps (step 2 delay e.g. 24h with angle "add the case study"; step 3 delay 24h "breakup note"). **Save sequence**.
+- [ ] **Step 1 fires.** **Start** → each recipient's step-1 draft appears **approved** (auto). Download the email CSV (Email panel → Download CSV) — that's the real send; it marks step 1 *sent* and starts the delay clock.
+- [ ] **Step 2 fires on schedule.** Advance time past the step-2 delay (or wait) → **Run now** → step-2 drafts generate + auto-approve for recipients who haven't been stopped. Export again. No reply → step 3 follows the same way, then the recipient shows **completed**.
+- [ ] **Manual stop (email).** Paste a recipient's email into the **Stop pasted recipients** box → that recipient flips to **stopped** and gets no further steps; everyone else continues. (Email replies aren't visible to Tuezday — this is the honest stop path.)
+- [ ] **X DM auto-stop on reply.** With X connected, make a 2-step **X DM** sequence (Fully automated, **Stop on reply** on) → **Start** → DM 1 sends to each recipient. Have one recipient reply (it appears in the **Inbox**) → advance time + **Run now** → that recipient shows **replied** and receives **no** DM 2; a non-replying recipient still gets DM 2 on schedule.
+- [ ] **Review each step.** Set a launch to **Review each step** → due steps generate but wait at the approval gate (Review); approving lets the chain continue on the next run; nothing sends without approval.
+- [ ] **Manual mode + guardrails.** A **Manual** launch never advances on its own (the worker skips it) — only your **Run now** advances it. With the **kill switch** on (Automation settings), an auto X DM is held (the step stays pending, the recipient stays active); turning it off and running again sends it.
+
+**Gate:** define a 3-step email sequence at a segment → step 1 sends (export) → no reply → step 2 fires on schedule → step 3 follows; a manual stop halts one email recipient while others continue; and an X DM reply automatically stops that recipient's chain while others proceed — every step brain-resolved, per-recipient, and approval-gated, at the automation level you chose.
+
 ---
 
 ## Cross-cutting things worth re-checking occasionally
 
-- [ ] `npm test` (321 tests) and `npm run typecheck` stay green.
+- [ ] `npm test` (619 tests) and `npm run typecheck` stay green.
 - [ ] Every generation's prompt trace is readable *before* and *after* the LLM call (sandbox → "show prompt trace").
 - [ ] Stopping any external service (R2R, Nango) degrades gracefully — the app never breaks, traces/banners say why.
 - [ ] Gemini occasionally returns 503 "high demand" — a retry succeeds; it surfaces as a clean error, never a crash.

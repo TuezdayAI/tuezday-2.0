@@ -28,6 +28,9 @@ const TASK_LABELS: Record<TaskType, string> = {
   google_rsa: "Google RSA",
   pr_pitch: "Media pitch",
   press_boilerplate: "Press boilerplate",
+  x_dm: "X DM",
+  instagram_post: "Instagram post",
+  engagement_reply: "Reply",
 };
 
 const STATE_LABELS: Record<ApprovalState, string> = {
@@ -197,6 +200,17 @@ export default function ApprovalsPage() {
               <li key={d.id} className="section-card">
                 <div className="section-head">
                   <span className={`layer-badge state-${d.state}`}>{STATE_LABELS[d.state]}</span>
+                  {decisions[d.id]?.some(
+                    (dec) => dec.action === "approve" && dec.actor === "system",
+                  ) && (
+                    <span
+                      className="layer-badge state-approved"
+                      style={{ marginLeft: 8 }}
+                      title="Approved automatically by scheduled-auto"
+                    >
+                      Auto-approved
+                    </span>
+                  )}
                   <span className="section-title">
                     {TASK_LABELS[d.taskType]} · {d.channel} · {personaName(d.personaId)}
                     {d.campaignId && (

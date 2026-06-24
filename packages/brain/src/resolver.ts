@@ -8,6 +8,7 @@
   type GuidanceSource,
   type MediaContactType,
   type PrPitchType,
+  type SequenceChannel,
   type TaskType,
 } from "@tuezday/contracts";
 import { BRAIN_DOC_META, type BrainContents } from "./index";
@@ -43,6 +44,45 @@ export function composePrPitchInstruction(pitchType: PrPitchType): string {
     "Reference the contact's beat where it is genuinely relevant. One clear low-friction ask (an interview, a comment, the full story). " +
     "No flattery openers, no superlatives, no attachments mentioned. Return only the subject and body - no preamble or commentary."
   );
+}
+
+/**
+ * Compose the task instruction for a follow-up step in an outbound sequence
+ * (Sprint 30). Step 1 uses the channel's default instruction; steps 2+ get this
+ * framing — a genuine follow-up that adds a fresh angle and never repeats the
+ * earlier touches it is told about. Rides on the resolver's `taskInstruction`
+ * override, so the full follow-up prompt shows up in the context trace.
+ */
+export function composeFollowupInstruction(args: {
+  channel: SequenceChannel;
+  stepNumber: number;
+  instruction: string;
+  priorBodies: string[];
+}): string {
+  const { channel, stepNumber, instruction, priorBodies } = args;
+  const medium = channel === "email" ? "cold email" : "X (Twitter) direct message";
+  const base =
+    channel === "email"
+      ? "Write a short follow-up email to the same lead: a subject line (prefix 'Subject: ') and a body of at most 100 words."
+      : "Write a short follow-up X DM to the same person: at most one or two sentences, friendly and low-friction.";
+  const angle = instruction.trim()
+    ? `Angle for this follow-up: ${instruction.trim()}`
+    : "Add a fresh, useful angle - do not merely 'bump' the thread with 'just checking in'.";
+  const prior = priorBodies.length
+    ? `You already sent these earlier messages to this person (do NOT repeat them):\n${priorBodies
+        .map((b, i) => `(${i + 1}) ${b.trim()}`)
+        .join("\n")}`
+    : "";
+  return [
+    `Task: This is message #${stepNumber} in an outbound ${medium} follow-up sequence to the same person.`,
+    base,
+    angle,
+    "Personalize ONLY from the lead facts above - never invent meetings, prior replies, or details not in the data. Make one clear, low-friction ask. Skip flattery and 'circling back' clichés.",
+    prior,
+    "Return only the message - no preamble or commentary.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 /**
@@ -141,6 +181,12 @@ export const TASK_INSTRUCTIONS: Record<TaskType, string> = {
   pr_pitch: composePrPitchInstruction("announcement"),
   press_boilerplate:
     "Task: Write press boilerplate for the company from the context above, in three labeled parts: 'One-liner:' (a single factual sentence saying what the company is), 'About:' (a roughly 100-word about paragraph in the third person - factual, concrete, no superlatives), and 'Key facts:' (3-5 bullet lines starting with '- '). Ground every claim in the context - never invent numbers, customers, or dates. Return only the three labeled parts - no preamble or commentary.",
+  x_dm:
+    "Task: Write a short personalized first-touch X (Twitter) direct message to the recipient above (treated as the lead). Two or three sentences, plain and human, like a real person sliding into DMs - not a marketing blast. Personalize ONLY from the recipient facts given; never invent shared history. One clear, low-friction ask. No links unless essential, no hashtags, no emoji spam. Return only the DM text - no preamble, greeting label, or commentary.",
+  instagram_post:
+    "Task: Write one Instagram caption grounded in the context above, to accompany the launch's image/video. Open with a scroll-stopping first line, then a few short, punchy lines in the company's voice. End with one light call to action and 3-5 relevant hashtags on the final line. Keep it under 2200 characters. The caption supports the visual - don't describe the image literally. Return only the caption text - no preamble or commentary.",
+  engagement_reply:
+    "Task: Write a reply to the inbound comment/message in the conversation above, for the requested channel, in the company's voice. Respond to what the person actually said - answer their question, address their point, or thank them specifically - grounded in the company context and our original post. Keep it short and human, like a real person replying in a thread, not a brand statement. No links unless they asked, no hard sell. Return only the reply text - no preamble, greeting label, or commentary.",
 };
 
 // ---------------------------------------------------------------------------
@@ -155,6 +201,7 @@ export type ContextLayer =
   | "lead"
   | "contact"
   | "signal"
+  | "conversation"
   | "evidence"
   | "angle"
   | "review"
@@ -175,6 +222,16 @@ export interface ResolveSignal {
   content: string;
   source: string;
   sourceUrl?: string | null;
+}
+
+/** An inbound comment/DM we're replying to, plus our original post (Sprint 29). */
+export interface ResolveConversation {
+  /** The body of our post/DM that drew the reply, when known. */
+  originalPost?: string;
+  inboundAuthor: string;
+  inboundMessage: string;
+  /** Platform the conversation is on (reddit/linkedin/x/instagram). */
+  source: string;
 }
 
 export interface ResolveLead {
@@ -215,6 +272,7 @@ export interface ResolveInput {
   lead?: ResolveLead;
   mediaContact?: ResolveMediaContact;
   signal?: ResolveSignal;
+  conversation?: ResolveConversation;
   evidence?: ResolveEvidence;
   /** Why evidence is absent (store down, no docs, toggled off) — shown in the trace. */
   evidenceExclusionReason?: string;
@@ -434,6 +492,25 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       included: false,
       reason: "Excluded: no signal attached to this task.",
       tokens: 0,
+    });
+  }
+
+  // The inbound conversation we're replying to (Sprint 29). Only present for a
+  // reply task — pushed conditionally so other tasks' section lists are unchanged.
+  if (input.conversation) {
+    const convo = input.conversation;
+    const lines: string[] = [];
+    if (convo.originalPost?.trim()) lines.push(`Our post:\n${convo.originalPost.trim()}`);
+    lines.push(`Reply from ${convo.inboundAuthor} (on ${convo.source}):\n${convo.inboundMessage.trim()}`);
+    const conversationContent = lines.join("\n\n");
+    sections.push({
+      key: "conversation",
+      layer: "conversation",
+      title: "Conversation to reply to",
+      content: conversationContent,
+      included: true,
+      reason: `The inbound ${convo.source} message this reply answers, plus our original post.`,
+      tokens: estimateTokens(conversationContent),
     });
   }
 

@@ -1,12 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, lte } from "drizzle-orm";
-import type { Connection, Publication, PublicationStatus, PublishDraftInput } from "@tuezday/contracts";
+import type {
+  Connection,
+  Publication,
+  PublicationMetric,
+  PublicationStatus,
+  PublishDraftInput,
+} from "@tuezday/contracts";
 import type { Db } from "../db";
 import { drafts, publications, type PublicationRow } from "../db/schema";
 import type { ConnectorFabric } from "../connectors/fabric";
-import { socialAdapterFor } from "../connectors/social";
+import { socialAdapterFor, type PublishMedia } from "../connectors/social";
 import { getConnection, providerByKey } from "./connections";
 import { emitEvent } from "./events";
+import { metricsByPublication } from "./inbox";
 
 type Fetcher = typeof fetch;
 
@@ -16,6 +23,8 @@ function rowToPublication(row: PublicationRow): Publication {
 
 export interface PublicationWithDraft extends Publication {
   draft: { id: string; taskType: string; channel: string; content: string } | null;
+  /** Engagement snapshots (24h/7d) on a published post (Sprint 29). */
+  metrics: PublicationMetric[];
 }
 
 export function listPublications(db: Db, workspaceId: string): PublicationWithDraft[] {
@@ -26,12 +35,29 @@ export function listPublications(db: Db, workspaceId: string): PublicationWithDr
     .where(eq(publications.workspaceId, workspaceId))
     .orderBy(desc(publications.createdAt))
     .all();
+  const metrics = metricsByPublication(db, workspaceId);
   return rows.map(({ publication, draft }) => ({
     ...rowToPublication(publication),
     draft: draft
       ? { id: draft.id, taskType: draft.taskType, channel: draft.channel, content: draft.content }
       : null,
+    metrics: metrics.get(publication.id) ?? [],
   }));
+}
+
+/** Every receipt a cadence has created, soonest scheduled first. */
+export function listCadencePublications(
+  db: Db,
+  workspaceId: string,
+  cadenceId: string,
+): Publication[] {
+  return db
+    .select()
+    .from(publications)
+    .where(and(eq(publications.workspaceId, workspaceId), eq(publications.cadenceId, cadenceId)))
+    .orderBy(publications.scheduledFor)
+    .all()
+    .map(rowToPublication);
 }
 
 export function getPublication(
@@ -86,6 +112,8 @@ export async function createPublication(
   draftId: string,
   connection: Connection,
   input: PublishDraftInput,
+  media?: PublishMedia[],
+  cadenceId: string | null = null,
 ): Promise<Publication> {
   const now = Date.now();
   const row: PublicationRow = {
@@ -96,6 +124,8 @@ export async function createPublication(
     providerKey: connection.providerKey,
     target: input.target,
     title: input.title,
+    mediaJson: media && media.length > 0 ? JSON.stringify(media) : null,
+    cadenceId,
     status: "scheduled",
     scheduledFor: input.scheduledFor ?? now,
     publishedAt: null,
@@ -143,6 +173,7 @@ export async function attemptPublication(
       target: row.target,
       title: row.title,
       body: draft.content,
+      media: row.mediaJson ? (JSON.parse(row.mediaJson) as PublishMedia[]) : undefined,
     });
     db.update(publications)
       .set({
