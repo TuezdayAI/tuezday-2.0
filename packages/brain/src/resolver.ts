@@ -76,6 +76,53 @@ export function composeAdCreativeInstruction(
   );
 }
 
+// ---------------------------------------------------------------------------
+// Generation quality (Sprint 22) — angle-first + dual-LLM pre-review.
+// Each is composed as a task instruction and assembled through resolveContext,
+// so the brain context the reviewer/angle step sees is the same inspectable
+// bundle as a normal generation — never a hardcoded prompt.
+// ---------------------------------------------------------------------------
+
+/** Ask the model for N distinct one-line angles before drafting. */
+export function composeAngleInstruction(
+  taskType: TaskType,
+  channel: Channel,
+  count: number,
+): string {
+  return (
+    `Task: Before drafting, propose ${count} genuinely DISTINCT angles for a ${taskType} on the ` +
+    `${channel} channel, grounded in the context above. Each angle is ONE sentence naming the hook ` +
+    "or lens — not the full draft. List the strongest angle FIRST. " +
+    `Return EXACTLY ${count} lines, each prefixed with 'ANGLE: ' and nothing else — no preamble, ` +
+    "numbering, or commentary."
+  );
+}
+
+/** Brand-voice reviewer pass: judge voice/soul/positioning match only. */
+export function composeBrandVoiceReviewInstruction(): string {
+  return (
+    "Task: You are a brand-voice editor. Judge ONLY how well the draft under review above matches " +
+    "this company's voice, soul, and positioning as given in the context. Ignore length and channel " +
+    "formatting — that is a separate review. Respond in EXACTLY this format and nothing else:\n" +
+    "SCORE: <integer 0-100, where 100 is a perfect voice match>\n" +
+    "ISSUES:\n- <one specific, actionable voice problem>\n" +
+    "(If there are no issues, write '- none'. List at most 5 issues.)"
+  );
+}
+
+/** Channel-fit reviewer pass: judge channel conventions only. */
+export function composeChannelFitReviewInstruction(channel: Channel): string {
+  return (
+    `Task: You are a channel editor for the ${channel} channel. Judge ONLY how well the draft under ` +
+    "review above fits the channel guidance above — length, format, hook, tone, and conventions. " +
+    "Ignore brand-voice nuance — that is a separate review. Respond in EXACTLY this format and " +
+    "nothing else:\n" +
+    "SCORE: <integer 0-100, where 100 is a perfect fit>\n" +
+    "ISSUES:\n- <one specific, actionable channel-fit problem>\n" +
+    "(If there are no issues, write '- none'. List at most 5 issues.)"
+  );
+}
+
 export const TASK_INSTRUCTIONS: Record<TaskType, string> = {
   linkedin_post:
     "Task: Write one LinkedIn post grounded in the context above. Use the company's voice and the persona's point of view if one is set. Lead with the sharpest insight, keep it under 200 words, end without a cringe call-to-action. Return only the post text itself - no preamble, labels, or commentary.",
@@ -109,6 +156,8 @@ export type ContextLayer =
   | "contact"
   | "signal"
   | "evidence"
+  | "angle"
+  | "review"
   | "task";
 
 export interface ResolvePersona {
@@ -181,6 +230,16 @@ export interface ResolveInput {
    * passes the workspace override here when one exists. Surfaced in the trace.
    */
   channelGuidance?: { content: string; source: GuidanceSource };
+  /**
+   * A chosen angle to draft from (Sprint 22 angle step). When set, becomes the
+   * "angle" section, just before the task instruction.
+   */
+  angle?: string;
+  /**
+   * The draft text a reviewer pass is judging (Sprint 22 pre-review). When set,
+   * becomes the "review_subject" section, just before the task instruction.
+   */
+  reviewSubject?: string;
   tokenBudget?: number;
 }
 
@@ -400,6 +459,36 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       included: false,
       reason: `Excluded: ${input.evidenceExclusionReason ?? "no evidence retrieved for this task."}`,
       tokens: 0,
+    });
+  }
+
+  // Sprint 22: a chosen angle and/or the draft under review are pushed only
+  // when set, so an ordinary generation's section list is byte-for-byte
+  // unchanged (and the pinned section-order tests don't move). Both sit just
+  // before the task instruction and are protected from the token budget.
+  if (input.angle && input.angle.trim()) {
+    const angleContent = input.angle.trim();
+    sections.push({
+      key: "angle",
+      layer: "angle",
+      title: "Chosen angle",
+      content: angleContent,
+      included: true,
+      reason: "The angle this draft was generated from (Sprint 22 angle step).",
+      tokens: estimateTokens(angleContent),
+    });
+  }
+
+  if (input.reviewSubject && input.reviewSubject.trim()) {
+    const subject = input.reviewSubject.trim();
+    sections.push({
+      key: "review_subject",
+      layer: "review",
+      title: "Draft under review",
+      content: subject,
+      included: true,
+      reason: "The draft this reviewer pass is judging. Score only this text.",
+      tokens: estimateTokens(subject),
     });
   }
 

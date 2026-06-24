@@ -13,12 +13,15 @@ import {
   TASK_TYPES,
   type Campaign,
   type Channel,
+  type GenerationReview,
+  type GenerationSettings,
   type OutputRating,
   type Persona,
   type TaskType,
   type Workspace,
 } from "@tuezday/contracts";
 import type { ContextSection, ResolvedContext } from "@tuezday/brain";
+import { ReviewPanel } from "@/components/ReviewPanel";
 
 const TASK_LABELS: Record<TaskType, string> = {
   linkedin_post: "LinkedIn post",
@@ -59,6 +62,9 @@ interface GenerationView {
   rating: OutputRating | null;
   createdAt: number;
   sections: ContextSection[];
+  review?: GenerationReview | null;
+  angles?: string[];
+  chosenAngle?: string;
 }
 
 export default function SandboxPage() {
@@ -86,20 +92,29 @@ export default function SandboxPage() {
   const [showTrace, setShowTrace] = useState(false);
   const [expandedLog, setExpandedLog] = useState<Record<string, boolean>>({});
 
+  const [settings, setSettings] = useState<GenerationSettings | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [angles, setAngles] = useState<string[] | null>(null);
+  const [chosenAngle, setChosenAngle] = useState<string>("");
+  const [anglesLoading, setAnglesLoading] = useState(false);
+
   const load = useCallback(async () => {
     try {
-      const [wsRes, pRes, gRes, dRes, cRes] = await Promise.all([
+      const [wsRes, pRes, gRes, dRes, cRes, sRes] = await Promise.all([
         apiFetch(`/workspaces/${id}`),
         apiFetch(`/workspaces/${id}/personas`),
         apiFetch(`/workspaces/${id}/generations`),
         apiFetch(`/workspaces/${id}/drafts`),
         apiFetch(`/workspaces/${id}/campaigns`),
+        apiFetch(`/workspaces/${id}/generation-settings`),
       ]);
-      if (!wsRes.ok || !pRes.ok || !gRes.ok || !dRes.ok || !cRes.ok) throw new Error("not found");
+      if (!wsRes.ok || !pRes.ok || !gRes.ok || !dRes.ok || !cRes.ok || !sRes.ok)
+        throw new Error("not found");
       setWorkspace(await wsRes.json());
       setPersonas(await pRes.json());
       setLog(await gRes.json());
       setCampaigns(((await cRes.json()) as Campaign[]).filter((c) => c.status === "active"));
+      setSettings(await sRes.json());
       const drafts: { sourceGenerationId: string | null; id: string }[] = await dRes.json();
       setSubmittedByGeneration(
         Object.fromEntries(
@@ -116,9 +131,11 @@ export default function SandboxPage() {
     void load();
   }, [load]);
 
-  // Any control change invalidates the preview gate.
+  // Any control change invalidates the preview gate and stale angle list.
   useEffect(() => {
     setPreviewStale(true);
+    setAngles(null);
+    setChosenAngle("");
   }, [taskType, channel, personaId, campaignId, useEvidence, tokenBudget]);
 
   async function previewContext() {
@@ -148,7 +165,7 @@ export default function SandboxPage() {
     }
   }
 
-  async function generate() {
+  async function generate(angle?: string) {
     setGenerating(true);
     setError(null);
     try {
@@ -162,6 +179,7 @@ export default function SandboxPage() {
           campaignId: campaignId || undefined,
           useEvidence,
           tokenBudget,
+          angle: angle || undefined,
         }),
       });
       const body = await res.json().catch(() => null);
@@ -179,6 +197,48 @@ export default function SandboxPage() {
       }
     } finally {
       setGenerating(false);
+    }
+  }
+
+  async function saveSettings(patch: Partial<GenerationSettings>) {
+    setError(null);
+    const res = await apiFetch(`/workspaces/${id}/generation-settings`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch),
+    });
+    if (res.ok) {
+      setSettings(await res.json());
+    } else {
+      const body = await res.json().catch(() => null);
+      setError(body?.message ?? `API returned ${res.status}`);
+    }
+  }
+
+  async function suggestAngles() {
+    setAnglesLoading(true);
+    setError(null);
+    try {
+      const res = await apiFetch(`/workspaces/${id}/angles`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          taskType,
+          channel,
+          personaId: personaId || undefined,
+          campaignId: campaignId || undefined,
+          useEvidence,
+          tokenBudget,
+        }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message ?? `API returned ${res.status}`);
+      setAngles(body.angles ?? []);
+      setChosenAngle("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not suggest angles");
+    } finally {
+      setAnglesLoading(false);
     }
   }
 
@@ -248,7 +308,60 @@ export default function SandboxPage() {
             result. Your ratings teach it what good looks like.
           </p>
         </div>
+        <div className="page-actions">
+          <button className="button-secondary" onClick={() => setShowSettings((s) => !s)}>
+            {showSettings ? "Hide quality settings" : "Quality settings"}
+          </button>
+        </div>
       </div>
+
+      {showSettings && settings && (
+        <section className="panel">
+          <h2>Generation quality</h2>
+          <p className="subtitle">
+            Pre-review and the angle step run before you ever look at a draft. Both apply across
+            every module in this workspace.
+          </p>
+          <div className="settings-grid">
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={settings.reviewEnabled}
+                onChange={(e) => saveSettings({ reviewEnabled: e.target.checked })}
+              />
+              Automated pre-review (brand voice + channel fit)
+            </label>
+            <label className="checkbox-label">
+              <input
+                type="checkbox"
+                checked={settings.angleEnabled}
+                onChange={(e) => saveSettings({ angleEnabled: e.target.checked })}
+              />
+              Angle step (suggest angles before drafting)
+            </label>
+            <label>
+              Angles to suggest
+              <input
+                type="number"
+                min={2}
+                max={5}
+                value={settings.angleCount}
+                onChange={(e) => saveSettings({ angleCount: Number(e.target.value) })}
+              />
+            </label>
+            <label>
+              Flag below score
+              <input
+                type="number"
+                min={0}
+                max={100}
+                value={settings.flagThreshold}
+                onChange={(e) => saveSettings({ flagThreshold: Number(e.target.value) })}
+              />
+            </label>
+          </div>
+        </section>
+      )}
 
       <section className="panel">
         <h2>1 · Choose the task</h2>
@@ -358,7 +471,42 @@ export default function SandboxPage() {
         {(!preview || previewStale) && (
           <p className="subtitle">Preview the context first — always read what the model reads.</p>
         )}
-        <button onClick={generate} disabled={generating || !preview || previewStale}>
+
+        {settings?.angleEnabled && (
+          <div style={{ marginBottom: 14 }}>
+            <button
+              className="button-secondary"
+              onClick={suggestAngles}
+              disabled={anglesLoading || !preview || previewStale}
+            >
+              {anglesLoading ? "Thinking…" : "Suggest angles"}
+            </button>
+            {angles && angles.length > 0 && (
+              <ul className="angle-list">
+                {angles.map((a, i) => (
+                  <li key={i} className={`angle-card ${chosenAngle === a ? "chosen" : ""}`}>
+                    <span>{a}</span>
+                    <button
+                      className="button-secondary"
+                      disabled={generating}
+                      onClick={() => {
+                        setChosenAngle(a);
+                        void generate(a);
+                      }}
+                    >
+                      Draft from this
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {angles && angles.length === 0 && (
+              <p className="subtitle">No angles came back — try again or draft without one.</p>
+            )}
+          </div>
+        )}
+
+        <button onClick={() => generate()} disabled={generating || !preview || previewStale}>
           {generating ? "Generating…" : "Generate with brain"}
         </button>
 
@@ -373,8 +521,12 @@ export default function SandboxPage() {
                 {showTrace ? "hide" : "show"} prompt trace
               </button>
             </p>
+            {latest.chosenAngle && (
+              <p className="meta">Angle: {latest.chosenAngle}</p>
+            )}
             {showTrace && <pre className="section-content">{latest.prompt}</pre>}
             <pre className="output-text">{latest.output}</pre>
+            <ReviewPanel review={latest.review} />
             <div className="rating-row">
               {OUTPUT_RATINGS.map((r) => (
                 <button
@@ -421,6 +573,7 @@ export default function SandboxPage() {
                 {expandedLog[g.id] && (
                   <>
                     <pre className="output-text">{g.output}</pre>
+                    <ReviewPanel review={g.review} />
                     <div className="rating-row">
                       {OUTPUT_RATINGS.map((r) => (
                         <button

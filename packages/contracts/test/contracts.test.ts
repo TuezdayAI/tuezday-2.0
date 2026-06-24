@@ -64,6 +64,15 @@ import {
   DISCOVERY_SOURCE_TYPES,
   createWorkspaceInputSchema,
   generationSchema,
+  generateRequestSchema,
+  generateAnglesInputSchema,
+  generationSettingsSchema,
+  updateGenerationSettingsInputSchema,
+  isReviewFlagged,
+  reviewCheckResultSchema,
+  generationReviewSchema,
+  DEFAULT_REVIEW_FLAG_THRESHOLD,
+  type ReviewCheckResult,
   rateGenerationInputSchema,
   resolveRequestSchema,
   updateBrainDocInputSchema,
@@ -1204,6 +1213,114 @@ describe("social publishing contracts (Sprint 17)", () => {
         publishedAt: null,
         externalId: null,
         externalUrl: null,
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe("generation quality (Sprint 22)", () => {
+  function check(score: number | null): ReviewCheckResult {
+    return {
+      check: "brand_voice",
+      score,
+      issues: [],
+      prompt: "p",
+      model: "m",
+      provider: "fake",
+      durationMs: 1,
+    };
+  }
+
+  it("isReviewFlagged flags only non-null scores below the threshold", () => {
+    expect(isReviewFlagged([check(69)], 70)).toBe(true);
+    expect(isReviewFlagged([check(70)], 70)).toBe(false);
+    expect(isReviewFlagged([check(95)], 70)).toBe(false);
+    // A null score (reviewer failed/unparseable) never flags.
+    expect(isReviewFlagged([check(null)], 70)).toBe(false);
+    // Any one check below threshold flags the whole draft.
+    expect(isReviewFlagged([check(95), { ...check(40), check: "channel_fit" }], 70)).toBe(true);
+    expect(isReviewFlagged([], 70)).toBe(false);
+  });
+
+  it("validates a full GenerationReview shape", () => {
+    const review = {
+      checks: [check(82), { ...check(91), check: "channel_fit" as const }],
+      threshold: DEFAULT_REVIEW_FLAG_THRESHOLD,
+      flagged: false,
+      createdAt: 1765500000000,
+    };
+    expect(generationReviewSchema.safeParse(review).success).toBe(true);
+    // score out of range is rejected.
+    expect(reviewCheckResultSchema.safeParse(check(101)).success).toBe(false);
+    expect(reviewCheckResultSchema.safeParse(check(-1)).success).toBe(false);
+    // null score is allowed.
+    expect(reviewCheckResultSchema.safeParse(check(null)).success).toBe(true);
+  });
+
+  it("updateGenerationSettingsInputSchema accepts partials and enforces ranges", () => {
+    expect(updateGenerationSettingsInputSchema.safeParse({}).success).toBe(true);
+    expect(updateGenerationSettingsInputSchema.safeParse({ reviewEnabled: false }).success).toBe(
+      true,
+    );
+    expect(updateGenerationSettingsInputSchema.safeParse({ angleCount: 3 }).success).toBe(true);
+    expect(updateGenerationSettingsInputSchema.safeParse({ angleCount: 1 }).success).toBe(false);
+    expect(updateGenerationSettingsInputSchema.safeParse({ angleCount: 6 }).success).toBe(false);
+    expect(updateGenerationSettingsInputSchema.safeParse({ flagThreshold: 101 }).success).toBe(
+      false,
+    );
+    const settings = {
+      workspaceId: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      reviewEnabled: true,
+      angleEnabled: false,
+      angleCount: 3,
+      flagThreshold: 70,
+      updatedAt: 1765500000000,
+    };
+    expect(generationSettingsSchema.safeParse(settings).success).toBe(true);
+  });
+
+  it("generateRequestSchema is a superset of resolve; /resolve schema stays strict", () => {
+    const base = { taskType: "linkedin_post" as const, channel: "linkedin" as const };
+    // generate accepts the new angle controls.
+    expect(generateRequestSchema.safeParse({ ...base, angle: "a sharp take" }).success).toBe(true);
+    expect(generateRequestSchema.safeParse({ ...base, autoAngle: true, angleCount: 4 }).success).toBe(
+      true,
+    );
+    expect(generateRequestSchema.safeParse({ ...base, angleCount: 9 }).success).toBe(false);
+    // resolve still parses the base inputs (zod strips unknown keys by default,
+    // so this only asserts the shared fields remain valid).
+    expect(resolveRequestSchema.safeParse(base).success).toBe(true);
+    // angles input is resolve + optional count.
+    expect(generateAnglesInputSchema.safeParse({ ...base, angleCount: 2 }).success).toBe(true);
+    expect(generateAnglesInputSchema.safeParse({ ...base, angleCount: 1 }).success).toBe(false);
+  });
+
+  it("generationSchema accepts an attached review and a null review", () => {
+    const base = {
+      id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      workspaceId: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      taskType: "linkedin_post" as const,
+      channel: "linkedin" as const,
+      personaId: null,
+      campaignId: null,
+      leadId: null,
+      mediaContactId: null,
+      prompt: "p",
+      output: "o",
+      model: "m",
+      provider: "fake",
+      durationMs: 5,
+      rating: null,
+      ratedAt: null,
+      createdAt: 1765500000000,
+    };
+    // Backwards-compatible: no review field at all still parses.
+    expect(generationSchema.safeParse(base).success).toBe(true);
+    expect(generationSchema.safeParse({ ...base, review: null }).success).toBe(true);
+    expect(
+      generationSchema.safeParse({
+        ...base,
+        review: { checks: [check(82)], threshold: 70, flagged: false, createdAt: 1 },
       }).success,
     ).toBe(true);
   });

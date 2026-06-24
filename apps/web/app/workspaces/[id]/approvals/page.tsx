@@ -15,6 +15,7 @@ import {
   type TaskType,
   type Workspace,
 } from "@tuezday/contracts";
+import { ReviewPanel } from "@/components/ReviewPanel";
 
 const TASK_LABELS: Record<TaskType, string> = {
   linkedin_post: "LinkedIn post",
@@ -97,6 +98,21 @@ export default function ApprovalsPage() {
       if (historyId === draftId) await loadHistory(draftId);
     } catch (err) {
       setError(err instanceof Error ? err.message : `Failed to ${name}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function rerunReview(draftId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await apiFetch(`/workspaces/${id}/drafts/${draftId}/review`, { method: "POST" });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message ?? `API returned ${res.status}`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to re-run review");
     } finally {
       setBusy(false);
     }
@@ -222,6 +238,7 @@ export default function ApprovalsPage() {
                         <pre className="section-content">{d.originalContent}</pre>
                       </details>
                     )}
+                    <ReviewPanel review={d.review} />
                   </>
                 )}
 
@@ -290,6 +307,13 @@ export default function ApprovalsPage() {
                         )}
                       </>
                     )}
+                    <button
+                      className="button-secondary"
+                      disabled={busy}
+                      onClick={() => rerunReview(d.id)}
+                    >
+                      ⟳ {d.review ? "Re-run review" : "Run review"}
+                    </button>
                     <button className="link-button" onClick={() => toggleHistory(d.id)}>
                       {historyId === d.id ? "hide history" : "history"}
                     </button>

@@ -171,6 +171,9 @@ export const generations = sqliteTable("generations", {
   durationMs: integer("duration_ms").notNull(),
   rating: text("rating"),
   ratedAt: integer("rated_at"),
+  // Sprint 22 dual-LLM pre-review of `output`, as JSON (GenerationReview).
+  // Null when review is disabled or never ran.
+  reviewJson: text("review_json"),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -192,6 +195,10 @@ export const drafts = sqliteTable("drafts", {
   originalContent: text("original_content").notNull(),
   content: text("content").notNull(),
   state: text("state").notNull(),
+  // Sprint 22 pre-review (GenerationReview JSON), copied from the source
+  // generation at submit or refreshed by the Re-run review action. Null when
+  // never reviewed.
+  reviewJson: text("review_json"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -607,6 +614,21 @@ export const adSettings = sqliteTable("ad_settings", {
 });
 
 export type AdSettingsRow = typeof adSettings.$inferSelect;
+
+// Per-workspace generation-quality settings (Sprint 22); reads fall back to
+// defaults when unset, same pattern as ad_settings. Booleans stored as 0/1.
+export const generationSettings = sqliteTable("generation_settings", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  reviewEnabled: integer("review_enabled").notNull().default(1),
+  angleEnabled: integer("angle_enabled").notNull().default(0),
+  angleCount: integer("angle_count").notNull().default(3),
+  flagThreshold: integer("flag_threshold").notNull().default(70),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type GenerationSettingsRow = typeof generationSettings.$inferSelect;
 
 export const events = sqliteTable("events", {
   id: text("id").primaryKey(),

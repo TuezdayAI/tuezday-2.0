@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   CHANNEL_GUIDANCE_DEFAULTS,
   TASK_INSTRUCTIONS,
+  composeAngleInstruction,
+  composeBrandVoiceReviewInstruction,
+  composeChannelFitReviewInstruction,
   composePrPitchInstruction,
   estimateTokens,
   resolveContext,
@@ -402,5 +405,62 @@ describe("resolveContext", () => {
       tokenBudget: 6000,
     });
     expect(resolveContext(input)).toEqual(resolveContext(input));
+  });
+});
+
+describe("generation quality sections (Sprint 22)", () => {
+  it("does not add angle/review sections when neither is set", () => {
+    const keys = resolveContext(baseInput()).sections.map((s) => s.key);
+    expect(keys).not.toContain("angle");
+    expect(keys).not.toContain("review_subject");
+  });
+
+  it("inserts the angle section immediately before task", () => {
+    const result = resolveContext(baseInput({ angle: "Lead with the contrarian take." }));
+    const keys = result.sections.map((s) => s.key);
+    expect(keys).toContain("angle");
+    expect(keys.indexOf("angle")).toBe(keys.indexOf("task") - 1);
+    const angle = result.sections.find((s) => s.key === "angle")!;
+    expect(angle.layer).toBe("angle");
+    expect(angle.included).toBe(true);
+    expect(result.prompt).toContain("Lead with the contrarian take.");
+  });
+
+  it("inserts the review_subject section before task", () => {
+    const result = resolveContext(baseInput({ reviewSubject: "Here is the draft to judge." }));
+    const keys = result.sections.map((s) => s.key);
+    expect(keys).toContain("review_subject");
+    expect(keys.indexOf("review_subject")).toBeLessThan(keys.indexOf("task"));
+    const subject = result.sections.find((s) => s.key === "review_subject")!;
+    expect(subject.layer).toBe("review");
+    expect(result.prompt).toContain("Here is the draft to judge.");
+  });
+
+  it("orders angle before review_subject before task when both are set", () => {
+    const result = resolveContext(
+      baseInput({ angle: "the angle", reviewSubject: "the draft" }),
+    );
+    const keys = result.sections.map((s) => s.key);
+    expect(keys.indexOf("angle")).toBeLessThan(keys.indexOf("review_subject"));
+    expect(keys.indexOf("review_subject")).toBe(keys.indexOf("task") - 1);
+  });
+
+  it("composes an angle instruction naming the count and the ANGLE prefix", () => {
+    const instruction = composeAngleInstruction("linkedin_post", "linkedin", 4);
+    expect(instruction).toContain("ANGLE: ");
+    expect(instruction).toMatch(/EXACTLY 4/);
+    expect(instruction).toMatch(/distinct/i);
+  });
+
+  it("composes distinct brand-voice and channel-fit reviewer instructions", () => {
+    const brand = composeBrandVoiceReviewInstruction();
+    const fit = composeChannelFitReviewInstruction("linkedin");
+    expect(brand).not.toBe(fit);
+    for (const instruction of [brand, fit]) {
+      expect(instruction).toContain("SCORE:");
+      expect(instruction).toContain("ISSUES:");
+    }
+    expect(brand).toMatch(/voice/i);
+    expect(fit).toMatch(/linkedin/i);
   });
 });

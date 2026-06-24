@@ -18,6 +18,7 @@ import { getBrain } from "../services/brain";
 import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
 import { submitDraft } from "../services/drafts";
 import { retrieveEvidence } from "../services/evidence";
+import { getGenerationSettings } from "../services/generation-settings";
 import { storeGeneration } from "../services/generations";
 import { resolveChannelGuidance } from "../services/guidance";
 import { csvField } from "../services/leads";
@@ -29,6 +30,7 @@ import {
   listMediaContacts,
 } from "../services/media-contacts";
 import { getPersona } from "../services/personas";
+import { runPreReview, setGenerationReview } from "../services/review";
 import { getSignal } from "../services/signals";
 import { getWorkspace } from "../services/workspaces";
 
@@ -143,6 +145,7 @@ export function registerPrRoutes(
     );
     const taskInstruction = composePrPitchInstruction(parsed.data.pitchType);
     const channelGuidance = resolveChannelGuidance(db, request.params.id, "pr");
+    const settings = getGenerationSettings(db, request.params.id);
 
     const results = [];
     for (const contact of contactRecords) {
@@ -189,6 +192,27 @@ export function registerPrRoutes(
           provider: result.provider,
           durationMs: result.durationMs,
         });
+        if (settings.reviewEnabled) {
+          const review = await runPreReview(
+            llm,
+            {
+              workspaceName: workspace.name,
+              docs: contents,
+              taskType: "pr_pitch",
+              channel: "pr",
+              channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
+              persona: persona
+                ? { name: persona.name, description: persona.description, overlay: persona.overlay }
+                : undefined,
+              campaign: campaign
+                ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
+                : undefined,
+            },
+            result.text,
+            settings.flagThreshold,
+          );
+          setGenerationReview(db, request.params.id, generation.id, review);
+        }
         const draft = submitDraft(db, {
           workspaceId: request.params.id,
           sourceGenerationId: generation.id,
@@ -282,6 +306,28 @@ export function registerPrRoutes(
         provider: result.provider,
         durationMs: result.durationMs,
       });
+      const settings = getGenerationSettings(db, request.params.id);
+      if (settings.reviewEnabled) {
+        const review = await runPreReview(
+          llm,
+          {
+            workspaceName: workspace.name,
+            docs: contents,
+            taskType: "press_boilerplate",
+            channel: "pr",
+            channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
+            persona: persona
+              ? { name: persona.name, description: persona.description, overlay: persona.overlay }
+              : undefined,
+            campaign: campaign
+              ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
+              : undefined,
+          },
+          result.text,
+          settings.flagThreshold,
+        );
+        setGenerationReview(db, request.params.id, generation.id, review);
+      }
       const draft = submitDraft(db, {
         workspaceId: request.params.id,
         sourceGenerationId: generation.id,

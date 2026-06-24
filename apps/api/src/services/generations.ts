@@ -3,6 +3,7 @@ import { and, desc, eq } from "drizzle-orm";
 import type {
   Channel,
   Generation,
+  GenerationReview,
   OutputRating,
   TaskType,
 } from "@tuezday/contracts";
@@ -33,6 +34,7 @@ function rowToGeneration(row: GenerationRow): GenerationWithTrace {
     rating: row.rating as OutputRating | null,
     ratedAt: row.ratedAt,
     createdAt: row.createdAt,
+    review: row.reviewJson ? (JSON.parse(row.reviewJson) as GenerationReview) : null,
     sections: JSON.parse(row.sectionsJson) as ContextSection[],
   };
 }
@@ -70,6 +72,7 @@ export function storeGeneration(db: Db, input: StoreGenerationInput): Generation
     durationMs: input.durationMs,
     rating: null,
     ratedAt: null,
+    reviewJson: null,
     createdAt: Date.now(),
   };
   db.insert(generations).values(row).run();

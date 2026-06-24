@@ -263,6 +263,87 @@ export const resolveRequestSchema = z.object({
 export type ResolveRequest = z.infer<typeof resolveRequestSchema>;
 
 // ---------------------------------------------------------------------------
+// Generation quality (Sprint 22) — angle-first + dual-LLM pre-review.
+// Vocabulary lives here (the rule: enum vocabularies are defined only in
+// contracts). Review is advisory: a flagged draft is never blocked from
+// approval; the founder override always works.
+// ---------------------------------------------------------------------------
+
+/** Reviewer passes. brand_voice judges voice/soul match; channel_fit judges channel conventions. */
+export const GENERATION_REVIEW_CHECKS = ["brand_voice", "channel_fit"] as const;
+export type GenerationReviewCheck = (typeof GENERATION_REVIEW_CHECKS)[number];
+
+export const REVIEW_CHECK_LABELS: Record<GenerationReviewCheck, string> = {
+  brand_voice: "Brand voice",
+  channel_fit: "Channel fit",
+};
+
+export const DEFAULT_REVIEW_FLAG_THRESHOLD = 70;
+export const DEFAULT_ANGLE_COUNT = 3;
+export const ANGLE_COUNT_MIN = 2;
+export const ANGLE_COUNT_MAX = 5;
+export const REVIEW_SCORE_MIN = 0;
+export const REVIEW_SCORE_MAX = 100;
+export const ANGLE_MAX_CHARS = 2_000;
+
+/**
+ * One reviewer pass's result. `score` is null when the reviewer call failed or
+ * its output couldn't be parsed — review is best-effort and never blocks.
+ */
+export const reviewCheckResultSchema = z.object({
+  check: z.enum(GENERATION_REVIEW_CHECKS),
+  score: z.number().int().min(REVIEW_SCORE_MIN).max(REVIEW_SCORE_MAX).nullable(),
+  issues: z.array(z.string()),
+  // The exact reviewer prompt sent (resolver-assembled) — for the trace.
+  prompt: z.string(),
+  model: z.string(),
+  provider: z.string(),
+  durationMs: z.number().int(),
+});
+export type ReviewCheckResult = z.infer<typeof reviewCheckResultSchema>;
+
+export const generationReviewSchema = z.object({
+  checks: z.array(reviewCheckResultSchema),
+  threshold: z.number().int(),
+  // True when any check has a non-null score below the threshold.
+  flagged: z.boolean(),
+  createdAt: z.number().int(),
+});
+export type GenerationReview = z.infer<typeof generationReviewSchema>;
+
+/** A draft is flagged when any check scored (non-null) below the threshold. */
+export function isReviewFlagged(checks: ReviewCheckResult[], threshold: number): boolean {
+  return checks.some((c) => c.score !== null && c.score < threshold);
+}
+
+// Per-workspace generation-quality settings (defaults applied on read).
+export const generationSettingsSchema = z.object({
+  workspaceId: z.string().uuid(),
+  reviewEnabled: z.boolean(),
+  angleEnabled: z.boolean(),
+  angleCount: z.number().int().min(ANGLE_COUNT_MIN).max(ANGLE_COUNT_MAX),
+  flagThreshold: z.number().int().min(REVIEW_SCORE_MIN).max(REVIEW_SCORE_MAX),
+  updatedAt: z.number().int(),
+});
+export type GenerationSettings = z.infer<typeof generationSettingsSchema>;
+
+export const updateGenerationSettingsInputSchema = z
+  .object({
+    reviewEnabled: z.boolean(),
+    angleEnabled: z.boolean(),
+    angleCount: z.number().int().min(ANGLE_COUNT_MIN).max(ANGLE_COUNT_MAX),
+    flagThreshold: z.number().int().min(REVIEW_SCORE_MIN).max(REVIEW_SCORE_MAX),
+  })
+  .partial();
+export type UpdateGenerationSettingsInput = z.infer<typeof updateGenerationSettingsInputSchema>;
+
+/** Angle generation takes the same inputs as resolve, plus an optional count. */
+export const generateAnglesInputSchema = resolveRequestSchema.extend({
+  angleCount: z.number().int().min(ANGLE_COUNT_MIN).max(ANGLE_COUNT_MAX).optional(),
+});
+export type GenerateAnglesInput = z.infer<typeof generateAnglesInputSchema>;
+
+// ---------------------------------------------------------------------------
 // Generations (sandbox outputs + training signals)
 // ---------------------------------------------------------------------------
 
@@ -283,12 +364,23 @@ export const generationSchema = z.object({
   rating: z.enum(OUTPUT_RATINGS).nullable(),
   ratedAt: z.number().int().nullable(),
   createdAt: z.number().int(),
+  // The dual-LLM pre-review of `output` (Sprint 22). Null when review is off.
+  review: generationReviewSchema.nullable().optional(),
 });
 export type Generation = z.infer<typeof generationSchema>;
 
-/** Generate takes the same inputs as resolve. */
-export const generateRequestSchema = resolveRequestSchema;
-export type GenerateRequest = ResolveRequest;
+/**
+ * Generate takes the resolve inputs plus the Sprint 22 angle controls. A
+ * superset of resolveRequestSchema, so /resolve stays unaffected.
+ */
+export const generateRequestSchema = resolveRequestSchema.extend({
+  // Draft from this chosen angle (manual pick). Injected as a context section.
+  angle: z.string().trim().max(ANGLE_MAX_CHARS).optional(),
+  // Generate angles, auto-pick the strongest, then draft — all server-side.
+  autoAngle: z.boolean().optional(),
+  angleCount: z.number().int().min(ANGLE_COUNT_MIN).max(ANGLE_COUNT_MAX).optional(),
+});
+export type GenerateRequest = z.infer<typeof generateRequestSchema>;
 
 export const rateGenerationInputSchema = z.object({
   rating: z.enum(OUTPUT_RATINGS),
@@ -545,6 +637,9 @@ export const draftSchema = z.object({
   state: z.enum(APPROVAL_STATES),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
+  // The pre-review copied from the source generation at submit, or refreshed
+  // by the Re-run review action (Sprint 22). Null when never reviewed.
+  review: generationReviewSchema.nullable().optional(),
 });
 export type Draft = z.infer<typeof draftSchema>;
 

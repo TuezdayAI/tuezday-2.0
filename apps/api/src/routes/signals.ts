@@ -8,9 +8,11 @@ import { getBrain } from "../services/brain";
 import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
 import { retrieveEvidence } from "../services/evidence";
 import type { EvidenceStore } from "../evidence/store";
+import { getGenerationSettings } from "../services/generation-settings";
 import { storeGeneration } from "../services/generations";
 import { resolveChannelGuidance } from "../services/guidance";
 import { getPersona } from "../services/personas";
+import { runPreReview, setGenerationReview } from "../services/review";
 import { createSignal, getSignal, listSignals } from "../services/signals";
 import { submitDraft } from "../services/drafts";
 import { getWorkspace } from "../services/workspaces";
@@ -125,6 +127,27 @@ export function registerSignalRoutes(
           provider: result.provider,
           durationMs: result.durationMs,
         });
+        const settings = getGenerationSettings(db, request.params.id);
+        if (settings.reviewEnabled) {
+          const review = await runPreReview(
+            llm,
+            {
+              workspaceName: workspace.name,
+              docs: contents,
+              taskType: "signal_response",
+              channel: parsed.data.channel,
+              persona: persona
+                ? { name: persona.name, description: persona.description, overlay: persona.overlay }
+                : undefined,
+              campaign: campaign
+                ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
+                : undefined,
+            },
+            result.text,
+            settings.flagThreshold,
+          );
+          setGenerationReview(db, request.params.id, generation.id, review);
+        }
         const draft = submitDraft(db, {
           workspaceId: request.params.id,
           sourceGenerationId: generation.id,

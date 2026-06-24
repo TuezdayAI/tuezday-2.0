@@ -17,10 +17,12 @@ import { getBrain } from "../services/brain";
 import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
 import { submitDraft } from "../services/drafts";
 import { retrieveEvidence } from "../services/evidence";
+import { getGenerationSettings } from "../services/generation-settings";
 import { storeGeneration } from "../services/generations";
 import { resolveChannelGuidance } from "../services/guidance";
 import { createLead, csvField, deleteLead, getLead, importLeadsCsv, listLeads } from "../services/leads";
 import { getPersona } from "../services/personas";
+import { runPreReview, setGenerationReview } from "../services/review";
 import { getWorkspace } from "../services/workspaces";
 
 function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
@@ -110,6 +112,7 @@ export function registerOutboundRoutes(
 
     const { docs } = getBrain(db, request.params.id);
     const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
+    const settings = getGenerationSettings(db, request.params.id);
     const evidenceResolution = await retrieveEvidence(
       db,
       evidence,
@@ -158,6 +161,28 @@ export function registerOutboundRoutes(
           provider: result.provider,
           durationMs: result.durationMs,
         });
+        // Pre-review (Sprint 22) before the draft is submitted, so the review
+        // is copied onto the draft. Best-effort — never aborts the batch.
+        if (settings.reviewEnabled) {
+          const review = await runPreReview(
+            llm,
+            {
+              workspaceName: workspace.name,
+              docs: contents,
+              taskType: "outbound_email",
+              channel: "email",
+              persona: persona
+                ? { name: persona.name, description: persona.description, overlay: persona.overlay }
+                : undefined,
+              campaign: campaign
+                ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
+                : undefined,
+            },
+            result.text,
+            settings.flagThreshold,
+          );
+          setGenerationReview(db, request.params.id, generation.id, review);
+        }
         const draft = submitDraft(db, {
           workspaceId: request.params.id,
           sourceGenerationId: generation.id,

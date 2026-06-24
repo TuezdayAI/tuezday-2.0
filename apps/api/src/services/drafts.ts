@@ -7,10 +7,11 @@ import {
   type ApprovalState,
   type Channel,
   type Draft,
+  type GenerationReview,
   type TaskType,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
-import { approvalDecisions, drafts, type DraftRow } from "../db/schema";
+import { approvalDecisions, drafts, generations, type DraftRow } from "../db/schema";
 
 /** Who performed a draft action — a user, or the worker's system identity. */
 export interface DraftActor {
@@ -26,11 +27,13 @@ export class InvalidTransitionError extends Error {
 }
 
 function rowToDraft(row: DraftRow): Draft {
+  const { reviewJson, ...rest } = row;
   return {
-    ...row,
+    ...rest,
     taskType: row.taskType as TaskType,
     channel: row.channel as Channel,
     state: row.state as ApprovalState,
+    review: reviewJson ? (JSON.parse(reviewJson) as GenerationReview) : null,
   };
 }
 
@@ -89,6 +92,15 @@ export function draftForGeneration(
 export function submitDraft(db: Db, input: SubmitDraftInput, actor: DraftActor): Draft {
   const now = Date.now();
   const toState = transitionTo("draft", "submit")!;
+  // Carry the source generation's pre-review (Sprint 22) onto the draft so the
+  // approval queue is self-contained — the review shows in Review without a join.
+  const sourceReviewJson = input.sourceGenerationId
+    ? (db
+        .select({ reviewJson: generations.reviewJson })
+        .from(generations)
+        .where(eq(generations.id, input.sourceGenerationId))
+        .get()?.reviewJson ?? null)
+    : null;
   const row: DraftRow = {
     id: randomUUID(),
     workspaceId: input.workspaceId,
@@ -103,6 +115,7 @@ export function submitDraft(db: Db, input: SubmitDraftInput, actor: DraftActor):
     originalContent: input.content,
     content: input.content,
     state: toState,
+    reviewJson: sourceReviewJson,
     createdAt: now,
     updatedAt: now,
   };
