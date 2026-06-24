@@ -65,6 +65,8 @@ export const CHANNEL_GUIDANCE_DEFAULTS: Record<Channel, string> = {
   ads: "Channel: Paid ads. Hook, promise, proof, action - in very few words. One message per variant. Clarity beats cleverness.",
   web: "Channel: Website. Visitors scan. Headline carries the positioning, subhead carries the proof. Concrete claims over adjectives.",
   pr: "Channel: PR / media pitch. The reader is a journalist triaging a full inbox. The subject line IS the story. Lead with why their readers care, not why the company is proud. Short, factual, zero marketing language - never call your own news exciting. Make the journalist's job easy: the angle, the proof, who they can talk to.",
+  instagram:
+    "Channel: Instagram. Visual-first feed; caption supports the image/video, it doesn't carry the post alone. Hook in the first line (it gets truncated). Conversational, no corporate phrasing, light hashtag use at most.",
 };
 
 /** Human label per channel for the guidance editor. */
@@ -75,6 +77,7 @@ export const CHANNEL_LABELS: Record<Channel, string> = {
   ads: "Paid ads",
   web: "Website",
   pr: "PR / media",
+  instagram: "Instagram",
 };
 
 /** Where a channel's resolved guidance came from. */
