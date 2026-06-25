@@ -470,7 +470,22 @@ export type UpdateCampaignAutomationInput = z.infer<typeof updateCampaignAutomat
 // Signals (manual market input — source adapters arrive in a later slice)
 // ---------------------------------------------------------------------------
 
-export const SIGNAL_SOURCES = ["reddit", "x", "linkedin", "rss", "news", "other"] as const;
+export const SIGNAL_SOURCES = [
+  "reddit",
+  "x",
+  "linkedin",
+  "rss",
+  "news",
+  "hacker_news",
+  "youtube",
+  "podcast",
+  "google_trends",
+  "funding",
+  "g2",
+  "capterra",
+  "intent",
+  "other",
+] as const;
 export type SignalSource = (typeof SIGNAL_SOURCES)[number];
 
 export const SIGNAL_MAX_CHARS = 10_000;
@@ -481,6 +496,10 @@ export const signalSchema = z.object({
   content: z.string().min(1).max(SIGNAL_MAX_CHARS),
   source: z.enum(SIGNAL_SOURCES),
   sourceUrl: z.string().nullable(),
+  // Auto-mapping (Sprint 31): carried from a discovered item on accept so the
+  // Content draft can pre-fill persona + campaign. Null for manual signals.
+  suggestedPersonaId: z.string().uuid().nullable(),
+  suggestedCampaignId: z.string().uuid().nullable(),
   createdAt: z.number().int(),
 });
 export type Signal = z.infer<typeof signalSchema>;
@@ -493,6 +512,8 @@ export const createSignalInputSchema = z.object({
     .max(SIGNAL_MAX_CHARS, `Signal must be ${SIGNAL_MAX_CHARS} characters or fewer`),
   source: z.enum(SIGNAL_SOURCES),
   sourceUrl: z.string().trim().url("Source URL must be a valid URL").optional(),
+  suggestedPersonaId: z.string().uuid().optional(),
+  suggestedCampaignId: z.string().uuid().optional(),
 });
 export type CreateSignalInput = z.infer<typeof createSignalInputSchema>;
 
@@ -515,7 +536,21 @@ export type DraftSignalRequest = z.infer<typeof draftSignalRequestSchema>;
  * today; `x` and `linkedin` are registered infrastructure that flips live
  * when API credentials exist (status `needs_api_key` until then).
  */
-export const DISCOVERY_SOURCE_TYPES = ["rss", "google_news", "reddit", "x", "linkedin"] as const;
+export const DISCOVERY_SOURCE_TYPES = [
+  "rss",
+  "google_news",
+  "reddit",
+  "hacker_news",
+  "youtube",
+  "podcast",
+  "google_trends",
+  "funding_news",
+  "x",
+  "linkedin",
+  "g2",
+  "capterra",
+  "intent",
+] as const;
 export type DiscoverySourceType = (typeof DISCOVERY_SOURCE_TYPES)[number];
 
 export const DISCOVERY_SOURCE_STATUSES = ["active", "needs_api_key", "error"] as const;
@@ -528,6 +563,9 @@ export const discoverySourceConfigSchema = z.object({
   feedUrl: z.string().url().optional(),
   query: z.string().trim().max(200).optional(),
   subreddit: z.string().trim().max(100).optional(),
+  channelId: z.string().trim().max(100).optional(),
+  geo: z.string().trim().max(10).optional(),
+  sector: z.string().trim().max(100).optional(),
 });
 export type DiscoverySourceConfig = z.infer<typeof discoverySourceConfigSchema>;
 
@@ -561,6 +599,24 @@ export const createDiscoverySourceInputSchema = z
     if (input.type === "reddit" && !input.config.query?.trim() && !input.config.subreddit?.trim()) {
       ctx.addIssue({ code: "custom", message: "A Reddit source needs a query or a subreddit" });
     }
+    if (input.type === "hacker_news" && !input.config.query?.trim()) {
+      ctx.addIssue({ code: "custom", message: "A Hacker News source needs a query" });
+    }
+    if (input.type === "youtube" && !input.config.channelId?.trim()) {
+      ctx.addIssue({ code: "custom", message: "A YouTube source needs a channelId" });
+    }
+    if (input.type === "podcast" && !input.config.feedUrl) {
+      ctx.addIssue({ code: "custom", message: "A podcast source needs a feedUrl" });
+    }
+    if (input.type === "funding_news" && !input.config.query?.trim()) {
+      ctx.addIssue({ code: "custom", message: "A funding-news source needs a query" });
+    }
+    if (
+      (input.type === "g2" || input.type === "capterra" || input.type === "intent") &&
+      !input.config.query?.trim()
+    ) {
+      ctx.addIssue({ code: "custom", message: `A ${input.type} source needs a query` });
+    }
     if ((input.type === "x" || input.type === "linkedin") && !input.config.query?.trim()) {
       ctx.addIssue({ code: "custom", message: `An ${input.type} source needs a query` });
     }
@@ -585,6 +641,7 @@ export const discoveredItemSchema = z.object({
   publishedAt: z.number().int().nullable(),
   score: z.number().int().min(0).max(100).nullable(),
   suggestedPersonaId: z.string().uuid().nullable(),
+  suggestedCampaignId: z.string().uuid().nullable(),
   scoreReason: z.string().nullable(),
   status: z.enum(DISCOVERED_ITEM_STATUSES),
   signalId: z.string().uuid().nullable(),

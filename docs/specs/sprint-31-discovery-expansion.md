@@ -178,4 +178,11 @@ Tests written **before/with** each change; `npm test` + `npm run typecheck` gree
 ## Progress log
 
 - 2026-06-24 — Worktree `sprint-31-discovery-expansion` created off `main` (`d08c7c6`); `npm install` clean. Existing discovery engine (Sprint 7) reviewed.
-- 2026-06-24 — Spec drafted; founder locked the four decisions above. **Awaiting founder review of this spec before implementation.**
+- 2026-06-24 — Spec drafted; founder locked the four decisions above.
+- 2026-06-24 — Green baseline on the worktree (671 tests).
+- 2026-06-24 — **Slice A built & green.** `suggestedCampaignId` on items + `suggestedPersonaId`/`suggestedCampaignId` on signals (migration `0022`); scoring extended to suggest a campaign (validated against active campaigns); accept carries the mapping onto the signal; triage campaign chip + Content draft pre-fill.
+- 2026-06-24 — **Slice B built & green.** Five keyless source types + adapters (HN via Algolia JSON; YouTube/podcast/Google-Trends via `parseFeed`; funding-news via a funding-scoped Google-News query); `isLiveSourceType` + the exhaustive maps + per-type config validation + type-aware web add-forms; adapter fixture tests.
+- 2026-06-24 — **Slice C built & green.** `g2`/`capterra`/`intent` registered-but-inert (`needs_api_key`, like x/linkedin); `IntentProvider` boundary (`apps/api/src/discovery/intent.ts`) + `NullIntentProvider`, injected into `buildApp` and routed in `runDiscovery`; tests for refusal + a configured provider fetching through the boundary. Final `npm test` **679** + `npm run typecheck` green.
+- 2026-06-24 — Founder-acceptance section appended to `docs/founder-acceptance-tests.md`.
+- **Notes:** web has no test project in this repo (suites are contracts/api/brain) — UI covered by typecheck + the manual acceptance script, as in every prior sprint. The HN Algolia + Google-Trends RSS exact endpoints are confirmed live during acceptance.
+- **Pending:** founder review + manual acceptance (Slice A → B → C); founder merges to `main`.

@@ -233,6 +233,10 @@ export const signals = sqliteTable("signals", {
   content: text("content").notNull(),
   source: text("source").notNull(),
   sourceUrl: text("source_url"),
+  // Auto-mapping (Sprint 31): carried from a discovered item on accept so the
+  // Content draft can pre-fill persona + campaign. Null for manual signals.
+  suggestedPersonaId: text("suggested_persona_id"),
+  suggestedCampaignId: text("suggested_campaign_id"),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -272,6 +276,7 @@ export const discoveredItems = sqliteTable(
     publishedAt: integer("published_at"),
     score: integer("score"),
     suggestedPersonaId: text("suggested_persona_id"),
+    suggestedCampaignId: text("suggested_campaign_id"),
     scoreReason: text("score_reason"),
     status: text("status").notNull().default("new"),
     signalId: text("signal_id"),

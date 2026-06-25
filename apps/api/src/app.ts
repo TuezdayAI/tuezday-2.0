@@ -6,6 +6,7 @@ import type { ConnectorFabric } from "./connectors/fabric";
 import { NangoFabric } from "./connectors/nango";
 import type { Db } from "./db";
 import type { Fetcher } from "./discovery/adapters";
+import { NullIntentProvider, type IntentProvider } from "./discovery/intent";
 import { R2REvidenceStore } from "./evidence/r2r";
 import type { EvidenceStore } from "./evidence/store";
 import { GeminiGateway } from "./llm/gemini";
@@ -53,6 +54,8 @@ export interface BuildAppOptions {
   evidence?: EvidenceStore;
   /** Connector fabric override; defaults to the Nango client from env. */
   connectors?: ConnectorFabric;
+  /** Intent-signal provider (Sprint 31); defaults to the inert NullIntentProvider. */
+  intent?: IntentProvider;
   /** Outbound-email exporter (Sprint 26); defaults to a Smartlead/Instantly CSV. */
   exporter?: OutboundExporter;
   /** Transactional mailer (Sprint 27); defaults to Resend, else a console logger. */
@@ -70,6 +73,7 @@ export async function buildApp({
   fetcher = fetch,
   evidence = new R2REvidenceStore(),
   connectors = new NangoFabric(undefined, undefined, fetcher),
+  intent = new NullIntentProvider(),
   exporter = new CsvOutboundExporter(),
   mailer = createDefaultMailer(fetcher),
   workerToken = process.env.TUEZDAY_WORKER_TOKEN,
@@ -102,7 +106,7 @@ export async function buildApp({
   registerGenerationRoutes(app, db, llm, evidence);
   registerDraftRoutes(app, db, fetcher, llm);
   registerSignalRoutes(app, db, llm, evidence);
-  registerDiscoveryRoutes(app, db, llm, fetcher);
+  registerDiscoveryRoutes(app, db, llm, fetcher, intent);
   registerCampaignRoutes(app, db);
   registerAudienceRoutes(app, db);
   registerEvidenceRoutes(app, db, evidence);

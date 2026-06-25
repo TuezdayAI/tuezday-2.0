@@ -793,7 +793,21 @@ describe("createDiscoverySourceInputSchema", () => {
   });
 
   it("covers the planned source types", () => {
-    expect(DISCOVERY_SOURCE_TYPES).toEqual(["rss", "google_news", "reddit", "x", "linkedin"]);
+    expect(DISCOVERY_SOURCE_TYPES).toEqual([
+      "rss",
+      "google_news",
+      "reddit",
+      "hacker_news",
+      "youtube",
+      "podcast",
+      "google_trends",
+      "funding_news",
+      "x",
+      "linkedin",
+      "g2",
+      "capterra",
+      "intent",
+    ]);
   });
 });
 

@@ -149,6 +149,68 @@ async function fetchReddit(config: DiscoverySourceConfig, fetcher: Fetcher) {
 }
 
 // ---------------------------------------------------------------------------
+// Hacker News, YouTube, podcasts, Google Trends, funding news (Sprint 31).
+// All keyless: HN via the official Algolia API; the rest reuse parseFeed.
+// ---------------------------------------------------------------------------
+
+interface HnHit {
+  objectID?: string;
+  title?: string;
+  url?: string | null;
+  story_text?: string | null;
+  points?: number;
+  num_comments?: number;
+  created_at_i?: number;
+}
+
+async function fetchHackerNews(config: DiscoverySourceConfig, fetcher: Fetcher) {
+  const query = config.query?.trim();
+  if (!query) throw new Error("Hacker News source has no query configured.");
+  const url = `https://hn.algolia.com/api/v1/search_by_date?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=${MAX_ITEMS}`;
+  const body = JSON.parse(await fetchText(url, fetcher)) as { hits?: HnHit[] };
+  return (body.hits ?? [])
+    .filter((h) => h.objectID && h.title)
+    .map((h) => ({
+      externalId: `hn-${h.objectID}`,
+      title: cleanText(h.title),
+      url: h.url || `https://news.ycombinator.com/item?id=${h.objectID}`,
+      summary:
+        cleanText(h.story_text) ||
+        `${h.points ?? 0} points · ${h.num_comments ?? 0} comments on Hacker News`,
+      publishedAt: typeof h.created_at_i === "number" ? h.created_at_i * 1000 : null,
+    }));
+}
+
+async function fetchYoutube(config: DiscoverySourceConfig, fetcher: Fetcher) {
+  const channelId = config.channelId?.trim();
+  if (!channelId) throw new Error("YouTube source has no channelId configured.");
+  const url = `https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(channelId)}`;
+  return parseFeed(await fetchText(url, fetcher));
+}
+
+async function fetchPodcast(config: DiscoverySourceConfig, fetcher: Fetcher) {
+  if (!config.feedUrl) throw new Error("Podcast source has no feedUrl configured.");
+  return parseFeed(await fetchText(config.feedUrl, fetcher));
+}
+
+async function fetchGoogleTrends(config: DiscoverySourceConfig, fetcher: Fetcher) {
+  const geo = (config.geo?.trim() || "US").toUpperCase();
+  const url = `https://trends.google.com/trends/trendingsearches/daily/rss?geo=${encodeURIComponent(geo)}`;
+  const items = parseFeed(await fetchText(url, fetcher));
+  // Trends items can lack a guid/link; fall back to the title so they dedupe.
+  return items.map((i) => ({ ...i, externalId: i.externalId || i.title }));
+}
+
+async function fetchFundingNews(config: DiscoverySourceConfig, fetcher: Fetcher) {
+  const query = config.query?.trim();
+  if (!query) throw new Error("Funding-news source has no query configured.");
+  const scoped = config.sector?.trim() ? `${query} ${config.sector.trim()}` : query;
+  const fundingQuery = `${scoped} (funding OR raises OR "Series A" OR "Series B" OR seed OR round)`;
+  const url = `https://news.google.com/rss/search?q=${encodeURIComponent(fundingQuery)}&hl=en-US&gl=US&ceid=US:en`;
+  return parseFeed(await fetchText(url, fetcher));
+}
+
+// ---------------------------------------------------------------------------
 // Dispatch
 // ---------------------------------------------------------------------------
 
@@ -164,13 +226,35 @@ export async function fetchSourceItems(
       return fetchGoogleNews(config, fetcher);
     case "reddit":
       return fetchReddit(config, fetcher);
+    case "hacker_news":
+      return fetchHackerNews(config, fetcher);
+    case "youtube":
+      return fetchYoutube(config, fetcher);
+    case "podcast":
+      return fetchPodcast(config, fetcher);
+    case "google_trends":
+      return fetchGoogleTrends(config, fetcher);
+    case "funding_news":
+      return fetchFundingNews(config, fetcher);
     case "x":
     case "linkedin":
+    case "g2":
+    case "capterra":
+    case "intent":
       throw new NeedsApiKeyError(type);
   }
 }
 
 /** Whether a source type can fetch today (no credentials required). */
 export function isLiveSourceType(type: DiscoverySourceType): boolean {
-  return type === "rss" || type === "google_news" || type === "reddit";
+  return (
+    type === "rss" ||
+    type === "google_news" ||
+    type === "reddit" ||
+    type === "hacker_news" ||
+    type === "youtube" ||
+    type === "podcast" ||
+    type === "google_trends" ||
+    type === "funding_news"
+  );
 }

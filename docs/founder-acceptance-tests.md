@@ -462,11 +462,35 @@ your voice and cleared through Review — without leaving Tuezday.
 
 **Gate:** define a 3-step email sequence at a segment → step 1 sends (export) → no reply → step 2 fires on schedule → step 3 follows; a manual stop halts one email recipient while others continue; and an X DM reply automatically stops that recipient's chain while others proceed — every step brain-resolved, per-recipient, and approval-gated, at the automation level you chose.
 
+## Sprint 31 — Discovery Source Expansion + Auto-Mapping
+
+> Prereq: a workspace with ≥1 campaign and ≥1 persona, and brain docs filled enough to score. The new keyless sources (Hacker News, YouTube, podcast, Google Trends, funding-news) need no API keys. Run the worker for auto-polling, or click "Run discovery now".
+
+**Slice A — Campaign/persona auto-mapping**
+
+- [ ] With ≥1 campaign + ≥1 persona, run discovery on any source → triage items show a suggested **campaign chip (◆)** next to the persona chip (→) plus the reason.
+- [ ] Accept an item → open it in Content → the draft form's **persona and campaign pickers are pre-filled** from the suggestion (you can still override) → draft → approve (gate unchanged).
+- [ ] An item with no good campaign shows persona-only — mapping assists, never forces.
+
+**Slice B — Keyless content adapters (live now)**
+
+- [ ] Add a **Hacker News** source (query) and a **Funding news** source (query, optional sector) → Run discovery → real items appear, scored and mapped.
+- [ ] Add a **YouTube channel** (channel ID), a **Podcast** (feed URL), and a **Google Trends** (geo) source → each fetches real items.
+- [ ] Re-run → no duplicates appear (per-source dedupe holds for the new types).
+- [ ] Accept a Hacker News item → it becomes a signal tagged "Hacker News" and drafts as usual.
+
+**Slice C — Provider-gated sources + IntentProvider boundary**
+
+- [ ] Add a **G2 reviews**, **Capterra reviews**, or **Intent signals** source → it registers and shows **"needs API key"**, and Run discovery skips it — exactly like X / LinkedIn today; nothing is scraped.
+- [ ] (Automated) The `IntentProvider` boundary is wired: with a real provider configured, an `intent` source fetches through it — covered by `apps/api/test/discovery.test.ts`.
+
+**Gate:** more of the outside world flows in (HN, YouTube, podcasts, Trends, funding news — keyless and live); every discovered item is routed to a campaign + persona you accept in one click into a pre-filled draft; and the review-site / intent providers are real registered infrastructure waiting only on a key.
+
 ---
 
 ## Cross-cutting things worth re-checking occasionally
 
-- [ ] `npm test` (619 tests) and `npm run typecheck` stay green.
+- [ ] `npm test` (679 tests) and `npm run typecheck` stay green.
 - [ ] Every generation's prompt trace is readable *before* and *after* the LLM call (sandbox → "show prompt trace").
 - [ ] Stopping any external service (R2R, Nango) degrades gracefully — the app never breaks, traces/banners say why.
 - [ ] Gemini occasionally returns 503 "high demand" — a retry succeeds; it surfaces as a clean error, never a crash.

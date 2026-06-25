@@ -7,6 +7,7 @@ import {
 } from "@tuezday/contracts";
 import type { Db } from "../db";
 import type { Fetcher } from "../discovery/adapters";
+import type { IntentProvider } from "../discovery/intent";
 import type { LlmGateway } from "../llm/gateway";
 import { GatewayError } from "../llm/gateway";
 import {
@@ -38,6 +39,7 @@ export function registerDiscoveryRoutes(
   db: Db,
   llm: LlmGateway,
   fetcher: Fetcher,
+  intent: IntentProvider,
 ): void {
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/discovery/sources",
@@ -97,7 +99,7 @@ export function registerDiscoveryRoutes(
   app.post<{ Params: { id: string } }>("/workspaces/:id/discovery/run", async (request, reply) => {
     const workspace = workspaceOr404(db, request.params.id, reply);
     if (!workspace) return reply;
-    return runDiscovery(db, llm, fetcher, request.params.id, workspace.name);
+    return runDiscovery(db, llm, fetcher, intent, request.params.id, workspace.name);
   });
 
   app.get<{ Params: { id: string }; Querystring: { status?: string } }>(

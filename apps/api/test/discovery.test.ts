@@ -30,8 +30,11 @@ function makeFetcher(): { fetcher: Fetcher; calls: string[] } {
   return { fetcher, calls };
 }
 
-/** Scores every item 0-100 by position; suggests the first persona for item index 0. */
-function scoringGateway(personaIdRef: { id: string | null }): LlmGateway {
+/** Scores every item 0-100 by position; suggests the first persona + campaign for item index 0. */
+function scoringGateway(
+  personaIdRef: { id: string | null },
+  campaignIdRef: { id: string | null },
+): LlmGateway {
   return {
     async generate({ prompt }) {
       if (prompt.includes("propose discovery sources")) {
@@ -61,6 +64,7 @@ function scoringGateway(personaIdRef: { id: string | null }): LlmGateway {
         index: i,
         score: 90 - i * 10,
         personaId: i === 0 ? personaIdRef.id : null,
+        campaignId: i === 0 ? campaignIdRef.id : null,
         reason: `Relevant because reason ${i}.`,
       }));
       return { text: JSON.stringify(scores), model: "fake", provider: "fake", durationMs: 3 };
@@ -72,11 +76,17 @@ describe("discovery API", () => {
   let app: TuezdayApp;
   let workspaceId: string;
   let personaRef: { id: string | null };
+  let campaignRef: { id: string | null };
 
   beforeEach(async () => {
     personaRef = { id: null };
+    campaignRef = { id: null };
     const { fetcher } = makeFetcher();
-    app = await buildAuthedApp({ db: createTestDb(), llm: scoringGateway(personaRef), fetcher });
+    app = await buildAuthedApp({
+      db: createTestDb(),
+      llm: scoringGateway(personaRef, campaignRef),
+      fetcher,
+    });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Disco" } })
     ).json().id;
@@ -93,6 +103,14 @@ describe("discovery API", () => {
       })
     ).json();
     personaRef.id = persona.id;
+    const campaign = (
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns`,
+        payload: { name: "Launch", objective: "Win fintech VPs" },
+      })
+    ).json();
+    campaignRef.id = campaign.id;
   });
 
   afterEach(async () => {
@@ -190,6 +208,7 @@ describe("discovery API", () => {
       // sorted by score desc; first item got the persona suggestion
       expect(list[0].score).toBe(90);
       expect(list[0].suggestedPersonaId).toBe(personaRef.id);
+      expect(list[0].suggestedCampaignId).toBe(campaignRef.id);
       expect(list[0].scoreReason).toContain("Relevant because");
       expect(list[1].score).toBe(80);
     });
@@ -237,6 +256,62 @@ describe("discovery API", () => {
     });
   });
 
+  describe("provider-gated sources (Sprint 31)", () => {
+    it("registers intent/g2/capterra as needs_api_key and skips them without a provider", async () => {
+      for (const type of ["intent", "g2", "capterra"] as const) {
+        const res = await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/discovery/sources`,
+          payload: { type, config: { query: "acme" } },
+        });
+        expect(res.json().status).toBe("needs_api_key");
+      }
+      const result = await run();
+      expect(result.sources).toEqual([]); // all inert, nothing fetched
+      expect(await items()).toEqual([]);
+    });
+
+    it("fetches intent items through a configured IntentProvider", async () => {
+      const { fetcher } = makeFetcher();
+      const intent = {
+        isConfigured: () => true,
+        fetchSignals: async () => [
+          {
+            externalId: "funding-1",
+            title: "Acme raised a $20M Series B",
+            url: "https://example.com/acme",
+            summary: "Funding round closed.",
+            publishedAt: Date.now(),
+          },
+        ],
+      };
+      const localApp = await buildAuthedApp({
+        db: createTestDb(),
+        llm: scoringGateway({ id: null }, { id: null }),
+        fetcher,
+        intent,
+      });
+      const ws = (
+        await localApp.inject({ method: "POST", url: "/workspaces", payload: { name: "Intent" } })
+      ).json().id;
+      await localApp.inject({
+        method: "POST",
+        url: `/workspaces/${ws}/discovery/sources`,
+        payload: { type: "intent", config: { query: "acme.com" } },
+      });
+      const result = (
+        await localApp.inject({ method: "POST", url: `/workspaces/${ws}/discovery/run` })
+      ).json();
+      expect(result.sources).toHaveLength(1);
+      expect(result.sources[0].new).toBe(1);
+      const list = (
+        await localApp.inject({ method: "GET", url: `/workspaces/${ws}/discovery/items` })
+      ).json();
+      expect(list[0].title).toContain("Acme raised");
+      await localApp.close();
+    });
+  });
+
   describe("triage", () => {
     it("accepting an item creates a linked signal with mapped source", async () => {
       await addRssSource();
@@ -253,6 +328,9 @@ describe("discovery API", () => {
       expect(signal.source).toBe("rss");
       expect(signal.content).toContain(top.title);
       expect(signal.sourceUrl).toBe(top.url);
+      // the campaign/persona mapping is carried onto the signal for the draft
+      expect(signal.suggestedPersonaId).toBe(top.suggestedPersonaId);
+      expect(signal.suggestedCampaignId).toBe(top.suggestedCampaignId);
 
       // it shows up in the Sprint 6 signal inbox
       const signals = (

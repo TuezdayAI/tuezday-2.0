@@ -153,11 +153,122 @@ describe("reddit adapter", () => {
 });
 
 describe("credential-gated adapters", () => {
-  it("refuses x and linkedin until API keys exist", async () => {
-    for (const type of ["x", "linkedin"] as const) {
+  it("refuses x, linkedin, g2, capterra, intent until API keys exist", async () => {
+    for (const type of ["x", "linkedin", "g2", "capterra", "intent"] as const) {
       await expect(
         fetchSourceItems(type, { query: "anything" }, fixtureFetcher("{}")),
       ).rejects.toThrow(NeedsApiKeyError);
     }
+  });
+});
+
+// --- Sprint 31: keyless source expansion ----------------------------------
+
+const HN_FIXTURE = JSON.stringify({
+  hits: [
+    {
+      objectID: "40000001",
+      title: "Show HN: a GTM memory layer",
+      url: "https://example.com/gtm-memory",
+      story_text: "We built a brain for go-to-market.",
+      points: 120,
+      num_comments: 45,
+      created_at_i: 1_749_465_600,
+    },
+    {
+      objectID: "40000002",
+      title: "Ask HN: how do you remember what worked?",
+      url: null,
+      points: 8,
+      num_comments: 3,
+      created_at_i: 1_749_469_200,
+    },
+  ],
+});
+
+const YOUTUBE_FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Channel</title>
+  <entry>
+    <title>How GTM teams lose their memory</title>
+    <link href="https://www.youtube.com/watch?v=abc123"/>
+    <id>yt:video:abc123</id>
+    <summary>Talk about GTM amnesia.</summary>
+    <updated>2026-06-09T10:00:00Z</updated>
+  </entry>
+</feed>`;
+
+describe("hacker_news adapter", () => {
+  it("queries the Algolia API and maps hits (HN link + points-summary fallbacks)", async () => {
+    const { fetcher, urls } = capturingFetcher(HN_FIXTURE);
+    const items = await fetchSourceItems("hacker_news", { query: "GTM memory" }, fetcher);
+    expect(urls[0]).toContain("hn.algolia.com/api/v1/search_by_date");
+    expect(urls[0]).toContain("tags=story");
+    expect(urls[0]).toContain(encodeURIComponent("GTM memory"));
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({
+      externalId: "hn-40000001",
+      title: "Show HN: a GTM memory layer",
+      url: "https://example.com/gtm-memory",
+    });
+    expect(items[0]!.publishedAt).toBe(1_749_465_600 * 1000);
+    // no url -> HN item link; no story_text -> points/comments summary
+    expect(items[1]!.url).toBe("https://news.ycombinator.com/item?id=40000002");
+    expect(items[1]!.summary).toContain("8 points");
+  });
+
+  it("needs a query", async () => {
+    await expect(fetchSourceItems("hacker_news", {}, fixtureFetcher(HN_FIXTURE))).rejects.toThrow(
+      /query/,
+    );
+  });
+});
+
+describe("youtube adapter", () => {
+  it("builds the channel feed url and parses entries", async () => {
+    const { fetcher, urls } = capturingFetcher(YOUTUBE_FIXTURE);
+    const items = await fetchSourceItems("youtube", { channelId: "UC_test" }, fetcher);
+    expect(urls[0]).toContain("youtube.com/feeds/videos.xml?channel_id=UC_test");
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ title: "How GTM teams lose their memory" });
+  });
+});
+
+describe("podcast adapter", () => {
+  it("fetches the feed url and parses RSS items", async () => {
+    const { fetcher, urls } = capturingFetcher(RSS_FIXTURE);
+    const items = await fetchSourceItems(
+      "podcast",
+      { feedUrl: "https://feeds.example.com/show.xml" },
+      fetcher,
+    );
+    expect(urls[0]).toBe("https://feeds.example.com/show.xml");
+    expect(items).toHaveLength(2);
+  });
+});
+
+describe("google_trends adapter", () => {
+  it("builds the daily-trends rss url for the geo and parses items", async () => {
+    const { fetcher, urls } = capturingFetcher(RSS_FIXTURE);
+    const items = await fetchSourceItems("google_trends", { geo: "us" }, fetcher);
+    expect(urls[0]).toContain("trends.google.com/trends/trendingsearches/daily/rss");
+    expect(urls[0]).toContain("geo=US");
+    expect(items.length).toBeGreaterThan(0);
+  });
+});
+
+describe("funding_news adapter", () => {
+  it("builds a funding-scoped Google News query", async () => {
+    const { fetcher, urls } = capturingFetcher(RSS_FIXTURE);
+    const items = await fetchSourceItems(
+      "funding_news",
+      { query: "fintech", sector: "payments" },
+      fetcher,
+    );
+    expect(urls[0]).toContain("news.google.com/rss/search");
+    const decoded = decodeURIComponent(urls[0]!);
+    expect(decoded).toContain("fintech payments");
+    expect(decoded).toMatch(/funding|raises|Series/);
+    expect(items).toHaveLength(2);
   });
 });

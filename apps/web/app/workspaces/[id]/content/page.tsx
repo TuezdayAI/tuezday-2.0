@@ -27,6 +27,14 @@ const SOURCE_LABELS: Record<SignalSource, string> = {
   linkedin: "LinkedIn",
   rss: "RSS",
   news: "News",
+  hacker_news: "Hacker News",
+  youtube: "YouTube",
+  podcast: "Podcast",
+  google_trends: "Google Trends",
+  funding: "Funding",
+  g2: "G2",
+  capterra: "Capterra",
+  intent: "Intent",
   other: "Other",
 };
 
@@ -43,6 +51,8 @@ interface SignalView {
   content: string;
   source: SignalSource;
   sourceUrl: string | null;
+  suggestedPersonaId: string | null;
+  suggestedCampaignId: string | null;
   createdAt: number;
   drafts: { id: string; state: ApprovalState; channel: Channel; createdAt: number }[];
 }
@@ -547,7 +557,14 @@ export default function ContentPage() {
                   </div>
                 ) : (
                   <div className="rating-row" style={{ marginTop: 10 }}>
-                    <button className="button-secondary" onClick={() => setDraftingFor(s.id)}>
+                    <button
+                      className="button-secondary"
+                      onClick={() => {
+                        setDraftingFor(s.id);
+                        setDraftPersonaId(s.suggestedPersonaId ?? "");
+                        setDraftCampaignId(s.suggestedCampaignId ?? "");
+                      }}
+                    >
                       Draft response
                     </button>
                   </div>
