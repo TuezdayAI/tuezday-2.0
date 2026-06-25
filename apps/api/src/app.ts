@@ -41,6 +41,7 @@ import { registerPersonaRoutes } from "./routes/personas";
 import { registerSignalRoutes } from "./routes/signals";
 import { registerTeamRoutes } from "./routes/teams";
 import { registerWorkspaceRoutes } from "./routes/workspaces";
+import { registerInsightsRoutes } from "./routes/insights";
 
 export type TuezdayApp = FastifyInstance;
 
@@ -124,6 +125,7 @@ export async function buildApp({
   registerMailRoutes(app, db, mailer);
   registerAutomationRoutes(app, db, llm, evidence);
   registerInboxRoutes(app, db, llm, evidence, connectors, fetcher);
+  registerInsightsRoutes(app, db);
 
   return app;
 }
