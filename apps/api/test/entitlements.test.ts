@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+process.env.TEST_BILLING_GATING = "1";
 import { getPlan, getEntitlements, getUsage, assertWithinLimit, EntitlementError } from "../src/services/entitlements";
 import { createTestDb } from "./helpers";
 import { registerAccount } from "../src/services/auth";

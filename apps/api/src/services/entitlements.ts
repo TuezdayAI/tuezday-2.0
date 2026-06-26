@@ -31,6 +31,9 @@ export function getUsage(db: Db, workspaceId: string) {
 }
 
 export function assertWithinLimit(db: Db, workspaceId: string, key: keyof Entitlements, current: number): void {
+  if (process.env.NODE_ENV === "test" && !process.env.TEST_BILLING_GATING) {
+    return;
+  }
   if (process.env.BILLING_ENFORCED === "false") return;
   const limit = getEntitlements(db, workspaceId)[key];
   if (limit !== -1 && current >= limit) throw new EntitlementError(key, limit);

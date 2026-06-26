@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+process.env.TEST_BILLING_GATING = "1";
 import { buildApp, type TuezdayApp } from "../src/app";
 import { createTestDb } from "./helpers";
 import { registerAccount } from "../src/services/auth";

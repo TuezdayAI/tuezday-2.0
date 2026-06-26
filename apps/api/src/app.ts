@@ -108,7 +108,7 @@ export async function buildApp({
   registerAuthRoutes(app, db);
   registerWorkspaceRoutes(app, db);
   registerTeamRoutes(app, db, mailer);
-  registerOnboardingRoutes(app, db);
+  app.register(registerOnboardingRoutes(db));
   registerBillingRoutes(app, db);
   registerStripeWebhookRoute(app, db);
   registerBrainRoutes(app, db);
