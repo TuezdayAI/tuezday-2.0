@@ -2676,6 +2676,109 @@ export const checkoutInputSchema = z.object({
 });
 export type CheckoutInput = z.infer<typeof checkoutInputSchema>;
 
+// GTM insights (Sprint 34) — read-only response schemas for native insights.
+// No new enums; reuses CHANNELS, APPROVAL_STATES, OUTPUT_RATINGS, BRAIN_DOC_TYPES.
+// ---------------------------------------------------------------------------
+
+export const metricTotalsSchema = z.object({
+  spendCents: z.number().int(),
+  impressions: z.number().int(),
+  clicks: z.number().int(),
+  conversions: z.number().int(),
+});
+export type MetricTotals = z.infer<typeof metricTotalsSchema>;
+
+export const campaignInsightsSchema = z.object({
+  campaign: z.object({ id: z.string(), name: z.string(), status: z.string() }),
+  paid: z
+    .object({
+      totals: metricTotalsSchema,
+      adCampaigns: z.array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          accountName: z.string(),
+          currency: z.string(),
+          totals: metricTotalsSchema,
+        }),
+      ),
+    })
+    .nullable(),
+  organic: z.object({
+    publishedCount: z.number().int(),
+    scheduledCount: z.number().int(),
+    platform: z.object({
+      likes: z.number().int(),
+      comments: z.number().int(),
+      shares: z.number().int(),
+      impressions: z.number().int(),
+      clicks: z.number().int(),
+    }),
+    learning: z.object({
+      impressions: z.number().int(),
+      engagements: z.number().int(),
+      clicks: z.number().int(),
+    }),
+  }),
+  outbound: z.object({
+    launchCount: z.number().int(),
+    sentCount: z.number().int(),
+    failedCount: z.number().int(),
+    repliedCount: z.number().int(),
+    replyRate: z.number(),
+  }),
+  quality: z.object({
+    draftCounts: z.record(z.string(), z.number().int()),
+    approvalRate: z.number(),
+    ratings: z.record(z.string(), z.number().int()),
+  }),
+  byChannel: z.array(
+    z.object({
+      channel: z.string(),
+      published: z.number().int(),
+      impressions: z.number().int(),
+      spendCents: z.number().int(),
+      sent: z.number().int(),
+      replied: z.number().int(),
+    }),
+  ),
+});
+export type CampaignInsights = z.infer<typeof campaignInsightsSchema>;
+
+export const workspaceInsightsSchema = z.object({
+  campaigns: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      status: z.string(),
+      spendCents: z.number().int(),
+      publishedCount: z.number().int(),
+      sentCount: z.number().int(),
+      approvalRate: z.number(),
+    }),
+  ),
+  byChannel: z.array(
+    z.object({
+      channel: z.string(),
+      published: z.number().int(),
+      impressions: z.number().int(),
+      spendCents: z.number().int(),
+      sent: z.number().int(),
+      replied: z.number().int(),
+    }),
+  ),
+  brain: z.object({
+    docs: z.array(z.object({ type: z.string(), filled: z.boolean() })),
+    overlayCount: z.number().int(),
+    personaCount: z.number().int(),
+    campaignCount: z.number().int(),
+    generationsTotal: z.number().int(),
+    completenessPct: z.number(),
+  }),
+});
+export type WorkspaceInsights = z.infer<typeof workspaceInsightsSchema>;
+
+
 // ---------------------------------------------------------------------------
 // API error shape
 // ---------------------------------------------------------------------------

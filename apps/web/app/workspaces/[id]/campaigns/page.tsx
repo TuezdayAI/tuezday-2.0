@@ -1,6 +1,6 @@
 "use client";
 
-import { API_URL, apiFetch } from "@/lib/api";
+import { API_URL, apiFetch, apiDownload } from "@/lib/api";
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
@@ -13,6 +13,7 @@ import {
   type Channel,
   type Persona,
   type Workspace,
+  type CampaignInsights,
 } from "@tuezday/contracts";
 
 const STATE_LABELS: Record<ApprovalState, string> = {
@@ -52,6 +53,7 @@ interface CampaignDetail {
     adCampaigns: { id: string; name: string; accountName: string; currency: string; totals: AdTotals }[];
   } | null;
   audiences: { id: string; name: string; kind: "static" | "dynamic"; memberCount: number }[];
+  insights?: CampaignInsights;
 }
 
 function money(cents: number, currency: string): string {
@@ -215,10 +217,17 @@ export default function CampaignsPage() {
     }
     setExpandedId(campaignId);
     if (!details[campaignId]) {
-      const res = await apiFetch(`/workspaces/${id}/campaigns/${campaignId}`);
+      const [res, insightsRes] = await Promise.all([
+        apiFetch(`/workspaces/${id}/campaigns/${campaignId}`),
+        apiFetch(`/workspaces/${id}/campaigns/${campaignId}/insights`)
+      ]);
       if (res.ok) {
         const detail = await res.json();
-        setDetails((d) => ({ ...d, [campaignId]: detail }));
+        let insights = undefined;
+        if (insightsRes.ok) {
+          insights = await insightsRes.json();
+        }
+        setDetails((d) => ({ ...d, [campaignId]: { ...detail, insights } }));
       }
     }
   }
@@ -434,6 +443,24 @@ export default function CampaignsPage() {
                           ))}
                         </ul>
                       </>
+                    )}
+                    {detail.insights && (
+                      <div className="bundle-summary" style={{ marginTop: 10 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                          <span className="meta" style={{ fontWeight: "bold" }}>Campaign Insights:</span>
+                          <button 
+                            className="link-button" 
+                            onClick={(e) => { e.preventDefault(); apiDownload(`/workspaces/${id}/campaigns/${c.id}/insights?format=csv`, `campaign-insights-${c.id}.csv`); }}
+                          >
+                            Export CSV
+                          </button>
+                        </div>
+                        <ul className="draft-chain" style={{ marginTop: 4 }}>
+                          <li><span className="meta">Published: {detail.insights.organic.publishedCount}</span></li>
+                          <li><span className="meta">Sent/Outbound: {detail.insights.outbound.sentCount}</span></li>
+                          <li><span className="meta">Approval Rate: {Math.round(detail.insights.quality.approvalRate * 100)}%</span></li>
+                        </ul>
+                      </div>
                     )}
                   </div>
                 )}

@@ -20,6 +20,7 @@ interface NavItem {
 
 const NAV: NavItem[] = [
   { label: "Home", path: "" },
+  { label: "Insights", path: "/insights" },
   {
     label: "Brain",
     path: "/brain",
