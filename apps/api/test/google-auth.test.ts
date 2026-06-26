@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { GoogleAuthError, exchangeCodeForProfile, googleAuthUrl } from "../src/auth/google";
 import { registerAccount, sessionUser, upsertGoogleUser } from "../src/services/auth";
 import { createTestDb } from "./helpers";
+import { buildApp } from "../src/app";
 
 const ENV = { ...process.env };
 beforeEach(() => {
@@ -75,5 +76,51 @@ describe("upsertGoogleUser", () => {
     const first = upsertGoogleUser(db, profile);
     const second = upsertGoogleUser(db, profile);
     expect(second.user.id).toBe(first.user.id);
+  });
+});
+
+function googleFetcher(userinfo: object): typeof fetch {
+  return (async (url: string) => {
+    if (url.includes("oauth2.googleapis.com/token")) return new Response(JSON.stringify({ access_token: "at" }), { status: 200 });
+    if (url.includes("userinfo")) return new Response(JSON.stringify(userinfo), { status: 200 });
+    return new Response("{}", { status: 200 });
+  }) as unknown as typeof fetch;
+}
+
+describe("Google auth routes", () => {
+  it("GET /auth/google/url returns an authorize URL (public, no token)", async () => {
+    const app = await buildApp({ db: createTestDb() });
+    const res = await app.inject({ method: "GET", url: "/auth/google/url?state=abc" });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().url).toContain("accounts.google.com");
+  });
+
+  it("503s when Google is unconfigured", async () => {
+    delete process.env.GOOGLE_CLIENT_ID;
+    const app = await buildApp({ db: createTestDb() });
+    const res = await app.inject({ method: "GET", url: "/auth/google/url?state=abc" });
+    expect(res.statusCode).toBe(503);
+    expect(res.json().error).toBe("google_not_configured");
+  });
+
+  it("POST /auth/google/callback exchanges the code and returns a session", async () => {
+    const app = await buildApp({
+      db: createTestDb(),
+      fetcher: googleFetcher({ sub: "g-9", email: "new@acme.com", email_verified: true, name: "New" }),
+    });
+    const res = await app.inject({ method: "POST", url: "/auth/google/callback", payload: { code: "c" } });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().user.email).toBe("new@acme.com");
+    expect(typeof res.json().token).toBe("string");
+  });
+
+  it("401s an unverified Google email", async () => {
+    const app = await buildApp({
+      db: createTestDb(),
+      fetcher: googleFetcher({ sub: "g", email: "x@y.com", email_verified: false, name: "" }),
+    });
+    const res = await app.inject({ method: "POST", url: "/auth/google/callback", payload: { code: "c" } });
+    expect(res.statusCode).toBe(401);
+    expect(res.json().error).toBe("email_unverified");
   });
 });

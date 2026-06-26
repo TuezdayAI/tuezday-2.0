@@ -1,12 +1,15 @@
 import type { FastifyInstance } from "fastify";
-import { loginInputSchema, registerInputSchema } from "@tuezday/contracts";
+import { googleCallbackInputSchema, loginInputSchema, registerInputSchema } from "@tuezday/contracts";
 import type { Db } from "../db";
-import { EmailTakenError, getUser, login, registerAccount, revokeSession } from "../services/auth";
+import { EmailTakenError, getUser, login, registerAccount, revokeSession, upsertGoogleUser } from "../services/auth";
 import { listUserMemberships } from "../services/teams";
 import type { AnalyticsSink } from "../analytics/sink";
 import { track } from "../analytics/track";
 
-export function registerAuthRoutes(app: FastifyInstance, db: Db, analytics: AnalyticsSink): void {
+import type { Fetcher } from "../discovery/adapters";
+import { GoogleAuthError, exchangeCodeForProfile, googleAuthUrl } from "../auth/google";
+
+export function registerAuthRoutes(app: FastifyInstance, db: Db, fetcher: Fetcher, analytics: AnalyticsSink): void {
   app.post("/auth/register", async (request, reply) => {
     const parsed = registerInputSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -52,5 +55,33 @@ export function registerAuthRoutes(app: FastifyInstance, db: Db, analytics: Anal
     const user = getUser(db, request.actor.userId);
     if (!user) return reply.status(401).send({ error: "unauthenticated" });
     return { user, memberships: listUserMemberships(db, user.id) };
+  });
+
+  app.get<{ Querystring: { state?: string } }>("/auth/google/url", async (request, reply) => {
+    try {
+      return { url: googleAuthUrl(request.query.state ?? "") };
+    } catch (err) {
+      if (err instanceof GoogleAuthError && err.code === "not_configured") {
+        return reply.status(503).send({ error: "google_not_configured", message: err.message });
+      }
+      throw err;
+    }
+  });
+
+  app.post("/auth/google/callback", async (request, reply) => {
+    const parsed = googleCallbackInputSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "invalid_input" });
+    }
+    try {
+      const profile = await exchangeCodeForProfile(fetcher, parsed.data.code);
+      return upsertGoogleUser(db, profile);
+    } catch (err) {
+      if (err instanceof GoogleAuthError) {
+        const status = err.code === "not_configured" ? 503 : 401;
+        return reply.status(status).send({ error: err.code, message: err.message });
+      }
+      throw err;
+    }
   });
 }

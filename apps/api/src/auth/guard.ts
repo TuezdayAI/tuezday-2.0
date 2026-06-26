@@ -28,7 +28,13 @@ export function actorOf(request: FastifyRequest): { userId: string | null; label
   return { userId: request.actor.userId, label: request.actor.label };
 }
 
-const PUBLIC_ROUTES = new Set(["POST /auth/register", "POST /auth/login", "GET /health"]);
+const PUBLIC_ROUTES = new Set([
+  "POST /auth/register",
+  "POST /auth/login",
+  "GET /auth/google/url",
+  "POST /auth/google/callback",
+  "GET /health",
+]);
 
 function bearerToken(authorization: string | undefined): string | null {
   if (!authorization) return null;

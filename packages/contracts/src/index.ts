@@ -2601,7 +2601,8 @@ export const ANALYTICS_EVENTS = [
   "generation.created",
   "draft.approved",
   "draft.published",
-  "connection.connected",
+  "connector.connected",
+  "publication.started",
 ] as const;
 export type AnalyticsEvent = (typeof ANALYTICS_EVENTS)[number];
 
