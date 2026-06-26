@@ -1,11 +1,13 @@
 import type { FastifyInstance } from "fastify";
-import { createWorkspaceInputSchema } from "@tuezday/contracts";
+import { createWorkspaceInputSchema, setAnalyticsOptOutInputSchema } from "@tuezday/contracts";
 import type { Db } from "../db";
 import {
   createWorkspace,
+  getAnalyticsOptOut,
   getWorkspace,
   listWorkspaces,
   listWorkspacesForUser,
+  setAnalyticsOptOut,
 } from "../services/workspaces";
 
 export function registerWorkspaceRoutes(app: FastifyInstance, db: Db): void {
@@ -32,5 +34,24 @@ export function registerWorkspaceRoutes(app: FastifyInstance, db: Db): void {
       return reply.status(404).send({ error: "workspace_not_found" });
     }
     return workspace;
+  });
+  app.get<{ Params: { id: string } }>("/workspaces/:id/analytics-optout", async (request, reply) => {
+    const workspace = getWorkspace(db, request.params.id);
+    if (!workspace) return reply.status(404).send({ error: "workspace_not_found" });
+    return { optOut: getAnalyticsOptOut(db, request.params.id) };
+  });
+
+  app.put<{ Params: { id: string } }>("/workspaces/:id/analytics-optout", async (request, reply) => {
+    const workspace = getWorkspace(db, request.params.id);
+    if (!workspace) return reply.status(404).send({ error: "workspace_not_found" });
+    const parsed = setAnalyticsOptOutInputSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({
+        error: "invalid_input",
+        message: parsed.error.issues.map((i) => i.message).join("; "),
+      });
+    }
+    setAnalyticsOptOut(db, request.params.id, parsed.data.optOut);
+    return { optOut: parsed.data.optOut };
   });
 }

@@ -1,4 +1,6 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
+import type { AnalyticsSink } from "../analytics/sink";
+import { track } from "../analytics/track";
 import {
   APPROVAL_STATES,
   editDraftInputSchema,
@@ -47,6 +49,7 @@ export function registerDraftRoutes(
   db: Db,
   fetcher: Fetcher,
   llm: LlmGateway,
+  analytics: AnalyticsSink,
 ): void {
   app.post<{ Params: { id: string; generationId: string } }>(
     "/workspaces/:id/generations/:generationId/submit",
@@ -194,6 +197,13 @@ export function registerDraftRoutes(
 
         try {
           const updated = applyDraftAction(db, draft, action, actorOf(request), newContent);
+          if (action === "approve") {
+            track(db, analytics, {
+              event: "draft.approved",
+              distinctId: request.actor.userId!,
+              workspaceId: request.params.id,
+            });
+          }
           if (action === "approve" || action === "reject") {
             await emitEvent(
               db,

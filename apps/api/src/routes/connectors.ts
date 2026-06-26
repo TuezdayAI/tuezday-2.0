@@ -1,4 +1,6 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
+import type { AnalyticsSink } from "../analytics/sink";
+import { track } from "../analytics/track";
 import {
   CONNECTOR_PROVIDERS,
   connectInputSchema,
@@ -43,6 +45,7 @@ export function registerConnectorRoutes(
   db: Db,
   fabric: ConnectorFabric,
   fetcher: Fetcher,
+  analytics: AnalyticsSink,
 ): void {
   app.get<{ Params: { id: string } }>("/workspaces/:id/connectors", async (request, reply) => {
     if (!workspaceOr404(db, request.params.id, reply)) return reply;
@@ -136,6 +139,14 @@ export function registerConnectorRoutes(
         nangoConnectionId,
       );
       await testConnection(db, fabric, connection);
+
+      track(db, analytics, {
+        event: "connector.connected",
+        distinctId: request.actor.userId!,
+        workspaceId: request.params.id,
+        properties: { provider: provider.key },
+      });
+
       return reply.status(201).send(getConnection(db, request.params.id, connection.id));
     },
   );
@@ -207,6 +218,14 @@ export function registerConnectorRoutes(
           provider,
           parsed.data,
         );
+
+        track(db, analytics, {
+          event: "connector.connected",
+          distinctId: request.actor.userId!,
+          workspaceId: request.params.id,
+          properties: { provider: provider.key },
+        });
+
         return reply.status(201).send(connection);
       } catch (err) {
         if (err instanceof ConnectorFabricError) {

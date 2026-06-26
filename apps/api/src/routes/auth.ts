@@ -3,8 +3,10 @@ import { loginInputSchema, registerInputSchema } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { EmailTakenError, getUser, login, registerAccount, revokeSession } from "../services/auth";
 import { listUserMemberships } from "../services/teams";
+import type { AnalyticsSink } from "../analytics/sink";
+import { track } from "../analytics/track";
 
-export function registerAuthRoutes(app: FastifyInstance, db: Db): void {
+export function registerAuthRoutes(app: FastifyInstance, db: Db, analytics: AnalyticsSink): void {
   app.post("/auth/register", async (request, reply) => {
     const parsed = registerInputSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -15,6 +17,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: Db): void {
     }
     try {
       const result = registerAccount(db, parsed.data);
+      track(db, analytics, { event: "user.registered", distinctId: result.user.id });
       return reply.status(201).send(result);
     } catch (err) {
       if (err instanceof EmailTakenError) {

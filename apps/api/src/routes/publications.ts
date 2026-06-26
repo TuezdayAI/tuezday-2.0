@@ -1,4 +1,6 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
+import type { AnalyticsSink } from "../analytics/sink";
+import { track } from "../analytics/track";
 import { publishDraftInputSchema, validateSocialPost } from "@tuezday/contracts";
 import type { Db } from "../db";
 import type { ConnectorFabric } from "../connectors/fabric";
@@ -30,6 +32,7 @@ export function registerPublicationRoutes(
   db: Db,
   fabric: ConnectorFabric,
   fetcher: Fetcher,
+  analytics: AnalyticsSink,
 ): void {
   app.post<{ Params: { id: string; draftId: string } }>(
     "/workspaces/:id/drafts/:draftId/publish",
@@ -102,6 +105,14 @@ export function registerPublicationRoutes(
         connection,
         input,
       );
+
+      track(db, analytics, {
+        event: "publication.started",
+        distinctId: request.actor.userId!,
+        workspaceId: request.params.id,
+        properties: { channel: draft.channel },
+      });
+
       return reply.status(201).send(publication);
     },
   );
