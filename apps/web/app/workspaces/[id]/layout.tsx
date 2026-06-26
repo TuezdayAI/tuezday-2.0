@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import type { Workspace } from "@tuezday/contracts";
 import { apiFetch, clearToken } from "@/lib/api";
+import { initAnalytics, identify } from "@/src/analytics";
 
 interface NavChild {
   label: string;
@@ -88,10 +89,23 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
         if (!cancelled) setWorkspace(ws);
       })
       .catch(() => {});
+      
+    apiFetch(`/workspaces/${id}/analytics-optout`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (!cancelled && data) {
+          initAnalytics(id, data.optOut);
+        }
+      })
+      .catch(() => {});
+
     apiFetch("/auth/me")
       .then((res) => (res.ok ? res.json() : null))
       .then((me) => {
-        if (!cancelled && me) setUserLabel(me.user.name || me.user.email);
+        if (!cancelled && me) {
+          setUserLabel(me.user.name || me.user.email);
+          identify(me.user.id);
+        }
       })
       .catch(() => {});
     return () => {
