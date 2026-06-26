@@ -40,6 +40,23 @@ function LoginForm() {
     }
   }
 
+  async function startGoogleAuth() {
+    setSubmitting(true);
+    setError(null);
+    try {
+      const nextUrl = searchParams.get("next") ?? "/";
+      const res = await fetch(`${API_URL}/auth/google/url?state=${encodeURIComponent(nextUrl)}`);
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(body?.message ?? `API returned ${res.status}`);
+      }
+      window.location.assign(body.url);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong starting Google auth");
+      setSubmitting(false);
+    }
+  }
+
   return (
     <>
       <header className="site-header">
@@ -98,8 +115,54 @@ function LoginForm() {
           </button>
         </form>
 
+        <div className="auth-divider">
+          <span>or</span>
+        </div>
+
+        <button 
+          className="google-auth-btn" 
+          onClick={startGoogleAuth} 
+          disabled={submitting}
+        >
+          <img src="https://www.google.com/favicon.ico" alt="Google" width="16" height="16" />
+          Continue with Google
+        </button>
+
         {error && <p className="error">{error}</p>}
       </main>
+      <style jsx>{`
+        .auth-divider {
+          display: flex;
+          align-items: center;
+          text-align: center;
+          margin: 1.5rem 0;
+          color: var(--color-text-dim);
+        }
+        .auth-divider::before,
+        .auth-divider::after {
+          content: "";
+          flex: 1;
+          border-bottom: 1px solid var(--color-border);
+        }
+        .auth-divider span {
+          padding: 0 10px;
+          font-size: 0.9rem;
+        }
+        .google-auth-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          gap: 10px;
+          width: 100%;
+          background: white;
+          color: #333;
+          border: 1px solid var(--color-border);
+          font-weight: 500;
+        }
+        .google-auth-btn:hover:not(:disabled) {
+          background: #f8f8f8;
+        }
+      `}</style>
     </>
   );
 }

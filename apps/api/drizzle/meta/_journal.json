@@ -183,6 +183,13 @@
       "when": 1782491426747,
       "tag": "0025_noisy_golden_guardian",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1782477427411,
+      "tag": "0024_fair_maximus",
+      "breakpoints": true
     }
   ]
 }

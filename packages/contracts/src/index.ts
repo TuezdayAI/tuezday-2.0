@@ -2799,9 +2799,27 @@ export const ANALYTICS_EVENTS = [
   "generation.created",
   "draft.approved",
   "draft.published",
-  "connection.connected",
+  "connector.connected",
+  "publication.started",
 ] as const;
 export type AnalyticsEvent = (typeof ANALYTICS_EVENTS)[number];
 
 export const setAnalyticsOptOutInputSchema = z.object({ optOut: z.boolean() });
 export type SetAnalyticsOptOutInput = z.infer<typeof setAnalyticsOptOutInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Google OAuth login (Sprint 36)
+// ---------------------------------------------------------------------------
+
+export const googleCallbackInputSchema = z.object({
+  code: z.string().min(1, "Missing authorization code"),
+});
+export type GoogleCallbackInput = z.infer<typeof googleCallbackInputSchema>;
+
+/** Internal: the verified identity we extract from Google's userinfo. */
+export interface GoogleProfile {
+  sub: string;
+  email: string;
+  emailVerified: boolean;
+  name: string;
+}

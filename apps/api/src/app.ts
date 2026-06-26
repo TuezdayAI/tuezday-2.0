@@ -103,7 +103,7 @@ export async function buildApp({
     return { status: "ok", db: "ok" };
   });
 
-  registerAuthRoutes(app, db, analytics);
+  registerAuthRoutes(app, db, fetcher, analytics);
   registerWorkspaceRoutes(app, db);
   registerTeamRoutes(app, db, mailer);
   app.register(registerOnboardingRoutes(db));

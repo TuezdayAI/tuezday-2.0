@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID, scryptSync, timingSafeEqual } from "node:crypto";
 import { eq } from "drizzle-orm";
-import type { LoginInput, RegisterInput, User } from "@tuezday/contracts";
+import type { LoginInput, RegisterInput, User, GoogleProfile } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { sessions, users, type UserRow } from "../db/schema";
 
@@ -75,6 +75,7 @@ export function registerAccount(db: Db, input: RegisterInput): { user: User; tok
     email: input.email,
     name: input.name,
     passwordHash: hashPassword(input.password),
+    googleSub: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -84,7 +85,7 @@ export function registerAccount(db: Db, input: RegisterInput): { user: User; tok
 
 export function login(db: Db, input: LoginInput): { user: User; token: string } | null {
   const row = getUserByEmail(db, input.email);
-  if (!row || !verifyPassword(input.password, row.passwordHash)) return null;
+  if (!row || !row.passwordHash || !verifyPassword(input.password, row.passwordHash)) return null;
   return { user: rowToUser(row), token: createSession(db, row.id) };
 }
 
@@ -102,4 +103,34 @@ export function sessionUser(db: Db, token: string): User | null {
 
 export function revokeSession(db: Db, token: string): void {
   db.delete(sessions).where(eq(sessions.tokenHash, hashToken(token))).run();
+}
+
+/**
+ * Sign a user in with Google. Link by verified email: reuse the existing
+ * account if one has this email (attaching the google_sub once), else create a
+ * password-less user. Always returns a fresh session — same shape as login().
+ */
+export function upsertGoogleUser(db: Db, profile: GoogleProfile): { user: User; token: string } {
+  const existing = getUserByEmail(db, profile.email);
+  if (existing) {
+    if (!existing.googleSub) {
+      db.update(users)
+        .set({ googleSub: profile.sub, updatedAt: Date.now() })
+        .where(eq(users.id, existing.id))
+        .run();
+    }
+    return { user: rowToUser(existing), token: createSession(db, existing.id) };
+  }
+  const now = Date.now();
+  const row: UserRow = {
+    id: randomUUID(),
+    email: profile.email,
+    name: profile.name,
+    passwordHash: null,
+    googleSub: profile.sub,
+    createdAt: now,
+    updatedAt: now,
+  };
+  db.insert(users).values(row).run();
+  return { user: rowToUser(row), token: createSession(db, row.id) };
 }

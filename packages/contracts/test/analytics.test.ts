@@ -8,7 +8,8 @@ describe("analytics contracts", () => {
       "generation.created",
       "draft.approved",
       "draft.published",
-      "connection.connected",
+      "connector.connected",
+      "publication.started",
     ]);
   });
   it("validates the opt-out toggle", () => {
