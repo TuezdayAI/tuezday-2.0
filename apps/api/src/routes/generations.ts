@@ -1,4 +1,6 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
+import type { AnalyticsSink } from "../analytics/sink";
+import { track } from "../analytics/track";
 import {
   DEFAULT_ANGLE_COUNT,
   generateAnglesInputSchema,
@@ -34,6 +36,7 @@ export function registerGenerationRoutes(
   db: Db,
   llm: LlmGateway,
   evidence: EvidenceStore,
+  analytics: AnalyticsSink,
 ): void {
   app.post<{ Params: { id: string } }>("/workspaces/:id/generate", async (request, reply) => {
     const workspace = workspaceOr404(db, request.params.id, reply);
@@ -168,6 +171,13 @@ export function registerGenerationRoutes(
         );
         setGenerationReview(db, request.params.id, generation.id, review);
       }
+
+      track(db, analytics, {
+        event: "generation.created",
+        distinctId: request.actor.userId!,
+        workspaceId: request.params.id,
+        properties: { taskType: parsed.data.taskType, channel: parsed.data.channel },
+      });
 
       return reply
         .status(201)

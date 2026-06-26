@@ -1,6 +1,8 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import { sql } from "drizzle-orm";
+import type { AnalyticsSink } from "./analytics/sink";
+import { createAnalyticsSink } from "./analytics/sink";
 import { registerAuthGuard } from "./auth/guard";
 import type { ConnectorFabric } from "./connectors/fabric";
 import { NangoFabric } from "./connectors/nango";
@@ -67,6 +69,8 @@ export interface BuildAppOptions {
    * access to every workspace. Defaults to TUEZDAY_WORKER_TOKEN.
    */
   workerToken?: string;
+  /** Product-analytics sink; defaults to PostHog-or-Noop from env. */
+  analytics?: AnalyticsSink;
 }
 
 export async function buildApp({
@@ -79,6 +83,7 @@ export async function buildApp({
   exporter = new CsvOutboundExporter(),
   mailer = createDefaultMailer(fetcher),
   workerToken = process.env.TUEZDAY_WORKER_TOKEN,
+  analytics = createAnalyticsSink(),
 }: BuildAppOptions): Promise<TuezdayApp> {
   const app = Fastify({ logger: false });
 
@@ -98,7 +103,7 @@ export async function buildApp({
     return { status: "ok", db: "ok" };
   });
 
-  registerAuthRoutes(app, db);
+  registerAuthRoutes(app, db, analytics);
   registerWorkspaceRoutes(app, db);
   registerTeamRoutes(app, db, mailer);
   app.register(registerOnboardingRoutes(db));
@@ -106,8 +111,8 @@ export async function buildApp({
   registerGuidanceRoutes(app, db);
   registerGenerationSettingsRoutes(app, db);
   registerPersonaRoutes(app, db, evidence);
-  registerGenerationRoutes(app, db, llm, evidence);
-  registerDraftRoutes(app, db, fetcher, llm);
+  registerGenerationRoutes(app, db, llm, evidence, analytics);
+  registerDraftRoutes(app, db, fetcher, llm, analytics);
   registerSignalRoutes(app, db, llm, evidence);
   registerDiscoveryRoutes(app, db, llm, fetcher, intent);
   registerCampaignRoutes(app, db);
@@ -116,13 +121,13 @@ export async function buildApp({
   registerLearningRoutes(app, db, llm, fetcher);
   registerOutboundRoutes(app, db, llm, evidence);
   registerLaunchRoutes(app, db, llm, evidence, connectors, fetcher, exporter);
-  registerConnectorRoutes(app, db, connectors, fetcher);
+  registerConnectorRoutes(app, db, connectors, fetcher, analytics);
   registerCrmRoutes(app, db, connectors, fetcher);
   registerAdsRoutes(app, db, connectors, fetcher);
   registerAdLaunchRoutes(app, db, connectors, fetcher);
   registerAdCreativeRoutes(app, db, llm, evidence);
   registerPrRoutes(app, db, llm, evidence);
-  registerPublicationRoutes(app, db, connectors, fetcher);
+  registerPublicationRoutes(app, db, connectors, fetcher, analytics);
   registerCadenceRoutes(app, db, connectors, fetcher);
   registerMailRoutes(app, db, mailer);
   registerAutomationRoutes(app, db, llm, evidence);

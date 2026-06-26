@@ -2788,3 +2788,20 @@ export const apiErrorSchema = z.object({
   message: z.string().optional(),
 });
 export type ApiError = z.infer<typeof apiErrorSchema>;
+
+// ---------------------------------------------------------------------------
+// Product analytics (internal — PostHog). NOT the native customer dashboard.
+// ---------------------------------------------------------------------------
+
+/** Curated product-funnel events. Non-PII payloads only (ids/enums/counts). */
+export const ANALYTICS_EVENTS = [
+  "user.registered",
+  "generation.created",
+  "draft.approved",
+  "draft.published",
+  "connection.connected",
+] as const;
+export type AnalyticsEvent = (typeof ANALYTICS_EVENTS)[number];
+
+export const setAnalyticsOptOutInputSchema = z.object({ optOut: z.boolean() });
+export type SetAnalyticsOptOutInput = z.infer<typeof setAnalyticsOptOutInputSchema>;
