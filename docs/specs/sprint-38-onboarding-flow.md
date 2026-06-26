@@ -72,7 +72,7 @@ Web dashboard home
 
 ### Modified files
 - `packages/contracts/src/index.ts` — `BRAIN_DOC_TEMPLATES`, `onboardingStepSchema`, `OnboardingStep`.
-- `apps/api/src/db/schema.ts` — `onboarding_dismissals` (userId, workspaceId, dismissedAt) **or** an `onboardingDismissedAt` column on `workspace_members`. (Recommended: a column on `workspace_members` — it already keys (workspace,user).)
+- `apps/api/src/db/schema.ts` — `onboarding_dismissals` (userId, workspaceId, dismissedAt) **or** a `onboardingDismissedAt` column on `workspace_members`. (Recommended: a column on `workspace_members` — it already keys (workspace,user).)
 - `apps/api/drizzle/00NN_onboarding.sql` — generated (next after `0022` on `main`; renumber on collision).
 - `apps/api/src/app.ts` — `registerOnboardingRoutes(app, db)`.
 - `apps/web/app/workspaces/[id]/page.tsx` (or the dashboard home) — mount the checklist; brain editor page — "Use a template".
@@ -156,4 +156,3 @@ Step completion derivation (in `onboarding.ts`):
 
 ## Progress log
 - 2026-06-26 — Spec drafted against `main` (HEAD Sprint 31) and **marked BLOCKED** per the roadmap's explicit deferral + CLAUDE.md "ask clarifying questions first." Verified reuse points: `ensureBrainDocs`/brain completeness (`services/brain.ts`, used by `createWorkspace`), `listConnections` (`services/connections.ts`), `CONNECTOR_PROVIDERS`, drafts/generations tables. Open questions enumerated for the founder. Branch not to be cut until those are answered.
-- 2026-06-27 — Re-saved after the untracked working-tree copy was lost during branch switches; content unchanged.

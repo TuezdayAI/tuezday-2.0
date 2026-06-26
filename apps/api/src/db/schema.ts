@@ -57,6 +57,7 @@ export const workspaceMembers = sqliteTable(
       .references(() => users.id, { onDelete: "cascade" }),
     role: text("role").notNull(),
     createdAt: integer("created_at").notNull(),
+    onboardingDismissedAt: integer("onboarding_dismissed_at"),
   },
   (t) => [uniqueIndex("workspace_members_workspace_user").on(t.workspaceId, t.userId)],
 );
@@ -1041,3 +1042,17 @@ export const sequenceRecipients = sqliteTable(
 );
 
 export type SequenceRecipientRow = typeof sequenceRecipients.$inferSelect;
+
+export const subscriptions = sqliteTable("subscriptions", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  plan: text("plan").notNull().default("free"),                 // PlanId
+  status: text("status").notNull().default("active"),           // active|past_due|canceled
+  stripeCustomerId: text("stripe_customer_id"),
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  currentPeriodEnd: integer("current_period_end"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (t) => [uniqueIndex("subscriptions_workspace").on(t.workspaceId)]);
+
+export type SubscriptionRow = typeof subscriptions.$inferSelect;

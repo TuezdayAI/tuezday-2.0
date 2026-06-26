@@ -1,0 +1,1 @@
+ALTER TABLE `workspace_members` ADD `onboarding_dismissed_at` integer;

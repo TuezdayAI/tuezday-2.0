@@ -225,4 +225,3 @@ try {
 
 ## Progress log
 - 2026-06-26 — Spec drafted against `main` (HEAD Sprint 31). Verified reuse points: `teams.ts` (`listMembers`/`createInvite`/`addMember`), `connections.ts` (`listConnections`), `mailer.ts` (`Mailer`/`ConsoleMailer`), `auth/guard.ts` `PUBLIC_ROUTES`, `WORKSPACE_ROLES = [owner, member]`. Highest migration on `main` = `0022_rich_bloodstorm.sql`. Sprint 34/35/36 unmerged and not required. Branch not yet cut (awaiting founder go-ahead).
-- 2026-06-27 — Re-saved after the untracked working-tree copy was lost during branch switches; content unchanged.

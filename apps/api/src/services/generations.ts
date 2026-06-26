@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte } from "drizzle-orm";
 import type {
   Channel,
   Generation,
@@ -108,4 +108,13 @@ export function rateGeneration(
     .where(eq(generations.id, generationId))
     .run();
   return rowToGeneration({ ...row, rating, ratedAt });
+}
+
+export function countGenerationsSince(db: Db, workspaceId: string, sinceMs: number): number {
+  return db
+    .select()
+    .from(generations)
+    .where(and(eq(generations.workspaceId, workspaceId), gte(generations.createdAt, sinceMs)))
+    .all()
+    .length;
 }

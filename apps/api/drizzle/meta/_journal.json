@@ -169,6 +169,20 @@
       "when": 1782423442296,
       "tag": "0023_fat_boomer",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1782491363442,
+      "tag": "0024_clever_reaper",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1782491426747,
+      "tag": "0025_noisy_golden_guardian",
+      "breakpoints": true
     }
   ]
 }

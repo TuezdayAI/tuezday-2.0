@@ -7,6 +7,7 @@ import {
 } from "@tuezday/contracts";
 import { composeAngleInstruction, resolveContext, type BrainContents } from "@tuezday/brain";
 import type { Db } from "../db";
+import { assertWithinLimit, EntitlementError, getUsage } from "../services/entitlements";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { generateAngles } from "../services/angles";
 import { getBrain } from "../services/brain";
@@ -104,6 +105,16 @@ export function registerGenerationRoutes(
           tokenBudget: parsed.data.tokenBudget,
           taskInstruction: composeAngleInstruction(parsed.data.taskType, parsed.data.channel, count),
         });
+
+        try {
+          assertWithinLimit(db, request.params.id, "monthlyGenerations", getUsage(db, request.params.id).monthlyGenerations);
+        } catch (err) {
+          if (err instanceof EntitlementError) {
+            return reply.status(402).send({ error: "upgrade_required", key: err.key, limit: err.limit });
+          }
+          throw err;
+        }
+
         const angleResult = await generateAngles(llm, angleResolved, count);
         angles = angleResult.angles;
         chosenAngle = angles[0];

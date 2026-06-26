@@ -175,4 +175,3 @@ export function verifyAndBurn(db: Db, raw: string): { workspaceId: string; draft
 
 ## Progress log
 - 2026-06-26 — Spec drafted against `main` (HEAD Sprint 31). Verified reuse points: draft state machine `applyDraftAction` + `APPROVAL_ACTIONS = [submit,edit,resubmit,approve,reject]` + `transitionTo` (`services/drafts.ts`, `contracts`), `Mailer`/`ConsoleMailer` (`mail/mailer.ts`), `auth/guard.ts` `PUBLIC_ROUTES`, drafts route action loop (`routes/drafts.ts`). Highest migration on `main` = `0022_rich_bloodstorm.sql`. Branch not yet cut (awaiting founder go-ahead).
-- 2026-06-27 — Re-saved after the untracked working-tree copy was lost during branch switches; content unchanged. (Note: this sprint has since been partially implemented on branch `sprint-39-notifications-mobile-approvals`.)
