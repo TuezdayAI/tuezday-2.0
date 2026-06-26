@@ -43,7 +43,7 @@ describe("notifications", () => {
 
       const list2 = listChannels(db, WS);
       expect(list2).toHaveLength(1);
-      expect(list2[0].enabled).toBe(false);
+      expect(list2[0]!.enabled).toBe(false);
 
       // Delete
       deleteChannel(db, WS, c1.id);
@@ -64,7 +64,7 @@ describe("notifications", () => {
       );
 
       expect(fetcher).toHaveBeenCalledTimes(1);
-      const [url, init] = fetcher.mock.calls[0];
+      const [url, init] = fetcher.mock.calls[0] as any[];
       expect(url).toBe("https://api.telegram.org/bottest-bot-token/sendMessage");
       expect(init.method).toBe("POST");
 
