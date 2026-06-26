@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "6c3e89e7-4f08-477b-ab80-dc1baee7c48a",
-  "prevId": "a25ad5eb-c1e8-4d00-a1de-a649fa5af205",
+  "id": "fd431729-40f7-4698-a8d6-cbab8de18141",
+  "prevId": "6c3e89e7-4f08-477b-ab80-dc1baee7c48a",
   "tables": {
     "ad_accounts": {
       "name": "ad_accounts",
@@ -4922,7 +4922,14 @@
           "name": "password_hash",
           "type": "text",
           "primaryKey": false,
-          "notNull": true,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "google_sub": {
+          "name": "google_sub",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
           "autoincrement": false
         },
         "created_at": {
@@ -4945,6 +4952,13 @@
           "name": "users_email",
           "columns": [
             "email"
+          ],
+          "isUnique": true
+        },
+        "users_google_sub": {
+          "name": "users_google_sub",
+          "columns": [
+            "google_sub"
           ],
           "isUnique": true
         }
@@ -5335,6 +5349,14 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "analytics_opt_out": {
+          "name": "analytics_opt_out",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": false
         },
         "created_at": {
           "name": "created_at",
