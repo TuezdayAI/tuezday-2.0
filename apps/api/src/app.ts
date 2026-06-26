@@ -1,5 +1,6 @@
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
+import rawBody from "fastify-raw-body";
 import { sql } from "drizzle-orm";
 import { registerAuthGuard } from "./auth/guard";
 import type { ConnectorFabric } from "./connectors/fabric";
@@ -42,6 +43,7 @@ import { registerSignalRoutes } from "./routes/signals";
 import { registerTeamRoutes } from "./routes/teams";
 import { registerWorkspaceRoutes } from "./routes/workspaces";
 import { registerOnboardingRoutes } from "./routes/onboarding";
+import { registerBillingRoutes, registerStripeWebhookRoute } from "./routes/billing";
 
 export type TuezdayApp = FastifyInstance;
 
@@ -88,6 +90,12 @@ export async function buildApp({
     methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   });
 
+  await app.register(rawBody, {
+    field: "rawBody",
+    global: false, // only populated for routes that ask for it
+    encoding: "utf8",
+  });
+
   // Must come before any routes: every route registered after this needs a
   // session (or the worker token), except the guard's public allowlist.
   registerAuthGuard(app, db, workerToken);
@@ -100,7 +108,9 @@ export async function buildApp({
   registerAuthRoutes(app, db);
   registerWorkspaceRoutes(app, db);
   registerTeamRoutes(app, db, mailer);
-  app.register(registerOnboardingRoutes(db));
+  registerOnboardingRoutes(app, db);
+  registerBillingRoutes(app, db);
+  registerStripeWebhookRoute(app, db);
   registerBrainRoutes(app, db);
   registerGuidanceRoutes(app, db);
   registerGenerationSettingsRoutes(app, db);
