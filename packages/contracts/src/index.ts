@@ -2645,6 +2645,38 @@ export const onboardingStepSchema = z.object({
 export type OnboardingStep = z.infer<typeof onboardingStepSchema>;
 
 // ---------------------------------------------------------------------------
+// Pricing plans & feature gating (Sprint 37)
+// ---------------------------------------------------------------------------
+
+export const PLAN_IDS = ["free", "pro", "scale"] as const;
+export type PlanId = (typeof PLAN_IDS)[number];
+
+export interface Entitlements {
+  seats: number;          // -1 = unlimited
+  connectors: number;
+  monthlyGenerations: number;
+  adSpendCapCents: number;
+}
+
+export const PLANS: Record<PlanId, { label: string; priceEnv: string | null; entitlements: Entitlements }> = {
+  free:  { label: "Free",  priceEnv: null,                entitlements: { seats: 1,  connectors: 1,  monthlyGenerations: 50,   adSpendCapCents: 0 } },
+  pro:   { label: "Pro",   priceEnv: "STRIPE_PRICE_PRO",  entitlements: { seats: 5,  connectors: 10, monthlyGenerations: 1000, adSpendCapCents: 500_00 } },
+  scale: { label: "Scale", priceEnv: "STRIPE_PRICE_SCALE",entitlements: { seats: -1, connectors: -1, monthlyGenerations: -1,   adSpendCapCents: -1 } },
+};
+
+export const entitlementUsageSchema = z.object({
+  seats: z.number().int(),
+  connectors: z.number().int(),
+  monthlyGenerations: z.number().int(),
+});
+export type EntitlementUsage = z.infer<typeof entitlementUsageSchema>;
+
+export const checkoutInputSchema = z.object({
+  plan: z.enum(["pro", "scale"]),
+});
+export type CheckoutInput = z.infer<typeof checkoutInputSchema>;
+
+// ---------------------------------------------------------------------------
 // API error shape
 // ---------------------------------------------------------------------------
 

@@ -41,6 +41,7 @@ import { registerPersonaRoutes } from "./routes/personas";
 import { registerSignalRoutes } from "./routes/signals";
 import { registerTeamRoutes } from "./routes/teams";
 import { registerWorkspaceRoutes } from "./routes/workspaces";
+import { registerOnboardingRoutes } from "./routes/onboarding";
 
 export type TuezdayApp = FastifyInstance;
 
@@ -99,6 +100,7 @@ export async function buildApp({
   registerAuthRoutes(app, db);
   registerWorkspaceRoutes(app, db);
   registerTeamRoutes(app, db, mailer);
+  app.register(registerOnboardingRoutes(db));
   registerBrainRoutes(app, db);
   registerGuidanceRoutes(app, db);
   registerGenerationSettingsRoutes(app, db);
