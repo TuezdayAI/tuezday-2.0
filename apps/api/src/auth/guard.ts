@@ -34,8 +34,8 @@ const PUBLIC_ROUTES = new Set([
   "GET /auth/google/url",
   "POST /auth/google/callback",
   "GET /health",
+  "POST /webhooks/stripe",
 ]);
-
 function bearerToken(authorization: string | undefined): string | null {
   if (!authorization) return null;
   const [scheme, token] = authorization.split(" ");

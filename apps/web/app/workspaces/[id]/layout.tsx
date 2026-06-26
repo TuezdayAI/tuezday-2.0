@@ -6,6 +6,7 @@ import { useParams, usePathname, useRouter } from "next/navigation";
 import type { Workspace } from "@tuezday/contracts";
 import { apiFetch, clearToken } from "@/lib/api";
 import { initAnalytics, identify } from "@/src/analytics";
+import { UpgradeModal } from "@/components/upgrade-modal";
 
 interface NavChild {
   label: string;
@@ -73,6 +74,7 @@ const NAV: NavItem[] = [
   },
   { label: "Integrations", path: "/connectors" },
   { label: "Team", path: "/team" },
+  { label: "Billing", path: "/billing" },
 ];
 
 export default function WorkspaceLayout({ children }: { children: React.ReactNode }) {
@@ -165,6 +167,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
         </div>
       </aside>
       <main className="ws-content">{children}</main>
+      <UpgradeModal />
     </div>
   );
 }
