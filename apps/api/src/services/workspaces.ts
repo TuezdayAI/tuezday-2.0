@@ -29,7 +29,16 @@ export function createWorkspace(
 }
 
 export function listWorkspaces(db: Db): Workspace[] {
-  return db.select().from(workspaces).orderBy(desc(workspaces.createdAt)).all();
+  return db
+    .select({
+      id: workspaces.id,
+      name: workspaces.name,
+      createdAt: workspaces.createdAt,
+      updatedAt: workspaces.updatedAt,
+    })
+    .from(workspaces)
+    .orderBy(desc(workspaces.createdAt))
+    .all();
 }
 
 /**
@@ -60,7 +69,16 @@ export function listWorkspacesForUser(db: Db, userId: string): Workspace[] {
 }
 
 export function getWorkspace(db: Db, id: string): Workspace | undefined {
-  return db.select().from(workspaces).where(eq(workspaces.id, id)).get();
+  return db
+    .select({
+      id: workspaces.id,
+      name: workspaces.name,
+      createdAt: workspaces.createdAt,
+      updatedAt: workspaces.updatedAt,
+    })
+    .from(workspaces)
+    .where(eq(workspaces.id, id))
+    .get();
 }
 
 export function getAnalyticsOptOut(db: Db, workspaceId: string): boolean {
