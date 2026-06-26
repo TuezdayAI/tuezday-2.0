@@ -9,7 +9,7 @@ CREATE TABLE `__new_users` (
 	`updated_at` integer NOT NULL
 );
 --> statement-breakpoint
-INSERT INTO `__new_users`("id", "email", "name", "password_hash", "google_sub", "created_at", "updated_at") SELECT "id", "email", "name", "password_hash", "google_sub", "created_at", "updated_at" FROM `users`;--> statement-breakpoint
+INSERT INTO `__new_users`("id", "email", "name", "password_hash", "google_sub", "created_at", "updated_at") SELECT "id", "email", "name", "password_hash", NULL, "created_at", "updated_at" FROM `users`;--> statement-breakpoint
 DROP TABLE `users`;--> statement-breakpoint
 ALTER TABLE `__new_users` RENAME TO `users`;--> statement-breakpoint
 PRAGMA foreign_keys=ON;--> statement-breakpoint

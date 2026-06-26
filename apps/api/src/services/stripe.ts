@@ -7,7 +7,7 @@ export function getStripe(): Stripe | undefined {
   if (_stripe) return _stripe;
   if (!process.env.STRIPE_SECRET_KEY) return undefined;
   _stripe = new Stripe(process.env.STRIPE_SECRET_KEY, {
-    apiVersion: "2023-10-16",
+    apiVersion: "2026-06-24.dahlia",
     appInfo: { name: "Tuezday", version: "2.0.1" },
   });
   return _stripe;

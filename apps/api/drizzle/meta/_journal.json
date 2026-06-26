@@ -185,14 +185,7 @@
       "breakpoints": true
     },
     {
-      "idx": 24,
-      "version": "6",
-      "when": 1782477427411,
-      "tag": "0024_fair_maximus",
-      "breakpoints": true
-    },
-    {
-      "idx": 25,
+      "idx": 26,
       "version": "6",
       "when": 1782511033238,
       "tag": "0025_cheerful_william_stryker",

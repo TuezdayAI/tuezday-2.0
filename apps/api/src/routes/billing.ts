@@ -60,7 +60,7 @@ export function registerBillingRoutes(app: FastifyInstance, db: Db): void {
       );
       return reply.send({ url });
     } catch (err) {
-      app.log.error("Stripe checkout error:", err);
+      app.log.error(err, "Stripe checkout error:");
       return reply.status(502).send({ error: "checkout_failed", message: err instanceof Error ? err.message : String(err) });
     }
   });
