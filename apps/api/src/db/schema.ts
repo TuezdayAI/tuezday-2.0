@@ -20,11 +20,12 @@ export const users = sqliteTable(
     email: text("email").notNull(),
     name: text("name").notNull().default(""),
     // Format: scrypt$<salt-hex>$<hash-hex> — see services/auth.ts.
-    passwordHash: text("password_hash").notNull(),
+    passwordHash: text("password_hash"),
+    googleSub: text("google_sub"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (t) => [uniqueIndex("users_email").on(t.email)],
+  (t) => [uniqueIndex("users_email").on(t.email), uniqueIndex("users_google_sub").on(t.googleSub)],
 );
 
 export type UserRow = typeof users.$inferSelect;

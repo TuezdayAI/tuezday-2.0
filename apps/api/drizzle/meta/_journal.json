@@ -169,6 +169,13 @@
       "when": 1782433678641,
       "tag": "0023_charming_true_believers",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1782477427411,
+      "tag": "0024_fair_maximus",
+      "breakpoints": true
     }
   ]
 }

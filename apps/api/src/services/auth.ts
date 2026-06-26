@@ -75,6 +75,7 @@ export function registerAccount(db: Db, input: RegisterInput): { user: User; tok
     email: input.email,
     name: input.name,
     passwordHash: hashPassword(input.password),
+    googleSub: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -84,7 +85,7 @@ export function registerAccount(db: Db, input: RegisterInput): { user: User; tok
 
 export function login(db: Db, input: LoginInput): { user: User; token: string } | null {
   const row = getUserByEmail(db, input.email);
-  if (!row || !verifyPassword(input.password, row.passwordHash)) return null;
+  if (!row || !row.passwordHash || !verifyPassword(input.password, row.passwordHash)) return null;
   return { user: rowToUser(row), token: createSession(db, row.id) };
 }
 
