@@ -1058,3 +1058,37 @@ export const subscriptions = sqliteTable("subscriptions", {
 }, (t) => [uniqueIndex("subscriptions_workspace").on(t.workspaceId)]);
 
 export type SubscriptionRow = typeof subscriptions.$inferSelect;
+
+// Per-workspace notification channel config (Sprint 39). Each row represents a
+// Telegram chat or email address the founder configured for approval notifications.
+export const notificationChannels = sqliteTable("notification_channels", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  type: text("type").notNull(),          // "telegram" | "email"
+  target: text("target").notNull(),      // telegram chat id | email address
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type NotificationChannelRow = typeof notificationChannels.$inferSelect;
+
+// Signed, one-time-use approval action tokens (Sprint 39). A button tap or
+// email link carries a raw token; we store the sha256 and burn it on first use.
+export const approvalActionTokens = sqliteTable(
+  "approval_action_tokens",
+  {
+    id: text("id").primaryKey(),
+    tokenHash: text("token_hash").notNull(),     // sha256 of the raw token
+    workspaceId: text("workspace_id").notNull(),
+    draftId: text("draft_id").notNull(),
+    action: text("action").notNull(),            // "approve" | "reject"
+    expiresAt: integer("expires_at").notNull(),
+    usedAt: integer("used_at"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("approval_action_tokens_hash").on(t.tokenHash)],
+);
+
+export type ApprovalActionTokenRow = typeof approvalActionTokens.$inferSelect;

@@ -2823,3 +2823,17 @@ export interface GoogleProfile {
   emailVerified: boolean;
   name: string;
 }
+
+// ---------------------------------------------------------------------------
+// Notification channels (Sprint 39)
+// ---------------------------------------------------------------------------
+
+export const NOTIFICATION_CHANNEL_TYPES = ["telegram", "email"] as const;
+export type NotificationChannelType = (typeof NOTIFICATION_CHANNEL_TYPES)[number];
+
+export const createNotificationChannelInputSchema = z.object({
+  type: z.enum(NOTIFICATION_CHANNEL_TYPES),
+  target: z.string().trim().min(1, "Target is required"),
+  enabled: z.boolean().default(true),
+});
+export type CreateNotificationChannelInput = z.infer<typeof createNotificationChannelInputSchema>;
