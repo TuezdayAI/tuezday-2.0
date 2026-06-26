@@ -2615,6 +2615,36 @@ export const launchDetailSchema = z.object({
 export type LaunchDetail = z.infer<typeof launchDetailSchema>;
 
 // ---------------------------------------------------------------------------
+// Onboarding (Sprint 38)
+// ---------------------------------------------------------------------------
+
+export const BRAIN_DOC_TEMPLATES = [
+  {
+    id: "b2b-saas-founder",
+    label: "B2B SaaS founder",
+    docs: { soul: "...", icp: "...", voice: "...", history: "", now: "" },
+  },
+  {
+    id: "agency",
+    label: "Agency",
+    docs: { soul: "...", icp: "...", voice: "...", history: "", now: "" },
+  },
+  {
+    id: "dev-tool",
+    label: "Dev-tool",
+    docs: { soul: "...", icp: "...", voice: "...", history: "", now: "" },
+  },
+] as const;
+
+export const onboardingStepSchema = z.object({
+  key: z.enum(["workspace", "brain", "connect", "generate", "approve"]),
+  label: z.string(),
+  done: z.boolean(),
+  cta: z.string(),
+});
+export type OnboardingStep = z.infer<typeof onboardingStepSchema>;
+
+// ---------------------------------------------------------------------------
 // API error shape
 // ---------------------------------------------------------------------------
 
