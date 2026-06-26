@@ -14,6 +14,7 @@ import type {
   Workspace,
 } from "@tuezday/contracts";
 import type { BrainScore } from "@tuezday/brain";
+import { OnboardingChecklist } from "./_components/onboarding-checklist";
 
 interface BrainView {
   completeness: BrainScore;
@@ -91,41 +92,6 @@ export default function WorkspaceHomePage() {
   const { workspace, brain, personas, generations, drafts, newSignals, syntheses, campaigns } =
     data;
 
-  const brainFilled =
-    brain.completeness.percent >= 60 ||
-    brain.completeness.docs.every((d) => d.status !== "empty");
-  const hasVoice = personas.length > 0;
-  const hasDraft = generations.length > 0;
-  const hasDecision = drafts.some((d) => d.state !== "pending_review" && d.state !== "draft");
-
-  const steps = [
-    {
-      done: brainFilled,
-      title: "Teach Tuezday your company",
-      hint: `Fill in the five brain docs — ${brain.completeness.percent}% complete`,
-      href: `/workspaces/${id}/brain`,
-    },
-    {
-      done: hasVoice,
-      title: "Add a voice",
-      hint: "Create a persona Tuezday can write as",
-      href: `/workspaces/${id}/resolver`,
-    },
-    {
-      done: hasDraft,
-      title: "Generate your first draft",
-      hint: "Try the Playground — see exactly what Tuezday used",
-      href: `/workspaces/${id}/sandbox`,
-    },
-    {
-      done: hasDecision,
-      title: "Make your first decision",
-      hint: "Approve, edit, or reject a draft in Review",
-      href: `/workspaces/${id}/approvals`,
-    },
-  ];
-  const setupDone = steps.every((s) => s.done);
-
   const pendingReview = drafts.filter((d) => d.state === "pending_review").length;
   const proposedUpdates = syntheses.filter((s) => s.status === "proposed").length;
   const activeCampaigns = campaigns.filter((c) => c.status === "active").length;
@@ -141,28 +107,7 @@ export default function WorkspaceHomePage() {
         </div>
       </div>
 
-      {!setupDone && (
-        <section className="panel">
-          <h2>Get set up</h2>
-          <ul className="checklist">
-            {steps.map((step) => (
-              <li key={step.title}>
-                <Link
-                  className={`checklist-item ${step.done ? "done" : ""}`}
-                  href={step.href}
-                >
-                  <span className="check-dot">{step.done ? "✓" : ""}</span>
-                  <span>
-                    <span className="step-title">{step.title}</span>
-                    <br />
-                    <span className="step-hint">{step.hint}</span>
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
+      <OnboardingChecklist workspaceId={workspace.id} />
 
       <div className="home-grid">
         <Link
