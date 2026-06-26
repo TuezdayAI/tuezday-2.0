@@ -62,3 +62,19 @@ export function listWorkspacesForUser(db: Db, userId: string): Workspace[] {
 export function getWorkspace(db: Db, id: string): Workspace | undefined {
   return db.select().from(workspaces).where(eq(workspaces.id, id)).get();
 }
+
+export function getAnalyticsOptOut(db: Db, workspaceId: string): boolean {
+  const row = db
+    .select({ analyticsOptOut: workspaces.analyticsOptOut })
+    .from(workspaces)
+    .where(eq(workspaces.id, workspaceId))
+    .get();
+  return row?.analyticsOptOut ?? false;
+}
+
+export function setAnalyticsOptOut(db: Db, workspaceId: string, optOut: boolean): void {
+  db.update(workspaces)
+    .set({ analyticsOptOut: optOut, updatedAt: Date.now() })
+    .where(eq(workspaces.id, workspaceId))
+    .run();
+}

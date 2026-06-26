@@ -1,0 +1,1 @@
+ALTER TABLE `workspaces` ADD `analytics_opt_out` integer DEFAULT false NOT NULL;
