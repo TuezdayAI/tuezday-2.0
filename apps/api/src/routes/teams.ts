@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { createInviteInputSchema } from "@tuezday/contracts";
 import type { Db } from "../db";
+import { assertWithinLimit, EntitlementError, getUsage } from "../services/entitlements";
 import { appBaseUrl, type Mailer } from "../mail/mailer";
 import { getUser } from "../services/auth";
 import {
@@ -46,6 +47,16 @@ export function registerTeamRoutes(app: FastifyInstance, db: Db, mailer: Mailer)
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/invites", async (request, reply) => {
     if (!ownerOr403(request, reply)) return reply;
+
+    try {
+      assertWithinLimit(db, request.params.id, "seats", getUsage(db, request.params.id).seats);
+    } catch (err) {
+      if (err instanceof EntitlementError) {
+        return reply.status(402).send({ error: "upgrade_required", key: err.key, limit: err.limit });
+      }
+      throw err;
+    }
+
     const parsed = createInviteInputSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({

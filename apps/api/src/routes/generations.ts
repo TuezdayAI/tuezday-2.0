@@ -7,6 +7,7 @@ import {
 } from "@tuezday/contracts";
 import { composeAngleInstruction, resolveContext, type BrainContents } from "@tuezday/brain";
 import type { Db } from "../db";
+import { assertWithinLimit, EntitlementError, getUsage } from "../services/entitlements";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { generateAngles } from "../services/angles";
 import { getBrain } from "../services/brain";
@@ -37,6 +38,16 @@ export function registerGenerationRoutes(
   app.post<{ Params: { id: string } }>("/workspaces/:id/generate", async (request, reply) => {
     const workspace = workspaceOr404(db, request.params.id, reply);
     if (!workspace) return reply;
+
+    try {
+      assertWithinLimit(db, request.params.id, "monthlyGenerations", getUsage(db, request.params.id).monthlyGenerations);
+    } catch (err) {
+      if (err instanceof EntitlementError) {
+        return reply.status(402).send({ error: "upgrade_required", key: err.key, limit: err.limit });
+      }
+      throw err;
+    }
+
     const parsed = generateRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({

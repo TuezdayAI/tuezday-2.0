@@ -5,6 +5,7 @@ import {
   createWebhookInputSchema,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
+import { assertWithinLimit, EntitlementError, getUsage } from "../services/entitlements";
 import { ConnectorFabricError, type ConnectorFabric } from "../connectors/fabric";
 import {
   connectProvider,
@@ -65,6 +66,16 @@ export function registerConnectorRoutes(
     "/workspaces/:id/connectors/:providerKey/oauth/session",
     async (request, reply) => {
       if (!workspaceOr404(db, request.params.id, reply)) return reply;
+
+      try {
+        assertWithinLimit(db, request.params.id, "connectors", getUsage(db, request.params.id).connectors);
+      } catch (err) {
+        if (err instanceof EntitlementError) {
+          return reply.status(402).send({ error: "upgrade_required", key: err.key, limit: err.limit });
+        }
+        throw err;
+      }
+
       const provider = providerByKey(request.params.providerKey);
       if (!provider) return reply.status(404).send({ error: "provider_not_found" });
       if (provider.authMode !== "oauth") {
@@ -144,6 +155,16 @@ export function registerConnectorRoutes(
     "/workspaces/:id/connectors/:providerKey/connect",
     async (request, reply) => {
       if (!workspaceOr404(db, request.params.id, reply)) return reply;
+
+      try {
+        assertWithinLimit(db, request.params.id, "connectors", getUsage(db, request.params.id).connectors);
+      } catch (err) {
+        if (err instanceof EntitlementError) {
+          return reply.status(402).send({ error: "upgrade_required", key: err.key, limit: err.limit });
+        }
+        throw err;
+      }
+
       const provider = providerByKey(request.params.providerKey);
       if (!provider) return reply.status(404).send({ error: "provider_not_found" });
       if (provider.authMode === "oauth") {
