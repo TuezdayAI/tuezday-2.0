@@ -68,7 +68,44 @@ export class R2REvidenceStore implements EvidenceStore {
     }
     const documentId = body.results?.document_id ?? body.results?.documentId;
     if (!documentId) throw new EvidenceStoreError("R2R did not return a document id.");
+    await this.attachDocument(input.collectionId, documentId);
     return documentId;
+  }
+
+  /**
+   * Create an R2R collection and return its id. Idempotency (one collection
+   * per workspace) is owned by Tuezday via the evidence_collections table, so
+   * this performs a plain create.
+   */
+  async createCollection(name: string): Promise<string> {
+    const res = await this.fetcher(`${this.baseUrl}/v3/collections`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, description: `Tuezday evidence corpus (${name})` }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const body = (await res.json().catch(() => ({}))) as {
+      results?: { id?: string; collection_id?: string; collectionId?: string };
+    };
+    if (!res.ok) throw new EvidenceStoreError(`R2R collection create failed (${res.status}).`);
+    const id = body.results?.id ?? body.results?.collection_id ?? body.results?.collectionId;
+    if (!id) throw new EvidenceStoreError("R2R did not return a collection id.");
+    return id;
+  }
+
+  /**
+   * Attach a document to a collection. A duplicate attach (the document is
+   * already a member) is treated as success so backfills and re-runs are
+   * idempotent.
+   */
+  async attachDocument(collectionId: string, documentId: string): Promise<void> {
+    const res = await this.fetcher(
+      `${this.baseUrl}/v3/collections/${collectionId}/documents/${documentId}`,
+      { method: "POST", signal: AbortSignal.timeout(30_000) },
+    );
+    if (!res.ok && res.status !== 409) {
+      throw new EvidenceStoreError(`R2R collection attach failed (${res.status}).`);
+    }
   }
 
   async deleteDocument(documentId: string): Promise<void> {
@@ -81,8 +118,7 @@ export class R2REvidenceStore implements EvidenceStore {
     }
   }
 
-  async search(query: string, documentIds: string[], limit: number): Promise<StoreSearchResult[]> {
-    if (documentIds.length === 0) return [];
+  async search(query: string, collectionId: string, limit: number): Promise<StoreSearchResult[]> {
     const res = await this.fetcher(`${this.baseUrl}/v3/retrieval/search`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -90,7 +126,7 @@ export class R2REvidenceStore implements EvidenceStore {
         query,
         search_settings: {
           limit,
-          filters: { document_id: { $in: documentIds } },
+          filters: { collection_ids: { $overlap: [collectionId] } },
         },
       }),
       signal: AbortSignal.timeout(30_000),

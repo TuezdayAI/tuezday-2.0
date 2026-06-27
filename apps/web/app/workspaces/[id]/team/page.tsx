@@ -1,5 +1,8 @@
 "use client";
 
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import type { WorkspaceInvite, WorkspaceMember } from "@tuezday/contracts";
@@ -127,12 +130,12 @@ export default function TeamPage() {
       </div>
 
       {error && <p className="error">{error}</p>}
-      {notice && <p className="empty">{notice}</p>}
+      {notice && <EmptyState description={<>{notice}</>} />}
 
       <section className="panel">
         <h2>Members</h2>
         {members === null ? (
-          <p className="empty">Loading…</p>
+          <EmptyState description="Loading…" />
         ) : (
           <ul className="checklist">
             {members.map((m) => (

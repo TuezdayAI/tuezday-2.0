@@ -1,5 +1,8 @@
 "use client";
 
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { API_URL, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useState } from "react";
@@ -15,6 +18,7 @@ import {
   type TaskType,
   type Workspace,
 } from "@tuezday/contracts";
+import { WhyThisOutput } from "@/components/why-this-output";
 
 const TASK_LABELS: Record<TaskType, string> = {
   linkedin_post: "LinkedIn post",
@@ -105,6 +109,21 @@ export default function ApprovalsPage() {
     }
   }
 
+  async function rerunReview(draftId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await apiFetch(`/workspaces/${id}/drafts/${draftId}/review`, { method: "POST" });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message ?? `API returned ${res.status}`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to re-run review");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function loadHistory(draftId: string) {
     const res = await apiFetch(`/workspaces/${id}/drafts/${draftId}`);
     if (res.ok) {
@@ -141,7 +160,7 @@ export default function ApprovalsPage() {
     );
   }
 
-  if (!workspace) return <p className="empty">Loading…</p>;
+  if (!workspace) return <EmptyState description="Loading…" />;
 
   return (
     <>
@@ -170,11 +189,9 @@ export default function ApprovalsPage() {
       {error && <p className="error">{error}</p>}
 
       {visible.length === 0 ? (
-        <p className="empty">
-          {drafts.length === 0
+        <EmptyState description={<>{drafts.length === 0
             ? "The queue is empty. Generate something in the sandbox and send it here."
-            : "Nothing in this state."}
-        </p>
+            : "Nothing in this state."}</>} />
       ) : (
         <ul className="section-list">
           {visible.map((d) => {
@@ -236,6 +253,7 @@ export default function ApprovalsPage() {
                         <pre className="section-content">{d.originalContent}</pre>
                       </details>
                     )}
+                    <WhyThisOutput review={d.review} />
                   </>
                 )}
 
@@ -304,6 +322,13 @@ export default function ApprovalsPage() {
                         )}
                       </>
                     )}
+                    <button
+                      className="button-secondary"
+                      disabled={busy}
+                      onClick={() => rerunReview(d.id)}
+                    >
+                      ⟳ {d.review ? "Re-run review" : "Run review"}
+                    </button>
                     <button className="link-button" onClick={() => toggleHistory(d.id)}>
                       {historyId === d.id ? "hide history" : "history"}
                     </button>

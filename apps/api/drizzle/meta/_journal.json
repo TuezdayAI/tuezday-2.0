@@ -131,43 +131,64 @@
     {
       "idx": 18,
       "version": "6",
-      "when": 1781854951165,
-      "tag": "0018_demonic_tempest",
+      "when": 1781690350107,
+      "tag": "0018_flat_the_spike",
       "breakpoints": true
     },
     {
       "idx": 19,
       "version": "6",
-      "when": 1782106404581,
-      "tag": "0019_fat_the_renegades",
+      "when": 1782286989580,
+      "tag": "0019_narrow_iceman",
       "breakpoints": true
     },
     {
       "idx": 20,
       "version": "6",
-      "when": 1782122808143,
-      "tag": "0020_lush_black_tom",
+      "when": 1782287391671,
+      "tag": "0020_flaky_tattoo",
       "breakpoints": true
     },
     {
       "idx": 21,
       "version": "6",
-      "when": 1782123393608,
-      "tag": "0021_tired_lightspeed",
+      "when": 1782288213269,
+      "tag": "0021_huge_captain_flint",
       "breakpoints": true
     },
     {
       "idx": 22,
       "version": "6",
-      "when": 1782131381875,
-      "tag": "0022_large_expediter",
+      "when": 1782393944749,
+      "tag": "0022_rich_bloodstorm",
       "breakpoints": true
     },
     {
       "idx": 23,
       "version": "6",
-      "when": 1782159687492,
-      "tag": "0023_lucky_harry_osborn",
+      "when": 1782423442296,
+      "tag": "0023_fat_boomer",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1782491363442,
+      "tag": "0024_clever_reaper",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1782491426747,
+      "tag": "0025_noisy_golden_guardian",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1782511033238,
+      "tag": "0025_cheerful_william_stryker",
       "breakpoints": true
     }
   ]

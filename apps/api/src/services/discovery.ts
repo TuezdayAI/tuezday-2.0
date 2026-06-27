@@ -20,8 +20,10 @@ import {
   type DiscoverySourceRow,
 } from "../db/schema";
 import { fetchSourceItems, isLiveSourceType, type Fetcher } from "../discovery/adapters";
+import type { IntentProvider } from "../discovery/intent";
 import type { LlmGateway } from "../llm/gateway";
 import { getBrain } from "./brain";
+import { listCampaigns } from "./campaigns";
 import { listPersonas } from "./personas";
 import { createSignal } from "./signals";
 
@@ -54,6 +56,22 @@ function defaultSourceName(input: CreateDiscoverySourceInput): string {
       return input.config.subreddit
         ? `Reddit: r/${input.config.subreddit}${input.config.query ? ` (${input.config.query})` : ""}`
         : `Reddit: ${input.config.query}`;
+    case "hacker_news":
+      return `Hacker News: ${input.config.query}`;
+    case "youtube":
+      return `YouTube: ${input.config.channelId}`;
+    case "podcast":
+      return `Podcast: ${input.config.feedUrl}`;
+    case "google_trends":
+      return `Google Trends: ${input.config.geo ?? "US"}`;
+    case "funding_news":
+      return `Funding news: ${input.config.query}`;
+    case "g2":
+      return `G2 reviews: ${input.config.query}`;
+    case "capterra":
+      return `Capterra reviews: ${input.config.query}`;
+    case "intent":
+      return `Intent: ${input.config.query}`;
     case "x":
       return `X: ${input.config.query}`;
     case "linkedin":
@@ -175,6 +193,14 @@ const SIGNAL_SOURCE_BY_TYPE: Record<DiscoverySourceType, SignalSource> = {
   rss: "rss",
   x: "x",
   linkedin: "linkedin",
+  hacker_news: "hacker_news",
+  youtube: "youtube",
+  podcast: "podcast",
+  google_trends: "google_trends",
+  funding_news: "funding",
+  g2: "g2",
+  capterra: "capterra",
+  intent: "intent",
 };
 
 export class ItemNotTriagableError extends Error {
@@ -195,6 +221,8 @@ export function acceptDiscoveredItem(
     content: item.summary ? `${item.title}\n\n${item.summary}` : item.title,
     source: source ? SIGNAL_SOURCE_BY_TYPE[source.type] : "other",
     sourceUrl: item.url || undefined,
+    suggestedPersonaId: item.suggestedPersonaId ?? undefined,
+    suggestedCampaignId: item.suggestedCampaignId ?? undefined,
   });
   db.update(discoveredItems)
     .set({ status: "accepted", signalId: signal.id })
@@ -241,6 +269,7 @@ interface ScoreEntry {
   index: number;
   score: number;
   personaId: string | null;
+  campaignId: string | null;
   reason: string;
 }
 
@@ -281,6 +310,12 @@ async function scoreUnscoredItems(
   const personaList =
     personas.map((p) => `- ${p.id}: ${p.name}${p.description ? ` (${p.description})` : ""}`).join("\n") ||
     "(no personas yet)";
+  const campaigns = listCampaigns(db, workspaceId).filter((c) => c.status === "active");
+  const campaignIds = new Set(campaigns.map((c) => c.id));
+  const campaignList =
+    campaigns
+      .map((c) => `- ${c.id}: ${c.name}${c.objective ? ` — ${c.objective.slice(0, 120)}` : ""}`)
+      .join("\n") || "(no campaigns yet)";
 
   let scoredCount = 0;
   for (let offset = 0; offset < unscored.length; offset += SCORE_BATCH_SIZE) {
@@ -296,9 +331,10 @@ async function scoreUnscoredItems(
       `You are the judgment layer of ${workspaceName}'s GTM brain. Discovered items from the outside world need relevance scoring — the brain judges and routes signals, it does not invent them.`,
       `COMPANY BRAIN DIGEST:\n${digest || "(brain not filled yet)"}`,
       `PERSONAS (id: name):\n${personaList}`,
+      `CAMPAIGNS (id: name — objective):\n${campaignList}`,
       `DISCOVERED ITEMS:\n${itemsBlock}`,
-      `For each item, judge how relevant it is as a GTM signal for this company (0 = noise, 100 = must act on this), and which persona (by id) should respond, or null if none fits.`,
-      `Respond with ONLY a JSON array, one entry per item: [{"index": <item number>, "score": <0-100>, "personaId": <id or null>, "reason": "<one short sentence>"}]`,
+      `For each item, judge how relevant it is as a GTM signal for this company (0 = noise, 100 = must act on this), which persona (by id) should respond (or null), and which campaign (by id) it best belongs to (or null if none fits).`,
+      `Respond with ONLY a JSON array, one entry per item: [{"index": <item number>, "score": <0-100>, "personaId": <id or null>, "campaignId": <id or null>, "reason": "<one short sentence>"}]`,
     ].join("\n\n");
 
     try {
@@ -314,10 +350,15 @@ async function scoreUnscoredItems(
           typeof entry.personaId === "string" && personaIds.has(entry.personaId)
             ? entry.personaId
             : null;
+        const campaignId =
+          typeof entry.campaignId === "string" && campaignIds.has(entry.campaignId)
+            ? entry.campaignId
+            : null;
         db.update(discoveredItems)
           .set({
             score: Math.max(0, Math.min(100, Math.round(entry.score))),
             suggestedPersonaId: personaId,
+            suggestedCampaignId: campaignId,
             scoreReason: typeof entry.reason === "string" ? entry.reason.slice(0, 500) : null,
           })
           .where(eq(discoveredItems.id, item.id))
@@ -336,17 +377,24 @@ export async function runDiscovery(
   db: Db,
   llm: LlmGateway,
   fetcher: Fetcher,
+  intentProvider: IntentProvider,
   workspaceId: string,
   workspaceName: string,
 ): Promise<DiscoveryRunResult> {
   const sources = listDiscoverySources(db, workspaceId).filter(
-    (s) => s.enabled && s.status !== "needs_api_key",
+    (s) =>
+      s.enabled &&
+      (s.status !== "needs_api_key" ||
+        (s.type === "intent" && intentProvider.isConfigured())),
   );
 
   const results: SourceRunResult[] = [];
   for (const source of sources) {
     try {
-      const fetched = await fetchSourceItems(source.type, source.config, fetcher);
+      const fetched =
+        source.type === "intent"
+          ? await intentProvider.fetchSignals(source.config)
+          : await fetchSourceItems(source.type, source.config, fetcher);
       const existing = new Set(
         fetched.length
           ? db
@@ -380,6 +428,7 @@ export async function runDiscovery(
             publishedAt: item.publishedAt,
             score: null,
             suggestedPersonaId: null,
+            suggestedCampaignId: null,
             scoreReason: null,
             status: "new",
             signalId: null,

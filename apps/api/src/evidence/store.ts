@@ -10,6 +10,8 @@ export interface EvidenceStoreHealth {
 export interface AddDocumentInput {
   title: string;
   content: string;
+  /** The R2R collection (one per workspace) the document is ingested into. */
+  collectionId: string;
   metadata: Record<string, string>;
 }
 
@@ -21,11 +23,19 @@ export interface StoreSearchResult {
 
 export interface EvidenceStore {
   health(): Promise<EvidenceStoreHealth>;
-  /** Returns the store's document id. */
+  /**
+   * Create a collection in the store and return its id. Tuezday owns the
+   * workspace→collection mapping (and thus idempotency); the store only owns
+   * the R2R side of the operation.
+   */
+  createCollection(name: string): Promise<string>;
+  /** Ingest a document into a collection. Returns the store's document id. */
   addDocument(input: AddDocumentInput): Promise<string>;
+  /** Attach an already-ingested document to a collection (used by backfill). */
+  attachDocument(collectionId: string, documentId: string): Promise<void>;
   deleteDocument(documentId: string): Promise<void>;
-  /** Search restricted to the given store document ids (workspace scoping). */
-  search(query: string, documentIds: string[], limit: number): Promise<StoreSearchResult[]>;
+  /** Search restricted to a single collection (workspace scoping). */
+  search(query: string, collectionId: string, limit: number): Promise<StoreSearchResult[]>;
 }
 
 export class EvidenceStoreError extends Error {

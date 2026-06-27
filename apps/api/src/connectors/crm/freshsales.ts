@@ -1,3 +1,4 @@
+import type { CrmSyncFilter, CrmView } from "@tuezday/contracts";
 import { ConnectorFabricError, type ConnectorFabric, type ProxyJsonResult } from "../fabric";
 import type { CrmAdapter, CrmContactRecord } from "./index";
 
@@ -26,6 +27,7 @@ interface RawContact {
   emails?: Array<{ value?: string; is_primary?: boolean }>;
   job_title?: string;
   sales_accounts?: Array<{ name?: string; is_primary?: boolean }>;
+  updated_at?: string;
 }
 
 function primaryEmail(contact: RawContact): string {
@@ -76,18 +78,27 @@ export class FreshsalesAdapter implements CrmAdapter {
     return result.json;
   }
 
-  private async allContactsViewId(): Promise<string> {
+  async listViews(): Promise<CrmView[]> {
     const body = (await this.request("GET", "/api/contacts/filters")) as {
       filters?: Array<{ id: number | string; name?: string }>;
     };
-    const filters = body.filters ?? [];
-    const all = filters.find((f) => f.name?.toLowerCase() === "all contacts") ?? filters[0];
-    if (!all) throw new ConnectorFabricError("Freshsales returned no contact views to sync from.");
-    return String(all.id);
+    return (body.filters ?? []).map((f) => ({ id: String(f.id), name: f.name ?? `View ${f.id}` }));
   }
 
-  async listContacts(): Promise<{ contacts: CrmContactRecord[]; truncated: boolean }> {
-    const viewId = await this.allContactsViewId();
+  /** The chosen view, or the "All Contacts" default. */
+  private async resolveViewId(filter?: CrmSyncFilter): Promise<string> {
+    if (filter?.viewId) return filter.viewId;
+    const views = await this.listViews();
+    const all = views.find((v) => v.name.toLowerCase() === "all contacts") ?? views[0];
+    if (!all) throw new ConnectorFabricError("Freshsales returned no contact views to sync from.");
+    return all.id;
+  }
+
+  async listContacts(
+    filter?: CrmSyncFilter,
+  ): Promise<{ contacts: CrmContactRecord[]; truncated: boolean }> {
+    const viewId = await this.resolveViewId(filter);
+    const cutoff = filter?.updatedSince;
     const contacts: CrmContactRecord[] = [];
     let totalPages = 1;
     for (let page = 1; page <= Math.min(totalPages, PAGE_CAP); page++) {
@@ -97,6 +108,11 @@ export class FreshsalesAdapter implements CrmAdapter {
       )) as { contacts?: RawContact[]; meta?: { total_pages?: number } };
       totalPages = body.meta?.total_pages ?? 1;
       for (const raw of body.contacts ?? []) {
+        // Drop contacts updated before the cutoff; keep ones we can't date.
+        if (cutoff !== undefined) {
+          const updated = raw.updated_at ? Date.parse(raw.updated_at) : NaN;
+          if (!Number.isNaN(updated) && updated < cutoff) continue;
+        }
         contacts.push({
           externalId: String(raw.id),
           name: contactName(raw),

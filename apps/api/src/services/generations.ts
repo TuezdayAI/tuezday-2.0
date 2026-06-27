@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte } from "drizzle-orm";
 import type {
   Channel,
   Generation,
+  GenerationReview,
   OutputRating,
   TaskType,
 } from "@tuezday/contracts";
@@ -33,6 +34,7 @@ function rowToGeneration(row: GenerationRow): GenerationWithTrace {
     rating: row.rating as OutputRating | null,
     ratedAt: row.ratedAt,
     createdAt: row.createdAt,
+    review: row.reviewJson ? (JSON.parse(row.reviewJson) as GenerationReview) : null,
     sections: JSON.parse(row.sectionsJson) as ContextSection[],
   };
 }
@@ -70,6 +72,7 @@ export function storeGeneration(db: Db, input: StoreGenerationInput): Generation
     durationMs: input.durationMs,
     rating: null,
     ratedAt: null,
+    reviewJson: null,
     createdAt: Date.now(),
   };
   db.insert(generations).values(row).run();
@@ -105,4 +108,13 @@ export function rateGeneration(
     .where(eq(generations.id, generationId))
     .run();
   return rowToGeneration({ ...row, rating, ratedAt });
+}
+
+export function countGenerationsSince(db: Db, workspaceId: string, sinceMs: number): number {
+  return db
+    .select()
+    .from(generations)
+    .where(and(eq(generations.workspaceId, workspaceId), gte(generations.createdAt, sinceMs)))
+    .all()
+    .length;
 }

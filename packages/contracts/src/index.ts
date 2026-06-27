@@ -48,6 +48,58 @@ export const CHANNELS = ["linkedin", "x", "email", "ads", "web", "pr", "instagra
 export type Channel = (typeof CHANNELS)[number];
 
 // ---------------------------------------------------------------------------
+// Channel guidance (Sprint 21)
+//
+// Built-in per-channel guidance the resolver injects. This is the single source
+// of truth and the global fallback; a workspace may override any channel's text
+// at runtime (DB holds overrides only). Moved verbatim from the resolver so
+// generation behavior is unchanged until a founder edits something.
+// ---------------------------------------------------------------------------
+
+export const CHANNEL_GUIDANCE_DEFAULTS: Record<Channel, string> = {
+  linkedin:
+    "Channel: LinkedIn. Professional but human feed. Strong first line (it gets truncated). Short paragraphs, no hashtag walls, no engagement bait. Posts that read like a person, not a brand bulletin.",
+  x: "Channel: X (Twitter). Compressed, punchy, idea-first. One thought per post. Threads only when each post stands alone. No corporate phrasing.",
+  email:
+    "Channel: Email. One reader at a time. Subject and opener decide everything. Short lines, one clear ask, no marketing gloss. Write like a competent person, not a campaign.",
+  ads: "Channel: Paid ads. Hook, promise, proof, action - in very few words. One message per variant. Clarity beats cleverness.",
+  web: "Channel: Website. Visitors scan. Headline carries the positioning, subhead carries the proof. Concrete claims over adjectives.",
+  pr: "Channel: PR / media pitch. The reader is a journalist triaging a full inbox. The subject line IS the story. Lead with why their readers care, not why the company is proud. Short, factual, zero marketing language - never call your own news exciting. Make the journalist's job easy: the angle, the proof, who they can talk to.",
+  instagram:
+    "Channel: Instagram. Visual-first feed; caption supports the image/video, it doesn't carry the post alone. Hook in the first line (it gets truncated). Conversational, no corporate phrasing, light hashtag use at most.",
+};
+
+/** Human label per channel for the guidance editor. */
+export const CHANNEL_LABELS: Record<Channel, string> = {
+  linkedin: "LinkedIn",
+  x: "X (Twitter)",
+  email: "Email",
+  ads: "Paid ads",
+  web: "Website",
+  pr: "PR / media",
+  instagram: "Instagram",
+};
+
+/** Where a channel's resolved guidance came from. */
+export const GUIDANCE_SOURCES = ["default", "workspace"] as const;
+export type GuidanceSource = (typeof GUIDANCE_SOURCES)[number];
+
+/** A channel's resolved guidance + its source (read model for the editor). */
+export const channelGuidanceSchema = z.object({
+  channel: z.enum(CHANNELS),
+  content: z.string(),
+  source: z.enum(GUIDANCE_SOURCES),
+  // null when source === "default" (no override row exists).
+  updatedAt: z.number().int().nullable(),
+});
+export type ChannelGuidance = z.infer<typeof channelGuidanceSchema>;
+
+export const updateGuidanceInputSchema = z.object({
+  content: z.string().trim().min(1, "Guidance cannot be empty").max(4000),
+});
+export type UpdateGuidanceInput = z.infer<typeof updateGuidanceInputSchema>;
+
+// ---------------------------------------------------------------------------
 // Workspace
 // ---------------------------------------------------------------------------
 
@@ -219,6 +271,87 @@ export const resolveRequestSchema = z.object({
 export type ResolveRequest = z.infer<typeof resolveRequestSchema>;
 
 // ---------------------------------------------------------------------------
+// Generation quality (Sprint 22) — angle-first + dual-LLM pre-review.
+// Vocabulary lives here (the rule: enum vocabularies are defined only in
+// contracts). Review is advisory: a flagged draft is never blocked from
+// approval; the founder override always works.
+// ---------------------------------------------------------------------------
+
+/** Reviewer passes. brand_voice judges voice/soul match; channel_fit judges channel conventions. */
+export const GENERATION_REVIEW_CHECKS = ["brand_voice", "channel_fit"] as const;
+export type GenerationReviewCheck = (typeof GENERATION_REVIEW_CHECKS)[number];
+
+export const REVIEW_CHECK_LABELS: Record<GenerationReviewCheck, string> = {
+  brand_voice: "Brand voice",
+  channel_fit: "Channel fit",
+};
+
+export const DEFAULT_REVIEW_FLAG_THRESHOLD = 70;
+export const DEFAULT_ANGLE_COUNT = 3;
+export const ANGLE_COUNT_MIN = 2;
+export const ANGLE_COUNT_MAX = 5;
+export const REVIEW_SCORE_MIN = 0;
+export const REVIEW_SCORE_MAX = 100;
+export const ANGLE_MAX_CHARS = 2_000;
+
+/**
+ * One reviewer pass's result. `score` is null when the reviewer call failed or
+ * its output couldn't be parsed — review is best-effort and never blocks.
+ */
+export const reviewCheckResultSchema = z.object({
+  check: z.enum(GENERATION_REVIEW_CHECKS),
+  score: z.number().int().min(REVIEW_SCORE_MIN).max(REVIEW_SCORE_MAX).nullable(),
+  issues: z.array(z.string()),
+  // The exact reviewer prompt sent (resolver-assembled) — for the trace.
+  prompt: z.string(),
+  model: z.string(),
+  provider: z.string(),
+  durationMs: z.number().int(),
+});
+export type ReviewCheckResult = z.infer<typeof reviewCheckResultSchema>;
+
+export const generationReviewSchema = z.object({
+  checks: z.array(reviewCheckResultSchema),
+  threshold: z.number().int(),
+  // True when any check has a non-null score below the threshold.
+  flagged: z.boolean(),
+  createdAt: z.number().int(),
+});
+export type GenerationReview = z.infer<typeof generationReviewSchema>;
+
+/** A draft is flagged when any check scored (non-null) below the threshold. */
+export function isReviewFlagged(checks: ReviewCheckResult[], threshold: number): boolean {
+  return checks.some((c) => c.score !== null && c.score < threshold);
+}
+
+// Per-workspace generation-quality settings (defaults applied on read).
+export const generationSettingsSchema = z.object({
+  workspaceId: z.string().uuid(),
+  reviewEnabled: z.boolean(),
+  angleEnabled: z.boolean(),
+  angleCount: z.number().int().min(ANGLE_COUNT_MIN).max(ANGLE_COUNT_MAX),
+  flagThreshold: z.number().int().min(REVIEW_SCORE_MIN).max(REVIEW_SCORE_MAX),
+  updatedAt: z.number().int(),
+});
+export type GenerationSettings = z.infer<typeof generationSettingsSchema>;
+
+export const updateGenerationSettingsInputSchema = z
+  .object({
+    reviewEnabled: z.boolean(),
+    angleEnabled: z.boolean(),
+    angleCount: z.number().int().min(ANGLE_COUNT_MIN).max(ANGLE_COUNT_MAX),
+    flagThreshold: z.number().int().min(REVIEW_SCORE_MIN).max(REVIEW_SCORE_MAX),
+  })
+  .partial();
+export type UpdateGenerationSettingsInput = z.infer<typeof updateGenerationSettingsInputSchema>;
+
+/** Angle generation takes the same inputs as resolve, plus an optional count. */
+export const generateAnglesInputSchema = resolveRequestSchema.extend({
+  angleCount: z.number().int().min(ANGLE_COUNT_MIN).max(ANGLE_COUNT_MAX).optional(),
+});
+export type GenerateAnglesInput = z.infer<typeof generateAnglesInputSchema>;
+
+// ---------------------------------------------------------------------------
 // Generations (sandbox outputs + training signals)
 // ---------------------------------------------------------------------------
 
@@ -239,12 +372,23 @@ export const generationSchema = z.object({
   rating: z.enum(OUTPUT_RATINGS).nullable(),
   ratedAt: z.number().int().nullable(),
   createdAt: z.number().int(),
+  // The dual-LLM pre-review of `output` (Sprint 22). Null when review is off.
+  review: generationReviewSchema.nullable().optional(),
 });
 export type Generation = z.infer<typeof generationSchema>;
 
-/** Generate takes the same inputs as resolve. */
-export const generateRequestSchema = resolveRequestSchema;
-export type GenerateRequest = ResolveRequest;
+/**
+ * Generate takes the resolve inputs plus the Sprint 22 angle controls. A
+ * superset of resolveRequestSchema, so /resolve stays unaffected.
+ */
+export const generateRequestSchema = resolveRequestSchema.extend({
+  // Draft from this chosen angle (manual pick). Injected as a context section.
+  angle: z.string().trim().max(ANGLE_MAX_CHARS).optional(),
+  // Generate angles, auto-pick the strongest, then draft — all server-side.
+  autoAngle: z.boolean().optional(),
+  angleCount: z.number().int().min(ANGLE_COUNT_MIN).max(ANGLE_COUNT_MAX).optional(),
+});
+export type GenerateRequest = z.infer<typeof generateRequestSchema>;
 
 export const rateGenerationInputSchema = z.object({
   rating: z.enum(OUTPUT_RATINGS),
@@ -326,7 +470,22 @@ export type UpdateCampaignAutomationInput = z.infer<typeof updateCampaignAutomat
 // Signals (manual market input — source adapters arrive in a later slice)
 // ---------------------------------------------------------------------------
 
-export const SIGNAL_SOURCES = ["reddit", "x", "linkedin", "rss", "news", "other"] as const;
+export const SIGNAL_SOURCES = [
+  "reddit",
+  "x",
+  "linkedin",
+  "rss",
+  "news",
+  "hacker_news",
+  "youtube",
+  "podcast",
+  "google_trends",
+  "funding",
+  "g2",
+  "capterra",
+  "intent",
+  "other",
+] as const;
 export type SignalSource = (typeof SIGNAL_SOURCES)[number];
 
 export const SIGNAL_MAX_CHARS = 10_000;
@@ -337,6 +496,10 @@ export const signalSchema = z.object({
   content: z.string().min(1).max(SIGNAL_MAX_CHARS),
   source: z.enum(SIGNAL_SOURCES),
   sourceUrl: z.string().nullable(),
+  // Auto-mapping (Sprint 31): carried from a discovered item on accept so the
+  // Content draft can pre-fill persona + campaign. Null for manual signals.
+  suggestedPersonaId: z.string().uuid().nullable(),
+  suggestedCampaignId: z.string().uuid().nullable(),
   createdAt: z.number().int(),
 });
 export type Signal = z.infer<typeof signalSchema>;
@@ -349,6 +512,8 @@ export const createSignalInputSchema = z.object({
     .max(SIGNAL_MAX_CHARS, `Signal must be ${SIGNAL_MAX_CHARS} characters or fewer`),
   source: z.enum(SIGNAL_SOURCES),
   sourceUrl: z.string().trim().url("Source URL must be a valid URL").optional(),
+  suggestedPersonaId: z.string().uuid().optional(),
+  suggestedCampaignId: z.string().uuid().optional(),
 });
 export type CreateSignalInput = z.infer<typeof createSignalInputSchema>;
 
@@ -371,7 +536,21 @@ export type DraftSignalRequest = z.infer<typeof draftSignalRequestSchema>;
  * today; `x` and `linkedin` are registered infrastructure that flips live
  * when API credentials exist (status `needs_api_key` until then).
  */
-export const DISCOVERY_SOURCE_TYPES = ["rss", "google_news", "reddit", "x", "linkedin"] as const;
+export const DISCOVERY_SOURCE_TYPES = [
+  "rss",
+  "google_news",
+  "reddit",
+  "hacker_news",
+  "youtube",
+  "podcast",
+  "google_trends",
+  "funding_news",
+  "x",
+  "linkedin",
+  "g2",
+  "capterra",
+  "intent",
+] as const;
 export type DiscoverySourceType = (typeof DISCOVERY_SOURCE_TYPES)[number];
 
 export const DISCOVERY_SOURCE_STATUSES = ["active", "needs_api_key", "error"] as const;
@@ -384,6 +563,9 @@ export const discoverySourceConfigSchema = z.object({
   feedUrl: z.string().url().optional(),
   query: z.string().trim().max(200).optional(),
   subreddit: z.string().trim().max(100).optional(),
+  channelId: z.string().trim().max(100).optional(),
+  geo: z.string().trim().max(10).optional(),
+  sector: z.string().trim().max(100).optional(),
 });
 export type DiscoverySourceConfig = z.infer<typeof discoverySourceConfigSchema>;
 
@@ -417,6 +599,24 @@ export const createDiscoverySourceInputSchema = z
     if (input.type === "reddit" && !input.config.query?.trim() && !input.config.subreddit?.trim()) {
       ctx.addIssue({ code: "custom", message: "A Reddit source needs a query or a subreddit" });
     }
+    if (input.type === "hacker_news" && !input.config.query?.trim()) {
+      ctx.addIssue({ code: "custom", message: "A Hacker News source needs a query" });
+    }
+    if (input.type === "youtube" && !input.config.channelId?.trim()) {
+      ctx.addIssue({ code: "custom", message: "A YouTube source needs a channelId" });
+    }
+    if (input.type === "podcast" && !input.config.feedUrl) {
+      ctx.addIssue({ code: "custom", message: "A podcast source needs a feedUrl" });
+    }
+    if (input.type === "funding_news" && !input.config.query?.trim()) {
+      ctx.addIssue({ code: "custom", message: "A funding-news source needs a query" });
+    }
+    if (
+      (input.type === "g2" || input.type === "capterra" || input.type === "intent") &&
+      !input.config.query?.trim()
+    ) {
+      ctx.addIssue({ code: "custom", message: `A ${input.type} source needs a query` });
+    }
     if ((input.type === "x" || input.type === "linkedin") && !input.config.query?.trim()) {
       ctx.addIssue({ code: "custom", message: `An ${input.type} source needs a query` });
     }
@@ -441,6 +641,7 @@ export const discoveredItemSchema = z.object({
   publishedAt: z.number().int().nullable(),
   score: z.number().int().min(0).max(100).nullable(),
   suggestedPersonaId: z.string().uuid().nullable(),
+  suggestedCampaignId: z.string().uuid().nullable(),
   scoreReason: z.string().nullable(),
   status: z.enum(DISCOVERED_ITEM_STATUSES),
   signalId: z.string().uuid().nullable(),
@@ -455,6 +656,11 @@ export type DiscoveredItem = z.infer<typeof discoveredItemSchema>;
 export const EVIDENCE_STATUSES = ["processing", "ready", "failed"] as const;
 export type EvidenceStatus = (typeof EVIDENCE_STATUSES)[number];
 
+// Provenance (Sprint 30): where an evidence document came from. `manual` is
+// pasted by hand; `signal`/`published` are accepted from the ingest queue.
+export const EVIDENCE_KINDS = ["manual", "signal", "published"] as const;
+export type EvidenceKind = (typeof EVIDENCE_KINDS)[number];
+
 export const EVIDENCE_MAX_CHARS = 200_000;
 
 export const evidenceDocumentSchema = z.object({
@@ -465,6 +671,9 @@ export const evidenceDocumentSchema = z.object({
   chars: z.number().int(),
   status: z.enum(EVIDENCE_STATUSES),
   error: z.string().nullable(),
+  kind: z.enum(EVIDENCE_KINDS),
+  sourceRef: z.string().nullable(),
+  sourceCreatedAt: z.number().int().nullable(),
   createdAt: z.number().int(),
 });
 export type EvidenceDocument = z.infer<typeof evidenceDocumentSchema>;
@@ -482,6 +691,31 @@ export const createEvidenceInputSchema = z.object({
     .max(EVIDENCE_MAX_CHARS, `Evidence must be ${EVIDENCE_MAX_CHARS} characters or fewer`),
 });
 export type CreateEvidenceInput = z.infer<typeof createEvidenceInputSchema>;
+
+// Founder-gated ingest queue (Sprint 30). The worker proposes signals +
+// published posts as candidates; the founder accepts them into the corpus.
+// Eligible candidate kinds are a subset of EVIDENCE_KINDS (manual is never a
+// candidate — it is only ever a hand-pasted document).
+export const EVIDENCE_CANDIDATE_KINDS = ["signal", "published"] as const;
+export type EvidenceCandidateKind = (typeof EVIDENCE_CANDIDATE_KINDS)[number];
+
+export const EVIDENCE_CANDIDATE_STATUSES = ["pending", "accepted", "dismissed"] as const;
+export type EvidenceCandidateStatus = (typeof EVIDENCE_CANDIDATE_STATUSES)[number];
+
+export const evidenceCandidateSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  kind: z.enum(EVIDENCE_CANDIDATE_KINDS),
+  sourceRef: z.string(),
+  title: z.string(),
+  content: z.string(),
+  sourceCreatedAt: z.number().int(),
+  status: z.enum(EVIDENCE_CANDIDATE_STATUSES),
+  evidenceDocumentId: z.string().nullable(),
+  createdAt: z.number().int(),
+  decidedAt: z.number().int().nullable(),
+});
+export type EvidenceCandidate = z.infer<typeof evidenceCandidateSchema>;
 
 // ---------------------------------------------------------------------------
 // Approval gate
@@ -527,6 +761,9 @@ export const draftSchema = z.object({
   state: z.enum(APPROVAL_STATES),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
+  // The pre-review copied from the source generation at submit, or refreshed
+  // by the Re-run review action (Sprint 22). Null when never reviewed.
+  review: generationReviewSchema.nullable().optional(),
 });
 export type Draft = z.infer<typeof draftSchema>;
 
@@ -888,6 +1125,10 @@ export const crmContactSchema = z.object({
   company: z.string(),
   role: z.string(),
   leadId: z.string().uuid().nullable(),
+  // Set when the founder discards the contact locally (Sprint 23). A discarded
+  // row is a tombstone: hidden from the working set and skipped by re-sync so
+  // it is not resurrected; restore clears it. Discard never touches the CRM.
+  discardedAt: z.number().int().nullable(),
   lastSyncedAt: z.number().int(),
   createdAt: z.number().int(),
 });
@@ -897,6 +1138,34 @@ export const crmSyncInputSchema = z.object({
   connectionId: z.string().uuid(),
 });
 export type CrmSyncInput = z.infer<typeof crmSyncInputSchema>;
+
+/**
+ * Per-connection sync filter (Sprint 23). Empty object = today's behavior
+ * (the CRM's default "all contacts" view, all dates). The CRM stays the system
+ * of record — the filter only controls what is pulled into Tuezday's mirror.
+ */
+export const crmSyncFilterSchema = z.object({
+  /** CRM view/list/segment id to pull from instead of the default view. */
+  viewId: z.string().optional(),
+  /** Human label for the chosen view, stored for display. */
+  viewName: z.string().optional(),
+  /** Epoch ms; only sync contacts whose CRM updated_at is at/after this. */
+  updatedSince: z.number().int().optional(),
+});
+export type CrmSyncFilter = z.infer<typeof crmSyncFilterSchema>;
+
+export const crmSyncFilterInputSchema = z.object({
+  connectionId: z.string().uuid(),
+  filter: crmSyncFilterSchema,
+});
+export type CrmSyncFilterInput = z.infer<typeof crmSyncFilterInputSchema>;
+
+/** A CRM view/list/segment the founder can scope a sync to. */
+export const crmViewSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+});
+export type CrmView = z.infer<typeof crmViewSchema>;
 
 export const pushLeadInputSchema = z.object({
   leadId: z.string().uuid(),
@@ -2346,6 +2615,171 @@ export const launchDetailSchema = z.object({
 export type LaunchDetail = z.infer<typeof launchDetailSchema>;
 
 // ---------------------------------------------------------------------------
+// Onboarding (Sprint 38)
+// ---------------------------------------------------------------------------
+
+export const BRAIN_DOC_TEMPLATES = [
+  {
+    id: "b2b-saas-founder",
+    label: "B2B SaaS founder",
+    docs: { soul: "...", icp: "...", voice: "...", history: "", now: "" },
+  },
+  {
+    id: "agency",
+    label: "Agency",
+    docs: { soul: "...", icp: "...", voice: "...", history: "", now: "" },
+  },
+  {
+    id: "dev-tool",
+    label: "Dev-tool",
+    docs: { soul: "...", icp: "...", voice: "...", history: "", now: "" },
+  },
+] as const;
+
+export const onboardingStepSchema = z.object({
+  key: z.enum(["workspace", "brain", "connect", "generate", "approve"]),
+  label: z.string(),
+  done: z.boolean(),
+  cta: z.string(),
+});
+export type OnboardingStep = z.infer<typeof onboardingStepSchema>;
+
+// ---------------------------------------------------------------------------
+// Pricing plans & feature gating (Sprint 37)
+// ---------------------------------------------------------------------------
+
+export const PLAN_IDS = ["free", "pro", "scale"] as const;
+export type PlanId = (typeof PLAN_IDS)[number];
+
+export interface Entitlements {
+  seats: number;          // -1 = unlimited
+  connectors: number;
+  monthlyGenerations: number;
+  adSpendCapCents: number;
+}
+
+export const PLANS: Record<PlanId, { label: string; priceEnv: string | null; entitlements: Entitlements }> = {
+  free:  { label: "Free",  priceEnv: null,                entitlements: { seats: 1,  connectors: 1,  monthlyGenerations: 50,   adSpendCapCents: 0 } },
+  pro:   { label: "Pro",   priceEnv: "STRIPE_PRICE_PRO",  entitlements: { seats: 5,  connectors: 10, monthlyGenerations: 1000, adSpendCapCents: 500_00 } },
+  scale: { label: "Scale", priceEnv: "STRIPE_PRICE_SCALE",entitlements: { seats: -1, connectors: -1, monthlyGenerations: -1,   adSpendCapCents: -1 } },
+};
+
+export const entitlementUsageSchema = z.object({
+  seats: z.number().int(),
+  connectors: z.number().int(),
+  monthlyGenerations: z.number().int(),
+});
+export type EntitlementUsage = z.infer<typeof entitlementUsageSchema>;
+
+export const checkoutInputSchema = z.object({
+  plan: z.enum(["pro", "scale"]),
+});
+export type CheckoutInput = z.infer<typeof checkoutInputSchema>;
+
+// GTM insights (Sprint 34) — read-only response schemas for native insights.
+// No new enums; reuses CHANNELS, APPROVAL_STATES, OUTPUT_RATINGS, BRAIN_DOC_TYPES.
+// ---------------------------------------------------------------------------
+
+export const metricTotalsSchema = z.object({
+  spendCents: z.number().int(),
+  impressions: z.number().int(),
+  clicks: z.number().int(),
+  conversions: z.number().int(),
+});
+export type MetricTotals = z.infer<typeof metricTotalsSchema>;
+
+export const campaignInsightsSchema = z.object({
+  campaign: z.object({ id: z.string(), name: z.string(), status: z.string() }),
+  paid: z
+    .object({
+      totals: metricTotalsSchema,
+      adCampaigns: z.array(
+        z.object({
+          id: z.string(),
+          name: z.string(),
+          accountName: z.string(),
+          currency: z.string(),
+          totals: metricTotalsSchema,
+        }),
+      ),
+    })
+    .nullable(),
+  organic: z.object({
+    publishedCount: z.number().int(),
+    scheduledCount: z.number().int(),
+    platform: z.object({
+      likes: z.number().int(),
+      comments: z.number().int(),
+      shares: z.number().int(),
+      impressions: z.number().int(),
+      clicks: z.number().int(),
+    }),
+    learning: z.object({
+      impressions: z.number().int(),
+      engagements: z.number().int(),
+      clicks: z.number().int(),
+    }),
+  }),
+  outbound: z.object({
+    launchCount: z.number().int(),
+    sentCount: z.number().int(),
+    failedCount: z.number().int(),
+    repliedCount: z.number().int(),
+    replyRate: z.number(),
+  }),
+  quality: z.object({
+    draftCounts: z.record(z.string(), z.number().int()),
+    approvalRate: z.number(),
+    ratings: z.record(z.string(), z.number().int()),
+  }),
+  byChannel: z.array(
+    z.object({
+      channel: z.string(),
+      published: z.number().int(),
+      impressions: z.number().int(),
+      spendCents: z.number().int(),
+      sent: z.number().int(),
+      replied: z.number().int(),
+    }),
+  ),
+});
+export type CampaignInsights = z.infer<typeof campaignInsightsSchema>;
+
+export const workspaceInsightsSchema = z.object({
+  campaigns: z.array(
+    z.object({
+      id: z.string(),
+      name: z.string(),
+      status: z.string(),
+      spendCents: z.number().int(),
+      publishedCount: z.number().int(),
+      sentCount: z.number().int(),
+      approvalRate: z.number(),
+    }),
+  ),
+  byChannel: z.array(
+    z.object({
+      channel: z.string(),
+      published: z.number().int(),
+      impressions: z.number().int(),
+      spendCents: z.number().int(),
+      sent: z.number().int(),
+      replied: z.number().int(),
+    }),
+  ),
+  brain: z.object({
+    docs: z.array(z.object({ type: z.string(), filled: z.boolean() })),
+    overlayCount: z.number().int(),
+    personaCount: z.number().int(),
+    campaignCount: z.number().int(),
+    generationsTotal: z.number().int(),
+    completenessPct: z.number(),
+  }),
+});
+export type WorkspaceInsights = z.infer<typeof workspaceInsightsSchema>;
+
+
+// ---------------------------------------------------------------------------
 // API error shape
 // ---------------------------------------------------------------------------
 
@@ -2354,3 +2788,85 @@ export const apiErrorSchema = z.object({
   message: z.string().optional(),
 });
 export type ApiError = z.infer<typeof apiErrorSchema>;
+
+// ---------------------------------------------------------------------------
+// Product analytics (internal — PostHog). NOT the native customer dashboard.
+// ---------------------------------------------------------------------------
+
+/** Curated product-funnel events. Non-PII payloads only (ids/enums/counts). */
+export const ANALYTICS_EVENTS = [
+  "user.registered",
+  "generation.created",
+  "draft.approved",
+  "draft.published",
+  "connector.connected",
+  "publication.started",
+] as const;
+export type AnalyticsEvent = (typeof ANALYTICS_EVENTS)[number];
+
+export const setAnalyticsOptOutInputSchema = z.object({ optOut: z.boolean() });
+export type SetAnalyticsOptOutInput = z.infer<typeof setAnalyticsOptOutInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Google OAuth login (Sprint 36)
+// ---------------------------------------------------------------------------
+
+export const googleCallbackInputSchema = z.object({
+  code: z.string().min(1, "Missing authorization code"),
+});
+export type GoogleCallbackInput = z.infer<typeof googleCallbackInputSchema>;
+
+/** Internal: the verified identity we extract from Google's userinfo. */
+export interface GoogleProfile {
+  sub: string;
+  email: string;
+  emailVerified: boolean;
+  name: string;
+}
+
+// ---------------------------------------------------------------------------
+// Sprint 33: Dashboard IA and Nav Visibility
+// ---------------------------------------------------------------------------
+
+export const workspaceCapabilitiesSchema = z.object({
+  hasAds: z.boolean(),
+  hasInsights: z.boolean(),
+  hasCrm: z.boolean(),
+  hasConnections: z.boolean(),
+  draftCount: z.number().int(),
+  generationCount: z.number().int(),
+});
+export type WorkspaceCapabilities = z.infer<typeof workspaceCapabilitiesSchema>;
+
+export interface NavChild {
+  label: string;
+  path: string;
+}
+
+export interface NavItem {
+  label: string;
+  path: string;
+  children?: NavChild[];
+}
+
+/**
+ * Pure predicate to filter navigation items based on workspace capabilities.
+ */
+export function visibleNavItems(nav: NavItem[], caps: WorkspaceCapabilities): NavItem[] {
+  return nav
+    .filter((item) => {
+      if (item.label === "Insights" && !caps.hasInsights) return false;
+      return true;
+    })
+    .map((item) => {
+      if (item.label === "Campaigns" && !caps.hasAds) {
+        return {
+          ...item,
+          children: item.children?.filter(
+            (c) => c.label !== "Ads" && c.label !== "Ad creatives" && c.label !== "Launch ads"
+          ),
+        };
+      }
+      return item;
+    });
+}

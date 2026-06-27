@@ -50,5 +50,14 @@ async function doFetch(path: string, init?: RequestInit): Promise<Response> {
     const next = window.location.pathname + window.location.search;
     window.location.href = `/login?next=${encodeURIComponent(next)}`;
   }
+  if (res.status === 402 && typeof window !== "undefined") {
+    // We clone the response to read the body without consuming it for the caller.
+    // The caller might also want to read it, but usually on 402 they just throw.
+    res.clone().json().then(data => {
+      window.dispatchEvent(new CustomEvent("upgrade_required", { detail: data }));
+    }).catch(() => {
+      window.dispatchEvent(new CustomEvent("upgrade_required", { detail: {} }));
+    });
+  }
   return res;
 }

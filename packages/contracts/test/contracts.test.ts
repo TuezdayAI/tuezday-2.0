@@ -22,14 +22,25 @@ import {
   transitionTo,
   BRAIN_DOC_TYPES,
   CHANNELS,
+  CHANNEL_GUIDANCE_DEFAULTS,
+  CHANNEL_LABELS,
+  GUIDANCE_SOURCES,
+  channelGuidanceSchema,
+  updateGuidanceInputSchema,
   CONNECTOR_AUTH_MODES,
   CONNECTOR_CATEGORIES,
   CONNECTOR_PROVIDERS,
   connectInputSchema,
   createWebhookInputSchema,
   crmContactSchema,
+  crmSyncFilterInputSchema,
+  crmSyncFilterSchema,
   crmSyncInputSchema,
+  crmViewSchema,
   EVENT_TYPES,
+  EVIDENCE_KINDS,
+  EVIDENCE_CANDIDATE_KINDS,
+  evidenceCandidateSchema,
   logDraftInputSchema,
   pushLeadInputSchema,
   OUTPUT_RATINGS,
@@ -56,6 +67,15 @@ import {
   DISCOVERY_SOURCE_TYPES,
   createWorkspaceInputSchema,
   generationSchema,
+  generateRequestSchema,
+  generateAnglesInputSchema,
+  generationSettingsSchema,
+  updateGenerationSettingsInputSchema,
+  isReviewFlagged,
+  reviewCheckResultSchema,
+  generationReviewSchema,
+  DEFAULT_REVIEW_FLAG_THRESHOLD,
+  type ReviewCheckResult,
   rateGenerationInputSchema,
   resolveRequestSchema,
   updateBrainDocInputSchema,
@@ -85,6 +105,43 @@ describe("approval states", () => {
 describe("output ratings", () => {
   it("matches the planned training signal vocabulary", () => {
     expect(OUTPUT_RATINGS).toEqual(["accepted", "needs_edit", "rejected"]);
+  });
+});
+
+describe("evidence kinds (Sprint 30)", () => {
+  it("lists manual plus the two candidate origins", () => {
+    expect(EVIDENCE_KINDS).toEqual(["manual", "signal", "published"]);
+  });
+  it("restricts candidate origins to signal + published (never manual)", () => {
+    expect(EVIDENCE_CANDIDATE_KINDS).toEqual(["signal", "published"]);
+  });
+});
+
+describe("evidenceCandidateSchema", () => {
+  const valid = {
+    id: "11111111-1111-1111-1111-111111111111",
+    workspaceId: "22222222-2222-2222-2222-222222222222",
+    kind: "signal" as const,
+    sourceRef: "sig-1",
+    title: "Signal — reddit — 2026-06-23",
+    content: "Something worth grounding future drafts in.",
+    sourceCreatedAt: 1_700_000_000_000,
+    status: "pending" as const,
+    evidenceDocumentId: null,
+    createdAt: 1_700_000_000_000,
+    decidedAt: null,
+  };
+
+  it("accepts a well-formed pending candidate", () => {
+    expect(evidenceCandidateSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it("rejects manual as a candidate kind", () => {
+    expect(evidenceCandidateSchema.safeParse({ ...valid, kind: "manual" }).success).toBe(false);
+  });
+
+  it("rejects an unknown status", () => {
+    expect(evidenceCandidateSchema.safeParse({ ...valid, status: "queued" }).success).toBe(false);
   });
 });
 
@@ -133,6 +190,58 @@ describe("task types and channels", () => {
 
   it("covers the planned channels", () => {
     expect(CHANNELS).toEqual(["linkedin", "x", "email", "ads", "web", "pr", "instagram"]);
+  });
+});
+
+describe("channel guidance (Sprint 21)", () => {
+  it("provides a built-in default and a label for every channel", () => {
+    for (const channel of CHANNELS) {
+      expect(CHANNEL_GUIDANCE_DEFAULTS[channel].length).toBeGreaterThan(0);
+      expect(CHANNEL_LABELS[channel].length).toBeGreaterThan(0);
+    }
+  });
+
+  it("defines the guidance source vocabulary", () => {
+    expect(GUIDANCE_SOURCES).toEqual(["default", "workspace"]);
+  });
+
+  it("validates a resolved guidance row, including a null updatedAt for defaults", () => {
+    expect(
+      channelGuidanceSchema.safeParse({
+        channel: "linkedin",
+        content: CHANNEL_GUIDANCE_DEFAULTS.linkedin,
+        source: "default",
+        updatedAt: null,
+      }).success,
+    ).toBe(true);
+    expect(
+      channelGuidanceSchema.safeParse({
+        channel: "linkedin",
+        content: "Override.",
+        source: "workspace",
+        updatedAt: 1765400000000,
+      }).success,
+    ).toBe(true);
+    expect(
+      channelGuidanceSchema.safeParse({
+        channel: "tiktok",
+        content: "x",
+        source: "workspace",
+        updatedAt: 1,
+      }).success,
+    ).toBe(false);
+  });
+
+  it("requires non-empty guidance content within the length cap", () => {
+    expect(updateGuidanceInputSchema.safeParse({ content: "Open with a contrarian line." }).success).toBe(
+      true,
+    );
+    expect(updateGuidanceInputSchema.safeParse({ content: "   " }).success).toBe(false);
+    expect(updateGuidanceInputSchema.safeParse({ content: "x".repeat(4001) }).success).toBe(false);
+  });
+
+  it("trims guidance content", () => {
+    expect(updateGuidanceInputSchema.parse({ content: "  hello  " }).content).toBe("hello");
   });
 });
 
@@ -404,6 +513,7 @@ describe("crm contracts", () => {
       company: "",
       role: "",
       leadId: null,
+      discardedAt: null,
       lastSyncedAt: 1765400000000,
       createdAt: 1765400000000,
     });
@@ -418,6 +528,23 @@ describe("crm contracts", () => {
     expect(pushLeadInputSchema.safeParse({ leadId: uuid }).success).toBe(false);
     expect(logDraftInputSchema.safeParse({ draftId: uuid }).success).toBe(true);
     expect(logDraftInputSchema.safeParse({ draftId: "nope" }).success).toBe(false);
+  });
+
+  it("validates the sync filter, its input wrapper, and views (Sprint 23)", () => {
+    const uuid = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+    // Empty filter is valid (no scoping); populated filter is valid.
+    expect(crmSyncFilterSchema.safeParse({}).success).toBe(true);
+    expect(
+      crmSyncFilterSchema.safeParse({ viewId: "9", viewName: "Hot leads", updatedSince: 1765400000000 })
+        .success,
+    ).toBe(true);
+    expect(crmSyncFilterSchema.safeParse({ updatedSince: "yesterday" }).success).toBe(false);
+    expect(
+      crmSyncFilterInputSchema.safeParse({ connectionId: uuid, filter: { viewId: "9" } }).success,
+    ).toBe(true);
+    expect(crmSyncFilterInputSchema.safeParse({ filter: {} }).success).toBe(false);
+    expect(crmViewSchema.safeParse({ id: "9", name: "Hot leads" }).success).toBe(true);
+    expect(crmViewSchema.safeParse({ id: 9, name: "Hot leads" }).success).toBe(false);
   });
 });
 
@@ -706,7 +833,21 @@ describe("createDiscoverySourceInputSchema", () => {
   });
 
   it("covers the planned source types", () => {
-    expect(DISCOVERY_SOURCE_TYPES).toEqual(["rss", "google_news", "reddit", "x", "linkedin"]);
+    expect(DISCOVERY_SOURCE_TYPES).toEqual([
+      "rss",
+      "google_news",
+      "reddit",
+      "hacker_news",
+      "youtube",
+      "podcast",
+      "google_trends",
+      "funding_news",
+      "x",
+      "linkedin",
+      "g2",
+      "capterra",
+      "intent",
+    ]);
   });
 });
 
@@ -1130,6 +1271,114 @@ describe("social publishing contracts (Sprint 17)", () => {
         publishedAt: null,
         externalId: null,
         externalUrl: null,
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe("generation quality (Sprint 22)", () => {
+  function check(score: number | null): ReviewCheckResult {
+    return {
+      check: "brand_voice",
+      score,
+      issues: [],
+      prompt: "p",
+      model: "m",
+      provider: "fake",
+      durationMs: 1,
+    };
+  }
+
+  it("isReviewFlagged flags only non-null scores below the threshold", () => {
+    expect(isReviewFlagged([check(69)], 70)).toBe(true);
+    expect(isReviewFlagged([check(70)], 70)).toBe(false);
+    expect(isReviewFlagged([check(95)], 70)).toBe(false);
+    // A null score (reviewer failed/unparseable) never flags.
+    expect(isReviewFlagged([check(null)], 70)).toBe(false);
+    // Any one check below threshold flags the whole draft.
+    expect(isReviewFlagged([check(95), { ...check(40), check: "channel_fit" }], 70)).toBe(true);
+    expect(isReviewFlagged([], 70)).toBe(false);
+  });
+
+  it("validates a full GenerationReview shape", () => {
+    const review = {
+      checks: [check(82), { ...check(91), check: "channel_fit" as const }],
+      threshold: DEFAULT_REVIEW_FLAG_THRESHOLD,
+      flagged: false,
+      createdAt: 1765500000000,
+    };
+    expect(generationReviewSchema.safeParse(review).success).toBe(true);
+    // score out of range is rejected.
+    expect(reviewCheckResultSchema.safeParse(check(101)).success).toBe(false);
+    expect(reviewCheckResultSchema.safeParse(check(-1)).success).toBe(false);
+    // null score is allowed.
+    expect(reviewCheckResultSchema.safeParse(check(null)).success).toBe(true);
+  });
+
+  it("updateGenerationSettingsInputSchema accepts partials and enforces ranges", () => {
+    expect(updateGenerationSettingsInputSchema.safeParse({}).success).toBe(true);
+    expect(updateGenerationSettingsInputSchema.safeParse({ reviewEnabled: false }).success).toBe(
+      true,
+    );
+    expect(updateGenerationSettingsInputSchema.safeParse({ angleCount: 3 }).success).toBe(true);
+    expect(updateGenerationSettingsInputSchema.safeParse({ angleCount: 1 }).success).toBe(false);
+    expect(updateGenerationSettingsInputSchema.safeParse({ angleCount: 6 }).success).toBe(false);
+    expect(updateGenerationSettingsInputSchema.safeParse({ flagThreshold: 101 }).success).toBe(
+      false,
+    );
+    const settings = {
+      workspaceId: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      reviewEnabled: true,
+      angleEnabled: false,
+      angleCount: 3,
+      flagThreshold: 70,
+      updatedAt: 1765500000000,
+    };
+    expect(generationSettingsSchema.safeParse(settings).success).toBe(true);
+  });
+
+  it("generateRequestSchema is a superset of resolve; /resolve schema stays strict", () => {
+    const base = { taskType: "linkedin_post" as const, channel: "linkedin" as const };
+    // generate accepts the new angle controls.
+    expect(generateRequestSchema.safeParse({ ...base, angle: "a sharp take" }).success).toBe(true);
+    expect(generateRequestSchema.safeParse({ ...base, autoAngle: true, angleCount: 4 }).success).toBe(
+      true,
+    );
+    expect(generateRequestSchema.safeParse({ ...base, angleCount: 9 }).success).toBe(false);
+    // resolve still parses the base inputs (zod strips unknown keys by default,
+    // so this only asserts the shared fields remain valid).
+    expect(resolveRequestSchema.safeParse(base).success).toBe(true);
+    // angles input is resolve + optional count.
+    expect(generateAnglesInputSchema.safeParse({ ...base, angleCount: 2 }).success).toBe(true);
+    expect(generateAnglesInputSchema.safeParse({ ...base, angleCount: 1 }).success).toBe(false);
+  });
+
+  it("generationSchema accepts an attached review and a null review", () => {
+    const base = {
+      id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      workspaceId: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      taskType: "linkedin_post" as const,
+      channel: "linkedin" as const,
+      personaId: null,
+      campaignId: null,
+      leadId: null,
+      mediaContactId: null,
+      prompt: "p",
+      output: "o",
+      model: "m",
+      provider: "fake",
+      durationMs: 5,
+      rating: null,
+      ratedAt: null,
+      createdAt: 1765500000000,
+    };
+    // Backwards-compatible: no review field at all still parses.
+    expect(generationSchema.safeParse(base).success).toBe(true);
+    expect(generationSchema.safeParse({ ...base, review: null }).success).toBe(true);
+    expect(
+      generationSchema.safeParse({
+        ...base,
+        review: { checks: [check(82)], threshold: 70, flagged: false, createdAt: 1 },
       }).success,
     ).toBe(true);
   });

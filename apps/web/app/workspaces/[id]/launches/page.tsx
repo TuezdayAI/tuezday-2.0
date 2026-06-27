@@ -1,5 +1,9 @@
 "use client";
 
+import { PageHeader } from "@/src/components/page-header";
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -247,24 +251,16 @@ export default function LaunchesPage() {
       </>
     );
   }
-  if (!workspace) return <p className="empty">Loading…</p>;
+  if (!workspace) return <EmptyState description="Loading…" />;
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>Launches</h1>
-          <p className="subtitle">
-            Launch a personalized first-touch at a segment: per-recipient email + X DMs, and one
-            broadcast post each for LinkedIn and Instagram. Every message clears Review first.
-          </p>
-        </div>
-        <div className="page-actions">
-          <button className="button-secondary" onClick={() => setShowForm(!showForm)}>
+      <PageHeader title="Launches" subtitle={<>Launch a personalized first-touch at a segment: per-recipient email + X DMs, and one
+            broadcast post each for LinkedIn and Instagram. Every message clears Review first.</>} actions={<>
+            <button className="button-secondary" onClick={() => setShowForm(!showForm)}>
             + New launch
           </button>
-        </div>
-      </div>
+          </>} />
 
       {error && <p className="error">{error}</p>}
 
@@ -361,7 +357,7 @@ export default function LaunchesPage() {
       <section className="panel">
         <h2>Launches ({launches.length})</h2>
         {launches.length === 0 ? (
-          <p className="empty">No launches yet. Create one to target a segment.</p>
+          <EmptyState description={<>No launches yet. Create one to target a segment.</>} />
         ) : (
           <ul className="section-list">
             {launches.map((launch) => (

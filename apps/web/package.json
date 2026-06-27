@@ -13,6 +13,7 @@
     "@tuezday/brain": "*",
     "@tuezday/contracts": "*",
     "next": "^15.3.0",
+    "posthog-js": "^1.393.5",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

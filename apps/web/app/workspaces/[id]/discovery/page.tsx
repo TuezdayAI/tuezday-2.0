@@ -1,5 +1,8 @@
 "use client";
 
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { API_URL, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useState } from "react";
@@ -7,6 +10,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
   DISCOVERY_SOURCE_TYPES,
+  type Campaign,
   type DiscoveredItem,
   type DiscoverySource,
   type DiscoverySourceType,
@@ -18,8 +22,16 @@ const TYPE_LABELS: Record<DiscoverySourceType, string> = {
   rss: "RSS feed",
   google_news: "Google News",
   reddit: "Reddit",
+  hacker_news: "Hacker News",
+  youtube: "YouTube channel",
+  podcast: "Podcast",
+  google_trends: "Google Trends",
+  funding_news: "Funding news",
   x: "X (needs API key)",
   linkedin: "LinkedIn (needs API key)",
+  g2: "G2 reviews (needs API key)",
+  capterra: "Capterra reviews (needs API key)",
+  intent: "Intent signals (needs API key)",
 };
 
 interface SourceProposal {
@@ -39,6 +51,7 @@ export default function DiscoveryPage() {
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [personas, setPersonas] = useState<Persona[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [sources, setSources] = useState<DiscoverySource[]>([]);
   const [inbox, setInbox] = useState<DiscoveredItem[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +62,9 @@ export default function DiscoveryPage() {
   const [feedUrl, setFeedUrl] = useState("");
   const [query, setQuery] = useState("");
   const [subreddit, setSubreddit] = useState("");
+  const [channelId, setChannelId] = useState("");
+  const [geo, setGeo] = useState("");
+  const [sector, setSector] = useState("");
 
   const [running, setRunning] = useState(false);
   const [runSummary, setRunSummary] = useState<RunSummary | null>(null);
@@ -58,15 +74,17 @@ export default function DiscoveryPage() {
 
   const load = useCallback(async () => {
     try {
-      const [wsRes, pRes, sRes, iRes] = await Promise.all([
+      const [wsRes, pRes, cRes, sRes, iRes] = await Promise.all([
         apiFetch(`/workspaces/${id}`),
         apiFetch(`/workspaces/${id}/personas`),
+        apiFetch(`/workspaces/${id}/campaigns`),
         apiFetch(`/workspaces/${id}/discovery/sources`),
         apiFetch(`/workspaces/${id}/discovery/items?status=new`),
       ]);
-      if (!wsRes.ok || !pRes.ok || !sRes.ok || !iRes.ok) throw new Error("not found");
+      if (!wsRes.ok || !pRes.ok || !cRes.ok || !sRes.ok || !iRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
       setPersonas(await pRes.json());
+      setCampaigns(await cRes.json());
       setSources(await sRes.json());
       setInbox(await iRes.json());
       setError(null);
@@ -98,6 +116,9 @@ export default function DiscoveryPage() {
       setFeedUrl("");
       setQuery("");
       setSubreddit("");
+      setChannelId("");
+      setGeo("");
+      setSector("");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add source");
@@ -109,13 +130,25 @@ export default function DiscoveryPage() {
   function submitForm(e: React.FormEvent) {
     e.preventDefault();
     const config: Record<string, string | undefined> = {};
-    if (newType === "rss") config.feedUrl = feedUrl.trim();
-    if (newType === "google_news" || newType === "x" || newType === "linkedin")
+    if (newType === "rss" || newType === "podcast") config.feedUrl = feedUrl.trim();
+    if (
+      newType === "google_news" ||
+      newType === "x" ||
+      newType === "linkedin" ||
+      newType === "hacker_news" ||
+      newType === "funding_news" ||
+      newType === "g2" ||
+      newType === "capterra" ||
+      newType === "intent"
+    )
       config.query = query.trim();
     if (newType === "reddit") {
       if (subreddit.trim()) config.subreddit = subreddit.trim();
       if (query.trim()) config.query = query.trim();
     }
+    if (newType === "youtube") config.channelId = channelId.trim();
+    if (newType === "google_trends" && geo.trim()) config.geo = geo.trim();
+    if (newType === "funding_news" && sector.trim()) config.sector = sector.trim();
     void addSource({ type: newType, config });
   }
 
@@ -185,6 +218,11 @@ export default function DiscoveryPage() {
     return personas.find((p) => p.id === pid)?.name ?? null;
   }
 
+  function campaignName(cid: string | null): string | null {
+    if (!cid) return null;
+    return campaigns.find((c) => c.id === cid)?.name ?? null;
+  }
+
   if (error && !workspace) {
     return (
       <>
@@ -194,7 +232,7 @@ export default function DiscoveryPage() {
     );
   }
 
-  if (!workspace) return <p className="empty">Loading…</p>;
+  if (!workspace) return <EmptyState description="Loading…" />;
 
   return (
     <>
@@ -240,7 +278,7 @@ export default function DiscoveryPage() {
                   ))}
                 </select>
               </label>
-              {newType === "rss" && (
+              {(newType === "rss" || newType === "podcast") && (
                 <label style={{ flex: 1 }}>
                   Feed URL
                   <input
@@ -250,7 +288,15 @@ export default function DiscoveryPage() {
                   />
                 </label>
               )}
-              {newType !== "rss" && (
+              {(newType === "google_news" ||
+                newType === "reddit" ||
+                newType === "x" ||
+                newType === "linkedin" ||
+                newType === "hacker_news" ||
+                newType === "funding_news" ||
+                newType === "g2" ||
+                newType === "capterra" ||
+                newType === "intent") && (
                 <label style={{ flex: 1 }}>
                   {newType === "reddit" ? "Query (optional with subreddit)" : "Query"}
                   <input
@@ -267,6 +313,32 @@ export default function DiscoveryPage() {
                     value={subreddit}
                     onChange={(e) => setSubreddit(e.target.value)}
                     placeholder="SaaS"
+                  />
+                </label>
+              )}
+              {newType === "youtube" && (
+                <label style={{ flex: 1 }}>
+                  Channel ID
+                  <input
+                    value={channelId}
+                    onChange={(e) => setChannelId(e.target.value)}
+                    placeholder="UCxxxxxxxxxxxxxxxxxxxxxx"
+                  />
+                </label>
+              )}
+              {newType === "google_trends" && (
+                <label>
+                  Geo (optional)
+                  <input value={geo} onChange={(e) => setGeo(e.target.value)} placeholder="US" />
+                </label>
+              )}
+              {newType === "funding_news" && (
+                <label>
+                  Sector (optional)
+                  <input
+                    value={sector}
+                    onChange={(e) => setSector(e.target.value)}
+                    placeholder="fintech"
                   />
                 </label>
               )}
@@ -304,7 +376,7 @@ export default function DiscoveryPage() {
         )}
 
         {sources.length === 0 ? (
-          <p className="empty">No sources yet. Add one or let the brain suggest some.</p>
+          <EmptyState description={<>No sources yet. Add one or let the brain suggest some.</>} />
         ) : (
           <ul className="section-list">
             {sources.map((s) => (
@@ -357,13 +429,12 @@ export default function DiscoveryPage() {
       <section className="panel">
         <h2>Triage inbox ({inbox.length})</h2>
         {inbox.length === 0 ? (
-          <p className="empty">
-            Nothing to triage. Run discovery, or wait for the worker's next poll.
-          </p>
+          <EmptyState description={<>Nothing to triage. Run discovery, or wait for the worker's next poll.</>} />
         ) : (
           <ul className="section-list">
             {inbox.map((item) => {
               const persona = personaName(item.suggestedPersonaId);
+              const campaign = campaignName(item.suggestedCampaignId);
               return (
                 <li key={item.id} className="section-card">
                   <div className="section-head">
@@ -392,6 +463,11 @@ export default function DiscoveryPage() {
                     {persona && (
                       <span className="layer-badge layer-persona" style={{ marginRight: 6 }}>
                         → {persona}
+                      </span>
+                    )}
+                    {campaign && (
+                      <span className="layer-badge layer-campaign" style={{ marginRight: 6 }}>
+                        ◆ {campaign}
                       </span>
                     )}
                     {item.scoreReason ?? ""}

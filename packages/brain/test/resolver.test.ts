@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  CHANNEL_GUIDANCE,
+  CHANNEL_GUIDANCE_DEFAULTS,
   TASK_INSTRUCTIONS,
+  composeAngleInstruction,
+  composeBrandVoiceReviewInstruction,
+  composeChannelFitReviewInstruction,
   composePrPitchInstruction,
   estimateTokens,
   resolveContext,
@@ -37,7 +40,7 @@ describe("estimateTokens", () => {
 describe("built-in defaults", () => {
   it("provides guidance for every channel", () => {
     for (const channel of ["linkedin", "x", "email", "ads", "web", "pr"] as const) {
-      expect(CHANNEL_GUIDANCE[channel].length).toBeGreaterThan(0);
+      expect(CHANNEL_GUIDANCE_DEFAULTS[channel].length).toBeGreaterThan(0);
     }
   });
 
@@ -143,11 +146,24 @@ describe("resolveContext", () => {
     expect(last.content).toBe(TASK_INSTRUCTIONS.cold_email_opener);
   });
 
-  it("uses the channel guidance for the requested channel", () => {
+  it("falls back to the built-in default channel guidance when none is provided", () => {
     const result = resolveContext(baseInput({ channel: "email" }));
     const channel = result.sections.find((s) => s.key === "channel")!;
     expect(channel.included).toBe(true);
-    expect(channel.content).toBe(CHANNEL_GUIDANCE.email);
+    expect(channel.content).toBe(CHANNEL_GUIDANCE_DEFAULTS.email);
+    expect(channel.reason).toMatch(/built-in default/i);
+  });
+
+  it("uses a provided channel guidance override and labels its source in the trace", () => {
+    const override = "Channel: LinkedIn. Always open with a contrarian one-liner.";
+    const result = resolveContext(
+      baseInput({ channel: "linkedin", channelGuidance: { content: override, source: "workspace" } }),
+    );
+    const channel = result.sections.find((s) => s.key === "channel")!;
+    expect(channel.content).toBe(override);
+    expect(channel.reason).toMatch(/workspace override/i);
+    // The override text must actually reach the assembled prompt.
+    expect(result.prompt).toContain(override);
   });
 
   it("drops history first to fit a tight token budget", () => {
@@ -240,8 +256,8 @@ describe("resolveContext", () => {
         evidence: {
           query: "GTM memory layer linkedin_post",
           chunks: [
-            { text: "Our churn dropped 30% after the brain rollout.", score: 0.82, documentId: "d1", title: "Case study notes" },
-            { text: "Positioning doc: GTM that remembers.", score: 0.74, documentId: "d2", title: "Website copy" },
+            { text: "Our churn dropped 30% after the brain rollout.", title: "Case study notes", documentId: "d1", kind: "manual", score: 0.82, recencyScore: 0.9, sourceWeight: 1, finalScore: 0.8 },
+            { text: "Positioning doc: GTM that remembers.", title: "Website copy", documentId: "d2", kind: "manual", score: 0.74, recencyScore: 0.8, sourceWeight: 1, finalScore: 0.7 },
           ],
         },
       }),
@@ -285,6 +301,50 @@ describe("resolveContext", () => {
     const evidence = result.sections.find((s) => s.key === "evidence")!;
     expect(evidence.included).toBe(false);
     expect(evidence.reason.length).toBeGreaterThan(0);
+  });
+
+  const evChunk = (id: string, finalScore: number) => ({
+    text: `evidence ${id} ` + "lorem ipsum dolor ".repeat(20),
+    title: `Doc ${id}`,
+    documentId: id,
+    kind: "manual" as const,
+    score: 0.9,
+    recencyScore: 1,
+    sourceWeight: 1,
+    finalScore,
+  });
+
+  it("degrades evidence chunk-by-chunk under a tight budget, keeping protected sections", () => {
+    const chunks = [evChunk("a", 0.95), evChunk("b", 0.9), evChunk("c", 0.85)];
+    const base = resolveContext(baseInput({ tokenBudget: 100_000 })).includedTokens;
+    const evAll = resolveContext(
+      baseInput({ evidence: { query: "q", chunks }, tokenBudget: 100_000 }),
+    ).sections.find((s) => s.key === "evidence")!.tokens;
+
+    const result = resolveContext(
+      baseInput({ evidence: { query: "q", chunks }, tokenBudget: base + Math.floor(evAll / 2) }),
+    );
+    const evidence = result.sections.find((s) => s.key === "evidence")!;
+    const trace = evidence.evidence!.chunks;
+    expect(evidence.included).toBe(true);
+    expect(trace.filter((c) => c.kept).length).toBeGreaterThan(0);
+    expect(trace.filter((c) => c.kept).length).toBeLessThan(3);
+    expect(trace[0]!.kept).toBe(true); // top-ranked survives
+    expect(trace[2]!.kept).toBe(false); // lowest-ranked dropped first
+    expect(trace.find((c) => !c.kept)!.exclusionReason).toMatch(/budget/i);
+    expect(result.sections.find((s) => s.key === "org:soul")!.included).toBe(true);
+  });
+
+  it("excludes evidence entirely when no chunk fits, leaving protected sections", () => {
+    const chunks = [evChunk("only", 0.9)];
+    const base = resolveContext(baseInput({ tokenBudget: 100_000 })).includedTokens;
+    const result = resolveContext(
+      baseInput({ evidence: { query: "q", chunks }, tokenBudget: base }),
+    );
+    const evidence = result.sections.find((s) => s.key === "evidence")!;
+    expect(evidence.included).toBe(false);
+    expect(evidence.reason).toMatch(/budget/i);
+    expect(result.sections.find((s) => s.key === "org:soul")!.included).toBe(true);
   });
 
   it("places the lead section after persona and before signal when given", () => {
@@ -380,7 +440,7 @@ describe("resolveContext", () => {
     expect(TASK_INSTRUCTIONS.press_boilerplate).toMatch(/One-liner/);
     expect(TASK_INSTRUCTIONS.press_boilerplate).toMatch(/About/);
     expect(TASK_INSTRUCTIONS.press_boilerplate).toMatch(/Key facts/);
-    expect(CHANNEL_GUIDANCE.pr).toMatch(/journalist/i);
+    expect(CHANNEL_GUIDANCE_DEFAULTS.pr).toMatch(/journalist/i);
   });
 
   it("is deterministic", () => {
@@ -389,5 +449,62 @@ describe("resolveContext", () => {
       tokenBudget: 6000,
     });
     expect(resolveContext(input)).toEqual(resolveContext(input));
+  });
+});
+
+describe("generation quality sections (Sprint 22)", () => {
+  it("does not add angle/review sections when neither is set", () => {
+    const keys = resolveContext(baseInput()).sections.map((s) => s.key);
+    expect(keys).not.toContain("angle");
+    expect(keys).not.toContain("review_subject");
+  });
+
+  it("inserts the angle section immediately before task", () => {
+    const result = resolveContext(baseInput({ angle: "Lead with the contrarian take." }));
+    const keys = result.sections.map((s) => s.key);
+    expect(keys).toContain("angle");
+    expect(keys.indexOf("angle")).toBe(keys.indexOf("task") - 1);
+    const angle = result.sections.find((s) => s.key === "angle")!;
+    expect(angle.layer).toBe("angle");
+    expect(angle.included).toBe(true);
+    expect(result.prompt).toContain("Lead with the contrarian take.");
+  });
+
+  it("inserts the review_subject section before task", () => {
+    const result = resolveContext(baseInput({ reviewSubject: "Here is the draft to judge." }));
+    const keys = result.sections.map((s) => s.key);
+    expect(keys).toContain("review_subject");
+    expect(keys.indexOf("review_subject")).toBeLessThan(keys.indexOf("task"));
+    const subject = result.sections.find((s) => s.key === "review_subject")!;
+    expect(subject.layer).toBe("review");
+    expect(result.prompt).toContain("Here is the draft to judge.");
+  });
+
+  it("orders angle before review_subject before task when both are set", () => {
+    const result = resolveContext(
+      baseInput({ angle: "the angle", reviewSubject: "the draft" }),
+    );
+    const keys = result.sections.map((s) => s.key);
+    expect(keys.indexOf("angle")).toBeLessThan(keys.indexOf("review_subject"));
+    expect(keys.indexOf("review_subject")).toBe(keys.indexOf("task") - 1);
+  });
+
+  it("composes an angle instruction naming the count and the ANGLE prefix", () => {
+    const instruction = composeAngleInstruction("linkedin_post", "linkedin", 4);
+    expect(instruction).toContain("ANGLE: ");
+    expect(instruction).toMatch(/EXACTLY 4/);
+    expect(instruction).toMatch(/distinct/i);
+  });
+
+  it("composes distinct brand-voice and channel-fit reviewer instructions", () => {
+    const brand = composeBrandVoiceReviewInstruction();
+    const fit = composeChannelFitReviewInstruction("linkedin");
+    expect(brand).not.toBe(fit);
+    for (const instruction of [brand, fit]) {
+      expect(instruction).toContain("SCORE:");
+      expect(instruction).toContain("ISSUES:");
+    }
+    expect(brand).toMatch(/voice/i);
+    expect(fit).toMatch(/linkedin/i);
   });
 });

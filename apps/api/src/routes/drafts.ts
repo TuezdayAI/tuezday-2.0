@@ -1,4 +1,6 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
+import type { AnalyticsSink } from "../analytics/sink";
+import { track } from "../analytics/track";
 import {
   APPROVAL_STATES,
   editDraftInputSchema,
@@ -13,6 +15,9 @@ import { eq } from "drizzle-orm";
 import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
 import { generations } from "../db/schema";
+import type { LlmGateway } from "../llm/gateway";
+import { getBrain } from "../services/brain";
+import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
 import {
   InvalidTransitionError,
   applyDraftAction,
@@ -23,7 +28,11 @@ import {
   submitDraft,
 } from "../services/drafts";
 import { emitEvent } from "../services/events";
+import { getGenerationSettings } from "../services/generation-settings";
+import { getPersona } from "../services/personas";
+import { runPreReview, setDraftReview } from "../services/review";
 import { getWorkspace } from "../services/workspaces";
+import type { BrainContents } from "@tuezday/brain";
 
 type Fetcher = typeof fetch;
 
@@ -35,7 +44,13 @@ function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
   return workspace;
 }
 
-export function registerDraftRoutes(app: FastifyInstance, db: Db, fetcher: Fetcher): void {
+export function registerDraftRoutes(
+  app: FastifyInstance,
+  db: Db,
+  fetcher: Fetcher,
+  llm: LlmGateway,
+  analytics: AnalyticsSink,
+): void {
   app.post<{ Params: { id: string; generationId: string } }>(
     "/workspaces/:id/generations/:generationId/submit",
     async (request, reply) => {
@@ -64,6 +79,52 @@ export function registerDraftRoutes(app: FastifyInstance, db: Db, fetcher: Fetch
         content: generation.output,
       }, actorOf(request));
       return reply.status(201).send(draft);
+    },
+  );
+
+  // Re-run the dual-LLM pre-review against the draft's CURRENT content
+  // (Sprint 22). Manual, on-demand — edits do not auto-trigger review. Works
+  // regardless of the workspace toggle; best-effort, never 5xx on reviewer
+  // failure (runPreReview returns null scores instead).
+  app.post<{ Params: { id: string; draftId: string } }>(
+    "/workspaces/:id/drafts/:draftId/review",
+    async (request, reply) => {
+      const workspace = workspaceOr404(db, request.params.id, reply);
+      if (!workspace) return reply;
+      const draft = getDraft(db, request.params.id, request.params.draftId);
+      if (!draft) return reply.status(404).send({ error: "draft_not_found" });
+
+      const persona = draft.personaId
+        ? getPersona(db, request.params.id, draft.personaId)
+        : undefined;
+      const campaign = draft.campaignId
+        ? getCampaign(db, request.params.id, draft.campaignId)
+        : undefined;
+      const { docs } = getBrain(db, request.params.id);
+      const contents = Object.fromEntries(
+        docs.map((d) => [d.docType, d.content]),
+      ) as BrainContents;
+      const settings = getGenerationSettings(db, request.params.id);
+
+      const review = await runPreReview(
+        llm,
+        {
+          workspaceName: workspace.name,
+          docs: contents,
+          taskType: draft.taskType,
+          channel: draft.channel,
+          persona: persona
+            ? { name: persona.name, description: persona.description, overlay: persona.overlay }
+            : undefined,
+          campaign: campaign
+            ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
+            : undefined,
+        },
+        draft.content,
+        settings.flagThreshold,
+      );
+      setDraftReview(db, request.params.id, draft.id, review);
+      return { ...draft, review };
     },
   );
 
@@ -136,6 +197,13 @@ export function registerDraftRoutes(app: FastifyInstance, db: Db, fetcher: Fetch
 
         try {
           const updated = applyDraftAction(db, draft, action, actorOf(request), newContent);
+          if (action === "approve") {
+            track(db, analytics, {
+              event: "draft.approved",
+              distinctId: request.actor.userId!,
+              workspaceId: request.params.id,
+            });
+          }
           if (action === "approve" || action === "reject") {
             await emitEvent(
               db,

@@ -6,6 +6,7 @@ import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core
 export const workspaces = sqliteTable("workspaces", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
+  analyticsOptOut: integer("analytics_opt_out", { mode: "boolean" }).notNull().default(false),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -19,11 +20,12 @@ export const users = sqliteTable(
     email: text("email").notNull(),
     name: text("name").notNull().default(""),
     // Format: scrypt$<salt-hex>$<hash-hex> — see services/auth.ts.
-    passwordHash: text("password_hash").notNull(),
+    passwordHash: text("password_hash"),
+    googleSub: text("google_sub"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (t) => [uniqueIndex("users_email").on(t.email)],
+  (t) => [uniqueIndex("users_email").on(t.email), uniqueIndex("users_google_sub").on(t.googleSub)],
 );
 
 export type UserRow = typeof users.$inferSelect;
@@ -57,6 +59,7 @@ export const workspaceMembers = sqliteTable(
       .references(() => users.id, { onDelete: "cascade" }),
     role: text("role").notNull(),
     createdAt: integer("created_at").notNull(),
+    onboardingDismissedAt: integer("onboarding_dismissed_at"),
   },
   (t) => [uniqueIndex("workspace_members_workspace_user").on(t.workspaceId, t.userId)],
 );
@@ -118,6 +121,26 @@ export const brainDocumentVersions = sqliteTable("brain_document_versions", {
 
 export type BrainDocumentVersionRow = typeof brainDocumentVersions.$inferSelect;
 
+// Per-workspace, per-channel guidance overrides (Sprint 21). The built-in
+// defaults live in @tuezday/contracts; this table holds overrides only. A
+// missing row means "use the default" for that channel.
+export const guidanceOverrides = sqliteTable(
+  "guidance_overrides",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    channel: text("channel").notNull(),
+    content: text("content").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("guidance_overrides_workspace_channel").on(t.workspaceId, t.channel)],
+);
+
+export type GuidanceOverrideRow = typeof guidanceOverrides.$inferSelect;
+
 export const personas = sqliteTable("personas", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id")
@@ -151,6 +174,9 @@ export const generations = sqliteTable("generations", {
   durationMs: integer("duration_ms").notNull(),
   rating: text("rating"),
   ratedAt: integer("rated_at"),
+  // Sprint 22 dual-LLM pre-review of `output`, as JSON (GenerationReview).
+  // Null when review is disabled or never ran.
+  reviewJson: text("review_json"),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -172,6 +198,10 @@ export const drafts = sqliteTable("drafts", {
   originalContent: text("original_content").notNull(),
   content: text("content").notNull(),
   state: text("state").notNull(),
+  // Sprint 22 pre-review (GenerationReview JSON), copied from the source
+  // generation at submit or refreshed by the Re-run review action. Null when
+  // never reviewed.
+  reviewJson: text("review_json"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -206,6 +236,10 @@ export const signals = sqliteTable("signals", {
   content: text("content").notNull(),
   source: text("source").notNull(),
   sourceUrl: text("source_url"),
+  // Auto-mapping (Sprint 31): carried from a discovered item on accept so the
+  // Content draft can pre-fill persona + campaign. Null for manual signals.
+  suggestedPersonaId: text("suggested_persona_id"),
+  suggestedCampaignId: text("suggested_campaign_id"),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -245,6 +279,7 @@ export const discoveredItems = sqliteTable(
     publishedAt: integer("published_at"),
     score: integer("score"),
     suggestedPersonaId: text("suggested_persona_id"),
+    suggestedCampaignId: text("suggested_campaign_id"),
     scoreReason: text("score_reason"),
     status: text("status").notNull().default("new"),
     signalId: text("signal_id"),
@@ -290,10 +325,51 @@ export const evidenceDocuments = sqliteTable("evidence_documents", {
   chars: integer("chars").notNull(),
   status: text("status").notNull().default("processing"),
   error: text("error"),
+  // Provenance (Sprint 30): manual paste vs accepted ingest candidate.
+  kind: text("kind").notNull().default("manual"),
+  sourceRef: text("source_ref"),
+  sourceCreatedAt: integer("source_created_at"),
   createdAt: integer("created_at").notNull(),
 });
 
 export type EvidenceDocumentRow = typeof evidenceDocuments.$inferSelect;
+
+// One R2R collection per workspace (Sprint 30) — replaces document-id-filter
+// scoping with real per-workspace isolation inside the store.
+export const evidenceCollections = sqliteTable("evidence_collections", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  r2rCollectionId: text("r2r_collection_id").notNull(),
+  createdAt: integer("created_at").notNull(),
+});
+
+export type EvidenceCollectionRow = typeof evidenceCollections.$inferSelect;
+
+// Founder-gated ingest queue (Sprint 30): the worker proposes signals +
+// published posts; the founder accepts them into the corpus. Unique on
+// (workspace, kind, sourceRef) so a source is proposed at most once.
+export const evidenceCandidates = sqliteTable(
+  "evidence_candidates",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    sourceRef: text("source_ref").notNull(),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    sourceCreatedAt: integer("source_created_at").notNull(),
+    status: text("status").notNull().default("pending"),
+    evidenceDocumentId: text("evidence_document_id"),
+    createdAt: integer("created_at").notNull(),
+    decidedAt: integer("decided_at"),
+  },
+  (t) => [uniqueIndex("evidence_candidates_source").on(t.workspaceId, t.kind, t.sourceRef)],
+);
+
+export type EvidenceCandidateRow = typeof evidenceCandidates.$inferSelect;
 
 export const engagementMetrics = sqliteTable("engagement_metrics", {
   id: text("id").primaryKey(),
@@ -395,6 +471,8 @@ export const crmContacts = sqliteTable(
     company: text("company").notNull().default(""),
     role: text("role").notNull().default(""),
     leadId: text("lead_id").references(() => leads.id, { onDelete: "set null" }),
+    // Tombstone for local discard (Sprint 23): set = hidden + skipped by sync.
+    discardedAt: integer("discarded_at"),
     lastSyncedAt: integer("last_synced_at").notNull(),
     createdAt: integer("created_at").notNull(),
   },
@@ -402,6 +480,21 @@ export const crmContacts = sqliteTable(
 );
 
 export type CrmContactRow = typeof crmContacts.$inferSelect;
+
+// Per-connection CRM sync filter (Sprint 23). Stored separately so the generic
+// connection config stays provider-agnostic; cascades with its connection.
+export const crmSyncSettings = sqliteTable("crm_sync_settings", {
+  connectionId: text("connection_id")
+    .primaryKey()
+    .references(() => connections.id, { onDelete: "cascade" }),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  filterJson: text("filter_json").notNull().default("{}"),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type CrmSyncSettingsRow = typeof crmSyncSettings.$inferSelect;
 
 // Ads reporting (Sprint 14). Tuezday owns this metric model regardless of
 // source; connectionId null marks the workspace's CSV-only account.
@@ -612,6 +705,21 @@ export const adSettings = sqliteTable("ad_settings", {
 });
 
 export type AdSettingsRow = typeof adSettings.$inferSelect;
+
+// Per-workspace generation-quality settings (Sprint 22); reads fall back to
+// defaults when unset, same pattern as ad_settings. Booleans stored as 0/1.
+export const generationSettings = sqliteTable("generation_settings", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  reviewEnabled: integer("review_enabled").notNull().default(1),
+  angleEnabled: integer("angle_enabled").notNull().default(0),
+  angleCount: integer("angle_count").notNull().default(3),
+  flagThreshold: integer("flag_threshold").notNull().default(70),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type GenerationSettingsRow = typeof generationSettings.$inferSelect;
 
 // Social automation guardrails (Sprint 28) — one row per workspace, like
 // ad_settings. killSwitch is the hard stop for scheduled_auto posting; the caps
@@ -936,3 +1044,17 @@ export const sequenceRecipients = sqliteTable(
 );
 
 export type SequenceRecipientRow = typeof sequenceRecipients.$inferSelect;
+
+export const subscriptions = sqliteTable("subscriptions", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  plan: text("plan").notNull().default("free"),                 // PlanId
+  status: text("status").notNull().default("active"),           // active|past_due|canceled
+  stripeCustomerId: text("stripe_customer_id"),
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  currentPeriodEnd: integer("current_period_end"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+}, (t) => [uniqueIndex("subscriptions_workspace").on(t.workspaceId)]);
+
+export type SubscriptionRow = typeof subscriptions.$inferSelect;

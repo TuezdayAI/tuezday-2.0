@@ -1,5 +1,8 @@
 "use client";
 
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { API_URL, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useState } from "react";
@@ -27,6 +30,14 @@ const SOURCE_LABELS: Record<SignalSource, string> = {
   linkedin: "LinkedIn",
   rss: "RSS",
   news: "News",
+  hacker_news: "Hacker News",
+  youtube: "YouTube",
+  podcast: "Podcast",
+  google_trends: "Google Trends",
+  funding: "Funding",
+  g2: "G2",
+  capterra: "Capterra",
+  intent: "Intent",
   other: "Other",
 };
 
@@ -43,6 +54,8 @@ interface SignalView {
   content: string;
   source: SignalSource;
   sourceUrl: string | null;
+  suggestedPersonaId: string | null;
+  suggestedCampaignId: string | null;
   createdAt: number;
   drafts: { id: string; state: ApprovalState; channel: Channel; createdAt: number }[];
 }
@@ -284,7 +297,7 @@ export default function ContentPage() {
     );
   }
 
-  if (!workspace) return <p className="empty">Loading…</p>;
+  if (!workspace) return <EmptyState description="Loading…" />;
 
   return (
     <>
@@ -338,7 +351,7 @@ export default function ContentPage() {
       <section className="panel">
         <h2>Signal inbox</h2>
         {signalsList.length === 0 ? (
-          <p className="empty">No signals yet. Paste something the market said above.</p>
+          <EmptyState description={<>No signals yet. Paste something the market said above.</>} />
         ) : (
           <ul className="section-list">
             {signalsList.map((s) => (
@@ -412,13 +425,11 @@ export default function ContentPage() {
                         {publishingFor === d.id && (
                           <div className="resolve-controls" style={{ marginTop: 10 }}>
                             {socialConnections.length === 0 ? (
-                              <p className="empty">
-                                No social account connected.{" "}
+                              <EmptyState description={<>No social account connected.{" "}
                                 <Link href={`/workspaces/${id}/connectors`}>
                                   Connect Reddit on the Integrations page
                                 </Link>{" "}
-                                first.
-                              </p>
+                                first.</>} />
                             ) : (
                               <>
                                 <label>
@@ -547,7 +558,14 @@ export default function ContentPage() {
                   </div>
                 ) : (
                   <div className="rating-row" style={{ marginTop: 10 }}>
-                    <button className="button-secondary" onClick={() => setDraftingFor(s.id)}>
+                    <button
+                      className="button-secondary"
+                      onClick={() => {
+                        setDraftingFor(s.id);
+                        setDraftPersonaId(s.suggestedPersonaId ?? "");
+                        setDraftCampaignId(s.suggestedCampaignId ?? "");
+                      }}
+                    >
                       Draft response
                     </button>
                   </div>
@@ -561,10 +579,8 @@ export default function ContentPage() {
       <section className="panel">
         <h2>Published</h2>
         {publications.length === 0 ? (
-          <p className="empty">
-            Nothing published yet. Approve a draft, then use publish… to post it to a connected
-            social account.
-          </p>
+          <EmptyState description={<>Nothing published yet. Approve a draft, then use publish… to post it to a connected
+            social account.</>} />
         ) : (
           <ul className="section-list">
             {publications.map((p) => (

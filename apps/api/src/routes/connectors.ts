@@ -1,10 +1,13 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
+import type { AnalyticsSink } from "../analytics/sink";
+import { track } from "../analytics/track";
 import {
   CONNECTOR_PROVIDERS,
   connectInputSchema,
   createWebhookInputSchema,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
+import { assertWithinLimit, EntitlementError, getUsage } from "../services/entitlements";
 import { ConnectorFabricError, type ConnectorFabric } from "../connectors/fabric";
 import {
   connectProvider,
@@ -43,6 +46,7 @@ export function registerConnectorRoutes(
   db: Db,
   fabric: ConnectorFabric,
   fetcher: Fetcher,
+  analytics: AnalyticsSink,
 ): void {
   app.get<{ Params: { id: string } }>("/workspaces/:id/connectors", async (request, reply) => {
     if (!workspaceOr404(db, request.params.id, reply)) return reply;
@@ -65,6 +69,16 @@ export function registerConnectorRoutes(
     "/workspaces/:id/connectors/:providerKey/oauth/session",
     async (request, reply) => {
       if (!workspaceOr404(db, request.params.id, reply)) return reply;
+
+      try {
+        assertWithinLimit(db, request.params.id, "connectors", getUsage(db, request.params.id).connectors);
+      } catch (err) {
+        if (err instanceof EntitlementError) {
+          return reply.status(402).send({ error: "upgrade_required", key: err.key, limit: err.limit });
+        }
+        throw err;
+      }
+
       const provider = providerByKey(request.params.providerKey);
       if (!provider) return reply.status(404).send({ error: "provider_not_found" });
       if (provider.authMode !== "oauth") {
@@ -136,6 +150,14 @@ export function registerConnectorRoutes(
         nangoConnectionId,
       );
       await testConnection(db, fabric, connection);
+
+      track(db, analytics, {
+        event: "connector.connected",
+        distinctId: request.actor.userId!,
+        workspaceId: request.params.id,
+        properties: { provider: provider.key },
+      });
+
       return reply.status(201).send(getConnection(db, request.params.id, connection.id));
     },
   );
@@ -144,6 +166,16 @@ export function registerConnectorRoutes(
     "/workspaces/:id/connectors/:providerKey/connect",
     async (request, reply) => {
       if (!workspaceOr404(db, request.params.id, reply)) return reply;
+
+      try {
+        assertWithinLimit(db, request.params.id, "connectors", getUsage(db, request.params.id).connectors);
+      } catch (err) {
+        if (err instanceof EntitlementError) {
+          return reply.status(402).send({ error: "upgrade_required", key: err.key, limit: err.limit });
+        }
+        throw err;
+      }
+
       const provider = providerByKey(request.params.providerKey);
       if (!provider) return reply.status(404).send({ error: "provider_not_found" });
       if (provider.authMode === "oauth") {
@@ -207,6 +239,14 @@ export function registerConnectorRoutes(
           provider,
           parsed.data,
         );
+
+        track(db, analytics, {
+          event: "connector.connected",
+          distinctId: request.actor.userId!,
+          workspaceId: request.params.id,
+          properties: { provider: provider.key },
+        });
+
         return reply.status(201).send(connection);
       } catch (err) {
         if (err instanceof ConnectorFabricError) {

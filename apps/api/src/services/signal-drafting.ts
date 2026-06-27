@@ -7,7 +7,10 @@ import { getBrain } from "./brain";
 import { composeCampaignOverlay } from "./campaigns";
 import { submitDraft, type DraftActor } from "./drafts";
 import { retrieveEvidence } from "./evidence";
+import { getGenerationSettings } from "./generation-settings";
 import { storeGeneration } from "./generations";
+import { resolveChannelGuidance } from "./guidance";
+import { runPreReview, setGenerationReview } from "./review";
 
 export interface GenerateSignalDraftOptions {
   channel: Channel;
@@ -50,17 +53,21 @@ export async function generateSignalDraft(
 
   const { docs } = getBrain(db, workspace.id);
   const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
+  const channelGuidance = resolveChannelGuidance(db, workspace.id, opts.channel);
+  const personaInput = opts.persona
+    ? { name: opts.persona.name, description: opts.persona.description, overlay: opts.persona.overlay }
+    : undefined;
+  const campaignInput = opts.campaign
+    ? { name: opts.campaign.name, overlay: composeCampaignOverlay(opts.campaign) }
+    : undefined;
   const resolved = resolveContext({
     workspaceName: workspace.name,
     docs: contents,
     taskType: "signal_response",
     channel: opts.channel,
-    persona: opts.persona
-      ? { name: opts.persona.name, description: opts.persona.description, overlay: opts.persona.overlay }
-      : undefined,
-    campaign: opts.campaign
-      ? { name: opts.campaign.name, overlay: composeCampaignOverlay(opts.campaign) }
-      : undefined,
+    channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
+    persona: personaInput,
+    campaign: campaignInput,
     signal: { content: signal.content, source: signal.source, sourceUrl: signal.sourceUrl },
     evidence: evidenceResolution.evidence,
     evidenceExclusionReason: evidenceResolution.exclusionReason,
@@ -80,6 +87,25 @@ export async function generateSignalDraft(
     provider: result.provider,
     durationMs: result.durationMs,
   });
+
+  const settings = getGenerationSettings(db, workspace.id);
+  if (settings.reviewEnabled) {
+    const review = await runPreReview(
+      llm,
+      {
+        workspaceName: workspace.name,
+        docs: contents,
+        taskType: "signal_response",
+        channel: opts.channel,
+        channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
+        persona: personaInput,
+        campaign: campaignInput,
+      },
+      result.text,
+      settings.flagThreshold,
+    );
+    setGenerationReview(db, workspace.id, generation.id, review);
+  }
 
   return submitDraft(
     db,

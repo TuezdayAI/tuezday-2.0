@@ -1,5 +1,9 @@
 "use client";
 
+import { PageHeader } from "@/src/components/page-header";
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { API_URL, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useState } from "react";
@@ -178,26 +182,18 @@ export default function LearningPage() {
     );
   }
 
-  if (!workspace || !stats) return <p className="empty">Loading…</p>;
+  if (!workspace || !stats) return <EmptyState description="Loading…" />;
 
   const proposed = syntheses.filter((s) => s.status === "proposed");
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>Learning</h1>
-          <p className="subtitle">
-            What Tuezday learns from your decisions, edits, and results — proposed as brain
-            updates that you approve or dismiss.
-          </p>
-        </div>
-        <div className="page-actions">
-          <button disabled={synthesizing} onClick={synthesize}>
+      <PageHeader title="Learning" subtitle={<>What Tuezday learns from your decisions, edits, and results — proposed as brain
+            updates that you approve or dismiss.</>} actions={<>
+            <button disabled={synthesizing} onClick={synthesize}>
             {synthesizing ? "Synthesizing…" : "✨ Synthesize learnings"}
           </button>
-        </div>
-      </div>
+          </>} />
 
       <section className="panel">
         <h2>Signal so far</h2>
@@ -215,10 +211,8 @@ export default function LearningPage() {
           {proposed.length > 0 && <span className="layer-badge state-edited">{proposed.length} awaiting review</span>}
         </h2>
         {syntheses.length === 0 ? (
-          <p className="empty">
-            No syntheses yet. Approve/reject some work, then synthesize — or let the worker propose
-            one weekly.
-          </p>
+          <EmptyState description={<>No syntheses yet. Approve/reject some work, then synthesize — or let the worker propose
+            one weekly.</>} />
         ) : (
           <ul className="section-list">
             {syntheses.map((s) => (
@@ -354,9 +348,7 @@ export default function LearningPage() {
       <section className="panel">
         <h2>Training examples ({examples.length})</h2>
         {examples.length === 0 ? (
-          <p className="empty">
-            Nothing yet — rate outputs in the Playground and decide drafts in Review.
-          </p>
+          <EmptyState description={<>Nothing yet — rate outputs in the Playground and decide drafts in Review.</>} />
         ) : (
           <ul className="section-list">
             {examples.map((e) => (

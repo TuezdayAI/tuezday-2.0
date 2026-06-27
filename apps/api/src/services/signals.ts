@@ -21,6 +21,8 @@ export function createSignal(db: Db, workspaceId: string, input: CreateSignalInp
     content: input.content,
     source: input.source,
     sourceUrl: input.sourceUrl ?? null,
+    suggestedPersonaId: input.suggestedPersonaId ?? null,
+    suggestedCampaignId: input.suggestedCampaignId ?? null,
     createdAt: Date.now(),
   };
   db.insert(signals).values(row).run();

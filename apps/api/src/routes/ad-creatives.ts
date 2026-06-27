@@ -20,6 +20,7 @@ import { composeCampaignOverlay, getCampaign, listCampaigns } from "../services/
 import { submitDraft } from "../services/drafts";
 import { retrieveEvidence } from "../services/evidence";
 import { storeGeneration } from "../services/generations";
+import { resolveChannelGuidance } from "../services/guidance";
 import { csvField } from "../services/leads";
 import { getPersona } from "../services/personas";
 import { getWorkspace } from "../services/workspaces";
@@ -78,11 +79,13 @@ export function registerAdCreativeRoutes(
 
       const format = AD_CREATIVE_FORMATS[parsed.data.taskType];
       const variantCount = parsed.data.variantCount ?? format.variantCount?.default;
+      const channelGuidance = resolveChannelGuidance(db, request.params.id, "ads");
       const resolved = resolveContext({
         workspaceName: workspace.name,
         docs: contents,
         taskType: parsed.data.taskType,
         channel: "ads",
+        channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
         persona: persona
           ? { name: persona.name, description: persona.description, overlay: persona.overlay }
           : undefined,

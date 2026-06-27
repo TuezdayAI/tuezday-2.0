@@ -1,5 +1,8 @@
 "use client";
 
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { API_URL, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useState } from "react";
@@ -156,7 +159,7 @@ export default function ResolverPage() {
     );
   }
 
-  if (!workspace) return <p className="empty">Loading…</p>;
+  if (!workspace) return <EmptyState description="Loading…" />;
 
   return (
     <>
@@ -178,10 +181,8 @@ export default function ResolverPage() {
           </button>
         </div>
         {personas.length === 0 ? (
-          <p className="empty">
-            No personas yet. Create one (e.g. “CEO voice”, “Company page”) to see the same brain
-            resolve differently.
-          </p>
+          <EmptyState description={<>No personas yet. Create one (e.g. “CEO voice”, “Company page”) to see the same brain
+            resolve differently.</>} />
         ) : (
           <ul className="persona-list">
             {personas.map((p) => (

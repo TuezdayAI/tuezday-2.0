@@ -1,9 +1,12 @@
 ﻿import {
   AD_CREATIVE_FORMATS,
   BRAIN_DOC_TYPES,
+  CHANNEL_GUIDANCE_DEFAULTS,
   DEFAULT_TOKEN_BUDGET,
   type AdCreativeTaskType,
   type Channel,
+  type EvidenceKind,
+  type GuidanceSource,
   type MediaContactType,
   type PrPitchType,
   type SequenceChannel,
@@ -12,22 +15,13 @@
 import { BRAIN_DOC_META, type BrainContents } from "./index";
 
 // ---------------------------------------------------------------------------
-// Built-in defaults. Channel guidance becomes editable in a later slice;
-// task instructions are shared with the Sprint 4 generation sandbox.
+// Built-in defaults. Channel guidance defaults now live in @tuezday/contracts
+// (CHANNEL_GUIDANCE_DEFAULTS) and are editable per workspace at runtime
+// (Sprint 21); re-exported here so brain consumers keep one import site. Task
+// instructions are shared with the Sprint 4 generation sandbox.
 // ---------------------------------------------------------------------------
 
-export const CHANNEL_GUIDANCE: Record<Channel, string> = {
-  linkedin:
-    "Channel: LinkedIn. Professional but human feed. Strong first line (it gets truncated). Short paragraphs, no hashtag walls, no engagement bait. Posts that read like a person, not a brand bulletin.",
-  x: "Channel: X (Twitter). Compressed, punchy, idea-first. One thought per post. Threads only when each post stands alone. No corporate phrasing.",
-  email:
-    "Channel: Email. One reader at a time. Subject and opener decide everything. Short lines, one clear ask, no marketing gloss. Write like a competent person, not a campaign.",
-  ads: "Channel: Paid ads. Hook, promise, proof, action - in very few words. One message per variant. Clarity beats cleverness.",
-  web: "Channel: Website. Visitors scan. Headline carries the positioning, subhead carries the proof. Concrete claims over adjectives.",
-  pr: "Channel: PR / media pitch. The reader is a journalist triaging a full inbox. The subject line IS the story. Lead with why their readers care, not why the company is proud. Short, factual, zero marketing language - never call your own news exciting. Make the journalist's job easy: the angle, the proof, who they can talk to.",
-  instagram:
-    "Channel: Instagram. Visual-first feed; the caption supports the image/video, it doesn't carry the whole message. Open with a hook in the first line (the rest is hidden behind 'more'). Conversational, concrete, a little personality. Light, meaningful emoji use is fine; a few topical hashtags at the end, not a wall. No LinkedIn-style corporate phrasing.",
-};
+export { CHANNEL_GUIDANCE_DEFAULTS } from "@tuezday/contracts";
 
 /**
  * Compose the pr_pitch task instruction for a pitch type. A shared spine
@@ -123,6 +117,53 @@ export function composeAdCreativeInstruction(
   );
 }
 
+// ---------------------------------------------------------------------------
+// Generation quality (Sprint 22) — angle-first + dual-LLM pre-review.
+// Each is composed as a task instruction and assembled through resolveContext,
+// so the brain context the reviewer/angle step sees is the same inspectable
+// bundle as a normal generation — never a hardcoded prompt.
+// ---------------------------------------------------------------------------
+
+/** Ask the model for N distinct one-line angles before drafting. */
+export function composeAngleInstruction(
+  taskType: TaskType,
+  channel: Channel,
+  count: number,
+): string {
+  return (
+    `Task: Before drafting, propose ${count} genuinely DISTINCT angles for a ${taskType} on the ` +
+    `${channel} channel, grounded in the context above. Each angle is ONE sentence naming the hook ` +
+    "or lens — not the full draft. List the strongest angle FIRST. " +
+    `Return EXACTLY ${count} lines, each prefixed with 'ANGLE: ' and nothing else — no preamble, ` +
+    "numbering, or commentary."
+  );
+}
+
+/** Brand-voice reviewer pass: judge voice/soul/positioning match only. */
+export function composeBrandVoiceReviewInstruction(): string {
+  return (
+    "Task: You are a brand-voice editor. Judge ONLY how well the draft under review above matches " +
+    "this company's voice, soul, and positioning as given in the context. Ignore length and channel " +
+    "formatting — that is a separate review. Respond in EXACTLY this format and nothing else:\n" +
+    "SCORE: <integer 0-100, where 100 is a perfect voice match>\n" +
+    "ISSUES:\n- <one specific, actionable voice problem>\n" +
+    "(If there are no issues, write '- none'. List at most 5 issues.)"
+  );
+}
+
+/** Channel-fit reviewer pass: judge channel conventions only. */
+export function composeChannelFitReviewInstruction(channel: Channel): string {
+  return (
+    `Task: You are a channel editor for the ${channel} channel. Judge ONLY how well the draft under ` +
+    "review above fits the channel guidance above — length, format, hook, tone, and conventions. " +
+    "Ignore brand-voice nuance — that is a separate review. Respond in EXACTLY this format and " +
+    "nothing else:\n" +
+    "SCORE: <integer 0-100, where 100 is a perfect fit>\n" +
+    "ISSUES:\n- <one specific, actionable channel-fit problem>\n" +
+    "(If there are no issues, write '- none'. List at most 5 issues.)"
+  );
+}
+
 export const TASK_INSTRUCTIONS: Record<TaskType, string> = {
   linkedin_post:
     "Task: Write one LinkedIn post grounded in the context above. Use the company's voice and the persona's point of view if one is set. Lead with the sharpest insight, keep it under 200 words, end without a cringe call-to-action. Return only the post text itself - no preamble, labels, or commentary.",
@@ -163,6 +204,8 @@ export type ContextLayer =
   | "signal"
   | "conversation"
   | "evidence"
+  | "angle"
+  | "review"
   | "task";
 
 export interface ResolvePersona {
@@ -209,9 +252,17 @@ export interface ResolveMediaContact {
 
 export interface EvidenceChunk {
   text: string;
-  score: number;
-  documentId: string;
   title: string;
+  documentId: string;
+  kind: EvidenceKind;
+  /** R2R similarity score (0–1). */
+  score: number;
+  /** Recency decay applied by the retrieval policy (0–1). */
+  recencyScore: number;
+  /** Per-origin weight (manual > published > signal). */
+  sourceWeight: number;
+  /** Blended rank used for ordering and budget trimming. */
+  finalScore: number;
 }
 
 export interface ResolveEvidence {
@@ -240,7 +291,30 @@ export interface ResolveInput {
    * trace like any other section.
    */
   taskInstruction?: string;
+  /**
+   * The channel guidance to use and where it came from (Sprint 21). Omitted →
+   * the resolver falls back to the built-in default for `channel`. The API
+   * passes the workspace override here when one exists. Surfaced in the trace.
+   */
+  channelGuidance?: { content: string; source: GuidanceSource };
+  /**
+   * A chosen angle to draft from (Sprint 22 angle step). When set, becomes the
+   * "angle" section, just before the task instruction.
+   */
+  angle?: string;
+  /**
+   * The draft text a reviewer pass is judging (Sprint 22 pre-review). When set,
+   * becomes the "review_subject" section, just before the task instruction.
+   */
+  reviewSubject?: string;
   tokenBudget?: number;
+}
+
+export interface EvidenceChunkTrace extends EvidenceChunk {
+  /** Whether this chunk survived the token budget into the prompt. */
+  kept: boolean;
+  /** Why a chunk was dropped (budget), when applicable. */
+  exclusionReason?: string;
 }
 
 export interface ContextSection {
@@ -251,6 +325,12 @@ export interface ContextSection {
   included: boolean;
   reason: string;
   tokens: number;
+  /**
+   * Per-chunk retrieval trace, present only on the evidence section: the
+   * composed query and every candidate chunk with its scores + kept/dropped
+   * status. Powers the Evidence-retrieval inspection view.
+   */
+  evidence?: { query: string; chunks: EvidenceChunkTrace[] };
 }
 
 export interface ResolvedContext {
@@ -273,6 +353,13 @@ export function estimateTokens(text: string): number {
  */
 const BUDGET_SACRIFICE_ORDER = ["org:history", "channel"] as const;
 
+/** Render evidence chunks as `[n]` citations followed by a numbered source list. */
+function renderEvidence(chunks: EvidenceChunk[]): string {
+  const lines = chunks.map((c, i) => `[${i + 1}] ${c.text.trim()}`);
+  const sources = chunks.map((c, i) => `[${i + 1}] ${c.title}`);
+  return `${lines.join("\n\n")}\n\nSources:\n${sources.join("\n")}`;
+}
+
 export function resolveContext(input: ResolveInput): ResolvedContext {
   const tokenBudget = input.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
   const sections: ContextSection[] = [];
@@ -294,15 +381,21 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
     });
   }
 
-  const channelContent = CHANNEL_GUIDANCE[input.channel];
+  const guidance = input.channelGuidance ?? {
+    content: CHANNEL_GUIDANCE_DEFAULTS[input.channel],
+    source: "default" as const,
+  };
   sections.push({
     key: "channel",
     layer: "channel",
     title: `Channel: ${input.channel}`,
-    content: channelContent,
+    content: guidance.content,
     included: true,
-    reason: `Built-in default guidance for the ${input.channel} channel.`,
-    tokens: estimateTokens(channelContent),
+    reason:
+      guidance.source === "workspace"
+        ? `Channel guidance for ${input.channel} (workspace override).`
+        : `Channel guidance for ${input.channel} (built-in default).`,
+    tokens: estimateTokens(guidance.content),
   });
 
   const campaignContent = input.campaign?.overlay.trim() ?? "";
@@ -451,9 +544,7 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
   }
 
   if (input.evidence && input.evidence.chunks.length > 0) {
-    const lines = input.evidence.chunks.map((c, i) => `[${i + 1}] ${c.text.trim()}`);
-    const sources = input.evidence.chunks.map((c, i) => `[${i + 1}] ${c.title}`);
-    const evidenceContent = `${lines.join("\n\n")}\n\nSources:\n${sources.join("\n")}`;
+    const evidenceContent = renderEvidence(input.evidence.chunks);
     sections.push({
       key: "evidence",
       layer: "evidence",
@@ -462,6 +553,10 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       included: true,
       reason: `Retrieved ${input.evidence.chunks.length} evidence chunk(s) for query: "${input.evidence.query}". Ground claims in this evidence.`,
       tokens: estimateTokens(evidenceContent),
+      evidence: {
+        query: input.evidence.query,
+        chunks: input.evidence.chunks.map((c) => ({ ...c, kept: true })),
+      },
     });
   } else {
     sections.push({
@@ -472,6 +567,36 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       included: false,
       reason: `Excluded: ${input.evidenceExclusionReason ?? "no evidence retrieved for this task."}`,
       tokens: 0,
+    });
+  }
+
+  // Sprint 22: a chosen angle and/or the draft under review are pushed only
+  // when set, so an ordinary generation's section list is byte-for-byte
+  // unchanged (and the pinned section-order tests don't move). Both sit just
+  // before the task instruction and are protected from the token budget.
+  if (input.angle && input.angle.trim()) {
+    const angleContent = input.angle.trim();
+    sections.push({
+      key: "angle",
+      layer: "angle",
+      title: "Chosen angle",
+      content: angleContent,
+      included: true,
+      reason: "The angle this draft was generated from (Sprint 22 angle step).",
+      tokens: estimateTokens(angleContent),
+    });
+  }
+
+  if (input.reviewSubject && input.reviewSubject.trim()) {
+    const subject = input.reviewSubject.trim();
+    sections.push({
+      key: "review_subject",
+      layer: "review",
+      title: "Draft under review",
+      content: subject,
+      included: true,
+      reason: "The draft this reviewer pass is judging. Score only this text.",
+      tokens: estimateTokens(subject),
     });
   }
 
@@ -488,10 +613,34 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
     tokens: estimateTokens(taskContent),
   });
 
-  // Token budget: drop sacrificial sections whole, in order, until we fit.
+  // Token budget. Evidence is the lowest-priority layer: it degrades
+  // chunk-by-chunk (lowest-ranked dropped first) before any whole section is.
   const includedTotal = () =>
     sections.filter((s) => s.included).reduce((sum, s) => sum + s.tokens, 0);
 
+  const evidenceSection = sections.find((s) => s.key === "evidence");
+  if (evidenceSection?.included && input.evidence) {
+    const allChunks = input.evidence.chunks;
+    const traces = evidenceSection.evidence!.chunks;
+    let keptCount = allChunks.length;
+    while (keptCount > 0 && includedTotal() > tokenBudget) {
+      keptCount--;
+      traces[keptCount]!.kept = false;
+      traces[keptCount]!.exclusionReason = "dropped to fit the token budget";
+      if (keptCount === 0) {
+        evidenceSection.included = false;
+        evidenceSection.content = "";
+        evidenceSection.tokens = 0;
+        evidenceSection.reason = "Excluded: no evidence chunks fit the token budget.";
+      } else {
+        evidenceSection.content = renderEvidence(allChunks.slice(0, keptCount));
+        evidenceSection.tokens = estimateTokens(evidenceSection.content);
+        evidenceSection.reason = `Retrieved ${allChunks.length} evidence chunk(s) for query: "${input.evidence.query}"; kept the top ${keptCount} within the token budget. Ground claims in this evidence.`;
+      }
+    }
+  }
+
+  // Then drop whole sacrificial sections, in order, until we fit.
   for (const key of BUDGET_SACRIFICE_ORDER) {
     if (includedTotal() <= tokenBudget) break;
     const section = sections.find((s) => s.key === key)!;

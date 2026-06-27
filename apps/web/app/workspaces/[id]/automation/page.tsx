@@ -1,5 +1,9 @@
 "use client";
 
+import { PageHeader } from "@/src/components/page-header";
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import type {
@@ -51,25 +55,17 @@ export default function AutomationPage() {
   }
 
   if (error) return <p className="error">{error}</p>;
-  if (!settings) return <p className="empty">Loading…</p>;
+  if (!settings) return <EmptyState description="Loading…" />;
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>Automation</h1>
-          <p className="subtitle">
-            Guardrails for campaigns set to <strong>scheduled-auto</strong>. New discovery signals
+      <PageHeader title="Automation" subtitle={<>Guardrails for campaigns set to <strong>scheduled-auto</strong>. New discovery signals
             draft to each campaign channel; human-in-the-loop waits at Review, scheduled-auto
-            auto-approves and posts on the campaign cadence — within these limits.
-          </p>
-        </div>
-        <div className="page-actions">
-          <button onClick={runNow} disabled={running}>
+            auto-approves and posts on the campaign cadence — within these limits.</>} actions={<>
+            <button onClick={runNow} disabled={running}>
             {running ? "Running…" : "Run automation now"}
           </button>
-        </div>
-      </div>
+          </>} />
 
       <section className="panel">
         <h2>Kill switch</h2>
@@ -144,7 +140,7 @@ export default function AutomationPage() {
         <section className="panel">
           <h2>Last run</h2>
           {lastRun.length === 0 ? (
-            <p className="empty">No campaigns are in an automated mode yet.</p>
+            <EmptyState description={<>No campaigns are in an automated mode yet.</>} />
           ) : (
             <ul className="draft-chain">
               {lastRun.map((r) => (
