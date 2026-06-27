@@ -47,6 +47,7 @@ import { registerWorkspaceRoutes } from "./routes/workspaces";
 import { registerOnboardingRoutes } from "./routes/onboarding";
 import { registerInsightsRoutes } from "./routes/insights";
 import { registerBillingRoutes, registerStripeWebhookRoute } from "./routes/billing";
+import { registerApiKeyRoutes } from "./routes/api-keys";
 
 export type TuezdayApp = FastifyInstance;
 
@@ -113,6 +114,7 @@ export async function buildApp({
 
   registerAuthRoutes(app, db, fetcher, analytics);
   registerWorkspaceRoutes(app, db);
+  registerApiKeyRoutes(app, db);
   registerTeamRoutes(app, db, mailer);
   app.register(registerOnboardingRoutes(db));
   registerBillingRoutes(app, db);
