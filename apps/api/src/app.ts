@@ -48,6 +48,7 @@ import { registerOnboardingRoutes } from "./routes/onboarding";
 import { registerInsightsRoutes } from "./routes/insights";
 import { registerBillingRoutes, registerStripeWebhookRoute } from "./routes/billing";
 import { registerApiKeyRoutes } from "./routes/api-keys";
+import { registerPublicApiRoutes } from "./routes/public-api";
 
 export type TuezdayApp = FastifyInstance;
 
@@ -106,6 +107,8 @@ export async function buildApp({
   // Must come before any routes: every route registered after this needs a
   // session (or the worker token), except the guard's public allowlist.
   registerAuthGuard(app, db, workerToken);
+
+  registerPublicApiRoutes(app, db);
 
   app.get("/health", async () => {
     db.run(sql`select 1`);

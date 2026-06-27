@@ -53,6 +53,7 @@ export function registerAuthGuard(app: FastifyInstance, db: Db, workerToken?: st
   app.addHook("preHandler", async (request, reply) => {
     if (request.method === "OPTIONS") return;
     const route = request.routeOptions.url ?? request.url;
+    if (route.startsWith("/api/v1/")) return;
     if (PUBLIC_ROUTES.has(`${request.method} ${route}`)) return;
 
     const token = bearerToken(request.headers.authorization);
