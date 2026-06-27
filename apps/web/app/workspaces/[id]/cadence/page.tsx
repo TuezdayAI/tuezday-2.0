@@ -1,5 +1,8 @@
 "use client";
 
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -169,16 +172,14 @@ export default function CadencePage() {
       </div>
 
       {error && <p className="error">{error}</p>}
-      {notice && <p className="empty">{notice}</p>}
+      {notice && <EmptyState description={<>{notice}</>} />}
 
       <section className="panel">
         <h2>New cadence</h2>
         {social.length === 0 ? (
-          <p className="empty">
-            No connected social account.{" "}
+          <EmptyState description={<>No connected social account.{" "}
             <Link href={`/workspaces/${id}/connectors`}>Connect one</Link> first — a cadence posts
-            through it.
-          </p>
+            through it.</>} />
         ) : (
           <form onSubmit={create}>
             <div className="resolve-controls">
@@ -296,9 +297,9 @@ export default function CadencePage() {
       <section className="panel">
         <h2>Your cadences</h2>
         {cadences === null ? (
-          <p className="empty">Loading…</p>
+          <EmptyState description="Loading…" />
         ) : cadences.length === 0 ? (
-          <p className="empty">No cadences yet.</p>
+          <EmptyState description={<>No cadences yet.</>} />
         ) : (
           <ul className="checklist">
             {cadences.map((c) => (

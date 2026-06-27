@@ -1,5 +1,9 @@
 "use client";
 
+import { PageHeader } from "@/src/components/page-header";
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -318,22 +322,14 @@ export default function ListsPage() {
       </>
     );
   }
-  if (!workspace) return <p className="empty">Loading…</p>;
+  if (!workspace) return <EmptyState description="Loading…" />;
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>Lists &amp; segments</h1>
-          <p className="subtitle">
-            Group leads and contacts into reusable audiences — hand-picked lists or live
-            rule-based segments — then attach them to a campaign as its target.
-          </p>
-        </div>
-        <div className="page-actions">
-          <button onClick={() => startEdit()}>+ New audience</button>
-        </div>
-      </div>
+      <PageHeader title="Lists &amp; segments" subtitle={<>Group leads and contacts into reusable audiences — hand-picked lists or live
+            rule-based segments — then attach them to a campaign as its target.</>} actions={<>
+            <button onClick={() => startEdit()}>+ New audience</button>
+          </>} />
 
       {showForm && (
         <section className="panel">
@@ -397,7 +393,7 @@ export default function ListsPage() {
       )}
 
       {audiences.length === 0 && !showForm ? (
-        <p className="empty">No audiences yet. Create a static list or a dynamic segment.</p>
+        <EmptyState description={<>No audiences yet. Create a static list or a dynamic segment.</>} />
       ) : (
         <ul className="section-list">
           {audiences.map((a) => {

@@ -1,5 +1,9 @@
 "use client";
 
+import { PageHeader } from "@/src/components/page-header";
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { API_URL, apiFetch, apiDownload } from "@/lib/api";
 
 import { useCallback, useEffect, useState } from "react";
@@ -86,6 +90,7 @@ export default function CampaignsPage() {
   const [error, setError] = useState<string | null>(null);
 
   const [showForm, setShowForm] = useState(false);
+  const [step, setStep] = useState(1);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
@@ -114,6 +119,7 @@ export default function CampaignsPage() {
 
   function startEdit(c?: Campaign) {
     setShowForm(true);
+    setStep(1);
     setEditingId(c?.id ?? null);
     setForm(
       c
@@ -245,109 +251,132 @@ export default function CampaignsPage() {
     );
   }
 
-  if (!workspace) return <p className="empty">Loading…</p>;
+  if (!workspace) return <EmptyState description="Loading…" />;
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>Campaigns</h1>
-          <p className="subtitle">
-            Your GTM goals and everything attached to them. A campaign shapes every draft
-            created under it.
-          </p>
-        </div>
-        <div className="page-actions">
-          <button onClick={() => startEdit()}>+ New campaign</button>
-        </div>
-      </div>
+      <PageHeader title="Campaigns" subtitle={<>Your GTM goals and everything attached to them. A campaign shapes every draft
+            created under it.</>} actions={<>
+            <button onClick={() => startEdit()}>+ New campaign</button>
+          </>} />
 
       {showForm && (
         <section className="panel">
-          <h2>{editingId ? "Edit campaign" : "New campaign"}</h2>
+          <h2>
+            {editingId ? "Edit campaign" : "New campaign"}
+            <span style={{ fontSize: "0.8rem", color: "var(--color-fg-muted)", marginLeft: "1rem", fontWeight: "normal" }}>
+              Step {step} of 3
+            </span>
+          </h2>
           <form className="persona-form" style={{ borderTop: "none", paddingTop: 0, marginTop: 0 }} onSubmit={saveCampaign}>
-            <input
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-              placeholder="Campaign name (e.g. Q3 GTM memory push)"
-              maxLength={200}
-            />
-            <textarea
-              value={form.objective}
-              onChange={(e) => setForm({ ...form, objective: e.target.value })}
-              placeholder="Objective — what is this campaign trying to achieve?"
-              rows={2}
-            />
-            <div className="resolve-controls">
-              <label style={{ flex: 1 }}>
-                KPI
+            {step === 1 && (
+              <>
                 <input
-                  value={form.kpi}
-                  onChange={(e) => setForm({ ...form, kpi: e.target.value })}
-                  placeholder="e.g. 20 demo calls booked"
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder="Campaign name (e.g. Q3 GTM memory push)"
+                  maxLength={200}
                 />
-              </label>
-              <label style={{ flex: 1 }}>
-                Timeframe
-                <input
-                  value={form.timeframe}
-                  onChange={(e) => setForm({ ...form, timeframe: e.target.value })}
-                  placeholder="e.g. Jul–Sep 2026"
+                <textarea
+                  value={form.objective}
+                  onChange={(e) => setForm({ ...form, objective: e.target.value })}
+                  placeholder="Objective — what is this campaign trying to achieve?"
+                  rows={2}
                 />
-              </label>
-            </div>
-            <textarea
-              value={form.audience}
-              onChange={(e) => setForm({ ...form, audience: e.target.value })}
-              placeholder="Audience slice — who exactly is this for?"
-              rows={2}
-            />
-            <textarea
-              value={form.pillarsText}
-              onChange={(e) => setForm({ ...form, pillarsText: e.target.value })}
-              placeholder={"Messaging pillars — one per line (max 10)"}
-              rows={3}
-            />
-            <div className="checkbox-row">
-              <span className="meta">Channels:</span>
-              {CHANNELS.map((c) => (
-                <label key={c} className="checkbox-label">
-                  <input
-                    type="checkbox"
-                    checked={form.channels.includes(c)}
-                    onChange={() => setForm({ ...form, channels: toggleInList(form.channels, c) })}
-                  />
-                  {c}
-                </label>
-              ))}
-            </div>
-            {personas.length > 0 && (
-              <div className="checkbox-row">
-                <span className="meta">Personas:</span>
-                {personas.map((p) => (
-                  <label key={p.id} className="checkbox-label">
+                <div className="resolve-controls">
+                  <label style={{ flex: 1 }}>
+                    KPI
                     <input
-                      type="checkbox"
-                      checked={form.personaIds.includes(p.id)}
-                      onChange={() =>
-                        setForm({ ...form, personaIds: toggleInList(form.personaIds, p.id) })
-                      }
+                      value={form.kpi}
+                      onChange={(e) => setForm({ ...form, kpi: e.target.value })}
+                      placeholder="e.g. 20 demo calls booked"
                     />
-                    {p.name}
                   </label>
-                ))}
-              </div>
+                  <label style={{ flex: 1 }}>
+                    Timeframe
+                    <input
+                      value={form.timeframe}
+                      onChange={(e) => setForm({ ...form, timeframe: e.target.value })}
+                      placeholder="e.g. Jul–Sep 2026"
+                    />
+                  </label>
+                </div>
+              </>
             )}
-            <textarea
-              value={form.overlay}
-              onChange={(e) => setForm({ ...form, overlay: e.target.value })}
-              placeholder="Campaign now-overlay — what matters for this campaign right now (markdown)…"
-              rows={4}
-            />
+
+            {step === 2 && (
+              <>
+                <textarea
+                  value={form.audience}
+                  onChange={(e) => setForm({ ...form, audience: e.target.value })}
+                  placeholder="Audience slice — who exactly is this for?"
+                  rows={2}
+                />
+                <textarea
+                  value={form.pillarsText}
+                  onChange={(e) => setForm({ ...form, pillarsText: e.target.value })}
+                  placeholder={"Messaging pillars — one per line (max 10)"}
+                  rows={3}
+                />
+              </>
+            )}
+
+            {step === 3 && (
+              <>
+                <div className="checkbox-row">
+                  <span className="meta">Channels:</span>
+                  {CHANNELS.map((c) => (
+                    <label key={c} className="checkbox-label">
+                      <input
+                        type="checkbox"
+                        checked={form.channels.includes(c)}
+                        onChange={() => setForm({ ...form, channels: toggleInList(form.channels, c) })}
+                      />
+                      {c}
+                    </label>
+                  ))}
+                </div>
+                {personas.length > 0 && (
+                  <div className="checkbox-row">
+                    <span className="meta">Personas:</span>
+                    {personas.map((p) => (
+                      <label key={p.id} className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={form.personaIds.includes(p.id)}
+                          onChange={() =>
+                            setForm({ ...form, personaIds: toggleInList(form.personaIds, p.id) })
+                          }
+                        />
+                        {p.name}
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <textarea
+                  value={form.overlay}
+                  onChange={(e) => setForm({ ...form, overlay: e.target.value })}
+                  placeholder="Campaign now-overlay — what matters for this campaign right now (markdown)…"
+                  rows={4}
+                />
+              </>
+            )}
+
             <div className="editor-actions">
-              <button type="submit" disabled={saving || form.name.trim().length === 0}>
-                {editingId ? "Update campaign" : "Create campaign"}
-              </button>
+              {step > 1 && (
+                <button type="button" className="button-secondary" onClick={() => setStep(step - 1)}>
+                  Back
+                </button>
+              )}
+              {step < 3 ? (
+                <button type="button" onClick={() => setStep(step + 1)} disabled={form.name.trim().length === 0}>
+                  Next
+                </button>
+              ) : (
+                <button type="submit" disabled={saving || form.name.trim().length === 0}>
+                  {editingId ? "Update campaign" : "Create campaign"}
+                </button>
+              )}
               <button type="button" className="button-secondary" onClick={() => setShowForm(false)}>
                 Cancel
               </button>
@@ -358,7 +387,7 @@ export default function CampaignsPage() {
       )}
 
       {campaignsList.length === 0 && !showForm ? (
-        <p className="empty">No campaigns yet. Create the first one to make GTM goal-scoped.</p>
+        <EmptyState description={<>No campaigns yet. Create the first one to make GTM goal-scoped.</>} />
       ) : (
         <ul className="section-list">
           {campaignsList.map((c) => {

@@ -1,5 +1,8 @@
 "use client";
 
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { API_URL, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useState } from "react";
@@ -294,7 +297,7 @@ export default function ContentPage() {
     );
   }
 
-  if (!workspace) return <p className="empty">Loading…</p>;
+  if (!workspace) return <EmptyState description="Loading…" />;
 
   return (
     <>
@@ -348,7 +351,7 @@ export default function ContentPage() {
       <section className="panel">
         <h2>Signal inbox</h2>
         {signalsList.length === 0 ? (
-          <p className="empty">No signals yet. Paste something the market said above.</p>
+          <EmptyState description={<>No signals yet. Paste something the market said above.</>} />
         ) : (
           <ul className="section-list">
             {signalsList.map((s) => (
@@ -422,13 +425,11 @@ export default function ContentPage() {
                         {publishingFor === d.id && (
                           <div className="resolve-controls" style={{ marginTop: 10 }}>
                             {socialConnections.length === 0 ? (
-                              <p className="empty">
-                                No social account connected.{" "}
+                              <EmptyState description={<>No social account connected.{" "}
                                 <Link href={`/workspaces/${id}/connectors`}>
                                   Connect Reddit on the Integrations page
                                 </Link>{" "}
-                                first.
-                              </p>
+                                first.</>} />
                             ) : (
                               <>
                                 <label>
@@ -578,10 +579,8 @@ export default function ContentPage() {
       <section className="panel">
         <h2>Published</h2>
         {publications.length === 0 ? (
-          <p className="empty">
-            Nothing published yet. Approve a draft, then use publish… to post it to a connected
-            social account.
-          </p>
+          <EmptyState description={<>Nothing published yet. Approve a draft, then use publish… to post it to a connected
+            social account.</>} />
         ) : (
           <ul className="section-list">
             {publications.map((p) => (

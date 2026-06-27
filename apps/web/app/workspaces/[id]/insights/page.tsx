@@ -1,5 +1,9 @@
 "use client";
 
+import { PageHeader } from "@/src/components/page-header";
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { apiFetch, apiDownload } from "@/lib/api";
@@ -38,23 +42,15 @@ export default function WorkspaceInsightsPage() {
   }, [id]);
 
   if (error) return <p className="error">{error}</p>;
-  if (!insights) return <p className="empty">Loading insights…</p>;
+  if (!insights) return <EmptyState description={<>Loading insights…</>} />;
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>Workspace Insights</h1>
-          <p className="subtitle">
-            Aggregate metrics and brain completeness across your workspace.
-          </p>
-        </div>
-        <div className="page-actions">
-          <button onClick={() => apiDownload(`/workspaces/${id}/insights?format=csv`, `workspace-insights-${id}.csv`)}>
+      <PageHeader title="Workspace Insights" subtitle={<>Aggregate metrics and brain completeness across your workspace.</>} actions={<>
+            <button onClick={() => apiDownload(`/workspaces/${id}/insights?format=csv`, `workspace-insights-${id}.csv`)}>
             Export CSV
           </button>
-        </div>
-      </div>
+          </>} />
 
       <section className="panel">
         <h2>Brain Completeness</h2>
@@ -99,7 +95,7 @@ export default function WorkspaceInsightsPage() {
       <section className="panel" style={{ marginTop: "24px" }}>
         <h2>Metrics by Channel</h2>
         {insights.byChannel.length === 0 ? (
-          <p className="empty">No channel metrics available.</p>
+          <EmptyState description={<>No channel metrics available.</>} />
         ) : (
           <table className="data-table" style={{ width: "100%", textAlign: "left" }}>
             <thead>
@@ -131,7 +127,7 @@ export default function WorkspaceInsightsPage() {
       <section className="panel" style={{ marginTop: "24px" }}>
         <h2>Campaigns Summary</h2>
         {insights.campaigns.length === 0 ? (
-          <p className="empty">No campaigns available.</p>
+          <EmptyState description={<>No campaigns available.</>} />
         ) : (
           <table className="data-table" style={{ width: "100%", textAlign: "left" }}>
             <thead>

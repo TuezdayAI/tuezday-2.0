@@ -1,5 +1,8 @@
 "use client";
 
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { API_URL, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useState } from "react";
@@ -104,7 +107,7 @@ export default function EvidencePage() {
     );
   }
 
-  if (!workspace || !view) return <p className="empty">Loading…</p>;
+  if (!workspace || !view) return <EmptyState description="Loading…" />;
 
   return (
     <>
@@ -171,10 +174,8 @@ export default function EvidencePage() {
           nothing is ingested until you do.
         </p>
         {candidates.length === 0 ? (
-          <p className="empty">
-            No pending candidates. The worker proposes your signals and published posts here as they
-            appear.
-          </p>
+          <EmptyState description={<>No pending candidates. The worker proposes your signals and published posts here as they
+            appear.</>} />
         ) : (
           <ul className="section-list">
             {candidates.map((c) => (
@@ -209,10 +210,8 @@ export default function EvidencePage() {
       <section className="panel">
         <h2>Corpus ({view.documents.length})</h2>
         {view.documents.length === 0 ? (
-          <p className="empty">
-            No evidence yet. Paste your website copy and a few past posts to give the brain
-            something to cite.
-          </p>
+          <EmptyState description={<>No evidence yet. Paste your website copy and a few past posts to give the brain
+            something to cite.</>} />
         ) : (
           <ul className="section-list">
             {view.documents.map((doc) => (

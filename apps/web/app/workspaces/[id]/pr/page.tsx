@@ -1,5 +1,9 @@
 "use client";
 
+import { PageHeader } from "@/src/components/page-header";
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { API_URL, apiDownload, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useState } from "react";
@@ -245,21 +249,14 @@ export default function PrPage() {
     );
   }
 
-  if (!workspace) return <p className="empty">Loading…</p>;
+  if (!workspace) return <EmptyState description="Loading…" />;
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>PR &amp; media</h1>
-          <p className="subtitle">
-            Your media list, with pitches drafted in your voice per contact — referencing their
+      <PageHeader title="PR &amp; media" subtitle={<>Your media list, with pitches drafted in your voice per contact — referencing their
             actual beat, never inventing coverage. Pitches go through Review; sending stays in your
-            email client.
-          </p>
-        </div>
-        <div className="page-actions">
-          {approvedPitches.length > 0 && (
+            email client.</>} actions={<>
+            {approvedPitches.length > 0 && (
             <button
               type="button"
               className="button-secondary"
@@ -268,8 +265,7 @@ export default function PrPage() {
               ↓ Export approved CSV ({approvedPitches.length})
             </button>
           )}
-        </div>
-      </div>
+          </>} />
 
       <section className="panel">
         <div className="panel-title-row">
@@ -363,7 +359,7 @@ export default function PrPage() {
         {error && <p className="error">{error}</p>}
 
         {contacts.length === 0 ? (
-          <p className="empty">No media contacts yet. Paste a CSV above.</p>
+          <EmptyState description={<>No media contacts yet. Paste a CSV above.</>} />
         ) : (
           <ul className="section-list">
             {contacts.map((contact) => {
@@ -515,7 +511,7 @@ export default function PrPage() {
           version; edit and approve it in Review like any other output.
         </p>
         {pressKitDrafts.length === 0 ? (
-          <p className="empty">No press kit yet. Generate one from your brain docs.</p>
+          <EmptyState description={<>No press kit yet. Generate one from your brain docs.</>} />
         ) : (
           <ul className="section-list">
             {pressKitDrafts.map((d, i) => (

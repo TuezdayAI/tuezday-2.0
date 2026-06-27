@@ -1,5 +1,8 @@
 "use client";
 
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { API_URL, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useState } from "react";
@@ -271,7 +274,7 @@ export default function ConnectorsPage() {
     );
   }
 
-  if (!workspace || !view) return <p className="empty">Loading…</p>;
+  if (!workspace || !view) return <EmptyState description="Loading…" />;
 
   return (
     <>
@@ -536,7 +539,7 @@ export default function ConnectorsPage() {
       <section className="panel">
         <h2>Event log</h2>
         {eventLog.length === 0 ? (
-          <p className="empty">No events yet. Approve a draft or ping a webhook.</p>
+          <EmptyState description={<>No events yet. Approve a draft or ping a webhook.</>} />
         ) : (
           <ul className="draft-chain">
             {eventLog.map((e) => (

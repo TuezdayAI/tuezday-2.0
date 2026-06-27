@@ -1,5 +1,8 @@
 "use client";
 
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { API_URL, apiDownload, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -213,7 +216,7 @@ export default function AdCreativesPage() {
     );
   }
 
-  if (!workspace) return <p className="empty">Loading…</p>;
+  if (!workspace) return <EmptyState description="Loading…" />;
 
   return (
     <>
@@ -232,10 +235,8 @@ export default function AdCreativesPage() {
           <h2>Generate a variant set</h2>
         </div>
         {activeCampaigns.length === 0 ? (
-          <p className="empty">
-            Ad creative is generated for a campaign — the campaign overlay drives the offer and
-            angle. <Link href={`/workspaces/${id}/campaigns`}>Create a campaign first</Link>.
-          </p>
+          <EmptyState description={<>Ad creative is generated for a campaign — the campaign overlay drives the offer and
+            angle. <Link href={`/workspaces/${id}/campaigns`}>Create a campaign first</Link>.</>} />
         ) : (
           <div className="resolve-controls">
             <label>
@@ -338,7 +339,7 @@ export default function AdCreativesPage() {
         </div>
 
         {sets.length === 0 ? (
-          <p className="empty">No ad creative yet. Pick a campaign above and generate a set.</p>
+          <EmptyState description={<>No ad creative yet. Pick a campaign above and generate a set.</>} />
         ) : (
           <ul className="section-list">
             {sets.map((set) => {

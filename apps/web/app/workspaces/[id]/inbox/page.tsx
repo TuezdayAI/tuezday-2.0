@@ -1,5 +1,9 @@
 "use client";
 
+import { PageHeader } from "@/src/components/page-header";
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -151,21 +155,13 @@ export default function InboxPage() {
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>Inbox</h1>
-          <p className="subtitle">
-            Comments on your published posts and replies to your DMs, in one place. Draft a reply in
+      <PageHeader title="Inbox" subtitle={<>Comments on your published posts and replies to your DMs, in one place. Draft a reply in
             your voice, approve it on <Link href={`/workspaces/${id}/approvals`}>Review</Link>, and
-            it posts back to the platform.
-          </p>
-        </div>
-        <div className="page-actions">
-          <button onClick={runNow} disabled={running}>
+            it posts back to the platform.</>} actions={<>
+            <button onClick={runNow} disabled={running}>
             {running ? "Running…" : "Run inbox now"}
           </button>
-        </div>
-      </div>
+          </>} />
 
       {lastRun && (
         <p className="subtitle">
@@ -190,11 +186,9 @@ export default function InboxPage() {
       {error && <p className="error">{error}</p>}
 
       {visible.length === 0 ? (
-        <p className="empty">
-          {items.length === 0
+        <EmptyState description={<>{items.length === 0
             ? "Nothing inbound yet. When someone comments on a published post or replies to a DM, it shows up here — run the inbox to pull the latest."
-            : "Nothing in this state."}
-        </p>
+            : "Nothing in this state."}</>} />
       ) : (
         <ul className="section-list">
           {visible.map((item) => {

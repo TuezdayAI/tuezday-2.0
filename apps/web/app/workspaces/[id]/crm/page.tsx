@@ -1,5 +1,8 @@
 "use client";
 
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { API_URL, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -228,7 +231,7 @@ export default function CrmPage() {
     );
   }
 
-  if (!workspace || !view) return <p className="empty">Loading…</p>;
+  if (!workspace || !view) return <EmptyState description="Loading…" />;
 
   return (
     <>
@@ -253,11 +256,9 @@ export default function CrmPage() {
           <h2>Sync</h2>
         </div>
         {crmConnections.length === 0 ? (
-          <p className="empty">
-            No CRM connected yet.{" "}
+          <EmptyState description={<>No CRM connected yet.{" "}
             <Link href={`/workspaces/${id}/connectors`}>Connect Freshsales on the connectors page</Link>{" "}
-            first.
-          </p>
+            first.</>} />
         ) : (
           <>
             <div className="resolve-controls">
@@ -358,7 +359,7 @@ export default function CrmPage() {
       <section className="panel">
         <h2>CRM contacts ({contacts.length})</h2>
         {contacts.length === 0 ? (
-          <p className="empty">Nothing synced yet. Run a sync above.</p>
+          <EmptyState description={<>Nothing synced yet. Run a sync above.</>} />
         ) : (
           <ul className="section-list">
             {contacts.map((contact) => (
@@ -435,10 +436,8 @@ export default function CrmPage() {
       <section className="panel">
         <h2>Leads → CRM</h2>
         {leadsList.length === 0 ? (
-          <p className="empty">
-            No leads yet. Import a contact above or add leads on the{" "}
-            <Link href={`/workspaces/${id}/outbound`}>outbound page</Link>.
-          </p>
+          <EmptyState description={<>No leads yet. Import a contact above or add leads on the{" "}
+            <Link href={`/workspaces/${id}/outbound`}>outbound page</Link>.</>} />
         ) : (
           <ul className="section-list">
             {leadsList.map((lead) => (
@@ -468,11 +467,9 @@ export default function CrmPage() {
       <section className="panel">
         <h2>Approved outbound drafts → CRM notes</h2>
         {approvedDrafts.length === 0 ? (
-          <p className="empty">
-            No approved outbound drafts yet. Draft on the{" "}
+          <EmptyState description={<>No approved outbound drafts yet. Draft on the{" "}
             <Link href={`/workspaces/${id}/outbound`}>outbound page</Link>, approve in the{" "}
-            <Link href={`/workspaces/${id}/approvals`}>queue</Link>, then log them here.
-          </p>
+            <Link href={`/workspaces/${id}/approvals`}>queue</Link>, then log them here.</>} />
         ) : (
           <ul className="section-list">
             {approvedDrafts.map((draft) => {

@@ -1,5 +1,9 @@
 "use client";
 
+import { PageHeader } from "@/src/components/page-header";
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { API_URL, apiDownload, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useState } from "react";
@@ -177,20 +181,13 @@ export default function OutboundPage() {
     );
   }
 
-  if (!workspace) return <p className="empty">Loading…</p>;
+  if (!workspace) return <EmptyState description="Loading…" />;
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>Audience</h1>
-          <p className="subtitle">
-            Your leads and contacts, with outreach drafted in your voice per person. Drafts go
-            through Review; sending stays in your sender of choice.
-          </p>
-        </div>
-        <div className="page-actions">
-          {approvedCount > 0 && (
+      <PageHeader title="Audience" subtitle={<>Your leads and contacts, with outreach drafted in your voice per person. Drafts go
+            through Review; sending stays in your sender of choice.</>} actions={<>
+            {approvedCount > 0 && (
             <button
               type="button"
               className="button-secondary"
@@ -199,8 +196,7 @@ export default function OutboundPage() {
               ↓ Export approved CSV ({approvedCount})
             </button>
           )}
-        </div>
-      </div>
+          </>} />
 
       <section className="panel">
         <div className="panel-title-row">
@@ -284,7 +280,7 @@ export default function OutboundPage() {
         {error && <p className="error">{error}</p>}
 
         {leadsList.length === 0 ? (
-          <p className="empty">No leads yet. Paste a CSV above.</p>
+          <EmptyState description={<>No leads yet. Paste a CSV above.</>} />
         ) : (
           <ul className="section-list">
             {leadsList.map((lead) => {

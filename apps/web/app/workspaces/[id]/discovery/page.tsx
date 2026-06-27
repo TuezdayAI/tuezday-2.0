@@ -1,5 +1,8 @@
 "use client";
 
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { API_URL, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useState } from "react";
@@ -229,7 +232,7 @@ export default function DiscoveryPage() {
     );
   }
 
-  if (!workspace) return <p className="empty">Loading…</p>;
+  if (!workspace) return <EmptyState description="Loading…" />;
 
   return (
     <>
@@ -373,7 +376,7 @@ export default function DiscoveryPage() {
         )}
 
         {sources.length === 0 ? (
-          <p className="empty">No sources yet. Add one or let the brain suggest some.</p>
+          <EmptyState description={<>No sources yet. Add one or let the brain suggest some.</>} />
         ) : (
           <ul className="section-list">
             {sources.map((s) => (
@@ -426,9 +429,7 @@ export default function DiscoveryPage() {
       <section className="panel">
         <h2>Triage inbox ({inbox.length})</h2>
         {inbox.length === 0 ? (
-          <p className="empty">
-            Nothing to triage. Run discovery, or wait for the worker's next poll.
-          </p>
+          <EmptyState description={<>Nothing to triage. Run discovery, or wait for the worker's next poll.</>} />
         ) : (
           <ul className="section-list">
             {inbox.map((item) => {

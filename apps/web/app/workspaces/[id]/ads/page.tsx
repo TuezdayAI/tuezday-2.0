@@ -1,5 +1,8 @@
 "use client";
 
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { API_URL, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -296,7 +299,7 @@ export default function AdsPage() {
     );
   }
 
-  if (!workspace || !view) return <p className="empty">Loading…</p>;
+  if (!workspace || !view) return <EmptyState description="Loading…" />;
 
   return (
     <>
@@ -322,11 +325,9 @@ export default function AdsPage() {
           <h2>Ad accounts</h2>
         </div>
         {adsConnections.length === 0 ? (
-          <p className="empty">
-            No ad platform connected yet.{" "}
+          <EmptyState description={<>No ad platform connected yet.{" "}
             <Link href={`/workspaces/${id}/connectors`}>Connect Meta Ads on the integrations page</Link>{" "}
-            — or use the CSV import below without connecting anything.
-          </p>
+            — or use the CSV import below without connecting anything.</>} />
         ) : (
           <div className="resolve-controls">
             <label>
@@ -402,9 +403,7 @@ export default function AdsPage() {
           </label>
         </div>
         {!report || report.campaigns.length === 0 ? (
-          <p className="empty">
-            No metrics in this range yet. Sync an account above or import a CSV below.
-          </p>
+          <EmptyState description={<>No metrics in this range yet. Sync an account above or import a CSV below.</>} />
         ) : (
           <ul className="section-list">
             {report.campaigns.map((row) => {

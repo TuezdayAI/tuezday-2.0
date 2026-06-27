@@ -1,5 +1,8 @@
 "use client";
 
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { API_URL, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useState } from "react";
@@ -15,7 +18,7 @@ import {
   type TaskType,
   type Workspace,
 } from "@tuezday/contracts";
-import { ReviewPanel } from "@/components/ReviewPanel";
+import { WhyThisOutput } from "@/components/why-this-output";
 
 const TASK_LABELS: Record<TaskType, string> = {
   linkedin_post: "LinkedIn post",
@@ -157,7 +160,7 @@ export default function ApprovalsPage() {
     );
   }
 
-  if (!workspace) return <p className="empty">Loading…</p>;
+  if (!workspace) return <EmptyState description="Loading…" />;
 
   return (
     <>
@@ -186,11 +189,9 @@ export default function ApprovalsPage() {
       {error && <p className="error">{error}</p>}
 
       {visible.length === 0 ? (
-        <p className="empty">
-          {drafts.length === 0
+        <EmptyState description={<>{drafts.length === 0
             ? "The queue is empty. Generate something in the sandbox and send it here."
-            : "Nothing in this state."}
-        </p>
+            : "Nothing in this state."}</>} />
       ) : (
         <ul className="section-list">
           {visible.map((d) => {
@@ -252,7 +253,7 @@ export default function ApprovalsPage() {
                         <pre className="section-content">{d.originalContent}</pre>
                       </details>
                     )}
-                    <ReviewPanel review={d.review} />
+                    <WhyThisOutput review={d.review} />
                   </>
                 )}
 

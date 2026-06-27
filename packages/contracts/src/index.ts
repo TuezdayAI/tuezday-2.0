@@ -2823,3 +2823,50 @@ export interface GoogleProfile {
   emailVerified: boolean;
   name: string;
 }
+
+// ---------------------------------------------------------------------------
+// Sprint 33: Dashboard IA and Nav Visibility
+// ---------------------------------------------------------------------------
+
+export const workspaceCapabilitiesSchema = z.object({
+  hasAds: z.boolean(),
+  hasInsights: z.boolean(),
+  hasCrm: z.boolean(),
+  hasConnections: z.boolean(),
+  draftCount: z.number().int(),
+  generationCount: z.number().int(),
+});
+export type WorkspaceCapabilities = z.infer<typeof workspaceCapabilitiesSchema>;
+
+export interface NavChild {
+  label: string;
+  path: string;
+}
+
+export interface NavItem {
+  label: string;
+  path: string;
+  children?: NavChild[];
+}
+
+/**
+ * Pure predicate to filter navigation items based on workspace capabilities.
+ */
+export function visibleNavItems(nav: NavItem[], caps: WorkspaceCapabilities): NavItem[] {
+  return nav
+    .filter((item) => {
+      if (item.label === "Insights" && !caps.hasInsights) return false;
+      return true;
+    })
+    .map((item) => {
+      if (item.label === "Campaigns" && !caps.hasAds) {
+        return {
+          ...item,
+          children: item.children?.filter(
+            (c) => c.label !== "Ads" && c.label !== "Ad creatives" && c.label !== "Launch ads"
+          ),
+        };
+      }
+      return item;
+    });
+}

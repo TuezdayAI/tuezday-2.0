@@ -1,5 +1,8 @@
 "use client";
 
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { API_URL, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -309,7 +312,7 @@ export default function AdLaunchesPage() {
       </>
     );
   }
-  if (!workspace || !settings) return <p className="empty">Loading…</p>;
+  if (!workspace || !settings) return <EmptyState description="Loading…" />;
 
   const capCents = settings.dailyCapCents;
   const meterPct = capCents > 0 ? Math.min(100, Math.round((committedCents / capCents) * 100)) : 0;
@@ -374,17 +377,13 @@ export default function AdLaunchesPage() {
       <section className="panel">
         <h2>New launch</h2>
         {connectedAccounts.length === 0 ? (
-          <p className="empty">
-            No connected ad account.{" "}
+          <EmptyState description={<>No connected ad account.{" "}
             <Link href={`/workspaces/${id}/connectors`}>Connect Meta Ads</Link>, then{" "}
-            <Link href={`/workspaces/${id}/ads`}>import your ad accounts</Link> first.
-          </p>
+            <Link href={`/workspaces/${id}/ads`}>import your ad accounts</Link> first.</>} />
         ) : creatives.length === 0 ? (
-          <p className="empty">
-            No approved Meta creative yet.{" "}
+          <EmptyState description={<>No approved Meta creative yet.{" "}
             <Link href={`/workspaces/${id}/ad-creatives`}>Generate and approve one</Link> to launch
-            it.
-          </p>
+            it.</>} />
         ) : (
           <>
             <div className="resolve-controls">
@@ -520,7 +519,7 @@ export default function AdLaunchesPage() {
           <h2>Launches</h2>
         </div>
         {launches.length === 0 ? (
-          <p className="empty">No launches yet. Build one above.</p>
+          <EmptyState description={<>No launches yet. Build one above.</>} />
         ) : (
           <ul className="section-list">
             {launches.map((launch) => {

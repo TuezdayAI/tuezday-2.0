@@ -1,5 +1,9 @@
 "use client";
 
+import { EmptyState } from "@/src/components/empty-state";
+import { PageHeader } from "@/src/components/page-header";
+
+
 import { API_URL, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useState } from "react";
@@ -87,7 +91,7 @@ export default function WorkspaceHomePage() {
     );
   }
 
-  if (!data) return <p className="empty">Loading…</p>;
+  if (!data) return <EmptyState description="Loading…" />;
 
   const { workspace, brain, personas, generations, drafts, newSignals, syntheses, campaigns } =
     data;
@@ -100,12 +104,10 @@ export default function WorkspaceHomePage() {
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>Home</h1>
-          <p className="subtitle">What needs your attention in {workspace.name} today.</p>
-        </div>
-      </div>
+      <PageHeader
+        title="Home"
+        subtitle={`What needs your attention in ${workspace.name} today.`}
+      />
 
       <OnboardingChecklist workspaceId={workspace.id} />
 
@@ -143,10 +145,8 @@ export default function WorkspaceHomePage() {
           </Link>
         </div>
         {recentDrafts.length === 0 ? (
-          <p className="empty">
-            Nothing here yet. Drafts appear as soon as you create something — try the Playground
-            or paste a signal in Create.
-          </p>
+          <EmptyState description={<>Nothing here yet. Drafts appear as soon as you create something — try the Playground
+            or paste a signal in Create.</>} />
         ) : (
           <ul className="section-list">
             {recentDrafts.map((draft) => (

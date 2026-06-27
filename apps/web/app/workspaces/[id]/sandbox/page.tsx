@@ -1,5 +1,9 @@
 "use client";
 
+import { PageHeader } from "@/src/components/page-header";
+import { EmptyState } from "@/src/components/empty-state";
+
+
 import { API_URL, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useState } from "react";
@@ -22,6 +26,7 @@ import {
 } from "@tuezday/contracts";
 import type { ContextSection, ResolvedContext } from "@tuezday/brain";
 import { ReviewPanel } from "@/components/ReviewPanel";
+import { WhyThisOutput, EvidenceRetrieval } from "@/components/why-this-output";
 
 const TASK_LABELS: Record<TaskType, string> = {
   linkedin_post: "LinkedIn post",
@@ -74,38 +79,7 @@ interface GenerationView {
 /** Retrieval-quality inspection: the composed query and every candidate chunk
  * with its similarity / recency / source / final scores and kept-vs-dropped
  * status. Renders only for the evidence section (which carries `evidence`). */
-function EvidenceRetrieval({ section }: { section: ContextSection }) {
-  if (!section.evidence) return null;
-  const { query, chunks } = section.evidence;
-  return (
-    <div style={{ marginTop: 8 }}>
-      <p className="meta">
-        Retrieval query: <em>{query}</em>
-      </p>
-      <ul className="section-list" style={{ marginTop: 4 }}>
-        {chunks.map((c, i) => (
-          <li
-            key={`${c.documentId}-${i}`}
-            className={`section-card ${c.kept ? "" : "excluded"}`}
-            style={{ padding: 8 }}
-          >
-            <div className="section-head">
-              <span className="layer-badge">{c.kind}</span>
-              <span className="section-title" style={{ fontSize: "0.85rem" }}>
-                {c.title}
-              </span>
-              <span className="section-tokens">{c.kept ? "Kept" : "Dropped (budget)"}</span>
-            </div>
-            <p className="meta" style={{ fontFamily: "monospace", fontSize: "0.8rem" }}>
-              sim {c.score.toFixed(2)} · rec {c.recencyScore.toFixed(2)} · src{" "}
-              {c.sourceWeight.toFixed(2)} · final {c.finalScore.toFixed(2)}
-            </p>
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
+
 
 export default function SandboxPage() {
   const { id } = useParams<{ id: string }>();
@@ -129,7 +103,6 @@ export default function SandboxPage() {
   const [showPreviewDetail, setShowPreviewDetail] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [latest, setLatest] = useState<GenerationView | null>(null);
-  const [showTrace, setShowTrace] = useState(false);
   const [expandedLog, setExpandedLog] = useState<Record<string, boolean>>({});
 
   const [settings, setSettings] = useState<GenerationSettings | null>(null);
@@ -227,7 +200,6 @@ export default function SandboxPage() {
         throw new Error(body?.message ?? `API returned ${res.status}`);
       }
       setLatest(body);
-      setShowTrace(false);
       await load();
     } catch (err) {
       if (err instanceof TypeError) {
@@ -336,24 +308,16 @@ export default function SandboxPage() {
     );
   }
 
-  if (!workspace) return <p className="empty">Loading…</p>;
+  if (!workspace) return <EmptyState description="Loading…" />;
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>Playground</h1>
-          <p className="subtitle">
-            Try a one-off generation: see exactly what Tuezday will use, generate, then rate the
-            result. Your ratings teach it what good looks like.
-          </p>
-        </div>
-        <div className="page-actions">
-          <button className="button-secondary" onClick={() => setShowSettings((s) => !s)}>
+      <PageHeader title="Playground" subtitle={<>Try a one-off generation: see exactly what Tuezday will use, generate, then rate the
+            result. Your ratings teach it what good looks like.</>} actions={<>
+            <button className="button-secondary" onClick={() => setShowSettings((s) => !s)}>
             {showSettings ? "Hide quality settings" : "Quality settings"}
           </button>
-        </div>
-      </div>
+          </>} />
 
       {showSettings && settings && (
         <section className="panel">
@@ -557,26 +521,15 @@ export default function SandboxPage() {
           <div className="generation-output">
             <p className="bundle-summary">
               {TASK_LABELS[latest.taskType]} · {latest.channel} · {personaName(latest.personaId)} ·{" "}
-              {latest.model} · {(latest.durationMs / 1000).toFixed(1)}s{" "}
-              <button className="link-button" onClick={() => setShowTrace(!showTrace)}>
-                {showTrace ? "hide" : "show"} prompt trace
-              </button>
+              {latest.model} · {(latest.durationMs / 1000).toFixed(1)}s
             </p>
             {latest.chosenAngle && (
               <p className="meta">Angle: {latest.chosenAngle}</p>
             )}
-            {showTrace && (
-              <>
-                {latest.sections
-                  ?.filter((s) => s.key === "evidence" && s.evidence)
-                  .map((s) => (
-                    <EvidenceRetrieval key={s.key} section={s} />
-                  ))}
-                <pre className="section-content">{latest.prompt}</pre>
-              </>
-            )}
+            
+            <WhyThisOutput sections={latest.sections} prompt={latest.prompt} review={latest.review} />
+
             <pre className="output-text">{latest.output}</pre>
-            <ReviewPanel review={latest.review} />
             <div className="rating-row">
               {OUTPUT_RATINGS.map((r) => (
                 <button
@@ -597,13 +550,14 @@ export default function SandboxPage() {
       <section className="panel">
         <h2>Training signal log</h2>
         {log.length === 0 ? (
-          <p className="empty">No generations yet.</p>
+          <EmptyState description={<>No generations yet.</>} />
         ) : (
           <ul className="section-list">
             {log.map((g) => (
               <li key={g.id} className="section-card">
                 <div
                   className="section-head"
+                  style={{ cursor: "pointer" }}
                   onClick={() => setExpandedLog((e) => ({ ...e, [g.id]: !e[g.id] }))}
                 >
                   <span className={`layer-badge ${g.rating ? `rating-${g.rating}` : ""}`}>
@@ -622,6 +576,19 @@ export default function SandboxPage() {
                 </p>
                 {expandedLog[g.id] && (
                   <>
+                    <details className="trace-details" style={{ marginTop: 12, marginBottom: 12 }}>
+                      <summary className="link-button" style={{ cursor: 'pointer', listStyle: 'none' }}>
+                        How did Tuezday write this?
+                      </summary>
+                      <div className="trace-content" style={{ marginTop: 8 }}>
+                        {g.sections
+                          ?.filter((s) => s.key === "evidence" && s.evidence)
+                          .map((s) => (
+                            <EvidenceRetrieval key={s.key} section={s} />
+                          ))}
+                        <pre className="section-content">{g.prompt}</pre>
+                      </div>
+                    </details>
                     <pre className="output-text">{g.output}</pre>
                     <ReviewPanel review={g.review} />
                     <div className="rating-row">

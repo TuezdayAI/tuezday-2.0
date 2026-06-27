@@ -3,24 +3,13 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
-import type { Workspace } from "@tuezday/contracts";
+import { visibleNavItems, type Workspace, type WorkspaceCapabilities } from "@tuezday/contracts";
 import { apiFetch, clearToken } from "@/lib/api";
 import { initAnalytics, identify } from "@/src/analytics";
 import { UpgradeModal } from "@/components/upgrade-modal";
 
-interface NavChild {
-  label: string;
-  path: string;
-}
-
-interface NavItem {
-  label: string;
-  /** Path suffix under /workspaces/[id]; "" is the workspace home. */
-  path: string;
-  children?: NavChild[];
-}
-
-const NAV: NavItem[] = [
+// Removed NavChild and NavItem interfaces as they are imported or not strictly needed here since NAV is untyped or we can infer it.
+const NAV = [
   { label: "Home", path: "" },
   { label: "Insights", path: "/insights" },
   {
@@ -82,6 +71,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
   const pathname = usePathname();
   const router = useRouter();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [capabilities, setCapabilities] = useState<WorkspaceCapabilities | null>(null);
   const [userLabel, setUserLabel] = useState<string | null>(null);
 
   useEffect(() => {
@@ -90,6 +80,13 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
       .then((res) => (res.ok ? res.json() : null))
       .then((ws) => {
         if (!cancelled) setWorkspace(ws);
+      })
+      .catch(() => {});
+      
+    apiFetch(`/workspaces/${id}/capabilities`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((caps) => {
+        if (!cancelled) setCapabilities(caps);
       })
       .catch(() => {});
       
@@ -134,7 +131,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
         </Link>
         <div className="ws-name">{workspace?.name ?? "…"}</div>
         <nav className="ws-nav">
-          {NAV.map((item) => (
+          {capabilities ? visibleNavItems(NAV, capabilities).map((item) => (
             <div key={item.label}>
               <Link
                 className={`ws-nav-item ${isActive(item.path) ? "active" : ""}`}
@@ -152,7 +149,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
                 </Link>
               ))}
             </div>
-          ))}
+          )) : null}
         </nav>
         <div className="ws-sidebar-foot">
           <Link href="/">← All workspaces</Link>
