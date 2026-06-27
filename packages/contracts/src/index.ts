@@ -2823,3 +2823,23 @@ export interface GoogleProfile {
   emailVerified: boolean;
   name: string;
 }
+
+// ---------------------------------------------------------------------------
+// Public API Keys (Sprint 40)
+// ---------------------------------------------------------------------------
+
+export const API_SCOPES = [
+  "ideas:write",
+  "drafts:read",
+  "drafts:write",
+  "analytics:read",
+  "campaigns:launch",
+] as const;
+
+export type ApiScope = (typeof API_SCOPES)[number];
+
+export const createApiKeyInputSchema = z.object({
+  name: z.string().trim().min(1).max(100),
+  scopes: z.array(z.enum(API_SCOPES)).min(1),
+});
+export type CreateApiKeyInput = z.infer<typeof createApiKeyInputSchema>;
