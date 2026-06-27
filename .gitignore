@@ -11,3 +11,15 @@ dist/
 *.sqlite
 .DS_Store
 coverage/
+
+# Local editor/agent state
+.claude/
+
+# Local SQLite backup snapshots
+*.db.bak-*
+*.db-shm.bak-*
+*.db-wal.bak-*
+
+# One-off generated report artifacts
+Tuezday-Market-Intelligence-Report.docx
+generate-report.js
