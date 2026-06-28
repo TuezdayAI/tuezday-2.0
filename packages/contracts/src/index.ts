@@ -1758,7 +1758,7 @@ export const createPostingCadenceInputSchema = z.object({
   campaignId: z.string().uuid(),
   personaId: z.string().uuid().optional(),
   channel: z.enum(CHANNELS),
-  connectionId: z.string().uuid(),
+  connectionId: z.string().uuid().optional(),
   target: z.string().trim().min(1, "A target is required").max(200),
   daysOfWeek: daysOfWeekSchema,
   timeOfDay: timeOfDaySchema,

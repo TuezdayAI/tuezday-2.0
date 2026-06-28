@@ -120,6 +120,25 @@ describe("posting cadences", () => {
     return complete.json().id;
   }
 
+  async function connectSocial(providerKey: string, nangoConnectionId = `nango-${providerKey}-${randomUUID()}`): Promise<string> {
+    if (providerKey === "linkedin") {
+      vi.stubEnv("LINKEDIN_CLIENT_ID", "cid");
+      vi.stubEnv("LINKEDIN_CLIENT_SECRET", "csecret");
+    }
+    await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/connectors/${providerKey}/oauth/session`,
+    });
+    state.connections.set(nangoConnectionId, { type: "OAUTH2" });
+    const complete = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/connectors/${providerKey}/oauth/complete`,
+      payload: { connectionId: nangoConnectionId },
+    });
+    expect(complete.statusCode).toBe(201);
+    return complete.json().id;
+  }
+
   async function createCampaign(name = "Launch"): Promise<string> {
     const res = await app.inject({
       method: "POST",
@@ -136,6 +155,21 @@ describe("posting cadences", () => {
       payload: { name },
     });
     return res.json().id;
+  }
+
+  async function assignSocialAccount(
+    personaId: string,
+    connectionId: string,
+    channel = "linkedin",
+    isPrimary = true,
+  ) {
+    const res = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/personas/${personaId}/social-accounts`,
+      payload: { connectionId, channel, isPrimary },
+    });
+    expect(res.statusCode).toBe(201);
+    return res.json();
   }
 
   function seedApprovedDraft(opts: {
@@ -194,6 +228,20 @@ describe("posting cadences", () => {
       expect(parsed.status).toBe("active");
     });
 
+    it("accepts a persona cadence without an explicit connectionId", () => {
+      const parsed = createPostingCadenceInputSchema.parse({
+        name: "Persona cadence",
+        campaignId: randomUUID(),
+        personaId: randomUUID(),
+        channel: "linkedin",
+        target: "feed",
+        daysOfWeek: [1],
+        timeOfDay: "09:30",
+        timezone: "UTC",
+      });
+      expect(parsed.connectionId).toBeUndefined();
+    });
+
     it("rejects a bad time, weekday, and timezone", () => {
       const base = {
         name: "X",
@@ -248,6 +296,29 @@ describe("posting cadences", () => {
       expect(del.statusCode).toBe(204);
       const after = await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/cadences` });
       expect(after.json()).toHaveLength(0);
+    });
+
+    it("creates a persona cadence from the persona primary account", async () => {
+      const personaId = await createPersona("CEO");
+      const accountId = await connectSocial("linkedin", "nango-linkedin-ceo");
+      await assignSocialAccount(personaId, accountId, "linkedin", true);
+      const campaignId = await createCampaign();
+
+      const res = await createCadence(
+        cadencePayload({
+          name: "CEO LinkedIn",
+          campaignId,
+          personaId,
+          channel: "linkedin",
+          target: "feed",
+          daysOfWeek: [1],
+          timeOfDay: "09:00",
+          timezone: "UTC",
+        }),
+      );
+
+      expect(res.statusCode).toBe(201);
+      expect(res.json().connectionId).toBe(accountId);
     });
 
     it("rejects unknown campaign / connection / persona, and non-social connections", async () => {

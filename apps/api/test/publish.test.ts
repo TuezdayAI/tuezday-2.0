@@ -405,13 +405,12 @@ describe("social publishing API", () => {
   });
 
   /** Simulate the popup: Nango creates the connection, then we complete. */
-  async function connectReddit(): Promise<{ id: string }> {
+  async function connectReddit(nangoConnectionId = `nango-${Math.random().toString(36).slice(2)}`): Promise<{ id: string }> {
     const session = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/connectors/reddit/oauth/session`,
     });
     expect(session.statusCode).toBe(200);
-    const nangoConnectionId = `nango-${Math.random().toString(36).slice(2)}`;
     state.connections.set(nangoConnectionId, {
       providerConfigKey: "tuezday-reddit",
       credentials: { type: "OAUTH2" },
@@ -425,12 +424,41 @@ describe("social publishing API", () => {
     return complete.json();
   }
 
-  async function approvedDraft(): Promise<string> {
+  async function createPersona(name = "CEO") {
+    const res = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/personas`,
+      payload: { name },
+    });
+    expect(res.statusCode).toBe(201);
+    return res.json();
+  }
+
+  async function assignSocialAccount(
+    personaId: string,
+    connectionId: string,
+    channel = "reddit",
+    isPrimary = true,
+  ) {
+    const res = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/personas/${personaId}/social-accounts`,
+      payload: { connectionId, channel, isPrimary },
+    });
+    expect(res.statusCode).toBe(201);
+    return res.json();
+  }
+
+  async function approvedDraft(opts: { personaId?: string; channel?: string } = {}): Promise<string> {
     const generationId = (
       await app.inject({
         method: "POST",
         url: `/workspaces/${workspaceId}/generate`,
-        payload: { taskType: "linkedin_post", channel: "linkedin" },
+        payload: {
+          taskType: "linkedin_post",
+          channel: opts.channel ?? "linkedin",
+          personaId: opts.personaId,
+        },
       })
     ).json().id;
     const draftId = (
@@ -622,6 +650,23 @@ describe("social publishing API", () => {
         title: "T",
       });
       expect(res.statusCode).toBe(400);
+    });
+
+    it("blocks persona drafts from publishing through unassigned accounts", async () => {
+      const persona = await createPersona("CEO");
+      const assigned = await connectReddit("nango-reddit-ceo");
+      const unassigned = await connectReddit("nango-reddit-other");
+      await assignSocialAccount(persona.id, assigned.id, "reddit", true);
+      const draftId = await approvedDraft({ personaId: persona.id, channel: "linkedin" });
+
+      const res = await publish(draftId, {
+        connectionId: unassigned.id,
+        target: "test",
+        title: "Wrong account",
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error).toBe("persona_account_mismatch");
     });
 
     it("gates on platform constraints before anything leaves", async () => {

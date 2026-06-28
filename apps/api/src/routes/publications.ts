@@ -15,6 +15,7 @@ import {
   listPublications,
   runDuePublications,
 } from "../services/publications";
+import { resolvePersonaSocialConnection } from "../services/persona-social-accounts";
 import { getWorkspace } from "../services/workspaces";
 
 type Fetcher = typeof fetch;
@@ -74,6 +75,21 @@ export function registerPublicationRoutes(
           error: "not_social",
           message: "Pick a connected social account to publish to.",
         });
+      }
+
+      if (draft.personaId) {
+        const routed = resolvePersonaSocialConnection(db, request.params.id, {
+          personaId: draft.personaId,
+          providerKey: connection.providerKey,
+          channel: provider.key === "twitter" ? "x" : provider.key,
+          explicitConnectionId: connection.id,
+        });
+        if (!routed.ok) {
+          return reply.status(409).send({
+            error: routed.error,
+            message: "This draft's persona is not assigned to the selected social account.",
+          });
+        }
       }
 
       const validation = validateSocialPost(provider.key, {

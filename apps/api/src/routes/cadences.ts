@@ -20,6 +20,7 @@ import {
   updateCadence,
 } from "../services/cadences";
 import { getPersona } from "../services/personas";
+import { resolvePersonaSocialConnection } from "../services/persona-social-accounts";
 import { getWorkspace } from "../services/workspaces";
 
 type Fetcher = typeof fetch;
@@ -83,21 +84,39 @@ export function registerCadenceRoutes(
         message: parsed.error.issues.map((i) => i.message).join("; "),
       });
     }
+    let cadenceInput = parsed.data;
     if (
       !validateRefs(
         db,
         request.params.id,
         {
-          campaignId: parsed.data.campaignId,
-          personaId: parsed.data.personaId ?? null,
-          connectionId: parsed.data.connectionId,
+          campaignId: cadenceInput.campaignId,
+          personaId: cadenceInput.personaId ?? null,
         },
         reply,
       )
     ) {
       return reply;
     }
-    return reply.status(201).send(createCadence(db, request.params.id, parsed.data));
+    if (!cadenceInput.connectionId && cadenceInput.personaId) {
+      const routed = resolvePersonaSocialConnection(db, request.params.id, {
+        personaId: cadenceInput.personaId,
+        channel: cadenceInput.channel,
+      });
+      if (!routed.ok) return reply.status(409).send({ error: routed.error });
+      cadenceInput = { ...cadenceInput, connectionId: routed.connection.id };
+    }
+    if (!cadenceInput.connectionId) {
+      return reply.status(400).send({
+        error: "connection_not_found",
+        message: "Pick a social account or select a persona with a primary account.",
+      });
+    }
+    if (!validateRefs(db, request.params.id, { connectionId: cadenceInput.connectionId }, reply)) {
+      return reply;
+    }
+    const resolvedCadenceInput = { ...cadenceInput, connectionId: cadenceInput.connectionId };
+    return reply.status(201).send(createCadence(db, request.params.id, resolvedCadenceInput));
   });
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/cadences", async (request, reply) => {

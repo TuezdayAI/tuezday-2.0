@@ -176,7 +176,7 @@ export function getCadence(
 export function createCadence(
   db: Db,
   workspaceId: string,
-  input: CreatePostingCadenceInput,
+  input: CreatePostingCadenceInput & { connectionId: string },
 ): PostingCadence {
   const now = Date.now();
   const row: PostingCadenceRow = {
