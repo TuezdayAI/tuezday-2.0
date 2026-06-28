@@ -488,6 +488,21 @@ your voice and cleared through Review — without leaving Tuezday.
 
 ---
 
+### Persona social account routing
+
+1. Connect two LinkedIn accounts and two Instagram accounts in one workspace.
+2. Create a CEO persona and a Company Page persona.
+3. Assign one LinkedIn and one Instagram account as primary for CEO.
+4. Assign the other LinkedIn and Instagram accounts as primary for Company Page.
+5. Generate and approve a CEO LinkedIn draft.
+6. Confirm the publish modal only offers the CEO-assigned LinkedIn account.
+7. Create a cadence for the CEO persona with no explicit account override.
+8. Confirm the cadence stores and publishes through the CEO primary account.
+9. Create a launch for the Company Page persona with LinkedIn and Instagram channels.
+10. Confirm dispatch uses the Company Page primary accounts and never the CEO accounts.
+
+---
+
 ## Cross-cutting things worth re-checking occasionally
 
 - [ ] `npm test` (679 tests) and `npm run typecheck` stay green.

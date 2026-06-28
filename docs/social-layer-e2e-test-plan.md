@@ -267,6 +267,23 @@ Watch for:
 - Instagram account connected but unable to publish because the account type is wrong.
 - Multiple connected accounts with no clear account picker later.
 
+Persona routing extension:
+
+1. Connect at least two accounts for the same social provider, preferably LinkedIn and Instagram.
+2. Confirm Integrations shows separate account rows, statuses, test results, and a clear "Connect another account" action.
+3. In Context Inspector, create CEO and Company Page personas.
+4. Assign different LinkedIn and Instagram accounts as primary for each persona/channel.
+5. Create a CEO LinkedIn cadence and confirm the account picker only shows CEO-assigned accounts once the persona is selected.
+6. Create a Company Page launch with LinkedIn and Instagram and confirm readiness only turns on after those primary assignments exist.
+7. Dispatch the launch and confirm final publication records use the Company Page connection IDs, not the CEO accounts.
+
+Persona routing pass criteria:
+
+- Multiple accounts for one provider do not overwrite each other.
+- Every persona/channel has at most one visible primary account.
+- Persona-scoped cadence and launch flows use assigned accounts and block missing primary accounts before platform calls.
+- User-facing account labels are specific enough to tell accounts apart.
+
 ---
 
 ### Phase 3 - Manual social publishing from an approved draft
