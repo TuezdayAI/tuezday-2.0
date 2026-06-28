@@ -2,6 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { personaSchema } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
 import { ConnectorFabricError, type ConnectorFabric } from "../src/connectors/fabric";
+import type { Db } from "../src/db";
+import { resolvePersonaSocialConnection } from "../src/services/persona-social-accounts";
 import { buildAuthedApp, createTestDb } from "./helpers";
 
 interface FabricState {
@@ -41,12 +43,14 @@ function fakeFabric(state: FabricState): ConnectorFabric {
 
 describe("personas API", () => {
   let app: TuezdayApp;
+  let db: Db;
   let workspaceId: string;
   let state: FabricState;
 
   beforeEach(async () => {
+    db = createTestDb();
     state = { healthy: true, connections: new Map() };
-    app = await buildAuthedApp({ db: createTestDb(), connectors: fakeFabric(state) });
+    app = await buildAuthedApp({ db, connectors: fakeFabric(state) });
     const res = await app.inject({
       method: "POST",
       url: "/workspaces",
@@ -86,6 +90,16 @@ describe("personas API", () => {
     });
     expect(complete.statusCode).toBe(201);
     return complete.json();
+  }
+
+  async function assign(personaId: string, connectionId: string, channel = "linkedin", isPrimary = true) {
+    const res = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/personas/${personaId}/social-accounts`,
+      payload: { connectionId, channel, isPrimary },
+    });
+    expect(res.statusCode).toBe(201);
+    return res.json();
   }
 
   it("creates a persona with defaults", async () => {
@@ -280,5 +294,55 @@ describe("personas API", () => {
     });
     expect(res.statusCode).toBe(400);
     expect(res.json().error).toBe("not_social");
+  });
+
+  it("resolves a persona primary account and rejects mismatched explicit accounts", async () => {
+    const persona = await createPersona("CEO");
+    const ceoAccount = await connectSocial("linkedin", "nango-linkedin-ceo");
+    const otherAccount = await connectSocial("linkedin", "nango-linkedin-other");
+    await assign(persona.id, ceoAccount.id, "linkedin", true);
+
+    const primary = resolvePersonaSocialConnection(db, workspaceId, {
+      personaId: persona.id,
+      providerKey: "linkedin",
+      channel: "linkedin",
+    });
+    expect(primary.ok).toBe(true);
+    if (!primary.ok) throw new Error(primary.error);
+    expect(primary.connection.id).toBe(ceoAccount.id);
+
+    const mismatch = resolvePersonaSocialConnection(db, workspaceId, {
+      personaId: persona.id,
+      providerKey: "linkedin",
+      channel: "linkedin",
+      explicitConnectionId: otherAccount.id,
+    });
+    expect(mismatch.ok).toBe(false);
+    if (mismatch.ok) throw new Error("expected persona_account_mismatch");
+    expect(mismatch.error).toBe("persona_account_mismatch");
+  });
+
+  it("reports missing persona primary accounts and allows persona-less explicit accounts", async () => {
+    const persona = await createPersona("CEO");
+    const account = await connectSocial("linkedin", "nango-linkedin-manual");
+
+    const missing = resolvePersonaSocialConnection(db, workspaceId, {
+      personaId: persona.id,
+      providerKey: "linkedin",
+      channel: "linkedin",
+    });
+    expect(missing.ok).toBe(false);
+    if (missing.ok) throw new Error("expected persona_account_missing");
+    expect(missing.error).toBe("persona_account_missing");
+
+    const explicit = resolvePersonaSocialConnection(db, workspaceId, {
+      personaId: null,
+      providerKey: "linkedin",
+      channel: "linkedin",
+      explicitConnectionId: account.id,
+    });
+    expect(explicit.ok).toBe(true);
+    if (!explicit.ok) throw new Error(explicit.error);
+    expect(explicit.connection.id).toBe(account.id);
   });
 });

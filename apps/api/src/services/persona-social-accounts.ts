@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import type {
+  Connection,
   PersonaSocialAccount,
   SocialAccountChannel,
   UpsertPersonaSocialAccountInput,
@@ -166,4 +167,74 @@ export function deletePersonaSocialAccount(
     )
     .run();
   return true;
+}
+
+export type PersonaAccountRoutingError =
+  | "persona_account_missing"
+  | "persona_account_mismatch"
+  | "persona_account_unavailable"
+  | "persona_account_ambiguous"
+  | "connection_not_found";
+
+export type PersonaConnectionResolution =
+  | { ok: true; connection: Connection; assignment: PersonaSocialAccount | null }
+  | { ok: false; error: PersonaAccountRoutingError };
+
+export function providerForSocialChannel(channel: string): string | null {
+  if (channel === "linkedin") return "linkedin";
+  if (channel === "instagram") return "instagram";
+  if (channel === "x") return "twitter";
+  if (channel === "reddit") return "reddit";
+  return null;
+}
+
+export function resolvePersonaSocialConnection(
+  db: Db,
+  workspaceId: string,
+  args: {
+    personaId: string | null | undefined;
+    providerKey?: string;
+    channel: string;
+    explicitConnectionId?: string;
+  },
+): PersonaConnectionResolution {
+  const providerKey = args.providerKey ?? providerForSocialChannel(args.channel);
+  if (!providerKey) return { ok: false, error: "persona_account_missing" };
+
+  if (args.explicitConnectionId) {
+    const connection = getConnection(db, workspaceId, args.explicitConnectionId);
+    if (!connection) return { ok: false, error: "connection_not_found" };
+    const provider = providerByKey(connection.providerKey);
+    if (
+      connection.status !== "connected" ||
+      connection.providerKey !== providerKey ||
+      !provider?.categories?.includes("social")
+    ) {
+      return { ok: false, error: "persona_account_unavailable" };
+    }
+    if (!args.personaId) return { ok: true, connection, assignment: null };
+    const assignment = listPersonaSocialAccounts(db, workspaceId, args.personaId).find(
+      (a) => a.connectionId === connection.id && a.providerKey === providerKey && a.channel === args.channel,
+    );
+    if (!assignment) return { ok: false, error: "persona_account_mismatch" };
+    return { ok: true, connection, assignment };
+  }
+
+  if (!args.personaId) return { ok: false, error: "persona_account_missing" };
+  const primaries = listPersonaSocialAccounts(db, workspaceId, args.personaId).filter(
+    (a) => a.providerKey === providerKey && a.channel === args.channel && a.isPrimary,
+  );
+  if (primaries.length === 0) return { ok: false, error: "persona_account_missing" };
+  if (primaries.length > 1) return { ok: false, error: "persona_account_ambiguous" };
+  const connection = getConnection(db, workspaceId, primaries[0]!.connectionId);
+  const provider = connection ? providerByKey(connection.providerKey) : undefined;
+  if (
+    !connection ||
+    connection.status !== "connected" ||
+    connection.providerKey !== providerKey ||
+    !provider?.categories?.includes("social")
+  ) {
+    return { ok: false, error: "persona_account_unavailable" };
+  }
+  return { ok: true, connection, assignment: primaries[0]! };
 }
