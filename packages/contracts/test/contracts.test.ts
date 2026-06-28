@@ -31,6 +31,7 @@ import {
   CONNECTOR_CATEGORIES,
   CONNECTOR_PROVIDERS,
   connectInputSchema,
+  connectionSchema,
   createWebhookInputSchema,
   crmContactSchema,
   crmSyncFilterInputSchema,
@@ -45,10 +46,12 @@ import {
   pushLeadInputSchema,
   OUTPUT_RATINGS,
   PERSONA_OVERLAY_MAX_CHARS,
+  personaSocialAccountSchema,
   PUBLICATION_STATUSES,
   publicationSchema,
   publishDraftInputSchema,
   SOCIAL_POST_CONSTRAINTS,
+  SOCIAL_ACCOUNT_CHANNELS,
   validateSocialPost,
   TASK_TYPES,
   brainDocumentSchema,
@@ -79,7 +82,9 @@ import {
   rateGenerationInputSchema,
   resolveRequestSchema,
   updateBrainDocInputSchema,
+  updateConnectionInputSchema,
   upsertCampaignInputSchema,
+  upsertPersonaSocialAccountInputSchema,
   upsertPersonaInputSchema,
   workspaceSchema,
 } from "../src/index";
@@ -376,6 +381,61 @@ describe("upsertPersonaInputSchema", () => {
     const overlay = "x".repeat(PERSONA_OVERLAY_MAX_CHARS + 1);
     expect(upsertPersonaInputSchema.safeParse({ name: "CEO", overlay }).success).toBe(false);
   });
+});
+
+it("parses connection identity metadata", () => {
+  expect(
+    connectionSchema.parse({
+      id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      workspaceId: "7c9e6679-7425-40de-944b-e07fc1f90ae8",
+      providerKey: "linkedin",
+      nangoConnectionId: "nango-linkedin-a",
+      config: {},
+      displayName: "Founder LinkedIn",
+      externalAccountId: "person-123",
+      externalAccountName: "Founder Name",
+      externalAccountHandle: "founder",
+      externalAccountUrl: "https://linkedin.com/in/founder",
+      status: "connected",
+      lastCheckedAt: null,
+      lastError: null,
+      createdAt: 1,
+      updatedAt: 1,
+    }).displayName,
+  ).toBe("Founder LinkedIn");
+});
+
+it("parses persona social account assignments", () => {
+  expect(SOCIAL_ACCOUNT_CHANNELS).toContain("linkedin");
+  expect(
+    personaSocialAccountSchema.parse({
+      id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+      workspaceId: "7c9e6679-7425-40de-944b-e07fc1f90ae8",
+      personaId: "7c9e6679-7425-40de-944b-e07fc1f90ae9",
+      connectionId: "7c9e6679-7425-40de-944b-e07fc1f90aea",
+      providerKey: "linkedin",
+      channel: "linkedin",
+      isPrimary: true,
+      defaultTarget: "feed",
+      createdAt: 1,
+      updatedAt: 1,
+    }).isPrimary,
+  ).toBe(true);
+  expect(
+    upsertPersonaSocialAccountInputSchema.parse({
+      connectionId: "7c9e6679-7425-40de-944b-e07fc1f90aea",
+      channel: "linkedin",
+      isPrimary: true,
+    }).defaultTarget,
+  ).toBe("feed");
+});
+
+it("validates connection display name updates", () => {
+  expect(updateConnectionInputSchema.parse({ displayName: "  Founder LinkedIn  " }).displayName).toBe(
+    "Founder LinkedIn",
+  );
+  expect(updateConnectionInputSchema.safeParse({ displayName: "  " }).success).toBe(false);
+  expect(updateConnectionInputSchema.safeParse({ displayName: "x".repeat(121) }).success).toBe(false);
 });
 
 describe("resolveRequestSchema", () => {

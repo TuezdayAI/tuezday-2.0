@@ -1088,12 +1088,50 @@ export const connectionSchema = z.object({
     baseUrl: z.string().optional(),
     testPath: z.string().optional(),
   }),
+  displayName: z.string(),
+  externalAccountId: z.string().nullable(),
+  externalAccountName: z.string().nullable(),
+  externalAccountHandle: z.string().nullable(),
+  externalAccountUrl: z.string().nullable(),
   status: z.enum(CONNECTION_STATUSES),
   lastCheckedAt: z.number().int().nullable(),
   lastError: z.string().nullable(),
   createdAt: z.number().int(),
+  updatedAt: z.number().int(),
 });
 export type Connection = z.infer<typeof connectionSchema>;
+
+export const SOCIAL_ACCOUNT_CHANNELS = ["linkedin", "instagram", "x", "reddit"] as const;
+export type SocialAccountChannel = (typeof SOCIAL_ACCOUNT_CHANNELS)[number];
+
+export const personaSocialAccountSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  personaId: z.string().uuid(),
+  connectionId: z.string().uuid(),
+  providerKey: z.string(),
+  channel: z.enum(SOCIAL_ACCOUNT_CHANNELS),
+  isPrimary: z.boolean(),
+  defaultTarget: z.string(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type PersonaSocialAccount = z.infer<typeof personaSocialAccountSchema>;
+
+export const upsertPersonaSocialAccountInputSchema = z.object({
+  connectionId: z.string().uuid(),
+  channel: z.enum(SOCIAL_ACCOUNT_CHANNELS),
+  isPrimary: z.boolean().default(false),
+  defaultTarget: z.string().trim().min(1).max(200).default("feed"),
+});
+export type UpsertPersonaSocialAccountInput = z.infer<
+  typeof upsertPersonaSocialAccountInputSchema
+>;
+
+export const updateConnectionInputSchema = z.object({
+  displayName: z.string().trim().min(1).max(120),
+});
+export type UpdateConnectionInput = z.infer<typeof updateConnectionInputSchema>;
 
 /** Credential requirements are enforced per provider auth mode at the route. */
 export const connectInputSchema = z.object({
