@@ -37,6 +37,7 @@ describe("onboarding service", () => {
       configJson: "{}",
       status: "connected",
       createdAt: now,
+      updatedAt: now,
     }).run();
     state = getOnboarding(db, ws.id, user.id);
     expect(state.steps.find((s) => s.key === "connect")?.done).toBe(true);

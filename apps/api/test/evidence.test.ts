@@ -298,7 +298,7 @@ describe("evidence API", () => {
       const ts = Date.now();
       const connectionId = randomUUID();
       db.insert(connections)
-        .values({ id: connectionId, workspaceId, providerKey: "reddit", nangoConnectionId: "n-1", createdAt: ts })
+        .values({ id: connectionId, workspaceId, providerKey: "reddit", nangoConnectionId: "n-1", createdAt: ts, updatedAt: ts })
         .run();
       const draftId = randomUUID();
       db.insert(drafts)

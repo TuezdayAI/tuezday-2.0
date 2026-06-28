@@ -34,6 +34,7 @@ describe("entitlements service", () => {
       configJson: "{}",
       status: "connected",
       createdAt: Date.now(),
+      updatedAt: Date.now(),
     }).run();
 
     db.insert(generations).values({

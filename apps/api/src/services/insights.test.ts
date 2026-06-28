@@ -137,7 +137,7 @@ describe("insights.service", () => {
     // Organic
     const p1 = randomUUID();
     const connId = randomUUID();
-    db.insert(connections).values({ id: connId, workspaceId: wsId, providerKey: "linkedin", status: "active", nangoConnectionId: "nango1", configJson: "{}", createdAt: Date.now() }).run();
+    db.insert(connections).values({ id: connId, workspaceId: wsId, providerKey: "linkedin", status: "active", nangoConnectionId: "nango1", configJson: "{}", createdAt: Date.now(), updatedAt: Date.now() }).run();
 
     db.insert(publications)
       .values({
@@ -205,7 +205,7 @@ describe("insights.service", () => {
       })
       .run();
     const inboxConnId = randomUUID();
-    db.insert(connections).values({ id: inboxConnId, workspaceId: wsId, providerKey: "google", status: "active", nangoConnectionId: "nango2", configJson: "{}", createdAt: Date.now() }).run();
+    db.insert(connections).values({ id: inboxConnId, workspaceId: wsId, providerKey: "google", status: "active", nangoConnectionId: "nango2", configJson: "{}", createdAt: Date.now(), updatedAt: Date.now() }).run();
 
     db.insert(inboxItems)
       .values({

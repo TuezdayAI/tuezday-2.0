@@ -121,6 +121,7 @@ describe("audiences API", () => {
         lastCheckedAt: null,
         lastError: null,
         createdAt: Date.now(),
+        updatedAt: Date.now(),
       })
       .run();
     return id;

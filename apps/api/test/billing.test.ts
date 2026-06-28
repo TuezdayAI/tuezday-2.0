@@ -73,6 +73,7 @@ describe("billing gating (Task 3)", () => {
       configJson: "{}",
       status: "connected",
       createdAt: Date.now(),
+      updatedAt: Date.now(),
     }).run();
 
     const res2 = await app.inject({
