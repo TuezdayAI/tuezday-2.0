@@ -100,6 +100,12 @@ function fabricState(graph: GraphState = graphState()): FabricState {
   return { healthy: true, integrations: new Set(), connections: new Map(), proxyStatus: 200, graph };
 }
 
+function storedConnectionWithPrefix(state: FabricState, prefix: string) {
+  return [...state.connections.entries()].find(([connectionId]) =>
+    connectionId.startsWith(prefix),
+  )?.[1];
+}
+
 function fakeFabric(state: FabricState): ConnectorFabric {
   return {
     async health() {
@@ -437,7 +443,7 @@ describe("Ads reporting API", () => {
   describe("connect", () => {
     it("connects meta_ads with a pasted token, stored as OAUTH2 credentials in the fabric", async () => {
       await connectMetaAds();
-      const stored = state.connections.get(`ws-${workspaceId}-meta_ads`);
+      const stored = storedConnectionWithPrefix(state, `ws-${workspaceId}-meta_ads-`);
       expect(stored).toBeDefined();
       expect(stored!.credentials).toEqual({ type: "OAUTH2", accessToken: "EAAB-token" });
     });

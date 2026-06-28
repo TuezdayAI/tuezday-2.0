@@ -69,6 +69,12 @@ function fabricState(contacts: FreshsalesContact[] = []): FabricState {
   };
 }
 
+function storedConnectionWithPrefix(state: FabricState, prefix: string) {
+  return [...state.connections.entries()].find(([connectionId]) =>
+    connectionId.startsWith(prefix),
+  )?.[1];
+}
+
 function handleFreshsales(state: FreshsalesState, method: string, path: string, body: unknown): ProxyJsonResult {
   if (state.failStatus) return { status: state.failStatus, json: { errors: ["boom"] } };
 
@@ -470,7 +476,7 @@ describe("CRM read/write API", () => {
   describe("connect", () => {
     it("connects freshsales with a bundle base url, passing connection_config to the fabric", async () => {
       await connectFreshsales();
-      const stored = state.connections.get(`ws-${workspaceId}-freshsales`);
+      const stored = storedConnectionWithPrefix(state, `ws-${workspaceId}-freshsales-`);
       expect(stored).toBeDefined();
       expect(stored!.credentials).toEqual({ type: "API_KEY", apiKey: "fs-key-123" });
       expect(stored!.connectionConfig).toEqual({ bundleAlias: "acme.myfreshworks.com/crm/sales" });
