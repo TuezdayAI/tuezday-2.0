@@ -1,5 +1,9 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
-import { resolveRequestSchema, upsertPersonaInputSchema } from "@tuezday/contracts";
+import {
+  resolveRequestSchema,
+  upsertPersonaInputSchema,
+  upsertPersonaSocialAccountInputSchema,
+} from "@tuezday/contracts";
 import { resolveContext, type BrainContents } from "@tuezday/brain";
 import type { Db } from "../db";
 import { getBrain } from "../services/brain";
@@ -14,6 +18,12 @@ import {
   listPersonas,
   updatePersona,
 } from "../services/personas";
+import {
+  createPersonaSocialAccount,
+  deletePersonaSocialAccount,
+  listPersonaSocialAccounts,
+  updatePersonaSocialAccount,
+} from "../services/persona-social-accounts";
 import { getWorkspace } from "../services/workspaces";
 
 function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
@@ -65,6 +75,89 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
       if (!workspaceOr404(db, request.params.id, reply)) return reply;
       const deleted = deletePersona(db, request.params.id, request.params.personaId);
       if (!deleted) return reply.status(404).send({ error: "persona_not_found" });
+      return reply.status(204).send();
+    },
+  );
+
+  app.get<{ Params: { id: string; personaId: string } }>(
+    "/workspaces/:id/personas/:personaId/social-accounts",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!getPersona(db, request.params.id, request.params.personaId)) {
+        return reply.status(404).send({ error: "persona_not_found" });
+      }
+      return listPersonaSocialAccounts(db, request.params.id, request.params.personaId);
+    },
+  );
+
+  app.post<{ Params: { id: string; personaId: string } }>(
+    "/workspaces/:id/personas/:personaId/social-accounts",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!getPersona(db, request.params.id, request.params.personaId)) {
+        return reply.status(404).send({ error: "persona_not_found" });
+      }
+      const parsed = upsertPersonaSocialAccountInputSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.status(400).send({
+          error: "invalid_input",
+          message: parsed.error.issues.map((i) => i.message).join("; "),
+        });
+      }
+      const result = createPersonaSocialAccount(
+        db,
+        request.params.id,
+        request.params.personaId,
+        parsed.data,
+      );
+      if (!result.ok) return reply.status(400).send({ error: result.error });
+      return reply.status(201).send(result.assignment);
+    },
+  );
+
+  app.patch<{ Params: { id: string; personaId: string; assignmentId: string } }>(
+    "/workspaces/:id/personas/:personaId/social-accounts/:assignmentId",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!getPersona(db, request.params.id, request.params.personaId)) {
+        return reply.status(404).send({ error: "persona_not_found" });
+      }
+      const parsed = upsertPersonaSocialAccountInputSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.status(400).send({
+          error: "invalid_input",
+          message: parsed.error.issues.map((i) => i.message).join("; "),
+        });
+      }
+      const result = updatePersonaSocialAccount(
+        db,
+        request.params.id,
+        request.params.personaId,
+        request.params.assignmentId,
+        parsed.data,
+      );
+      if (!result.ok && result.error === "assignment_not_found") {
+        return reply.status(404).send({ error: result.error });
+      }
+      if (!result.ok) return reply.status(400).send({ error: result.error });
+      return result.assignment;
+    },
+  );
+
+  app.delete<{ Params: { id: string; personaId: string; assignmentId: string } }>(
+    "/workspaces/:id/personas/:personaId/social-accounts/:assignmentId",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!getPersona(db, request.params.id, request.params.personaId)) {
+        return reply.status(404).send({ error: "persona_not_found" });
+      }
+      const deleted = deletePersonaSocialAccount(
+        db,
+        request.params.id,
+        request.params.personaId,
+        request.params.assignmentId,
+      );
+      if (!deleted) return reply.status(404).send({ error: "assignment_not_found" });
       return reply.status(204).send();
     },
   );
