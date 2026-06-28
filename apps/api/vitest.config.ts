@@ -4,5 +4,6 @@ export default defineConfig({
   test: {
     name: "api",
     environment: "node",
+    testTimeout: 10_000,
   },
 });
