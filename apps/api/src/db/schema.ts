@@ -1125,3 +1125,16 @@ export const approvalActionTokens = sqliteTable(
 );
 
 export type ApprovalActionTokenRow = typeof approvalActionTokens.$inferSelect;
+
+export const apiKeys = sqliteTable("api_keys", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id").notNull().references(() => workspaces.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  keyHash: text("key_hash").notNull(),         // sha256 of the raw key
+  scopesJson: text("scopes_json").notNull(),   // JSON string[] of API_SCOPES
+  lastUsedAt: integer("last_used_at"),
+  revokedAt: integer("revoked_at"),
+  createdAt: integer("created_at").notNull(),
+}, (t) => [uniqueIndex("api_keys_hash").on(t.keyHash)]);
+
+export type ApiKeyRow = typeof apiKeys.$inferSelect;
