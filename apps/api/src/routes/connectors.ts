@@ -5,6 +5,7 @@ import {
   CONNECTOR_PROVIDERS,
   connectInputSchema,
   createWebhookInputSchema,
+  updateConnectionInputSchema,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { assertWithinLimit, EntitlementError, getUsage } from "../services/entitlements";
@@ -19,6 +20,7 @@ import {
   providerByKey,
   registerOAuthConnection,
   testConnection,
+  updateConnection,
 } from "../services/connections";
 import {
   createWebhook,
@@ -215,15 +217,6 @@ export function registerConnectorRoutes(
           message: `${provider.label} needs a baseUrl.`,
         });
       }
-      const existing = listConnections(db, request.params.id).find(
-        (c) => c.providerKey === provider.key && c.status === "connected",
-      );
-      if (existing) {
-        return reply.status(409).send({
-          error: "already_connected",
-          message: `${provider.label} is already connected. Disconnect first to reconnect.`,
-        });
-      }
       const health = await fabric.health();
       if (!health.healthy) {
         return reply.status(503).send({
@@ -264,6 +257,23 @@ export function registerConnectorRoutes(
       const connection = getConnection(db, request.params.id, request.params.connectionId);
       if (!connection) return reply.status(404).send({ error: "connection_not_found" });
       return testConnection(db, fabric, connection);
+    },
+  );
+
+  app.patch<{ Params: { id: string; connectionId: string } }>(
+    "/workspaces/:id/connections/:connectionId",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const parsed = updateConnectionInputSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.status(400).send({
+          error: "invalid_input",
+          message: parsed.error.issues.map((i) => i.message).join("; "),
+        });
+      }
+      const updated = updateConnection(db, request.params.id, request.params.connectionId, parsed.data);
+      if (!updated) return reply.status(404).send({ error: "connection_not_found" });
+      return updated;
     },
   );
 

@@ -269,6 +269,104 @@ describe("connect social API", () => {
       }
     });
 
+    it("keeps multiple OAuth accounts for the same social provider", async () => {
+      stubSocialEnv();
+
+      const firstSession = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/connectors/linkedin/oauth/session`,
+      });
+      expect(firstSession.statusCode).toBe(200);
+
+      state.connections.set("nango-linkedin-a", { providerConfigKey: "tuezday-linkedin" });
+      const first = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/connectors/linkedin/oauth/complete`,
+        payload: { connectionId: "nango-linkedin-a" },
+      });
+      expect(first.statusCode).toBe(201);
+
+      state.connections.set("nango-linkedin-b", { providerConfigKey: "tuezday-linkedin" });
+      const second = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/connectors/linkedin/oauth/complete`,
+        payload: { connectionId: "nango-linkedin-b" },
+      });
+      expect(second.statusCode).toBe(201);
+
+      const view = await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/connectors` });
+      const linkedInConnections = view
+        .json()
+        .connections.filter((c: { providerKey: string }) => c.providerKey === "linkedin");
+      expect(linkedInConnections).toHaveLength(2);
+    });
+
+    it("treats the same OAuth Nango connection id as idempotent", async () => {
+      stubSocialEnv();
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/connectors/linkedin/oauth/session`,
+      });
+      state.connections.set("nango-linkedin-repeat", { providerConfigKey: "tuezday-linkedin" });
+
+      const first = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/connectors/linkedin/oauth/complete`,
+        payload: { connectionId: "nango-linkedin-repeat" },
+      });
+      expect(first.statusCode).toBe(201);
+
+      const second = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/connectors/linkedin/oauth/complete`,
+        payload: { connectionId: "nango-linkedin-repeat" },
+      });
+      expect(second.statusCode).toBe(201);
+      expect(second.json().id).toBe(first.json().id);
+
+      const view = await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/connectors` });
+      const linkedInConnections = view
+        .json()
+        .connections.filter((c: { providerKey: string }) => c.providerKey === "linkedin");
+      expect(linkedInConnections).toHaveLength(1);
+    });
+
+    it("updates an OAuth connection display name", async () => {
+      stubSocialEnv();
+      const connection = await connect("linkedin");
+
+      const patched = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/connections/${connection.id}`,
+        payload: { displayName: "  Founder LinkedIn  " },
+      });
+      expect(patched.statusCode).toBe(200);
+      expect(patched.json().displayName).toBe("Founder LinkedIn");
+
+      const view = await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/connectors` });
+      const linkedIn = view
+        .json()
+        .connections.find((c: { id: string }) => c.id === connection.id);
+      expect(linkedIn.displayName).toBe("Founder LinkedIn");
+
+      const invalid = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/connections/${connection.id}`,
+        payload: { displayName: "  " },
+      });
+      expect(invalid.statusCode).toBe(400);
+
+      const otherWorkspaceId = (
+        await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Other" } })
+      ).json().id;
+      const crossWorkspace = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${otherWorkspaceId}/connections/${connection.id}`,
+        payload: { displayName: "Wrong workspace" },
+      });
+      expect(crossWorkspace.statusCode).toBe(404);
+    });
+
     it("refuses completion for a connection Nango does not know", async () => {
       stubSocialEnv();
       await app.inject({
@@ -310,7 +408,7 @@ describe("connect social API", () => {
       expect(row.lastError).toContain("401");
     });
 
-    it("disconnects to 204 then revives the same row on reconnect", async () => {
+    it("disconnects to 204 then reconnects as a new row", async () => {
       stubSocialEnv();
       const first = await connect("instagram");
       const del = await app.inject({
@@ -326,8 +424,14 @@ describe("connect social API", () => {
       expect(afterDelete.status).toBe("disconnected");
 
       const second = await connect("instagram");
-      expect(second.id).toBe(first.id); // same row revived
+      expect(second.id).not.toBe(first.id);
       expect(second.status).toBe("connected");
+      const afterReconnect = (
+        await app
+          .inject({ method: "GET", url: `/workspaces/${workspaceId}/connectors` })
+          .then((r) => r.json())
+      ).connections.filter((c: { providerKey: string }) => c.providerKey === "instagram");
+      expect(afterReconnect).toHaveLength(2);
     });
   });
 

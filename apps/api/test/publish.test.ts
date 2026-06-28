@@ -524,15 +524,20 @@ describe("social publishing API", () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it("revives a disconnected connection on reconnect", async () => {
+    it("reconnects as a new row after disconnect", async () => {
       const first = await connectReddit();
       await app.inject({
         method: "DELETE",
         url: `/workspaces/${workspaceId}/connections/${first.id}`,
       });
       const second = await connectReddit();
-      expect(second.id).toBe(first.id);
+      expect(second.id).not.toBe(first.id);
       expect(second).toMatchObject({ status: "connected" });
+      const view = await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/connectors` });
+      const redditRows = view
+        .json()
+        .connections.filter((c: { providerKey: string }) => c.providerKey === "reddit");
+      expect(redditRows).toHaveLength(2);
     });
   });
 

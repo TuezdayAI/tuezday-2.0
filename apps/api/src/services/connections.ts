@@ -6,6 +6,7 @@ import {
   type Connection,
   type ConnectionStatus,
   type ConnectorProvider,
+  type UpdateConnectionInput,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { connections, type ConnectionRow } from "../db/schema";
@@ -17,9 +18,21 @@ export function providerByKey(key: string): ConnectorProvider | undefined {
 
 function rowToConnection(row: ConnectionRow): Connection {
   return {
-    ...row,
+    id: row.id,
+    workspaceId: row.workspaceId,
+    providerKey: row.providerKey,
+    nangoConnectionId: row.nangoConnectionId,
     config: JSON.parse(row.configJson) as Connection["config"],
+    displayName: row.displayName || row.providerKey,
+    externalAccountId: row.externalAccountId,
+    externalAccountName: row.externalAccountName,
+    externalAccountHandle: row.externalAccountHandle,
+    externalAccountUrl: row.externalAccountUrl,
     status: row.status as ConnectionStatus,
+    lastCheckedAt: row.lastCheckedAt,
+    lastError: row.lastError,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt ?? row.createdAt,
   };
 }
 
@@ -44,6 +57,21 @@ export function getConnection(
     .where(and(eq(connections.workspaceId, workspaceId), eq(connections.id, connectionId)))
     .get();
   return row ? rowToConnection(row) : undefined;
+}
+
+export function updateConnection(
+  db: Db,
+  workspaceId: string,
+  connectionId: string,
+  input: UpdateConnectionInput,
+): Connection | undefined {
+  const existing = getConnection(db, workspaceId, connectionId);
+  if (!existing) return undefined;
+  db.update(connections)
+    .set({ displayName: input.displayName, updatedAt: Date.now() })
+    .where(and(eq(connections.workspaceId, workspaceId), eq(connections.id, connectionId)))
+    .run();
+  return getConnection(db, workspaceId, connectionId);
 }
 
 export function integrationKeyFor(provider: ConnectorProvider): string {
@@ -73,8 +101,7 @@ export function oauthAppCredentials(
 
 /**
  * Register a connection the OAuth popup created. Nango generated the
- * connection id; Tuezday only stores the state row (reviving a disconnected
- * one, like key-paste reconnect).
+ * connection id; Tuezday stores one row per distinct Nango connection id.
  */
 export function registerOAuthConnection(
   db: Db,
@@ -86,15 +113,24 @@ export function registerOAuthConnection(
     .select()
     .from(connections)
     .where(
-      and(eq(connections.workspaceId, workspaceId), eq(connections.providerKey, provider.key)),
+      and(
+        eq(connections.workspaceId, workspaceId),
+        eq(connections.nangoConnectionId, nangoConnectionId),
+      ),
     )
     .get();
   const now = Date.now();
 
   if (existing) {
     db.update(connections)
-      .set({ nangoConnectionId, status: "connected", lastError: null, lastCheckedAt: now })
-      .where(eq(connections.id, existing.id))
+      .set({
+        nangoConnectionId,
+        status: "connected",
+        lastError: null,
+        lastCheckedAt: now,
+        updatedAt: now,
+      })
+      .where(and(eq(connections.workspaceId, workspaceId), eq(connections.id, existing.id)))
       .run();
     return getConnection(db, workspaceId, existing.id)!;
   }
@@ -105,10 +141,16 @@ export function registerOAuthConnection(
     providerKey: provider.key,
     nangoConnectionId,
     configJson: "{}",
+    displayName: provider.label,
+    externalAccountId: null,
+    externalAccountName: null,
+    externalAccountHandle: null,
+    externalAccountUrl: null,
     status: "connected",
     lastCheckedAt: now,
     lastError: null,
     createdAt: now,
+    updatedAt: now,
   };
   db.insert(connections).values(row).run();
   return rowToConnection(row);
@@ -117,7 +159,8 @@ export function registerOAuthConnection(
 /**
  * Connect a provider: ensure the integration exists in Nango, import the
  * credentials there (they never touch our DB), and store only the state row.
- * Reconnecting a disconnected provider revives the same row.
+ * Reconnecting a disconnected provider creates a new row; reconnecting a
+ * specific prior row belongs to a future scoped flow.
  */
 export async function connectProvider(
   db: Db,
@@ -138,15 +181,7 @@ export async function connectProvider(
           ? { type: "API_KEY", apiKey: input.apiKey }
           : { type: "BASIC", username: input.username!, password: input.password! };
 
-  const existing = db
-    .select()
-    .from(connections)
-    .where(
-      and(eq(connections.workspaceId, workspaceId), eq(connections.providerKey, provider.key)),
-    )
-    .get();
-
-  const nangoConnectionId = `ws-${workspaceId}-${provider.key}`;
+  const nangoConnectionId = `ws-${workspaceId}-${provider.key}-${randomUUID()}`;
   // Some Nango templates resolve their API host from a connection_config
   // value (freshsales' bundleAlias) — derive it from the founder's base URL.
   const connectionConfig =
@@ -161,24 +196,22 @@ export async function connectProvider(
   });
   const now = Date.now();
 
-  if (existing) {
-    db.update(connections)
-      .set({ nangoConnectionId, configJson: config, status: "connected", lastError: null, lastCheckedAt: now })
-      .where(eq(connections.id, existing.id))
-      .run();
-    return getConnection(db, workspaceId, existing.id)!;
-  }
-
   const row: ConnectionRow = {
     id: randomUUID(),
     workspaceId,
     providerKey: provider.key,
     nangoConnectionId,
     configJson: config,
+    displayName: provider.label,
+    externalAccountId: null,
+    externalAccountName: null,
+    externalAccountHandle: null,
+    externalAccountUrl: null,
     status: "connected",
     lastCheckedAt: now,
     lastError: null,
     createdAt: now,
+    updatedAt: now,
   };
   db.insert(connections).values(row).run();
   return rowToConnection(row);

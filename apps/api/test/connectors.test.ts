@@ -119,6 +119,7 @@ describe("connector fabric API", () => {
       const connection = res.json();
       expect(connectionSchema.safeParse(connection).success).toBe(true);
       expect(connection.status).toBe("connected");
+      expect(connection).not.toHaveProperty("configJson");
       expect(JSON.stringify(connection)).not.toContain("sk-live-123");
       // credentials reached the fabric, integration was ensured
       expect(state.integrations.has("tuezday-smartlead")).toBe(true);
@@ -156,11 +157,30 @@ describe("connector fabric API", () => {
       });
     });
 
-    it("refuses double-connect with 409", async () => {
-      await connect();
-      const res = await connect();
-      expect(res.statusCode).toBe(409);
-      expect(res.json().error).toBe("already_connected");
+    it("keeps multiple token-paste and no-auth accounts for the same provider", async () => {
+      const first = await connect();
+      expect(first.statusCode).toBe(201);
+      const second = await connect("smartlead", { apiKey: "sk-live-456" });
+      expect(second.statusCode).toBe(201);
+      expect(second.json().id).not.toBe(first.json().id);
+
+      const firstCustom = await connect("custom", {
+        baseUrl: "https://api.example.com",
+        testPath: "/status",
+      });
+      expect(firstCustom.statusCode).toBe(201);
+      const secondCustom = await connect("custom", {
+        baseUrl: "https://api2.example.com",
+        testPath: "/health",
+      });
+      expect(secondCustom.statusCode).toBe(201);
+      expect(secondCustom.json().id).not.toBe(firstCustom.json().id);
+
+      const listed = (
+        await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/connectors` })
+      ).json().connections;
+      expect(listed.filter((c: { providerKey: string }) => c.providerKey === "smartlead")).toHaveLength(2);
+      expect(listed.filter((c: { providerKey: string }) => c.providerKey === "custom")).toHaveLength(2);
     });
 
     it("returns 503 when the fabric is down", async () => {
@@ -190,7 +210,7 @@ describe("connector fabric API", () => {
       expect(list.connections[0].lastError).toContain("401");
     });
 
-    it("disconnects and reconnects", async () => {
+    it("disconnects and reconnects as a new row", async () => {
       const connection = (await connect()).json();
       const del = await app.inject({
         method: "DELETE",
@@ -206,8 +226,12 @@ describe("connector fabric API", () => {
 
       const re = await connect();
       expect(re.statusCode).toBe(201);
-      expect(re.json().id).toBe(connection.id); // same row revived
+      expect(re.json().id).not.toBe(connection.id);
       expect(re.json().status).toBe("connected");
+      const afterReconnect = (
+        await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/connectors` })
+      ).json().connections.filter((c: { providerKey: string }) => c.providerKey === "smartlead");
+      expect(afterReconnect).toHaveLength(2);
     });
   });
 
