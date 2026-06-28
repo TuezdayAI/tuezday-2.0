@@ -33,6 +33,8 @@ import { getPersona } from "../services/personas";
 import { runPreReview, setDraftReview } from "../services/review";
 import { getWorkspace } from "../services/workspaces";
 import type { BrainContents } from "@tuezday/brain";
+import type { Mailer } from "../mail/mailer";
+import { notifyDraftPending } from "../services/notifications";
 
 type Fetcher = typeof fetch;
 
@@ -50,6 +52,7 @@ export function registerDraftRoutes(
   fetcher: Fetcher,
   llm: LlmGateway,
   analytics: AnalyticsSink,
+  mailer: Mailer,
 ): void {
   app.post<{ Params: { id: string; generationId: string } }>(
     "/workspaces/:id/generations/:generationId/submit",
@@ -78,6 +81,7 @@ export function registerDraftRoutes(
         personaId: generation.personaId,
         content: generation.output,
       }, actorOf(request));
+      notifyDraftPending(db, mailer, fetcher, draft).catch(() => {});
       return reply.status(201).send(draft);
     },
   );
@@ -197,6 +201,9 @@ export function registerDraftRoutes(
 
         try {
           const updated = applyDraftAction(db, draft, action, actorOf(request), newContent);
+          if (action === "resubmit") {
+            notifyDraftPending(db, mailer, fetcher, updated).catch(() => {});
+          }
           if (action === "approve") {
             track(db, analytics, {
               event: "draft.approved",

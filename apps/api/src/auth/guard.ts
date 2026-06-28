@@ -35,6 +35,8 @@ const PUBLIC_ROUTES = new Set([
   "POST /auth/google/callback",
   "GET /health",
   "POST /webhooks/stripe",
+  "GET /a/:token",
+  "POST /telegram/webhook",
 ]);
 function bearerToken(authorization: string | undefined): string | null {
   if (!authorization) return null;
