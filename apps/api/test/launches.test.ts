@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { eq } from "drizzle-orm";
 import {
   CHANNELS,
   SOCIAL_POST_CONSTRAINTS,
@@ -14,6 +15,8 @@ import {
   type ConnectorFabric,
   type ProxyJsonResult,
 } from "../src/connectors/fabric";
+import type { Db } from "../src/db";
+import { launchMessages } from "../src/db/schema";
 import { InstagramAdapter } from "../src/connectors/social/instagram";
 import { LinkedInAdapter } from "../src/connectors/social/linkedin";
 import { XAdapter } from "../src/connectors/social/x";
@@ -266,6 +269,7 @@ describe("social adapters", () => {
 
 describe("targeted launch API", () => {
   let app: TuezdayApp;
+  let db: Db;
   let workspaceId: string;
   let state: PlatformState;
 
@@ -275,7 +279,8 @@ describe("targeted launch API", () => {
       vi.stubEnv(`${k}_CLIENT_SECRET`, "csecret");
     }
     state = platformState();
-    app = await buildAuthedApp({ db: createTestDb(), llm: fakeLlm, connectors: fakeFabric(state) });
+    db = createTestDb();
+    app = await buildAuthedApp({ db, llm: fakeLlm, connectors: fakeFabric(state) });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Launcher" } })
     ).json().id;
@@ -311,13 +316,15 @@ describe("targeted launch API", () => {
     return audienceId;
   }
 
-  async function connect(providerKey: string): Promise<{ id: string }> {
+  async function connect(
+    providerKey: string,
+    nangoConnectionId = `nango-${providerKey}-${Math.random().toString(36).slice(2)}`,
+  ): Promise<{ id: string }> {
     const session = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/connectors/${providerKey}/oauth/session`,
     });
     expect(session.statusCode).toBe(200);
-    const nangoConnectionId = `nango-${providerKey}-${Math.random().toString(36).slice(2)}`;
     state.connections.set(nangoConnectionId, {
       providerConfigKey: `tuezday-${providerKey}`,
       credentials: { type: "OAUTH2" },
@@ -329,6 +336,35 @@ describe("targeted launch API", () => {
     });
     expect(complete.statusCode).toBe(201);
     return complete.json();
+  }
+
+  async function connectSocial(providerKey: string, nangoConnectionId: string): Promise<{ id: string }> {
+    return connect(providerKey, nangoConnectionId);
+  }
+
+  async function createPersona(name = "CEO") {
+    const res = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/personas`,
+      payload: { name },
+    });
+    expect(res.statusCode).toBe(201);
+    return res.json();
+  }
+
+  async function assignSocialAccount(
+    personaId: string,
+    connectionId: string,
+    channel: string,
+    isPrimary = true,
+  ) {
+    const res = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/personas/${personaId}/social-accounts`,
+      payload: { connectionId, channel, isPrimary },
+    });
+    expect(res.statusCode).toBe(201);
+    return res.json();
   }
 
   async function approveDraft(draftId: string): Promise<void> {
@@ -343,6 +379,44 @@ describe("targeted launch API", () => {
     return app
       .inject({ method: "GET", url: `/workspaces/${workspaceId}/launches/${launchId}` })
       .then((r) => r.json());
+  }
+
+  async function readyLaunch(opts: { personaId?: string; channels: string[] }): Promise<{ id: string }> {
+    const alice = await createLead("Alice", "alice");
+    const audienceId = await staticAudience([alice]);
+    const launch = (
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/launches`,
+        payload: {
+          name: "Persona launch",
+          audienceId,
+          personaId: opts.personaId,
+          channels: opts.channels,
+        },
+      })
+    ).json();
+    const generated = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/launches/${launch.id}/generate`,
+      payload: {},
+    });
+    expect(generated.statusCode).toBe(200);
+    return launch;
+  }
+
+  async function approveLaunchDrafts(launchId: string): Promise<void> {
+    const d = await detail(launchId);
+    for (const message of d.messages as Array<{ draftId: string | null }>) {
+      if (message.draftId) await approveDraft(message.draftId);
+    }
+  }
+
+  async function publishedConnectionIds(): Promise<string[]> {
+    const publications = await app
+      .inject({ method: "GET", url: `/workspaces/${workspaceId}/publications` })
+      .then((r) => r.json());
+    return publications.map((publication: { connectionId: string }) => publication.connectionId);
   }
 
   async function fullLaunch(): Promise<{ launchId: string }> {
@@ -448,6 +522,25 @@ describe("targeted launch API", () => {
     expect(pubs).toHaveLength(1);
   });
 
+  it("dispatches LinkedIn launch broadcasts through the launch persona primary account", async () => {
+    const persona = await createPersona("CEO");
+    const ceoLinkedIn = await connectSocial("linkedin", "nango-linkedin-ceo");
+    const otherLinkedIn = await connectSocial("linkedin", "nango-linkedin-other");
+    await assignSocialAccount(persona.id, ceoLinkedIn.id, "linkedin", true);
+    const launch = await readyLaunch({ personaId: persona.id, channels: ["linkedin"] });
+    await approveLaunchDrafts(launch.id);
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/launches/${launch.id}/channels/linkedin/dispatch`,
+      payload: {},
+    });
+
+    expect(res.statusCode).toBe(200);
+    await expect(publishedConnectionIds()).resolves.toEqual([ceoLinkedIn.id]);
+    await expect(publishedConnectionIds()).resolves.not.toContain(otherLinkedIn.id);
+  });
+
   it("requires media for an Instagram dispatch", async () => {
     await connect("instagram");
     const { launchId } = await fullLaunch();
@@ -474,7 +567,7 @@ describe("targeted launch API", () => {
 
   it("sends X DMs per recipient, surfacing a refusal without aborting the rest", async () => {
     state.xFailHandles.add("bob");
-    await connect("twitter");
+    const connection = await connect("twitter");
     const { launchId } = await fullLaunch();
     const d = await detail(launchId);
     for (const m of d.messages.filter((m: { channel: string; draftId: string | null }) => m.channel === "x" && m.draftId)) {
@@ -491,6 +584,13 @@ describe("targeted launch API", () => {
     expect(x.find((m: { recipientName: string }) => m.recipientName === "Alice").status).toBe("sent");
     expect(x.find((m: { recipientName: string }) => m.recipientName === "Bob").status).toBe("failed");
     expect(x.find((m: { recipientName: string }) => m.recipientName === "Carol").status).toBe("skipped");
+    const sentRows = db
+      .select()
+      .from(launchMessages)
+      .where(eq(launchMessages.channel, "x"))
+      .all()
+      .filter((row) => row.status === "sent");
+    expect(sentRows.map((row) => row.connectionId)).toEqual([connection.id]);
   });
 
   it("does not dispatch messages whose draft is not approved", async () => {

@@ -43,6 +43,7 @@ import { retrieveEvidence } from "./evidence";
 import { storeGeneration } from "./generations";
 import type { OutboundExporter, OutboundExport } from "../outbound/exporter";
 import { getPersona } from "./personas";
+import { resolvePersonaSocialConnection } from "./persona-social-accounts";
 import { createPublication } from "./publications";
 import { hasSequence, listSequenceRecipients, listSequenceSteps } from "./launch-sequences";
 import { getWorkspace } from "./workspaces";
@@ -455,6 +456,31 @@ function resolveConnection(
   return { ok: true, connection: candidates[0]! };
 }
 
+function resolveLaunchConnection(
+  db: Db,
+  workspaceId: string,
+  launchRow: LaunchRow,
+  channel: LaunchChannel,
+  connectionId: string | undefined,
+): ConnResolution {
+  const providerKey = LAUNCH_CHANNEL_PROVIDER[channel];
+  if (!providerKey) return { ok: false, error: "no_connection" };
+  const routed = resolvePersonaSocialConnection(db, workspaceId, {
+    personaId: launchRow.personaId,
+    providerKey,
+    channel,
+    explicitConnectionId: connectionId,
+  });
+  if (routed.ok) return { ok: true, connection: routed.connection };
+  if (routed.error === "persona_account_missing" && !launchRow.personaId) {
+    return resolveConnection(db, workspaceId, providerKey, connectionId);
+  }
+  return {
+    ok: false,
+    error: routed.error === "persona_account_ambiguous" ? "ambiguous_connection" : "no_connection",
+  };
+}
+
 export interface DispatchMessageResult {
   messageId: string;
   recipient: string;
@@ -550,7 +576,7 @@ export async function dispatchChannel(
     // email is exported, not dispatched here.
     return { ok: false, error: "channel_not_selected", message: "Use the CSV export for email." };
   }
-  const conn = resolveConnection(db, workspaceId, providerKey, input.connectionId);
+  const conn = resolveLaunchConnection(db, workspaceId, launchRow, channel, input.connectionId);
   if (!conn.ok) return { ok: false, error: conn.error };
   const connection = conn.connection;
 
@@ -635,7 +661,15 @@ export async function dispatchChannel(
       if (!adapter?.sendDm) throw new Error("The X connection is not available — reconnect it on the Integrations page.");
       const res = await adapter.sendDm({ recipientHandle: row.recipientHandle ?? "", body: draft.content });
       db.update(launchMessages)
-        .set({ status: "sent", sentAt: now, externalId: res.externalId, externalUrl: res.url || null, lastError: null, updatedAt: now })
+        .set({
+          status: "sent",
+          sentAt: now,
+          externalId: res.externalId,
+          externalUrl: res.url || null,
+          lastError: null,
+          connectionId: connection.id,
+          updatedAt: now,
+        })
         .where(eq(launchMessages.id, row.id))
         .run();
       results.push({ messageId: row.id, recipient: row.recipientName, status: "sent" });
