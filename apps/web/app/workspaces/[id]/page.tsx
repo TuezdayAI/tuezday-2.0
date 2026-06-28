@@ -1,11 +1,5 @@
 "use client";
 
-import { EmptyState } from "@/src/components/empty-state";
-import { PageHeader } from "@/src/components/page-header";
-
-
-import { API_URL, apiFetch } from "@/lib/api";
-
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
@@ -18,6 +12,9 @@ import type {
   Workspace,
 } from "@tuezday/contracts";
 import type { BrainScore } from "@tuezday/brain";
+import { API_URL, apiFetch } from "@/lib/api";
+import { EmptyState } from "@/src/components/empty-state";
+import { PageHeader } from "@/src/components/page-header";
 import { OnboardingChecklist } from "./_components/onboarding-checklist";
 
 interface BrainView {
@@ -86,27 +83,24 @@ export default function WorkspaceHomePage() {
     return (
       <>
         <p className="error">{error}</p>
-        <Link href="/">← Back to workspaces</Link>
+        <Link href="/">{"<-"} Back to workspaces</Link>
       </>
     );
   }
 
-  if (!data) return <EmptyState description="Loading…" />;
+  if (!data) return <EmptyState description="Loading..." />;
 
-  const { workspace, brain, personas, generations, drafts, newSignals, syntheses, campaigns } =
-    data;
-
+  const { workspace, drafts, newSignals, syntheses, campaigns } = data;
   const pendingReview = drafts.filter((d) => d.state === "pending_review").length;
   const proposedUpdates = syntheses.filter((s) => s.status === "proposed").length;
   const activeCampaigns = campaigns.filter((c) => c.status === "active").length;
-
   const recentDrafts = [...drafts].sort((a, b) => b.createdAt - a.createdAt).slice(0, 5);
 
   return (
     <>
       <PageHeader
-        title="Home"
-        subtitle={`What needs your attention in ${workspace.name} today.`}
+        title="Command Center"
+        subtitle={`The GTM loop for ${workspace.name}: review work, act on signals, update the Brain, and keep campaigns moving.`}
       />
 
       <OnboardingChecklist workspaceId={workspace.id} />
@@ -114,26 +108,27 @@ export default function WorkspaceHomePage() {
       <div className="home-grid">
         <Link
           className={`stat-card ${pendingReview > 0 ? "attention" : ""}`}
+          data-tone="icp"
           href={`/workspaces/${id}/approvals`}
         >
           <span className="stat-number">{pendingReview}</span>
-          <span className="stat-label">Waiting for review</span>
-          <span className="stat-hint">Drafts that need a decision from you</span>
+          <span className="stat-label">Needs review</span>
+          <span className="stat-hint">Drafts waiting for a human decision</span>
         </Link>
-        <Link className="stat-card" href={`/workspaces/${id}/discovery`}>
+        <Link className="stat-card" data-tone="signal" href={`/workspaces/${id}/discovery`}>
           <span className="stat-number">{newSignals}</span>
-          <span className="stat-label">New signals</span>
-          <span className="stat-hint">Things happening in your market</span>
+          <span className="stat-label">Market signals</span>
+          <span className="stat-hint">Things worth turning into action</span>
         </Link>
-        <Link className="stat-card" href={`/workspaces/${id}/learning`}>
+        <Link className="stat-card" data-tone="history" href={`/workspaces/${id}/learning`}>
           <span className="stat-number">{proposedUpdates}</span>
-          <span className="stat-label">Proposed brain updates</span>
-          <span className="stat-hint">What Tuezday learned from your decisions</span>
+          <span className="stat-label">Brain updates</span>
+          <span className="stat-hint">Learning ready for you to accept</span>
         </Link>
-        <Link className="stat-card" href={`/workspaces/${id}/campaigns`}>
+        <Link className="stat-card" data-tone="voice" href={`/workspaces/${id}/campaigns`}>
           <span className="stat-number">{activeCampaigns}</span>
-          <span className="stat-label">Active campaigns</span>
-          <span className="stat-hint">GTM goals currently in play</span>
+          <span className="stat-label">Campaigns live</span>
+          <span className="stat-hint">GTM pushes currently in play</span>
         </Link>
       </div>
 
@@ -141,19 +136,26 @@ export default function WorkspaceHomePage() {
         <div className="panel-title-row">
           <h2>Recent drafts</h2>
           <Link className="button-secondary" href={`/workspaces/${id}/content`}>
-            Create something
+            Create draft
           </Link>
         </div>
         {recentDrafts.length === 0 ? (
-          <EmptyState description={<>Nothing here yet. Drafts appear as soon as you create something — try the Playground
-            or paste a signal in Create.</>} />
+          <EmptyState
+            title="No drafts yet"
+            description="Drafts appear here after you create from the Brain, turn a signal into a post, or generate campaign assets."
+            primaryAction={
+              <Link className="button-secondary" href={`/workspaces/${id}/content`}>
+                Start in Create
+              </Link>
+            }
+          />
         ) : (
           <ul className="section-list">
             {recentDrafts.map((draft) => (
               <li key={draft.id} className="section-card">
                 <div className="section-head">
                   <span className="section-title">
-                    {draft.taskType.replace(/_/g, " ")} · {draft.channel}
+                    {draft.taskType.replace(/_/g, " ")} / {draft.channel}
                   </span>
                   <span className={`layer-badge state-${draft.state}`}>
                     {STATE_LABEL[draft.state] ?? draft.state}
@@ -164,7 +166,7 @@ export default function WorkspaceHomePage() {
                 </div>
                 <p className="section-reason">
                   {draft.content.length > 160
-                    ? `${draft.content.slice(0, 160)}…`
+                    ? `${draft.content.slice(0, 160)}...`
                     : draft.content}
                 </p>
               </li>
