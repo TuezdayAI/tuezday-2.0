@@ -446,13 +446,46 @@ export const connections = sqliteTable("connections", {
   providerKey: text("provider_key").notNull(),
   nangoConnectionId: text("nango_connection_id").notNull(),
   configJson: text("config_json").notNull().default("{}"),
+  displayName: text("display_name").notNull().default(""),
+  externalAccountId: text("external_account_id"),
+  externalAccountName: text("external_account_name"),
+  externalAccountHandle: text("external_account_handle"),
+  externalAccountUrl: text("external_account_url"),
   status: text("status").notNull().default("connected"),
   lastCheckedAt: integer("last_checked_at"),
   lastError: text("last_error"),
   createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
 });
 
 export type ConnectionRow = typeof connections.$inferSelect;
+
+export const personaSocialAccounts = sqliteTable(
+  "persona_social_accounts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    personaId: text("persona_id")
+      .notNull()
+      .references(() => personas.id, { onDelete: "cascade" }),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => connections.id, { onDelete: "cascade" }),
+    providerKey: text("provider_key").notNull(),
+    channel: text("channel").notNull(),
+    isPrimary: integer("is_primary", { mode: "boolean" }).notNull().default(false),
+    defaultTarget: text("default_target").notNull().default("feed"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("persona_social_accounts_unique").on(table.personaId, table.connectionId, table.channel),
+  ],
+);
+
+export type PersonaSocialAccountRow = typeof personaSocialAccounts.$inferSelect;
 
 // Synced mirror of CRM contacts — the CRM stays the system of record.
 export const crmContacts = sqliteTable(
