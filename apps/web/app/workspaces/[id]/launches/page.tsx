@@ -14,17 +14,21 @@ import {
   type Audience,
   type AutomationMode,
   type Campaign,
+  type Connection,
+  type ConnectorProvider,
   type Launch,
   type LaunchChannel,
   type LaunchDetail,
   type LaunchMessage,
   type Persona,
+  type PersonaSocialAccount,
   type SequenceChannel,
   type SequenceRecipient,
   type SequenceStep,
   type Workspace,
 } from "@tuezday/contracts";
 import { API_URL, apiDownload, apiFetch } from "@/lib/api";
+import { launchChannelReady } from "@/lib/persona-social-routing";
 
 const MODE_LABELS: Record<AutomationMode, string> = {
   manual: "Manual (you drive every step)",
@@ -47,16 +51,9 @@ const CHANNEL_LABELS: Record<LaunchChannel, string> = {
   x: "X (DMs)",
 };
 
-// Channel → connector provider key. email has no connector.
-const CHANNEL_PROVIDER: Record<LaunchChannel, string | null> = {
-  email: null,
-  linkedin: "linkedin",
-  instagram: "instagram",
-  x: "twitter",
-};
-
 interface ConnectorsView {
-  connections: { id: string; providerKey: string; status: string }[];
+  providers: ConnectorProvider[];
+  connections: Connection[];
 }
 
 export default function LaunchesPage() {
@@ -67,7 +64,10 @@ export default function LaunchesPage() {
   const [audiences, setAudiences] = useState<Audience[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [personas, setPersonas] = useState<Persona[]>([]);
-  const [connected, setConnected] = useState<Set<string>>(new Set());
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [assignmentsByPersona, setAssignmentsByPersona] = useState<
+    Record<string, PersonaSocialAccount[]>
+  >({});
   const [error, setError] = useState<string | null>(null);
 
   const [showForm, setShowForm] = useState(false);
@@ -101,13 +101,24 @@ export default function LaunchesPage() {
       setLaunches(await lRes.json());
       setAudiences(aRes.ok ? await aRes.json() : []);
       setCampaigns(cRes.ok ? ((await cRes.json()) as Campaign[]).filter((c) => c.status === "active") : []);
-      setPersonas(pRes.ok ? await pRes.json() : []);
+      const personaRows = pRes.ok ? ((await pRes.json()) as Persona[]) : [];
+      setPersonas(personaRows);
       if (conRes.ok) {
         const view = (await conRes.json()) as ConnectorsView;
-        setConnected(
-          new Set(view.connections.filter((c) => c.status === "connected").map((c) => c.providerKey)),
-        );
+        setConnections(view.connections);
+      } else {
+        setConnections([]);
       }
+      const assignmentEntries = await Promise.all(
+        personaRows.map(async (persona) => {
+          const res = await apiFetch(`/workspaces/${id}/personas/${persona.id}/social-accounts`);
+          return [
+            persona.id,
+            res.ok ? ((await res.json()) as PersonaSocialAccount[]) : [],
+          ] as const;
+        }),
+      );
+      setAssignmentsByPersona(Object.fromEntries(assignmentEntries));
       setError(null);
     } catch {
       setError(`Could not load this workspace from ${API_URL}. Is "npm run dev" running?`);
@@ -118,9 +129,23 @@ export default function LaunchesPage() {
     void load();
   }, [load]);
 
-  function channelConnected(channel: LaunchChannel): boolean {
-    const provider = CHANNEL_PROVIDER[channel];
-    return provider === null || connected.has(provider);
+  function channelReadyForPersona(
+    channel: LaunchChannel,
+    personaId: string | null | undefined,
+  ): boolean {
+    return launchChannelReady(channel, connections, personaId, assignmentsByPersona);
+  }
+
+  function channelUnavailableTitle(
+    channel: LaunchChannel,
+    personaId: string | null | undefined,
+  ): string {
+    if (channelReadyForPersona(channel, null)) {
+      return personaId
+        ? "Assign this persona a primary account for the channel first"
+        : "";
+    }
+    return "Connect this account on Integrations first";
   }
 
   async function openDetail(launchId: string) {
@@ -306,7 +331,16 @@ export default function LaunchesPage() {
                 Persona
                 <select
                   value={form.personaId}
-                  onChange={(e) => setForm({ ...form, personaId: e.target.value })}
+                  onChange={(e) => {
+                    const nextPersonaId = e.target.value;
+                    setForm({
+                      ...form,
+                      personaId: nextPersonaId,
+                      channels: form.channels.filter((channel) =>
+                        channelReadyForPersona(channel, nextPersonaId),
+                      ),
+                    });
+                  }}
                 >
                   <option value="">(org voice)</option>
                   {personas.map((p) => (
@@ -320,9 +354,13 @@ export default function LaunchesPage() {
             <div className="checkbox-row" style={{ flexWrap: "wrap", gap: 12 }}>
               <span className="meta">Channels</span>
               {LAUNCH_CHANNELS.map((channel) => {
-                const usable = channelConnected(channel);
+                const usable = channelReadyForPersona(channel, form.personaId || null);
                 return (
-                  <label key={channel} className="checkbox-label" title={usable ? "" : "Connect this account on Integrations first"}>
+                  <label
+                    key={channel}
+                    className="checkbox-label"
+                    title={usable ? "" : channelUnavailableTitle(channel, form.personaId || null)}
+                  >
                     <input
                       type="checkbox"
                       disabled={!usable}
@@ -337,13 +375,30 @@ export default function LaunchesPage() {
                       }
                     />
                     {CHANNEL_LABELS[channel]}
-                    {!usable && <span className="meta"> (not connected)</span>}
+                    {!usable && (
+                      <span className="meta">
+                        {channelReadyForPersona(channel, null)
+                          ? " (needs persona primary)"
+                          : " (not connected)"}
+                      </span>
+                    )}
                   </label>
                 );
               })}
             </div>
             <div className="editor-actions">
-              <button type="submit" disabled={saving || !form.name || !form.audienceId || form.channels.length === 0}>
+              <button
+                type="submit"
+                disabled={
+                  saving ||
+                  !form.name ||
+                  !form.audienceId ||
+                  form.channels.length === 0 ||
+                  !form.channels.every((channel) =>
+                    channelReadyForPersona(channel, form.personaId || null),
+                  )
+                }
+              >
                 {saving ? "Creating…" : "Create launch"}
               </button>
               <button type="button" className="button-secondary" onClick={() => setShowForm(false)}>
@@ -388,7 +443,7 @@ export default function LaunchesPage() {
                     igMedia={igMedia}
                     setIgMedia={setIgMedia}
                     dispatchNote={dispatchNote}
-                    channelConnected={channelConnected}
+                    channelReady={(channel) => channelReadyForPersona(channel, detail.launch.personaId)}
                     onApprove={(draftId) => approve(draftId, launch.id)}
                     onDispatch={(channel) => dispatch(launch.id, channel)}
                     onRefresh={() => refreshDetail(launch.id)}
@@ -410,7 +465,7 @@ function LaunchDetailView({
   igMedia,
   setIgMedia,
   dispatchNote,
-  channelConnected,
+  channelReady,
   onApprove,
   onDispatch,
   onRefresh,
@@ -421,7 +476,7 @@ function LaunchDetailView({
   igMedia: string;
   setIgMedia: (v: string) => void;
   dispatchNote: string | null;
-  channelConnected: (c: LaunchChannel) => boolean;
+  channelReady: (c: LaunchChannel) => boolean;
   onApprove: (draftId: string) => void;
   onDispatch: (channel: LaunchChannel) => void;
   onRefresh: () => void;
@@ -468,7 +523,7 @@ function LaunchDetailView({
                 </button>
               ) : (
                 <button
-                  disabled={busy || approvedCount(channel) === 0 || !channelConnected(channel)}
+                  disabled={busy || approvedCount(channel) === 0 || !channelReady(channel)}
                   onClick={() => onDispatch(channel)}
                 >
                   {channel === "x" ? "Send DMs" : "Publish"} ({approvedCount(channel)})

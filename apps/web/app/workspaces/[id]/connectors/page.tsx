@@ -16,6 +16,7 @@ import {
   type WebhookSubscription,
   type Workspace,
 } from "@tuezday/contracts";
+import { connectionLabel } from "@/lib/persona-social-routing";
 
 /** The API decorates OAuth providers with whether their app creds are set. */
 type ProviderView = ConnectorProvider & { oauthConfigured?: boolean };
@@ -118,8 +119,8 @@ export default function ConnectorsPage() {
     void load();
   }, [load]);
 
-  function connectionFor(providerKey: string): Connection | undefined {
-    return view?.connections.find((c) => c.providerKey === providerKey);
+  function connectionsFor(providerKey: string): Connection[] {
+    return view?.connections.filter((c) => c.providerKey === providerKey) ?? [];
   }
 
   async function connect(provider: ConnectorProvider) {
@@ -298,11 +299,17 @@ export default function ConnectorsPage() {
         <h2>Providers</h2>
         <ul className="section-list">
           {view.providers.map((provider) => {
-            const connection = connectionFor(provider.key);
-            const isConnected = connection?.status === "connected";
+            const providerConnections = connectionsFor(provider.key);
+            const isConnected = providerConnections.some((connection) => connection.status === "connected");
+            const hasError = providerConnections.some((connection) => connection.status === "error");
+            const hasDisconnected = providerConnections.some(
+              (connection) => connection.status === "disconnected",
+            );
             // An OAuth provider with app creds in .env behaves like any other
             // connectable provider; without them it stays informational.
             const needsOAuthApp = provider.authMode === "oauth" && !provider.oauthConfigured;
+            const connectLabel =
+              providerConnections.length > 0 ? "Connect another account" : "Connect";
             return (
               <li key={provider.key} className="section-card">
                 <div className="section-head">
@@ -310,7 +317,7 @@ export default function ConnectorsPage() {
                     className={`layer-badge ${
                       isConnected
                         ? "state-approved"
-                        : connection?.status === "error"
+                        : hasError
                           ? "state-rejected"
                           : needsOAuthApp
                             ? "state-edited"
@@ -319,22 +326,84 @@ export default function ConnectorsPage() {
                   >
                     {isConnected
                       ? "connected"
-                      : connection?.status === "error"
+                      : hasError
                         ? "error"
                         : needsOAuthApp
                           ? "needs OAuth app"
-                          : "not connected"}
+                          : hasDisconnected
+                            ? "disconnected"
+                            : "not connected"}
                   </span>
                   <span className="section-title">{provider.label}</span>
-                  {connection?.lastCheckedAt && (
-                    <span className="section-tokens">
-                      checked {new Date(connection.lastCheckedAt).toLocaleString()}
-                    </span>
+                  {providerConnections.length > 0 && (
+                    <span className="section-tokens">{providerConnections.length} account(s)</span>
                   )}
                 </div>
-                {connection?.lastError && <p className="error">{connection.lastError}</p>}
-                {testResults[connection?.id ?? ""] && (
-                  <p className="section-reason">{testResults[connection!.id]}</p>
+
+                {providerConnections.length > 0 && (
+                  <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
+                    {providerConnections.map((connection) => (
+                      <div
+                        key={connection.id}
+                        className={connection.status === "disconnected" ? "excluded" : ""}
+                        style={{ borderTop: "1px solid var(--border)", paddingTop: 10 }}
+                      >
+                        <div className="section-head">
+                          <span
+                            className={`layer-badge ${
+                              connection.status === "connected"
+                                ? "state-approved"
+                                : connection.status === "error"
+                                  ? "state-rejected"
+                                  : ""
+                            }`}
+                          >
+                            {connection.status}
+                          </span>
+                          <span className="section-title">
+                            {connectionLabel(connection, provider.label)}
+                          </span>
+                          {connection.externalAccountHandle && (
+                            <span className="meta">@{connection.externalAccountHandle}</span>
+                          )}
+                          {connection.lastCheckedAt && (
+                            <span className="section-tokens">
+                              checked {new Date(connection.lastCheckedAt).toLocaleString()}
+                            </span>
+                          )}
+                        </div>
+                        {connection.externalAccountUrl && (
+                          <p className="section-reason">
+                            <a href={connection.externalAccountUrl} target="_blank" rel="noreferrer">
+                              {connection.externalAccountUrl}
+                            </a>
+                          </p>
+                        )}
+                        {connection.lastError && <p className="error">{connection.lastError}</p>}
+                        {testResults[connection.id] && (
+                          <p className="section-reason">{testResults[connection.id]}</p>
+                        )}
+                        {connection.status !== "disconnected" && (
+                          <div className="rating-row" style={{ marginTop: 8 }}>
+                            <button
+                              className="button-secondary"
+                              disabled={busy}
+                              onClick={() => testConnection(connection)}
+                            >
+                              Test
+                            </button>
+                            <button
+                              className="button-secondary danger"
+                              disabled={busy}
+                              onClick={() => disconnect(connection)}
+                            >
+                              Disconnect
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
                 )}
 
                 {connectingKey === provider.key ? (
@@ -398,7 +467,7 @@ export default function ConnectorsPage() {
                       }
                       onClick={() => connect(provider)}
                     >
-                      Connect
+                      {connectLabel}
                     </button>
                     <button className="button-secondary" onClick={() => setConnectingKey(null)}>
                       Cancel
@@ -406,48 +475,22 @@ export default function ConnectorsPage() {
                   </div>
                 ) : (
                   <div className="rating-row" style={{ marginTop: 8 }}>
-                    {provider.authMode !== "oauth" && !isConnected && (
+                    {provider.authMode !== "oauth" && (
                       <button
                         className="button-secondary"
-                        disabled={!view.fabric.healthy}
+                        disabled={busy || !view.fabric.healthy}
                         onClick={() => setConnectingKey(provider.key)}
                       >
-                        Connect
+                        {connectLabel}
                       </button>
                     )}
-                    {provider.authMode === "oauth" && provider.oauthConfigured && !isConnected && (
+                    {provider.authMode === "oauth" && provider.oauthConfigured && (
                       <button
                         className="button-secondary"
                         disabled={busy || !view.fabric.healthy}
                         onClick={() => connectOAuth(provider)}
                       >
-                        {connection?.status === "disconnected" ? "Reconnect" : "Connect"}
-                      </button>
-                    )}
-                    {connection && connection.status !== "disconnected" && (
-                      <>
-                        <button
-                          className="button-secondary"
-                          disabled={busy}
-                          onClick={() => testConnection(connection)}
-                        >
-                          Test
-                        </button>
-                        <button
-                          className="button-secondary danger"
-                          disabled={busy}
-                          onClick={() => disconnect(connection)}
-                        >
-                          Disconnect
-                        </button>
-                      </>
-                    )}
-                    {connection?.status === "disconnected" && provider.authMode !== "oauth" && (
-                      <button
-                        className="button-secondary"
-                        onClick={() => setConnectingKey(provider.key)}
-                      >
-                        Reconnect
+                        {connectLabel}
                       </button>
                     )}
                   </div>

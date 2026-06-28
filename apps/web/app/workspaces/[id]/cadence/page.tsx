@@ -14,9 +14,15 @@ import {
   type Connection,
   type ConnectorProvider,
   type Persona,
+  type PersonaSocialAccount,
   type PostingCadence,
 } from "@tuezday/contracts";
 import { apiFetch } from "@/lib/api";
+import {
+  connectionLabel,
+  personaAccountOptions,
+  primaryConnectionForChannel,
+} from "@/lib/persona-social-routing";
 
 interface CadenceSummary extends PostingCadence {
   queuedCount: number;
@@ -42,6 +48,9 @@ export default function CadencePage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [social, setSocial] = useState<Connection[]>([]);
+  const [personaAssignments, setPersonaAssignments] = useState<PersonaSocialAccount[] | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -92,6 +101,42 @@ export default function CadencePage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function loadAssignments() {
+      if (!form.personaId) {
+        setPersonaAssignments(null);
+        return;
+      }
+      const res = await apiFetch(`/workspaces/${id}/personas/${form.personaId}/social-accounts`);
+      if (!cancelled) {
+        setPersonaAssignments(res.ok ? ((await res.json()) as PersonaSocialAccount[]) : []);
+      }
+    }
+    void loadAssignments();
+    return () => {
+      cancelled = true;
+    };
+  }, [id, form.personaId]);
+
+  useEffect(() => {
+    if (!form.personaId || personaAssignments === null) return;
+    const options = personaAccountOptions({
+      connections: social,
+      assignments: personaAssignments,
+      personaId: form.personaId,
+      channel: form.channel,
+    });
+    const primary = primaryConnectionForChannel(social, personaAssignments, form.channel);
+    setForm((current) => {
+      if (current.personaId !== form.personaId || current.channel !== form.channel) return current;
+      if (current.connectionId && options.some((account) => account.id === current.connectionId)) {
+        return current;
+      }
+      return { ...current, connectionId: primary?.id ?? "" };
+    });
+  }, [form.personaId, form.channel, personaAssignments, social]);
+
   function toggleDay(day: number) {
     setForm((f) => ({
       ...f,
@@ -114,7 +159,7 @@ export default function CadencePage() {
         campaignId: form.campaignId,
         personaId: form.personaId || undefined,
         channel: form.channel,
-        connectionId: form.connectionId,
+        connectionId: form.connectionId || undefined,
         target: form.target,
         daysOfWeek: form.daysOfWeek,
         timeOfDay: form.timeOfDay,
@@ -157,6 +202,12 @@ export default function CadencePage() {
 
   const canCreate =
     form.name && form.campaignId && form.connectionId && form.target && form.daysOfWeek.length > 0;
+  const accountOptions = personaAccountOptions({
+    connections: social,
+    assignments: personaAssignments,
+    personaId: form.personaId,
+    channel: form.channel,
+  });
 
   return (
     <>
@@ -209,7 +260,9 @@ export default function CadencePage() {
                 Persona (optional)
                 <select
                   value={form.personaId}
-                  onChange={(e) => setForm((f) => ({ ...f, personaId: e.target.value }))}
+                  onChange={(e) =>
+                    setForm((f) => ({ ...f, personaId: e.target.value, connectionId: "" }))
+                  }
                 >
                   <option value="">Any persona</option>
                   {personas.map((p) => (
@@ -225,7 +278,13 @@ export default function CadencePage() {
                 Channel
                 <select
                   value={form.channel}
-                  onChange={(e) => setForm((f) => ({ ...f, channel: e.target.value as Channel }))}
+                  onChange={(e) =>
+                    setForm((f) => ({
+                      ...f,
+                      channel: e.target.value as Channel,
+                      connectionId: "",
+                    }))
+                  }
                 >
                   {CHANNELS.map((ch) => (
                     <option key={ch} value={ch}>
@@ -241,9 +300,9 @@ export default function CadencePage() {
                   onChange={(e) => setForm((f) => ({ ...f, connectionId: e.target.value }))}
                 >
                   <option value="">— pick an account —</option>
-                  {social.map((c) => (
+                  {accountOptions.map((c) => (
                     <option key={c.id} value={c.id}>
-                      {c.providerKey}
+                      {connectionLabel(c)}
                     </option>
                   ))}
                 </select>
@@ -275,6 +334,12 @@ export default function CadencePage() {
                 />
               </label>
             </div>
+            {form.personaId && accountOptions.length === 0 && (
+              <p className="section-reason">
+                This persona has no assigned account for {form.channel}. Add one in Context
+                Inspector before scheduling this cadence.
+              </p>
+            )}
             <div className="cadence-days">
               {WEEKDAY_LABELS.map((label, day) => (
                 <label key={day} className="cadence-day">
