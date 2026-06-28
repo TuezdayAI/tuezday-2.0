@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { OnboardingStep } from "@tuezday/contracts";
-import { API_URL, apiFetch } from "@/lib/api";
+import { apiFetch } from "@/lib/api";
 
 interface OnboardingState {
   steps: OnboardingStep[];
@@ -44,8 +44,13 @@ export function OnboardingChecklist({ workspaceId }: { workspaceId: string }) {
   return (
     <section className="panel onboarding-panel">
       <div className="panel-title-row">
-        <h2>Get set up</h2>
-        <button className="button-secondary" onClick={handleDismiss}>
+        <div>
+          <h2>Teach Tuezday enough context to help</h2>
+          <p className="section-reason">
+            Complete the first loop: Brain, connections, draft, approval.
+          </p>
+        </div>
+        <button type="button" className="button-secondary" onClick={handleDismiss}>
           Dismiss
         </button>
       </div>
@@ -53,7 +58,7 @@ export function OnboardingChecklist({ workspaceId }: { workspaceId: string }) {
         {state.steps.map((step) => (
           <li key={step.key}>
             <Link className={`checklist-item ${step.done ? "done" : ""}`} href={step.cta}>
-              <span className="check-dot">{step.done ? "✓" : ""}</span>
+              <span className="check-dot" aria-hidden="true" />
               <span>
                 <span className="step-title">{step.label}</span>
               </span>

@@ -1,14 +1,18 @@
-# Social Layer End-to-End Test Plan
+# Overall Platform End-to-End Test Plan - Social Focus
 
 > Draft date: 2026-06-27
 >
-> Scope: current `sprint-30-outbound-sequences` branch. This plan tests the social layer as a real founder/operator would use it, then expands into the broader platform trust checks that social depends on.
+> Scope: current workspace after the newer merged/implemented surfaces. This plan tests the full Tuezday platform end to end, with the social layer as the main stress test because it is where drafts, approvals, integrations, scheduling, automation, inbox, and external platform state all meet.
 
 ---
 
 ## 1. Why we are testing this
 
-The social layer is where Tuezday stops being a smart drafting tool and starts touching the outside world. That means the test cannot only ask, "Did the button work?"
+Tuezday now has enough connected surface area that a feature-by-feature click test will miss the real risk.
+
+The product needs to be tested as one GTM system: workspace setup, onboarding, brain, context, generation, approvals, evidence, discovery, campaigns, CRM, ads, PR, outbound, social publishing, automation, replies, insights, billing, and team access. The social layer remains the deepest path because it is where Tuezday stops being a smart drafting tool and starts touching the outside world.
+
+That means the test cannot only ask, "Did the button work?"
 
 It needs to answer:
 
@@ -16,12 +20,22 @@ It needs to answer:
 - Does every automated action still respect the approval gate, kill switch, caps, platform constraints, and account state?
 - When something fails, does Tuezday explain the failure plainly enough that the user can recover?
 - Does the platform feel like one GTM system with memory, or like several disconnected tools sitting in the same sidebar?
+- Do the new global surfaces - onboarding, guidance, generation settings, insights, analytics, Google login, and billing - behave like part of the same system?
 
-The test should produce a clear founder-facing report: what works, what breaks, what is confusing, what is risky, and what should be fixed before broader testing.
+The test should produce a clear founder-facing report: what works, what breaks, what is confusing, what is risky, what is not testable because of external credentials, and what should be fixed before broader testing.
 
 ---
 
 ## 2. Platform Areas Covered
+
+### Full platform baseline
+
+- Email/password auth and Google sign-in.
+- Workspace creation, membership, invites, owner/member permissions, and actor attribution.
+- New onboarding checklist and brain templates.
+- Dashboard v2 navigation, capability-gated nav, home attention cards, and upgrade modal behavior.
+- Billing, plans, usage, entitlement limits, Stripe checkout, and Stripe webhook handling.
+- Product analytics: PostHog/no-op behavior, opt-out, and non-blocking event capture.
 
 ### Primary social layer
 
@@ -42,14 +56,21 @@ The test should produce a clear founder-facing report: what works, what breaks, 
 
 ### Broader platform checks around social
 
-- Auth, workspace access, and team identity.
 - Brain docs, personas, campaign context, and resolver traces.
+- Runtime-editable channel guidance.
+- Generation quality settings: angle step, pre-review, score threshold, and review traces.
 - Approval gate and decision history.
 - Discovery signal intake.
-- Evidence and context quality where available.
+- Evidence library, evidence candidates, RAG collection health, retrieval policy, citations, and graceful R2R degradation.
 - Learning loop touchpoints.
+- Outbound, CRM, ads reporting, ad creative generation, native ad launch, and PR/media outreach.
+- Native insights: workspace insights, campaign insights, channel rollups, and CSV export.
 - Event logs, publication receipts, and persistence after reload/restart.
 - Failure handling when Nango, platform APIs, Gemini, R2R, or the worker are unavailable.
+
+### Planned or not part of this run
+
+- Notifications/mobile approvals and MCP/public API have specs, but no corresponding app/API surfaces were visible in this workspace scan. Treat them as planned unless code is present in the run branch.
 
 ---
 
@@ -71,8 +92,12 @@ Capture both product bugs and trust problems. A flow can technically pass and st
 
 ## 4. Success Criteria
 
-The social layer passes this E2E round when:
+The platform passes this E2E round when:
 
+- A new user can register or sign in with Google, create/open a workspace, understand the home screen, and complete the onboarding checklist without reading engineering docs.
+- Brain docs, templates, personas, channel guidance, generation settings, evidence, campaigns, and resolver traces all visibly shape output.
+- The approval gate works across every module, not just social.
+- The user can move through content, outbound, PR, CRM, ads, insights, and billing without losing workspace context or actor attribution.
 - A new or returning user can complete a full flow from context setup to published social output.
 - A targeted launch can generate, approve, and dispatch email, LinkedIn, Instagram, and X outputs with correct per-channel behavior.
 - A cadence can schedule approved drafts and the calendar reflects what is going out.
@@ -80,7 +105,8 @@ The social layer passes this E2E round when:
 - Scheduled-auto can auto-approve and publish only inside guardrails.
 - The inbox can pull a real reply, draft a reply, approve it, and post it back.
 - A multi-step sequence can progress, stop one recipient, and stop an X recipient automatically after reply detection.
-- Every generated or posted artifact has a traceable path back to brain, campaign, persona, audience, approval state, and platform receipt.
+- Every generated, approved, sent, published, or reported artifact has a traceable path back to brain, campaign, persona, audience, evidence, approval state, platform receipt, and actor.
+- Insights and billing reflect real workspace state, not stale or fake numbers.
 - Blocking failures are visible, recoverable, and do not corrupt state.
 
 ---
@@ -103,11 +129,14 @@ The social layer passes this E2E round when:
 Use real test accounts. Do not use personal or production accounts unless explicitly intended.
 
 - `GEMINI_API_KEY` for generation.
+- Google OAuth credentials if testing "Continue with Google": `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI`.
 - `REDDIT_CLIENT_ID` and `REDDIT_CLIENT_SECRET` if testing Reddit.
 - `LINKEDIN_CLIENT_ID` and `LINKEDIN_CLIENT_SECRET` if testing LinkedIn.
 - `TWITTER_CLIENT_ID` and `TWITTER_CLIENT_SECRET` if testing X.
 - `INSTAGRAM_CLIENT_ID` and `INSTAGRAM_CLIENT_SECRET` for the Facebook app backing Instagram Graph API.
 - Optional: `RESEND_API_KEY`, `MAIL_FROM`, and `APP_BASE_URL` for real invite/test emails.
+- Optional: PostHog keys if testing real product analytics delivery. With keys absent, analytics should be a no-op and must not break the product.
+- Optional: Stripe keys, price IDs, and webhook signing secret if testing live billing checkout/webhooks. Without them, billing should still show plan/usage and checkout should fail clearly.
 
 ### Platform caveats to check before blaming Tuezday
 
@@ -117,6 +146,8 @@ Use real test accounts. Do not use personal or production accounts unless explic
 - Reddit is the most practical end-to-end live platform for local testing.
 - Email sending is not native. Tuezday exports CSV for Smartlead/Instantly-style sending.
 - Email reply detection is not native yet. Email sequences stop by manual action.
+- Billing enforcement may be disabled by env. The test should record whether limits are actually enforced in the current run.
+- Analytics is best-effort by design. A dead analytics endpoint must never block auth, generation, approval, publish, or connect flows.
 
 ---
 
@@ -126,11 +157,20 @@ Create or reuse a workspace named `tuezday`.
 
 Minimum useful setup:
 
+- User accounts: one owner account, one invited teammate account, and one outsider/non-member account.
+- Auth paths: one email/password account and one Google-login account if Google OAuth is configured.
 - Brain docs: fill `soul`, `icp`, `voice`, `history`, and `now` with enough real context that generated drafts can be judged.
+- Brain templates: leave at least one new/empty workspace available to test template application and onboarding.
+- Channel guidance: prepare one obvious LinkedIn or email override so you can see whether generation changes after saving it.
+- Generation settings: plan one run with automated review on, one with angle step on, and one with both off.
+- Evidence: upload at least two manual evidence docs; create or publish at least one item that can become an evidence candidate.
 - Personas: create at least two personas:
   - Founder / CEO voice.
   - Company page voice.
 - Campaign: create one active campaign with objective, audience, channels, messaging pillars, and a now-overlay.
+- CRM: have a Freshsales or demo connector path ready if CRM read/write is in scope for the run.
+- Ads: have a Meta Ads read-only connection or CSV metrics ready if ads reporting is in scope.
+- PR: prepare 3 to 5 media contacts in CSV form.
 - Audience: create one static list or dynamic segment with 5 to 8 people.
 - Leads:
   - At least 5 email-ready leads.
@@ -139,11 +179,15 @@ Minimum useful setup:
   - At least 1 lead with a bad or closed X handle if testing error behavior.
 - Discovery signal: add or paste at least one realistic signal that could produce a social response.
 - Approved draft seed: create at least one approved draft under the campaign for cadence testing.
+- Billing: know the expected starting plan, whether `BILLING_ENFORCED` is active, and whether Stripe checkout is configured.
+- Insights: seed at least some real activity - draft decisions, publications, launch messages, ad metrics, and engagement metrics - so insights has something to aggregate.
 
 Recommended live test accounts:
 
 - One social account connected to Tuezday for publishing.
 - A second account on the same platform to comment or reply as an outside person.
+- One payment-test path, if Stripe is configured.
+- One PostHog project or a no-key/no-op analytics run, depending on what you want to verify.
 
 ---
 
@@ -174,16 +218,143 @@ Use this simple status scale:
 
 ## 8. Recommended Test Sequence
 
-### Phase 0 - Smoke test the base platform
+Run the whole platform first, then spend the most time on social. The existing social phases below are intentionally detailed because they are the hardest to trust: they touch external accounts, approvals, automation, schedules, replies, and reporting.
 
-Goal: prove the local environment, auth, and workspace state are usable before testing social.
+Recommended order:
+
+1. Environment, auth, navigation, capabilities, and workspace access.
+2. Onboarding, brain templates, team identity, and Google auth.
+3. Brain, channel guidance, generation quality settings, evidence/RAG, and resolver traces.
+4. Core generation, approval, learning, and analytics.
+5. Discovery, campaigns, audiences, CRM, outbound, PR, ads, and insights.
+6. Billing, entitlements, upgrade modal, and Stripe webhooks.
+7. Social connections, publishing, launches, cadence, automation, inbox, auto-replies, and sequences.
+8. Cross-cutting failure/recovery.
+
+### Phase A - New platform-wide surfaces
+
+Goal: include the newer implemented features that sit outside the social layer but affect the whole product.
+
+Steps:
+
+1. Create a fresh workspace and confirm Home shows the onboarding checklist.
+2. Apply a brain template to an empty brain doc.
+3. Complete enough onboarding actions for checklist progress to update, then dismiss onboarding and reload.
+4. Invite a teammate; accept the invite in another browser; confirm the teammate appears in Team.
+5. If Google OAuth is configured, test Continue with Google for:
+   - a new verified Google email,
+   - an existing email/password account with the same verified Google email,
+   - an unverified Google email or misconfigured OAuth app.
+6. Confirm the sidebar shows capability-allowed nav items, including Insights and Billing when available.
+7. Open Billing and confirm plan, usage, and entitlements.
+8. Trigger one entitlement limit if possible: connector limit, generation limit, or seat limit.
+9. Confirm `upgrade_required` opens the upgrade modal and routes to Billing.
+10. If Stripe is configured, complete a test checkout and verify the webhook updates the plan; send one bad-signature webhook and confirm it is rejected.
+11. If PostHog is configured, confirm events fire for register, generate, approve, publish, and connect. Then toggle analytics opt-out and confirm events stop.
+12. With PostHog keys missing or endpoint unreachable, confirm auth/generation/approval/publish/connect still work.
+
+Pass criteria:
+
+- Onboarding progress is tied to real workspace actions.
+- Brain templates create editable saved content.
+- Team/member access and actor attribution are correct.
+- Google auth links by verified email and rejects unsafe identities.
+- Billing shows accurate plan/usage and gates only the intended actions.
+- Analytics is best-effort, opt-out aware, and never blocks product actions.
+
+Watch for:
+
+- Capability-gated navigation hiding live features or showing dead ones.
+- Checkout redirect pointing to the wrong billing URL.
+- Upgrade modal without enough context.
+- Analytics sending draft content or other sensitive text.
+- Member users reaching owner-only billing actions.
+
+---
+
+### Phase B - Brain, guidance, generation quality, evidence, and resolver trust
+
+Goal: prove that every downstream module is working from the same memory and quality settings.
+
+Steps:
+
+1. Fill all five brain docs, edit them twice, restore an older version, and export the brain.
+2. Create CEO and company page personas.
+3. Edit LinkedIn channel guidance with an obvious instruction.
+4. Resolve/generate a LinkedIn task and confirm the trace uses the workspace guidance override.
+5. Reset guidance and confirm the trace returns to the default source.
+6. In Playground, turn automated pre-review on and generate; confirm brand/channel scores and issues appear.
+7. Turn angle step on, suggest angles, choose one, and generate from it.
+8. Turn both settings off and confirm new generations carry no angle or review output.
+9. Upload manual evidence documents.
+10. Sweep evidence candidates after signals or published posts exist.
+11. Accept one candidate into the corpus and dismiss another.
+12. Resolve with evidence enabled and confirm query, ranked chunks, citations, and trace reasons.
+13. Stop R2R and confirm evidence is excluded with a clear reason while generation still works.
+
+Pass criteria:
+
+- Guidance source is visible as Default or Workspace override.
+- Generation settings affect the next generation without deploys.
+- Automated review is advisory and does not block approval.
+- Evidence candidates are founder-gated.
+- RAG failure degrades clearly instead of breaking the task.
+
+Watch for:
+
+- Hidden prompt changes.
+- Evidence being ingested without acceptance.
+- Generic output after strong brain/guidance changes.
+- Review flags that prevent founder override.
+
+---
+
+### Phase C - Core GTM modules outside social
+
+Goal: test the rest of the platform so the social run has real context and data.
+
+Steps:
+
+1. Add discovery sources and run discovery.
+2. Accept a discovered or pasted signal into a draft.
+3. Create a campaign with channels, objective, pillars, persona, audience, and automation mode.
+4. Create one static list and one dynamic segment.
+5. Import leads and draft outbound emails; approve/reject a few; export approved CSV.
+6. If CRM is configured, sync contacts, discard some, set a filter, import one as a lead, and log an approved draft back to CRM.
+7. Import PR contacts, draft pitches, generate a press kit, approve one, and export/open email client.
+8. If ads reporting is configured, sync/import ad metrics and compare against the source platform or CSV.
+9. Generate Meta and Google RSA ad creative variants; test character limits; approve and export.
+10. If Meta ads execution is configured, test ad launch approval, budget cap, pause/resume, and kill switch.
+11. Open Insights and Campaign insights.
+12. Export workspace and campaign insights CSV.
+
+Pass criteria:
+
+- Signals can become drafts.
+- Campaign context changes output.
+- Audiences are usable by launches and campaigns.
+- CRM, ads, and PR flows preserve their source-of-truth boundaries.
+- Insights reflect actual drafts, approvals, publications, launch messages, ads, brain completeness, and channel activity.
+
+Watch for:
+
+- CRM contacts duplicated as leads.
+- Ads spend controls bypassing approval.
+- Insights showing stale or fake-looking numbers.
+- CSV exports that are not usable without manual cleanup.
+
+---
+
+### Phase D - Social-heavy smoke and workspace readiness
+
+Goal: prove the local environment, auth, nav, and workspace state are usable before the social-heavy pass.
 
 Steps:
 
 1. Start Nango, web/API with `npm run dev`, and the worker with `npm run start -w apps/worker`.
 2. Register or log in.
 3. Open the workspace.
-4. Confirm the sidebar navigation loads: Home, Brain, Discover, Create, Review, Campaigns, Calendar, Audience, Integrations, Team.
+4. Confirm the sidebar navigation loads the expected capability-allowed items: Home, Insights, Brain, Discover, Create, Review, Campaigns, Calendar, Audience, Integrations, Team, Billing.
 5. Confirm API health returns OK.
 6. Reload the workspace and verify the same state appears.
 7. Log out and log back in.
@@ -201,12 +372,13 @@ Watch for:
 - Login loops.
 - 403s for valid workspace members.
 - UI labels that expose internal words where the user needs plain language.
+- Live implemented pages hidden by a stale capability response.
 
 ---
 
-### Phase 1 - Brain, context, campaign, and approval trust
+### Phase E - Brain, context, campaign, and approval trust
 
-Goal: confirm social outputs will have the right source of truth.
+Goal: confirm social and non-social outputs have the right source of truth.
 
 Steps:
 
@@ -235,7 +407,7 @@ Watch for:
 
 ---
 
-### Phase 2 - Social account connections
+### Phase F - Social account connections
 
 Goal: confirm accounts can connect, test, disconnect, and recover.
 
@@ -286,7 +458,7 @@ Persona routing pass criteria:
 
 ---
 
-### Phase 3 - Manual social publishing from an approved draft
+### Phase G - Manual social publishing from an approved draft
 
 Goal: close the simple loop: brain-resolved draft to live social post.
 
@@ -322,7 +494,7 @@ Watch for:
 
 ---
 
-### Phase 4 - Audience and targeted launch
+### Phase H - Audience and targeted launch
 
 Goal: test the first real campaign motion across audience, email, LinkedIn, Instagram, and X.
 
@@ -368,7 +540,7 @@ Watch for:
 
 ---
 
-### Phase 5 - Cadence and calendar
+### Phase I - Cadence and calendar
 
 Goal: prove approved drafts can be slotted and published on a recurring schedule.
 
@@ -404,7 +576,7 @@ Watch for:
 
 ---
 
-### Phase 6 - Campaign automation modes
+### Phase J - Campaign automation modes
 
 Goal: confirm campaign mode controls how discovery signals become social output.
 
@@ -448,7 +620,7 @@ Watch for:
 
 ---
 
-### Phase 7 - Engagement and reply inbox
+### Phase K - Engagement and reply inbox
 
 Goal: prove the inbound loop works after posting.
 
@@ -488,7 +660,7 @@ Watch for:
 
 ---
 
-### Phase 8 - Auto-reply guardrails
+### Phase L - Auto-reply guardrails
 
 Goal: make sure automatic replies are intentional and bounded.
 
@@ -525,7 +697,7 @@ Watch for:
 
 ---
 
-### Phase 9 - Multi-step outbound sequences
+### Phase M - Multi-step outbound sequences
 
 Goal: test the current deepest social/outbound flow.
 
@@ -580,7 +752,7 @@ Watch for:
 
 ---
 
-### Phase 10 - Cross-cutting failure and recovery pass
+### Phase N - Cross-cutting failure and recovery pass
 
 Goal: find trust breaks when dependencies fail.
 
@@ -618,6 +790,25 @@ Pass criteria:
 
 | Area | Happy Path | Challenge Path | Pass Signal |
 |---|---|---|---|
+| Auth | Email/password and Google sign-in work | Unverified Google email, misconfigured OAuth, logout/login | User lands in correct workspace with no duplicate account |
+| Onboarding | Checklist progresses and templates apply | Dismiss/reload, empty workspace, teammate account | First-run guidance reflects real state |
+| Team/access | Invite and teammate acceptance | Non-member access, member vs owner billing | Actions are attributed and scoped correctly |
+| Brain | Edit, version, restore, export | Empty docs, conflicting edits | Brain is inspectable and durable |
+| Guidance | Override/reset channel guidance | Invalid channel, empty guidance | Resolver trace shows source and content |
+| Generation quality | Angle step and pre-review affect drafts | Settings off, low score, gateway failure | Quality tools are visible, advisory, and non-blocking |
+| Evidence/RAG | Upload, retrieve, candidate accept | R2R down, candidate dismiss, delete doc | Evidence helps when available and degrades clearly |
+| Discovery | Sources run and signals become drafts | Source error, low-quality source, duplicate signal | Signals are scored, explainable, and actionable |
+| Campaigns | Campaign context shapes output | Archive/unarchive, wrong persona/channel | Campaign is visible in draft and insights context |
+| Audiences | Lists/segments target leads/contacts | Dedupe, deleted leads, dynamic rule edits | Audience membership is accurate |
+| Outbound | Leads -> drafts -> approvals -> CSV | Missing fields, invented personalization | CSV is usable and honest |
+| CRM | Sync, discard, filter, log back | Re-sync discarded contacts, CRM unavailable | CRM stays source of record |
+| PR | Contacts -> pitches -> press kit -> export | Duplicate CSV rows, reactive signal pitch | Pitches reference real contact/story context |
+| Ads reporting | Sync/import metrics and link campaign | Meta unavailable, CSV mismatch | Numbers match source for closed period |
+| Ad creatives | Generate/approve/export Meta/RSA | Character limit violations | Export is paste-ready |
+| Ad launches | Approve and launch/pause/resume | Budget cap, kill switch, Meta error | Spend controls are enforced before platform call |
+| Insights | Workspace/campaign rollups and CSV | Empty data, mismatched counts | Numbers map back to records |
+| Billing | Plan, usage, checkout, webhook | Limit reached, bad signature, member checkout | Entitlements gate intended actions only |
+| Analytics | Events fire when enabled | Opt-out, no keys, PostHog down | Analytics never blocks product flow |
 | Integrations | OAuth connect, test, disconnect | Missing creds, expired token, reconnect | User knows account state and recovery path |
 | Manual publishing | Approved draft posts now/scheduled | Bad target, duplicate, retry | Receipt matches external platform |
 | Launches | Segment -> generate -> approve -> dispatch | Missing X handle, bad X handle, IG no media | Per-message status is accurate |
@@ -646,6 +837,14 @@ These are not automatically bugs, but they matter when judging the experience:
 - Engagement metrics are captured at 24h and 7d snapshots, not continuously.
 - Some worker-driven actions happen on ticks, so "instant" may mean "next worker run" unless using Run now.
 - Large segment generation is synchronous and may feel slow.
+- Google sign-in depends on direct Google OAuth configuration, not Nango.
+- Billing can be present without live Stripe checkout; record whether Stripe env vars and webhook signing secret are configured.
+- Billing enforcement may be disabled by env; record whether gates are enforced in the run.
+- Product analytics should be treated as internal telemetry, not the customer insights dashboard.
+- Product analytics is allowed to be a no-op when keys are missing, but it must not block any request.
+- Native Insights depends on seeded workspace activity; empty insights are not a bug if the workspace has no drafts, publications, launch messages, metrics, or approvals.
+- Evidence candidates come from signals and published posts but should not enter the corpus until accepted.
+- Notifications/mobile approvals and MCP/public API are planned/spec'd but were not visible as active app surfaces in this workspace scan.
 
 These should appear in the final QA report so product decisions are not confused with broken behavior.
 
@@ -662,39 +861,61 @@ Ask these after each major flow:
 - Could I recover from an error without opening logs?
 - Was automation clearly off, waiting for review, or allowed to run?
 - Did I understand why a recipient was skipped, stopped, failed, or completed?
+- Did onboarding tell me what to do next without getting in my way?
+- Did Billing explain plan limits and upgrade paths before blocking me?
+- Did Insights tell me where each number came from?
+- Did guidance, generation settings, and evidence changes show up in traces?
 - Did the platform use founder-friendly language, or did it leak implementation details?
 
 ---
 
 ## 12. Suggested Multi-Day Run
 
-### Day 0 - Setup and credentials
+### Day 0 - Setup, credentials, and first-run path
 
 - Confirm local environment.
-- Connect available social accounts.
-- Create workspace, brain, personas, campaign, audience, test leads.
-- Produce one approved draft.
+- Configure available credentials: Gemini, Nango/social, R2R, Google, Stripe, PostHog, Resend.
+- Test register/login/Google login.
+- Create a fresh workspace.
+- Walk onboarding and brain templates.
+- Invite a teammate and confirm permissions.
 
-### Day 1 - Manual social and launch flows
+### Day 1 - Brain, quality, evidence, and core GTM modules
 
+- Fill brain docs, personas, guidance, generation settings.
+- Upload evidence and test evidence candidates.
+- Generate, review, approve/reject, and synthesize learning.
+- Test discovery, campaigns, audiences, outbound, PR, CRM, ads, and ad creative where configured.
+
+### Day 2 - Insights, billing, analytics, and non-social regression
+
+- Open workspace and campaign insights.
+- Export insights CSVs.
+- Test billing/usage/entitlements/upgrade modal/checkout where configured.
+- Confirm analytics enabled, opt-out, no-key/no-op, and failure behavior.
+- Re-run key auth/team/access-control checks.
+
+### Day 3 - Manual social and launch flows
+
+- Test social OAuth connections.
 - Test manual publishing.
 - Test targeted launch generation and dispatch.
 - Capture all platform-specific failures.
 
-### Day 2 - Scheduling and automation
+### Day 4 - Scheduling and automation
 
 - Test cadence and calendar.
 - Test automation modes.
 - Test kill switch and caps.
 
-### Day 3 - Inbox and replies
+### Day 5 - Inbox and replies
 
 - Create live replies from a second account.
 - Run inbox.
 - Draft, approve, and post replies.
 - Test auto-reply guardrails.
 
-### Day 4 - Sequences and regression
+### Day 6 - Sequences and full regression
 
 - Test email sequence.
 - Test X DM sequence with stop-on-reply.
@@ -718,6 +939,21 @@ Use this structure after the run.
 
 | Flow | Status | Notes |
 |---|---|---|
+| Auth and Google login |  |  |
+| Onboarding and templates |  |  |
+| Team and access control |  |  |
+| Brain, guidance, resolver |  |  |
+| Generation quality settings |  |  |
+| Evidence/RAG |  |  |
+| Core approval and learning |  |  |
+| Discovery and campaigns |  |  |
+| Audiences and outbound |  |  |
+| CRM |  |  |
+| PR |  |  |
+| Ads reporting/creative/launch |  |  |
+| Insights |  |  |
+| Billing and entitlements |  |  |
+| Product analytics |  |  |
 | Account connection |  |  |
 | Manual publish |  |  |
 | Targeted launch |  |  |
@@ -769,21 +1005,28 @@ List things that felt solid. Especially note:
 Rank fixes in this order:
 
 1. Prevent wrong external actions.
-2. Fix broken core paths.
-3. Improve recovery from external failures.
-4. Reduce user confusion in high-frequency flows.
-5. Polish lower-risk copy and layout.
+2. Fix auth/access/billing paths that can block the whole product.
+3. Fix broken core paths.
+4. Improve recovery from external failures.
+5. Reduce user confusion in high-frequency flows.
+6. Polish lower-risk copy and layout.
 
 ---
 
 ## 14. Final Acceptance Gate
 
-Do not call the social layer founder-ready until these five runs pass:
+Do not call the platform founder-ready until these runs pass:
 
-1. Brain -> approved draft -> manual social publish -> external receipt.
-2. Segment -> launch -> approve -> email CSV + LinkedIn/Instagram publish + X DM statuses.
-3. Approved draft -> cadence -> calendar -> scheduled publish -> receipt.
-4. Published post -> inbound reply -> AI draft -> approve -> posted reply.
-5. Multi-step launch -> step 1 sent -> follow-up generated -> one recipient stopped -> one X recipient stopped by reply.
+1. Fresh user -> onboarding -> brain template -> first complete brain setup.
+2. Email/password or Google login -> workspace -> invite teammate -> teammate action attributed correctly.
+3. Brain/guidance/evidence/settings -> resolve context -> generate -> pre-review/angle behavior visible -> approve/reject -> learning proposal accepted.
+4. Discovery/campaign/audience -> draft output -> outbound/PR/ads workflows produce usable exports or platform receipts.
+5. Billing/entitlement limit -> upgrade modal -> Billing page -> checkout/webhook path tested or clearly marked not configured.
+6. Insights -> workspace/campaign rollups -> CSV export -> numbers traced back to records.
+7. Brain -> approved draft -> manual social publish -> external receipt.
+8. Segment -> launch -> approve -> email CSV + LinkedIn/Instagram publish + X DM statuses.
+9. Approved draft -> cadence -> calendar -> scheduled publish -> receipt.
+10. Published post -> inbound reply -> AI draft -> approve -> posted reply.
+11. Multi-step launch -> step 1 sent -> follow-up generated -> one recipient stopped -> one X recipient stopped by reply.
 
 If any of these fail, the report should name the exact failure and whether it is a code bug, platform credential issue, product decision, or local setup issue.

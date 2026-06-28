@@ -58,6 +58,7 @@ Ranked by composite **market power** (revenue + market share + funding). Incumbe
 | 8 | **11x** | AI SDR (point) | $50M Series B (a16z), ~$76M total `[R]` | ~$3–10M ARR (disputed) `[C]` | **High** |
 | 9 | **Landbase** | Agentic GTM platform | $30M Series A, **~$42.5M total** `[C]` | <$10M ARR `[E]` | **Highest** |
 | 10 | **Artisan** | AI BDR (point) | $25M Series A, ~$36.5M total `[C]` | ~$5M ARR `[R]` | High |
+| 11 | **Blaze.ai** | SMB/prosumer marketing autopilot | Bootstrapped/undisclosed `[E]` | <$20M ARR `[E]` | **High** (headline pitch, not buyer/depth) |
 
 *Next-10 / honorable mentions:* Amplemarket, Reply.io (Jason AI), AiSDR, AdCreative.ai, Smartly.io, Outreach, Salesloft, Smartlead, Instantly.
 
@@ -147,6 +148,15 @@ Ranked by composite **market power** (revenue + market share + funding). Incumbe
 - **Strengths:** Viral "Stop Hiring Humans" brand marketing; clear "AI employee" hook; **$25M Series A (Glade Brook + HubSpot Ventures, April 2025)**, ~$36.5M total `[C]`; capital-efficient.
 - **Weaknesses:** Outbound-only; provocative branding draws criticism; thin moat vs. 11x/others; ~$5M ARR (early) `[R]`.
 - **Recent moves:** $25M Series A (2025); expanding beyond outbound.
+
+### 11. Blaze.ai — closest SMB/prosumer "autopilot" analogue
+- **Pricing:** Blaze Starter ~$79/mo, Blaze Growth ~$149/mo (other sources cite $40–99/mo entry tiers, inconsistent across pages); Done For You from $899/mo (managed); Blaze Studio (iOS app) from $7.99/mo `[R]`.
+- **Key features:** Five pillars — organic content (social/blog/email/Google My Business, 8+ channels), paid ads (Google/Meta, built from organic performance), landing pages, reputation management (Google/Yelp review monitoring + responses), and an AI SDR (phone answering, call qualification, meeting booking). Signature mechanic: generates a fresh batch of on-brand content **every Monday** for review/approve, then auto-publishes across 10+ channels. "Brand Kit" auto-built from the customer's website + past content at onboarding (<10 min). Strategy Generator produces a 12-month plan + ~2 months of pre-written content immediately on signup. `[C]`
+- **Target audience:** Solo founders, local services, real estate, e-commerce, agencies, hospitality — prosumer/SMB, not B2B GTM teams.
+- **Strengths:** Real product, real paying customers, fastest time-to-value of anything in this set (drafts in minutes, not after a brain-building exercise); auto-bootstraps brand context instead of asking the user to write it; ships surfaces Tuezday doesn't have at all (landing pages, reputation management, voice SDR); cheap, PLG, App Store presence.
+- **Weaknesses:** "Brand voice" is reviewer-documented as shallow — testing found it ignored source-market English variant and structure; output is consistently flagged as AI-detectable / "AI slop" by reviewers; no persistent cross-channel brain, no inspectable/editable context, "learning" = simple performance-weighting ("post more of what works"), not a structured signal loop; multiple Trustpilot/Capterra complaints about refunds and pay-per-regeneration credit costs; channels run in parallel, not orchestrated as one campaign with shared pillars/personas; no outbound, no CRM, no evidence/RAG, no multi-step sequences — not a B2B GTM platform.
+- **Recent moves:** Expanding the AI SDR (voice) surface; pushing the "full marketing department for $79/mo" narrative hard in performance marketing.
+- **⚠️ Watch:** Not a 1:1 architectural analogue (no real brain, no B2B depth) but the **closest headline-pitch analogue** — "AI plans, creates, posts, and learns, you just approve" is functionally Tuezday's own pitch, aimed at a different (prosumer/SMB) buyer. Its weaknesses are exactly Tuezday's stated bets (inspectable/editable brain, real learning loop, true campaign orchestration) — but those bets are unproven in a shipped product, while Blaze's time-to-value and onboarding bootstrap (auto-built Brand Kit from site + content) are real and currently better than Tuezday's. Steal the bootstrap and the instant-draft mechanic; do not chase its breadth (landing pages/reputation/voice SDR are out of scope per `product-strategy-and-positioning.md`).
 
 ---
 
@@ -246,6 +256,7 @@ Companies not in the GTM-orchestration market today but with the assets/distribu
 | **11x** | 🟠 **MEDIUM** | Strong narrative + capital, but outbound-only and reputationally wounded |
 | **Adobe** | 🟠 **MEDIUM** | Content/campaign breadth, but no outbound and enterprise-only |
 | **Artisan** | 🟠 **MEDIUM** | Viral brand, expanding suite, but outbound-only and thin moat |
+| **Blaze.ai** | 🟠 **MEDIUM** | Closest headline-pitch analogue ("AI plans/creates/posts, you approve") and shipped/paying today, but wrong buyer (prosumer/SMB) and no real brain/outbound/B2B depth — narrative risk more than buyer-overlap risk |
 | **Writer** | 🟡 **LOW-MEDIUM** | Enterprise/horizontal; different buyer; not GTM-specific |
 | **Jasper** | 🟡 **LOW-MEDIUM** | Content-only; commoditizing; on the back foot |
 | **Apollo** | 🟡 **LOW-MEDIUM** | Sales-led, data-centric; assistive not autonomous |
@@ -284,6 +295,7 @@ Companies not in the GTM-orchestration market today but with the assets/distribu
 - Jasper $125M Series A @ $1.5B (Insight Partners), ~$88M ARR — Jasper.ai, GetLatka, Sacra, Contrary Research
 - Artisan $25M Series A (Glade Brook + HubSpot Ventures), ~$5M ARR — Artisan.co, DHRMap, ARR Club (April 2025)
 - Copy.ai ~$14M total, GTM pivot, 480% 2024 growth — Sacra, Wing VC, BusinessWire, Crunchbase
+- Blaze.ai product/pricing/positioning, reviews, complaints — blaze.ai, Originality.ai review, Trustpilot, Capterra (June 2026)
 
 **Product / pricing / strategy**
 - Salesforce Agentforce 360 + Agentic Marketing — Salesforce.com newsroom, SalesforceBen

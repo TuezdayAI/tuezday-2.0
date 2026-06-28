@@ -4,42 +4,94 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository State
 
-This is the greenfield rebuild of Tuezday, an AI-powered GTM (go-to-market) orchestration platform. Phase 0 (foundation + workspace slice) is built. The planning documents define what gets built and in what order:
+This is the greenfield rebuild of Tuezday, an AI-powered GTM (go-to-market) orchestration platform. The foundation and most core modules are built: brain + context resolver, generation + approval gate, campaigns, discovery, evidence/RAG, learning loop, outbound, the connector fabric, and the CRM/Ads/PR/social slices, plus users/teams/auth. Sprints 1–20 are on `main`; Sprints 21+ are delivered one branch at a time (see Sprint Delivery Workflow). The `apps/api/drizzle` migration list and `git log` are the source of truth for exactly how far the schema has progressed.
+
+The planning documents define what gets built and in what order — read the relevant sections before scaffolding or implementing anything:
 
 - `product-strategy-and-positioning.md` — what Tuezday is and is not
 - `greenfield-rebuild-plan.md` — phased build order, feature gate protocol, milestones
 - `oss-integration-recommendations.md` — build-native vs integrate-OSS decisions per layer
-- `docs/plans/sprint-plan.md` — sprint-by-sprint execution plan (current source of truth for sequencing)
+- `docs/plans/sprint-plan.md` — Sprints 1–20 execution plan
+- `docs/plans/sprint-guide-21-onward.md` — post-Sprint-20 roadmap (current sequencing source of truth)
 - `docs/specs/` — one written spec per slice, created before implementation
-
-Any code written here must follow these documents. Read the relevant sections before scaffolding or implementing anything.
 
 ## Commands
 
-- `npm install` — install all workspaces (npm workspaces monorepo)
+- `npm install` — install all workspaces (npm workspaces monorepo; Node ≥ 20)
 - `npm run dev` — run API (Fastify, http://localhost:3001) and web (Next.js, http://localhost:3000) together
-- `npm test` — run all Vitest suites (contracts + api); API tests use in-memory SQLite with the checked-in Drizzle migrations
-- `npm run typecheck` — `tsc --noEmit` across all workspaces
-- `npm run db:generate -w apps/api` — generate a Drizzle migration after editing `apps/api/src/db/schema.ts`
+- `npm test` — run all Vitest suites (api + contracts + brain). API tests use in-memory SQLite with the checked-in Drizzle migrations
+- `npm test -- <substring>` — run only test files whose path matches (e.g. `npm test -- brain`); add `-t "<name>"` to filter by test name
+- `npm run typecheck` — `tsc --noEmit` across all workspaces (there is no lint step)
+- `npm run db:generate -w apps/api` — generate a Drizzle migration after editing `apps/api/src/db/schema.ts` (commit the generated SQL under `apps/api/drizzle/`)
+- `npm run r2r:up` / `r2r:down`, `npm run nango:up` / `nango:down` — bring the integration backends up/down via Docker Compose (`infra/`). Not needed for tests, which inject fakes.
+- `npm run test:watch` — run Vitest in watch mode (alias: `vitest`)
+
+## Environment
+
+Copy `.env.example` to `.env` at the repo root (dev server loads it via dotenv). Required vars:
+
+- `GEMINI_API_KEY` — Gemini 2.5 Flash (default LLM). `GEMINI_MODEL` overrides the model name.
+- `TUEZDAY_WORKER_TOKEN` — system actor token used by the worker to call the API across workspaces. Generate with: `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`
+- `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` — social publishing connector (Sprint 17).
+- `LINKEDIN_CLIENT_ID/SECRET`, `TWITTER_CLIENT_ID/SECRET`, `INSTAGRAM_CLIENT_ID/SECRET` — social trio (Sprint 25+). Leave blank until those connectors are wired.
+
+CI (`.github/workflows/ci.yml`) runs `npm run typecheck && npm test` on Node 22 for every push and PR — keep it green before pushing sprint branches.
 
 ## Stack (locked at Sprint 1)
 
-TypeScript everywhere. Next.js App Router (`apps/web`), Fastify (`apps/api`, routes → services → db), Drizzle ORM on better-sqlite3 (Postgres swap planned ~Sprint 8 — keep the schema portable, keep all DB access inside `apps/api/src/db` and services). Shared zod contracts live in `packages/contracts` and are the only place enum vocabularies (brain doc types, approval states, output ratings) are defined.
+TypeScript everywhere, ESM (`"type": "module"`), run directly with `tsx` (no build step in dev). Next.js App Router (`apps/web`), Fastify (`apps/api`, routes → services → db), Drizzle ORM on better-sqlite3 (Postgres swap planned — keep the schema portable, keep all DB access inside `apps/api/src/db` and services). The default LLM is Gemini 2.5 Flash via a provider-agnostic gateway. Shared zod contracts live in `packages/contracts` and are the **only** place enum vocabularies (brain doc types, approval states, output ratings, task types, channels, roles) are defined — import them, never redeclare.
 
 ## Core Product Concept
 
-Tuezday's moat is the **Central Brain**: five human-readable, editable brain documents per workspace — `soul`, `icp`, `voice`, `history`, `now` — layered with overlays (org → channel → campaign → persona) that a **Context Resolver** turns into a deterministic, inspectable context bundle before any LLM call. Every module (Content, Outbound, Ads, PR) must resolve context through this same brain contract. Generated outputs flow through an **Approval Gate** (draft → pending_review → edited/approved/rejected), and approval decisions feed a learning loop back into the `now` doc.
+Tuezday's moat is the **Central Brain**: five human-readable, editable brain documents per workspace — `soul`, `icp`, `voice`, `history`, `now` — layered with overlays (org → channel → campaign → persona) that a **Context Resolver** (`packages/brain`) turns into a deterministic, inspectable context bundle before any LLM call. Every module (Content, Outbound, Ads, PR) must resolve context through this same brain contract. Generated outputs flow through an **Approval Gate** (draft → pending_review → edited/approved/rejected), and approval decisions feed a learning loop back into the `now` doc.
 
-## Non-Negotiable Build Rules
+## How the API is wired (read this before touching `apps/api`)
 
-1. **Brain first.** Build order is: Foundation → Central Brain → Context Resolver → Generation Sandbox → Approval Gate → Manual Content Slice → Campaigns → RAG → Discovery → Learning Loop → Outbound → Connector Fabric → CRM/Ads/Lifecycle. Do not skip ahead (e.g., no scrapers before manual signal input works, no sending infra before content proves the brain).
-2. **One vertical slice at a time.** Each slice: written spec → automated tests before implementation → build → automated verification → founder manually tests → accepted → frozen with tests. No new slice until the previous is accepted.
-3. **No module may depend on a fake brain contract**, and no integration gets added until the native boundary it plugs into exists.
-4. Every slice must produce something a human can see and test.
+`apps/api/src/app.ts` exports `buildApp(options)` — the single composition root. It takes injectable dependencies and registers every route group:
+
+```
+buildApp({ db, llm?, fetcher?, evidence?, connectors?, workerToken? })
+```
+
+- Real runtime (`server.ts`) supplies the live `GeminiGateway`, `R2REvidenceStore`, `NangoFabric`, and global `fetch`.
+- Tests supply an in-memory db and fake gateways/fabrics. **Every new external dependency must be an injectable option with a real default**, so tests never hit the network.
+- Each route group is `registerXRoutes(app, db, ...deps)`. Routes are thin — they validate with a contracts zod schema, then call a service in `apps/api/src/services/`. Business logic and all DB access live in services, not routes.
+
+Key seams (integrations live behind these interfaces — never let provider code leak into services):
+
+- **LLM** — `llm/gateway.ts` defines `LlmGateway` / `GenerateParams` / `GenerateResult` and `GatewayError`. `gemini.ts` is the only implementation. Services depend on the interface only.
+- **Evidence/RAG** — `evidence/store.ts` (`EvidenceStore`) with `evidence/r2r.ts` as the R2R-backed impl.
+- **Connectors** — `connectors/fabric.ts` (`ConnectorFabric`) with `connectors/nango.ts`; concrete providers under `connectors/{ads,crm,social}` (Meta ads, Freshsales CRM, Reddit social).
+- **Discovery** — `discovery/adapters.ts` takes an injected `Fetcher` so tests feed fixtures instead of real HTTP.
+- **Mailer** — `mail/mailer.ts` (`Mailer`) with a Resend-backed impl; console fallback in dev/tests.
+- **OutboundExporter** — `outbound/exporter.ts` (`OutboundExporter`) produces export files for Smartlead/Instantly; CSV by default.
+
+## Auth model
+
+`auth/guard.ts` installs one global `preHandler` (`registerAuthGuard`, registered before all routes). Every route outside the `PUBLIC_ROUTES` allowlist (`/auth/register`, `/auth/login`, `/health`) needs a bearer token. A request resolves to an `Actor`:
+
+- a signed-in user (session token → `sessionUser`), or
+- the **system** actor when the token equals `TUEZDAY_WORKER_TOKEN` (how the worker calls the API across all workspaces).
+
+Any `/workspaces/:id/...` route additionally requires membership in that workspace (system bypasses). Services attribute writes via `actorOf(request)` for version history / decision logs.
+
+## Database
+
+`db/index.ts` → `createDb(file)` opens better-sqlite3 (WAL, `foreign_keys = ON`) and runs the checked-in migrations from `apps/api/drizzle/`. Pass `":memory:"` for tests. The dev DB is `apps/api/tuezday.db` (gitignored). Schema is one file: `apps/api/src/db/schema.ts` — edit it, then `db:generate` to produce a migration; do not hand-write migration SQL.
+
+## Testing patterns
+
+Vitest is configured per-workspace (`vitest.config.ts` `projects`). API tests (`apps/api/test/`) use `test/helpers.ts`:
+
+- `createTestDb()` — fresh in-memory DB with all migrations.
+- `buildAuthedApp(options)` — builds the app and registers a default "founder" user; every `app.inject()` carries their bearer token, so the auth layer stays real (no bypass flag).
+- `asUser(app, token)` / `registerUser(app, ...)` for multi-user scenarios.
+
+Tests drive the app with `app.inject(...)` (no live server) and assert against the contracts zod schemas. Follow the existing one-file-per-slice convention.
 
 ## Sprint Delivery Workflow (Sprints 21+)
 
-The post-Sprint-20 roadmap lives in `docs/plans/sprint-guide-21-onward.md`. Sprints 1–20 are already on `main`. Deliver each subsequent sprint as follows (founder decision, 2026-06-17):
+Sprints 1–20 are already on `main`. Deliver each subsequent sprint as follows (founder decision, 2026-06-17):
 
 1. **One branch per sprint.** Branch from `main`, named `sprint-NN-<slug>` (e.g. `sprint-21-runtime-editable-guidance`).
 2. **Dependency caveat.** If a sprint's "Builds on" includes an earlier **21+** sprint not yet merged into `main`, branch off that predecessor's branch instead and state the required merge order at the top of the sprint's spec. (Phase A — 21/22/23 — only depends on already-merged sprints, so each is independent off `main`.)
@@ -49,26 +101,12 @@ The post-Sprint-20 roadmap lives in `docs/plans/sprint-guide-21-onward.md`. Spri
 6. **Do NOT merge into `main`.** The founder reviews, accepts, and merges each branch himself, one at a time, when he has time. Roadmap/planning docs and this file live on `main`; per-sprint specs travel on their sprint branch.
 7. One sprint at a time; do not start the next until asked.
 
-## Architecture (planned)
+## Non-Negotiable Build Rules
 
-Monorepo layout:
-
-```
-apps/
-  web/        # Next.js dashboard
-  api/        # HTTP API, application services, DB access
-  worker/     # background jobs, polling/sync
-packages/
-  contracts/  # shared types/contracts
-  brain/      # brain docs, overlays, context resolution
-  modules/    # content, outbound, ads, PR module runtime
-  integrations/
-  testing/    # test fixtures
-docs/
-  strategy/ specs/ plans/
-```
-
-Flow: UI → API routes → services → (DB | brain | modules); worker jobs call services; polling lives in integrations.
+1. **Brain first.** Build order is: Foundation → Central Brain → Context Resolver → Generation Sandbox → Approval Gate → Manual Content Slice → Campaigns → RAG → Discovery → Learning Loop → Outbound → Connector Fabric → CRM/Ads/Lifecycle. Do not skip ahead (e.g., no scrapers before manual signal input works, no sending infra before content proves the brain).
+2. **One vertical slice at a time.** Each slice: written spec → automated tests before implementation → build → automated verification → founder manually tests → accepted → frozen with tests. No new slice until the previous is accepted.
+3. **No module may depend on a fake brain contract**, and no integration gets added until the native boundary it plugs into exists.
+4. Every slice must produce something a human can see and test.
 
 ## Build-Native vs Integrate Boundaries
 
@@ -89,16 +127,11 @@ Integrate behind service/API boundaries (never fork into core):
 
 Defer: Graphiti (temporal graph) and Mem0 — only after RAG is useful. Avoid as core: Dify, n8n, Postiz (reference only, AGPL).
 
-## First Slice: "Brain Spine v0"
-
-If starting implementation, the first feature is: workspace creation + five brain docs + brain editor + persona overlay + context resolver + resolved context preview + one generation sandbox action with accept/edit/reject rating. It explicitly excludes RAG, scraping, posting, outbound, CRM, chat copilot, and analytics.
-
-First 10 tickets are enumerated at the end of `greenfield-rebuild-plan.md` — follow them in order, each tested and accepted before the next.
-
 ## Conventions From the Plans
 
-- Approval states: `draft`, `pending_review`, `approved`, `rejected`, `edited`.
+- Enum vocabularies are defined once in `packages/contracts` — approval states (`draft`, `pending_review`, `approved`, `rejected`, `edited`), output ratings (`accepted` / `needs_edit` / `rejected`), brain doc types, task types, channels, workspace roles. Import them; do not redeclare.
+- Approval state transitions must use `transitionTo()` / `canTransition()` from `packages/contracts` — the canonical state machine. Same for `adLaunchTransitionTo()`. Never roll your own transition logic.
 - Resolver input: workspace, task type, channel, persona, optional campaign → output: ordered context bundle with a trace explaining why each section was included. Context must be readable before any LLM call.
-- Output ratings (`accepted` / `needs edit` / `rejected`) are stored as training signals.
+- Output ratings are stored as training signals that feed the learning loop back into the `now` doc.
 - A prior Tuezday codebase exists elsewhere; salvage concepts (prompt layering, approval statuses, draft state machine, training examples, webhook/event shape) but do not port code wholesale.
-- Update this file with actual build/test/dev commands once the monorepo skeleton (Phase 0) exists.
+- `apps/worker` is still a thin stub; background polling/sync that needs cross-workspace access calls the API as the system actor with `TUEZDAY_WORKER_TOKEN`.

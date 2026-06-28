@@ -3,68 +3,25 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
-import { visibleNavItems, type Workspace, type WorkspaceCapabilities } from "@tuezday/contracts";
+import {
+  WORKSPACE_NAV,
+  visibleNavItems,
+  type NavItem,
+  type Workspace,
+  type WorkspaceCapabilities,
+} from "@tuezday/contracts";
 import { apiFetch, clearToken } from "@/lib/api";
 import { initAnalytics, identify } from "@/src/analytics";
 import { UpgradeModal } from "@/components/upgrade-modal";
 
-// Removed NavChild and NavItem interfaces as they are imported or not strictly needed here since NAV is untyped or we can infer it.
-const NAV = [
-  { label: "Home", path: "" },
-  { label: "Insights", path: "/insights" },
-  {
-    label: "Brain",
-    path: "/brain",
-    children: [
-      { label: "Evidence library", path: "/evidence" },
-      { label: "Context inspector", path: "/resolver" },
-    ],
-  },
-  { label: "Discover", path: "/discovery" },
-  {
-    label: "Create",
-    path: "/content",
-    children: [{ label: "Playground", path: "/sandbox" }],
-  },
-  {
-    label: "Review",
-    path: "/approvals",
-    children: [
-      { label: "Inbox", path: "/inbox" },
-      { label: "Learning", path: "/learning" },
-    ],
-  },
-  {
-    label: "Campaigns",
-    path: "/campaigns",
-    children: [
-      { label: "Ads", path: "/ads" },
-      { label: "Ad creatives", path: "/ad-creatives" },
-      { label: "Launch ads", path: "/ad-launches" },
-    ],
-  },
-  {
-    label: "Calendar",
-    path: "/calendar",
-    children: [
-      { label: "Cadence", path: "/cadence" },
-      { label: "Automation", path: "/automation" },
-    ],
-  },
-  {
-    label: "Audience",
-    path: "/outbound",
-    children: [
-      { label: "Lists & segments", path: "/lists" },
-      { label: "Launches", path: "/launches" },
-      { label: "CRM", path: "/crm" },
-      { label: "PR & media", path: "/pr" },
-    ],
-  },
-  { label: "Integrations", path: "/connectors" },
-  { label: "Team", path: "/team" },
-  { label: "Billing", path: "/billing" },
-];
+const EMPTY_CAPABILITIES: WorkspaceCapabilities = {
+  hasAds: false,
+  hasInsights: false,
+  hasCrm: false,
+  hasConnections: false,
+  draftCount: 0,
+  generationCount: 0,
+};
 
 export default function WorkspaceLayout({ children }: { children: React.ReactNode }) {
   const { id } = useParams<{ id: string }>();
@@ -82,14 +39,14 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
         if (!cancelled) setWorkspace(ws);
       })
       .catch(() => {});
-      
+
     apiFetch(`/workspaces/${id}/capabilities`)
       .then((res) => (res.ok ? res.json() : null))
       .then((caps) => {
         if (!cancelled) setCapabilities(caps);
       })
       .catch(() => {});
-      
+
     apiFetch(`/workspaces/${id}/analytics-optout`)
       .then((res) => (res.ok ? res.json() : null))
       .then((data) => {
@@ -120,39 +77,78 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
   }
 
   const base = `/workspaces/${id}`;
+  const caps = capabilities ?? EMPTY_CAPABILITIES;
+  const navItems = visibleNavItems(WORKSPACE_NAV, caps);
   const isActive = (path: string) =>
     path === "" ? pathname === base : pathname.startsWith(`${base}${path}`);
+  const isGroupActive = (item: NavItem) =>
+    isActive(item.path) || Boolean(item.children?.some((child) => isActive(child.path)));
+  const reviewStatus = caps.draftCount > 0 ? `${caps.draftCount} waiting` : "Review clear";
 
   return (
     <div className="ws-shell">
       <aside className="ws-sidebar">
-        <Link className="ws-logo" href="/">
-          Tuezday
-        </Link>
-        <div className="ws-name">{workspace?.name ?? "…"}</div>
-        <nav className="ws-nav">
-          {capabilities ? visibleNavItems(NAV, capabilities).map((item) => (
-            <div key={item.label}>
-              <Link
-                className={`ws-nav-item ${isActive(item.path) ? "active" : ""}`}
-                href={`${base}${item.path}`}
+        <div className="ws-brand-block">
+          <Link className="ws-logo" href="/">
+            <span className="ws-mark" aria-hidden="true">
+              t
+            </span>
+            <span>Tuezday</span>
+          </Link>
+          <div className="ws-kicker">GTM control room</div>
+        </div>
+
+        <div className="ws-workspace-card">
+          <div className="ws-workspace-label">Workspace</div>
+          <div className="ws-name">{workspace?.name ?? "Loading"}</div>
+          <div className="ws-health-row">
+            <span>{reviewStatus}</span>
+            <span>{caps.generationCount} outputs</span>
+          </div>
+        </div>
+
+        <nav className="ws-nav" aria-label="Workspace navigation">
+          {navItems.map((item) => {
+            const groupActive = isGroupActive(item);
+            return (
+              <section
+                key={item.label}
+                className={`ws-nav-group ${groupActive ? "active" : ""}`}
+                data-tone={item.tone ?? "system"}
               >
-                {item.label}
-              </Link>
-              {item.children?.map((child) => (
                 <Link
-                  key={child.path}
-                  className={`ws-nav-item ws-nav-child ${isActive(child.path) ? "active" : ""}`}
-                  href={`${base}${child.path}`}
+                  className={`ws-nav-item ws-nav-parent ${groupActive ? "active" : ""}`}
+                  href={`${base}${item.path}`}
                 >
-                  {child.label}
+                  <span className="ws-nav-copy">
+                    <span className="ws-nav-label">{item.label}</span>
+                    {item.summary && <span className="ws-nav-summary">{item.summary}</span>}
+                  </span>
                 </Link>
-              ))}
-            </div>
-          )) : null}
+
+                {item.children && groupActive && (
+                  <div className="ws-nav-children">
+                    {item.children.map((child) => (
+                      <Link
+                        key={child.path}
+                        className={`ws-nav-item ws-nav-child ${
+                          isActive(child.path) ? "active" : ""
+                        }`}
+                        href={`${base}${child.path}`}
+                        data-tone={child.tone ?? item.tone ?? "system"}
+                      >
+                        <span>{child.label}</span>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </section>
+            );
+          })}
         </nav>
+
         <div className="ws-sidebar-foot">
-          <Link href="/">← All workspaces</Link>
+          <Link href="/">{"<-"} All workspaces</Link>
           {userLabel && (
             <div className="ws-user">
               <span>{userLabel}</span>
