@@ -4,6 +4,11 @@ import { EmptyState } from "@/src/components/empty-state";
 
 
 import { API_URL, apiFetch } from "@/lib/api";
+import {
+  authorizeNangoOAuth,
+  oauthSessionErrorMessage,
+  type NangoOAuthSession,
+} from "@/lib/nango-oauth";
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
@@ -157,18 +162,17 @@ export default function ConnectorsPage() {
     setBusy(true);
     setError(null);
     try {
-      const sessionRes = await apiFetch(`/workspaces/${id}/connectors/${provider.key}/oauth/session`,
-        { method: "POST" },
-      );
-      const session = await sessionRes.json().catch(() => null);
-      if (!sessionRes.ok) throw new Error(session?.message ?? `API returned ${sessionRes.status}`);
-
-      const { default: Nango } = await import("@nangohq/frontend");
-      const nango = new Nango({
-        host: session.nangoBaseUrl,
-        connectSessionToken: session.token,
+      const result = await authorizeNangoOAuth(async (): Promise<NangoOAuthSession> => {
+        const sessionRes = await apiFetch(
+          `/workspaces/${id}/connectors/${provider.key}/oauth/session`,
+          { method: "POST" },
+        );
+        const session = await sessionRes.json().catch(() => null);
+        if (!sessionRes.ok) {
+          throw new Error(oauthSessionErrorMessage(provider.label, sessionRes.status, session));
+        }
+        return session as NangoOAuthSession;
       });
-      const result = await nango.auth(session.integrationKey);
 
       const completeRes = await apiFetch(`/workspaces/${id}/connectors/${provider.key}/oauth/complete`,
         {
