@@ -4,12 +4,13 @@ import type { Db } from "../db";
 import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
 import { getBrain } from "./brain";
-import { composeCampaignOverlay } from "./campaigns";
+import { composeResolveCampaign } from "./campaigns";
 import { submitDraft, type DraftActor } from "./drafts";
 import { retrieveEvidence } from "./evidence";
 import { getGenerationSettings } from "./generation-settings";
 import { storeGeneration } from "./generations";
 import { resolveChannelGuidance } from "./guidance";
+import { selectiveContextInputs } from "./resolve-input";
 import { runPreReview, setGenerationReview } from "./review";
 
 export interface GenerateSignalDraftOptions {
@@ -57,9 +58,8 @@ export async function generateSignalDraft(
   const personaInput = opts.persona
     ? { name: opts.persona.name, description: opts.persona.description, overlay: opts.persona.overlay }
     : undefined;
-  const campaignInput = opts.campaign
-    ? { name: opts.campaign.name, overlay: composeCampaignOverlay(opts.campaign) }
-    : undefined;
+  const campaignInput = opts.campaign ? composeResolveCampaign(opts.campaign) : undefined;
+  const selective = selectiveContextInputs(db, workspace.id);
   const resolved = resolveContext({
     workspaceName: workspace.name,
     docs: contents,
@@ -69,6 +69,7 @@ export async function generateSignalDraft(
     persona: personaInput,
     campaign: campaignInput,
     signal: { content: signal.content, source: signal.source, sourceUrl: signal.sourceUrl },
+    ...selective,
     evidence: evidenceResolution.evidence,
     evidenceExclusionReason: evidenceResolution.exclusionReason,
     tokenBudget: opts.tokenBudget,
@@ -100,6 +101,7 @@ export async function generateSignalDraft(
         channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
         persona: personaInput,
         campaign: campaignInput,
+        ...selective,
       },
       result.text,
       settings.flagThreshold,

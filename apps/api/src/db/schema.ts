@@ -98,6 +98,10 @@ export const brainDocuments = sqliteTable(
       .references(() => workspaces.id, { onDelete: "cascade" }),
     docType: text("doc_type").notNull(),
     content: text("content").notNull().default(""),
+    // Sprint 43: DocOutline JSON (headings + one-line summaries), regenerated
+    // on every save. Null for empty docs and docs saved before outlines
+    // existed (derived on the fly at resolve time).
+    outlineJson: text("outline_json"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -140,6 +144,35 @@ export const guidanceOverrides = sqliteTable(
 );
 
 export type GuidanceOverrideRow = typeof guidanceOverrides.$inferSelect;
+
+// Per-workspace task-matrix overrides (Sprint 43). The shipped defaults live
+// in @tuezday/contracts (DEFAULT_TASK_DOC_MATRIX); this table holds overrides
+// only. A missing row means "use the default" for that taskType × docType.
+export const contextMatrixOverrides = sqliteTable(
+  "context_matrix_overrides",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    taskType: text("task_type").notNull(),
+    docType: text("doc_type").notNull(),
+    mode: text("mode").notNull(),
+    // Optional founder-written why; falls back to the default cell's reason.
+    reason: text("reason"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("context_matrix_overrides_workspace_task_doc").on(
+      t.workspaceId,
+      t.taskType,
+      t.docType,
+    ),
+  ],
+);
+
+export type ContextMatrixOverrideRow = typeof contextMatrixOverrides.$inferSelect;
 
 export const personas = sqliteTable("personas", {
   id: text("id").primaryKey(),

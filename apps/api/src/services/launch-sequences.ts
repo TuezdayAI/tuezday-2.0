@@ -37,7 +37,9 @@ import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { getAudienceDetail, loadPeople } from "./audiences";
 import { getSocialAutomationSettings, utcDayBounds } from "./automation";
 import { getBrain } from "./brain";
-import { composeCampaignOverlay, getCampaign } from "./campaigns";
+import { composeResolveCampaign, getCampaign } from "./campaigns";
+import { resolveChannelGuidance } from "./guidance";
+import { selectiveContextInputs } from "./resolve-input";
 import { listConnections, providerByKey } from "./connections";
 import { applyDraftAction, submitDraft, type DraftActor } from "./drafts";
 import { retrieveEvidence } from "./evidence";
@@ -336,9 +338,7 @@ async function generateStepMessage(
   const personaArg = persona
     ? { name: persona.name, description: persona.description, overlay: persona.overlay }
     : undefined;
-  const campaignArg = campaign
-    ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
-    : undefined;
+  const campaignArg = campaign ? composeResolveCampaign(campaign) : undefined;
   const person = ctx.pool.get(`${recipient.recipientType}:${recipient.recipientId}`);
 
   const useFollowup = step.stepNumber > 1 || step.instruction.trim().length > 0;
@@ -391,11 +391,15 @@ async function generateStepMessage(
   };
 
   try {
+    // Sprint 43: pass the workspace's channel guidance — this path previously
+    // fell back to the built-in default even when an override existed.
+    const channelGuidance = resolveChannelGuidance(ctx.db, launch.workspaceId, gen.channel);
     const resolved = resolveContext({
       workspaceName: workspace.name,
       docs: contents,
       taskType: gen.taskType,
       channel: gen.channel,
+      channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
       persona: personaArg,
       campaign: campaignArg,
       lead: {
@@ -404,6 +408,7 @@ async function generateStepMessage(
         role: person?.role ?? "",
         notes: "",
       },
+      ...selectiveContextInputs(ctx.db, launch.workspaceId),
       evidence: evidenceResolution.evidence,
       evidenceExclusionReason: evidenceResolution.exclusionReason,
       taskInstruction,

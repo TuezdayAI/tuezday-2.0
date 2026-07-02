@@ -15,7 +15,8 @@ import { drafts } from "../db/schema";
 import type { EvidenceStore } from "../evidence/store";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { getBrain } from "../services/brain";
-import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
+import { composeResolveCampaign, getCampaign } from "../services/campaigns";
+import { selectiveContextInputs } from "../services/resolve-input";
 import { submitDraft } from "../services/drafts";
 import { retrieveEvidence } from "../services/evidence";
 import { getGenerationSettings } from "../services/generation-settings";
@@ -146,6 +147,7 @@ export function registerPrRoutes(
     const taskInstruction = composePrPitchInstruction(parsed.data.pitchType);
     const channelGuidance = resolveChannelGuidance(db, request.params.id, "pr");
     const settings = getGenerationSettings(db, request.params.id);
+    const selective = selectiveContextInputs(db, request.params.id);
 
     const results = [];
     for (const contact of contactRecords) {
@@ -158,9 +160,8 @@ export function registerPrRoutes(
         persona: persona
           ? { name: persona.name, description: persona.description, overlay: persona.overlay }
           : undefined,
-        campaign: campaign
-          ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
-          : undefined,
+        campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+        ...selective,
         mediaContact: {
           name: contact.name,
           type: contact.type,
@@ -204,9 +205,8 @@ export function registerPrRoutes(
               persona: persona
                 ? { name: persona.name, description: persona.description, overlay: persona.overlay }
                 : undefined,
-              campaign: campaign
-                ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
-                : undefined,
+              campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+              ...selective,
             },
             result.text,
             settings.flagThreshold,
@@ -275,6 +275,7 @@ export function registerPrRoutes(
       parsed.data.useEvidence ?? true,
     );
     const channelGuidance = resolveChannelGuidance(db, request.params.id, "pr");
+    const selective = selectiveContextInputs(db, request.params.id);
     const resolved = resolveContext({
       workspaceName: workspace.name,
       docs: contents,
@@ -284,9 +285,8 @@ export function registerPrRoutes(
       persona: persona
         ? { name: persona.name, description: persona.description, overlay: persona.overlay }
         : undefined,
-      campaign: campaign
-        ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
-        : undefined,
+      campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+      ...selective,
       evidence: evidenceResolution.evidence,
       evidenceExclusionReason: evidenceResolution.exclusionReason,
       tokenBudget: parsed.data.tokenBudget,
@@ -319,9 +319,8 @@ export function registerPrRoutes(
             persona: persona
               ? { name: persona.name, description: persona.description, overlay: persona.overlay }
               : undefined,
-            campaign: campaign
-              ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
-              : undefined,
+            campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+            ...selective,
           },
           result.text,
           settings.flagThreshold,

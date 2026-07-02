@@ -16,13 +16,14 @@ import type { EvidenceStore } from "../evidence/store";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { listAdCreativeSets, parseGeneratedVariants, withViolations } from "../services/ad-creatives";
 import { getBrain } from "../services/brain";
-import { composeCampaignOverlay, getCampaign, listCampaigns } from "../services/campaigns";
+import { composeResolveCampaign, getCampaign, listCampaigns } from "../services/campaigns";
 import { submitDraft } from "../services/drafts";
 import { retrieveEvidence } from "../services/evidence";
 import { storeGeneration } from "../services/generations";
 import { resolveChannelGuidance } from "../services/guidance";
 import { csvField } from "../services/leads";
 import { getPersona } from "../services/personas";
+import { selectiveContextInputs } from "../services/resolve-input";
 import { getWorkspace } from "../services/workspaces";
 
 function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
@@ -89,7 +90,8 @@ export function registerAdCreativeRoutes(
         persona: persona
           ? { name: persona.name, description: persona.description, overlay: persona.overlay }
           : undefined,
-        campaign: { name: campaign.name, overlay: composeCampaignOverlay(campaign) },
+        campaign: composeResolveCampaign(campaign),
+        ...selectiveContextInputs(db, request.params.id),
         evidence: evidenceResolution.evidence,
         evidenceExclusionReason: evidenceResolution.exclusionReason,
         taskInstruction: composeAdCreativeInstruction(parsed.data.taskType, variantCount),

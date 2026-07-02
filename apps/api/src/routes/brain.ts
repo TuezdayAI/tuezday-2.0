@@ -6,7 +6,14 @@ import {
 } from "@tuezday/contracts";
 import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
-import { exportBrainMarkdown, getBrain, listDocVersions, updateBrainDoc } from "../services/brain";
+import type { LlmGateway } from "../llm/gateway";
+import {
+  enrichOutlineSummaries,
+  exportBrainMarkdown,
+  getBrain,
+  listDocVersions,
+  updateBrainDoc,
+} from "../services/brain";
 import { getWorkspace } from "../services/workspaces";
 
 function isDocType(value: string): value is BrainDocType {
@@ -21,7 +28,7 @@ function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
   return workspace;
 }
 
-export function registerBrainRoutes(app: FastifyInstance, db: Db): void {
+export function registerBrainRoutes(app: FastifyInstance, db: Db, llm: LlmGateway): void {
   app.get<{ Params: { id: string } }>("/workspaces/:id/brain", async (request, reply) => {
     if (!workspaceOr404(db, request.params.id, reply)) return reply;
     return getBrain(db, request.params.id);
@@ -41,7 +48,10 @@ export function registerBrainRoutes(app: FastifyInstance, db: Db): void {
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      return updateBrainDoc(db, request.params.id, request.params.docType, parsed.data.content, actorOf(request));
+      // Save synchronously (deterministic fallback outline), then upgrade the
+      // outline's summaries via the LLM — best-effort, never fails the save.
+      updateBrainDoc(db, request.params.id, request.params.docType, parsed.data.content, actorOf(request));
+      return enrichOutlineSummaries(db, llm, request.params.id, request.params.docType);
     },
   );
 
