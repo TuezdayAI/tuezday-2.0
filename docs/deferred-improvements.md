@@ -207,6 +207,39 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
 - **Trigger to revisit:** Demand for cross-channel cadences, or once open/click tracking lands.
 - **Origin:** Sprint 30.
 
+### 22. Zoom ranking is lexical BM25 only — no embeddings
+- **What we shipped (Sprint 43):** Tier-3 map-then-zoom ranks brain-doc sections against the composed
+  task query with in-process BM25 (k1=1.2, b=0.75, shared IDF corpus). Deterministic, dependency-free,
+  and fully explainable in the trace — but purely lexical: a query about "pricing" won't pull a section
+  that only says "what we charge".
+- **The better version:** Hybrid lexical + vector ranking (RRF) once the gateway grows `embed()` and
+  the evidence store owns a sqlite-vec index (Sprint 47 / gap-assessment Sprint E) — same seam, zoom
+  swaps its scorer.
+- **Trigger to revisit:** Brain docs grow past ~50 sections, or the trace/learning loop shows zoom
+  repeatedly missing topically-relevant sections phrased with different words.
+- **Origin:** Sprint 43.
+
+### 23. Outline summaries aren't editable
+- **What we shipped (Sprint 43):** A doc's outline summaries are machine-made — one best-effort LLM
+  pass at save (deterministic first-sentence fallback when the gateway is absent/fails). The founder
+  can see them (brain page, resolve trace) but not fix a bad one; the next save regenerates everything.
+- **The better version:** Per-section founder-editable summaries with a "locked" flag that survives
+  regeneration — the outline is brain content, so humans should get the last word.
+- **Trigger to revisit:** An AI summary misrepresents a section in a way that visibly steers drafts,
+  or the founder asks to hand-tune the map.
+- **Origin:** Sprint 43.
+
+### 24. Zoomed sections duplicate their outline row
+- **What we shipped (Sprint 43):** When a doc enters as an outline and zoom pulls sections in full,
+  the prompt carries both the outline bullet ("Pricing experiment — …") and the full section body.
+  A few tokens of redundancy per zoomed section, kept because the outline preserves the doc's overall
+  shape for the model.
+- **The better version:** Mark zoomed rows in the rendered outline ("(included in full below)") or
+  drop them, saving the duplicate summary tokens without losing the map.
+- **Trigger to revisit:** Token-budget pressure on outline-mode bundles, or models visibly echoing
+  the summary line instead of the section content.
+- **Origin:** Sprint 43.
+
 ---
 
 ## Done (upgraded)

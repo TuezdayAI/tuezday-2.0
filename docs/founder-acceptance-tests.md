@@ -486,6 +486,39 @@ your voice and cleared through Review — without leaving Tuezday.
 
 **Gate:** more of the outside world flows in (HN, YouTube, podcasts, Trends, funding news — keyless and live); every discovered item is routed to a campaign + persona you accept in one click into a pre-filled draft; and the review-site / intent providers are real registered infrastructure waiting only on a key.
 
+## Sprint 43 — Resolver v2: Tiered Selective Context
+
+> Prereq: a workspace with all five brain docs filled. For the zoom checks, give **History** real
+> H2 sections (e.g. `## Pricing experiment`, `## Onboarding revamp`, each a paragraph or two) and
+> make ICP + History long enough to matter — ≥ ~600 tokens (~2,400 characters) each. Below that
+> the resolver includes small docs whole ("small enough to include whole") and outline mode won't
+> visibly engage.
+
+**Slice A — Outlines at save (Brain page)**
+
+- [ ] Open **Brain → History** (a doc with H2/H3 headings) → under the editor an **Outline** disclosure lists every heading with a one-line summary and per-section token count. With `GEMINI_API_KEY` set, summaries get an **AI summary** badge shortly after saving; without it, the first sentence of each section stands in.
+- [ ] Add a new `## heading` with a paragraph, **Save** → the outline updates to include it.
+- [ ] Every doc shows a **~N tokens** estimate under the editor. Paste >2,000 tokens (~8,000 chars) into **Soul** → an amber warning says it rides every prompt in full; **ICP/History** instead note that large is fine (they're outlined per task).
+
+**Slice B — Task × doc matrix (Context inspector)**
+
+- [ ] Open **Context inspector** → the **Task × doc context matrix** card shows all 13 task types × ICP/History, each cell a mode select (`full` / `outline` / `omit`) with the shipped reason underneath.
+- [ ] Change **Media pitch × ICP** to `omit` → the cell gains an **override** badge and a **reset** link; reset → back to the default, badge gone.
+
+**Slice C — Tiered resolve (Context inspector)**
+
+- [ ] Resolve **LinkedIn post** → soul/voice/now show **tier 1** full ("constitutional"); ICP and History show **tier 2 · outline** — expanding them shows heading bullets + summaries, not the full text; matching sections appear as separate **zoom** cards (tier 3) titled `Doc § Heading` with a rank + score; a **Zoom query** line shows exactly what was matched.
+- [ ] Attach a campaign whose objective names a History section's topic (e.g. "pricing") → resolve → that section is pulled in as a zoom card and History's trace reason counts how many sections zoomed in.
+- [ ] Resolve **Reply** (engagement_reply) → ICP and History are **excluded** with the matrix reason in the trace (omit by default: the conversation is the context).
+- [ ] Resolve **Media pitch** → History rides **full** (past coverage is the pitch's substance).
+
+**Slice D — Angle-first brief + end-to-end generation (Playground)**
+
+- [ ] With the angle step on, **Suggest angles** → the angle call runs on the cheap **brief** bundle: no zoom sections, no evidence, and matrix-`full` docs demoted to outline (reasons say "zoom off (brief mode)").
+- [ ] Draft from a chosen angle → the draft resolve's zoom query contains the angle text and pulls the sections it names; generation completes and the persisted **"How did Tuezday write this?"** trace shows the tier badges and zoom scores.
+
+**Gate:** the same brain resolves differently per task — constitutional docs always ride whole; ICP/History enter as full/outline/omit exactly as the editable matrix says; zoom pulls only the sections the task's query touches, with scores in the trace; the angle step runs on a visibly cheaper brief; and every inclusion/exclusion states its reason before any LLM sees the prompt.
+
 ---
 
 ### Persona social account routing
@@ -505,7 +538,7 @@ your voice and cleared through Review — without leaving Tuezday.
 
 ## Cross-cutting things worth re-checking occasionally
 
-- [ ] `npm test` (679 tests) and `npm run typecheck` stay green.
+- [ ] `npm test` (851 tests as of Sprint 43) and `npm run typecheck` stay green.
 - [ ] Every generation's prompt trace is readable *before* and *after* the LLM call (sandbox → "show prompt trace").
 - [ ] Stopping any external service (R2R, Nango) degrades gracefully — the app never breaks, traces/banners say why.
 - [ ] Gemini occasionally returns 503 "high demand" — a retry succeeds; it surfaces as a clean error, never a crash.

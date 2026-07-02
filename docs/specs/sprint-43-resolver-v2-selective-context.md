@@ -313,20 +313,21 @@ type; `DEFAULT_TASK_DOC_MATRIX` (complete, reasons mandatory); `matrixCellSchema
 
 ## Build order (checklist)
 
-1. [ ] Commit the gap-assessment doc + this spec on the branch.
-2. [ ] Contracts: modes, matrix defaults + schemas, outline schemas, constants. Contract tests.
-3. [ ] Brain: `sections.ts` parser + fallback summary; `zoom.ts` BM25 + `composeZoomQuery`;
+1. [x] Commit the gap-assessment doc + this spec on the branch.
+2. [x] Contracts: modes, matrix defaults + schemas, outline schemas, constants. Contract tests.
+3. [x] Brain: `sections.ts` parser + fallback summary; `zoom.ts` BM25 + `composeZoomQuery`;
    resolver v2 assembly, budget ladder, brief mode. Brain tests (new + updated pinned).
-4. [ ] Schema: `outline_json` + `context_matrix_overrides`; `npm run db:generate -w apps/api`.
-5. [ ] API services: brain save-time outlines (+ `llm` threading), `context-matrix.ts`,
+4. [x] Schema: `outline_json` + `context_matrix_overrides`; `npm run db:generate -w apps/api`
+   (migration `0030_numerous_hitman.sql`).
+5. [x] API services: brain save-time outlines (+ `llm` threading), `context-matrix.ts`,
    `resolve-input.ts` helper; update all 12 call sites (incl. guidance-gap fix + campaign
    objective/pillars threading + angle-brief). Routes: context-matrix CRUD; `app.ts` wiring.
-6. [ ] API tests (new + updated), full `npm test` green, `npm run typecheck` clean.
-7. [ ] Web: brain-page outlines + token warnings; matrix card + trace upgrades; `next build` clean.
-8. [ ] Docs: `docs/founder-acceptance-tests.md` Sprint 43 section; `docs/deferred-improvements.md`
-   entries (embeddings trigger, editable summaries, outline/zoom dedup);
+6. [x] API tests (new + updated), full `npm test` green, `npm run typecheck` clean.
+7. [x] Web: brain-page outlines + token warnings; matrix card + trace upgrades; `next build` clean.
+8. [x] Docs: `docs/founder-acceptance-tests.md` Sprint 43 section; `docs/deferred-improvements.md`
+   entries #22–24 (embeddings trigger, editable summaries, outline/zoom dedup);
    `docs/plans/sprint-guide-21-onward.md` gains the 43–47 block (Phase G, from the gap assessment).
-9. [ ] Commit(s) with the `Co-Authored-By` trailer; `git push -u origin
+9. [x] Commit(s) with the `Co-Authored-By` trailer; `git push -u origin
    sprint-43-resolver-v2-selective-context`. **Do NOT merge into `main`.**
 
 ---
@@ -337,3 +338,28 @@ type; `DEFAULT_TASK_DOC_MATRIX` (complete, reasons mandatory); `matrixCellSchema
   three call sites missing `channelGuidance` found and folded into scope). Branch cut off `main`
   (clean, post-Sprint-40). Founder away for the numbering + summary-mechanism sub-decisions;
   recommendations adopted and flagged above. Implementation starting at step 1.
+- 2026-07-02 — Steps 2–3 done (commit `1ad8afc`): contracts selective-context section (modes,
+  matrix defaults for all 13 task types, outline schemas, constants) + brain `tokens.ts` /
+  `sections.ts` / `zoom.ts` and the resolver v2 assembly with budget ladder + brief mode.
+  Two v1 budget tests rewritten to the ladder semantics (history demotes to outline instead of
+  dropping; channel guidance is never dropped — constitutional overflow flags `overBudget`).
+- 2026-07-03 — Steps 4–6 done (commit `4a635c2`): `outline_json` column + `context_matrix_overrides`
+  table (migration 0030); save-time fallback outline in `updateBrainDoc` (kept synchronous) with
+  best-effort async `enrichOutlineSummaries` LLM pass in the PUT route (GatewayError keeps the
+  fallback, never fails the save); `getBrainOutlines` derives outlines on the fly for pre-43 docs
+  (no backfill); `context-matrix` service + routes; `selectiveContextInputs()` spread into all 12
+  call sites. **Notable deviations locked in:** `/generations/angles` no longer calls
+  `retrieveEvidence` (the brief runs without evidence — trace says so); reviewer passes
+  (`review.ts` `runCheck`) also resolve `resolveMode: "brief"`; engagement-reply, launches, and
+  launch-sequences now pass workspace `channelGuidance` (previously silently used built-in
+  defaults). New `apps/api/test/selective-context.test.ts` covers outlines-at-save, matrix routes,
+  /resolve trace, and the generation/angle paths.
+- 2026-07-03 — Step 7 done (commit `723fd00`): Context-inspector matrix card (13×2 mode selects,
+  override badge, per-cell reset, reasons), zoom-query line + tier/mode/zoom badges on section
+  cards (resolver + sandbox preview + persisted trace via `why-this-output.tsx`); brain-page
+  token estimates, constitutional amber warning at `BRAIN_DOC_TOKEN_WARNING`, read-only outline
+  preview with AI-summary badges; `.layer-zoom` + matrix/outline CSS. `next build` clean.
+- 2026-07-03 — Step 8 done: founder-acceptance § Sprint 43 (4 slices + gate), deferred #22–24,
+  sprint-guide Phase G (Sprints 43–47) + traceability rows. Full verification: `npm run typecheck`
+  clean, `npm test` green — 68 files, **851 tests** (679 pre-sprint). Branch pushed; awaiting
+  founder review. **Not merged into `main`.**
