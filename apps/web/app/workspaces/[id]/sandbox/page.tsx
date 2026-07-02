@@ -26,7 +26,7 @@ import {
 } from "@tuezday/contracts";
 import type { ContextSection, ResolvedContext } from "@tuezday/brain";
 import { ReviewPanel } from "@/components/ReviewPanel";
-import { WhyThisOutput, EvidenceRetrieval } from "@/components/why-this-output";
+import { WhyThisOutput, EvidenceRetrieval, SectionBadges } from "@/components/why-this-output";
 
 const TASK_LABELS: Record<TaskType, string> = {
   linkedin_post: "LinkedIn post",
@@ -451,21 +451,29 @@ export default function SandboxPage() {
               </button>
             </p>
             {showPreviewDetail && (
-              <ol className="section-list">
-                {preview.sections.map((s) => (
-                  <li key={s.key} className={`section-card ${s.included ? "" : "excluded"}`}>
-                    <div className="section-head">
-                      <span className={`layer-badge layer-${s.layer}`}>{s.layer}</span>
-                      <span className="section-title">{s.title}</span>
-                      <span className="section-tokens">
-                        {s.included ? `~${s.tokens} tok` : "excluded"}
-                      </span>
-                    </div>
-                    <p className="section-reason">{s.reason}</p>
-                    {s.evidence && <EvidenceRetrieval section={s} />}
-                  </li>
-                ))}
-              </ol>
+              <>
+                {preview.zoomQuery && (
+                  <p className="meta">
+                    Zoom query: <em>{preview.zoomQuery}</em>
+                  </p>
+                )}
+                <ol className="section-list">
+                  {preview.sections.map((s) => (
+                    <li key={s.key} className={`section-card ${s.included ? "" : "excluded"}`}>
+                      <div className="section-head">
+                        <span className={`layer-badge layer-${s.layer}`}>{s.layer}</span>
+                        <SectionBadges section={s} />
+                        <span className="section-title">{s.title}</span>
+                        <span className="section-tokens">
+                          {s.included ? `~${s.tokens} tok` : "excluded"}
+                        </span>
+                      </div>
+                      <p className="section-reason">{s.reason}</p>
+                      {s.evidence && <EvidenceRetrieval section={s} />}
+                    </li>
+                  ))}
+                </ol>
+              </>
             )}
           </div>
         )}

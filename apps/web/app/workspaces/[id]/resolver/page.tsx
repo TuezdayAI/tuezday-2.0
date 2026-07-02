@@ -11,12 +11,17 @@ import { useParams } from "next/navigation";
 import {
   CHANNELS,
   DEFAULT_TOKEN_BUDGET,
+  DOC_CONTEXT_MODES,
+  MATRIX_DOC_TYPES,
   SOCIAL_ACCOUNT_CHANNELS,
   TASK_TYPES,
   type Campaign,
   type Channel,
   type Connection,
   type ConnectorProvider,
+  type DocContextMode,
+  type MatrixCell,
+  type MatrixDocType,
   type Persona,
   type PersonaSocialAccount,
   type SocialAccountChannel,
@@ -24,6 +29,7 @@ import {
   type Workspace,
 } from "@tuezday/contracts";
 import type { ContextSection, ResolvedContext } from "@tuezday/brain";
+import { SectionBadges } from "@/components/why-this-output";
 import {
   connectionLabel,
   defaultTargetForChannel,
@@ -44,6 +50,11 @@ const TASK_LABELS: Record<TaskType, string> = {
   x_dm: "X DM",
   instagram_post: "Instagram post",
   engagement_reply: "Reply",
+};
+
+const MATRIX_DOC_LABELS: Record<MatrixDocType, string> = {
+  icp: "ICP",
+  history: "History",
 };
 
 interface ConnectorsView {
@@ -89,6 +100,11 @@ export default function ResolverPage() {
   const [resolving, setResolving] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
+  // Task × doc context matrix (Sprint 43, tier 2)
+  const [matrixCells, setMatrixCells] = useState<MatrixCell[] | null>(null);
+  const [matrixBusy, setMatrixBusy] = useState<string | null>(null);
+  const [matrixError, setMatrixError] = useState<string | null>(null);
+
   // persona form
   const [showPersonaForm, setShowPersonaForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -98,13 +114,15 @@ export default function ResolverPage() {
 
   const load = useCallback(async () => {
     try {
-      const [wsRes, pRes, cRes, conRes] = await Promise.all([
+      const [wsRes, pRes, cRes, conRes, mRes] = await Promise.all([
         apiFetch(`/workspaces/${id}`),
         apiFetch(`/workspaces/${id}/personas`),
         apiFetch(`/workspaces/${id}/campaigns`),
         apiFetch(`/workspaces/${id}/connectors`),
+        apiFetch(`/workspaces/${id}/context-matrix`),
       ]);
       if (!wsRes.ok || !pRes.ok || !cRes.ok) throw new Error("not found");
+      if (mRes.ok) setMatrixCells((await mRes.json()) as MatrixCell[]);
       const personaRows = (await pRes.json()) as Persona[];
       setWorkspace(await wsRes.json());
       setPersonas(personaRows);
@@ -176,6 +194,56 @@ export default function ResolverPage() {
       setError(err instanceof Error ? err.message : "Failed to resolve");
     } finally {
       setResolving(false);
+    }
+  }
+
+  function cellFor(taskType: TaskType, docType: MatrixDocType): MatrixCell | undefined {
+    return matrixCells?.find((c) => c.taskType === taskType && c.docType === docType);
+  }
+
+  function replaceCell(next: MatrixCell) {
+    setMatrixCells((cells) =>
+      cells
+        ? cells.map((c) =>
+            c.taskType === next.taskType && c.docType === next.docType ? next : c,
+          )
+        : cells,
+    );
+  }
+
+  async function updateMatrixCell(taskType: TaskType, docType: MatrixDocType, mode: DocContextMode) {
+    setMatrixBusy(`${taskType}:${docType}`);
+    setMatrixError(null);
+    try {
+      const res = await apiFetch(`/workspaces/${id}/context-matrix/${taskType}/${docType}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message ?? body?.error ?? `API returned ${res.status}`);
+      replaceCell(body as MatrixCell);
+    } catch (err) {
+      setMatrixError(err instanceof Error ? err.message : "Failed to update matrix cell");
+    } finally {
+      setMatrixBusy(null);
+    }
+  }
+
+  async function resetMatrixCell(taskType: TaskType, docType: MatrixDocType) {
+    setMatrixBusy(`${taskType}:${docType}`);
+    setMatrixError(null);
+    try {
+      const res = await apiFetch(`/workspaces/${id}/context-matrix/${taskType}/${docType}`, {
+        method: "DELETE",
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message ?? body?.error ?? `API returned ${res.status}`);
+      replaceCell(body as MatrixCell);
+    } catch (err) {
+      setMatrixError(err instanceof Error ? err.message : "Failed to reset matrix cell");
+    } finally {
+      setMatrixBusy(null);
     }
   }
 
@@ -622,6 +690,11 @@ export default function ResolverPage() {
                 <span className="error"> — over budget: trim your docs or raise the budget</span>
               )}
             </p>
+            {bundle.zoomQuery && (
+              <p className="meta">
+                Zoom query: <em>{bundle.zoomQuery}</em>
+              </p>
+            )}
             <ol className="section-list">
               {bundle.sections.map((s: ContextSection) => (
                 <li key={s.key} className={`section-card ${s.included ? "" : "excluded"}`}>
@@ -630,6 +703,7 @@ export default function ResolverPage() {
                     onClick={() => setExpanded((e) => ({ ...e, [s.key]: !e[s.key] }))}
                   >
                     <span className={`layer-badge layer-${s.layer}`}>{s.layer}</span>
+                    <SectionBadges section={s} />
                     <span className="section-title">{s.title}</span>
                     <span className="section-tokens">
                       {s.included ? `~${s.tokens} tok` : "excluded"}
@@ -642,6 +716,79 @@ export default function ResolverPage() {
                 </li>
               ))}
             </ol>
+          </div>
+        )}
+      </section>
+
+      <section className="panel">
+        <h2>Task × doc context matrix</h2>
+        <p className="subtitle">
+          Tier 2 of the resolver: how much of ICP and History each task type sees — the whole doc,
+          an outline the resolver zooms into per topic, or nothing. Soul, Voice, and Now are
+          constitutional and always ride in full.
+        </p>
+
+        {matrixError && <p className="error">{matrixError}</p>}
+
+        {matrixCells === null ? (
+          <EmptyState description="Loading matrix…" />
+        ) : (
+          <div className="matrix-table-wrap">
+            <table className="matrix-table">
+              <thead>
+                <tr>
+                  <th>Task</th>
+                  {MATRIX_DOC_TYPES.map((d) => (
+                    <th key={d}>{MATRIX_DOC_LABELS[d]}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {TASK_TYPES.map((t) => (
+                  <tr key={t}>
+                    <th scope="row">{TASK_LABELS[t]}</th>
+                    {MATRIX_DOC_TYPES.map((d) => {
+                      const cell = cellFor(t, d);
+                      if (!cell) return <td key={d} />;
+                      const busy = matrixBusy === `${t}:${d}`;
+                      return (
+                        <td key={d}>
+                          <div className="matrix-cell-head">
+                            <select
+                              value={cell.mode}
+                              disabled={busy}
+                              onChange={(e) =>
+                                void updateMatrixCell(t, d, e.target.value as DocContextMode)
+                              }
+                            >
+                              {DOC_CONTEXT_MODES.map((m) => (
+                                <option key={m} value={m}>
+                                  {m}
+                                </option>
+                              ))}
+                            </select>
+                            {cell.source === "workspace" && (
+                              <>
+                                <span className="guidance-source source-workspace">override</span>
+                                <button
+                                  type="button"
+                                  className="link-button"
+                                  disabled={busy}
+                                  onClick={() => void resetMatrixCell(t, d)}
+                                >
+                                  reset
+                                </button>
+                              </>
+                            )}
+                          </div>
+                          <p className="matrix-cell-reason">{cell.reason}</p>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
       </section>

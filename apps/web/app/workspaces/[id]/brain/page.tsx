@@ -9,9 +9,27 @@ import { API_URL, apiDownload, apiFetch } from "@/lib/api";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import type { BrainDocType, BrainDocVersion, BrainDocument, Workspace } from "@tuezday/contracts";
-import { CHANNEL_LABELS, type Channel, type ChannelGuidance } from "@tuezday/contracts";
-import { BRAIN_DOC_META, type BrainScore } from "@tuezday/brain";
+import type {
+  BrainDocType,
+  BrainDocVersion,
+  BrainDocument,
+  DocOutline,
+  Workspace,
+} from "@tuezday/contracts";
+import {
+  BRAIN_DOC_TOKEN_WARNING,
+  CHANNEL_LABELS,
+  MATRIX_DOC_TYPES,
+  type Channel,
+  type ChannelGuidance,
+} from "@tuezday/contracts";
+import {
+  BRAIN_DOC_META,
+  PREAMBLE_ID,
+  buildFallbackOutline,
+  estimateTokens,
+  type BrainScore,
+} from "@tuezday/brain";
 import { BrainTemplates } from "./_components/brain-templates";
 
 interface BrainView {
@@ -50,6 +68,15 @@ export default function WorkspaceBrainPage() {
   );
   const selectedMeta = BRAIN_DOC_META.find((m) => m.docType === selected)!;
   const dirty = selectedDoc !== null && draft !== selectedDoc.content;
+
+  // Sprint 43: soul/voice/now are constitutional — they ride every prompt in
+  // full, so size matters there. ICP/History are outlined + zoomed per task.
+  const isMatrixDoc = (MATRIX_DOC_TYPES as readonly string[]).includes(selected);
+  const draftTokens = estimateTokens(draft);
+  const outline = useMemo<DocOutline | null>(() => {
+    if (!selectedDoc || selectedDoc.content.trim() === "") return null;
+    return selectedDoc.outline ?? buildFallbackOutline(selectedDoc.content, selectedDoc.updatedAt);
+  }, [selectedDoc]);
 
   const load = useCallback(async () => {
     try {
@@ -228,6 +255,19 @@ export default function WorkspaceBrainPage() {
             <BrainTemplates onApply={save} />
           )}
 
+          <p className="meta">
+            ~{draftTokens} tokens
+            {isMatrixDoc &&
+              " — large is fine: tasks see this doc as an outline and zoom into matching sections."}
+          </p>
+          {!isMatrixDoc && draftTokens >= BRAIN_DOC_TOKEN_WARNING && (
+            <p className="token-warning">
+              {selectedMeta.title} is constitutional — it rides every prompt in full, so ~
+              {draftTokens} tokens counts against every generation. Consider trimming; reference
+              detail belongs in ICP or History, which are outlined per task.
+            </p>
+          )}
+
           <div className="editor-actions">
             <button onClick={() => save(draft)} disabled={saving || !dirty}>
               {saving ? "Saving…" : dirty ? "Save" : "Saved"}
@@ -237,6 +277,36 @@ export default function WorkspaceBrainPage() {
             </button>
             {dirty && <span className="unsaved">Unsaved changes</span>}
           </div>
+
+          {outline && (
+            <details className="outline-preview">
+              <summary className="link-button" style={{ cursor: "pointer", listStyle: "none" }}>
+                Outline — the map outline-mode tasks see ({outline.sections.length}{" "}
+                {outline.sections.length === 1 ? "section" : "sections"})
+                {dirty ? " · from last save" : ""}
+              </summary>
+              <ul className="outline-list">
+                {outline.sections.map((s) => (
+                  <li key={s.id} className={s.level === 3 ? "outline-h3" : ""}>
+                    <span className="outline-heading">
+                      {s.heading === PREAMBLE_ID ? "(intro)" : s.heading}
+                    </span>
+                    {s.summary && <span className="meta"> — {s.summary}</span>}
+                    <span className="section-tokens" style={{ marginLeft: 6 }}>
+                      ~{s.tokens} tok
+                    </span>
+                    {s.summarySource === "llm" && (
+                      <span className="outline-llm-badge">AI summary</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <p className="meta">
+                Regenerated on every save. The resolver zooms into whole sections from this map when
+                a task&apos;s query matches them.
+              </p>
+            </details>
+          )}
 
           {showHistory && (
             <div className="history">
