@@ -194,11 +194,39 @@ export type CreateInviteInput = z.infer<typeof createInviteInputSchema>;
 
 export const BRAIN_DOC_MAX_CHARS = 50_000;
 
+// --- Doc outlines (Sprint 43) — the "map" in map-then-zoom, computed at save time ---
+
+export const OUTLINE_SUMMARY_SOURCES = ["llm", "fallback"] as const;
+export type OutlineSummarySource = (typeof OUTLINE_SUMMARY_SOURCES)[number];
+
+export const docOutlineSectionSchema = z.object({
+  /** Stable slug path, e.g. "operating-principles/brain-first". */
+  id: z.string(),
+  /** Parent H2's id for an H3 section; null for top-level sections. */
+  parentId: z.string().nullable(),
+  heading: z.string(),
+  level: z.union([z.literal(2), z.literal(3)]),
+  /** One-line summary — LLM-composed at save, deterministic fallback otherwise. */
+  summary: z.string(),
+  summarySource: z.enum(OUTLINE_SUMMARY_SOURCES),
+  tokens: z.number().int(),
+});
+export type DocOutlineSection = z.infer<typeof docOutlineSectionSchema>;
+
+export const docOutlineSchema = z.object({
+  sections: z.array(docOutlineSectionSchema),
+  generatedAt: z.number().int(),
+});
+export type DocOutline = z.infer<typeof docOutlineSchema>;
+
 export const brainDocumentSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
   docType: z.enum(BRAIN_DOC_TYPES),
   content: z.string(),
+  // Sprint 43: parsed section outline, regenerated on every save. Null for
+  // empty docs and docs saved before outlines existed (derived on the fly).
+  outline: docOutlineSchema.nullable().optional(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 });
@@ -269,6 +297,146 @@ export const resolveRequestSchema = z.object({
   useEvidence: z.boolean().optional(),
 });
 export type ResolveRequest = z.infer<typeof resolveRequestSchema>;
+
+// ---------------------------------------------------------------------------
+// Selective context (Sprint 43) — Resolver v2 vocabulary.
+//
+// Tier 1 (constitutional: soul/voice/now + keyed overlays + task payload) is
+// always included and never scored. Tier 2 is the task matrix below: how each
+// *informational* doc (icp/history) enters a given task's prompt. Tier 3
+// ("map-then-zoom") applies to docs in `outline` mode: the outline is always
+// present, and full sections are pulled only when they score against the
+// composed query. The matrix is data — defaults here, per-workspace overrides
+// in `context_matrix_overrides` — so the selection policy itself is
+// inspectable and editable.
+// ---------------------------------------------------------------------------
+
+/** How a doc enters a task's prompt: whole, outline + zoomed sections, or not at all. */
+export const DOC_CONTEXT_MODES = ["full", "outline", "omit"] as const;
+export type DocContextMode = (typeof DOC_CONTEXT_MODES)[number];
+
+/**
+ * The docs the task matrix governs. soul/voice/now are constitutional — always
+ * full, never in the matrix (identity is not information).
+ */
+export const MATRIX_DOC_TYPES = ["icp", "history"] as const;
+export type MatrixDocType = (typeof MATRIX_DOC_TYPES)[number];
+
+/** Resolver assembly modes. "brief" = angle-step brief: full→outline demotion, no zoom. */
+export const RESOLVE_MODES = ["draft", "brief"] as const;
+export type ResolveMode = (typeof RESOLVE_MODES)[number];
+
+/** Docs at or under this size are included whole even in `outline` mode. */
+export const ZOOM_SMALL_DOC_TOKENS = 600;
+/** Per-doc token cap on zoomed-in full sections. */
+export const ZOOM_DOC_TOKEN_CAP = 1_500;
+/** Per-doc cap on how many sections zoom may pull. */
+export const ZOOM_MAX_SECTIONS_PER_DOC = 4;
+/** Brain-editor warning threshold for constitutional docs (they ride every prompt). */
+export const BRAIN_DOC_TOKEN_WARNING = 2_000;
+export const MATRIX_CELL_REASON_MAX_CHARS = 300;
+
+export interface TaskDocMatrixCell {
+  mode: DocContextMode;
+  /** Human-readable why — shown in the matrix editor and the resolve trace. */
+  reason: string;
+}
+
+/**
+ * Shipped defaults: every task type × every matrix doc, each cell with a
+ * reason. Outreach tasks keep `icp` full (pain specificity is the task); PR
+ * tasks keep `history` full (the company story is the material); replies omit
+ * both (the conversation is the context; identity docs suffice).
+ */
+export const DEFAULT_TASK_DOC_MATRIX: Record<
+  TaskType,
+  Record<MatrixDocType, TaskDocMatrixCell>
+> = {
+  linkedin_post: {
+    icp: { mode: "outline", reason: "Audience awareness helps a post; the full ICP catalogue rarely does. Zoom pulls the segment the query touches." },
+    history: { mode: "outline", reason: "Lessons and launches are pulled per topic — the full history buries the hook." },
+  },
+  cold_email_opener: {
+    icp: { mode: "full", reason: "The opener lives or dies on ICP pain specificity." },
+    history: { mode: "outline", reason: "Only the history relevant to this lead's situation earns tokens." },
+  },
+  ad_copy_variant: {
+    icp: { mode: "full", reason: "Ad copy targets the ICP's pains and objections directly." },
+    history: { mode: "outline", reason: "Past angle learnings zoom in when the query touches them." },
+  },
+  landing_page_hero: {
+    icp: { mode: "full", reason: "The hero speaks to the ICP's exact pain and trigger." },
+    history: { mode: "outline", reason: "Proof points zoom in; the full timeline doesn't belong in a hero." },
+  },
+  signal_response: {
+    icp: { mode: "outline", reason: "The signal decides which audience matters; zoom follows the signal." },
+    history: { mode: "outline", reason: "Only history related to the signal's topic is useful." },
+  },
+  outbound_email: {
+    icp: { mode: "full", reason: "Personalized outbound needs the full pain/trigger detail." },
+    history: { mode: "outline", reason: "Relevant proof zooms in against the lead facts." },
+  },
+  meta_ad_creative: {
+    icp: { mode: "full", reason: "Creative variants target ICP pains and objections." },
+    history: { mode: "outline", reason: "Past creative learnings zoom in by campaign topic." },
+  },
+  google_rsa: {
+    icp: { mode: "full", reason: "RSA assets speak to the searcher's (ICP's) intent." },
+    history: { mode: "outline", reason: "Proof points zoom in; the timeline doesn't fit 30-char headlines." },
+  },
+  pr_pitch: {
+    icp: { mode: "outline", reason: "The journalist's readers matter more than our ICP detail." },
+    history: { mode: "full", reason: "The pitch is built from what actually happened — milestones, traction, story." },
+  },
+  press_boilerplate: {
+    icp: { mode: "outline", reason: "Boilerplate states who it's for in one line — the outline carries that." },
+    history: { mode: "full", reason: "Boilerplate is facts: founding, milestones, numbers — all history." },
+  },
+  x_dm: {
+    icp: { mode: "full", reason: "A cold DM needs the same pain specificity as cold email." },
+    history: { mode: "outline", reason: "Only history relevant to this recipient earns space in two sentences." },
+  },
+  instagram_post: {
+    icp: { mode: "outline", reason: "The caption rides the visual; audience outline suffices, zoom follows the topic." },
+    history: { mode: "outline", reason: "Topical lessons zoom in; the full history drowns a caption." },
+  },
+  engagement_reply: {
+    icp: { mode: "omit", reason: "The reply answers a specific person in a live thread — the conversation is the context." },
+    history: { mode: "omit", reason: "Thread replies are voice + the conversation; company history is a distractor here." },
+  },
+};
+
+/** A merged matrix cell as the API serves it (default overlaid by any workspace row). */
+export const matrixCellSchema = z.object({
+  taskType: z.enum(TASK_TYPES),
+  docType: z.enum(MATRIX_DOC_TYPES),
+  mode: z.enum(DOC_CONTEXT_MODES),
+  reason: z.string(),
+  // Reuses the guidance vocabulary: "default" (shipped) or "workspace" (override row).
+  source: z.enum(GUIDANCE_SOURCES),
+  // null when source === "default".
+  updatedAt: z.number().int().nullable(),
+});
+export type MatrixCell = z.infer<typeof matrixCellSchema>;
+
+export const updateMatrixCellInputSchema = z.object({
+  mode: z.enum(DOC_CONTEXT_MODES),
+  reason: z
+    .string()
+    .trim()
+    .max(MATRIX_CELL_REASON_MAX_CHARS, `Reason must be ${MATRIX_CELL_REASON_MAX_CHARS} characters or fewer`)
+    .optional(),
+});
+export type UpdateMatrixCellInput = z.infer<typeof updateMatrixCellInputSchema>;
+
+/** The resolver-facing merged matrix (built by the API from defaults + overrides). */
+export type ResolvedTaskDocMatrix = Record<
+  TaskType,
+  Record<MatrixDocType, { mode: DocContextMode; reason: string; source: GuidanceSource }>
+>;
+
+// (Doc outline schemas live in the Brain documents section above, so
+// brainDocumentSchema can embed them.)
 
 // ---------------------------------------------------------------------------
 // Generation quality (Sprint 22) — angle-first + dual-LLM pre-review.

@@ -2,17 +2,32 @@
   AD_CREATIVE_FORMATS,
   BRAIN_DOC_TYPES,
   CHANNEL_GUIDANCE_DEFAULTS,
+  DEFAULT_TASK_DOC_MATRIX,
   DEFAULT_TOKEN_BUDGET,
+  MATRIX_DOC_TYPES,
+  TASK_TYPES,
+  ZOOM_DOC_TOKEN_CAP,
+  ZOOM_MAX_SECTIONS_PER_DOC,
+  ZOOM_SMALL_DOC_TOKENS,
   type AdCreativeTaskType,
+  type BrainDocType,
   type Channel,
+  type DocContextMode,
+  type DocOutline,
   type EvidenceKind,
   type GuidanceSource,
+  type MatrixDocType,
   type MediaContactType,
   type PrPitchType,
+  type ResolveMode,
+  type ResolvedTaskDocMatrix,
   type SequenceChannel,
   type TaskType,
 } from "@tuezday/contracts";
 import { BRAIN_DOC_META, type BrainContents } from "./index";
+import { PREAMBLE_ID, buildFallbackOutline, parseDocSections, renderOutline } from "./sections";
+import { estimateTokens } from "./tokens";
+import { composeZoomQuery, rankSections, type ZoomCandidate } from "./zoom";
 
 // ---------------------------------------------------------------------------
 // Built-in defaults. Channel guidance defaults now live in @tuezday/contracts
@@ -199,6 +214,7 @@ export type ContextLayer =
   | "channel"
   | "campaign"
   | "persona"
+  | "zoom"
   | "lead"
   | "contact"
   | "signal"
@@ -217,6 +233,10 @@ export interface ResolvePersona {
 export interface ResolveCampaign {
   name: string;
   overlay: string;
+  /** Campaign objective — zoom-query material (Sprint 43). */
+  objective?: string;
+  /** Campaign content pillars — zoom-query material (Sprint 43). */
+  pillars?: string[];
 }
 
 export interface ResolveSignal {
@@ -308,6 +328,23 @@ export interface ResolveInput {
    */
   reviewSubject?: string;
   tokenBudget?: number;
+  /**
+   * Merged Tier-2 task matrix (Sprint 43): how icp/history enter this task's
+   * prompt. Omitted → the contracts defaults. The API passes the workspace-
+   * merged matrix.
+   */
+  matrix?: ResolvedTaskDocMatrix;
+  /**
+   * Stored doc outlines (Sprint 43) — LLM-summarized at save time. Missing
+   * docs fall back to a deterministic outline derived from the content.
+   */
+  outlines?: Partial<Record<BrainDocType, DocOutline>>;
+  /**
+   * "brief" = the angle-step brief (Sprint 43): matrix `full` cells demote to
+   * outline and zoom is skipped — a cheap bundle to pick an angle against.
+   * Default "draft".
+   */
+  resolveMode?: ResolveMode;
 }
 
 export interface EvidenceChunkTrace extends EvidenceChunk {
@@ -326,6 +363,16 @@ export interface ContextSection {
   reason: string;
   tokens: number;
   /**
+   * Which resolver tier included this section (Sprint 43): 1 = constitutional,
+   * 2 = task matrix, 3 = zoom. Absent on sections the tiers don't govern
+   * (evidence has its own per-chunk trace) and on pre-43 persisted traces.
+   */
+  tier?: 1 | 2 | 3;
+  /** Effective task-matrix mode, set on the five org-doc sections (Sprint 43). */
+  mode?: DocContextMode;
+  /** Zoom trace, set on `zoom:*` sections (Sprint 43). */
+  zoom?: { score: number; rank: number };
+  /**
    * Per-chunk retrieval trace, present only on the evidence section: the
    * composed query and every candidate chunk with its scores + kept/dropped
    * status. Powers the Evidence-retrieval inspection view.
@@ -339,19 +386,36 @@ export interface ResolvedContext {
   tokenBudget: number;
   overBudget: boolean;
   prompt: string;
+  /** The composed Tier-3 retrieval query (Sprint 43); set when zoom ran. */
+  zoomQuery?: string;
+  /** Which assembly mode produced this bundle (Sprint 43). */
+  resolveMode: ResolveMode;
 }
 
-/** Rough token estimate: ~4 characters per token, rounded up. */
-export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
-}
+export { estimateTokens } from "./tokens";
 
 /**
- * Sections that may be dropped (whole) to fit the token budget, in sacrifice
- * order. Everything else is protected: going over budget sets `overBudget`
- * instead of silently cutting the docs that define the company.
+ * The contracts default matrix as a ResolvedTaskDocMatrix (every cell marked
+ * source "default"). The API overlays workspace `context_matrix_overrides`
+ * rows on top of this; the resolver falls back to it when no matrix is passed.
  */
-const BUDGET_SACRIFICE_ORDER = ["org:history", "channel"] as const;
+export function defaultResolvedMatrix(): ResolvedTaskDocMatrix {
+  const matrix = {} as ResolvedTaskDocMatrix;
+  for (const taskType of TASK_TYPES) {
+    matrix[taskType] = {} as ResolvedTaskDocMatrix[TaskType];
+    for (const docType of MATRIX_DOC_TYPES) {
+      matrix[taskType][docType] = {
+        ...DEFAULT_TASK_DOC_MATRIX[taskType][docType],
+        source: "default",
+      };
+    }
+  }
+  return matrix;
+}
+
+function isMatrixDoc(docType: BrainDocType): docType is MatrixDocType {
+  return (MATRIX_DOC_TYPES as readonly string[]).includes(docType);
+}
 
 /** Render evidence chunks as `[n]` citations followed by a numbered source list. */
 function renderEvidence(chunks: EvidenceChunk[]): string {
@@ -362,22 +426,115 @@ function renderEvidence(chunks: EvidenceChunk[]): string {
 
 export function resolveContext(input: ResolveInput): ResolvedContext {
   const tokenBudget = input.tokenBudget ?? DEFAULT_TOKEN_BUDGET;
+  const resolveMode: ResolveMode = input.resolveMode ?? "draft";
+  const matrix = input.matrix ?? defaultResolvedMatrix();
   const sections: ContextSection[] = [];
 
-  for (const docType of BRAIN_DOC_TYPES) {
+  // --- Tiers 1+2: plan how each org doc enters the bundle -------------------
+  // soul/voice/now are constitutional (tier 1, always full). icp/history are
+  // informational (tier 2): the task matrix decides full/outline/omit, with a
+  // brief-mode demotion and a small-doc escape hatch on top.
+  const plans = BRAIN_DOC_TYPES.map((docType) => {
     const meta = BRAIN_DOC_META.find((m) => m.docType === docType)!;
     const content = input.docs[docType].trim();
+    const tier: 1 | 2 = isMatrixDoc(docType) ? 2 : 1;
+    if (!content) {
+      return { docType, meta, content, tier, mode: "omit" as DocContextMode, empty: true, notes: [] as string[], cell: undefined };
+    }
+    if (!isMatrixDoc(docType)) {
+      return { docType, meta, content, tier, mode: "full" as DocContextMode, empty: false, notes: [] as string[], cell: undefined };
+    }
+    const cell = matrix[input.taskType][docType];
+    let mode: DocContextMode = cell.mode;
+    const notes: string[] = [];
+    if (resolveMode === "brief" && mode === "full") {
+      mode = "outline";
+      notes.push("brief mode (angle step): full demoted to outline");
+    }
+    if (mode === "outline" && estimateTokens(content) <= ZOOM_SMALL_DOC_TOKENS) {
+      mode = "full";
+      notes.push(`included whole (doc ≤ ${ZOOM_SMALL_DOC_TOKENS} tokens — outlining saves nothing)`);
+    }
+    return { docType, meta, content, tier, mode, empty: false, notes, cell };
+  });
+
+  // --- Tier 3: zoom — score outline-mode docs' sections against the query ---
+  const outlinePlans = plans.filter((p) => p.mode === "outline" && !p.empty);
+  const docSectionCounts = new Map<BrainDocType, number>();
+  const zoomSelected = new Map<BrainDocType, { candidate: ZoomCandidate; score: number; rank: number }[]>();
+  let zoomQuery: string | undefined;
+  if (resolveMode === "draft" && outlinePlans.length > 0) {
+    zoomQuery = composeZoomQuery(input);
+    const candidates: ZoomCandidate[] = outlinePlans.flatMap((p) => {
+      const docSections = parseDocSections(p.content);
+      docSectionCounts.set(p.docType, docSections.length);
+      return docSections.map((section) => ({ docType: p.docType, section }));
+    });
+    const ranked = rankSections(zoomQuery, candidates);
+    const tokensByDoc = new Map<BrainDocType, number>();
+    const closedDocs = new Set<BrainDocType>();
+    ranked.forEach((r, i) => {
+      if (closedDocs.has(r.docType)) return;
+      const picked = zoomSelected.get(r.docType) ?? [];
+      const spent = tokensByDoc.get(r.docType) ?? 0;
+      if (picked.length >= ZOOM_MAX_SECTIONS_PER_DOC || spent + r.section.tokens > ZOOM_DOC_TOKEN_CAP) {
+        closedDocs.add(r.docType);
+        return;
+      }
+      picked.push({ candidate: { docType: r.docType, section: r.section }, score: r.score, rank: i + 1 });
+      zoomSelected.set(r.docType, picked);
+      tokensByDoc.set(r.docType, spent + r.section.tokens);
+    });
+  }
+
+  // --- Assemble the five org-doc sections (same keys/order as v1) -----------
+  for (const plan of plans) {
+    const { docType, meta, content, tier, mode, empty, notes, cell } = plan;
+    const source = cell ? ` — ${cell.source === "workspace" ? "workspace override" : "default"}` : "";
+    const noteSuffix = notes.length ? ` (${notes.join("; ")})` : "";
+    if (empty) {
+      sections.push({
+        key: `org:${docType}`, layer: "org", title: meta.title, content: "",
+        included: false, reason: `Excluded: the ${meta.title} doc is empty.`,
+        tokens: 0, tier, mode: "omit",
+      });
+      continue;
+    }
+    if (mode === "omit") {
+      sections.push({
+        key: `org:${docType}`, layer: "org", title: meta.title, content: "",
+        included: false,
+        reason: `Excluded (tier 2, task matrix${source}): omitted for ${input.taskType} — ${cell!.reason}`,
+        tokens: 0, tier, mode,
+      });
+      continue;
+    }
+    if (mode === "outline") {
+      const outline = input.outlines?.[docType] ?? buildFallbackOutline(content, 0)!;
+      const rendered = renderOutline(outline);
+      const pulled = zoomSelected.get(docType)?.length ?? 0;
+      const total = docSectionCounts.get(docType) ?? outline.sections.length;
+      const zoomNote =
+        resolveMode === "brief"
+          ? "zoom off (brief mode)"
+          : pulled > 0
+            ? `${pulled} of ${total} sections zoomed in below`
+            : "no sections matched the zoom query";
+      sections.push({
+        key: `org:${docType}`, layer: "org", title: `${meta.title} (outline)`, content: rendered,
+        included: true,
+        reason: `Org brain (tier 2, task matrix${source}): outline for ${input.taskType} — ${cell!.reason}${noteSuffix}; ${zoomNote}.`,
+        tokens: estimateTokens(rendered), tier, mode,
+      });
+      continue;
+    }
     sections.push({
-      key: `org:${docType}`,
-      layer: "org",
-      title: meta.title,
-      content,
-      included: content.length > 0,
-      reason:
-        content.length > 0
-          ? `Org brain: ${meta.description}`
-          : `Excluded: the ${meta.title} doc is empty.`,
-      tokens: estimateTokens(content),
+      key: `org:${docType}`, layer: "org", title: meta.title, content,
+      included: true,
+      reason: cell
+        ? `Org brain (tier 2, task matrix${source}): full for ${input.taskType} — ${cell.reason}${noteSuffix}`
+        : `Org brain (tier 1, constitutional): ${meta.description}`,
+      tokens: estimateTokens(content), tier, mode,
     });
   }
 
@@ -393,9 +550,10 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
     included: true,
     reason:
       guidance.source === "workspace"
-        ? `Channel guidance for ${input.channel} (workspace override).`
-        : `Channel guidance for ${input.channel} (built-in default).`,
+        ? `Channel guidance for ${input.channel} (tier 1, keyed — workspace override).`
+        : `Channel guidance for ${input.channel} (tier 1, keyed — built-in default).`,
     tokens: estimateTokens(guidance.content),
+    tier: 1,
   });
 
   const campaignContent = input.campaign?.overlay.trim() ?? "";
@@ -410,6 +568,7 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
         ? `Campaign overlay for "${input.campaign!.name}".`
         : "Excluded: no campaign overlay yet (campaigns arrive in a later slice).",
     tokens: estimateTokens(campaignContent),
+    tier: 1,
   });
 
   if (input.persona) {
@@ -425,6 +584,7 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       included: true,
       reason: `Persona overlay "${input.persona.name}" adjusts voice and point of view.`,
       tokens: estimateTokens(personaContent),
+      tier: 1,
     });
   } else {
     sections.push({
@@ -435,7 +595,31 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       included: false,
       reason: "Excluded: no persona selected; org voice applies.",
       tokens: 0,
+      tier: 1,
     });
+  }
+
+  // --- Tier 3 zoom sections: end of the stable prefix, before the volatile ---
+  // task payload. Grouped by doc in canonical order, best score first within
+  // each doc — the prompt reads "here is the map, here is what we zoomed into".
+  for (const docType of BRAIN_DOC_TYPES) {
+    const picked = zoomSelected.get(docType);
+    if (!picked) continue;
+    const meta = BRAIN_DOC_META.find((m) => m.docType === docType)!;
+    for (const { candidate, score, rank } of picked) {
+      const heading = candidate.section.id === PREAMBLE_ID ? "(intro)" : candidate.section.heading;
+      sections.push({
+        key: `zoom:${docType}:${candidate.section.id}`,
+        layer: "zoom",
+        title: `${meta.title} § ${heading}`,
+        content: candidate.section.body,
+        included: true,
+        reason: `Zoomed in (tier 3): scored ${score.toFixed(2)} (rank ${rank}) against the composed query.`,
+        tokens: candidate.section.tokens,
+        tier: 3,
+        zoom: { score, rank },
+      });
+    }
   }
 
   if (input.lead) {
@@ -455,6 +639,7 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       included: true,
       reason: "The lead this outbound task addresses. Personalize only from these facts.",
       tokens: estimateTokens(leadContent),
+      tier: 1,
     });
   } else {
     sections.push({
@@ -465,6 +650,7 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       included: false,
       reason: "Excluded: no lead attached to this task.",
       tokens: 0,
+      tier: 1,
     });
   }
 
@@ -486,6 +672,7 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       reason:
         "The media contact this pitch addresses. Personalize only from these facts — never invent past coverage or relationships.",
       tokens: estimateTokens(contactContent),
+      tier: 1,
     });
   } else {
     sections.push({
@@ -496,6 +683,7 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       included: false,
       reason: "Excluded: no media contact attached to this task.",
       tokens: 0,
+      tier: 1,
     });
   }
 
@@ -511,6 +699,7 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       included: true,
       reason: `The ${input.signal.source} signal this task responds to.`,
       tokens: estimateTokens(signalContent),
+      tier: 1,
     });
   } else {
     sections.push({
@@ -521,6 +710,7 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       included: false,
       reason: "Excluded: no signal attached to this task.",
       tokens: 0,
+      tier: 1,
     });
   }
 
@@ -540,6 +730,7 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       included: true,
       reason: `The inbound ${convo.source} message this reply answers, plus our original post.`,
       tokens: estimateTokens(conversationContent),
+      tier: 1,
     });
   }
 
@@ -584,6 +775,7 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       included: true,
       reason: "The angle this draft was generated from (Sprint 22 angle step).",
       tokens: estimateTokens(angleContent),
+      tier: 1,
     });
   }
 
@@ -597,6 +789,7 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       included: true,
       reason: "The draft this reviewer pass is judging. Score only this text.",
       tokens: estimateTokens(subject),
+      tier: 1,
     });
   }
 
@@ -611,6 +804,7 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       ? "Task instruction (composed for this request): always included, always last."
       : "Task instruction: always included, always last.",
     tokens: estimateTokens(taskContent),
+    tier: 1,
   });
 
   // Token budget. Evidence is the lowest-priority layer: it degrades
@@ -640,15 +834,38 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
     }
   }
 
-  // Then drop whole sacrificial sections, in order, until we fit.
-  for (const key of BUDGET_SACRIFICE_ORDER) {
+  // Ladder step 2 (Sprint 43): drop zoomed sections, lowest score first —
+  // they are the most speculative content in the bundle.
+  const zoomByScore = sections
+    .filter((s) => s.layer === "zoom" && s.included)
+    .sort((a, b) => a.zoom!.score - b.zoom!.score || b.zoom!.rank - a.zoom!.rank);
+  for (const section of zoomByScore) {
     if (includedTotal() <= tokenBudget) break;
-    const section = sections.find((s) => s.key === key)!;
-    if (section.included) {
-      const over = includedTotal() - tokenBudget;
-      section.included = false;
-      section.reason = `Excluded: dropped to fit the token budget (bundle was ${over} tokens over).`;
-    }
+    const over = includedTotal() - tokenBudget;
+    section.included = false;
+    section.reason = `Excluded: zoomed section dropped to fit the token budget (bundle was ${over} tokens over; lowest score first).`;
+  }
+
+  // Ladder step 3: demote matrix-`full` informational docs to their outline —
+  // history first, then icp. Constitutional docs (soul/voice/now), channel
+  // guidance, overlays, and the task payload are never cut: if the bundle is
+  // still over budget after this, it ships flagged `overBudget` and the
+  // Brain-page token warnings are the fix.
+  for (const docType of ["history", "icp"] as const) {
+    if (includedTotal() <= tokenBudget) break;
+    const plan = plans.find((p) => p.docType === docType)!;
+    const section = sections.find((s) => s.key === `org:${docType}`)!;
+    if (!section.included || plan.empty || section.mode !== "full" || !plan.cell) continue;
+    const outline = input.outlines?.[docType] ?? buildFallbackOutline(plan.content, 0)!;
+    const rendered = renderOutline(outline);
+    const outlineTokens = estimateTokens(rendered);
+    if (outlineTokens >= section.tokens) continue; // outlining a tiny doc saves nothing
+    const over = includedTotal() - tokenBudget;
+    section.content = rendered;
+    section.tokens = outlineTokens;
+    section.mode = "outline";
+    section.title = `${plan.meta.title} (outline)`;
+    section.reason = `${section.reason} — demoted to outline to fit the token budget (bundle was ${over} tokens over).`;
   }
 
   const includedTokens = includedTotal();
@@ -663,5 +880,7 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
     tokenBudget,
     overBudget: includedTokens > tokenBudget,
     prompt,
+    zoomQuery,
+    resolveMode,
   };
 }
