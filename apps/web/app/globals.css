@@ -1563,7 +1563,14 @@ a.workspace-card:hover {
   }
 
   .module-in {
-    animation: module-in 0.2s var(--ease-out);
+    animation: module-in 0.45s var(--ease-out) backwards;
+  }
+
+  /* Content fades in when it mounts (module pages render data async, so the
+     visible "module loaded" moment is the panels appearing, not the route). */
+  .module-in .panel,
+  .module-in .page-header {
+    animation: module-in 0.45s var(--ease-out) backwards;
   }
 }
 
@@ -1580,7 +1587,7 @@ a.workspace-card:hover {
 @keyframes module-in {
   from {
     opacity: 0;
-    transform: translateY(4px);
+    transform: translateY(12px);
   }
   to {
     opacity: 1;
