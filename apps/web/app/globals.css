@@ -1458,3 +1458,132 @@ a.workspace-card:hover {
   color: var(--rose-ink);
   background: var(--rose);
 }
+
+/* --- UI polish (2026-07-03): billing meters, module motion, smooth scroll --- */
+
+.plan-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  margin: 12px 0 20px;
+}
+
+.plan-hero-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.plan-hero-price {
+  text-align: right;
+}
+
+.plan-hero-amount {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.usage-heading {
+  margin: 0 0 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.usage-meters {
+  display: grid;
+  gap: 16px;
+}
+
+.usage-meter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.usage-meter-title {
+  font-weight: 600;
+}
+
+.usage-meter-figure {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.meter-track {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.4s var(--ease-out);
+}
+
+.meter-fill.near {
+  background: var(--c2-deep);
+}
+
+.meter-fill.over {
+  background: var(--danger);
+}
+
+.meter-fill.unlimited {
+  background: var(--accent);
+  opacity: 0.35;
+}
+
+.usage-alert {
+  margin: 6px 0 0;
+  color: var(--danger);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  .usage-alert {
+    animation: usage-pulse 1.2s ease-in-out infinite;
+  }
+
+  .module-in {
+    animation: module-in 0.2s var(--ease-out);
+  }
+}
+
+@keyframes usage-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes module-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
