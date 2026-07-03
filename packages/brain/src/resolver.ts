@@ -214,6 +214,7 @@ export type ContextLayer =
   | "channel"
   | "campaign"
   | "persona"
+  | "account"
   | "zoom"
   | "lead"
   | "contact"
@@ -228,6 +229,25 @@ export interface ResolvePersona {
   name: string;
   description: string;
   overlay: string;
+  /** Topics this persona covers (Sprint 44) — also zoom-query material. */
+  topics?: string[];
+  /** Structured drafting fields (Sprint 44); empty/omitted render nothing. */
+  tone?: string;
+  styleRules?: string;
+  avoid?: string;
+}
+
+/**
+ * The publishing account (connection) this draft will go out from, when it is
+ * known at draft time and has a content profile (Sprint 44). Injected as a
+ * tier-1 keyed section; topics also feed the zoom query.
+ */
+export interface ResolveAccount {
+  name: string;
+  handle?: string | null;
+  provider: string;
+  topics?: string[];
+  guidance?: string;
 }
 
 export interface ResolveCampaign {
@@ -298,6 +318,12 @@ export interface ResolveInput {
   channel: Channel;
   persona?: ResolvePersona;
   campaign?: ResolveCampaign;
+  /**
+   * The publishing account's content profile (Sprint 44), resolved by the API
+   * from the persona's primary connection (or the inbox item's connection).
+   * Omitted → no account section (existing section lists are unchanged).
+   */
+  account?: ResolveAccount;
   lead?: ResolveLead;
   mediaContact?: ResolveMediaContact;
   signal?: ResolveSignal;
@@ -315,8 +341,10 @@ export interface ResolveInput {
    * The channel guidance to use and where it came from (Sprint 21). Omitted →
    * the resolver falls back to the built-in default for `channel`. The API
    * passes the workspace override here when one exists. Surfaced in the trace.
+   * `scope` (Sprint 44) is a preformatted label naming the persona/campaign
+   * scope that won most-specific-wins resolution, folded into the reason.
    */
-  channelGuidance?: { content: string; source: GuidanceSource };
+  channelGuidance?: { content: string; source: GuidanceSource; scope?: string };
   /**
    * A chosen angle to draft from (Sprint 22 angle step). When set, becomes the
    * "angle" section, just before the task instruction.
@@ -542,6 +570,9 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
     content: CHANNEL_GUIDANCE_DEFAULTS[input.channel],
     source: "default" as const,
   };
+  // Sprint 44: name the scope that won most-specific-wins resolution. No
+  // scope → reasons unchanged byte-for-byte from Sprint 43.
+  const scopeSuffix = guidance.scope ? `, scoped: ${guidance.scope}` : "";
   sections.push({
     key: "channel",
     layer: "channel",
@@ -550,7 +581,7 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
     included: true,
     reason:
       guidance.source === "workspace"
-        ? `Channel guidance for ${input.channel} (tier 1, keyed — workspace override).`
+        ? `Channel guidance for ${input.channel} (tier 1, keyed — workspace override${scopeSuffix}).`
         : `Channel guidance for ${input.channel} (tier 1, keyed — built-in default).`,
     tokens: estimateTokens(guidance.content),
     tier: 1,
@@ -575,6 +606,18 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
     const lines = [`Speaking as: ${input.persona.name}.`];
     if (input.persona.description.trim()) lines.push(input.persona.description.trim());
     if (input.persona.overlay.trim()) lines.push(input.persona.overlay.trim());
+    // Sprint 44: structured drafting fields as labeled lines. Empty fields
+    // render nothing, so pre-44 personas produce byte-identical sections.
+    if (input.persona.topics?.length) {
+      lines.push(`Topics this persona covers: ${input.persona.topics.join(", ")}`);
+    }
+    if (input.persona.tone?.trim()) lines.push(`Tone: ${input.persona.tone.trim()}`);
+    if (input.persona.styleRules?.trim()) {
+      lines.push(`Style rules:\n${input.persona.styleRules.trim()}`);
+    }
+    if (input.persona.avoid?.trim()) {
+      lines.push(`Never say / avoid:\n${input.persona.avoid.trim()}`);
+    }
     const personaContent = lines.join("\n\n");
     sections.push({
       key: "persona",
@@ -595,6 +638,30 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       included: false,
       reason: "Excluded: no persona selected; org voice applies.",
       tokens: 0,
+      tier: 1,
+    });
+  }
+
+  // The publishing account's content profile (Sprint 44). Pushed only when the
+  // API resolved one (persona's primary connection, or the inbox item's own
+  // connection), so existing tasks' section lists are byte-identical without it.
+  if (input.account) {
+    const account = input.account;
+    const identity = account.handle?.trim()
+      ? `${account.name} (@${account.handle.trim().replace(/^@/, "")})`
+      : account.name;
+    const lines = [`Publishing as: ${identity} on ${account.provider}.`];
+    if (account.topics?.length) lines.push(`This account covers: ${account.topics.join(", ")}`);
+    if (account.guidance?.trim()) lines.push(`Account guidelines:\n${account.guidance.trim()}`);
+    const accountContent = lines.join("\n\n");
+    sections.push({
+      key: "account",
+      layer: "account",
+      title: `Account: ${identity}`,
+      content: accountContent,
+      included: true,
+      reason: `Account content profile for ${identity} (tier 1, keyed): the account this draft publishes from.`,
+      tokens: estimateTokens(accountContent),
       tier: 1,
     });
   }

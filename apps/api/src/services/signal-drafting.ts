@@ -10,6 +10,8 @@ import { retrieveEvidence } from "./evidence";
 import { getGenerationSettings } from "./generation-settings";
 import { storeGeneration } from "./generations";
 import { resolveChannelGuidance } from "./guidance";
+import { toResolvePersona } from "./personas";
+import { resolveDraftAccount } from "./resolve-account";
 import { selectiveContextInputs } from "./resolve-input";
 import { runPreReview, setGenerationReview } from "./review";
 
@@ -54,10 +56,11 @@ export async function generateSignalDraft(
 
   const { docs } = getBrain(db, workspace.id);
   const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
-  const channelGuidance = resolveChannelGuidance(db, workspace.id, opts.channel);
-  const personaInput = opts.persona
-    ? { name: opts.persona.name, description: opts.persona.description, overlay: opts.persona.overlay }
-    : undefined;
+  const channelGuidance = resolveChannelGuidance(db, workspace.id, opts.channel, {
+    personaId: opts.persona?.id ?? null,
+    campaignId: opts.campaign?.id ?? null,
+  });
+  const personaInput = opts.persona ? toResolvePersona(opts.persona) : undefined;
   const campaignInput = opts.campaign ? composeResolveCampaign(opts.campaign) : undefined;
   const selective = selectiveContextInputs(db, workspace.id);
   const resolved = resolveContext({
@@ -65,9 +68,17 @@ export async function generateSignalDraft(
     docs: contents,
     taskType: "signal_response",
     channel: opts.channel,
-    channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
+    channelGuidance: {
+      content: channelGuidance.content,
+      source: channelGuidance.source,
+      scope: channelGuidance.scopeLabel,
+    },
     persona: personaInput,
     campaign: campaignInput,
+    account: resolveDraftAccount(db, workspace.id, {
+      personaId: opts.persona?.id,
+      channel: opts.channel,
+    }),
     signal: { content: signal.content, source: signal.source, sourceUrl: signal.sourceUrl },
     ...selective,
     evidence: evidenceResolution.evidence,

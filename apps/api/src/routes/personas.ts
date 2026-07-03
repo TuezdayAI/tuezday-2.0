@@ -17,8 +17,10 @@ import {
   deletePersona,
   getPersona,
   listPersonas,
+  toResolvePersona,
   updatePersona,
 } from "../services/personas";
+import { resolveDraftAccount } from "../services/resolve-account";
 import {
   createPersonaSocialAccount,
   deletePersonaSocialAccount,
@@ -203,18 +205,27 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
 
     const { docs } = getBrain(db, request.params.id);
     const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
-    const channelGuidance = resolveChannelGuidance(db, request.params.id, parsed.data.channel);
+    const channelGuidance = resolveChannelGuidance(db, request.params.id, parsed.data.channel, {
+      personaId: parsed.data.personaId ?? null,
+      campaignId: parsed.data.campaignId ?? null,
+    });
 
     return resolveContext({
       workspaceName: workspace.name,
       docs: contents,
       taskType: parsed.data.taskType,
       channel: parsed.data.channel,
-      channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
-      persona: persona
-        ? { name: persona.name, description: persona.description, overlay: persona.overlay }
-        : undefined,
+      channelGuidance: {
+        content: channelGuidance.content,
+        source: channelGuidance.source,
+        scope: channelGuidance.scopeLabel,
+      },
+      persona: persona ? toResolvePersona(persona) : undefined,
       campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+      account: resolveDraftAccount(db, request.params.id, {
+        personaId: parsed.data.personaId,
+        channel: parsed.data.channel,
+      }),
       ...selectiveContextInputs(db, request.params.id),
       evidence: evidenceResolution.evidence,
       evidenceExclusionReason: evidenceResolution.exclusionReason,

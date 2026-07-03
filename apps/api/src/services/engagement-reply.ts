@@ -9,6 +9,8 @@ import { submitDraft, type DraftActor } from "./drafts";
 import { retrieveEvidence } from "./evidence";
 import { storeGeneration } from "./generations";
 import { resolveChannelGuidance } from "./guidance";
+import { toResolvePersona } from "./personas";
+import { resolveDraftAccount } from "./resolve-account";
 import { selectiveContextInputs } from "./resolve-input";
 
 export interface GenerateReplyContext {
@@ -54,6 +56,8 @@ export async function generateEngagementReply(
   const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
   // Sprint 43: pass the workspace's channel guidance — this path previously
   // fell back to the built-in default even when an override existed.
+  // Sprint 44: scope stays workspace-level here — inbox items don't carry a
+  // persona; deriving one from the item's connection is deferred (Sprint 45 ⏸).
   const channelGuidance = resolveChannelGuidance(db, workspace.id, item.channel);
   const resolved = resolveContext({
     workspaceName: workspace.name,
@@ -61,10 +65,13 @@ export async function generateEngagementReply(
     taskType: "engagement_reply",
     channel: item.channel,
     channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
-    persona: ctx.persona
-      ? { name: ctx.persona.name, description: ctx.persona.description, overlay: ctx.persona.overlay }
-      : undefined,
+    persona: ctx.persona ? toResolvePersona(ctx.persona) : undefined,
     campaign: ctx.campaign ? composeResolveCampaign(ctx.campaign) : undefined,
+    // The reply publishes from the same account the inbound item arrived on.
+    account: resolveDraftAccount(db, workspace.id, {
+      channel: item.channel,
+      connectionId: item.connectionId,
+    }),
     ...selectiveContextInputs(db, workspace.id),
     conversation: {
       originalPost: ctx.post?.content,

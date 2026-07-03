@@ -22,7 +22,7 @@ import { retrieveEvidence } from "../services/evidence";
 import { storeGeneration } from "../services/generations";
 import { resolveChannelGuidance } from "../services/guidance";
 import { csvField } from "../services/leads";
-import { getPersona } from "../services/personas";
+import { getPersona, toResolvePersona } from "../services/personas";
 import { selectiveContextInputs } from "../services/resolve-input";
 import { getWorkspace } from "../services/workspaces";
 
@@ -80,16 +80,21 @@ export function registerAdCreativeRoutes(
 
       const format = AD_CREATIVE_FORMATS[parsed.data.taskType];
       const variantCount = parsed.data.variantCount ?? format.variantCount?.default;
-      const channelGuidance = resolveChannelGuidance(db, request.params.id, "ads");
+      const channelGuidance = resolveChannelGuidance(db, request.params.id, "ads", {
+        personaId: parsed.data.personaId ?? null,
+        campaignId: campaign.id,
+      });
       const resolved = resolveContext({
         workspaceName: workspace.name,
         docs: contents,
         taskType: parsed.data.taskType,
         channel: "ads",
-        channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
-        persona: persona
-          ? { name: persona.name, description: persona.description, overlay: persona.overlay }
-          : undefined,
+        channelGuidance: {
+          content: channelGuidance.content,
+          source: channelGuidance.source,
+          scope: channelGuidance.scopeLabel,
+        },
+        persona: persona ? toResolvePersona(persona) : undefined,
         campaign: composeResolveCampaign(campaign),
         ...selectiveContextInputs(db, request.params.id),
         evidence: evidenceResolution.evidence,

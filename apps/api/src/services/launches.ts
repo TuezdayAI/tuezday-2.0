@@ -44,7 +44,8 @@ import { submitDraft } from "./drafts";
 import { retrieveEvidence } from "./evidence";
 import { storeGeneration } from "./generations";
 import type { OutboundExporter, OutboundExport } from "../outbound/exporter";
-import { getPersona } from "./personas";
+import { getPersona, toResolvePersona } from "./personas";
+import { resolveDraftAccount } from "./resolve-account";
 import { resolvePersonaSocialConnection } from "./persona-social-accounts";
 import { createPublication } from "./publications";
 import { hasSequence, listSequenceRecipients, listSequenceSteps } from "./launch-sequences";
@@ -296,9 +297,7 @@ export async function generateLaunch(
   const channels = parseChannels(launchRow);
   const campaign = launchRow.campaignId ? getCampaign(db, workspaceId, launchRow.campaignId) : undefined;
   const persona = launchRow.personaId ? getPersona(db, workspaceId, launchRow.personaId) : undefined;
-  const personaArg = persona
-    ? { name: persona.name, description: persona.description, overlay: persona.overlay }
-    : undefined;
+  const personaArg = persona ? toResolvePersona(persona) : undefined;
   const campaignArg = campaign ? composeResolveCampaign(campaign) : undefined;
   const { docs } = getBrain(db, workspaceId);
   const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
@@ -309,7 +308,15 @@ export async function generateLaunch(
     const gen = CHANNEL_GEN[channel];
     // Sprint 43: pass the workspace's channel guidance — this path previously
     // fell back to the built-in default even when an override existed.
-    const channelGuidance = resolveChannelGuidance(db, workspaceId, gen.channel);
+    // Sprint 44: scoped to the launch's persona/campaign, most-specific-wins.
+    const channelGuidance = resolveChannelGuidance(db, workspaceId, gen.channel, {
+      personaId: launchRow.personaId,
+      campaignId: launchRow.campaignId,
+    });
+    const account = resolveDraftAccount(db, workspaceId, {
+      personaId: launchRow.personaId,
+      channel: gen.channel,
+    });
     const evidenceResolution = await retrieveEvidence(
       db,
       evidence,
@@ -324,9 +331,14 @@ export async function generateLaunch(
         docs: contents,
         taskType: gen.taskType,
         channel: gen.channel,
-        channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
+        channelGuidance: {
+          content: channelGuidance.content,
+          source: channelGuidance.source,
+          scope: channelGuidance.scopeLabel,
+        },
         persona: personaArg,
         campaign: campaignArg,
+        account,
         lead: lead ? { name: lead.name, company: lead.company, role: lead.role, notes: "" } : undefined,
         ...selective,
         evidence: evidenceResolution.evidence,

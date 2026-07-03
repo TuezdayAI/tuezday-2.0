@@ -127,7 +127,11 @@ export type BrainDocumentVersionRow = typeof brainDocumentVersions.$inferSelect;
 
 // Per-workspace, per-channel guidance overrides (Sprint 21). The built-in
 // defaults live in @tuezday/contracts; this table holds overrides only. A
-// missing row means "use the default" for that channel.
+// missing row means "use the default" for that channel. Sprint 44 adds
+// optional persona/campaign scope: NULL persona+campaign is the workspace-wide
+// override; resolution picks the most specific matching row. SQLite treats
+// NULLs as distinct in the unique index, so the service layer upserts
+// select-first rather than relying on ON CONFLICT for the unscoped row.
 export const guidanceOverrides = sqliteTable(
   "guidance_overrides",
   {
@@ -136,11 +140,20 @@ export const guidanceOverrides = sqliteTable(
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     channel: text("channel").notNull(),
+    personaId: text("persona_id").references(() => personas.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "cascade" }),
     content: text("content").notNull(),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (t) => [uniqueIndex("guidance_overrides_workspace_channel").on(t.workspaceId, t.channel)],
+  (t) => [
+    uniqueIndex("guidance_overrides_workspace_channel_scope").on(
+      t.workspaceId,
+      t.channel,
+      t.personaId,
+      t.campaignId,
+    ),
+  ],
 );
 
 export type GuidanceOverrideRow = typeof guidanceOverrides.$inferSelect;
@@ -182,6 +195,11 @@ export const personas = sqliteTable("personas", {
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
   overlay: text("overlay").notNull().default(""),
+  // Sprint 44 structured drafting fields. topicsJson is a JSON string array.
+  topicsJson: text("topics_json").notNull().default("[]"),
+  tone: text("tone").notNull().default(""),
+  styleRules: text("style_rules").notNull().default(""),
+  avoid: text("avoid").notNull().default(""),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -487,6 +505,9 @@ export const connections = sqliteTable("connections", {
   status: text("status").notNull().default("connected"),
   lastCheckedAt: integer("last_checked_at"),
   lastError: text("last_error"),
+  // Sprint 44: per-account content profile ({ topics: string[], guidance }),
+  // injected into the context bundle when a draft resolves to this connection.
+  contentProfileJson: text("content_profile_json").notNull().default("{}"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });

@@ -30,7 +30,7 @@ import {
   importMediaContactsCsv,
   listMediaContacts,
 } from "../services/media-contacts";
-import { getPersona } from "../services/personas";
+import { getPersona, toResolvePersona } from "../services/personas";
 import { runPreReview, setGenerationReview } from "../services/review";
 import { getSignal } from "../services/signals";
 import { getWorkspace } from "../services/workspaces";
@@ -145,7 +145,10 @@ export function registerPrRoutes(
       parsed.data.useEvidence ?? true,
     );
     const taskInstruction = composePrPitchInstruction(parsed.data.pitchType);
-    const channelGuidance = resolveChannelGuidance(db, request.params.id, "pr");
+    const channelGuidance = resolveChannelGuidance(db, request.params.id, "pr", {
+      personaId: parsed.data.personaId ?? null,
+      campaignId: parsed.data.campaignId ?? null,
+    });
     const settings = getGenerationSettings(db, request.params.id);
     const selective = selectiveContextInputs(db, request.params.id);
 
@@ -156,10 +159,12 @@ export function registerPrRoutes(
         docs: contents,
         taskType: "pr_pitch",
         channel: "pr",
-        channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
-        persona: persona
-          ? { name: persona.name, description: persona.description, overlay: persona.overlay }
-          : undefined,
+        channelGuidance: {
+          content: channelGuidance.content,
+          source: channelGuidance.source,
+          scope: channelGuidance.scopeLabel,
+        },
+        persona: persona ? toResolvePersona(persona) : undefined,
         campaign: campaign ? composeResolveCampaign(campaign) : undefined,
         ...selective,
         mediaContact: {
@@ -202,9 +207,7 @@ export function registerPrRoutes(
               taskType: "pr_pitch",
               channel: "pr",
               channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
-              persona: persona
-                ? { name: persona.name, description: persona.description, overlay: persona.overlay }
-                : undefined,
+              persona: persona ? toResolvePersona(persona) : undefined,
               campaign: campaign ? composeResolveCampaign(campaign) : undefined,
               ...selective,
             },
@@ -274,17 +277,22 @@ export function registerPrRoutes(
       },
       parsed.data.useEvidence ?? true,
     );
-    const channelGuidance = resolveChannelGuidance(db, request.params.id, "pr");
+    const channelGuidance = resolveChannelGuidance(db, request.params.id, "pr", {
+      personaId: parsed.data.personaId ?? null,
+      campaignId: parsed.data.campaignId ?? null,
+    });
     const selective = selectiveContextInputs(db, request.params.id);
     const resolved = resolveContext({
       workspaceName: workspace.name,
       docs: contents,
       taskType: "press_boilerplate",
       channel: "pr",
-      channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
-      persona: persona
-        ? { name: persona.name, description: persona.description, overlay: persona.overlay }
-        : undefined,
+      channelGuidance: {
+        content: channelGuidance.content,
+        source: channelGuidance.source,
+        scope: channelGuidance.scopeLabel,
+      },
+      persona: persona ? toResolvePersona(persona) : undefined,
       campaign: campaign ? composeResolveCampaign(campaign) : undefined,
       ...selective,
       evidence: evidenceResolution.evidence,
@@ -316,9 +324,7 @@ export function registerPrRoutes(
             taskType: "press_boilerplate",
             channel: "pr",
             channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
-            persona: persona
-              ? { name: persona.name, description: persona.description, overlay: persona.overlay }
-              : undefined,
+            persona: persona ? toResolvePersona(persona) : undefined,
             campaign: campaign ? composeResolveCampaign(campaign) : undefined,
             ...selective,
           },

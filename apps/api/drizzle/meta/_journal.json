@@ -218,6 +218,13 @@
       "when": 1782987503322,
       "tag": "0030_numerous_hitman",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1783052749791,
+      "tag": "0031_far_madelyne_pryor",
+      "breakpoints": true
     }
   ]
 }

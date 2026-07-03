@@ -233,6 +233,46 @@ describe("connector fabric API", () => {
       ).json().connections.filter((c: { providerKey: string }) => c.providerKey === "smartlead");
       expect(afterReconnect).toHaveLength(2);
     });
+
+    it("saves and reads a content profile (Sprint 44)", async () => {
+      const connection = (await connect()).json();
+      expect(connection.contentProfile).toEqual({ topics: [], guidance: "" });
+
+      const put = await app.inject({
+        method: "PUT",
+        url: `/workspaces/${workspaceId}/connections/${connection.id}/content-profile`,
+        payload: { topics: ["gtm memory", "founder-led sales"], guidance: "No hashtags." },
+      });
+      expect(put.statusCode).toBe(200);
+      expect(put.json().contentProfile).toEqual({
+        topics: ["gtm memory", "founder-led sales"],
+        guidance: "No hashtags.",
+      });
+      expect(connectionSchema.safeParse(put.json()).success).toBe(true);
+
+      const listed = (
+        await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/connectors` })
+      ).json().connections;
+      expect(listed[0].contentProfile.topics).toEqual(["gtm memory", "founder-led sales"]);
+    });
+
+    it("rejects an over-limit content profile and 404s unknown connections", async () => {
+      const connection = (await connect()).json();
+      const tooMany = await app.inject({
+        method: "PUT",
+        url: `/workspaces/${workspaceId}/connections/${connection.id}/content-profile`,
+        payload: { topics: Array.from({ length: 21 }, (_, i) => `t${i}`), guidance: "" },
+      });
+      expect(tooMany.statusCode).toBe(400);
+
+      const missing = await app.inject({
+        method: "PUT",
+        url: `/workspaces/${workspaceId}/connections/7c9e6679-7425-40de-944b-e07fc1f90ae7/content-profile`,
+        payload: { topics: [], guidance: "x" },
+      });
+      expect(missing.statusCode).toBe(404);
+      expect(missing.json().error).toBe("connection_not_found");
+    });
   });
 
   describe("webhooks and events", () => {

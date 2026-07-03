@@ -1,10 +1,12 @@
 import type { BrainDocType } from "@tuezday/contracts";
 import type { DocSection } from "./sections";
 import type {
+  ResolveAccount,
   ResolveCampaign,
   ResolveConversation,
   ResolveLead,
   ResolveMediaContact,
+  ResolvePersona,
   ResolveSignal,
 } from "./resolver";
 
@@ -38,6 +40,8 @@ export function tokenize(text: string): string[] {
 export function composeZoomQuery(input: {
   taskType: string;
   channel: string;
+  persona?: ResolvePersona;
+  account?: ResolveAccount;
   campaign?: ResolveCampaign;
   signal?: ResolveSignal;
   lead?: ResolveLead;
@@ -46,6 +50,10 @@ export function composeZoomQuery(input: {
   angle?: string;
 }): string {
   const parts: string[] = [input.taskType.replace(/_/g, " "), input.channel];
+  // Sprint 44: persona/account topics describe what this voice covers —
+  // exactly the query material Tier 3 needs.
+  if (input.persona?.topics?.length) parts.push(input.persona.topics.join(" "));
+  if (input.account?.topics?.length) parts.push(input.account.topics.join(" "));
   if (input.campaign) {
     parts.push(input.campaign.name);
     if (input.campaign.objective?.trim()) parts.push(input.campaign.objective.trim());

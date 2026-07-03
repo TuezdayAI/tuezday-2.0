@@ -696,3 +696,124 @@ describe("resolver v2: brief mode (angle step)", () => {
     expect(result.resolveMode).toBe("draft");
   });
 });
+
+describe("scoped guidance & persona topics (Sprint 44)", () => {
+  it("names the winning scope in the channel guidance reason", () => {
+    const scoped = resolveContext(
+      baseInput({
+        channelGuidance: {
+          content: "First-person musings only.",
+          source: "workspace",
+          scope: 'persona "Consciousness"',
+        },
+      }),
+    );
+    expect(scoped.sections.find((s) => s.key === "channel")!.reason).toBe(
+      'Channel guidance for linkedin (tier 1, keyed — workspace override, scoped: persona "Consciousness").',
+    );
+    // No scope → the Sprint 43 reason, byte-for-byte.
+    const unscoped = resolveContext(
+      baseInput({ channelGuidance: { content: "Override.", source: "workspace" } }),
+    );
+    expect(unscoped.sections.find((s) => s.key === "channel")!.reason).toBe(
+      "Channel guidance for linkedin (tier 1, keyed — workspace override).",
+    );
+  });
+
+  it("renders persona topics + structured drafting fields as labeled lines", () => {
+    const result = resolveContext(
+      baseInput({
+        persona: {
+          name: "Field CTO",
+          description: "Technical founder voice",
+          overlay: "Write from hands-on experience.",
+          topics: ["agentic coding", "evals"],
+          tone: "dry, technical",
+          styleRules: "- no emoji\n- one idea per post",
+          avoid: "synergy, game-changer",
+        },
+      }),
+    );
+    const persona = result.sections.find((s) => s.key === "persona")!;
+    expect(persona.content).toContain("Topics this persona covers: agentic coding, evals");
+    expect(persona.content).toContain("Tone: dry, technical");
+    expect(persona.content).toContain("Style rules:\n- no emoji\n- one idea per post");
+    expect(persona.content).toContain("Never say / avoid:\nsynergy, game-changer");
+  });
+
+  it("keeps legacy personas byte-identical when the new fields are empty", () => {
+    const legacy = resolveContext(
+      baseInput({ persona: { name: "CEO", description: "Founder", overlay: "Confident." } }),
+    );
+    const withEmpty = resolveContext(
+      baseInput({
+        persona: {
+          name: "CEO",
+          description: "Founder",
+          overlay: "Confident.",
+          topics: [],
+          tone: "",
+          styleRules: "",
+          avoid: "",
+        },
+      }),
+    );
+    expect(withEmpty.sections.find((s) => s.key === "persona")!.content).toBe(
+      legacy.sections.find((s) => s.key === "persona")!.content,
+    );
+  });
+
+  it("pushes an account section between persona and lead when a publishing account is given", () => {
+    const result = resolveContext(
+      baseInput({
+        account: {
+          name: "Consciousness Lab",
+          handle: "conscious_lab",
+          provider: "twitter",
+          topics: ["consciousness", "psychology"],
+          guidance: "Long-form threads welcome; never tech takes.",
+        },
+      }),
+    );
+    const keys = result.sections.map((s) => s.key);
+    expect(keys.indexOf("account")).toBe(keys.indexOf("persona") + 1);
+    expect(keys.indexOf("account")).toBeLessThan(keys.indexOf("lead"));
+    const account = result.sections.find((s) => s.key === "account")!;
+    expect(account.layer).toBe("account");
+    expect(account.tier).toBe(1);
+    expect(account.included).toBe(true);
+    expect(account.title).toBe("Account: Consciousness Lab (@conscious_lab)");
+    expect(account.content).toContain("Publishing as: Consciousness Lab (@conscious_lab) on twitter.");
+    expect(account.content).toContain("This account covers: consciousness, psychology");
+    expect(account.content).toContain("Account guidelines:\nLong-form threads welcome; never tech takes.");
+    expect(account.reason).toContain("tier 1, keyed");
+  });
+
+  it("omits the account section entirely when no account is given (section list unchanged)", () => {
+    const result = resolveContext(baseInput());
+    expect(result.sections.some((s) => s.key === "account")).toBe(false);
+  });
+
+  it("folds persona and account topics into the zoom query", () => {
+    const result = resolveContext(
+      baseInput({
+        docs: bigDocs,
+        persona: {
+          name: "Field CTO",
+          description: "",
+          overlay: "",
+          topics: ["usage-based pricing"],
+        },
+        account: {
+          name: "Agency Desk",
+          provider: "linkedin",
+          topics: ["churn for agencies"],
+        },
+      }),
+    );
+    expect(result.zoomQuery).toContain("usage-based pricing");
+    expect(result.zoomQuery).toContain("churn for agencies");
+    // The topics actually drive zoom: the pricing section scores in.
+    expect(result.sections.some((s) => s.key === "zoom:history:pricing-experiment")).toBe(true);
+  });
+});

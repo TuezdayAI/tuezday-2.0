@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import {
   CONNECTOR_PROVIDERS,
+  connectionContentProfileSchema,
   type ConnectInput,
   type Connection,
+  type ConnectionContentProfile,
   type ConnectionStatus,
   type ConnectorProvider,
   type UpdateConnectionInput,
@@ -31,6 +33,7 @@ function rowToConnection(row: ConnectionRow): Connection {
     status: row.status as ConnectionStatus,
     lastCheckedAt: row.lastCheckedAt,
     lastError: row.lastError,
+    contentProfile: connectionContentProfileSchema.parse(JSON.parse(row.contentProfileJson)),
     createdAt: row.createdAt,
     updatedAt: row.updatedAt ?? row.createdAt,
   };
@@ -69,6 +72,22 @@ export function updateConnection(
   if (!existing) return undefined;
   db.update(connections)
     .set({ displayName: input.displayName, updatedAt: Date.now() })
+    .where(and(eq(connections.workspaceId, workspaceId), eq(connections.id, connectionId)))
+    .run();
+  return getConnection(db, workspaceId, connectionId);
+}
+
+/** Save the per-account content profile (Sprint 44) — what this account posts about. */
+export function setConnectionContentProfile(
+  db: Db,
+  workspaceId: string,
+  connectionId: string,
+  profile: ConnectionContentProfile,
+): Connection | undefined {
+  const existing = getConnection(db, workspaceId, connectionId);
+  if (!existing) return undefined;
+  db.update(connections)
+    .set({ contentProfileJson: JSON.stringify(profile), updatedAt: Date.now() })
     .where(and(eq(connections.workspaceId, workspaceId), eq(connections.id, connectionId)))
     .run();
   return getConnection(db, workspaceId, connectionId);
@@ -149,6 +168,7 @@ export function registerOAuthConnection(
     status: "connected",
     lastCheckedAt: now,
     lastError: null,
+    contentProfileJson: "{}",
     createdAt: now,
     updatedAt: now,
   };
@@ -210,6 +230,7 @@ export async function connectProvider(
     status: "connected",
     lastCheckedAt: now,
     lastError: null,
+    contentProfileJson: "{}",
     createdAt: now,
     updatedAt: now,
   };

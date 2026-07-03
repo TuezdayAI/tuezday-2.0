@@ -80,22 +80,48 @@ export const CHANNEL_LABELS: Record<Channel, string> = {
   instagram: "Instagram",
 };
 
-/** Where a channel's resolved guidance came from. */
+/** Where a channel's resolved guidance came from: built-in text vs founder-written. */
 export const GUIDANCE_SOURCES = ["default", "workspace"] as const;
 export type GuidanceSource = (typeof GUIDANCE_SOURCES)[number];
 
-/** A channel's resolved guidance + its source (read model for the editor). */
+export const GUIDANCE_CONTENT_MAX_CHARS = 4_000;
+
+/**
+ * A channel's resolved guidance + its source (read model for the editor).
+ * Sprint 44: guidance can be scoped to a persona and/or campaign
+ * (most-specific-wins: persona+campaign > persona > campaign > workspace >
+ * default); personaId/campaignId name the winning row's scope, both null for
+ * workspace-level and default guidance.
+ */
 export const channelGuidanceSchema = z.object({
   channel: z.enum(CHANNELS),
   content: z.string(),
   source: z.enum(GUIDANCE_SOURCES),
+  personaId: z.string().uuid().nullable(),
+  campaignId: z.string().uuid().nullable(),
   // null when source === "default" (no override row exists).
   updatedAt: z.number().int().nullable(),
 });
 export type ChannelGuidance = z.infer<typeof channelGuidanceSchema>;
 
+/** One scoped guidance override row (management read model, names joined in). */
+export const guidanceOverrideSchema = z.object({
+  id: z.string().uuid(),
+  channel: z.enum(CHANNELS),
+  content: z.string(),
+  personaId: z.string().uuid().nullable(),
+  campaignId: z.string().uuid().nullable(),
+  personaName: z.string().nullable(),
+  campaignName: z.string().nullable(),
+  updatedAt: z.number().int(),
+});
+export type GuidanceOverride = z.infer<typeof guidanceOverrideSchema>;
+
 export const updateGuidanceInputSchema = z.object({
-  content: z.string().trim().min(1, "Guidance cannot be empty").max(4000),
+  content: z.string().trim().min(1, "Guidance cannot be empty").max(GUIDANCE_CONTENT_MAX_CHARS),
+  // Sprint 44: optional scope — omit both for the workspace-level override.
+  personaId: z.string().uuid().optional(),
+  campaignId: z.string().uuid().optional(),
 });
 export type UpdateGuidanceInput = z.infer<typeof updateGuidanceInputSchema>;
 
@@ -257,12 +283,35 @@ export type BrainDocVersion = z.infer<typeof brainDocVersionSchema>;
 
 export const PERSONA_OVERLAY_MAX_CHARS = 10_000;
 
+// Sprint 44: structured drafting fields + topics. Topics feed the Tier-3 zoom
+// query now and discovery matching in Sprint 45.
+export const PERSONA_TOPICS_MAX = 20;
+export const PERSONA_TOPIC_MAX_CHARS = 80;
+export const PERSONA_TONE_MAX_CHARS = 300;
+export const PERSONA_STYLE_RULES_MAX_CHARS = 2_000;
+export const PERSONA_AVOID_MAX_CHARS = 1_000;
+
+/** Shared by personas and connection content profiles (Sprint 44). */
+const topicsSchema = z
+  .array(
+    z
+      .string()
+      .trim()
+      .min(1, "Topics cannot be empty")
+      .max(PERSONA_TOPIC_MAX_CHARS, `Topics must be ${PERSONA_TOPIC_MAX_CHARS} characters or fewer`),
+  )
+  .max(PERSONA_TOPICS_MAX, `At most ${PERSONA_TOPICS_MAX} topics`);
+
 export const personaSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
   name: z.string().min(1).max(100),
   description: z.string().max(500),
   overlay: z.string().max(PERSONA_OVERLAY_MAX_CHARS),
+  topics: z.array(z.string()),
+  tone: z.string().max(PERSONA_TONE_MAX_CHARS),
+  styleRules: z.string().max(PERSONA_STYLE_RULES_MAX_CHARS),
+  avoid: z.string().max(PERSONA_AVOID_MAX_CHARS),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 });
@@ -278,6 +327,20 @@ export const upsertPersonaInputSchema = z.object({
   overlay: z
     .string()
     .max(PERSONA_OVERLAY_MAX_CHARS, `Overlay must be ${PERSONA_OVERLAY_MAX_CHARS} characters or fewer`)
+    .default(""),
+  topics: topicsSchema.default([]),
+  tone: z
+    .string()
+    .trim()
+    .max(PERSONA_TONE_MAX_CHARS, `Tone must be ${PERSONA_TONE_MAX_CHARS} characters or fewer`)
+    .default(""),
+  styleRules: z
+    .string()
+    .max(PERSONA_STYLE_RULES_MAX_CHARS, `Style rules must be ${PERSONA_STYLE_RULES_MAX_CHARS} characters or fewer`)
+    .default(""),
+  avoid: z
+    .string()
+    .max(PERSONA_AVOID_MAX_CHARS, `Avoid list must be ${PERSONA_AVOID_MAX_CHARS} characters or fewer`)
     .default(""),
 });
 export type UpsertPersonaInput = z.infer<typeof upsertPersonaInputSchema>;
@@ -1247,6 +1310,25 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
 export const CONNECTION_STATUSES = ["connected", "error", "disconnected"] as const;
 export type ConnectionStatus = (typeof CONNECTION_STATUSES)[number];
 
+// Sprint 44: what this account posts about + how — injected as the tier-1
+// "account" context section when the publishing account is known at draft time.
+export const CONNECTION_GUIDANCE_MAX_CHARS = 2_000;
+
+export const connectionContentProfileSchema = z.object({
+  topics: topicsSchema.default([]),
+  guidance: z
+    .string()
+    .trim()
+    .max(CONNECTION_GUIDANCE_MAX_CHARS, `Guidance must be ${CONNECTION_GUIDANCE_MAX_CHARS} characters or fewer`)
+    .default(""),
+});
+export type ConnectionContentProfile = z.infer<typeof connectionContentProfileSchema>;
+
+export const updateConnectionContentProfileInputSchema = connectionContentProfileSchema;
+export type UpdateConnectionContentProfileInput = z.infer<
+  typeof updateConnectionContentProfileInputSchema
+>;
+
 export const connectionSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
@@ -1256,6 +1338,7 @@ export const connectionSchema = z.object({
     baseUrl: z.string().optional(),
     testPath: z.string().optional(),
   }),
+  contentProfile: connectionContentProfileSchema,
   displayName: z.string(),
   externalAccountId: z.string().nullable(),
   externalAccountName: z.string().nullable(),

@@ -26,6 +26,7 @@ import {
   CHANNEL_LABELS,
   GUIDANCE_SOURCES,
   channelGuidanceSchema,
+  guidanceOverrideSchema,
   updateGuidanceInputSchema,
   CONNECTOR_AUTH_MODES,
   CONNECTOR_CATEGORIES,
@@ -46,6 +47,14 @@ import {
   pushLeadInputSchema,
   OUTPUT_RATINGS,
   PERSONA_OVERLAY_MAX_CHARS,
+  PERSONA_TOPICS_MAX,
+  PERSONA_TOPIC_MAX_CHARS,
+  PERSONA_TONE_MAX_CHARS,
+  PERSONA_STYLE_RULES_MAX_CHARS,
+  PERSONA_AVOID_MAX_CHARS,
+  CONNECTION_GUIDANCE_MAX_CHARS,
+  connectionContentProfileSchema,
+  updateConnectionContentProfileInputSchema,
   personaSocialAccountSchema,
   PUBLICATION_STATUSES,
   publicationSchema,
@@ -216,6 +225,8 @@ describe("channel guidance (Sprint 21)", () => {
         channel: "linkedin",
         content: CHANNEL_GUIDANCE_DEFAULTS.linkedin,
         source: "default",
+        personaId: null,
+        campaignId: null,
         updatedAt: null,
       }).success,
     ).toBe(true);
@@ -224,6 +235,8 @@ describe("channel guidance (Sprint 21)", () => {
         channel: "linkedin",
         content: "Override.",
         source: "workspace",
+        personaId: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        campaignId: null,
         updatedAt: 1765400000000,
       }).success,
     ).toBe(true);
@@ -232,6 +245,8 @@ describe("channel guidance (Sprint 21)", () => {
         channel: "tiktok",
         content: "x",
         source: "workspace",
+        personaId: null,
+        campaignId: null,
         updatedAt: 1,
       }).success,
     ).toBe(false);
@@ -247,6 +262,34 @@ describe("channel guidance (Sprint 21)", () => {
 
   it("trims guidance content", () => {
     expect(updateGuidanceInputSchema.parse({ content: "  hello  " }).content).toBe("hello");
+  });
+
+  it("accepts an optional persona/campaign scope on updates (Sprint 44)", () => {
+    const personaId = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+    const campaignId = "7c9e6679-7425-40de-944b-e07fc1f90ae8";
+    expect(updateGuidanceInputSchema.parse({ content: "Scoped." })).toEqual({ content: "Scoped." });
+    expect(updateGuidanceInputSchema.parse({ content: "Scoped.", personaId }).personaId).toBe(personaId);
+    expect(
+      updateGuidanceInputSchema.parse({ content: "Scoped.", personaId, campaignId }).campaignId,
+    ).toBe(campaignId);
+    expect(updateGuidanceInputSchema.safeParse({ content: "Scoped.", personaId: "not-a-uuid" }).success).toBe(
+      false,
+    );
+  });
+
+  it("validates a scoped override row with joined names (Sprint 44)", () => {
+    expect(
+      guidanceOverrideSchema.safeParse({
+        id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        channel: "x",
+        content: "Consciousness account: first-person, no threads.",
+        personaId: "7c9e6679-7425-40de-944b-e07fc1f90ae8",
+        campaignId: null,
+        personaName: "Consciousness",
+        campaignName: null,
+        updatedAt: 1765400000000,
+      }).success,
+    ).toBe(true);
   });
 });
 
@@ -361,7 +404,15 @@ describe("PR & media outreach (Sprint 16)", () => {
 describe("upsertPersonaInputSchema", () => {
   it("accepts a persona and applies defaults", () => {
     const parsed = upsertPersonaInputSchema.parse({ name: "CEO" });
-    expect(parsed).toEqual({ name: "CEO", description: "", overlay: "" });
+    expect(parsed).toEqual({
+      name: "CEO",
+      description: "",
+      overlay: "",
+      topics: [],
+      tone: "",
+      styleRules: "",
+      avoid: "",
+    });
   });
 
   it("trims name and description", () => {
@@ -381,6 +432,47 @@ describe("upsertPersonaInputSchema", () => {
     const overlay = "x".repeat(PERSONA_OVERLAY_MAX_CHARS + 1);
     expect(upsertPersonaInputSchema.safeParse({ name: "CEO", overlay }).success).toBe(false);
   });
+
+  it("accepts topics + structured drafting fields within limits (Sprint 44)", () => {
+    const parsed = upsertPersonaInputSchema.parse({
+      name: "Field CTO",
+      topics: ["  agentic coding ", "evals"],
+      tone: "dry, technical",
+      styleRules: "- no emoji\n- one idea per post",
+      avoid: "synergy, game-changer",
+    });
+    expect(parsed.topics).toEqual(["agentic coding", "evals"]);
+    expect(parsed.tone).toBe("dry, technical");
+  });
+
+  it("rejects over-limit topics and drafting fields (Sprint 44)", () => {
+    expect(
+      upsertPersonaInputSchema.safeParse({
+        name: "CEO",
+        topics: Array.from({ length: PERSONA_TOPICS_MAX + 1 }, (_, i) => `t${i}`),
+      }).success,
+    ).toBe(false);
+    expect(
+      upsertPersonaInputSchema.safeParse({
+        name: "CEO",
+        topics: ["x".repeat(PERSONA_TOPIC_MAX_CHARS + 1)],
+      }).success,
+    ).toBe(false);
+    expect(
+      upsertPersonaInputSchema.safeParse({ name: "CEO", tone: "x".repeat(PERSONA_TONE_MAX_CHARS + 1) })
+        .success,
+    ).toBe(false);
+    expect(
+      upsertPersonaInputSchema.safeParse({
+        name: "CEO",
+        styleRules: "x".repeat(PERSONA_STYLE_RULES_MAX_CHARS + 1),
+      }).success,
+    ).toBe(false);
+    expect(
+      upsertPersonaInputSchema.safeParse({ name: "CEO", avoid: "x".repeat(PERSONA_AVOID_MAX_CHARS + 1) })
+        .success,
+    ).toBe(false);
+  });
 });
 
 it("parses connection identity metadata", () => {
@@ -391,6 +483,7 @@ it("parses connection identity metadata", () => {
       providerKey: "linkedin",
       nangoConnectionId: "nango-linkedin-a",
       config: {},
+      contentProfile: { topics: [], guidance: "" },
       displayName: "Founder LinkedIn",
       externalAccountId: "person-123",
       externalAccountName: "Founder Name",
@@ -403,6 +496,22 @@ it("parses connection identity metadata", () => {
       updatedAt: 1,
     }).displayName,
   ).toBe("Founder LinkedIn");
+});
+
+it("validates connection content profiles (Sprint 44)", () => {
+  expect(connectionContentProfileSchema.parse({})).toEqual({ topics: [], guidance: "" });
+  const parsed = updateConnectionContentProfileInputSchema.parse({
+    topics: [" AI ", "dev tools"],
+    guidance: "  Hot takes welcome; no corporate voice.  ",
+  });
+  expect(parsed.topics).toEqual(["AI", "dev tools"]);
+  expect(parsed.guidance).toBe("Hot takes welcome; no corporate voice.");
+  expect(
+    updateConnectionContentProfileInputSchema.safeParse({
+      topics: [],
+      guidance: "x".repeat(CONNECTION_GUIDANCE_MAX_CHARS + 1),
+    }).success,
+  ).toBe(false);
 });
 
 it("parses persona social account assignments", () => {
