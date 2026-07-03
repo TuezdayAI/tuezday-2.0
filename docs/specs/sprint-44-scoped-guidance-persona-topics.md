@@ -309,22 +309,23 @@ from.` Account topics feed `composeZoomQuery`.
 
 ## Build order (checklist)
 
-1. [ ] Branch off `sprint-43-resolver-v2-selective-context`; commit this spec.
-2. [ ] Contracts: guidance scope inputs/read models, persona fields + limits, connection content
+1. [x] Branch off `sprint-43-resolver-v2-selective-context`; commit this spec.
+2. [x] Contracts: guidance scope inputs/read models, persona fields + limits, connection content
    profile. Contract tests.
-3. [ ] Brain: persona labeled lines, `account` section + layer, guidance scope in reason, topics
+3. [x] Brain: persona labeled lines, `account` section + layer, guidance scope in reason, topics
    into `composeZoomQuery`. Brain tests.
-4. [ ] Schema: guidance scope columns + index swap, persona columns, connection profile column;
-   `npm run db:generate -w apps/api` (migration `0031_*`).
-5. [ ] API: guidance service precedence + routes; personas service mapping + `toResolvePersona`;
+4. [x] Schema: guidance scope columns + index swap, persona columns, connection profile column;
+   `npm run db:generate -w apps/api` (migration `0031_far_madelyne_pryor`).
+5. [x] API: guidance service precedence + routes; personas service mapping + `toResolvePersona`;
    connections profile + route; `resolve-account.ts`; wire all call sites (scope + persona fields
    + account).
-6. [ ] API tests green; full `npm test` + `npm run typecheck` clean.
-7. [ ] Web: scoped-guidance card, persona fields, connection profile editor, `.layer-account`
+6. [x] API tests green; full `npm test` (879) + `npm run typecheck` clean.
+7. [x] Web: scoped-guidance card, persona fields, connection profile editor, `.layer-account`
    trace rendering; `next build` clean.
-8. [ ] Docs: `docs/founder-acceptance-tests.md` § Sprint 44; `docs/deferred-improvements.md`
-   (reply persona derivation ⏸); sprint-guide 44 entry marked built; progress log below.
-9. [ ] Commit(s) with the `Co-Authored-By` trailer; `git push -u origin
+8. [x] Docs: `docs/founder-acceptance-tests.md` § Sprint 44; `docs/deferred-improvements.md`
+   (#25 reply persona derivation ⏸, #26 SQLite cascade gap); sprint-guide 44 entry marked built;
+   progress log below.
+9. [x] Commit(s) with the `Co-Authored-By` trailer; `git push -u origin
    sprint-44-scoped-guidance-persona-topics`. **Do NOT merge into `main`.**
 
 ---
@@ -336,3 +337,17 @@ from.` Account topics feed `composeZoomQuery`.
   time via `resolvePersonaSocialConnection`; `inbox_items.connectionId` confirmed for replies).
   Founder locked the two open decisions (persona > campaign precedence; account profiles injected
   at draft time). Branch cut off the Sprint 43 branch. Implementation starting at step 2.
+- 2026-07-03 — **Built.** Contracts (138 tests), brain (84, incl. 6 new: byte-exact scoped/unscoped
+  channel reasons, labeled persona lines with legacy byte-parity, conditional account section
+  placed persona+1, persona/account topics in the zoom query), migration 0031, API services/routes
+  with every call site wired (scope: generations draft+angle, /resolve, signals, launches,
+  sequences, pr ×2, outbound, ads; account: the social-drafting paths + engagement replies via
+  `inbox_items.connectionId`). Notable deviations from the letter of the spec: (1) pr/outbound/ads
+  pass **both** personaId and campaignId as scope since their requests already carry personaId —
+  strictly more specific, same precedence rules; (2) `deletePersona` removes scoped guidance rows
+  in the service because drizzle-kit's SQLite `ALTER TABLE ADD` drops `ON DELETE cascade`
+  (deferred #26, schema still declares cascade for the Postgres swap); (3) review passes inherit
+  the scoped **text** via ReviewContext but not the scope label (trace nicety, not judgment
+  input). Full suite 879 green, typecheck clean, `next build` clean. Deferred: #25 (reply persona
+  derivation → Sprint 45), #26 (cascade gap). Acceptance tests added § Sprint 44; sprint guide
+  entry marked built. Pushed; awaiting founder review — merge order main ← 43 ← 44.

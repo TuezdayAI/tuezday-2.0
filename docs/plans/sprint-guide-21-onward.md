@@ -247,10 +247,11 @@ Small, high-leverage slices that sharpen every downstream module and clear the f
 - **Founder acceptance:** `docs/founder-acceptance-tests.md` § Sprint 43.
 - **Size:** L.
 
-### Sprint 44 — Scoped guidance & persona topics  *(Gap 2)*
+### Sprint 44 — Scoped guidance & persona topics  *(Gap 2)*  — built (branch `sprint-44-scoped-guidance-persona-topics`, off sprint-43; merge order: main ← 43 ← 44)
 - **Goal:** Configuration depth — guidance and topics that live where the founder thinks about them.
 - **Builds on:** Sprint 21 (guidance table), Sprint 43 (tier-1 keyed lookups).
-- **Scope:** Guidance scoped workspace × channel × optional persona × optional campaign (most-specific-wins, with trace); persona topics/themes + structured drafting fields; per-connection content profile. Prerequisite for 45; feeds discovery matching.
+- **Scope:** Guidance scoped workspace × channel × optional persona × optional campaign (most-specific-wins, with trace); persona topics/themes + structured drafting fields; per-connection content profile injected at draft time as a tier-1 `account` section (publish-time routing reused at draft time; engagement replies use the inbox item's own connection). Prerequisite for 45; feeds discovery matching.
+- **Founder acceptance:** `docs/founder-acceptance-tests.md` § Sprint 44.
 - **Size:** M.
 
 ### Sprint 45 — Discovery routing that honors the match  *(Gap 3)*

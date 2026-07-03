@@ -240,6 +240,31 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
   the summary line instead of the section content.
 - **Origin:** Sprint 43.
 
+### 25. Engagement replies don't get persona-scoped guidance
+- **What we shipped (Sprint 44):** A reply draft gets the **account** section from the inbox item's
+  own `connectionId` (the account the reply publishes from), but its channel guidance stays
+  workspace-level — inbox items don't carry a persona, so the scoped-guidance lookup has nothing to
+  key on.
+- **The better version:** Derive the persona from the item's connection (reverse the
+  persona-social-account assignment: which persona is this connection primary for?) and pass it as
+  the guidance scope and persona overlay, so replies speak in the owning persona's voice with that
+  persona's scoped rules.
+- **Trigger to revisit:** Sprint 45 (discovery routing passes persona through `runAutomation`), or
+  the founder notices replies ignoring a persona-scoped guidance override that posts respect.
+- **Origin:** Sprint 44.
+
+### 26. Guidance scope FKs don't cascade in SQLite (service-level cleanup instead)
+- **What we shipped (Sprint 44):** `guidance_overrides.persona_id/campaign_id` are declared
+  `ON DELETE cascade` in `schema.ts`, but drizzle-kit's SQLite `ALTER TABLE ADD` drops the action
+  (same gap as `publications.cadence_id` in 0021), so `deletePersona` deletes the scoped rows
+  explicitly via `deleteGuidanceForScope`. Campaigns have no delete path today, so only the persona
+  side needs it.
+- **The better version:** Real DB-enforced cascades — free on the planned Postgres swap, since the
+  schema already declares them; SQLite would need a table rebuild migration.
+- **Trigger to revisit:** The Postgres swap, or a campaign-delete feature (which must then call
+  `deleteGuidanceForScope` too — grep for it).
+- **Origin:** Sprint 44.
+
 ---
 
 ## Done (upgraded)

@@ -536,9 +536,39 @@ your voice and cleared through Review — without leaving Tuezday.
 
 ---
 
+## Sprint 44 — Scoped guidance & persona topics
+
+> Prereq: a workspace with at least one persona and one active campaign. For slice C, a persona
+> with a **primary** LinkedIn (or X) account assigned (Context inspector → Social account routing).
+
+**Slice A — Scoped guidance (Brain page)**
+
+- [ ] Open **Brain** → below Channel guidance a **Scoped guidance** card lists persona/campaign-scoped overrides (empty at first). Add LinkedIn guidance scoped to a persona → it appears with a persona badge; the workspace-level Channel guidance list above is unchanged.
+- [ ] The Save button stays disabled until a persona and/or campaign is picked — unscoped text lives in the card above.
+- [ ] **Playground:** generate a LinkedIn post **as that persona** → the trace's `channel` section shows the scoped text and its reason ends `scoped: persona "<name>"`. Generate without the persona → the workspace (or default) text is back.
+- [ ] Seed overlapping scopes (workspace + campaign + persona + persona+campaign for one channel) → drafts pick the most specific match: persona+campaign beats persona beats campaign beats workspace. (Automated: `guidance.test.ts` precedence suite; spot-check one pair via the trace.)
+- [ ] Delete the persona → its scoped rows disappear from the Scoped guidance card.
+
+**Slice B — Persona drafting fields (Context inspector)**
+
+- [ ] Edit a persona → four new fields: **topics** (comma-separated), **tone**, **style rules**, **never say / avoid**. Fill them, save → the persona card shows "covers …" with the topics.
+- [ ] **Resolve** with that persona → the persona section renders labeled lines (`Topics this persona covers: …`, `Tone: …`, `Style rules:`, `Never say / avoid:`) and — with a long, sectioned History doc — the **Zoom query** line contains the persona's topics, so topic-matching History sections zoom in.
+- [ ] A persona with only name/description/overlay renders exactly as before (no stray labels).
+
+**Slice C — Account content profiles (Connectors → drafts)**
+
+- [ ] Open **Integrations** → a connected social account has a **Content profile** disclosure (topics + guidelines). Save a profile → the summary line shows "covers …".
+- [ ] Generate a LinkedIn draft as a persona whose **primary** LinkedIn account has that profile → the trace gains an **account** section (badge `account`, right after `persona`): `Publishing as: <account> on linkedin.`, `This account covers: …`, `Account guidelines: …`.
+- [ ] Clear the profile (empty topics + guidance) → the account section disappears; drafting never fails because routing didn't resolve.
+- [ ] (Automated) An engagement reply drafts with the account section of the **inbox item's own connection** — covered by `personas.test.ts`.
+
+**Gate:** guidance lands exactly where the founder scoped it and the trace names the winning scope; personas carry topics/tone/rules that visibly shape both the prompt and the zoom; and every draft that will publish from a known account sees that account's profile before any LLM writes a word.
+
+---
+
 ## Cross-cutting things worth re-checking occasionally
 
-- [ ] `npm test` (851 tests as of Sprint 43) and `npm run typecheck` stay green.
+- [ ] `npm test` (879 tests as of Sprint 44) and `npm run typecheck` stay green.
 - [ ] Every generation's prompt trace is readable *before* and *after* the LLM call (sandbox → "show prompt trace").
 - [ ] Stopping any external service (R2R, Nango) degrades gracefully — the app never breaks, traces/banners say why.
 - [ ] Gemini occasionally returns 503 "high demand" — a retry succeeds; it surfaces as a clean error, never a crash.
