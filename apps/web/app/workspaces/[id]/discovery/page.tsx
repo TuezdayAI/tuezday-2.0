@@ -1,6 +1,7 @@
 "use client";
 
 import { EmptyState } from "@/src/components/empty-state";
+import { ShowMoreButton, useShowMore } from "@/src/components/show-more";
 
 
 import { API_URL, apiFetch } from "@/lib/api";
@@ -54,6 +55,7 @@ export default function DiscoveryPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [sources, setSources] = useState<DiscoverySource[]>([]);
   const [inbox, setInbox] = useState<DiscoveredItem[]>([]);
+  const inboxList = useShowMore(inbox, 50);
   const [error, setError] = useState<string | null>(null);
 
   // add-source form
@@ -432,7 +434,7 @@ export default function DiscoveryPage() {
           <EmptyState description={<>Nothing to triage. Run discovery, or wait for the worker's next poll.</>} />
         ) : (
           <ul className="section-list">
-            {inbox.map((item) => {
+            {inboxList.visible.map((item) => {
               const persona = personaName(item.suggestedPersonaId);
               const campaign = campaignName(item.suggestedCampaignId);
               return (
@@ -493,6 +495,11 @@ export default function DiscoveryPage() {
             })}
           </ul>
         )}
+        <ShowMoreButton
+          hasMore={inboxList.hasMore}
+          remaining={inboxList.remaining}
+          onClick={inboxList.showMore}
+        />
       </section>
     </>
   );
