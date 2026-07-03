@@ -566,9 +566,66 @@ your voice and cleared through Review — without leaving Tuezday.
 
 ---
 
+## Sprint 45 — Discovery routing that honors the match
+
+> Spec: `docs/specs/sprint-45-discovery-routing.md` (on the `sprint-45-discovery-routing` branch,
+> off sprint-44; merge order: main ← 43 ← 44 ← 45). Prereq: a working `GEMINI_API_KEY` (scoring is
+> an LLM call) and two active **automated** campaigns with distinct personas carrying distinct
+> Sprint-44 **topics** — e.g. Campaign A "Product Launch" (channel LinkedIn, mode
+> **Scheduled-auto**, persona "Field CTO", topics `agentic coding, evals`) and Campaign B
+> "Community" (channel X, mode **Human-in-the-loop**, persona "Community Lead", topics
+> `developer culture, memes`). Use **Run discovery now** / **Run automation now** instead of
+> waiting for worker ticks.
+
+**Slice A — Match-driven routing**
+
+- [ ] **One candidate, one chip.** Run discovery on a source carrying an article about an
+      agentic-coding benchmark (a Google News query on the topic works) → the triage item shows
+      **one** candidate chip — Campaign A + Field CTO, with its score and a reason. No Campaign B
+      chip: it didn't clear the threshold.
+- [ ] **Only the matched campaign drafts.** Accept the item → Automation → **Run automation now**
+      → **only** Campaign A gets a LinkedIn draft, already `approved` with the **Auto-approved**
+      badge (scheduled-auto), and the draft reads in the Field CTO voice — its resolve trace shows
+      the Sprint 44 persona topics + scoped guidance. Campaign B generated nothing this run.
+- [ ] **Two candidates, two pipelines.** Run discovery on a second article relevant to **both**
+      personas' topics → triage shows **two** candidate chips, each with its own score and reason.
+      Accept → **Run automation now** → Campaign A gets an auto-approved LinkedIn draft **and**
+      Campaign B gets an X draft sitting at `pending_review` (human-in-the-loop).
+
+**Slice B — Cross-source dedup**
+
+- [ ] Add a second source that carries the same story (e.g. an RSS feed alongside the Google News
+      query) → **Run discovery now** → triage does **not** show a second, unrelated-looking copy;
+      the original item shows a **"seen via 2 sources"** badge, expandable to list both sources
+      with their fetch dates.
+
+**Slice C — Manual signals, threshold, re-score**
+
+- [ ] **Manual signals auto-match.** Content → **New signal**, paste text squarely on one persona's
+      topics, leave persona and campaign **blank** → save → the signal carries the same candidate
+      match(es) a discovered item would, and the next **Run automation now** drafts only for the
+      matched campaign — no fan-out to every active campaign. Create another signal **with** a
+      persona/campaign picked → that explicit choice is the single score-100 match; no LLM
+      second-guessing.
+- [ ] **Threshold is a setting.** Automation → lower **Match threshold** from 50 to 30 → save →
+      on the next discovery/automation run, previously-below-threshold candidates start qualifying
+      (an item that showed one chip can now show two; a campaign that got nothing from a signal
+      can now draft from it).
+- [ ] **Re-score on config change.** Edit the Field CTO persona's **topics** → **Run discovery
+      now** → items still sitting untriaged (`new`) are re-scored against the new topics (their
+      chips and scores change); already-accepted signals keep the matches they were created with —
+      history doesn't rewrite itself.
+
+**Gate:** discovery's judgment drives distribution — a signal only reaches the campaigns it
+actually matched, written as the matched persona; the same story from two sources shows once with
+its corroboration visible; hand-created signals route like discovered ones; and the threshold and
+topics you edit change routing on the very next run.
+
+---
+
 ## Cross-cutting things worth re-checking occasionally
 
-- [ ] `npm test` (879 tests as of Sprint 44) and `npm run typecheck` stay green.
+- [ ] `npm test` (905 tests as of Sprint 45) and `npm run typecheck` stay green.
 - [ ] Every generation's prompt trace is readable *before* and *after* the LLM call (sandbox → "show prompt trace").
 - [ ] Stopping any external service (R2R, Nango) degrades gracefully — the app never breaks, traces/banners say why.
 - [ ] Gemini occasionally returns 503 "high demand" — a retry succeeds; it surfaces as a clean error, never a crash.

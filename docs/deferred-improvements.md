@@ -103,15 +103,6 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
 - **Trigger to revisit:** If the few-minute lag between flipping the switch and a due post matters.
 - **Origin:** Sprint 28.
 
-### 11. No relevance triage — every signal fans out to every automated campaign's channels
-- **What we shipped (Sprint 28):** A new signal generates a draft for each channel of every active
-  automated campaign, with no scoring of which signal actually fits which campaign/persona.
-- **The better version:** Score signal↔campaign/persona fit and route only relevant signals (extends
-  `suggestedPersonaId` / `scoreReason`).
-- **Trigger to revisit:** **Sprint 31** owns this (discovery source expansion + auto-mapping); the
-  post-2026-06-21 reorg moved discovery expansion to S31 (Sprint 29 became the reply inbox).
-- **Origin:** Sprint 28.
-
 ### 12. Inbox polls synchronously on a worker tick
 - **What we shipped (Sprint 29):** `pollInbox` fetches replies + engagement per published post/DM
   inline on the inbox tick, one platform call at a time, with no per-post cursors.
@@ -265,8 +256,43 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
   `deleteGuidanceForScope` too — grep for it).
 - **Origin:** Sprint 44.
 
+### 27. Re-score on config change is full-backlog, not incremental
+- **What we shipped (Sprint 45):** When any persona or campaign changes, the next discovery run
+  re-scores **every** still-`new` (untriaged, non-duplicate) item whose `scoredAt` is older than the
+  workspace's config watermark (`max(personas.updatedAt, campaigns.updatedAt)`) — not just the items
+  actually affected by what changed. One persona edit re-judges the whole triage backlog.
+- **The better version:** Incremental invalidation — re-score only the items whose stored matches
+  reference the edited persona/campaign (or whose no-match verdict could plausibly flip), so a
+  config edit costs LLM calls proportional to its blast radius.
+- **Trigger to revisit:** A large untriaged backlog makes a persona/campaign edit visibly expensive
+  — a discovery run stalls on re-scoring, or LLM spend spikes after config edits.
+- **Origin:** Sprint 45.
+
+### 28. Cross-source duplicates are a linked list, not a merge
+- **What we shipped (Sprint 45):** A duplicate stays its own row (own source, own `externalId`)
+  with `status: "duplicate"` pointing at the canonical item via `duplicateOfId`; the canonical item
+  shows a "seen via N sources" count with an expandable source list. There is no merged/diffed view
+  of what differs between the copies, and corroboration doesn't influence the item's score.
+- **The better version:** Treat corroboration as signal — a merged view of the linked copies, and
+  multi-source pickup feeding relevance ("3 sources picked this up" as a score/rank boost in triage).
+- **Trigger to revisit:** When corroboration itself becomes a signal worth surfacing — e.g. the
+  founder wants multi-source stories ranked above single-source ones.
+- **Origin:** Sprint 45.
+
 ---
 
 ## Done (upgraded)
 
-_(none yet)_
+### 11. No relevance triage — every signal fans out to every automated campaign's channels — **closed by Sprint 45**
+- **What we shipped (Sprint 28):** A new signal generates a draft for each channel of every active
+  automated campaign, with no scoring of which signal actually fits which campaign/persona.
+- **The better version:** Score signal↔campaign/persona fit and route only relevant signals (extends
+  `suggestedPersonaId` / `scoreReason`).
+- **Closed (Sprint 45, branch `sprint-45-discovery-routing`, 2026-07-03):** `runAutomation` is now
+  match-driven — a signal only reaches a campaign with a `signal_matches` row at or above the
+  workspace match threshold (Automation settings, default 50), and the draft is generated **as**
+  the matched persona. Sprint 31 built the scoring; Sprint 45 made automation consume it, for both
+  discovery-sourced signals (accept copies the full multi-candidate match list onto the signal) and
+  manually-created ones (auto-matched at `POST /signals`; an explicit persona/campaign pick is a
+  single score-100 match with no LLM call).
+- **Origin:** Sprint 28.

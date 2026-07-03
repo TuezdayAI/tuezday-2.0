@@ -254,7 +254,7 @@ Small, high-leverage slices that sharpen every downstream module and clear the f
 - **Founder acceptance:** `docs/founder-acceptance-tests.md` § Sprint 44.
 - **Size:** M.
 
-### Sprint 45 — Discovery routing that honors the match  *(Gap 3)*
+### Sprint 45 — Discovery routing that honors the match  *(Gap 3)*  — built 2026-07-03 (branch `sprint-45-discovery-routing`, off sprint-44; merge order: main ← 43 ← 44 ← 45)
 - **Goal:** Stop throwing away the campaign/persona match discovery already computes.
 - **Builds on:** Sprint 31 (auto-mapping), Sprint 44 (topics to match against).
 - **Scope:** Multi-candidate scoring (an item can clear threshold for several persona×campaign×channel pipelines); `runAutomation` consumes the mapping (kills deferred #11) and passes persona; re-score on config change; per-pipeline uniqueness + cross-source dedup (URL/content hash).

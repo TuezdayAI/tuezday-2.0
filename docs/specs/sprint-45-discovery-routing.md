@@ -1,6 +1,6 @@
 # Spec + Implementation Plan: Sprint 45 — Discovery routing that honors the match
 
-> Status: **planned** (spec only — nothing built yet; written 2026-07-03).
+> Status: built, awaiting founder acceptance (spec written + built 2026-07-03).
 > Roadmap entry: `docs/plans/sprint-guide-21-onward.md` → Phase G → Sprint 45 (**"Sprint C"** in
 > `docs/plans/context-discovery-gap-assessment.md`, Gap 3).
 > **Branch:** `sprint-45-discovery-routing`, cut from `sprint-44-scoped-guidance-persona-topics`
@@ -13,7 +13,7 @@
 
 This document is self-contained: it is both the slice spec and the step-by-step build guide, so a
 fresh session can resume from it without re-deriving context. "Build order" is the checklist; the
-"Progress log" at the bottom records what is done (empty — nothing built yet).
+"Progress log" at the bottom records what is done.
 
 ---
 
@@ -408,25 +408,25 @@ the same fetch batch still resolve correctly (the second sees the first via its 
 
 ## Build order (checklist)
 
-1. [ ] Branch off `sprint-44-scoped-guidance-persona-topics`; commit this spec.
-2. [ ] Contracts: `discoveredItemMatchSchema`, `matches` on item/signal schemas, `"duplicate"`
+1. [x] Branch off `sprint-44-scoped-guidance-persona-topics`; commit this spec.
+2. [x] Contracts: `discoveredItemMatchSchema`, `matches` on item/signal schemas, `"duplicate"`
    status, `duplicateOfId`/`duplicateCount`, `matchThreshold` on automation settings schemas,
    `DEFAULT_MATCH_THRESHOLD`, `DISCOVERY_MAX_MATCHES_PER_ITEM`. Contract tests.
-3. Schema: `discovered_item_matches`, `signal_matches` tables; `discoveredItems` gains `scoredAt`,
+3. [x] Schema: `discovered_item_matches`, `signal_matches` tables; `discoveredItems` gains `scoredAt`,
    `urlHash`, `contentHash`, `duplicateOfId` + indexes; `socialAutomationSettings` gains
    `matchThreshold`; `npm run db:generate -w apps/api`.
-4. API — discovery: multi-candidate scoring (shared prompt/parse helpers), config-version re-score
+4. [x] API — discovery: multi-candidate scoring (shared prompt/parse helpers), config-version re-score
    query, dedup hashing + ingest-time lookup, duplicates endpoint, accept carries full match list.
-5. API — signals: `createSignalWithMatching` + `scoreSignalMatches`; wire the route.
-6. API — automation: `getBestSignalMatchForCampaign`; rewrite the inner fan-out in `runAutomation`
+5. [x] API — signals: `createSignalWithMatching` + `scoreSignalMatches`; wire the route.
+6. [x] API — automation: `getBestSignalMatchForCampaign`; rewrite the inner fan-out in `runAutomation`
    to be match-driven and pass persona; `matchThreshold` read from settings.
-7. API tests green; full `npm test` + `npm run typecheck` clean.
-8. Web: triage candidate chips + duplicate badge/expansion; automation settings match-threshold
+7. [x] API tests green; full `npm test` + `npm run typecheck` clean.
+8. [x] Web: triage candidate chips + duplicate badge/expansion; automation settings match-threshold
    field; `next build` clean.
-9. Docs: `docs/founder-acceptance-tests.md` § Sprint 45; any new deferred-improvements entries
+9. [x] Docs: `docs/founder-acceptance-tests.md` § Sprint 45; any new deferred-improvements entries
    (full-backlog re-score, duplicate-as-merge); sprint-guide 45 entry marked built; progress log
    below.
-10. Commit(s) with the `Co-Authored-By` trailer; `git push -u origin sprint-45-discovery-routing`.
+10. [x] Commit(s) with the `Co-Authored-By` trailer; `git push -u origin sprint-45-discovery-routing`.
     **Do NOT merge into `main`.**
 
 ---
@@ -446,3 +446,25 @@ the same fetch batch still resolve correctly (the second sees the first via its 
   config-change re-score watermark needs no new bookkeeping column on those tables. Founder locked
   the three open decisions above (manual signals scored too; duplicates linked not dropped; match
   threshold is workspace-configurable). Nothing implemented yet — build starts at step 1.
+- 2026-07-03 — **Built** (contracts + schema + API, steps 2–7; spec commit `614277f`, API commit
+  `3bf2f1f`). Migration `0032_same_scorpion`: `discovered_item_matches` + `signal_matches` tables;
+  `discovered_items` gains `scored_at`/`url_hash`/`content_hash`/`duplicate_of_id` plus the two
+  hash indexes; `social_automation_settings` gains `match_threshold` (default 50). The
+  prompt-building / response-parsing / match helpers were factored into a new shared
+  `apps/api/src/services/matching.ts` used by discovery, signals, and automation. Multi-candidate
+  scoring landed per design: up to `DISCOVERY_MAX_MATCHES_PER_ITEM` (5) persona×campaign candidates
+  per item, defensive parse (unknown ids → null; a persona outside the campaign's `personaIds` →
+  dropped to null with the campaign match kept; a legacy no-`matches` response → one candidate),
+  delete-then-insert on re-score. Re-score watermark = `max(personas.updatedAt,
+  campaigns.updatedAt)` applied to still-`new`, non-duplicate items only. `runAutomation` is
+  match-driven — threshold read from settings, draft generated **as** the matched persona — which
+  fully closes deferred #11 (moved to Done in `docs/deferred-improvements.md`). Manual signals are
+  auto-matched on POST (an explicit persona/campaign pick becomes a single score-100 match with no
+  LLM call; an LLM failure never blocks the 201). Accept copies every match onto the new signal.
+  Cross-source dedup: url/content sha256, second copy inserted as `status: "duplicate"` with
+  `duplicateOfId`, `duplicateCount` on the canonical, duplicates endpoint; duplicates skip scoring.
+  Full suite **905 green across 68 files**, `npm run typecheck` clean. New deferred #27
+  (full-backlog re-score) and #28 (duplicates linked, not merged); acceptance tests added
+  § Sprint 45; sprint-guide 45 entry marked built. The web slice (triage candidate chips +
+  duplicate badge/expansion, match-threshold field — checklist 8) lands on this branch alongside
+  this docs pass; the push (10) follows.
