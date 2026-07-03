@@ -1072,6 +1072,8 @@ a.workspace-card:hover {
 .layer-persona { color: var(--amber-ink); background: var(--amber); }
 .layer-task { color: var(--rose-ink); background: var(--rose); }
 .layer-zoom { color: var(--c3-deep); background: var(--c3-wash); }
+/* Sprint 44: the publishing account's content profile */
+.layer-account { color: var(--mint-ink); background: var(--mint); border: 1px solid var(--mint-ink); }
 
 /* Sprint 43: selective-context trace badges */
 .tier-badge,

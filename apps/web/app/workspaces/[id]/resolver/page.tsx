@@ -111,6 +111,11 @@ export default function ResolverPage() {
   const [pName, setPName] = useState("");
   const [pDescription, setPDescription] = useState("");
   const [pOverlay, setPOverlay] = useState("");
+  // Sprint 44 structured drafting fields; topics edited as a comma-separated line.
+  const [pTopics, setPTopics] = useState("");
+  const [pTone, setPTone] = useState("");
+  const [pStyleRules, setPStyleRules] = useState("");
+  const [pAvoid, setPAvoid] = useState("");
 
   const load = useCallback(async () => {
     try {
@@ -253,6 +258,10 @@ export default function ResolverPage() {
     setPName(p?.name ?? "");
     setPDescription(p?.description ?? "");
     setPOverlay(p?.overlay ?? "");
+    setPTopics(p?.topics.join(", ") ?? "");
+    setPTone(p?.tone ?? "");
+    setPStyleRules(p?.styleRules ?? "");
+    setPAvoid(p?.avoid ?? "");
   }
 
   async function savePersona(e: React.FormEvent) {
@@ -265,7 +274,15 @@ export default function ResolverPage() {
       const res = await apiFetch(url, {
         method: editingId ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: pName, description: pDescription, overlay: pOverlay }),
+        body: JSON.stringify({
+          name: pName,
+          description: pDescription,
+          overlay: pOverlay,
+          topics: pTopics.split(",").map((t) => t.trim()).filter(Boolean),
+          tone: pTone,
+          styleRules: pStyleRules,
+          avoid: pAvoid,
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
@@ -424,6 +441,9 @@ export default function ResolverPage() {
                 <div>
                   <span className="name">{p.name}</span>
                   {p.description && <span className="meta"> — {p.description}</span>}
+                  {p.topics.length > 0 && (
+                    <span className="meta"> · covers {p.topics.join(", ")}</span>
+                  )}
                 </div>
                 <div className="persona-actions">
                   <button className="button-secondary" onClick={() => startEdit(p)}>
@@ -457,6 +477,29 @@ export default function ResolverPage() {
               onChange={(e) => setPOverlay(e.target.value)}
               placeholder="Overlay — voice and point-of-view adjustments layered on the org brain…"
               rows={5}
+            />
+            <input
+              value={pTopics}
+              onChange={(e) => setPTopics(e.target.value)}
+              placeholder="Topics this persona covers, comma-separated (feed the zoom + discovery)…"
+            />
+            <input
+              value={pTone}
+              onChange={(e) => setPTone(e.target.value)}
+              placeholder="Tone (e.g. dry, technical, first-person)…"
+              maxLength={300}
+            />
+            <textarea
+              value={pStyleRules}
+              onChange={(e) => setPStyleRules(e.target.value)}
+              placeholder="Style rules — one per line (e.g. Short sentences. No emoji.)…"
+              rows={3}
+            />
+            <textarea
+              value={pAvoid}
+              onChange={(e) => setPAvoid(e.target.value)}
+              placeholder="Never say / avoid (words, claims, topics this persona won't touch)…"
+              rows={2}
             />
             <div className="editor-actions">
               <button type="submit" disabled={pName.trim().length === 0}>
