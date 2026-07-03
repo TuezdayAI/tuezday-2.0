@@ -82,3 +82,21 @@ Vitest-tested (web workspace has no test runner).
 - Manual walkthrough: billing card states (free/over-limit pulse/unlimited),
   Activity page shows events, connectors page has no log, route changes fade in,
   inbox/discovery capped with Show more.
+
+## Progress log
+
+- 2026-07-03 — Spec + plan written and committed (`8385d2c`).
+- 2026-07-03 — Task 1: `usageMeter` (TDD, 6 tests) + Activity nav entry;
+  nav-visibility expectation updated; contracts 157/157 (`d48ef6d`).
+- 2026-07-03 — Task 2: billing page rebuilt on native tokens, meter CSS +
+  `usage-pulse`/`module-in` keyframes appended to globals.css (`d0bccf3`).
+- 2026-07-03 — Task 3: Activity page added, event log removed from
+  connectors (`28aae70`).
+- 2026-07-03 — Task 4: `template.tsx` module fade-in + smooth anchor scroll
+  (`b511a6f`).
+- 2026-07-03 — Task 5: `useShowMore`/`ShowMoreButton`; inbox + discovery
+  triage lists capped at 50 (`78c4475`). Renamed hook binding to
+  `inboxList` in discovery to avoid colliding with its `triage()` action.
+- 2026-07-03 — Verified: `npm test` 813/813 across 65 files, `npm run
+  typecheck` clean, `npm run build -w apps/web` green. Founder manual
+  walkthrough pending.
