@@ -136,6 +136,30 @@ export default function AutomationPage() {
         </div>
       </section>
 
+      <section className="panel">
+        <h2>Match threshold</h2>
+        <p className="subtitle">
+          Minimum persona×campaign match score (0–100) a signal needs before automation drafts for
+          that campaign. Lower it to let weaker matches through; raise it so only strong fits
+          generate.
+        </p>
+        <div className="resolve-controls">
+          <label style={{ flex: 1 }}>
+            Match threshold (0–100)
+            <input
+              type="number"
+              min={0}
+              max={100}
+              defaultValue={settings.matchThreshold}
+              onBlur={(e) => {
+                const v = Math.max(0, Math.min(100, Number(e.target.value)));
+                if (v !== settings.matchThreshold) void patch({ matchThreshold: v });
+              }}
+            />
+          </label>
+        </div>
+      </section>
+
       {lastRun && (
         <section className="panel">
           <h2>Last run</h2>
