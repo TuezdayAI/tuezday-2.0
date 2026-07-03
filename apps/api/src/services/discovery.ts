@@ -1,8 +1,9 @@
-import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { createHash, randomUUID } from "node:crypto";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import {
   type CreateDiscoverySourceInput,
   type DiscoveredItem,
+  type DiscoveredItemMatch,
   type DiscoveredItemStatus,
   type DiscoverySource,
   type DiscoverySourceConfig,
@@ -22,8 +23,20 @@ import {
 import { fetchSourceItems, isLiveSourceType, type Fetcher } from "../discovery/adapters";
 import type { IntentProvider } from "../discovery/intent";
 import type { LlmGateway } from "../llm/gateway";
-import { getBrain } from "./brain";
-import { listCampaigns } from "./campaigns";
+import {
+  brainDigest,
+  buildMatchingContext,
+  buildMatchingPrompt,
+  clampScore,
+  getMatchingConfigVersion,
+  insertSignalMatch,
+  listItemMatches,
+  listItemMatchesForItems,
+  listSignalMatches,
+  parseEntryMatches,
+  parseJsonArray,
+  replaceItemMatches,
+} from "./matching";
 import { listPersonas } from "./personas";
 import { createSignal } from "./signals";
 
@@ -150,11 +163,34 @@ export function deleteDiscoverySource(db: Db, workspaceId: string, sourceId: str
 // Items
 // ---------------------------------------------------------------------------
 
-function rowToItem(row: DiscoveredItemRow): DiscoveredItem {
+function rowToItem(
+  row: DiscoveredItemRow,
+  matches: DiscoveredItemMatch[],
+  duplicateCount: number,
+): DiscoveredItem {
   return {
     ...row,
     status: row.status as DiscoveredItemStatus,
+    matches,
+    duplicateCount,
   };
+}
+
+/** duplicateOfId -> linked-duplicate count, one grouped query per list call. */
+function countDuplicatesByCanonical(db: Db, workspaceId: string): Map<string, number> {
+  const rows = db
+    .select({ duplicateOfId: discoveredItems.duplicateOfId, count: sql<number>`COUNT(*)` })
+    .from(discoveredItems)
+    .where(
+      and(eq(discoveredItems.workspaceId, workspaceId), isNotNull(discoveredItems.duplicateOfId)),
+    )
+    .groupBy(discoveredItems.duplicateOfId)
+    .all();
+  const map = new Map<string, number>();
+  for (const row of rows) {
+    if (row.duplicateOfId) map.set(row.duplicateOfId, row.count);
+  }
+  return map;
 }
 
 export function listDiscoveredItems(
@@ -165,13 +201,20 @@ export function listDiscoveredItems(
   const where = status
     ? and(eq(discoveredItems.workspaceId, workspaceId), eq(discoveredItems.status, status))
     : eq(discoveredItems.workspaceId, workspaceId);
-  return db
+  const rows = db
     .select()
     .from(discoveredItems)
     .where(where)
     .orderBy(sql`${discoveredItems.score} DESC NULLS LAST`, desc(discoveredItems.createdAt))
-    .all()
-    .map(rowToItem);
+    .all();
+  const matchesByItem = listItemMatchesForItems(
+    db,
+    rows.map((r) => r.id),
+  );
+  const duplicateCounts = countDuplicatesByCanonical(db, workspaceId);
+  return rows.map((row) =>
+    rowToItem(row, matchesByItem.get(row.id) ?? [], duplicateCounts.get(row.id) ?? 0),
+  );
 }
 
 export function getDiscoveredItem(
@@ -184,7 +227,39 @@ export function getDiscoveredItem(
     .from(discoveredItems)
     .where(and(eq(discoveredItems.workspaceId, workspaceId), eq(discoveredItems.id, itemId)))
     .get();
-  return row ? rowToItem(row) : undefined;
+  if (!row) return undefined;
+  const duplicateCount =
+    db
+      .select({ count: sql<number>`COUNT(*)` })
+      .from(discoveredItems)
+      .where(eq(discoveredItems.duplicateOfId, itemId))
+      .get()?.count ?? 0;
+  return rowToItem(row, listItemMatches(db, itemId), duplicateCount);
+}
+
+export interface DuplicateItemRef {
+  id: string;
+  sourceId: string;
+  sourceName: string;
+  createdAt: number;
+}
+
+/** The rows linked to a canonical item — the "seen via N sources" expansion. */
+export function listItemDuplicates(db: Db, workspaceId: string, itemId: string): DuplicateItemRef[] {
+  return db
+    .select({
+      id: discoveredItems.id,
+      sourceId: discoveredItems.sourceId,
+      sourceName: discoverySources.name,
+      createdAt: discoveredItems.createdAt,
+    })
+    .from(discoveredItems)
+    .innerJoin(discoverySources, eq(discoveredItems.sourceId, discoverySources.id))
+    .where(
+      and(eq(discoveredItems.workspaceId, workspaceId), eq(discoveredItems.duplicateOfId, itemId)),
+    )
+    .orderBy(asc(discoveredItems.createdAt))
+    .all();
 }
 
 const SIGNAL_SOURCE_BY_TYPE: Record<DiscoverySourceType, SignalSource> = {
@@ -224,11 +299,20 @@ export function acceptDiscoveredItem(
     suggestedPersonaId: item.suggestedPersonaId ?? undefined,
     suggestedCampaignId: item.suggestedCampaignId ?? undefined,
   });
+  // Carry the full candidate list forward (Sprint 45): every scored
+  // persona×campaign pairing becomes a signal_matches row — no LLM call,
+  // automation routes on what discovery already judged.
+  for (const match of listItemMatches(db, item.id)) {
+    insertSignalMatch(db, workspaceId, signal.id, match);
+  }
   db.update(discoveredItems)
     .set({ status: "accepted", signalId: signal.id })
     .where(eq(discoveredItems.id, item.id))
     .run();
-  return { item: { ...item, status: "accepted", signalId: signal.id }, signal };
+  return {
+    item: { ...item, status: "accepted", signalId: signal.id },
+    signal: { ...signal, matches: listSignalMatches(db, signal.id) },
+  };
 }
 
 export function skipDiscoveredItem(db: Db, item: DiscoveredItem): DiscoveredItem {
@@ -255,35 +339,77 @@ export interface DiscoveryRunResult {
 }
 
 const SCORE_BATCH_SIZE = 10;
-const DIGEST_CHARS_PER_DOC = 600;
 
-function brainDigest(db: Db, workspaceId: string): string {
-  const { docs } = getBrain(db, workspaceId);
-  return docs
-    .filter((d) => ["soul", "icp", "voice", "now"].includes(d.docType) && d.content.trim())
-    .map((d) => `${d.docType.toUpperCase()}: ${d.content.trim().slice(0, DIGEST_CHARS_PER_DOC)}`)
-    .join("\n\n");
+// ---------------------------------------------------------------------------
+// Cross-source dedup hashing (Sprint 45)
+// ---------------------------------------------------------------------------
+
+const TRACKING_PARAM = /^(utm_[^=]*|fbclid|gclid|ref)(=|$)/;
+
+function sha256(input: string): string {
+  return createHash("sha256").update(input).digest("hex");
 }
 
-interface ScoreEntry {
-  index: number;
-  score: number;
-  personaId: string | null;
-  campaignId: string | null;
-  reason: string;
+/**
+ * Hash of the normalized URL: protocol, `www.`, fragment, trailing slash and
+ * known tracking params (`utm_*`, `fbclid`, `gclid`, `ref`) stripped. Null
+ * when the item has no URL.
+ */
+export function hashUrl(url: string): string | null {
+  const trimmed = url.trim().toLowerCase();
+  if (!trimmed) return null;
+  let u = trimmed.replace(/^https?:\/\//, "").replace(/^www\./, "");
+  const fragmentAt = u.indexOf("#");
+  if (fragmentAt !== -1) u = u.slice(0, fragmentAt);
+  const queryAt = u.indexOf("?");
+  let path = queryAt === -1 ? u : u.slice(0, queryAt);
+  path = path.replace(/\/+$/, "");
+  const params =
+    queryAt === -1
+      ? []
+      : u
+          .slice(queryAt + 1)
+          .split("&")
+          .filter((p) => p && !TRACKING_PARAM.test(p));
+  return sha256(params.length > 0 ? `${path}?${params.join("&")}` : path);
 }
 
-/** Pull the first JSON array out of a model response; tolerate fences/noise. */
-function parseJsonArray(text: string): unknown[] | null {
-  const match = text.match(/\[[\s\S]*\]/);
-  if (!match) return null;
-  try {
-    const parsed = JSON.parse(match[0]);
-    return Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
+/** Hash of the whitespace/case-normalized title + first 300 chars of summary. */
+export function hashContent(title: string, summary: string): string {
+  const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
+  return sha256(`${normalize(title)}\n${normalize(summary.slice(0, 300))}`);
 }
+
+/**
+ * The oldest canonical (non-duplicate) workspace item sharing this URL or
+ * content hash — the row a fresh cross-source copy should link to.
+ */
+function findCanonicalItem(
+  db: Db,
+  workspaceId: string,
+  urlHash: string | null,
+  contentHash: string,
+): { id: string } | undefined {
+  const hashMatches = [eq(discoveredItems.contentHash, contentHash)];
+  if (urlHash) hashMatches.push(eq(discoveredItems.urlHash, urlHash));
+  return db
+    .select({ id: discoveredItems.id })
+    .from(discoveredItems)
+    .where(
+      and(
+        eq(discoveredItems.workspaceId, workspaceId),
+        isNull(discoveredItems.duplicateOfId),
+        or(...hashMatches),
+      ),
+    )
+    .orderBy(asc(discoveredItems.createdAt))
+    .limit(1)
+    .get();
+}
+
+// ---------------------------------------------------------------------------
+// Scoring (Sprint 45: multi-candidate, re-scored on persona/campaign change)
+// ---------------------------------------------------------------------------
 
 async function scoreUnscoredItems(
   db: Db,
@@ -291,6 +417,9 @@ async function scoreUnscoredItems(
   workspaceId: string,
   workspaceName: string,
 ): Promise<number> {
+  // Re-score watermark: a still-new item whose last judgment predates the
+  // newest persona/campaign edit gets re-judged; triaged items are frozen.
+  const configVersion = getMatchingConfigVersion(db, workspaceId);
   const unscored = db
     .select()
     .from(discoveredItems)
@@ -298,24 +427,15 @@ async function scoreUnscoredItems(
       and(
         eq(discoveredItems.workspaceId, workspaceId),
         eq(discoveredItems.status, "new"),
-        isNull(discoveredItems.score),
+        isNull(discoveredItems.duplicateOfId),
+        or(isNull(discoveredItems.scoredAt), lt(discoveredItems.scoredAt, configVersion)),
       ),
     )
     .all();
   if (unscored.length === 0) return 0;
 
   const digest = brainDigest(db, workspaceId);
-  const personas = listPersonas(db, workspaceId);
-  const personaIds = new Set(personas.map((p) => p.id));
-  const personaList =
-    personas.map((p) => `- ${p.id}: ${p.name}${p.description ? ` (${p.description})` : ""}`).join("\n") ||
-    "(no personas yet)";
-  const campaigns = listCampaigns(db, workspaceId).filter((c) => c.status === "active");
-  const campaignIds = new Set(campaigns.map((c) => c.id));
-  const campaignList =
-    campaigns
-      .map((c) => `- ${c.id}: ${c.name}${c.objective ? ` — ${c.objective.slice(0, 120)}` : ""}`)
-      .join("\n") || "(no campaigns yet)";
+  const ctx = buildMatchingContext(db, workspaceId);
 
   let scoredCount = 0;
   for (let offset = 0; offset < unscored.length; offset += SCORE_BATCH_SIZE) {
@@ -326,40 +446,35 @@ async function scoreUnscoredItems(
           `ITEM ${i}: ${item.title}\n${item.summary ? item.summary.slice(0, 300) : "(no summary)"}`,
       )
       .join("\n\n");
-
-    const prompt = [
-      `You are the judgment layer of ${workspaceName}'s GTM brain. Discovered items from the outside world need relevance scoring — the brain judges and routes signals, it does not invent them.`,
-      `COMPANY BRAIN DIGEST:\n${digest || "(brain not filled yet)"}`,
-      `PERSONAS (id: name):\n${personaList}`,
-      `CAMPAIGNS (id: name — objective):\n${campaignList}`,
-      `DISCOVERED ITEMS:\n${itemsBlock}`,
-      `For each item, judge how relevant it is as a GTM signal for this company (0 = noise, 100 = must act on this), which persona (by id) should respond (or null), and which campaign (by id) it best belongs to (or null if none fits).`,
-      `Respond with ONLY a JSON array, one entry per item: [{"index": <item number>, "score": <0-100>, "personaId": <id or null>, "campaignId": <id or null>, "reason": "<one short sentence>"}]`,
-    ].join("\n\n");
+    const prompt = buildMatchingPrompt({ workspaceName, digest, ctx, itemsBlock });
 
     try {
       const result = await llm.generate({ prompt });
       const entries = parseJsonArray(result.text);
       if (!entries) continue; // scoring assists, never gates: leave unscored
+      const scoredAt = Date.now();
       for (const raw of entries) {
-        const entry = raw as Partial<ScoreEntry>;
+        if (typeof raw !== "object" || raw === null) continue;
+        const entry = raw as Record<string, unknown>;
         if (typeof entry.index !== "number" || typeof entry.score !== "number") continue;
         const item = batch[entry.index];
         if (!item) continue;
-        const personaId =
-          typeof entry.personaId === "string" && personaIds.has(entry.personaId)
-            ? entry.personaId
-            : null;
-        const campaignId =
-          typeof entry.campaignId === "string" && campaignIds.has(entry.campaignId)
-            ? entry.campaignId
-            : null;
+        const matches = parseEntryMatches(entry, ctx);
+        const best = matches[0];
+        replaceItemMatches(db, workspaceId, item.id, matches);
         db.update(discoveredItems)
           .set({
-            score: Math.max(0, Math.min(100, Math.round(entry.score))),
-            suggestedPersonaId: personaId,
-            suggestedCampaignId: campaignId,
-            scoreReason: typeof entry.reason === "string" ? entry.reason.slice(0, 500) : null,
+            // Overall relevance (the model's top-level judgment) drives the
+            // triage sort; the convenience fields mirror the best candidate.
+            score: clampScore(entry.score),
+            suggestedPersonaId: best?.personaId ?? null,
+            suggestedCampaignId: best?.campaignId ?? null,
+            scoreReason: best
+              ? best.reason
+              : typeof entry.reason === "string"
+                ? entry.reason.slice(0, 500)
+                : null,
+            scoredAt,
           })
           .where(eq(discoveredItems.id, item.id))
           .run();
@@ -416,6 +531,13 @@ export async function runDiscovery(
       const fresh = fetched.filter((f) => f.externalId && !existing.has(f.externalId));
       const now = Date.now();
       for (const item of fresh) {
+        // Cross-source dedup (Sprint 45): a story already seen via another
+        // source is kept but linked to the canonical item — it never enters
+        // triage and is never scored. Inserts are sequential, so two copies in
+        // the same batch still resolve (the second sees the first).
+        const urlHash = hashUrl(item.url);
+        const contentHash = hashContent(item.title, item.summary);
+        const canonical = findCanonicalItem(db, workspaceId, urlHash, contentHash);
         db.insert(discoveredItems)
           .values({
             id: randomUUID(),
@@ -430,8 +552,12 @@ export async function runDiscovery(
             suggestedPersonaId: null,
             suggestedCampaignId: null,
             scoreReason: null,
-            status: "new",
+            status: canonical ? "duplicate" : "new",
             signalId: null,
+            scoredAt: null,
+            urlHash,
+            contentHash,
+            duplicateOfId: canonical?.id ?? null,
             createdAt: now,
           })
           .run();

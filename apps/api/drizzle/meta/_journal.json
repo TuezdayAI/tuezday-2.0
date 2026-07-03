@@ -225,6 +225,13 @@
       "when": 1783052749791,
       "tag": "0031_far_madelyne_pryor",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1783069321612,
+      "tag": "0032_same_scorpion",
+      "breakpoints": true
     }
   ]
 }

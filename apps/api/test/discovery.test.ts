@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { discoverySourceSchema, discoveredItemSchema } from "@tuezday/contracts";
+import { eq } from "drizzle-orm";
+import {
+  DISCOVERY_MAX_MATCHES_PER_ITEM,
+  discoverySourceSchema,
+  discoveredItemSchema,
+  signalSchema,
+} from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
+import type { Db } from "../src/db";
+import { discoveredItemMatches, discoveredItems, signalMatches } from "../src/db/schema";
 import type { Fetcher } from "../src/discovery/adapters";
 import type { LlmGateway } from "../src/llm/gateway";
 import { buildAuthedApp, createTestDb } from "./helpers";
@@ -103,11 +111,13 @@ describe("discovery API", () => {
       })
     ).json();
     personaRef.id = persona.id;
+    // The persona must be assigned to the campaign: Sprint 45 scoring drops a
+    // suggested persona the campaign doesn't allow.
     const campaign = (
       await app.inject({
         method: "POST",
         url: `/workspaces/${workspaceId}/campaigns`,
-        payload: { name: "Launch", objective: "Win fintech VPs" },
+        payload: { name: "Launch", objective: "Win fintech VPs", personaIds: [persona.id] },
       })
     ).json();
     campaignRef.id = campaign.id;
@@ -392,5 +402,494 @@ describe("discovery API", () => {
       ).json();
       expect(sources).toEqual([]);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sprint 45 — multi-candidate scoring, re-score watermark, cross-source dedup
+// ---------------------------------------------------------------------------
+
+/** Serves a fixed XML body per feed URL; unknown URLs 404. */
+function fixtureFetcher(feeds: Record<string, string>): Fetcher {
+  return (async (url: Parameters<typeof fetch>[0]) => {
+    const body = feeds[String(url)];
+    return body ? new Response(body, { status: 200 }) : new Response("nope", { status: 404 });
+  }) as Fetcher;
+}
+
+interface MatchingHarness {
+  app: TuezdayApp;
+  db: Db;
+  workspaceId: string;
+  /** Every scoring prompt the gateway saw, in order. */
+  scoringPrompts: string[];
+  setResponder(fn: (prompt: string) => unknown): void;
+  /** Persona with Sprint 44 topics, assigned to campaignA. */
+  fieldCto: string;
+  /** Persona without topics, assigned to campaignB. */
+  communityLead: string;
+  campaignA: string;
+  campaignB: string;
+  addSource(feedUrl?: string): Promise<{ id: string; name: string }>;
+  run(): Promise<{ sources: unknown[]; scored: number }>;
+  items(status?: string): Promise<Record<string, any>[]>;
+}
+
+/**
+ * Workspace with two personas and two active campaigns (each persona assigned
+ * to its own campaign), driven by a scriptable scoring gateway.
+ */
+async function buildMatchingHarness(fetcher?: Fetcher): Promise<MatchingHarness> {
+  const db = createTestDb();
+  const scoringPrompts: string[] = [];
+  let responder: (prompt: string) => unknown = () => [];
+  const llm: LlmGateway = {
+    async generate({ prompt }) {
+      scoringPrompts.push(prompt);
+      return {
+        text: JSON.stringify(responder(prompt)),
+        model: "fake",
+        provider: "fake",
+        durationMs: 1,
+      };
+    },
+  };
+  const app = await buildAuthedApp({ db, llm, fetcher: fetcher ?? makeFetcher().fetcher });
+  const workspaceId = (
+    await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Match Co" } })
+  ).json().id;
+  const fieldCto = (
+    await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/personas`,
+      payload: { name: "Field CTO", topics: ["agentic coding", "evals"] },
+    })
+  ).json().id;
+  const communityLead = (
+    await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/personas`,
+      payload: { name: "Community Lead" },
+    })
+  ).json().id;
+  const campaignA = (
+    await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/campaigns`,
+      payload: { name: "Product Launch", objective: "Launch the agent", personaIds: [fieldCto] },
+    })
+  ).json().id;
+  const campaignB = (
+    await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/campaigns`,
+      payload: { name: "Community", objective: "Grow the community", personaIds: [communityLead] },
+    })
+  ).json().id;
+
+  return {
+    app,
+    db,
+    workspaceId,
+    scoringPrompts,
+    setResponder: (fn) => {
+      responder = fn;
+    },
+    fieldCto,
+    communityLead,
+    campaignA,
+    campaignB,
+    addSource: async (feedUrl = "https://feeds.example.com/blog.xml") =>
+      (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/discovery/sources`,
+          payload: { type: "rss", config: { feedUrl } },
+        })
+      ).json(),
+    run: async () =>
+      (await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/discovery/run` })).json(),
+    items: async (status?: string) =>
+      (
+        await app.inject({
+          method: "GET",
+          url: `/workspaces/${workspaceId}/discovery/items${status ? `?status=${status}` : ""}`,
+        })
+      ).json(),
+  };
+}
+
+describe("multi-candidate scoring (Sprint 45)", () => {
+  let h: MatchingHarness;
+
+  beforeEach(async () => {
+    h = await buildMatchingHarness();
+  });
+
+  afterEach(async () => {
+    await h.app.close();
+  });
+
+  it("stores one row per candidate and mirrors the best onto the item", async () => {
+    // Best candidate deliberately second: selection is by score, not order.
+    h.setResponder(() => [
+      {
+        index: 0,
+        score: 88,
+        matches: [
+          { personaId: h.communityLead, campaignId: h.campaignB, score: 60, reason: "Community angle." },
+          { personaId: h.fieldCto, campaignId: h.campaignA, score: 90, reason: "Fits the launch." },
+        ],
+      },
+      { index: 1, score: 40, matches: [] },
+    ]);
+    await h.addSource();
+    const result = await h.run();
+    expect(result.scored).toBe(2);
+
+    const list = await h.items();
+    const top = list.find((i) => i.score === 88)!;
+    expect(discoveredItemSchema.safeParse(top).success).toBe(true);
+    expect(top.matches).toHaveLength(2);
+    expect(top.matches[0]).toMatchObject({
+      personaId: h.fieldCto,
+      personaName: "Field CTO",
+      campaignId: h.campaignA,
+      campaignName: "Product Launch",
+      score: 90,
+      reason: "Fits the launch.",
+    });
+    expect(top.matches[1]).toMatchObject({ personaId: h.communityLead, campaignId: h.campaignB, score: 60 });
+    // convenience fields = overall relevance + best-scoring match
+    expect(top.suggestedPersonaId).toBe(h.fieldCto);
+    expect(top.suggestedCampaignId).toBe(h.campaignA);
+    expect(top.scoreReason).toBe("Fits the launch.");
+    const rows = h.db
+      .select()
+      .from(discoveredItemMatches)
+      .where(eq(discoveredItemMatches.itemId, top.id as string))
+      .all();
+    expect(rows).toHaveLength(2);
+
+    const other = list.find((i) => i.score === 40)!;
+    expect(other.matches).toEqual([]);
+    expect(other.suggestedPersonaId).toBeNull();
+    expect(other.suggestedCampaignId).toBeNull();
+
+    // prompt shape: Sprint 44 topics line, no-topics fallback line, and the
+    // campaign line naming its assigned personas
+    expect(h.scoringPrompts[0]).toContain(`- ${h.fieldCto}: Field CTO — topics: agentic coding, evals`);
+    expect(h.scoringPrompts[0]).toContain(`- ${h.communityLead}: Community Lead`);
+    expect(h.scoringPrompts[0]).toContain(`personas: [${h.fieldCto}: Field CTO]`);
+  });
+
+  it("keeps only the top-scoring five when the model over-suggests", async () => {
+    h.setResponder(() => [
+      {
+        index: 0,
+        score: 70,
+        matches: Array.from({ length: 7 }, (_, i) => ({
+          personaId: null,
+          campaignId: i % 2 === 0 ? h.campaignA : h.campaignB,
+          score: 20 + i * 10,
+          reason: `candidate ${i}`,
+        })),
+      },
+    ]);
+    await h.addSource();
+    await h.run();
+    const top = (await h.items()).find((i) => i.score === 70)!;
+    expect(top.matches).toHaveLength(DISCOVERY_MAX_MATCHES_PER_ITEM);
+    expect(top.matches.map((m: { score: number }) => m.score)).toEqual([80, 70, 60, 50, 40]);
+  });
+
+  it("drops a persona the campaign doesn't allow but keeps the campaign match", async () => {
+    // communityLead is not in campaignA's personaIds
+    h.setResponder(() => [
+      {
+        index: 0,
+        score: 65,
+        matches: [{ personaId: h.communityLead, campaignId: h.campaignA, score: 75, reason: "Wrong speaker." }],
+      },
+    ]);
+    await h.addSource();
+    await h.run();
+    const top = (await h.items()).find((i) => i.score === 65)!;
+    expect(top.matches).toHaveLength(1);
+    expect(top.matches[0]).toMatchObject({
+      personaId: null,
+      personaName: null,
+      campaignId: h.campaignA,
+      campaignName: "Product Launch",
+      score: 75,
+    });
+    expect(top.suggestedPersonaId).toBeNull();
+    expect(top.suggestedCampaignId).toBe(h.campaignA);
+  });
+
+  it("falls back to the legacy top-level shape when there is no matches key", async () => {
+    h.setResponder(() => [
+      { index: 0, score: 77, personaId: h.fieldCto, campaignId: h.campaignA, reason: "Legacy shape." },
+    ]);
+    await h.addSource();
+    await h.run();
+    const top = (await h.items()).find((i) => i.score === 77)!;
+    expect(top.matches).toHaveLength(1);
+    expect(top.matches[0]).toMatchObject({
+      personaId: h.fieldCto,
+      campaignId: h.campaignA,
+      score: 77,
+      reason: "Legacy shape.",
+    });
+    expect(top.suggestedPersonaId).toBe(h.fieldCto);
+    expect(top.suggestedCampaignId).toBe(h.campaignA);
+  });
+
+  it("accept copies every candidate onto the new signal", async () => {
+    h.setResponder(() => [
+      {
+        index: 0,
+        score: 88,
+        matches: [
+          { personaId: h.fieldCto, campaignId: h.campaignA, score: 90, reason: "Fits the launch." },
+          { personaId: h.communityLead, campaignId: h.campaignB, score: 60, reason: "Community angle." },
+        ],
+      },
+      { index: 1, score: 40, matches: [] },
+    ]);
+    await h.addSource();
+    await h.run();
+    const top = (await h.items()).find((i) => i.score === 88)!;
+
+    const res = await h.app.inject({
+      method: "POST",
+      url: `/workspaces/${h.workspaceId}/discovery/items/${top.id}/accept`,
+    });
+    expect(res.statusCode).toBe(200);
+    const { signal } = res.json();
+    expect(signalSchema.safeParse(signal).success).toBe(true);
+    expect(signal.matches).toHaveLength(2);
+    expect(signal.matches[0]).toMatchObject({ personaId: h.fieldCto, campaignId: h.campaignA, score: 90 });
+    const rows = h.db
+      .select()
+      .from(signalMatches)
+      .where(eq(signalMatches.signalId, signal.id))
+      .all();
+    expect(rows).toHaveLength(2);
+
+    // the signal inbox serializes them too
+    const signals = (
+      await h.app.inject({ method: "GET", url: `/workspaces/${h.workspaceId}/signals` })
+    ).json();
+    const listed = signals.find((s: { id: string }) => s.id === signal.id);
+    expect(listed.matches).toHaveLength(2);
+  });
+});
+
+describe("re-score on config change (Sprint 45)", () => {
+  let h: MatchingHarness;
+
+  beforeEach(async () => {
+    h = await buildMatchingHarness();
+    // Default responder: score by position, one candidate for every item.
+    h.setResponder((prompt) => {
+      const count = (prompt.match(/ITEM \d+:/g) ?? []).length;
+      return Array.from({ length: count }, (_, i) => ({
+        index: i,
+        score: 90 - i * 10,
+        matches: [{ personaId: h.fieldCto, campaignId: h.campaignA, score: 85, reason: "v1" }],
+      }));
+    });
+  });
+
+  afterEach(async () => {
+    await h.app.close();
+  });
+
+  /** Push every item's watermark into the past so a config edit is strictly newer. */
+  function backdateScoredAt() {
+    h.db
+      .update(discoveredItems)
+      .set({ scoredAt: Date.now() - 60_000 })
+      .where(eq(discoveredItems.workspaceId, h.workspaceId))
+      .run();
+  }
+
+  async function bumpPersona() {
+    const res = await h.app.inject({
+      method: "PUT",
+      url: `/workspaces/${h.workspaceId}/personas/${h.fieldCto}`,
+      payload: { name: "Field CTO", topics: ["post-training", "evals"] },
+    });
+    expect(res.statusCode).toBe(200);
+  }
+
+  it("re-scores a still-new item after a persona edit", async () => {
+    await h.addSource();
+    await h.run();
+    expect(h.scoringPrompts).toHaveLength(1);
+
+    backdateScoredAt();
+    await bumpPersona();
+    h.setResponder((prompt) => {
+      const count = (prompt.match(/ITEM \d+:/g) ?? []).length;
+      return Array.from({ length: count }, (_, i) => ({ index: i, score: 42, matches: [] }));
+    });
+    await h.run();
+    expect(h.scoringPrompts).toHaveLength(2);
+    // both original items were re-judged (plus the fresh v2 item)
+    expect(h.scoringPrompts[1]).toContain("Buyers hate generic AI output");
+    expect(h.scoringPrompts[1]).toContain("GTM teams forget what worked");
+    const list = await h.items("new");
+    for (const item of list) {
+      expect(item.score).toBe(42);
+      expect(item.matches).toEqual([]); // stale candidates were replaced, not accumulated
+      expect(item.suggestedPersonaId).toBeNull();
+    }
+  });
+
+  it("does not re-score an already-accepted item", async () => {
+    await h.addSource();
+    await h.run();
+    const top = (await h.items("new")).find((i) => i.score === 90)!;
+    await h.app.inject({
+      method: "POST",
+      url: `/workspaces/${h.workspaceId}/discovery/items/${top.id}/accept`,
+    });
+
+    backdateScoredAt();
+    await bumpPersona();
+    h.setResponder((prompt) => {
+      const count = (prompt.match(/ITEM \d+:/g) ?? []).length;
+      return Array.from({ length: count }, (_, i) => ({ index: i, score: 42, matches: [] }));
+    });
+    await h.run();
+    expect(h.scoringPrompts).toHaveLength(2);
+    // the accepted item (title of the top-scored index-0 item) stayed frozen
+    expect(h.scoringPrompts[1]).not.toContain(top.title);
+    const accepted = (await h.items()).find((i) => i.id === top.id)!;
+    expect(accepted.score).toBe(90);
+    expect(accepted.matches).toHaveLength(1);
+  });
+
+  it("skips already-scored items when nothing changed", async () => {
+    await h.addSource();
+    await h.run();
+    expect(h.scoringPrompts).toHaveLength(1);
+
+    // Second run: the feed's v2 brings one genuinely new item; the two
+    // already-scored items must not be sent back to the gateway.
+    await h.run();
+    expect(h.scoringPrompts).toHaveLength(2);
+    expect(h.scoringPrompts[1]).toContain("Fresh third item");
+    expect(h.scoringPrompts[1]).not.toContain("Buyers hate generic AI output");
+    expect((h.scoringPrompts[1]!.match(/ITEM \d+:/g) ?? []).length).toBe(1);
+
+    // Third run: nothing new, no config change — the gateway is not invoked.
+    await h.run();
+    expect(h.scoringPrompts).toHaveLength(2);
+  });
+});
+
+describe("cross-source dedup (Sprint 45)", () => {
+  it("links the same URL seen via two sources instead of duplicating triage", async () => {
+    const h = await buildMatchingHarness(
+      fixtureFetcher({
+        "https://feeds.example.com/one.xml": RSS_FIXTURE,
+        "https://feeds.example.com/two.xml": RSS_FIXTURE,
+      }),
+    );
+    const one = await h.addSource("https://feeds.example.com/one.xml");
+    const two = await h.addSource("https://feeds.example.com/two.xml");
+    await h.run();
+
+    const fresh = await h.items("new");
+    expect(fresh).toHaveLength(2); // the triage queue is not doubled
+    for (const item of fresh) {
+      expect(item.duplicateOfId).toBeNull();
+      expect(item.duplicateCount).toBe(1); // "seen via 2 sources"
+    }
+    const dups = await h.items("duplicate");
+    expect(dups).toHaveLength(2);
+    const canonicalIds = new Set(fresh.map((i) => i.id));
+    for (const dup of dups) {
+      expect(discoveredItemSchema.safeParse(dup).success).toBe(true);
+      expect(canonicalIds.has(dup.duplicateOfId)).toBe(true);
+      expect(dup.duplicateCount).toBe(0);
+    }
+
+    // duplicates are never scored: one scoring call covering the 2 canonicals
+    expect(h.scoringPrompts).toHaveLength(1);
+    expect((h.scoringPrompts[0]!.match(/ITEM \d+:/g) ?? []).length).toBe(2);
+
+    // the expandable "seen via" list names the corroborating source
+    const canonical = fresh[0]!;
+    const res = await h.app.inject({
+      method: "GET",
+      url: `/workspaces/${h.workspaceId}/discovery/items/${canonical.id}/duplicates`,
+    });
+    expect(res.statusCode).toBe(200);
+    const linked = res.json();
+    expect(linked).toHaveLength(1);
+    expect(linked[0].sourceName).toMatch(/^RSS: https:\/\/feeds\.example\.com\/(one|two)\.xml$/);
+    expect([one.id, two.id]).toContain(linked[0].sourceId);
+    expect(linked[0].sourceId).not.toBe(canonical.sourceId);
+    expect(typeof linked[0].createdAt).toBe("number");
+
+    await h.app.close();
+  });
+
+  it("links tracking-param/protocol/www variants of the same URL", async () => {
+    const feedA = `<?xml version="1.0"?>
+<rss version="2.0"><channel><title>A</title>
+<item><title>Benchmark drops</title><link>https://example.com/bench</link><guid>a-1</guid><description>Original writeup.</description></item>
+</channel></rss>`;
+    const feedB = `<?xml version="1.0"?>
+<rss version="2.0"><channel><title>B</title>
+<item><title>Benchmark drops (syndicated)</title><link>http://www.example.com/bench/?utm_source=rss&amp;fbclid=abc&amp;gclid=1</link><guid>b-1</guid><description>Different summary text entirely.</description></item>
+</channel></rss>`;
+    const h = await buildMatchingHarness(
+      fixtureFetcher({
+        "https://feeds.example.com/a.xml": feedA,
+        "https://feeds.example.com/b.xml": feedB,
+      }),
+    );
+    await h.addSource("https://feeds.example.com/a.xml");
+    await h.addSource("https://feeds.example.com/b.xml");
+    await h.run();
+
+    expect(await h.items("new")).toHaveLength(1);
+    const dups = await h.items("duplicate");
+    expect(dups).toHaveLength(1);
+    expect(dups[0]!.duplicateOfId).toBe((await h.items("new"))[0]!.id);
+    await h.app.close();
+  });
+
+  it("links different URLs whose normalized content matches", async () => {
+    const feedA = `<?xml version="1.0"?>
+<rss version="2.0"><channel><title>A</title>
+<item><title>Big Agentic Benchmark Drops</title><link>https://example.com/bench</link><guid>a-1</guid><description>A new benchmark for agentic coding dropped today.</description></item>
+</channel></rss>`;
+    const feedB = `<?xml version="1.0"?>
+<rss version="2.0"><channel><title>B</title>
+<item><title>  BIG agentic   benchmark DROPS </title><link>https://mirror.example.net/bench-copy</link><guid>b-1</guid><description>a NEW benchmark   FOR agentic coding dropped today.</description></item>
+</channel></rss>`;
+    const h = await buildMatchingHarness(
+      fixtureFetcher({
+        "https://feeds.example.com/a.xml": feedA,
+        "https://feeds.example.com/b.xml": feedB,
+      }),
+    );
+    await h.addSource("https://feeds.example.com/a.xml");
+    await h.addSource("https://feeds.example.com/b.xml");
+    await h.run();
+
+    const fresh = await h.items("new");
+    expect(fresh).toHaveLength(1);
+    expect(fresh[0]!.duplicateCount).toBe(1);
+    const dups = await h.items("duplicate");
+    expect(dups).toHaveLength(1);
+    expect(dups[0]!.duplicateOfId).toBe(fresh[0]!.id);
+    await h.app.close();
   });
 });

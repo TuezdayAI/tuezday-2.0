@@ -721,6 +721,29 @@ export type SignalSource = (typeof SIGNAL_SOURCES)[number];
 
 export const SIGNAL_MAX_CHARS = 10_000;
 
+// Persona×campaign matching (Sprint 45) — one candidate pairing a discovered
+// item (or signal) scored as a fit for. Declared here (before `signalSchema`)
+// because both `signalSchema` and `discoveredItemSchema` embed it.
+
+/**
+ * Default minimum match score (0–100) a candidate needs before automation
+ * routes a signal to its campaign. Workspace-overridable via `matchThreshold`
+ * on social automation settings.
+ */
+export const DEFAULT_MATCH_THRESHOLD = 50;
+/** Scoring keeps at most this many candidates per item/signal (top scores win). */
+export const DISCOVERY_MAX_MATCHES_PER_ITEM = 5;
+
+export const discoveredItemMatchSchema = z.object({
+  personaId: z.string().uuid().nullable(),
+  personaName: z.string().nullable(),
+  campaignId: z.string().uuid().nullable(),
+  campaignName: z.string().nullable(),
+  score: z.number().int().min(0).max(100),
+  reason: z.string(),
+});
+export type DiscoveredItemMatch = z.infer<typeof discoveredItemMatchSchema>;
+
 export const signalSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
@@ -731,6 +754,9 @@ export const signalSchema = z.object({
   // Content draft can pre-fill persona + campaign. Null for manual signals.
   suggestedPersonaId: z.string().uuid().nullable(),
   suggestedCampaignId: z.string().uuid().nullable(),
+  // Sprint 45: every persona×campaign candidate this signal matched (names
+  // joined in for display). Empty when nothing cleared scoring.
+  matches: z.array(discoveredItemMatchSchema),
   createdAt: z.number().int(),
 });
 export type Signal = z.infer<typeof signalSchema>;
@@ -787,7 +813,9 @@ export type DiscoverySourceType = (typeof DISCOVERY_SOURCE_TYPES)[number];
 export const DISCOVERY_SOURCE_STATUSES = ["active", "needs_api_key", "error"] as const;
 export type DiscoverySourceStatus = (typeof DISCOVERY_SOURCE_STATUSES)[number];
 
-export const DISCOVERED_ITEM_STATUSES = ["new", "accepted", "skipped"] as const;
+// `duplicate` (Sprint 45): a cross-source copy of an already-seen story,
+// linked to the canonical item via `duplicateOfId` — never enters triage.
+export const DISCOVERED_ITEM_STATUSES = ["new", "accepted", "skipped", "duplicate"] as const;
 export type DiscoveredItemStatus = (typeof DISCOVERED_ITEM_STATUSES)[number];
 
 export const discoverySourceConfigSchema = z.object({
@@ -876,6 +904,15 @@ export const discoveredItemSchema = z.object({
   scoreReason: z.string().nullable(),
   status: z.enum(DISCOVERED_ITEM_STATUSES),
   signalId: z.string().uuid().nullable(),
+  // Sprint 45: every persona×campaign candidate this item matched (names
+  // joined in for display). The item's suggested*/score fields stay the
+  // top-scoring match, kept for triage sort order and accept pre-fill.
+  matches: z.array(discoveredItemMatchSchema),
+  // Sprint 45 cross-source dedup: set when this row is a `duplicate`-status
+  // copy of an earlier canonical item.
+  duplicateOfId: z.string().uuid().nullable(),
+  // Number of linked duplicates for a canonical item (0 for plain/duplicate rows).
+  duplicateCount: z.number().int(),
   createdAt: z.number().int(),
 });
 export type DiscoveredItem = z.infer<typeof discoveredItemSchema>;
@@ -2266,6 +2303,9 @@ export const socialAutomationSettingsSchema = z.object({
   // Sprint 29: master switch for auto-posting engagement replies. Off by default —
   // even scheduled_auto campaigns gate their replies until the founder opts in.
   autoReplyEnabled: z.boolean(),
+  // Sprint 45: minimum persona×campaign match score (0–100) a signal needs
+  // before automation generates for that campaign. Default DEFAULT_MATCH_THRESHOLD.
+  matchThreshold: z.number().int().min(0).max(100),
   updatedAt: z.number().int(),
 });
 export type SocialAutomationSettings = z.infer<typeof socialAutomationSettingsSchema>;
@@ -2275,6 +2315,7 @@ export const updateSocialAutomationSettingsInputSchema = z.object({
   perConnectionDailyCap: z.number().int().positive().max(1000).optional(),
   perCampaignDailyCap: z.number().int().positive().max(1000).optional(),
   autoReplyEnabled: z.boolean().optional(),
+  matchThreshold: z.number().int().min(0).max(100).optional(),
 });
 export type UpdateSocialAutomationSettingsInput = z.infer<
   typeof updateSocialAutomationSettingsInputSchema

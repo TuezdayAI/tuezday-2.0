@@ -1,5 +1,6 @@
 import { and, asc, eq, gte, lt, ne } from "drizzle-orm";
 import {
+  DEFAULT_MATCH_THRESHOLD,
   DEFAULT_PER_CAMPAIGN_DAILY_CAP,
   DEFAULT_PER_CONNECTION_DAILY_CAP,
   type AutomationCampaignResult,
@@ -23,6 +24,8 @@ import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
 import { listAutomatedCampaigns } from "./campaigns";
 import { applyDraftAction, type DraftActor } from "./drafts";
+import { getBestSignalMatchForCampaign } from "./matching";
+import { listPersonas } from "./personas";
 import { generateSignalDraft } from "./signal-drafting";
 import { getWorkspace } from "./workspaces";
 
@@ -49,6 +52,7 @@ export function getSocialAutomationSettings(db: Db, workspaceId: string): Social
         perConnectionDailyCap: row.perConnectionDailyCap,
         perCampaignDailyCap: row.perCampaignDailyCap,
         autoReplyEnabled: row.autoReplyEnabled === 1,
+        matchThreshold: row.matchThreshold,
         updatedAt: row.updatedAt,
       }
     : {
@@ -57,6 +61,7 @@ export function getSocialAutomationSettings(db: Db, workspaceId: string): Social
         perConnectionDailyCap: DEFAULT_PER_CONNECTION_DAILY_CAP,
         perCampaignDailyCap: DEFAULT_PER_CAMPAIGN_DAILY_CAP,
         autoReplyEnabled: false,
+        matchThreshold: DEFAULT_MATCH_THRESHOLD,
         updatedAt: 0,
       };
 }
@@ -73,6 +78,7 @@ export function updateSocialAutomationSettings(
     perConnectionDailyCap: patch.perConnectionDailyCap ?? current.perConnectionDailyCap,
     perCampaignDailyCap: patch.perCampaignDailyCap ?? current.perCampaignDailyCap,
     autoReplyEnabled: patch.autoReplyEnabled ?? current.autoReplyEnabled,
+    matchThreshold: patch.matchThreshold ?? current.matchThreshold,
     updatedAt: Date.now(),
   };
   const columns = {
@@ -80,6 +86,7 @@ export function updateSocialAutomationSettings(
     perConnectionDailyCap: next.perConnectionDailyCap,
     perCampaignDailyCap: next.perCampaignDailyCap,
     autoReplyEnabled: next.autoReplyEnabled ? 1 : 0,
+    matchThreshold: next.matchThreshold,
     updatedAt: next.updatedAt,
   };
   db.insert(socialAutomationSettings)
@@ -191,7 +198,9 @@ function signalsOldestFirst(db: Db, workspaceId: string): Signal[] {
     .where(eq(signalsTable.workspaceId, workspaceId))
     .orderBy(asc(signalsTable.createdAt))
     .all()
-    .map((row) => ({ ...row, source: row.source as SignalSource }));
+    // `matches` stays empty on these internal objects — routing reads the
+    // signal_matches table directly via getBestSignalMatchForCampaign.
+    .map((row) => ({ ...row, source: row.source as SignalSource, matches: [] }));
 }
 
 function hasDraftFor(
@@ -217,11 +226,13 @@ function hasDraftFor(
 
 /**
  * Turn new discovery signals into channel posts per the campaign's automation
- * mode (Sprint 28). For each active automated campaign, every new signal
- * fans out to each campaign channel: human_in_the_loop leaves the draft at the
- * gate; scheduled_auto auto-approves it (a logged `system` approval) so the
- * cadence can post it. Idempotent — a signal already drafted for a
- * campaign+channel is skipped.
+ * mode (Sprint 28, match-routed since Sprint 45). For each active automated
+ * campaign, a signal fans out to the campaign's channels only when it carries a
+ * `signal_matches` row for that campaign scoring at or above the workspace's
+ * `matchThreshold` — and the draft is generated as that match's persona.
+ * human_in_the_loop leaves the draft at the gate; scheduled_auto auto-approves
+ * it (a logged `system` approval) so the cadence can post it. Idempotent — a
+ * signal already drafted for a campaign+channel is skipped.
  */
 export async function runAutomation(
   db: Db,
@@ -236,6 +247,7 @@ export async function runAutomation(
   const settings = getSocialAutomationSettings(db, workspaceId);
   const campaigns = listAutomatedCampaigns(db, workspaceId);
   const signals = signalsOldestFirst(db, workspaceId);
+  const personasById = new Map(listPersonas(db, workspaceId).map((p) => [p.id, p]));
   const results: AutomationCampaignResult[] = [];
 
   for (const campaign of campaigns) {
@@ -256,8 +268,13 @@ export async function runAutomation(
     let autoApproved = 0;
     let skipped = 0;
 
-    for (const channel of campaign.channels) {
-      for (const signal of signals) {
+    for (const signal of signals) {
+      // Sprint 45: a signal only reaches this campaign when discovery (or a
+      // human) matched it above the workspace threshold — no more blind fan-out.
+      const match = getBestSignalMatchForCampaign(db, signal.id, campaign.id);
+      if (!match || match.score < settings.matchThreshold) continue;
+      const persona = match.personaId ? personasById.get(match.personaId) : undefined;
+      for (const channel of campaign.channels) {
         if (hasDraftFor(db, signal.id, campaign.id, channel)) continue;
         try {
           const draft = await generateSignalDraft(
@@ -266,7 +283,7 @@ export async function runAutomation(
             evidence,
             workspace,
             signal,
-            { channel, campaign, useEvidence: true },
+            { channel, campaign, persona, useEvidence: true },
             SYSTEM_ACTOR,
           );
           generated += 1;

@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 // Keep this schema Postgres-portable: text ids, integer epoch-ms timestamps,
 // no SQLite-only column tricks. The Postgres swap is planned for Sprint 8.
@@ -334,9 +334,24 @@ export const discoveredItems = sqliteTable(
     scoreReason: text("score_reason"),
     status: text("status").notNull().default("new"),
     signalId: text("signal_id"),
+    // Sprint 45: re-score watermark — when the item was last LLM-judged. Null
+    // for never-scored items.
+    scoredAt: integer("scored_at"),
+    // Sprint 45 cross-source dedup: sha256 of the normalized URL (null when the
+    // item has no URL) and of the normalized title + summary prefix.
+    urlHash: text("url_hash"),
+    contentHash: text("content_hash").notNull().default(""),
+    // Self-reference to the canonical item when status = "duplicate". No
+    // declared FK: drizzle-kit's SQLite ALTER TABLE ADD cascade gap (deferred
+    // #26) — enforced at the service level instead.
+    duplicateOfId: text("duplicate_of_id"),
     createdAt: integer("created_at").notNull(),
   },
-  (t) => [uniqueIndex("discovered_items_source_external").on(t.sourceId, t.externalId)],
+  (t) => [
+    uniqueIndex("discovered_items_source_external").on(t.sourceId, t.externalId),
+    index("discovered_items_workspace_url_hash").on(t.workspaceId, t.urlHash),
+    index("discovered_items_workspace_content_hash").on(t.workspaceId, t.contentHash),
+  ],
 );
 
 export type DiscoveredItemRow = typeof discoveredItems.$inferSelect;
@@ -365,6 +380,57 @@ export const campaigns = sqliteTable("campaigns", {
 });
 
 export type CampaignRow = typeof campaigns.$inferSelect;
+
+// Sprint 45 multi-candidate scoring: one row per candidate persona×campaign
+// pairing a discovered item scored above zero relevance for. Replaced
+// (delete-then-insert) each time the item is scored.
+export const discoveredItemMatches = sqliteTable(
+  "discovered_item_matches",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => discoveredItems.id, { onDelete: "cascade" }),
+    personaId: text("persona_id").references(() => personas.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "cascade" }),
+    score: integer("score").notNull(),
+    reason: text("reason").notNull().default(""),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("discovered_item_matches_item").on(t.itemId)],
+);
+
+export type DiscoveredItemMatchRow = typeof discoveredItemMatches.$inferSelect;
+
+// Sprint 45: same shape for signals — copied from discovered_item_matches on
+// accept, written directly for manually-created signals. runAutomation routes
+// a signal to a campaign only via a row here at/above the match threshold.
+export const signalMatches = sqliteTable(
+  "signal_matches",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    signalId: text("signal_id")
+      .notNull()
+      .references(() => signals.id, { onDelete: "cascade" }),
+    personaId: text("persona_id").references(() => personas.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "cascade" }),
+    score: integer("score").notNull(),
+    reason: text("reason").notNull().default(""),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("signal_matches_signal").on(t.signalId),
+    index("signal_matches_signal_campaign").on(t.signalId, t.campaignId),
+  ],
+);
+
+export type SignalMatchRow = typeof signalMatches.$inferSelect;
 
 export const evidenceDocuments = sqliteTable("evidence_documents", {
   id: text("id").primaryKey(),
@@ -820,6 +886,9 @@ export const socialAutomationSettings = sqliteTable("social_automation_settings"
   perCampaignDailyCap: integer("per_campaign_daily_cap").notNull().default(5),
   // Sprint 29: master switch for auto-posting engagement replies (off by default).
   autoReplyEnabled: integer("auto_reply_enabled").notNull().default(0),
+  // Sprint 45: minimum signal-match score (0-100) for runAutomation to route a
+  // signal to a campaign.
+  matchThreshold: integer("match_threshold").notNull().default(50),
   updatedAt: integer("updated_at").notNull(),
 });
 

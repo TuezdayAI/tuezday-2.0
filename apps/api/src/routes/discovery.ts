@@ -18,6 +18,7 @@ import {
   getDiscoveredItem,
   listDiscoveredItems,
   listDiscoverySources,
+  listItemDuplicates,
   runDiscovery,
   skipDiscoveredItem,
   suggestDiscoverySources,
@@ -118,6 +119,17 @@ export function registerDiscoveryRoutes(
         request.params.id,
         status as DiscoveredItemStatus | undefined,
       );
+    },
+  );
+
+  // The "seen via N sources" expansion for a canonical item (Sprint 45).
+  app.get<{ Params: { id: string; itemId: string } }>(
+    "/workspaces/:id/discovery/items/:itemId/duplicates",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const item = getDiscoveredItem(db, request.params.id, request.params.itemId);
+      if (!item) return reply.status(404).send({ error: "item_not_found" });
+      return listItemDuplicates(db, request.params.id, request.params.itemId);
     },
   );
 

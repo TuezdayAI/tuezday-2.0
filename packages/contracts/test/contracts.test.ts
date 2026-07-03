@@ -77,6 +77,14 @@ import {
   outboundDraftRequestSchema,
   createSignalInputSchema,
   DISCOVERY_SOURCE_TYPES,
+  DISCOVERED_ITEM_STATUSES,
+  DEFAULT_MATCH_THRESHOLD,
+  DISCOVERY_MAX_MATCHES_PER_ITEM,
+  discoveredItemMatchSchema,
+  discoveredItemSchema,
+  signalSchema,
+  socialAutomationSettingsSchema,
+  updateSocialAutomationSettingsInputSchema,
   createWorkspaceInputSchema,
   generationSchema,
   generateRequestSchema,
@@ -1017,6 +1025,142 @@ describe("createDiscoverySourceInputSchema", () => {
       "capterra",
       "intent",
     ]);
+  });
+});
+
+describe("discovery routing contracts (Sprint 45)", () => {
+  const personaId = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+  const campaignId = "9b2c8a44-1d2e-4f5a-8b6c-7d8e9f0a1b2c";
+  const uuid = personaId;
+
+  const match = {
+    personaId,
+    personaName: "Field CTO",
+    campaignId,
+    campaignName: "Product Launch",
+    score: 82,
+    reason: "Directly about agentic coding benchmarks.",
+  };
+
+  const item = {
+    id: uuid,
+    workspaceId: uuid,
+    sourceId: uuid,
+    externalId: "ext-1",
+    title: "New agentic coding benchmark",
+    url: "https://example.com/a",
+    summary: "A benchmark drops.",
+    publishedAt: null,
+    score: 82,
+    suggestedPersonaId: personaId,
+    suggestedCampaignId: campaignId,
+    scoreReason: "fits",
+    status: "new",
+    signalId: null,
+    matches: [match],
+    duplicateOfId: null,
+    duplicateCount: 0,
+    createdAt: 1,
+  };
+
+  it("exposes the routing constants", () => {
+    expect(DEFAULT_MATCH_THRESHOLD).toBe(50);
+    expect(DISCOVERY_MAX_MATCHES_PER_ITEM).toBe(5);
+  });
+
+  it("round-trips a match, including a null persona or campaign side", () => {
+    expect(discoveredItemMatchSchema.parse(match)).toEqual(match);
+    const campaignOnly = { ...match, personaId: null, personaName: null };
+    expect(discoveredItemMatchSchema.parse(campaignOnly)).toEqual(campaignOnly);
+  });
+
+  it("bounds the match score to an integer 0-100", () => {
+    expect(discoveredItemMatchSchema.safeParse({ ...match, score: 0 }).success).toBe(true);
+    expect(discoveredItemMatchSchema.safeParse({ ...match, score: 100 }).success).toBe(true);
+    expect(discoveredItemMatchSchema.safeParse({ ...match, score: 101 }).success).toBe(false);
+    expect(discoveredItemMatchSchema.safeParse({ ...match, score: -1 }).success).toBe(false);
+    expect(discoveredItemMatchSchema.safeParse({ ...match, score: 82.5 }).success).toBe(false);
+  });
+
+  it("includes duplicate in the item status vocabulary", () => {
+    expect(DISCOVERED_ITEM_STATUSES).toEqual(["new", "accepted", "skipped", "duplicate"]);
+  });
+
+  it("discoveredItemSchema accepts matches and duplicate links", () => {
+    expect(discoveredItemSchema.safeParse(item).success).toBe(true);
+    // A canonical item corroborated by two sources.
+    expect(discoveredItemSchema.safeParse({ ...item, duplicateCount: 2 }).success).toBe(true);
+    // A duplicate row pointing at its canonical item, never scored.
+    expect(
+      discoveredItemSchema.safeParse({
+        ...item,
+        status: "duplicate",
+        duplicateOfId: campaignId,
+        matches: [],
+        score: null,
+        suggestedPersonaId: null,
+        suggestedCampaignId: null,
+        scoreReason: null,
+      }).success,
+    ).toBe(true);
+    expect(discoveredItemSchema.safeParse({ ...item, duplicateOfId: "not-a-uuid" }).success).toBe(false);
+    expect(discoveredItemSchema.safeParse({ ...item, duplicateCount: 1.5 }).success).toBe(false);
+    expect(discoveredItemSchema.safeParse({ ...item, matches: [{ ...match, score: 101 }] }).success).toBe(
+      false,
+    );
+  });
+
+  it("signalSchema carries the same match shape", () => {
+    const signal = {
+      id: uuid,
+      workspaceId: uuid,
+      content: "Saw a benchmark thread.",
+      source: "news",
+      sourceUrl: null,
+      suggestedPersonaId: null,
+      suggestedCampaignId: null,
+      matches: [match, { ...match, campaignId: null, campaignName: null }],
+      createdAt: 1,
+    };
+    expect(signalSchema.safeParse(signal).success).toBe(true);
+    expect(signalSchema.safeParse({ ...signal, matches: [] }).success).toBe(true);
+    expect(
+      signalSchema.safeParse({ ...signal, matches: [{ ...match, personaId: "nope" }] }).success,
+    ).toBe(false);
+  });
+
+  it("automation settings gain a matchThreshold bounded 0-100", () => {
+    const settings = {
+      workspaceId: uuid,
+      killSwitch: false,
+      perConnectionDailyCap: 5,
+      perCampaignDailyCap: 10,
+      autoReplyEnabled: false,
+      matchThreshold: DEFAULT_MATCH_THRESHOLD,
+      updatedAt: 1,
+    };
+    expect(socialAutomationSettingsSchema.safeParse(settings).success).toBe(true);
+    expect(socialAutomationSettingsSchema.safeParse({ ...settings, matchThreshold: 101 }).success).toBe(
+      false,
+    );
+    expect(socialAutomationSettingsSchema.safeParse({ ...settings, matchThreshold: -1 }).success).toBe(
+      false,
+    );
+
+    expect(updateSocialAutomationSettingsInputSchema.safeParse({}).success).toBe(true);
+    expect(updateSocialAutomationSettingsInputSchema.safeParse({ matchThreshold: 0 }).success).toBe(true);
+    expect(updateSocialAutomationSettingsInputSchema.safeParse({ matchThreshold: 100 }).success).toBe(
+      true,
+    );
+    expect(updateSocialAutomationSettingsInputSchema.safeParse({ matchThreshold: 101 }).success).toBe(
+      false,
+    );
+    expect(updateSocialAutomationSettingsInputSchema.safeParse({ matchThreshold: -1 }).success).toBe(
+      false,
+    );
+    expect(updateSocialAutomationSettingsInputSchema.safeParse({ matchThreshold: 55.5 }).success).toBe(
+      false,
+    );
   });
 });
 
