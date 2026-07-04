@@ -1,10 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { personaSchema } from "@tuezday/contracts";
+import { personaSchema, type InboxItem } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
 import { ConnectorFabricError, type ConnectorFabric } from "../src/connectors/fabric";
 import type { Db } from "../src/db";
+import type { LlmGateway } from "../src/llm/gateway";
+import { generateEngagementReply } from "../src/services/engagement-reply";
 import { resolvePersonaSocialConnection } from "../src/services/persona-social-accounts";
 import { buildAuthedApp, createTestDb } from "./helpers";
+
+const fakeLlm: LlmGateway = {
+  async generate() {
+    return { text: "Generated text.", model: "fake", provider: "fake", durationMs: 5 };
+  },
+};
 
 interface FabricState {
   healthy: boolean;
@@ -50,7 +58,7 @@ describe("personas API", () => {
   beforeEach(async () => {
     db = createTestDb();
     state = { healthy: true, connections: new Map() };
-    app = await buildAuthedApp({ db, connectors: fakeFabric(state) });
+    app = await buildAuthedApp({ db, llm: fakeLlm, connectors: fakeFabric(state) });
     const res = await app.inject({
       method: "POST",
       url: "/workspaces",
@@ -100,6 +108,24 @@ describe("personas API", () => {
     });
     expect(res.statusCode).toBe(201);
     return res.json();
+  }
+
+  // A history doc big enough to land in outline mode (> ZOOM_SMALL_DOC_TOKENS),
+  // so Tier-3 zoom runs and the resolve output carries a zoomQuery.
+  async function seedLongHistory() {
+    const filler = "We shipped many things and learned from every launch we ran. ".repeat(30);
+    const content = [
+      "## Pricing experiment",
+      `We tested usage-based pricing with design partners. ${filler}`,
+      "## Agency churn",
+      `Agencies churn when onboarding drags past week two. ${filler}`,
+    ].join("\n\n");
+    const res = await app.inject({
+      method: "PUT",
+      url: `/workspaces/${workspaceId}/brain/history`,
+      payload: { content },
+    });
+    expect(res.statusCode).toBe(200);
   }
 
   it("creates a persona with defaults", async () => {
@@ -344,5 +370,224 @@ describe("personas API", () => {
     expect(explicit.ok).toBe(true);
     if (!explicit.ok) throw new Error(explicit.error);
     expect(explicit.connection.id).toBe(account.id);
+  });
+
+  describe("persona topics & structured drafting fields (Sprint 44)", () => {
+    it("defaults the new fields to empty", async () => {
+      const persona = await createPersona("Plain");
+      expect(persona).toMatchObject({ topics: [], tone: "", styleRules: "", avoid: "" });
+    });
+
+    it("round-trips topics/tone/styleRules/avoid through create, update, and list", async () => {
+      const created = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/personas`,
+          payload: {
+            name: "Field CTO",
+            topics: ["agentic coding", "evals"],
+            tone: "dry, technical",
+            styleRules: "Short sentences.\nNo emoji.",
+            avoid: "synergy",
+          },
+        })
+      ).json();
+      expect(created.topics).toEqual(["agentic coding", "evals"]);
+      expect(created.tone).toBe("dry, technical");
+
+      const updated = (
+        await app.inject({
+          method: "PUT",
+          url: `/workspaces/${workspaceId}/personas/${created.id}`,
+          payload: { name: "Field CTO", topics: ["context engineering"], avoid: "delve" },
+        })
+      ).json();
+      expect(updated.topics).toEqual(["context engineering"]);
+      expect(updated.avoid).toBe("delve");
+      expect(updated.tone).toBe(""); // full replace, like overlay
+
+      const listed = (
+        await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/personas` })
+      ).json();
+      expect(listed[0].topics).toEqual(["context engineering"]);
+    });
+
+    it("rejects more than 20 topics", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/personas`,
+        payload: { name: "Too many", topics: Array.from({ length: 21 }, (_, i) => `t${i}`) },
+      });
+      expect(res.statusCode).toBe(400);
+    });
+
+    it("renders labeled persona lines in the /resolve trace and feeds topics into the zoom query", async () => {
+      await seedLongHistory();
+      const persona = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/personas`,
+          payload: {
+            name: "Field CTO",
+            description: "Founder voice",
+            topics: ["usage-based pricing"],
+            tone: "dry, technical",
+            styleRules: "Short sentences.",
+            avoid: "synergy",
+          },
+        })
+      ).json();
+
+      const resolved = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/resolve`,
+          payload: { taskType: "linkedin_post", channel: "linkedin", personaId: persona.id },
+        })
+      ).json();
+
+      const section = resolved.sections.find((s: { key: string }) => s.key === "persona");
+      expect(section.content).toContain("Topics this persona covers: usage-based pricing");
+      expect(section.content).toContain("Tone: dry, technical");
+      expect(section.content).toContain("Style rules:\nShort sentences.");
+      expect(section.content).toContain("Never say / avoid:\nsynergy");
+      expect(resolved.zoomQuery).toContain("usage-based pricing");
+    });
+  });
+
+  describe("account content profile injection (Sprint 44)", () => {
+    async function boundPersonaAndConnection() {
+      const persona = await createPersona("CEO");
+      const connection = await connectSocial("linkedin", "nango-linkedin-profile");
+      await assign(persona.id, connection.id, "linkedin", true);
+      return { persona, connection };
+    }
+
+    function setProfile(connectionId: string, profile: { topics: string[]; guidance: string }) {
+      return app.inject({
+        method: "PUT",
+        url: `/workspaces/${workspaceId}/connections/${connectionId}/content-profile`,
+        payload: profile,
+      });
+    }
+
+    it("injects the account section into a draft when the bound connection has a profile", async () => {
+      const { persona, connection } = await boundPersonaAndConnection();
+      const saved = await setProfile(connection.id, {
+        topics: ["churn for agencies"],
+        guidance: "Plain-spoken. No hashtags.",
+      });
+      expect(saved.statusCode).toBe(200);
+      expect(saved.json().contentProfile).toEqual({
+        topics: ["churn for agencies"],
+        guidance: "Plain-spoken. No hashtags.",
+      });
+
+      const gen = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/generate`,
+          payload: { taskType: "linkedin_post", channel: "linkedin", personaId: persona.id },
+        })
+      ).json();
+
+      const keys = gen.sections.map((s: { key: string }) => s.key);
+      expect(keys.indexOf("account")).toBe(keys.indexOf("persona") + 1);
+      const account = gen.sections.find((s: { key: string }) => s.key === "account");
+      expect(account.content).toContain("Publishing as: LinkedIn on linkedin.");
+      expect(account.content).toContain("This account covers: churn for agencies");
+      expect(account.content).toContain("Account guidelines:\nPlain-spoken. No hashtags.");
+      expect(account.reason).toContain("Account content profile");
+
+      // The inspector shows what a generation sends: account topics feed Tier 3.
+      await seedLongHistory();
+      const resolved = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/resolve`,
+          payload: { taskType: "linkedin_post", channel: "linkedin", personaId: persona.id },
+        })
+      ).json();
+      expect(resolved.zoomQuery).toContain("churn for agencies");
+    });
+
+    it("omits the account section when the connection has no content profile", async () => {
+      const { persona } = await boundPersonaAndConnection();
+      const gen = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/generate`,
+          payload: { taskType: "linkedin_post", channel: "linkedin", personaId: persona.id },
+        })
+      ).json();
+      expect(gen.sections.some((s: { key: string }) => s.key === "account")).toBe(false);
+    });
+
+    it("an engagement reply takes its account from the inbox item's own connection", async () => {
+      const connection = await connectSocial("linkedin", "nango-linkedin-inbox");
+      await setProfile(connection.id, { topics: ["gtm memory"], guidance: "" });
+
+      const now = Date.now();
+      const item: InboxItem = {
+        id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        workspaceId,
+        connectionId: connection.id,
+        providerKey: "linkedin",
+        kind: "comment",
+        channel: "linkedin",
+        externalId: "ext-1",
+        parentExternalId: null,
+        publicationId: null,
+        launchMessageId: null,
+        authorHandle: "someone",
+        authorName: "Someone",
+        content: "How does this handle churn?",
+        url: null,
+        status: "unread",
+        replyDraftId: null,
+        postedReplyExternalId: null,
+        postedReplyUrl: null,
+        externalCreatedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const draft = await generateEngagementReply(
+        db,
+        fakeLlm,
+        {
+          async health() {
+            return { healthy: false, detail: "test" };
+          },
+          async createCollection() {
+            throw new Error("unavailable");
+          },
+          async addDocument() {
+            throw new Error("unavailable");
+          },
+          async attachDocument() {
+            throw new Error("unavailable");
+          },
+          async deleteDocument() {
+            throw new Error("unavailable");
+          },
+          async search() {
+            throw new Error("unavailable");
+          },
+        },
+        { id: workspaceId, name: "Personable" },
+        item,
+        {},
+        { userId: null, label: "test" },
+      );
+      expect(draft.taskType).toBe("engagement_reply");
+
+      const generations = (
+        await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/generations` })
+      ).json();
+      const reply = generations.find((g: { taskType: string }) => g.taskType === "engagement_reply");
+      const account = reply.sections.find((s: { key: string }) => s.key === "account");
+      expect(account.content).toContain("This account covers: gtm memory");
+    });
   });
 });

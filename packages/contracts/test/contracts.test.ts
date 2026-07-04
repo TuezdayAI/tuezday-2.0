@@ -26,6 +26,7 @@ import {
   CHANNEL_LABELS,
   GUIDANCE_SOURCES,
   channelGuidanceSchema,
+  guidanceOverrideSchema,
   updateGuidanceInputSchema,
   CONNECTOR_AUTH_MODES,
   CONNECTOR_CATEGORIES,
@@ -46,6 +47,14 @@ import {
   pushLeadInputSchema,
   OUTPUT_RATINGS,
   PERSONA_OVERLAY_MAX_CHARS,
+  PERSONA_TOPICS_MAX,
+  PERSONA_TOPIC_MAX_CHARS,
+  PERSONA_TONE_MAX_CHARS,
+  PERSONA_STYLE_RULES_MAX_CHARS,
+  PERSONA_AVOID_MAX_CHARS,
+  CONNECTION_GUIDANCE_MAX_CHARS,
+  connectionContentProfileSchema,
+  updateConnectionContentProfileInputSchema,
   personaSocialAccountSchema,
   PUBLICATION_STATUSES,
   publicationSchema,
@@ -68,6 +77,14 @@ import {
   outboundDraftRequestSchema,
   createSignalInputSchema,
   DISCOVERY_SOURCE_TYPES,
+  DISCOVERED_ITEM_STATUSES,
+  DEFAULT_MATCH_THRESHOLD,
+  DISCOVERY_MAX_MATCHES_PER_ITEM,
+  discoveredItemMatchSchema,
+  discoveredItemSchema,
+  signalSchema,
+  socialAutomationSettingsSchema,
+  updateSocialAutomationSettingsInputSchema,
   createWorkspaceInputSchema,
   generationSchema,
   generateRequestSchema,
@@ -216,6 +233,8 @@ describe("channel guidance (Sprint 21)", () => {
         channel: "linkedin",
         content: CHANNEL_GUIDANCE_DEFAULTS.linkedin,
         source: "default",
+        personaId: null,
+        campaignId: null,
         updatedAt: null,
       }).success,
     ).toBe(true);
@@ -224,6 +243,8 @@ describe("channel guidance (Sprint 21)", () => {
         channel: "linkedin",
         content: "Override.",
         source: "workspace",
+        personaId: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        campaignId: null,
         updatedAt: 1765400000000,
       }).success,
     ).toBe(true);
@@ -232,6 +253,8 @@ describe("channel guidance (Sprint 21)", () => {
         channel: "tiktok",
         content: "x",
         source: "workspace",
+        personaId: null,
+        campaignId: null,
         updatedAt: 1,
       }).success,
     ).toBe(false);
@@ -247,6 +270,34 @@ describe("channel guidance (Sprint 21)", () => {
 
   it("trims guidance content", () => {
     expect(updateGuidanceInputSchema.parse({ content: "  hello  " }).content).toBe("hello");
+  });
+
+  it("accepts an optional persona/campaign scope on updates (Sprint 44)", () => {
+    const personaId = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+    const campaignId = "7c9e6679-7425-40de-944b-e07fc1f90ae8";
+    expect(updateGuidanceInputSchema.parse({ content: "Scoped." })).toEqual({ content: "Scoped." });
+    expect(updateGuidanceInputSchema.parse({ content: "Scoped.", personaId }).personaId).toBe(personaId);
+    expect(
+      updateGuidanceInputSchema.parse({ content: "Scoped.", personaId, campaignId }).campaignId,
+    ).toBe(campaignId);
+    expect(updateGuidanceInputSchema.safeParse({ content: "Scoped.", personaId: "not-a-uuid" }).success).toBe(
+      false,
+    );
+  });
+
+  it("validates a scoped override row with joined names (Sprint 44)", () => {
+    expect(
+      guidanceOverrideSchema.safeParse({
+        id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        channel: "x",
+        content: "Consciousness account: first-person, no threads.",
+        personaId: "7c9e6679-7425-40de-944b-e07fc1f90ae8",
+        campaignId: null,
+        personaName: "Consciousness",
+        campaignName: null,
+        updatedAt: 1765400000000,
+      }).success,
+    ).toBe(true);
   });
 });
 
@@ -361,7 +412,15 @@ describe("PR & media outreach (Sprint 16)", () => {
 describe("upsertPersonaInputSchema", () => {
   it("accepts a persona and applies defaults", () => {
     const parsed = upsertPersonaInputSchema.parse({ name: "CEO" });
-    expect(parsed).toEqual({ name: "CEO", description: "", overlay: "" });
+    expect(parsed).toEqual({
+      name: "CEO",
+      description: "",
+      overlay: "",
+      topics: [],
+      tone: "",
+      styleRules: "",
+      avoid: "",
+    });
   });
 
   it("trims name and description", () => {
@@ -381,6 +440,47 @@ describe("upsertPersonaInputSchema", () => {
     const overlay = "x".repeat(PERSONA_OVERLAY_MAX_CHARS + 1);
     expect(upsertPersonaInputSchema.safeParse({ name: "CEO", overlay }).success).toBe(false);
   });
+
+  it("accepts topics + structured drafting fields within limits (Sprint 44)", () => {
+    const parsed = upsertPersonaInputSchema.parse({
+      name: "Field CTO",
+      topics: ["  agentic coding ", "evals"],
+      tone: "dry, technical",
+      styleRules: "- no emoji\n- one idea per post",
+      avoid: "synergy, game-changer",
+    });
+    expect(parsed.topics).toEqual(["agentic coding", "evals"]);
+    expect(parsed.tone).toBe("dry, technical");
+  });
+
+  it("rejects over-limit topics and drafting fields (Sprint 44)", () => {
+    expect(
+      upsertPersonaInputSchema.safeParse({
+        name: "CEO",
+        topics: Array.from({ length: PERSONA_TOPICS_MAX + 1 }, (_, i) => `t${i}`),
+      }).success,
+    ).toBe(false);
+    expect(
+      upsertPersonaInputSchema.safeParse({
+        name: "CEO",
+        topics: ["x".repeat(PERSONA_TOPIC_MAX_CHARS + 1)],
+      }).success,
+    ).toBe(false);
+    expect(
+      upsertPersonaInputSchema.safeParse({ name: "CEO", tone: "x".repeat(PERSONA_TONE_MAX_CHARS + 1) })
+        .success,
+    ).toBe(false);
+    expect(
+      upsertPersonaInputSchema.safeParse({
+        name: "CEO",
+        styleRules: "x".repeat(PERSONA_STYLE_RULES_MAX_CHARS + 1),
+      }).success,
+    ).toBe(false);
+    expect(
+      upsertPersonaInputSchema.safeParse({ name: "CEO", avoid: "x".repeat(PERSONA_AVOID_MAX_CHARS + 1) })
+        .success,
+    ).toBe(false);
+  });
 });
 
 it("parses connection identity metadata", () => {
@@ -391,6 +491,7 @@ it("parses connection identity metadata", () => {
       providerKey: "linkedin",
       nangoConnectionId: "nango-linkedin-a",
       config: {},
+      contentProfile: { topics: [], guidance: "" },
       displayName: "Founder LinkedIn",
       externalAccountId: "person-123",
       externalAccountName: "Founder Name",
@@ -403,6 +504,22 @@ it("parses connection identity metadata", () => {
       updatedAt: 1,
     }).displayName,
   ).toBe("Founder LinkedIn");
+});
+
+it("validates connection content profiles (Sprint 44)", () => {
+  expect(connectionContentProfileSchema.parse({})).toEqual({ topics: [], guidance: "" });
+  const parsed = updateConnectionContentProfileInputSchema.parse({
+    topics: [" AI ", "dev tools"],
+    guidance: "  Hot takes welcome; no corporate voice.  ",
+  });
+  expect(parsed.topics).toEqual(["AI", "dev tools"]);
+  expect(parsed.guidance).toBe("Hot takes welcome; no corporate voice.");
+  expect(
+    updateConnectionContentProfileInputSchema.safeParse({
+      topics: [],
+      guidance: "x".repeat(CONNECTION_GUIDANCE_MAX_CHARS + 1),
+    }).success,
+  ).toBe(false);
 });
 
 it("parses persona social account assignments", () => {
@@ -908,6 +1025,142 @@ describe("createDiscoverySourceInputSchema", () => {
       "capterra",
       "intent",
     ]);
+  });
+});
+
+describe("discovery routing contracts (Sprint 45)", () => {
+  const personaId = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+  const campaignId = "9b2c8a44-1d2e-4f5a-8b6c-7d8e9f0a1b2c";
+  const uuid = personaId;
+
+  const match = {
+    personaId,
+    personaName: "Field CTO",
+    campaignId,
+    campaignName: "Product Launch",
+    score: 82,
+    reason: "Directly about agentic coding benchmarks.",
+  };
+
+  const item = {
+    id: uuid,
+    workspaceId: uuid,
+    sourceId: uuid,
+    externalId: "ext-1",
+    title: "New agentic coding benchmark",
+    url: "https://example.com/a",
+    summary: "A benchmark drops.",
+    publishedAt: null,
+    score: 82,
+    suggestedPersonaId: personaId,
+    suggestedCampaignId: campaignId,
+    scoreReason: "fits",
+    status: "new",
+    signalId: null,
+    matches: [match],
+    duplicateOfId: null,
+    duplicateCount: 0,
+    createdAt: 1,
+  };
+
+  it("exposes the routing constants", () => {
+    expect(DEFAULT_MATCH_THRESHOLD).toBe(50);
+    expect(DISCOVERY_MAX_MATCHES_PER_ITEM).toBe(5);
+  });
+
+  it("round-trips a match, including a null persona or campaign side", () => {
+    expect(discoveredItemMatchSchema.parse(match)).toEqual(match);
+    const campaignOnly = { ...match, personaId: null, personaName: null };
+    expect(discoveredItemMatchSchema.parse(campaignOnly)).toEqual(campaignOnly);
+  });
+
+  it("bounds the match score to an integer 0-100", () => {
+    expect(discoveredItemMatchSchema.safeParse({ ...match, score: 0 }).success).toBe(true);
+    expect(discoveredItemMatchSchema.safeParse({ ...match, score: 100 }).success).toBe(true);
+    expect(discoveredItemMatchSchema.safeParse({ ...match, score: 101 }).success).toBe(false);
+    expect(discoveredItemMatchSchema.safeParse({ ...match, score: -1 }).success).toBe(false);
+    expect(discoveredItemMatchSchema.safeParse({ ...match, score: 82.5 }).success).toBe(false);
+  });
+
+  it("includes duplicate in the item status vocabulary", () => {
+    expect(DISCOVERED_ITEM_STATUSES).toEqual(["new", "accepted", "skipped", "duplicate"]);
+  });
+
+  it("discoveredItemSchema accepts matches and duplicate links", () => {
+    expect(discoveredItemSchema.safeParse(item).success).toBe(true);
+    // A canonical item corroborated by two sources.
+    expect(discoveredItemSchema.safeParse({ ...item, duplicateCount: 2 }).success).toBe(true);
+    // A duplicate row pointing at its canonical item, never scored.
+    expect(
+      discoveredItemSchema.safeParse({
+        ...item,
+        status: "duplicate",
+        duplicateOfId: campaignId,
+        matches: [],
+        score: null,
+        suggestedPersonaId: null,
+        suggestedCampaignId: null,
+        scoreReason: null,
+      }).success,
+    ).toBe(true);
+    expect(discoveredItemSchema.safeParse({ ...item, duplicateOfId: "not-a-uuid" }).success).toBe(false);
+    expect(discoveredItemSchema.safeParse({ ...item, duplicateCount: 1.5 }).success).toBe(false);
+    expect(discoveredItemSchema.safeParse({ ...item, matches: [{ ...match, score: 101 }] }).success).toBe(
+      false,
+    );
+  });
+
+  it("signalSchema carries the same match shape", () => {
+    const signal = {
+      id: uuid,
+      workspaceId: uuid,
+      content: "Saw a benchmark thread.",
+      source: "news",
+      sourceUrl: null,
+      suggestedPersonaId: null,
+      suggestedCampaignId: null,
+      matches: [match, { ...match, campaignId: null, campaignName: null }],
+      createdAt: 1,
+    };
+    expect(signalSchema.safeParse(signal).success).toBe(true);
+    expect(signalSchema.safeParse({ ...signal, matches: [] }).success).toBe(true);
+    expect(
+      signalSchema.safeParse({ ...signal, matches: [{ ...match, personaId: "nope" }] }).success,
+    ).toBe(false);
+  });
+
+  it("automation settings gain a matchThreshold bounded 0-100", () => {
+    const settings = {
+      workspaceId: uuid,
+      killSwitch: false,
+      perConnectionDailyCap: 5,
+      perCampaignDailyCap: 10,
+      autoReplyEnabled: false,
+      matchThreshold: DEFAULT_MATCH_THRESHOLD,
+      updatedAt: 1,
+    };
+    expect(socialAutomationSettingsSchema.safeParse(settings).success).toBe(true);
+    expect(socialAutomationSettingsSchema.safeParse({ ...settings, matchThreshold: 101 }).success).toBe(
+      false,
+    );
+    expect(socialAutomationSettingsSchema.safeParse({ ...settings, matchThreshold: -1 }).success).toBe(
+      false,
+    );
+
+    expect(updateSocialAutomationSettingsInputSchema.safeParse({}).success).toBe(true);
+    expect(updateSocialAutomationSettingsInputSchema.safeParse({ matchThreshold: 0 }).success).toBe(true);
+    expect(updateSocialAutomationSettingsInputSchema.safeParse({ matchThreshold: 100 }).success).toBe(
+      true,
+    );
+    expect(updateSocialAutomationSettingsInputSchema.safeParse({ matchThreshold: 101 }).success).toBe(
+      false,
+    );
+    expect(updateSocialAutomationSettingsInputSchema.safeParse({ matchThreshold: -1 }).success).toBe(
+      false,
+    );
+    expect(updateSocialAutomationSettingsInputSchema.safeParse({ matchThreshold: 55.5 }).success).toBe(
+      false,
+    );
   });
 });
 

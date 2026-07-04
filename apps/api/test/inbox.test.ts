@@ -267,6 +267,7 @@ describe("engagement & reply inbox", () => {
           perConnectionDailyCap: 10,
           perCampaignDailyCap: 5,
           autoReplyEnabled: true,
+          matchThreshold: 50,
           updatedAt: 0,
         }).success,
       ).toBe(true);

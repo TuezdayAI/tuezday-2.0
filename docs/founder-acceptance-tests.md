@@ -486,6 +486,39 @@ your voice and cleared through Review — without leaving Tuezday.
 
 **Gate:** more of the outside world flows in (HN, YouTube, podcasts, Trends, funding news — keyless and live); every discovered item is routed to a campaign + persona you accept in one click into a pre-filled draft; and the review-site / intent providers are real registered infrastructure waiting only on a key.
 
+## Sprint 43 — Resolver v2: Tiered Selective Context
+
+> Prereq: a workspace with all five brain docs filled. For the zoom checks, give **History** real
+> H2 sections (e.g. `## Pricing experiment`, `## Onboarding revamp`, each a paragraph or two) and
+> make ICP + History long enough to matter — ≥ ~600 tokens (~2,400 characters) each. Below that
+> the resolver includes small docs whole ("small enough to include whole") and outline mode won't
+> visibly engage.
+
+**Slice A — Outlines at save (Brain page)**
+
+- [ ] Open **Brain → History** (a doc with H2/H3 headings) → under the editor an **Outline** disclosure lists every heading with a one-line summary and per-section token count. With `GEMINI_API_KEY` set, summaries get an **AI summary** badge shortly after saving; without it, the first sentence of each section stands in.
+- [ ] Add a new `## heading` with a paragraph, **Save** → the outline updates to include it.
+- [ ] Every doc shows a **~N tokens** estimate under the editor. Paste >2,000 tokens (~8,000 chars) into **Soul** → an amber warning says it rides every prompt in full; **ICP/History** instead note that large is fine (they're outlined per task).
+
+**Slice B — Task × doc matrix (Context inspector)**
+
+- [ ] Open **Context inspector** → the **Task × doc context matrix** card shows all 13 task types × ICP/History, each cell a mode select (`full` / `outline` / `omit`) with the shipped reason underneath.
+- [ ] Change **Media pitch × ICP** to `omit` → the cell gains an **override** badge and a **reset** link; reset → back to the default, badge gone.
+
+**Slice C — Tiered resolve (Context inspector)**
+
+- [ ] Resolve **LinkedIn post** → soul/voice/now show **tier 1** full ("constitutional"); ICP and History show **tier 2 · outline** — expanding them shows heading bullets + summaries, not the full text; matching sections appear as separate **zoom** cards (tier 3) titled `Doc § Heading` with a rank + score; a **Zoom query** line shows exactly what was matched.
+- [ ] Attach a campaign whose objective names a History section's topic (e.g. "pricing") → resolve → that section is pulled in as a zoom card and History's trace reason counts how many sections zoomed in.
+- [ ] Resolve **Reply** (engagement_reply) → ICP and History are **excluded** with the matrix reason in the trace (omit by default: the conversation is the context).
+- [ ] Resolve **Media pitch** → History rides **full** (past coverage is the pitch's substance).
+
+**Slice D — Angle-first brief + end-to-end generation (Playground)**
+
+- [ ] With the angle step on, **Suggest angles** → the angle call runs on the cheap **brief** bundle: no zoom sections, no evidence, and matrix-`full` docs demoted to outline (reasons say "zoom off (brief mode)").
+- [ ] Draft from a chosen angle → the draft resolve's zoom query contains the angle text and pulls the sections it names; generation completes and the persisted **"How did Tuezday write this?"** trace shows the tier badges and zoom scores.
+
+**Gate:** the same brain resolves differently per task — constitutional docs always ride whole; ICP/History enter as full/outline/omit exactly as the editable matrix says; zoom pulls only the sections the task's query touches, with scores in the trace; the angle step runs on a visibly cheaper brief; and every inclusion/exclusion states its reason before any LLM sees the prompt.
+
 ---
 
 ### Persona social account routing
@@ -503,9 +536,96 @@ your voice and cleared through Review — without leaving Tuezday.
 
 ---
 
+## Sprint 44 — Scoped guidance & persona topics
+
+> Prereq: a workspace with at least one persona and one active campaign. For slice C, a persona
+> with a **primary** LinkedIn (or X) account assigned (Context inspector → Social account routing).
+
+**Slice A — Scoped guidance (Brain page)**
+
+- [ ] Open **Brain** → below Channel guidance a **Scoped guidance** card lists persona/campaign-scoped overrides (empty at first). Add LinkedIn guidance scoped to a persona → it appears with a persona badge; the workspace-level Channel guidance list above is unchanged.
+- [ ] The Save button stays disabled until a persona and/or campaign is picked — unscoped text lives in the card above.
+- [ ] **Playground:** generate a LinkedIn post **as that persona** → the trace's `channel` section shows the scoped text and its reason ends `scoped: persona "<name>"`. Generate without the persona → the workspace (or default) text is back.
+- [ ] Seed overlapping scopes (workspace + campaign + persona + persona+campaign for one channel) → drafts pick the most specific match: persona+campaign beats persona beats campaign beats workspace. (Automated: `guidance.test.ts` precedence suite; spot-check one pair via the trace.)
+- [ ] Delete the persona → its scoped rows disappear from the Scoped guidance card.
+
+**Slice B — Persona drafting fields (Context inspector)**
+
+- [ ] Edit a persona → four new fields: **topics** (comma-separated), **tone**, **style rules**, **never say / avoid**. Fill them, save → the persona card shows "covers …" with the topics.
+- [ ] **Resolve** with that persona → the persona section renders labeled lines (`Topics this persona covers: …`, `Tone: …`, `Style rules:`, `Never say / avoid:`) and — with a long, sectioned History doc — the **Zoom query** line contains the persona's topics, so topic-matching History sections zoom in.
+- [ ] A persona with only name/description/overlay renders exactly as before (no stray labels).
+
+**Slice C — Account content profiles (Connectors → drafts)**
+
+- [ ] Open **Integrations** → a connected social account has a **Content profile** disclosure (topics + guidelines). Save a profile → the summary line shows "covers …".
+- [ ] Generate a LinkedIn draft as a persona whose **primary** LinkedIn account has that profile → the trace gains an **account** section (badge `account`, right after `persona`): `Publishing as: <account> on linkedin.`, `This account covers: …`, `Account guidelines: …`.
+- [ ] Clear the profile (empty topics + guidance) → the account section disappears; drafting never fails because routing didn't resolve.
+- [ ] (Automated) An engagement reply drafts with the account section of the **inbox item's own connection** — covered by `personas.test.ts`.
+
+**Gate:** guidance lands exactly where the founder scoped it and the trace names the winning scope; personas carry topics/tone/rules that visibly shape both the prompt and the zoom; and every draft that will publish from a known account sees that account's profile before any LLM writes a word.
+
+---
+
+## Sprint 45 — Discovery routing that honors the match
+
+> Spec: `docs/specs/sprint-45-discovery-routing.md` (on the `sprint-45-discovery-routing` branch,
+> off sprint-44; merge order: main ← 43 ← 44 ← 45). Prereq: a working `GEMINI_API_KEY` (scoring is
+> an LLM call) and two active **automated** campaigns with distinct personas carrying distinct
+> Sprint-44 **topics** — e.g. Campaign A "Product Launch" (channel LinkedIn, mode
+> **Scheduled-auto**, persona "Field CTO", topics `agentic coding, evals`) and Campaign B
+> "Community" (channel X, mode **Human-in-the-loop**, persona "Community Lead", topics
+> `developer culture, memes`). Use **Run discovery now** / **Run automation now** instead of
+> waiting for worker ticks.
+
+**Slice A — Match-driven routing**
+
+- [ ] **One candidate, one chip.** Run discovery on a source carrying an article about an
+      agentic-coding benchmark (a Google News query on the topic works) → the triage item shows
+      **one** candidate chip — Campaign A + Field CTO, with its score and a reason. No Campaign B
+      chip: it didn't clear the threshold.
+- [ ] **Only the matched campaign drafts.** Accept the item → Automation → **Run automation now**
+      → **only** Campaign A gets a LinkedIn draft, already `approved` with the **Auto-approved**
+      badge (scheduled-auto), and the draft reads in the Field CTO voice — its resolve trace shows
+      the Sprint 44 persona topics + scoped guidance. Campaign B generated nothing this run.
+- [ ] **Two candidates, two pipelines.** Run discovery on a second article relevant to **both**
+      personas' topics → triage shows **two** candidate chips, each with its own score and reason.
+      Accept → **Run automation now** → Campaign A gets an auto-approved LinkedIn draft **and**
+      Campaign B gets an X draft sitting at `pending_review` (human-in-the-loop).
+
+**Slice B — Cross-source dedup**
+
+- [ ] Add a second source that carries the same story (e.g. an RSS feed alongside the Google News
+      query) → **Run discovery now** → triage does **not** show a second, unrelated-looking copy;
+      the original item shows a **"seen via 2 sources"** badge, expandable to list both sources
+      with their fetch dates.
+
+**Slice C — Manual signals, threshold, re-score**
+
+- [ ] **Manual signals auto-match.** Content → **New signal**, paste text squarely on one persona's
+      topics, leave persona and campaign **blank** → save → the signal carries the same candidate
+      match(es) a discovered item would, and the next **Run automation now** drafts only for the
+      matched campaign — no fan-out to every active campaign. Create another signal **with** a
+      persona/campaign picked → that explicit choice is the single score-100 match; no LLM
+      second-guessing.
+- [ ] **Threshold is a setting.** Automation → lower **Match threshold** from 50 to 30 → save →
+      on the next discovery/automation run, previously-below-threshold candidates start qualifying
+      (an item that showed one chip can now show two; a campaign that got nothing from a signal
+      can now draft from it).
+- [ ] **Re-score on config change.** Edit the Field CTO persona's **topics** → **Run discovery
+      now** → items still sitting untriaged (`new`) are re-scored against the new topics (their
+      chips and scores change); already-accepted signals keep the matches they were created with —
+      history doesn't rewrite itself.
+
+**Gate:** discovery's judgment drives distribution — a signal only reaches the campaigns it
+actually matched, written as the matched persona; the same story from two sources shows once with
+its corroboration visible; hand-created signals route like discovered ones; and the threshold and
+topics you edit change routing on the very next run.
+
+---
+
 ## Cross-cutting things worth re-checking occasionally
 
-- [ ] `npm test` (679 tests) and `npm run typecheck` stay green.
+- [ ] `npm test` (905 tests as of Sprint 45) and `npm run typecheck` stay green.
 - [ ] Every generation's prompt trace is readable *before* and *after* the LLM call (sandbox → "show prompt trace").
 - [ ] Stopping any external service (R2R, Nango) degrades gracefully — the app never breaks, traces/banners say why.
 - [ ] Gemini occasionally returns 503 "high demand" — a retry succeeds; it surfaces as a clean error, never a crash.

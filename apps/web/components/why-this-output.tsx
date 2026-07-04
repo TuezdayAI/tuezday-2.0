@@ -2,6 +2,23 @@ import { ContextSection } from "@tuezday/brain";
 import { GenerationReview } from "@tuezday/contracts";
 import { ReviewPanel } from "./ReviewPanel";
 
+/** Tier / matrix-mode / zoom badges for one resolved section (Sprint 43). */
+export function SectionBadges({ section }: { section: ContextSection }) {
+  return (
+    <>
+      {section.tier !== undefined && (
+        <span className="tier-badge">tier {section.tier}</span>
+      )}
+      {section.mode && <span className={`mode-badge mode-${section.mode}`}>{section.mode}</span>}
+      {section.zoom && (
+        <span className="zoom-score">
+          #{section.zoom.rank} · score {section.zoom.score.toFixed(2)}
+        </span>
+      )}
+    </>
+  );
+}
+
 export function EvidenceRetrieval({ section }: { section: ContextSection }) {
   if (!section.evidence) return null;
   const { query, chunks } = section.evidence;
@@ -35,6 +52,31 @@ export function EvidenceRetrieval({ section }: { section: ContextSection }) {
   );
 }
 
+/** Compact per-section trace: which tier admitted each section and why (Sprint 43). */
+export function ContextSectionsTrace({ sections }: { sections: ContextSection[] }) {
+  return (
+    <ul className="section-list" style={{ marginTop: 4 }}>
+      {sections.map((s) => (
+        <li
+          key={s.key}
+          className={`section-card ${s.included ? "" : "excluded"}`}
+          style={{ padding: 8 }}
+        >
+          <div className="section-head">
+            <span className={`layer-badge layer-${s.layer}`}>{s.layer}</span>
+            <SectionBadges section={s} />
+            <span className="section-title" style={{ fontSize: "0.85rem" }}>
+              {s.title}
+            </span>
+            <span className="section-tokens">{s.included ? `~${s.tokens} tok` : "excluded"}</span>
+          </div>
+          <p className="section-reason">{s.reason}</p>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 export function WhyThisOutput({
   sections,
   prompt,
@@ -53,6 +95,7 @@ export function WhyThisOutput({
       </summary>
       <div className="trace-content" style={{ marginTop: 8 }}>
         {review && <ReviewPanel review={review} />}
+        {sections && sections.length > 0 && <ContextSectionsTrace sections={sections} />}
         {sections
           ?.filter((s) => s.key === "evidence" && s.evidence)
           .map((s) => (

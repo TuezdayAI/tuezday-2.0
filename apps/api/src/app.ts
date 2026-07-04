@@ -26,6 +26,7 @@ import { registerBrainRoutes } from "./routes/brain";
 import { registerCadenceRoutes } from "./routes/cadences";
 import { registerCampaignRoutes } from "./routes/campaigns";
 import { registerConnectorRoutes } from "./routes/connectors";
+import { registerContextMatrixRoutes } from "./routes/context-matrix";
 import { registerCrmRoutes } from "./routes/crm";
 import { registerDiscoveryRoutes } from "./routes/discovery";
 import { registerDraftRoutes } from "./routes/drafts";
@@ -123,8 +124,9 @@ export async function buildApp({
   app.register(registerOnboardingRoutes(db));
   registerBillingRoutes(app, db);
   registerStripeWebhookRoute(app, db);
-  registerBrainRoutes(app, db);
+  registerBrainRoutes(app, db, llm);
   registerGuidanceRoutes(app, db);
+  registerContextMatrixRoutes(app, db);
   registerGenerationSettingsRoutes(app, db);
   registerPersonaRoutes(app, db, evidence);
   registerGenerationRoutes(app, db, llm, evidence, analytics);

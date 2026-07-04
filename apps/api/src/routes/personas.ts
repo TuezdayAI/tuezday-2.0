@@ -7,7 +7,8 @@ import {
 import { resolveContext, type BrainContents } from "@tuezday/brain";
 import type { Db } from "../db";
 import { getBrain } from "../services/brain";
-import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
+import { composeResolveCampaign, getCampaign } from "../services/campaigns";
+import { selectiveContextInputs } from "../services/resolve-input";
 import { retrieveEvidence } from "../services/evidence";
 import { resolveChannelGuidance } from "../services/guidance";
 import type { EvidenceStore } from "../evidence/store";
@@ -16,8 +17,10 @@ import {
   deletePersona,
   getPersona,
   listPersonas,
+  toResolvePersona,
   updatePersona,
 } from "../services/personas";
+import { resolveDraftAccount } from "../services/resolve-account";
 import {
   createPersonaSocialAccount,
   deletePersonaSocialAccount,
@@ -202,20 +205,28 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
 
     const { docs } = getBrain(db, request.params.id);
     const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
-    const channelGuidance = resolveChannelGuidance(db, request.params.id, parsed.data.channel);
+    const channelGuidance = resolveChannelGuidance(db, request.params.id, parsed.data.channel, {
+      personaId: parsed.data.personaId ?? null,
+      campaignId: parsed.data.campaignId ?? null,
+    });
 
     return resolveContext({
       workspaceName: workspace.name,
       docs: contents,
       taskType: parsed.data.taskType,
       channel: parsed.data.channel,
-      channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
-      persona: persona
-        ? { name: persona.name, description: persona.description, overlay: persona.overlay }
-        : undefined,
-      campaign: campaign
-        ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
-        : undefined,
+      channelGuidance: {
+        content: channelGuidance.content,
+        source: channelGuidance.source,
+        scope: channelGuidance.scopeLabel,
+      },
+      persona: persona ? toResolvePersona(persona) : undefined,
+      campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+      account: resolveDraftAccount(db, request.params.id, {
+        personaId: parsed.data.personaId,
+        channel: parsed.data.channel,
+      }),
+      ...selectiveContextInputs(db, request.params.id),
       evidence: evidenceResolution.evidence,
       evidenceExclusionReason: evidenceResolution.exclusionReason,
       tokenBudget: parsed.data.tokenBudget,

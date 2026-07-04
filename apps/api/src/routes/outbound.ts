@@ -15,7 +15,8 @@ import { drafts } from "../db/schema";
 import type { EvidenceStore } from "../evidence/store";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { getBrain } from "../services/brain";
-import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
+import { composeResolveCampaign, getCampaign } from "../services/campaigns";
+import { selectiveContextInputs } from "../services/resolve-input";
 import { submitDraft } from "../services/drafts";
 import { retrieveEvidence } from "../services/evidence";
 import { getGenerationSettings } from "../services/generation-settings";
@@ -30,7 +31,7 @@ import {
   listLeads,
   updateLead,
 } from "../services/leads";
-import { getPersona } from "../services/personas";
+import { getPersona, toResolvePersona } from "../services/personas";
 import { runPreReview, setGenerationReview } from "../services/review";
 import { getWorkspace } from "../services/workspaces";
 
@@ -151,7 +152,11 @@ export function registerOutboundRoutes(
       parsed.data.useEvidence ?? true,
     );
 
-    const channelGuidance = resolveChannelGuidance(db, request.params.id, "email");
+    const channelGuidance = resolveChannelGuidance(db, request.params.id, "email", {
+      personaId: parsed.data.personaId ?? null,
+      campaignId: parsed.data.campaignId ?? null,
+    });
+    const selective = selectiveContextInputs(db, request.params.id);
     const results = [];
     for (const lead of leadRecords) {
       const resolved = resolveContext({
@@ -159,14 +164,15 @@ export function registerOutboundRoutes(
         docs: contents,
         taskType: "outbound_email",
         channel: "email",
-        channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
-        persona: persona
-          ? { name: persona.name, description: persona.description, overlay: persona.overlay }
-          : undefined,
-        campaign: campaign
-          ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
-          : undefined,
+        channelGuidance: {
+          content: channelGuidance.content,
+          source: channelGuidance.source,
+          scope: channelGuidance.scopeLabel,
+        },
+        persona: persona ? toResolvePersona(persona) : undefined,
+        campaign: campaign ? composeResolveCampaign(campaign) : undefined,
         lead: { name: lead.name, company: lead.company, role: lead.role, notes: lead.notes },
+        ...selective,
         evidence: evidenceResolution.evidence,
         evidenceExclusionReason: evidenceResolution.exclusionReason,
         tokenBudget: parsed.data.tokenBudget,
@@ -197,12 +203,10 @@ export function registerOutboundRoutes(
               docs: contents,
               taskType: "outbound_email",
               channel: "email",
-              persona: persona
-                ? { name: persona.name, description: persona.description, overlay: persona.overlay }
-                : undefined,
-              campaign: campaign
-                ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
-                : undefined,
+              channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
+              persona: persona ? toResolvePersona(persona) : undefined,
+              campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+              ...selective,
             },
             result.text,
             settings.flagThreshold,

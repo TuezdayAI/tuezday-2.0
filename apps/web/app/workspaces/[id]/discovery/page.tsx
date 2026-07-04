@@ -46,6 +46,14 @@ interface RunSummary {
   scored: number;
 }
 
+// Shape of GET /workspaces/:id/discovery/items/:itemId/duplicates (Sprint 45).
+interface DuplicateRef {
+  id: string;
+  sourceId: string;
+  sourceName: string;
+  createdAt: number;
+}
+
 export default function DiscoveryPage() {
   const { id } = useParams<{ id: string }>();
 
@@ -71,6 +79,10 @@ export default function DiscoveryPage() {
   const [suggesting, setSuggesting] = useState(false);
   const [proposals, setProposals] = useState<SourceProposal[] | null>(null);
   const [busy, setBusy] = useState(false);
+
+  // "seen via N sources" expansion (Sprint 45 cross-source dedup)
+  const [dupesOpen, setDupesOpen] = useState<Record<string, boolean>>({});
+  const [dupes, setDupes] = useState<Record<string, DuplicateRef[]>>({});
 
   const load = useCallback(async () => {
     try {
@@ -213,6 +225,23 @@ export default function DiscoveryPage() {
     }
   }
 
+  async function toggleDuplicates(itemId: string) {
+    if (dupesOpen[itemId]) {
+      setDupesOpen((o) => ({ ...o, [itemId]: false }));
+      return;
+    }
+    try {
+      const res = await apiFetch(`/workspaces/${id}/discovery/items/${itemId}/duplicates`);
+      if (res.ok) {
+        const body = (await res.json()) as DuplicateRef[];
+        setDupes((d) => ({ ...d, [itemId]: body }));
+      }
+    } catch {
+      // best-effort: the expansion just shows nothing if the fetch fails
+    }
+    setDupesOpen((o) => ({ ...o, [itemId]: true }));
+  }
+
   function personaName(pid: string | null): string | null {
     if (!pid) return null;
     return personas.find((p) => p.id === pid)?.name ?? null;
@@ -221,6 +250,10 @@ export default function DiscoveryPage() {
   function campaignName(cid: string | null): string | null {
     if (!cid) return null;
     return campaigns.find((c) => c.id === cid)?.name ?? null;
+  }
+
+  function sourceName(sid: string): string {
+    return sources.find((s) => s.id === sid)?.name ?? "unknown source";
   }
 
   if (error && !workspace) {
@@ -454,24 +487,69 @@ export default function DiscoveryPage() {
                         {item.title}
                       </a>
                     </span>
+                    {item.duplicateCount > 0 && (
+                      <span
+                        className="layer-badge layer-zoom"
+                        role="button"
+                        style={{ cursor: "pointer" }}
+                        title="The same story arrived from more than one source — click to see which"
+                        onClick={() => void toggleDuplicates(item.id)}
+                      >
+                        seen via {item.duplicateCount + 1} sources{" "}
+                        {dupesOpen[item.id] ? "▾" : "▸"}
+                      </span>
+                    )}
                     <span className="section-tokens">
                       {item.publishedAt ? new Date(item.publishedAt).toLocaleDateString() : ""}
                     </span>
                   </div>
                   {item.summary && <p className="section-reason">{item.summary.slice(0, 280)}</p>}
-                  <p className="section-reason">
-                    {persona && (
-                      <span className="layer-badge layer-persona" style={{ marginRight: 6 }}>
-                        → {persona}
-                      </span>
-                    )}
-                    {campaign && (
-                      <span className="layer-badge layer-campaign" style={{ marginRight: 6 }}>
-                        ◆ {campaign}
-                      </span>
-                    )}
-                    {item.scoreReason ?? ""}
-                  </p>
+                  {item.matches.length > 0 ? (
+                    <p className="section-reason">
+                      {item.matches.map((m, i) => (
+                        <span
+                          key={i}
+                          className={`layer-badge ${
+                            m.score >= 70 ? "state-approved" : m.score >= 40 ? "state-edited" : ""
+                          }`}
+                          style={{ marginRight: 6, cursor: "help" }}
+                          title={m.reason || "No reason given"}
+                        >
+                          {m.personaName ? `→ ${m.personaName} · ` : ""}
+                          {m.campaignName ? `◆ ${m.campaignName} · ` : ""}
+                          {m.score}/100
+                        </span>
+                      ))}
+                      {item.scoreReason ?? ""}
+                    </p>
+                  ) : (
+                    <p className="section-reason">
+                      {persona && (
+                        <span className="layer-badge layer-persona" style={{ marginRight: 6 }}>
+                          → {persona}
+                        </span>
+                      )}
+                      {campaign && (
+                        <span className="layer-badge layer-campaign" style={{ marginRight: 6 }}>
+                          ◆ {campaign}
+                        </span>
+                      )}
+                      {item.scoreReason ?? ""}
+                    </p>
+                  )}
+                  {dupesOpen[item.id] && (
+                    <div style={{ marginTop: 6 }}>
+                      <p className="section-reason" style={{ margin: "2px 0" }}>
+                        ⧉ {sourceName(item.sourceId)} — fetched{" "}
+                        {new Date(item.createdAt).toLocaleString()}
+                      </p>
+                      {(dupes[item.id] ?? []).map((d) => (
+                        <p key={d.id} className="section-reason" style={{ margin: "2px 0" }}>
+                          ⧉ {d.sourceName} — fetched {new Date(d.createdAt).toLocaleString()}
+                        </p>
+                      ))}
+                    </div>
+                  )}
                   <div className="rating-row" style={{ marginTop: 8 }}>
                     <button
                       className="button-secondary rating-accepted"

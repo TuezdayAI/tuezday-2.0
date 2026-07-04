@@ -234,6 +234,46 @@ Small, high-leverage slices that sharpen every downstream module and clear the f
 
 ---
 
+## Phase G — Context depth & discovery routing  *(inserted 2026-07-02, from `docs/plans/context-discovery-gap-assessment.md`)*
+
+> Numbering note: 41/42 were already reserved by Phase F, so these are 43–47. Sprint number ≠
+> execution order — Phase G addresses the verified context/discovery gaps and can run before 41/42.
+> Internal order: 43 → 44 → 45 → 46; 47 is independent (schedule on the R2R exit triggers).
+
+### Sprint 43 — Resolver v2: tiered selective context  *(Gap 1)*  — built (branch `sprint-43-resolver-v2-selective-context`)
+- **Goal:** Stop shipping the whole brain in every prompt — selective, deterministic, fully traced context per task.
+- **Builds on:** Sprints 2–4 (brain/resolver), 21 (guidance), 22 (angle-first).
+- **Scope:** H2/H3 section parser (stable IDs) + save-time outline summaries (LLM with deterministic fallback); three tiers — constitutional docs always full, an editable taskType×{icp,history} matrix (contracts defaults + workspace overrides), BM25 map-then-zoom against a composed query (no embeddings, no new infra); angle-first wired as the brief; stable-prefix ordering; real budget enforcement (demote-to-outline ladder); matrix editor + outline preview + tier/zoom trace in the UI.
+- **Founder acceptance:** `docs/founder-acceptance-tests.md` § Sprint 43.
+- **Size:** L.
+
+### Sprint 44 — Scoped guidance & persona topics  *(Gap 2)*  — built (branch `sprint-44-scoped-guidance-persona-topics`, off sprint-43; merge order: main ← 43 ← 44)
+- **Goal:** Configuration depth — guidance and topics that live where the founder thinks about them.
+- **Builds on:** Sprint 21 (guidance table), Sprint 43 (tier-1 keyed lookups).
+- **Scope:** Guidance scoped workspace × channel × optional persona × optional campaign (most-specific-wins, with trace); persona topics/themes + structured drafting fields; per-connection content profile injected at draft time as a tier-1 `account` section (publish-time routing reused at draft time; engagement replies use the inbox item's own connection). Prerequisite for 45; feeds discovery matching.
+- **Founder acceptance:** `docs/founder-acceptance-tests.md` § Sprint 44.
+- **Size:** M.
+
+### Sprint 45 — Discovery routing that honors the match  *(Gap 3)*  — built 2026-07-03 (branch `sprint-45-discovery-routing`, off sprint-44; merge order: main ← 43 ← 44 ← 45)
+- **Goal:** Stop throwing away the campaign/persona match discovery already computes.
+- **Builds on:** Sprint 31 (auto-mapping), Sprint 44 (topics to match against).
+- **Scope:** Multi-candidate scoring (an item can clear threshold for several persona×campaign×channel pipelines); `runAutomation` consumes the mapping (kills deferred #11) and passes persona; re-score on config change; per-pipeline uniqueness + cross-source dedup (URL/content hash).
+- **Size:** M.
+
+### Sprint 46 — Connected-account & competitor sourcing
+- **Goal:** Discovery reads through the workspace's own OAuth connections instead of keyless feeds only.
+- **Builds on:** Sprint 25 (social OAuth), Sprint 45 (routing).
+- **Scope:** `discovery_sources.connectionId` (X, LinkedIn, authenticated Reddit via Nango); competitor-handle tracking; Instagram; queue/back-pressure (deferred #8).
+- **Size:** M–L.
+
+### Sprint 47 — Own the evidence store  *(R2R exit)*
+- **Goal:** Replace the R2R Docker stack with a native store behind the existing `EvidenceStore` seam.
+- **Builds on:** Sprint 9 (evidence), Sprint 32 (RAG hardening). Independent of 43–46.
+- **Scope:** `DbEvidenceStore` (FTS5 + sqlite-vec + RRF); gateway `embed()`; golden-query parity vs R2R; cutover + retire the Docker dependency. Also unlocks hybrid zoom ranking (deferred #22).
+- **Size:** L.
+
+---
+
 ## Continuous tracks (run alongside, founder-prioritized — not numbered sprints)
 
 - **Integration expansion**  *(U8)* — extends Sprints 12–13: more CRM adapters behind `CrmAdapter` (HubSpot, Pipedrive, Salesforce), more ad platforms behind the Sprint 14 metric model, more social behind the Sprint 17 publish contract, plus a **lead-enrichment provider** behind a `LeadEnricher` boundary (research Tier-2 #7). Each is a uniform add, no special-casing.
@@ -272,6 +312,10 @@ Small, high-leverage slices that sharpen every downstream module and clear the f
 | Analytics surface (native) | A6 | 34 |
 | Account-health monitoring | A6 | folded into 28/29 (connection health) |
 | Recurring-cadence scheduling + calendar | A6 | 27 |
+| Selective brain context (Brain Index) | Gap assessment 2026-07-02, Gap 1 | 43 |
+| Persona/campaign/channel config depth | Gap assessment 2026-07-02, Gap 2 | 44 |
+| Discovery routing honors the match | Gap assessment 2026-07-02, Gap 3 | 45 + 46 |
+| R2R exit (own the evidence store) | Gap assessment 2026-07-02 | 47 |
 
 ---
 

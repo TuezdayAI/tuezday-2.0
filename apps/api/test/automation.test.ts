@@ -12,6 +12,7 @@ import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric"
 import type { Db } from "../src/db";
 import type { LlmGateway } from "../src/llm/gateway";
 import { applyDraftAction, listDecisions, listDrafts, submitDraft } from "../src/services/drafts";
+import { insertSignalMatch } from "../src/services/matching";
 import { buildAuthedApp, createTestDb } from "./helpers";
 
 const fakeLlm: LlmGateway = {
@@ -113,12 +114,26 @@ describe("social automation", () => {
     return complete.json().id;
   }
 
-  async function createCampaign(channels: string[] = ["linkedin"], name = "Launch"): Promise<string> {
+  async function createCampaign(
+    channels: string[] = ["linkedin"],
+    name = "Launch",
+    personaIds: string[] = [],
+  ): Promise<string> {
     const res = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/campaigns`,
-      payload: { name, channels },
+      payload: { name, channels, personaIds },
     });
+    return res.json().id;
+  }
+
+  async function createPersona(name = "Field CTO"): Promise<string> {
+    const res = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/personas`,
+      payload: { name },
+    });
+    expect(res.statusCode).toBe(201);
     return res.json().id;
   }
 
@@ -138,6 +153,20 @@ describe("social automation", () => {
     });
     expect(res.statusCode).toBe(201);
     return res.json().id;
+  }
+
+  /** Seed a signal→campaign match directly (Sprint 45 routing reads these). */
+  function seedMatch(
+    signalId: string,
+    campaignId: string,
+    opts: { personaId?: string | null; score?: number } = {},
+  ): void {
+    insertSignalMatch(db, workspaceId, signalId, {
+      personaId: opts.personaId ?? null,
+      campaignId,
+      score: opts.score ?? 80,
+      reason: "test match",
+    });
   }
 
   async function run() {
@@ -193,6 +222,7 @@ describe("social automation", () => {
           perConnectionDailyCap: 10,
           perCampaignDailyCap: 5,
           autoReplyEnabled: false,
+          matchThreshold: 50,
           updatedAt: 0,
         }).success,
       ).toBe(true);
@@ -234,16 +264,26 @@ describe("social automation", () => {
       const initial = (
         await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/automation/settings` })
       ).json();
-      expect(initial).toMatchObject({ killSwitch: false, perConnectionDailyCap: 10, perCampaignDailyCap: 5 });
+      expect(initial).toMatchObject({
+        killSwitch: false,
+        perConnectionDailyCap: 10,
+        perCampaignDailyCap: 5,
+        matchThreshold: 50,
+      });
 
       const updated = (
         await app.inject({
           method: "PATCH",
           url: `/workspaces/${workspaceId}/automation/settings`,
-          payload: { killSwitch: true, perConnectionDailyCap: 3, perCampaignDailyCap: 2 },
+          payload: { killSwitch: true, perConnectionDailyCap: 3, perCampaignDailyCap: 2, matchThreshold: 40 },
         })
       ).json();
-      expect(updated).toMatchObject({ killSwitch: true, perConnectionDailyCap: 3, perCampaignDailyCap: 2 });
+      expect(updated).toMatchObject({
+        killSwitch: true,
+        perConnectionDailyCap: 3,
+        perCampaignDailyCap: 2,
+        matchThreshold: 40,
+      });
 
       const bad = await app.inject({
         method: "PATCH",
@@ -251,6 +291,13 @@ describe("social automation", () => {
         payload: { perCampaignDailyCap: 0 },
       });
       expect(bad.statusCode).toBe(400);
+
+      const badThreshold = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/automation/settings`,
+        payload: { matchThreshold: 101 },
+      });
+      expect(badThreshold.statusCode).toBe(400);
     });
   });
 
@@ -270,6 +317,7 @@ describe("social automation", () => {
     const id = await createCampaign(["linkedin", "x"]);
     await setAutomation(id, "human_in_the_loop");
     const signalId = await createSignal();
+    seedMatch(signalId, id);
 
     const first = await run();
     expect(first.results[0]).toMatchObject({ mode: "human_in_the_loop", generated: 2, autoApproved: 0 });
@@ -284,8 +332,9 @@ describe("social automation", () => {
     expect(second.results[0].generated).toBe(0);
     expect(listDrafts(db, workspaceId)).toHaveLength(2);
 
-    // A new signal fans out again.
-    await createSignal("Another market signal");
+    // A new matched signal fans out again.
+    const secondSignal = await createSignal("Another market signal");
+    seedMatch(secondSignal, id);
     await run();
     expect(listDrafts(db, workspaceId)).toHaveLength(4);
   });
@@ -294,7 +343,8 @@ describe("social automation", () => {
     const connectionId = await connectReddit();
     const campaignId = await createCampaign(["linkedin"]);
     await setAutomation(campaignId, "scheduled_auto");
-    await createSignal();
+    const signalId = await createSignal();
+    seedMatch(signalId, campaignId);
 
     const result = await run();
     expect(result.results[0]).toMatchObject({ mode: "scheduled_auto", generated: 1, autoApproved: 1 });
@@ -318,6 +368,100 @@ describe("social automation", () => {
     const published = await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
     expect(published.json().results.filter((r: { ok: boolean }) => r.ok)).toHaveLength(1);
     expect(state.posts).toHaveLength(1);
+  });
+
+  // --- Match-driven routing (Sprint 45) ---------------------------------------
+
+  describe("match-driven routing", () => {
+    it("routes a signal only to the campaign it matched, as the match's persona", async () => {
+      const personaId = await createPersona("Field CTO");
+      const campaignA = await createCampaign(["linkedin"], "Product Launch", [personaId]);
+      const campaignB = await createCampaign(["x"], "Community");
+      await setAutomation(campaignA, "human_in_the_loop");
+      await setAutomation(campaignB, "human_in_the_loop");
+      const signalId = await createSignal("Agentic coding benchmark released");
+      seedMatch(signalId, campaignA, { personaId, score: 80 });
+
+      const result = await run();
+      const rowA = result.results.find((r: { campaignId: string }) => r.campaignId === campaignA);
+      const rowB = result.results.find((r: { campaignId: string }) => r.campaignId === campaignB);
+      expect(rowA).toMatchObject({ generated: 1, autoApproved: 0, skipped: 0, blocked: null });
+      // The unmatched campaign generates nothing but still reports a result row.
+      expect(rowB).toMatchObject({ generated: 0, autoApproved: 0, skipped: 0, blocked: null });
+
+      const drafts = listDrafts(db, workspaceId);
+      expect(drafts).toHaveLength(1);
+      expect(drafts[0]).toMatchObject({
+        campaignId: campaignA,
+        channel: "linkedin",
+        personaId,
+        sourceSignalId: signalId,
+      });
+
+      // Re-running with the same match set adds nothing (hasDraftFor idempotency).
+      const again = await run();
+      expect(again.results.every((r: { generated: number }) => r.generated === 0)).toBe(true);
+      expect(listDrafts(db, workspaceId)).toHaveLength(1);
+    });
+
+    it("a signal matching two campaigns generates for both, each as its own persona", async () => {
+      const personaA = await createPersona("Field CTO");
+      const personaB = await createPersona("Community Lead");
+      const campaignA = await createCampaign(["linkedin"], "Product Launch", [personaA]);
+      const campaignB = await createCampaign(["x"], "Community", [personaB]);
+      await setAutomation(campaignA, "human_in_the_loop");
+      await setAutomation(campaignB, "human_in_the_loop");
+      const signalId = await createSignal("Relevant to both pipelines");
+      seedMatch(signalId, campaignA, { personaId: personaA, score: 80 });
+      seedMatch(signalId, campaignB, { personaId: personaB, score: 70 });
+
+      const result = await run();
+      const rowA = result.results.find((r: { campaignId: string }) => r.campaignId === campaignA);
+      const rowB = result.results.find((r: { campaignId: string }) => r.campaignId === campaignB);
+      expect(rowA).toMatchObject({ generated: 1 });
+      expect(rowB).toMatchObject({ generated: 1 });
+
+      const drafts = listDrafts(db, workspaceId);
+      expect(drafts).toHaveLength(2);
+      const byCampaign = new Map(drafts.map((d) => [d.campaignId, d]));
+      expect(byCampaign.get(campaignA)?.personaId).toBe(personaA);
+      expect(byCampaign.get(campaignB)?.personaId).toBe(personaB);
+    });
+
+    it("a below-threshold match generates nothing until the threshold is lowered", async () => {
+      const campaignId = await createCampaign(["linkedin"]);
+      await setAutomation(campaignId, "human_in_the_loop");
+      const signalId = await createSignal();
+      seedMatch(signalId, campaignId, { score: 30 }); // below the default threshold of 50
+
+      const first = await run();
+      expect(first.results[0]).toMatchObject({ generated: 0, autoApproved: 0, skipped: 0, blocked: null });
+      expect(listDrafts(db, workspaceId)).toHaveLength(0);
+
+      const patched = (
+        await app.inject({
+          method: "PATCH",
+          url: `/workspaces/${workspaceId}/automation/settings`,
+          payload: { matchThreshold: 30 },
+        })
+      ).json();
+      expect(patched.matchThreshold).toBe(30);
+
+      // 30 >= 30 — the threshold is inclusive, so the match now qualifies.
+      const second = await run();
+      expect(second.results[0].generated).toBe(1);
+      expect(listDrafts(db, workspaceId)).toHaveLength(1);
+    });
+
+    it("a signal with no matches at all generates nothing", async () => {
+      const campaignId = await createCampaign(["linkedin"]);
+      await setAutomation(campaignId, "human_in_the_loop");
+      await createSignal("Unrouted noise");
+
+      const result = await run();
+      expect(result.results[0]).toMatchObject({ generated: 0, autoApproved: 0, skipped: 0, blocked: null });
+      expect(listDrafts(db, workspaceId)).toHaveLength(0);
+    });
   });
 
   // --- Guardrails -----------------------------------------------------------

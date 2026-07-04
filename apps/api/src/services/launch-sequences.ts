@@ -37,12 +37,15 @@ import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { getAudienceDetail, loadPeople } from "./audiences";
 import { getSocialAutomationSettings, utcDayBounds } from "./automation";
 import { getBrain } from "./brain";
-import { composeCampaignOverlay, getCampaign } from "./campaigns";
+import { composeResolveCampaign, getCampaign } from "./campaigns";
+import { resolveChannelGuidance } from "./guidance";
+import { selectiveContextInputs } from "./resolve-input";
 import { listConnections, providerByKey } from "./connections";
 import { applyDraftAction, submitDraft, type DraftActor } from "./drafts";
 import { retrieveEvidence } from "./evidence";
 import { storeGeneration } from "./generations";
-import { getPersona } from "./personas";
+import { getPersona, toResolvePersona } from "./personas";
+import { resolveDraftAccount } from "./resolve-account";
 import { getWorkspace } from "./workspaces";
 
 type Fetcher = typeof fetch;
@@ -333,12 +336,8 @@ async function generateStepMessage(
   const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
   const campaign = launch.campaignId ? getCampaign(ctx.db, launch.workspaceId, launch.campaignId) : undefined;
   const persona = launch.personaId ? getPersona(ctx.db, launch.workspaceId, launch.personaId) : undefined;
-  const personaArg = persona
-    ? { name: persona.name, description: persona.description, overlay: persona.overlay }
-    : undefined;
-  const campaignArg = campaign
-    ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
-    : undefined;
+  const personaArg = persona ? toResolvePersona(persona) : undefined;
+  const campaignArg = campaign ? composeResolveCampaign(campaign) : undefined;
   const person = ctx.pool.get(`${recipient.recipientType}:${recipient.recipientId}`);
 
   const useFollowup = step.stepNumber > 1 || step.instruction.trim().length > 0;
@@ -391,19 +390,36 @@ async function generateStepMessage(
   };
 
   try {
+    // Sprint 43: pass the workspace's channel guidance — this path previously
+    // fell back to the built-in default even when an override existed.
+    // Sprint 44: scoped to the launch's persona/campaign, most-specific-wins.
+    const channelGuidance = resolveChannelGuidance(ctx.db, launch.workspaceId, gen.channel, {
+      personaId: launch.personaId,
+      campaignId: launch.campaignId,
+    });
     const resolved = resolveContext({
       workspaceName: workspace.name,
       docs: contents,
       taskType: gen.taskType,
       channel: gen.channel,
+      channelGuidance: {
+        content: channelGuidance.content,
+        source: channelGuidance.source,
+        scope: channelGuidance.scopeLabel,
+      },
       persona: personaArg,
       campaign: campaignArg,
+      account: resolveDraftAccount(ctx.db, launch.workspaceId, {
+        personaId: launch.personaId,
+        channel: gen.channel,
+      }),
       lead: {
         name: recipient.recipientName,
         company: person?.company ?? "",
         role: person?.role ?? "",
         notes: "",
       },
+      ...selectiveContextInputs(ctx.db, launch.workspaceId),
       evidence: evidenceResolution.evidence,
       evidenceExclusionReason: evidenceResolution.exclusionReason,
       taskInstruction,
