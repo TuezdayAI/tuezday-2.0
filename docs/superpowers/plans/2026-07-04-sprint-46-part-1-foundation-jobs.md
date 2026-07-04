@@ -1,4 +1,4 @@
-# Sprint 46 Part 1 - Foundation & Discovery Job Ledger Implementation Plan
+﻿# Sprint 46 Part 1 - Foundation & Discovery Job Ledger Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -45,68 +45,68 @@
 
 ### Task 1: Contracts For Source Modes And Job Status
 
-- [ ] Add `DISCOVERY_SOURCE_MODES = ["query", "account_timeline", "list_timeline", "subreddit", "hashtag"]`.
-- [ ] Add `DISCOVERY_JOB_STATUSES = ["queued", "running", "succeeded", "failed", "skipped"]`.
-- [ ] Extend `discoverySourceConfigSchema` with `mode`, `handle`, `handles`, `listId`, `hashtag`, `trackedAccountId`, `trackedAccountIds`.
-- [ ] Extend `discoverySourceSchema` with `connectionId`, `cursor`, `backoffUntil`, `lastAttemptedAt`.
-- [ ] Add `discoveryJobSchema`.
-- [ ] Add tests that parse:
+- [x] Add `DISCOVERY_SOURCE_MODES = ["query", "account_timeline", "list_timeline", "subreddit", "hashtag"]`.
+- [x] Add `DISCOVERY_JOB_STATUSES = ["queued", "running", "succeeded", "failed", "skipped"]`.
+- [x] Extend `discoverySourceConfigSchema` with `mode`, `handle`, `handles`, `listId`, `hashtag`, `trackedAccountId`, `trackedAccountIds`.
+- [x] Extend `discoverySourceSchema` with `connectionId`, `cursor`, `backoffUntil`, `lastAttemptedAt`.
+- [x] Add `discoveryJobSchema`.
+- [x] Add tests that parse:
   - keyless RSS source with `connectionId: null`;
   - X source config with `mode: "query"`;
   - queued/running/succeeded job rows.
-- [ ] Run `npm test -- contracts`.
-- [ ] Commit: `feat(contracts): add connected discovery source and job contracts`.
+- [x] Run `npm test -- contracts`.
+- [x] Commit: `feat(contracts): add connected discovery source and job contracts`.
 
 ### Task 2: Schema And Migration
 
-- [ ] Add nullable columns on `discoverySources`: `connectionId`, `cursorJson`, `backoffUntil`, `lastAttemptedAt`.
-- [ ] Add `discoveryJobs` table with workspace/source/status/attempt/lock/timing/count/error columns.
-- [ ] Add indexes on `(workspaceId, status, createdAt)` and `(sourceId, status)`.
-- [ ] Run `npm run db:generate -w apps/api`.
-- [ ] Run `npm test -w @tuezday/api -- discovery`.
-- [ ] Commit: `feat(api): add discovery job ledger schema`.
+- [x] Add nullable columns on `discoverySources`: `connectionId`, `cursorJson`, `backoffUntil`, `lastAttemptedAt`.
+- [x] Add `discoveryJobs` table with workspace/source/status/attempt/lock/timing/count/error columns.
+- [x] Add indexes on `(workspaceId, status, createdAt)` and `(sourceId, status)`.
+- [x] Run `npm run db:generate -w apps/api`.
+- [x] Run `npm test -w @tuezday/api -- discovery`.
+- [x] Commit: `feat(api): add discovery job ledger schema`.
 
 ### Task 3: Job Helper Service
 
-- [ ] Create `apps/api/src/services/discovery-jobs.ts`.
-- [ ] Export constants:
+- [x] Create `apps/api/src/services/discovery-jobs.ts`.
+- [x] Export constants:
   - `DISCOVERY_JOB_BATCH_SIZE = 5`;
   - `DISCOVERY_JOB_LOCK_TIMEOUT_MS = 10 * 60 * 1000`.
-- [ ] Implement:
+- [x] Implement:
   - `releaseStaleDiscoveryJobs(db, now)`;
   - `enqueueDueDiscoveryJobs(db, workspaceId, now)`;
   - `claimDiscoveryJobs(db, workspaceId, limit, now)`;
   - `completeDiscoveryJob(db, jobId, counts, now)`;
   - `failDiscoveryJob(db, jobId, error, now)`.
-- [ ] Tests:
+- [x] Tests:
   - no duplicate queued job when one already exists for a source;
   - stale running job becomes failed with `stale_lock`;
   - claim respects batch size and marks `running`;
   - success/failure writes counts/error.
-- [ ] Run `npm test -- discovery-jobs`.
-- [ ] Commit: `feat(api): discovery job enqueue and claim helpers`.
+- [x] Run `npm test -- discovery-jobs`.
+- [x] Commit: `feat(api): discovery job enqueue and claim helpers`.
 
 ### Task 4: Run Existing Discovery Through Jobs
 
-- [ ] In `runDiscovery`, call stale release, enqueue due jobs, claim a bounded batch, and process each job.
-- [ ] For Part 1, all processed jobs use existing keyless fetching:
+- [x] In `runDiscovery`, call stale release, enqueue due jobs, claim a bounded batch, and process each job.
+- [x] For Part 1, all processed jobs use existing keyless fetching:
   - `intent` still uses `intentProvider`;
   - everything else still calls `fetchSourceItems`.
-- [ ] Preserve existing insertion, cross-source dedup, and `scoreUnscoredItems` logic.
-- [ ] On source failure, mark the job failed and source `error`.
-- [ ] On success, mark source `active`, update `lastFetchedAt`, `lastAttemptedAt`, and complete the job.
-- [ ] Return `{ queued, processed, sources, scored }`.
-- [ ] Update route tests to accept the new `queued`/`processed` fields without breaking existing assertions on `sources` and `scored`.
-- [ ] Run `npm test -- discovery`.
-- [ ] Commit: `feat(api): run discovery via bounded jobs`.
+- [x] Preserve existing insertion, cross-source dedup, and `scoreUnscoredItems` logic.
+- [x] On source failure, mark the job failed and source `error`.
+- [x] On success, mark source `active`, update `lastFetchedAt`, `lastAttemptedAt`, and complete the job.
+- [x] Return `{ queued, processed, sources, scored }`.
+- [x] Update route tests to accept the new `queued`/`processed` fields without breaking existing assertions on `sources` and `scored`.
+- [x] Run `npm test -- discovery`.
+- [x] Commit: `feat(api): run discovery via bounded jobs`.
 
 ### Task 5: Regression Sweep
 
-- [ ] Run `npm test -w @tuezday/api -- discovery`.
-- [ ] Run `npm test -- contracts`.
-- [ ] Run `npm run typecheck`.
-- [ ] Update `docs/specs/sprint-46-connected-account-competitor-sourcing.md` progress log with Part 1 completion notes.
-- [ ] Commit: `docs: mark Sprint 46 part 1 ready`.
+- [x] Run `npm test -w @tuezday/api -- discovery`.
+- [x] Run `npm test -- contracts`.
+- [x] Run `npm run typecheck`.
+- [x] Update `docs/specs/sprint-46-connected-account-competitor-sourcing.md` progress log with Part 1 completion notes.
+- [x] Commit: `docs: mark Sprint 46 part 1 ready`.
 
 ## Completion Gate
 
