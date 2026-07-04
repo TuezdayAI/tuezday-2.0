@@ -206,6 +206,9 @@ describe("discovery API", () => {
     it("fetches, stores, and brain-scores items", async () => {
       await addRssSource();
       const result = await run();
+      // Sprint 46: the run reports its job ledger activity
+      expect(result.queued).toBe(1);
+      expect(result.processed).toBe(1);
       expect(result.sources[0]).toMatchObject({ fetched: 2, new: 2 });
       expect(result.scored).toBe(2);
 
@@ -261,6 +264,8 @@ describe("discovery API", () => {
         payload: { type: "x", config: { query: "GTM" } },
       });
       const result = await run();
+      expect(result.queued).toBe(0);
+      expect(result.processed).toBe(0);
       expect(result.sources).toEqual([]);
       expect(await items()).toEqual([]);
     });

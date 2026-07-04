@@ -24,6 +24,14 @@ import { fetchSourceItems, isLiveSourceType, type Fetcher } from "../discovery/a
 import type { IntentProvider } from "../discovery/intent";
 import type { LlmGateway } from "../llm/gateway";
 import {
+  DISCOVERY_JOB_BATCH_SIZE,
+  claimDiscoveryJobs,
+  completeDiscoveryJob,
+  enqueueDueDiscoveryJobs,
+  failDiscoveryJob,
+  releaseStaleDiscoveryJobs,
+} from "./discovery-jobs";
+import {
   brainDigest,
   buildMatchingContext,
   buildMatchingPrompt,
@@ -342,6 +350,10 @@ export interface SourceRunResult {
 }
 
 export interface DiscoveryRunResult {
+  /** Jobs enqueued by this run (sources already queued/running are skipped). */
+  queued: number;
+  /** Jobs claimed and processed by this run (bounded by the batch size). */
+  processed: number;
   sources: SourceRunResult[];
   scored: number;
 }
@@ -504,15 +516,27 @@ export async function runDiscovery(
   workspaceId: string,
   workspaceName: string,
 ): Promise<DiscoveryRunResult> {
-  const sources = listDiscoverySources(db, workspaceId).filter(
+  // Job ledger (Sprint 46): enqueue every due source, then process a bounded
+  // batch. Leftover jobs stay queued for the next run, so one slow source (or
+  // many sources) never serializes the whole workspace in a single call.
+  const now = Date.now();
+  releaseStaleDiscoveryJobs(db, now);
+  const eligible = listDiscoverySources(db, workspaceId).filter(
     (s) =>
       s.enabled &&
       (s.status !== "needs_api_key" ||
         (s.type === "intent" && intentProvider.isConfigured())),
   );
+  const queued = enqueueDueDiscoveryJobs(db, workspaceId, eligible, now);
+  const claimed = claimDiscoveryJobs(db, workspaceId, DISCOVERY_JOB_BATCH_SIZE, now);
 
   const results: SourceRunResult[] = [];
-  for (const source of sources) {
+  for (const job of claimed) {
+    const source = getDiscoverySource(db, workspaceId, job.sourceId);
+    if (!source) {
+      failDiscoveryJob(db, job.id, "source_missing", Date.now());
+      continue;
+    }
     try {
       const fetched =
         source.type === "intent"
@@ -537,7 +561,7 @@ export async function runDiscovery(
           : [],
       );
       const fresh = fetched.filter((f) => f.externalId && !existing.has(f.externalId));
-      const now = Date.now();
+      const fetchedAt = Date.now();
       for (const item of fresh) {
         // Cross-source dedup (Sprint 45): a story already seen via another
         // source is kept but linked to the canonical item — it never enters
@@ -566,27 +590,40 @@ export async function runDiscovery(
             urlHash,
             contentHash,
             duplicateOfId: canonical?.id ?? null,
-            createdAt: now,
+            createdAt: fetchedAt,
           })
           .run();
       }
       db.update(discoverySources)
-        .set({ status: "active", lastError: null, lastFetchedAt: now })
+        .set({ status: "active", lastError: null, lastFetchedAt: fetchedAt, lastAttemptedAt: fetchedAt })
         .where(eq(discoverySources.id, source.id))
         .run();
+      completeDiscoveryJob(
+        db,
+        job.id,
+        { fetchedCount: fetched.length, newCount: fresh.length },
+        fetchedAt,
+      );
       results.push({ sourceId: source.id, name: source.name, fetched: fetched.length, new: fresh.length });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      const failedAt = Date.now();
       db.update(discoverySources)
-        .set({ status: "error", lastError: message.slice(0, 500), lastFetchedAt: Date.now() })
+        .set({
+          status: "error",
+          lastError: message.slice(0, 500),
+          lastFetchedAt: failedAt,
+          lastAttemptedAt: failedAt,
+        })
         .where(eq(discoverySources.id, source.id))
         .run();
+      failDiscoveryJob(db, job.id, message, failedAt);
       results.push({ sourceId: source.id, name: source.name, fetched: 0, new: 0, error: message });
     }
   }
 
   const scored = await scoreUnscoredItems(db, llm, workspaceId, workspaceName);
-  return { sources: results, scored };
+  return { queued, processed: claimed.length, sources: results, scored };
 }
 
 // ---------------------------------------------------------------------------

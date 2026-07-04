@@ -24,10 +24,13 @@ const stubLlm: LlmGateway = {
   },
 };
 
-const stubFetcher = (async () =>
-  new Response("<rss version=\"2.0\"><channel><title>t</title></channel></rss>", {
+/** Serves an empty-but-valid RSS feed; URLs containing "failing" 500. */
+const stubFetcher = (async (url: Parameters<typeof fetch>[0]) => {
+  if (String(url).includes("failing")) return new Response("boom", { status: 500 });
+  return new Response('<rss version="2.0"><channel><title>t</title></channel></rss>', {
     status: 200,
-  })) as Fetcher;
+  });
+}) as Fetcher;
 
 describe("discovery job ledger (Sprint 46)", () => {
   let app: TuezdayApp;
@@ -152,6 +155,76 @@ describe("discovery job ledger (Sprint 46)", () => {
       )
       .all();
     expect(fresh).toHaveLength(1);
+  });
+
+  describe("bounded /discovery/run (Sprint 46)", () => {
+    async function runDiscoveryRoute() {
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/discovery/run`,
+      });
+      expect(res.statusCode).toBe(200);
+      return res.json() as {
+        queued: number;
+        processed: number;
+        sources: { sourceId: string; error?: string }[];
+        scored: number;
+      };
+    }
+
+    it("processes a bounded batch and continues where it left off next run", async () => {
+      const total = DISCOVERY_JOB_BATCH_SIZE + 2;
+      for (let n = 1; n <= total; n += 1) await addRssSource(n);
+
+      const first = await runDiscoveryRoute();
+      expect(first.queued).toBe(total);
+      expect(first.processed).toBe(DISCOVERY_JOB_BATCH_SIZE);
+      expect(first.sources).toHaveLength(DISCOVERY_JOB_BATCH_SIZE);
+      expect(jobRows().filter((r) => r.status === "queued")).toHaveLength(2);
+      expect(jobRows().filter((r) => r.status === "succeeded")).toHaveLength(
+        DISCOVERY_JOB_BATCH_SIZE,
+      );
+
+      // Next run re-enqueues the 5 already-processed sources (their jobs
+      // finished) and claims the 2 leftovers first — nothing is starved.
+      const second = await runDiscoveryRoute();
+      expect(second.queued).toBe(DISCOVERY_JOB_BATCH_SIZE);
+      expect(second.processed).toBe(DISCOVERY_JOB_BATCH_SIZE);
+      const succeededSources = new Set(
+        jobRows()
+          .filter((r) => r.status === "succeeded")
+          .map((r) => r.sourceId),
+      );
+      expect(succeededSources.size).toBe(total); // every source ran at least once
+      expect(jobRows().filter((r) => r.status === "queued")).toHaveLength(2);
+    });
+
+    it("marks the job failed when a keyless fetch fails, without failing the run", async () => {
+      await addRssSource(1);
+      const bad = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/discovery/sources`,
+          payload: { type: "rss", config: { feedUrl: "https://failing.example.com/feed.xml" } },
+        })
+      ).json() as { id: string };
+
+      const result = await runDiscoveryRoute();
+      expect(result.queued).toBe(2);
+      expect(result.processed).toBe(2);
+      const badResult = result.sources.find((s) => s.sourceId === bad.id)!;
+      expect(badResult.error).toContain("500");
+
+      const failedJob = jobRows().find((r) => r.sourceId === bad.id)!;
+      expect(failedJob.status).toBe("failed");
+      expect(failedJob.error).toContain("500");
+      const okJob = jobRows().find((r) => r.sourceId !== bad.id)!;
+      expect(okJob.status).toBe("succeeded");
+
+      const badSource = sources().find((s) => s.id === bad.id)!;
+      expect(badSource.status).toBe("error");
+      expect(badSource.lastAttemptedAt).not.toBeNull();
+    });
   });
 
   it("records success counts and truncated failure errors", async () => {
