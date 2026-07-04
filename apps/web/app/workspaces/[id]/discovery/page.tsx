@@ -70,6 +70,10 @@ interface SourceProposal {
 }
 
 interface RunSummary {
+  /** Jobs enqueued by this run (Sprint 46 job ledger). */
+  queued: number;
+  /** Jobs claimed and processed by this run (bounded batch; the rest stay queued). */
+  processed: number;
   sources: { sourceId: string; name: string; fetched: number; new: number; error?: string }[];
   scored: number;
 }
@@ -433,6 +437,23 @@ export default function DiscoveryPage() {
     return sources.find((s) => s.id === sid)?.name ?? "unknown source";
   }
 
+  function connectionName(cid: string): string {
+    return connections.find((c) => c.id === cid)?.displayName ?? "connected account";
+  }
+
+  /** One badge summarizing where the source stands (Sprint 46 statuses). */
+  function sourceStatusBadge(s: DiscoverySource): { label: string; className: string } {
+    if (s.status === "error" && s.lastError?.startsWith("permission_required"))
+      return { label: "permission required", className: "state-rejected" };
+    if (s.status === "error" && s.lastError === "connection_disconnected")
+      return { label: "needs connection", className: "state-rejected" };
+    if (s.status === "error") return { label: "error", className: "state-rejected" };
+    if (s.status === "needs_api_key") return { label: "needs API key", className: "state-edited" };
+    if (s.backoffUntil && s.backoffUntil > Date.now())
+      return { label: "backing off", className: "state-edited" };
+    return { label: "active", className: "state-approved" };
+  }
+
   if (error && !workspace) {
     return (
       <>
@@ -703,47 +724,61 @@ export default function DiscoveryPage() {
           <EmptyState description={<>No sources yet. Add one or let the brain suggest some.</>} />
         ) : (
           <ul className="section-list">
-            {sources.map((s) => (
-              <li key={s.id} className={`section-card ${s.enabled ? "" : "excluded"}`}>
-                <div className="section-head">
-                  <span
-                    className={`layer-badge ${
-                      s.status === "active"
-                        ? "state-approved"
-                        : s.status === "needs_api_key"
-                          ? "state-edited"
-                          : "state-rejected"
-                    }`}
-                  >
-                    {s.status === "needs_api_key" ? "needs API key" : s.status}
-                  </span>
-                  <span className="section-title">{s.name}</span>
-                  <span className="section-tokens">
-                    {s.lastFetchedAt
-                      ? `last run ${new Date(s.lastFetchedAt).toLocaleString()}`
-                      : "never run"}
-                  </span>
-                </div>
-                {s.lastError && <p className="error">{s.lastError}</p>}
-                <div className="rating-row" style={{ marginTop: 8 }}>
-                  <button className="button-secondary" onClick={() => toggleSource(s)}>
-                    {s.enabled ? "Disable" : "Enable"}
-                  </button>
-                  <button className="button-secondary danger" onClick={() => removeSource(s)}>
-                    Delete
-                  </button>
-                </div>
-              </li>
-            ))}
+            {sources.map((s) => {
+              const badge = sourceStatusBadge(s);
+              return (
+                <li key={s.id} className={`section-card ${s.enabled ? "" : "excluded"}`}>
+                  <div className="section-head">
+                    <span className={`layer-badge ${badge.className}`}>{badge.label}</span>
+                    {s.connectionId ? (
+                      <span
+                        className="layer-badge layer-zoom source-badge"
+                        title="Reads through a connected account"
+                      >
+                        🔗 {connectionName(s.connectionId)}
+                      </span>
+                    ) : (
+                      <span className="layer-badge state-draft">keyless</span>
+                    )}
+                    <span className="section-title">{s.name}</span>
+                    <span className="section-tokens">
+                      {s.lastAttemptedAt
+                        ? `checked ${new Date(s.lastAttemptedAt).toLocaleString()}`
+                        : "never run"}
+                      {s.lastFetchedAt
+                        ? ` · fetched ${new Date(s.lastFetchedAt).toLocaleString()}`
+                        : ""}
+                    </span>
+                  </div>
+                  {s.lastError && <p className="error">{s.lastError}</p>}
+                  <div className="rating-row" style={{ marginTop: 8 }}>
+                    <button className="button-secondary" onClick={() => toggleSource(s)}>
+                      {s.enabled ? "Disable" : "Enable"}
+                    </button>
+                    <button className="button-secondary danger" onClick={() => removeSource(s)}>
+                      Delete
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         )}
 
         {runSummary && (
           <p className="bundle-summary" style={{ marginTop: 12 }}>
-            Run finished:{" "}
-            {runSummary.sources
-              .map((s) => `${s.name}: ${s.error ? `error` : `${s.new} new of ${s.fetched}`}`)
-              .join(" · ")}{" "}
+            Run finished: {runSummary.queued} queued · {runSummary.processed} processed
+            {runSummary.queued > runSummary.processed
+              ? " (the rest run on the next poll)"
+              : ""}
+            {runSummary.sources.length > 0 ? (
+              <>
+                {" · "}
+                {runSummary.sources
+                  .map((s) => `${s.name}: ${s.error ? "error" : `${s.new} new of ${s.fetched}`}`)
+                  .join(" · ")}
+              </>
+            ) : null}{" "}
             · {runSummary.scored} scored by the brain
           </p>
         )}

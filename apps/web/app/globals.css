@@ -1075,6 +1075,17 @@ a.workspace-card:hover {
 /* Sprint 44: the publishing account's content profile */
 .layer-account { color: var(--mint-ink); background: var(--mint); border: 1px solid var(--mint-ink); }
 
+/* Sprint 46: connection / source-origin badges — keep long account and source
+   names from blowing up card headers on narrow screens. */
+.layer-badge.source-badge {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: bottom;
+}
+
 /* Sprint 43: selective-context trace badges */
 .tier-badge,
 .mode-badge {
