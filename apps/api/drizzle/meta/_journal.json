@@ -232,6 +232,13 @@
       "when": 1783069321612,
       "tag": "0032_same_scorpion",
       "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1783151700788,
+      "tag": "0033_flawless_pepper_potts",
+      "breakpoints": true
     }
   ]
 }

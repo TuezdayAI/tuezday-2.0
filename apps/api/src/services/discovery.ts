@@ -55,6 +55,10 @@ function rowToSource(row: DiscoverySourceRow): DiscoverySource {
     status: row.status as DiscoverySourceStatus,
     lastError: row.lastError,
     lastFetchedAt: row.lastFetchedAt,
+    connectionId: row.connectionId,
+    cursor: JSON.parse(row.cursorJson) as Record<string, unknown>,
+    backoffUntil: row.backoffUntil,
+    lastAttemptedAt: row.lastAttemptedAt,
     createdAt: row.createdAt,
   };
 }
@@ -107,6 +111,10 @@ export function createDiscoverySource(
     status: isLiveSourceType(input.type) ? "active" : "needs_api_key",
     lastError: null,
     lastFetchedAt: null,
+    connectionId: null,
+    cursorJson: "{}",
+    backoffUntil: null,
+    lastAttemptedAt: null,
     createdAt: Date.now(),
   };
   db.insert(discoverySources).values(row).run();

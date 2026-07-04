@@ -308,10 +308,51 @@ export const discoverySources = sqliteTable("discovery_sources", {
   status: text("status").notNull(),
   lastError: text("last_error"),
   lastFetchedAt: integer("last_fetched_at"),
+  // Connected sourcing (Sprint 46): the workspace connection this source reads
+  // through; null for keyless sources. No declared FK to `connections`:
+  // drizzle-kit's SQLite ALTER TABLE ADD action gap (deferred #26) — cleared
+  // at the service level when a connection is deleted.
+  connectionId: text("connection_id"),
+  // Best-effort provider pagination state keyed by mode.
+  cursorJson: text("cursor_json").notNull().default("{}"),
+  // Rate-limit back-pressure: the source is not enqueued until this passes.
+  backoffUntil: integer("backoff_until"),
+  lastAttemptedAt: integer("last_attempted_at"),
   createdAt: integer("created_at").notNull(),
 });
 
 export type DiscoverySourceRow = typeof discoverySources.$inferSelect;
+
+// Discovery job ledger (Sprint 46): one row per source fetch attempt. Bounded
+// batches per `/discovery/run` give retries, per-source progress, and prevent
+// one slow provider from serializing the whole workspace — no external queue.
+export const discoveryJobs = sqliteTable(
+  "discovery_jobs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => discoverySources.id, { onDelete: "cascade" }),
+    status: text("status").notNull(), // queued | running | succeeded | failed | skipped
+    attempt: integer("attempt").notNull().default(0),
+    lockedAt: integer("locked_at"),
+    startedAt: integer("started_at"),
+    finishedAt: integer("finished_at"),
+    fetchedCount: integer("fetched_count").notNull().default(0),
+    newCount: integer("new_count").notNull().default(0),
+    error: text("error"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("discovery_jobs_workspace_status").on(t.workspaceId, t.status, t.createdAt),
+    index("discovery_jobs_source_status").on(t.sourceId, t.status),
+  ],
+);
+
+export type DiscoveryJobRow = typeof discoveryJobs.$inferSelect;
 
 export const discoveredItems = sqliteTable(
   "discovered_items",
