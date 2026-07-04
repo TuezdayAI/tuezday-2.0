@@ -2,11 +2,21 @@
 
 import { use, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
+import { PLANS, usageMeter, type EntitlementUsage, type Entitlements, type PlanId } from "@tuezday/contracts";
+
+interface BillingView {
+  plan: PlanId;
+  entitlements: Entitlements;
+  usage: EntitlementUsage;
+}
+
+/** Display-only price copy; the checkout price always comes from Stripe. */
+const PLAN_PRICE_COPY: Record<PlanId, string> = { free: "$0", pro: "$29.99", scale: "Custom" };
 
 export default function BillingPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
-  const [data, setData] = useState<any>(null);
-  const [error, setError] = useState("");
+  const [data, setData] = useState<BillingView | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [upgrading, setUpgrading] = useState(false);
 
   useEffect(() => {
@@ -19,127 +29,106 @@ export default function BillingPage({ params }: { params: Promise<{ id: string }
         }
         setData(await res.json());
       } catch (err) {
-        setError(String(err));
+        setError(err instanceof Error ? err.message : String(err));
       }
     }
     void fetchBilling();
   }, [id]);
 
-  const handleUpgrade = async () => {
+  async function handleUpgrade() {
+    setUpgrading(true);
+    setError(null);
     try {
-      setUpgrading(true);
       const res = await apiFetch(`/workspaces/${id}/billing/checkout`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ plan: "pro" }),
       });
-      const resData = await res.json();
-      if (!res.ok) {
-        throw new Error(resData.message || resData.error || "Checkout failed");
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message ?? body?.error ?? "Checkout failed");
+      if (body?.url) {
+        window.location.href = body.url;
+        return;
       }
-      if (resData.url) {
-        window.location.href = resData.url;
-      }
+      throw new Error("Checkout did not return a redirect URL.");
     } catch (err) {
-      alert(String(err));
+      setError(err instanceof Error ? err.message : String(err));
       setUpgrading(false);
     }
-  };
+  }
 
   return (
-    <div className="ws-content">
-      <header className="page-header">
-        <h1>Billing & Plans</h1>
-      </header>
+    <>
+      <div className="page-header">
+        <div>
+          <h1>Billing &amp; subscription</h1>
+          <p className="subtitle">Your plan, and how much of it this workspace is using.</p>
+        </div>
+      </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "24px", maxWidth: "800px" }}>
-        {error && <div className="error">{error}</div>}
-        
-        {!data && !error && <div className="empty">Loading...</div>}
+      {error && <p className="error">{error}</p>}
 
-        {data && (
+      <section className="panel">
+        <h2>Current plan</h2>
+        {!data ? (
+          <p className="meta">Loading...</p>
+        ) : (
           <>
-            <div className="billing-card">
-              <div className="billing-kicker">Current Plan</div>
-              <div className="billing-plan-row">
-                <div>
-                  <h2 className="billing-plan-name">{data.plan} Plan</h2>
-                  {data.plan === "free" && (
-                    <p className="billing-plan-hint">Upgrade to Pro for more generations and features.</p>
-                  )}
+            <div className="plan-hero">
+              <div>
+                <div className="plan-hero-name">
+                  {PLANS[data.plan].label} Plan
+                  <span className="layer-badge state-approved">Active</span>
                 </div>
                 {data.plan === "free" && (
-                  <button
-                    onClick={handleUpgrade}
-                    disabled={upgrading}
-                    className="billing-button"
-                  >
-                    {upgrading ? "Redirecting..." : "Upgrade to Pro"}
-                  </button>
+                  <p className="meta">Upgrade to Pro for more generations and features.</p>
                 )}
+              </div>
+              <div className="plan-hero-price">
+                <div className="plan-hero-amount">{PLAN_PRICE_COPY[data.plan]}</div>
+                <p className="meta">Per month</p>
               </div>
             </div>
 
-            <div className="billing-card">
-              <div className="billing-kicker">Usage</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
-                <UsageRow
-                  title="Monthly Generations"
-                  used={data.usage.monthlyGenerations}
-                  limit={data.entitlements.monthlyGenerations}
-                />
-                <UsageRow
-                  title="Connectors"
-                  used={data.usage.connectors}
-                  limit={data.entitlements.connectors}
-                />
-                <UsageRow
-                  title="Seats"
-                  used={data.usage.seats}
-                  limit={data.entitlements.seats}
-                />
-              </div>
+            <h3 className="usage-heading">Usage</h3>
+            <div className="usage-meters">
+              <MeterRow
+                title="Monthly generations"
+                used={data.usage.monthlyGenerations}
+                limit={data.entitlements.monthlyGenerations}
+              />
+              <MeterRow title="Connectors" used={data.usage.connectors} limit={data.entitlements.connectors} />
+              <MeterRow title="Seats" used={data.usage.seats} limit={data.entitlements.seats} />
             </div>
+
+            {data.plan === "free" && (
+              <div className="editor-actions" style={{ marginTop: 20 }}>
+                <button onClick={handleUpgrade} disabled={upgrading}>
+                  {upgrading ? "Redirecting..." : "Upgrade to Pro"}
+                </button>
+              </div>
+            )}
           </>
         )}
-      </div>
-    </div>
+      </section>
+    </>
   );
 }
 
-function UsageRow({ title, used, limit }: { title: string; used: number; limit: number }) {
-  const isUnlimited = limit === -1;
-  const percent = isUnlimited ? 0 : Math.min(100, Math.round((used / limit) * 100)) || 0;
-  const overLimit = !isUnlimited && used >= limit;
-  
+function MeterRow({ title, used, limit }: { title: string; used: number; limit: number }) {
+  const meter = usageMeter(used, limit);
   return (
-    <div className="billing-usage-row">
-      <div className="billing-usage-header">
-        <span className="billing-usage-label">{title}</span>
-        {isUnlimited ? (
-          <span className="billing-usage-unlimited">Unlimited</span>
-        ) : (
-          <span className="billing-usage-count">
-            {used} / {limit}
-          </span>
-        )}
+    <div className="usage-meter">
+      <div className="usage-meter-head">
+        <span className="usage-meter-title">{title}</span>
+        <span className="usage-meter-figure">
+          {meter.state === "unlimited" ? `${used} / Unlimited` : `${used} / ${limit}`}
+        </span>
       </div>
-      
-      {!isUnlimited && (
-        <>
-          <div className="billing-usage-bar-track">
-            <div 
-              className={`billing-usage-bar-fill ${overLimit ? 'over-limit' : ''}`} 
-              style={{ width: `${percent}%` }}
-            ></div>
-          </div>
-          {overLimit && (
-            <div className="billing-upgrade-flash">
-              Upgrade for more usages.
-            </div>
-          )}
-        </>
-      )}
+      <div className="meter-track">
+        <div className={`meter-fill ${meter.state}`} style={{ width: `${meter.percent}%` }} />
+      </div>
+      {meter.state === "over" && <p className="usage-alert">Upgrade for more usage</p>}
     </div>
   );
 }

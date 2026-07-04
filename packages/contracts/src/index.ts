@@ -3006,6 +3006,22 @@ export const checkoutInputSchema = z.object({
 });
 export type CheckoutInput = z.infer<typeof checkoutInputSchema>;
 
+/** UI state for a plan-usage meter. A limit of -1 means unlimited. */
+export type UsageMeterState = "ok" | "near" | "over" | "unlimited";
+export interface UsageMeterView {
+  percent: number; // 0–100, clamped
+  state: UsageMeterState;
+}
+
+/** Pure meter logic for the billing page's usage bars (kept here so it is Vitest-tested). */
+export function usageMeter(used: number, limit: number): UsageMeterView {
+  if (limit === -1) return { percent: 100, state: "unlimited" };
+  if (limit <= 0) return used > 0 ? { percent: 100, state: "over" } : { percent: 0, state: "ok" };
+  if (used >= limit) return { percent: 100, state: "over" };
+  const raw = (used / limit) * 100;
+  return { percent: Math.min(100, Math.round(raw)), state: raw >= 80 ? "near" : "ok" };
+}
+
 // GTM insights (Sprint 34) — read-only response schemas for native insights.
 // No new enums; reuses CHANNELS, APPROVAL_STATES, OUTPUT_RATINGS, BRAIN_DOC_TYPES.
 // ---------------------------------------------------------------------------
@@ -3270,6 +3286,7 @@ export const WORKSPACE_NAV: NavItem[] = [
       { label: "Integrations", path: "/connectors", summary: "Connect the stack", tone: "system" },
       { label: "Team", path: "/team", summary: "Members and invites", tone: "icp" },
       { label: "Billing", path: "/billing", summary: "Plan and usage", tone: "history" },
+      { label: "Activity", path: "/activity", summary: "Event log and audit trail", tone: "system" },
     ],
   },
 ];

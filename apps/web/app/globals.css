@@ -1572,144 +1572,138 @@ a.workspace-card:hover {
   background: var(--mint);
 }
 
-/* ---------- Billing ---------- */
+/* --- UI polish (2026-07-03): billing meters, module motion, smooth scroll --- */
 
-.billing-card {
-  background: var(--panel);
+.plan-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 24px;
-  position: relative;
-  overflow: hidden;
+  padding: 18px 20px;
+  margin: 12px 0 20px;
+}
+
+.plan-hero-name {
   display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.billing-card::before {
-  content: "";
-  height: 3px;
-  background: var(--accent);
-  position: absolute;
-  inset: 0 0 auto;
-}
-
-.billing-kicker {
-  color: var(--muted-2);
-  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
-  font-size: 10.5px;
-  font-weight: 650;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-}
-
-.billing-plan-row {
-  display: flex;
-  justify-content: space-between;
   align-items: center;
+  gap: 10px;
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.plan-hero-price {
+  text-align: right;
+}
+
+.plan-hero-amount {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.usage-heading {
+  margin: 0 0 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.usage-meters {
+  display: grid;
   gap: 16px;
-  flex-wrap: wrap;
 }
 
-.billing-plan-name {
-  font-family: var(--font-body);
-  font-weight: 680;
-  font-size: 20px;
-  line-height: 1.2;
-  color: var(--text);
-  margin: 0;
-  text-transform: capitalize;
-}
-
-.billing-plan-hint {
-  color: var(--muted);
-  font-size: 13.5px;
-  margin: 4px 0 0 0;
-}
-
-.billing-button {
-  background: var(--accent);
-  color: var(--accent-ink);
-  border: none;
-  border-radius: var(--radius-sm);
-  padding: 10px 14px;
-  font-size: 13.5px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: opacity 180ms var(--ease-out);
-}
-
-.billing-button:hover {
-  opacity: 0.9;
-}
-
-.billing-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.billing-usage-row {
+.usage-meter-head {
   display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.billing-usage-header {
-  display: flex;
-  justify-content: space-between;
   align-items: baseline;
-  font-size: 14px;
+  justify-content: space-between;
+  margin-bottom: 6px;
 }
 
-.billing-usage-label {
+.usage-meter-title {
   font-weight: 600;
-  color: var(--text);
 }
 
-.billing-usage-count {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-}
-
-.billing-usage-unlimited {
+.usage-meter-figure {
   color: var(--muted);
-  font-weight: 500;
-  font-size: 13px;
-}
-
-.billing-usage-bar-track {
-  width: 100%;
-  height: 6px;
-  background: var(--panel-2);
-  border-radius: 999px;
-  overflow: hidden;
-  border: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
-}
-
-.billing-usage-bar-fill {
-  height: 100%;
-  background: var(--accent);
-  border-radius: 999px;
-  transition: width 0.3s ease;
-}
-
-.billing-usage-bar-fill.over-limit {
-  background: var(--c1);
-}
-
-.billing-upgrade-flash {
-  color: var(--c1);
-  font-size: 12.5px;
+  font-size: 0.9rem;
   font-weight: 600;
-  animation: billing-pulse 1.5s infinite alternate;
 }
 
-@keyframes billing-pulse {
-  from {
+.meter-track {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.4s var(--ease-out);
+}
+
+.meter-fill.near {
+  background: var(--c2-deep);
+}
+
+.meter-fill.over {
+  background: var(--danger);
+}
+
+.meter-fill.unlimited {
+  background: var(--accent);
+  opacity: 0.35;
+}
+
+.usage-alert {
+  margin: 6px 0 0;
+  color: var(--danger);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  .usage-alert {
+    animation: usage-pulse 1.2s ease-in-out infinite;
+  }
+
+  .module-in {
+    animation: module-in 0.45s var(--ease-out) backwards;
+  }
+
+  /* Content fades in when it mounts (module pages render data async, so the
+     visible "module loaded" moment is the panels appearing, not the route). */
+  .module-in .panel,
+  .module-in .page-header {
+    animation: module-in 0.45s var(--ease-out) backwards;
+  }
+}
+
+@keyframes usage-pulse {
+  0%,
+  100% {
     opacity: 1;
   }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes module-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
   to {
-    opacity: 0.4;
+    opacity: 1;
+    transform: none;
   }
 }

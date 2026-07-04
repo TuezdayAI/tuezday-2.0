@@ -2,6 +2,7 @@
 
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
+import { ShowMoreButton, useShowMore } from "@/src/components/show-more";
 
 
 import { useCallback, useEffect, useState } from "react";
@@ -139,7 +140,8 @@ export default function InboxPage() {
     }
   }
 
-  const visible = filter === "all" ? items : items.filter((i) => i.status === filter);
+  const filteredItems = filter === "all" ? items : items.filter((i) => i.status === filter);
+  const { visible, hasMore, remaining, showMore } = useShowMore(filteredItems, 50);
   const counts = (f: Filter) =>
     f === "all" ? items.length : items.filter((i) => i.status === f).length;
   const filters: Filter[] = ["unread", "read", "replied", "dismissed", "all"];
@@ -317,6 +319,7 @@ export default function InboxPage() {
           })}
         </ul>
       )}
+      <ShowMoreButton hasMore={hasMore} remaining={remaining} onClick={showMore} />
     </>
   );
 }

@@ -70,21 +70,12 @@ interface ConnectorsView {
   fabric: { healthy: boolean; detail?: string };
 }
 
-interface EventView {
-  id: string;
-  type: string;
-  payloadJson: string;
-  createdAt: number;
-  deliveries: { status: string; httpStatus: number | null; error: string | null }[];
-}
-
 export default function ConnectorsPage() {
   const { id } = useParams<{ id: string }>();
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [view, setView] = useState<ConnectorsView | null>(null);
   const [webhooks, setWebhooks] = useState<WebhookSubscription[]>([]);
-  const [eventLog, setEventLog] = useState<EventView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -111,17 +102,15 @@ export default function ConnectorsPage() {
 
   const load = useCallback(async () => {
     try {
-      const [wsRes, cRes, wRes, eRes] = await Promise.all([
+      const [wsRes, cRes, wRes] = await Promise.all([
         apiFetch(`/workspaces/${id}`),
         apiFetch(`/workspaces/${id}/connectors`),
         apiFetch(`/workspaces/${id}/webhooks`),
-        apiFetch(`/workspaces/${id}/events`),
       ]);
       if (!wsRes.ok || !cRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
       setView(await cRes.json());
       setWebhooks(await wRes.json());
-      setEventLog(await eRes.json());
       setError(null);
     } catch {
       setError(`Could not load this workspace from ${API_URL}. Is "npm run dev" running?`);
@@ -682,30 +671,6 @@ export default function ConnectorsPage() {
         )}
       </section>
 
-      <section className="panel">
-        <h2>Event log</h2>
-        {eventLog.length === 0 ? (
-          <EmptyState description={<>No events yet. Approve a draft or ping a webhook.</>} />
-        ) : (
-          <ul className="draft-chain">
-            {eventLog.map((e) => (
-              <li key={e.id}>
-                <span className="layer-badge">{e.type}</span>{" "}
-                <span className="meta">{new Date(e.createdAt).toLocaleString()}</span>{" "}
-                {e.deliveries.map((d, i) => (
-                  <span
-                    key={i}
-                    className={`layer-badge ${d.status === "delivered" ? "state-approved" : "state-rejected"}`}
-                    style={{ marginLeft: 6 }}
-                  >
-                    {d.status === "delivered" ? `delivered (${d.httpStatus})` : `failed${d.httpStatus ? ` (${d.httpStatus})` : ""}`}
-                  </span>
-                ))}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
     </>
   );
 }
