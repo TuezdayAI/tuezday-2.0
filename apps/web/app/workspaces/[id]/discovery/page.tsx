@@ -11,13 +11,28 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
   DISCOVERY_SOURCE_TYPES,
+  TRACKED_SOCIAL_PLATFORMS,
   type Campaign,
   type DiscoveredItem,
   type DiscoverySource,
   type DiscoverySourceType,
   type Persona,
+  type TrackedSocialAccount,
+  type TrackedSocialPlatform,
   type Workspace,
 } from "@tuezday/contracts";
+
+const PLATFORM_LABELS: Record<TrackedSocialPlatform, string> = {
+  x: "X",
+  linkedin: "LinkedIn",
+  instagram: "Instagram",
+  reddit: "Reddit",
+};
+
+/** Reddit "handles" are subreddits/users, not @-handles. */
+function trackedHandleLabel(account: TrackedSocialAccount): string {
+  return account.platform === "reddit" ? `u/${account.handle}` : `@${account.handle}`;
+}
 
 const TYPE_LABELS: Record<DiscoverySourceType, string> = {
   rss: "RSS feed",
@@ -63,6 +78,7 @@ export default function DiscoveryPage() {
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [sources, setSources] = useState<DiscoverySource[]>([]);
+  const [tracked, setTracked] = useState<TrackedSocialAccount[]>([]);
   const [inbox, setInbox] = useState<DiscoveredItem[]>([]);
   const inboxList = useShowMore(inbox, 50);
   const [error, setError] = useState<string | null>(null);
@@ -77,6 +93,14 @@ export default function DiscoveryPage() {
   const [geo, setGeo] = useState("");
   const [sector, setSector] = useState("");
 
+  // tracked-accounts form
+  const [showTrackedForm, setShowTrackedForm] = useState(false);
+  const [trackedPlatform, setTrackedPlatform] = useState<TrackedSocialPlatform>("x");
+  const [trackedHandle, setTrackedHandle] = useState("");
+  const [trackedDisplayName, setTrackedDisplayName] = useState("");
+  const [trackedNotes, setTrackedNotes] = useState("");
+  const [trackedError, setTrackedError] = useState<string | null>(null);
+
   const [running, setRunning] = useState(false);
   const [runSummary, setRunSummary] = useState<RunSummary | null>(null);
   const [suggesting, setSuggesting] = useState(false);
@@ -89,18 +113,21 @@ export default function DiscoveryPage() {
 
   const load = useCallback(async () => {
     try {
-      const [wsRes, pRes, cRes, sRes, iRes] = await Promise.all([
+      const [wsRes, pRes, cRes, sRes, tRes, iRes] = await Promise.all([
         apiFetch(`/workspaces/${id}`),
         apiFetch(`/workspaces/${id}/personas`),
         apiFetch(`/workspaces/${id}/campaigns`),
         apiFetch(`/workspaces/${id}/discovery/sources`),
+        apiFetch(`/workspaces/${id}/discovery/tracked-accounts`),
         apiFetch(`/workspaces/${id}/discovery/items?status=new`),
       ]);
-      if (!wsRes.ok || !pRes.ok || !cRes.ok || !sRes.ok || !iRes.ok) throw new Error("not found");
+      if (!wsRes.ok || !pRes.ok || !cRes.ok || !sRes.ok || !tRes.ok || !iRes.ok)
+        throw new Error("not found");
       setWorkspace(await wsRes.json());
       setPersonas(await pRes.json());
       setCampaigns(await cRes.json());
       setSources(await sRes.json());
+      setTracked(await tRes.json());
       setInbox(await iRes.json());
       setError(null);
     } catch {
@@ -179,6 +206,57 @@ export default function DiscoveryPage() {
   async function removeSource(source: DiscoverySource) {
     if (!confirm(`Delete source "${source.name}"? Its discovered items go with it.`)) return;
     await apiFetch(`/workspaces/${id}/discovery/sources/${source.id}`, {
+      method: "DELETE",
+    });
+    await load();
+  }
+
+  async function addTrackedAccount(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setTrackedError(null);
+    try {
+      const res = await apiFetch(`/workspaces/${id}/discovery/tracked-accounts`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          platform: trackedPlatform,
+          handle: trackedHandle.trim(),
+          ...(trackedDisplayName.trim() ? { displayName: trackedDisplayName.trim() } : {}),
+          ...(trackedNotes.trim() ? { notes: trackedNotes.trim() } : {}),
+        }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message ?? `API returned ${res.status}`);
+      setShowTrackedForm(false);
+      setTrackedHandle("");
+      setTrackedDisplayName("");
+      setTrackedNotes("");
+      await load();
+    } catch (err) {
+      setTrackedError(err instanceof Error ? err.message : "Failed to add tracked account");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function toggleTrackedAccount(account: TrackedSocialAccount) {
+    await apiFetch(`/workspaces/${id}/discovery/tracked-accounts/${account.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled: !account.enabled }),
+    });
+    await load();
+  }
+
+  async function removeTrackedAccount(account: TrackedSocialAccount) {
+    if (
+      !confirm(
+        `Stop tracking ${PLATFORM_LABELS[account.platform]} ${trackedHandleLabel(account)}?`,
+      )
+    )
+      return;
+    await apiFetch(`/workspaces/${id}/discovery/tracked-accounts/${account.id}`, {
       method: "DELETE",
     });
     await load();
@@ -460,6 +538,110 @@ export default function DiscoveryPage() {
           </p>
         )}
         {error && <p className="error">{error}</p>}
+      </section>
+
+      <section className="panel">
+        <div className="panel-title-row">
+          <h2>Tracked accounts</h2>
+          <div className="persona-actions">
+            <button
+              className="button-secondary"
+              onClick={() => setShowTrackedForm(!showTrackedForm)}
+            >
+              + Track account
+            </button>
+          </div>
+        </div>
+        <p className="subtitle">
+          Competitor and source handles your connected sources can listen to — pick them in a
+          source instead of retyping handles.
+        </p>
+
+        {showTrackedForm && (
+          <form className="persona-form" onSubmit={addTrackedAccount}>
+            <div className="resolve-controls">
+              <label>
+                Platform
+                <select
+                  value={trackedPlatform}
+                  onChange={(e) => setTrackedPlatform(e.target.value as TrackedSocialPlatform)}
+                >
+                  {TRACKED_SOCIAL_PLATFORMS.map((p) => (
+                    <option key={p} value={p}>
+                      {PLATFORM_LABELS[p]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Handle
+                <input
+                  value={trackedHandle}
+                  onChange={(e) => setTrackedHandle(e.target.value)}
+                  placeholder={trackedPlatform === "reddit" ? "u/competitor" : "@competitor"}
+                />
+              </label>
+              <label>
+                Display name (optional)
+                <input
+                  value={trackedDisplayName}
+                  onChange={(e) => setTrackedDisplayName(e.target.value)}
+                  placeholder="Competitor Inc"
+                />
+              </label>
+              <label style={{ flex: 1 }}>
+                Notes (optional)
+                <input
+                  value={trackedNotes}
+                  onChange={(e) => setTrackedNotes(e.target.value)}
+                  placeholder="why this account matters"
+                />
+              </label>
+              <button type="submit" disabled={busy || !trackedHandle.trim()}>
+                Add
+              </button>
+            </div>
+          </form>
+        )}
+        {trackedError && <p className="error">{trackedError}</p>}
+
+        {tracked.length === 0 ? (
+          <EmptyState description={<>No tracked accounts yet. They are optional — add competitor handles here to reuse them across connected sources.</>} />
+        ) : (
+          <ul className="section-list">
+            {tracked.map((a) => (
+              <li key={a.id} className={`section-card ${a.enabled ? "" : "excluded"}`}>
+                <div className="section-head">
+                  <span className="layer-badge">{PLATFORM_LABELS[a.platform]}</span>
+                  <span className="section-title">
+                    {trackedHandleLabel(a)}
+                    {a.displayName ? ` — ${a.displayName}` : ""}
+                  </span>
+                  <span className="section-tokens">
+                    {a.enabled
+                      ? a.lastResolvedAt
+                        ? `resolved ${new Date(a.lastResolvedAt).toLocaleString()}`
+                        : "not resolved yet"
+                      : "disabled"}
+                  </span>
+                </div>
+                {a.notes && <p className="section-reason">{a.notes}</p>}
+                {a.lastError && <p className="error">{a.lastError}</p>}
+                <div className="rating-row" style={{ marginTop: 8 }}>
+                  <button className="button-secondary" onClick={() => toggleTrackedAccount(a)}>
+                    {a.enabled ? "Disable" : "Enable"}
+                  </button>
+                  <button
+                    className="button-secondary danger"
+                    onClick={() => removeTrackedAccount(a)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className="panel">
