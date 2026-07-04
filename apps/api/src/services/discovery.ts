@@ -13,16 +13,30 @@ import {
   type SignalSource,
   type UpdateDiscoverySourceInput,
 } from "@tuezday/contracts";
+import type { ConnectorFabric } from "../connectors/fabric";
 import type { Db } from "../db";
 import {
   discoveredItems,
+  discoveryJobs,
   discoverySources,
   type DiscoveredItemRow,
   type DiscoverySourceRow,
 } from "../db/schema";
-import { fetchSourceItems, isLiveSourceType, type Fetcher } from "../discovery/adapters";
+import {
+  fetchSourceItems,
+  isLiveSourceType,
+  type Fetcher,
+  type RawDiscoveredItem,
+} from "../discovery/adapters";
+import {
+  PermissionRequiredError,
+  RateLimitedError,
+  fetchConnectedSourceItems,
+} from "../discovery/connected-adapters";
 import type { IntentProvider } from "../discovery/intent";
 import type { LlmGateway } from "../llm/gateway";
+import { getConnection } from "./connections";
+import { resolveTrackedAccounts } from "./tracked-social-accounts";
 import {
   DISCOVERY_JOB_BATCH_SIZE,
   claimDiscoveryJobs,
@@ -71,6 +85,17 @@ function rowToSource(row: DiscoverySourceRow): DiscoverySource {
   };
 }
 
+/** What a connected source targets, for default names ("@rival", "#tag", …). */
+function connectedTargetLabel(config: DiscoverySourceConfig): string {
+  if (config.query?.trim()) return config.query.trim();
+  if (config.handle?.trim()) return `@${config.handle.trim().replace(/^@+/, "")}`;
+  if (config.handles?.length) return `${config.handles.length} accounts`;
+  if (config.hashtag?.trim()) return `#${config.hashtag.trim().replace(/^#/, "")}`;
+  if (config.listId?.trim()) return `list ${config.listId.trim()}`;
+  if (config.trackedAccountId || config.trackedAccountIds?.length) return "tracked accounts";
+  return "connected account";
+}
+
 function defaultSourceName(input: CreateDiscoverySourceInput): string {
   switch (input.type) {
     case "rss":
@@ -98,9 +123,95 @@ function defaultSourceName(input: CreateDiscoverySourceInput): string {
     case "intent":
       return `Intent: ${input.config.query}`;
     case "x":
-      return `X: ${input.config.query}`;
+      return `X: ${connectedTargetLabel(input.config)}`;
     case "linkedin":
-      return `LinkedIn: ${input.config.query}`;
+      return `LinkedIn: ${connectedTargetLabel(input.config)}`;
+    case "instagram":
+      return `Instagram: ${connectedTargetLabel(input.config)}`;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Connected-source validation (Sprint 46)
+// ---------------------------------------------------------------------------
+
+/** Connector provider key a connected source of this type must read through. */
+export function providerForDiscoverySourceType(type: DiscoverySourceType): string | undefined {
+  switch (type) {
+    case "x":
+      return "twitter";
+    case "linkedin":
+      return "linkedin";
+    case "instagram":
+      return "instagram";
+    case "reddit":
+      return "reddit";
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Whether this type+config combination can only run through a connection.
+ * Instagram has no keyless path; x/linkedin with a mode are connected
+ * sources (without one they stay legacy keyless `needs_api_key` rows).
+ */
+function requiresConnection(type: DiscoverySourceType, config: DiscoverySourceConfig): boolean {
+  if (type === "instagram") return true;
+  return (type === "x" || type === "linkedin") && config.mode !== undefined;
+}
+
+export class DiscoverySourceConnectionError extends Error {
+  constructor(
+    public readonly code: "connection_required" | "wrong_provider" | "connection_disconnected",
+    message: string,
+  ) {
+    super(message);
+    this.name = "DiscoverySourceConnectionError";
+  }
+}
+
+function validateSourceConnection(
+  db: Db,
+  workspaceId: string,
+  type: DiscoverySourceType,
+  config: DiscoverySourceConfig,
+  connectionId: string | null,
+): void {
+  const provider = providerForDiscoverySourceType(type);
+  if (!connectionId) {
+    if (requiresConnection(type, config)) {
+      throw new DiscoverySourceConnectionError(
+        "connection_required",
+        `A connected ${type} source needs a ${provider} connection.`,
+      );
+    }
+    return;
+  }
+  if (!provider) {
+    throw new DiscoverySourceConnectionError(
+      "wrong_provider",
+      `${type} sources are keyless and cannot use a connection.`,
+    );
+  }
+  const connection = getConnection(db, workspaceId, connectionId);
+  if (!connection) {
+    throw new DiscoverySourceConnectionError(
+      "connection_required",
+      "That connection does not exist in this workspace.",
+    );
+  }
+  if (connection.providerKey !== provider) {
+    throw new DiscoverySourceConnectionError(
+      "wrong_provider",
+      `A ${type} source needs a ${provider} connection, not ${connection.providerKey}.`,
+    );
+  }
+  if (connection.status !== "connected") {
+    throw new DiscoverySourceConnectionError(
+      "connection_disconnected",
+      "That connection is disconnected — reconnect it before using it for discovery.",
+    );
   }
 }
 
@@ -109,6 +220,8 @@ export function createDiscoverySource(
   workspaceId: string,
   input: CreateDiscoverySourceInput,
 ): DiscoverySource {
+  const connectionId = input.connectionId ?? null;
+  validateSourceConnection(db, workspaceId, input.type, input.config, connectionId);
   const row: DiscoverySourceRow = {
     id: randomUUID(),
     workspaceId,
@@ -116,10 +229,12 @@ export function createDiscoverySource(
     name: input.name ?? defaultSourceName(input),
     configJson: JSON.stringify(input.config),
     enabled: true,
-    status: isLiveSourceType(input.type) ? "active" : "needs_api_key",
+    // A validated connection makes any source type live; keyless x/linkedin
+    // stay parked until credentials exist.
+    status: connectionId || isLiveSourceType(input.type) ? "active" : "needs_api_key",
     lastError: null,
     lastFetchedAt: null,
-    connectionId: null,
+    connectionId,
     cursorJson: "{}",
     backoffUntil: null,
     lastAttemptedAt: null,
@@ -160,10 +275,16 @@ export function updateDiscoverySource(
 ): DiscoverySource | undefined {
   const existing = getDiscoverySource(db, workspaceId, sourceId);
   if (!existing) return undefined;
+  const nextConfig = input.config ?? existing.config;
+  // undefined keeps the current connection; null detaches it.
+  const nextConnectionId =
+    input.connectionId === undefined ? existing.connectionId : input.connectionId;
+  validateSourceConnection(db, workspaceId, existing.type, nextConfig, nextConnectionId);
   const updated = {
     name: input.name ?? existing.name,
     enabled: input.enabled ?? existing.enabled,
-    configJson: JSON.stringify(input.config ?? existing.config),
+    configJson: JSON.stringify(nextConfig),
+    connectionId: nextConnectionId,
   };
   db.update(discoverySources).set(updated).where(eq(discoverySources.id, sourceId)).run();
   return getDiscoverySource(db, workspaceId, sourceId);
@@ -284,6 +405,7 @@ const SIGNAL_SOURCE_BY_TYPE: Record<DiscoverySourceType, SignalSource> = {
   rss: "rss",
   x: "x",
   linkedin: "linkedin",
+  instagram: "instagram",
   hacker_news: "hacker_news",
   youtube: "youtube",
   podcast: "podcast",
@@ -508,11 +630,59 @@ async function scoreUnscoredItems(
   return scoredCount;
 }
 
+// Rate-limit back-pressure (Sprint 46): consecutive rate_limited failures
+// double the source's backoff, so a throttling provider is probed less and
+// less often instead of on every run.
+export const RATE_LIMIT_BACKOFF_BASE_MS = 5 * 60 * 1000;
+export const RATE_LIMIT_BACKOFF_MAX_MS = 60 * 60 * 1000;
+
+function rateLimitBackoffMs(db: Db, sourceId: string): number {
+  const recent = db
+    .select({ status: discoveryJobs.status, error: discoveryJobs.error })
+    .from(discoveryJobs)
+    .where(and(eq(discoveryJobs.sourceId, sourceId), inArray(discoveryJobs.status, ["succeeded", "failed"])))
+    .orderBy(desc(discoveryJobs.createdAt))
+    .limit(10)
+    .all();
+  let streak = 0;
+  for (const job of recent) {
+    if (job.status === "failed" && job.error === "rate_limited") streak += 1;
+    else break;
+  }
+  return Math.min(RATE_LIMIT_BACKOFF_BASE_MS * 2 ** streak, RATE_LIMIT_BACKOFF_MAX_MS);
+}
+
+/** Fetch a connected source through its workspace connection (Sprint 46). */
+async function fetchViaConnection(
+  db: Db,
+  fabric: ConnectorFabric,
+  workspaceId: string,
+  source: DiscoverySource,
+): Promise<RawDiscoveredItem[]> {
+  const connection = source.connectionId
+    ? getConnection(db, workspaceId, source.connectionId)
+    : undefined;
+  if (!connection || connection.status !== "connected") {
+    // The message doubles as the stable lastError value the UI keys on.
+    throw new Error("connection_disconnected");
+  }
+  const trackedIds = [
+    ...(source.config.trackedAccountId ? [source.config.trackedAccountId] : []),
+    ...(source.config.trackedAccountIds ?? []),
+  ];
+  const trackedAccounts = resolveTrackedAccounts(db, workspaceId, trackedIds).map((a) => ({
+    handle: a.handle,
+    externalId: a.externalId,
+  }));
+  return fetchConnectedSourceItems({ source, connection, fabric, trackedAccounts });
+}
+
 export async function runDiscovery(
   db: Db,
   llm: LlmGateway,
   fetcher: Fetcher,
   intentProvider: IntentProvider,
+  fabric: ConnectorFabric,
   workspaceId: string,
   workspaceName: string,
 ): Promise<DiscoveryRunResult> {
@@ -538,8 +708,9 @@ export async function runDiscovery(
       continue;
     }
     try {
-      const fetched =
-        source.type === "intent"
+      const fetched = source.connectionId
+        ? await fetchViaConnection(db, fabric, workspaceId, source)
+        : source.type === "intent"
           ? await intentProvider.fetchSignals(source.config)
           : await fetchSourceItems(source.type, source.config, fetcher);
       const existing = new Set(
@@ -595,7 +766,13 @@ export async function runDiscovery(
           .run();
       }
       db.update(discoverySources)
-        .set({ status: "active", lastError: null, lastFetchedAt: fetchedAt, lastAttemptedAt: fetchedAt })
+        .set({
+          status: "active",
+          lastError: null,
+          lastFetchedAt: fetchedAt,
+          lastAttemptedAt: fetchedAt,
+          backoffUntil: null,
+        })
         .where(eq(discoverySources.id, source.id))
         .run();
       completeDiscoveryJob(
@@ -606,8 +783,26 @@ export async function runDiscovery(
       );
       results.push({ sourceId: source.id, name: source.name, fetched: fetched.length, new: fresh.length });
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
       const failedAt = Date.now();
+      if (err instanceof RateLimitedError) {
+        // The source itself is healthy — stay active, just don't probe it
+        // again until the (exponential) backoff passes.
+        db.update(discoverySources)
+          .set({ backoffUntil: failedAt + rateLimitBackoffMs(db, source.id), lastAttemptedAt: failedAt })
+          .where(eq(discoverySources.id, source.id))
+          .run();
+        failDiscoveryJob(db, job.id, "rate_limited", failedAt);
+        results.push({ sourceId: source.id, name: source.name, fetched: 0, new: 0, error: "rate_limited" });
+        continue;
+      }
+      // Permission refusals get a stable, founder-actionable prefix; they are
+      // source-local and never abort the rest of the run.
+      const message =
+        err instanceof PermissionRequiredError
+          ? `permission_required: ${err.message}`
+          : err instanceof Error
+            ? err.message
+            : String(err);
       db.update(discoverySources)
         .set({
           status: "error",

@@ -30,6 +30,7 @@ const TYPE_LABELS: Record<DiscoverySourceType, string> = {
   funding_news: "Funding news",
   x: "X (needs API key)",
   linkedin: "LinkedIn (needs API key)",
+  instagram: "Instagram (connected account)",
   g2: "G2 reviews (needs API key)",
   capterra: "Capterra reviews (needs API key)",
   intent: "Intent signals (needs API key)",

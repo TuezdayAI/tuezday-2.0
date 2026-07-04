@@ -20,7 +20,8 @@ const SOCIAL = [
     nangoProvider: "linkedin",
     idEnv: "LINKEDIN_CLIENT_ID",
     secretEnv: "LINKEDIN_CLIENT_SECRET",
-    scopes: "openid,profile,email,w_member_social",
+    // r_member_social added in Sprint 46 for connected discovery reads.
+    scopes: "openid,profile,email,w_member_social,r_member_social",
   },
   {
     key: "twitter",
@@ -28,7 +29,8 @@ const SOCIAL = [
     nangoProvider: "twitter-v2",
     idEnv: "TWITTER_CLIENT_ID",
     secretEnv: "TWITTER_CLIENT_SECRET",
-    scopes: "tweet.read,tweet.write,users.read,dm.read,dm.write,offline.access",
+    // list.read added in Sprint 46 for list_timeline discovery sources.
+    scopes: "tweet.read,tweet.write,users.read,dm.read,dm.write,offline.access,list.read",
   },
   {
     key: "instagram",

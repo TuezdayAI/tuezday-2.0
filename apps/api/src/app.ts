@@ -133,7 +133,7 @@ export async function buildApp({
   registerDraftRoutes(app, db, fetcher, llm, analytics, mailer);
   registerNotificationRoutes(app, db, mailer, fetcher);
   registerSignalRoutes(app, db, llm, evidence);
-  registerDiscoveryRoutes(app, db, llm, fetcher, intent);
+  registerDiscoveryRoutes(app, db, llm, fetcher, intent, connectors);
   registerCampaignRoutes(app, db);
   registerAudienceRoutes(app, db);
   registerEvidenceRoutes(app, db, evidence);
