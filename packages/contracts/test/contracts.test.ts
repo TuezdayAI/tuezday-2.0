@@ -82,6 +82,11 @@ import {
   DISCOVERY_MAX_MATCHES_PER_ITEM,
   discoveredItemMatchSchema,
   discoveredItemSchema,
+  DISCOVERY_SOURCE_MODES,
+  DISCOVERY_JOB_STATUSES,
+  discoverySourceSchema,
+  discoverySourceConfigSchema,
+  discoveryJobSchema,
   signalSchema,
   socialAutomationSettingsSchema,
   updateSocialAutomationSettingsInputSchema,
@@ -1161,6 +1166,115 @@ describe("discovery routing contracts (Sprint 45)", () => {
     expect(updateSocialAutomationSettingsInputSchema.safeParse({ matchThreshold: 55.5 }).success).toBe(
       false,
     );
+  });
+});
+
+describe("connected discovery contracts (Sprint 46)", () => {
+  const uuid = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+  const sourceUuid = "9b2c8a44-1d2e-4f5a-8b6c-7d8e9f0a1b2c";
+
+  it("exposes the source mode and job status vocabularies", () => {
+    expect(DISCOVERY_SOURCE_MODES).toEqual([
+      "query",
+      "account_timeline",
+      "list_timeline",
+      "subreddit",
+      "hashtag",
+    ]);
+    expect(DISCOVERY_JOB_STATUSES).toEqual(["queued", "running", "succeeded", "failed", "skipped"]);
+  });
+
+  it("parses a keyless rss source row with no connection", () => {
+    const source = {
+      id: sourceUuid,
+      workspaceId: uuid,
+      type: "rss",
+      name: "RSS: https://example.com/feed.xml",
+      config: { feedUrl: "https://example.com/feed.xml" },
+      enabled: true,
+      status: "active",
+      lastError: null,
+      lastFetchedAt: null,
+      connectionId: null,
+      cursor: {},
+      backoffUntil: null,
+      lastAttemptedAt: null,
+      createdAt: 1,
+    };
+    expect(discoverySourceSchema.safeParse(source).success).toBe(true);
+    // a connected source binds to a connection and may carry cursor state
+    expect(
+      discoverySourceSchema.safeParse({
+        ...source,
+        type: "x",
+        config: { mode: "query", query: "gtm memory" },
+        connectionId: uuid,
+        cursor: { query: { nextToken: "abc" } },
+        backoffUntil: 99,
+        lastAttemptedAt: 98,
+      }).success,
+    ).toBe(true);
+    expect(discoverySourceSchema.safeParse({ ...source, connectionId: "nope" }).success).toBe(false);
+  });
+
+  it("parses connected source configs by mode", () => {
+    expect(
+      discoverySourceConfigSchema.safeParse({ mode: "query", query: "agentic gtm" }).success,
+    ).toBe(true);
+    expect(
+      discoverySourceConfigSchema.safeParse({ mode: "account_timeline", handle: "@rival" }).success,
+    ).toBe(true);
+    expect(
+      discoverySourceConfigSchema.safeParse({
+        mode: "account_timeline",
+        trackedAccountIds: [uuid, sourceUuid],
+      }).success,
+    ).toBe(true);
+    expect(discoverySourceConfigSchema.safeParse({ mode: "hashtag", hashtag: "buildinpublic" }).success).toBe(
+      true,
+    );
+    expect(discoverySourceConfigSchema.safeParse({ mode: "firehose" }).success).toBe(false);
+    expect(discoverySourceConfigSchema.safeParse({ trackedAccountId: "not-a-uuid" }).success).toBe(false);
+  });
+
+  it("parses job rows across the queued -> running -> finished lifecycle", () => {
+    const job = {
+      id: uuid,
+      workspaceId: uuid,
+      sourceId: sourceUuid,
+      status: "queued",
+      attempt: 0,
+      lockedAt: null,
+      startedAt: null,
+      finishedAt: null,
+      fetchedCount: 0,
+      newCount: 0,
+      error: null,
+      createdAt: 1,
+    };
+    expect(discoveryJobSchema.safeParse(job).success).toBe(true);
+    expect(
+      discoveryJobSchema.safeParse({ ...job, status: "running", attempt: 1, lockedAt: 2, startedAt: 2 })
+        .success,
+    ).toBe(true);
+    expect(
+      discoveryJobSchema.safeParse({
+        ...job,
+        status: "succeeded",
+        attempt: 1,
+        lockedAt: 2,
+        startedAt: 2,
+        finishedAt: 3,
+        fetchedCount: 10,
+        newCount: 4,
+      }).success,
+    ).toBe(true);
+    expect(
+      discoveryJobSchema.safeParse({ ...job, status: "failed", error: "stale_lock" }).success,
+    ).toBe(true);
+    expect(discoveryJobSchema.safeParse({ ...job, status: "paused" }).success).toBe(false);
+    expect(discoveryJobSchema.safeParse({ ...job, fetchedCount: -1 }).success).toBe(false);
+    expect(discoveryJobSchema.safeParse({ ...job, attempt: 0.5 }).success).toBe(false);
   });
 });
 

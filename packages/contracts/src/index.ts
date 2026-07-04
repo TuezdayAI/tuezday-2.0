@@ -813,6 +813,19 @@ export type DiscoverySourceType = (typeof DISCOVERY_SOURCE_TYPES)[number];
 export const DISCOVERY_SOURCE_STATUSES = ["active", "needs_api_key", "error"] as const;
 export type DiscoverySourceStatus = (typeof DISCOVERY_SOURCE_STATUSES)[number];
 
+// Connected sourcing (Sprint 46): how a source listens. Keyless sources leave
+// `mode` unset; connected sources pick a provider-supported mode (X: query /
+// account_timeline / list_timeline; Reddit: subreddit / query; LinkedIn:
+// account_timeline; Instagram: account_timeline / hashtag).
+export const DISCOVERY_SOURCE_MODES = [
+  "query",
+  "account_timeline",
+  "list_timeline",
+  "subreddit",
+  "hashtag",
+] as const;
+export type DiscoverySourceMode = (typeof DISCOVERY_SOURCE_MODES)[number];
+
 // `duplicate` (Sprint 45): a cross-source copy of an already-seen story,
 // linked to the canonical item via `duplicateOfId` — never enters triage.
 export const DISCOVERED_ITEM_STATUSES = ["new", "accepted", "skipped", "duplicate"] as const;
@@ -820,11 +833,20 @@ export type DiscoveredItemStatus = (typeof DISCOVERED_ITEM_STATUSES)[number];
 
 export const discoverySourceConfigSchema = z.object({
   feedUrl: z.string().url().optional(),
-  query: z.string().trim().max(200).optional(),
+  query: z.string().trim().max(300).optional(),
   subreddit: z.string().trim().max(100).optional(),
   channelId: z.string().trim().max(100).optional(),
   geo: z.string().trim().max(10).optional(),
   sector: z.string().trim().max(100).optional(),
+  // Connected sourcing (Sprint 46): mode + provider-specific targets. All
+  // optional here; type/mode combinations are validated on source create.
+  mode: z.enum(DISCOVERY_SOURCE_MODES).optional(),
+  handle: z.string().trim().max(100).optional(),
+  handles: z.array(z.string().trim().max(100)).max(25).optional(),
+  listId: z.string().trim().max(100).optional(),
+  hashtag: z.string().trim().max(100).optional(),
+  trackedAccountId: z.string().uuid().optional(),
+  trackedAccountIds: z.array(z.string().uuid()).max(25).optional(),
 });
 export type DiscoverySourceConfig = z.infer<typeof discoverySourceConfigSchema>;
 
@@ -838,6 +860,15 @@ export const discoverySourceSchema = z.object({
   status: z.enum(DISCOVERY_SOURCE_STATUSES),
   lastError: z.string().nullable(),
   lastFetchedAt: z.number().int().nullable(),
+  // Connected sourcing (Sprint 46): the workspace connection this source reads
+  // through. Null for keyless sources (RSS, Google News, keyless Reddit, ...).
+  connectionId: z.string().uuid().nullable(),
+  // Best-effort provider pagination state keyed by mode; dedup on external ids
+  // remains the idempotency guarantee.
+  cursor: z.record(z.string(), z.unknown()),
+  // Rate-limit back-pressure: the source is not enqueued until this passes.
+  backoffUntil: z.number().int().nullable(),
+  lastAttemptedAt: z.number().int().nullable(),
   createdAt: z.number().int(),
 });
 export type DiscoverySource = z.infer<typeof discoverySourceSchema>;
@@ -916,6 +947,34 @@ export const discoveredItemSchema = z.object({
   createdAt: z.number().int(),
 });
 export type DiscoveredItem = z.infer<typeof discoveredItemSchema>;
+
+// Discovery job ledger (Sprint 46): one row per source fetch attempt.
+// `/discovery/run` enqueues due sources and processes a bounded batch, so one
+// slow source cannot serialize the whole workspace and runs stay observable.
+export const DISCOVERY_JOB_STATUSES = [
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "skipped",
+] as const;
+export type DiscoveryJobStatus = (typeof DISCOVERY_JOB_STATUSES)[number];
+
+export const discoveryJobSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  sourceId: z.string().uuid(),
+  status: z.enum(DISCOVERY_JOB_STATUSES),
+  attempt: z.number().int().min(0),
+  lockedAt: z.number().int().nullable(),
+  startedAt: z.number().int().nullable(),
+  finishedAt: z.number().int().nullable(),
+  fetchedCount: z.number().int().min(0),
+  newCount: z.number().int().min(0),
+  error: z.string().nullable(),
+  createdAt: z.number().int(),
+});
+export type DiscoveryJob = z.infer<typeof discoveryJobSchema>;
 
 // ---------------------------------------------------------------------------
 // Evidence corpus (RAG behind the Brain Gateway boundary)
