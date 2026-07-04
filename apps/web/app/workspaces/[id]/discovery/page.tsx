@@ -13,14 +13,25 @@ import {
   DISCOVERY_SOURCE_TYPES,
   TRACKED_SOCIAL_PLATFORMS,
   type Campaign,
+  type Connection,
   type DiscoveredItem,
   type DiscoverySource,
+  type DiscoverySourceMode,
   type DiscoverySourceType,
   type Persona,
   type TrackedSocialAccount,
   type TrackedSocialPlatform,
   type Workspace,
 } from "@tuezday/contracts";
+
+// Connector provider key a connected source of each social type reads through
+// (mirrors providerForDiscoverySourceType on the API).
+const SOURCE_PROVIDERS: Partial<Record<DiscoverySourceType, string>> = {
+  x: "twitter",
+  linkedin: "linkedin",
+  instagram: "instagram",
+  reddit: "reddit",
+};
 
 const PLATFORM_LABELS: Record<TrackedSocialPlatform, string> = {
   x: "X",
@@ -43,8 +54,8 @@ const TYPE_LABELS: Record<DiscoverySourceType, string> = {
   podcast: "Podcast",
   google_trends: "Google Trends",
   funding_news: "Funding news",
-  x: "X (needs API key)",
-  linkedin: "LinkedIn (needs API key)",
+  x: "X (connected or API key)",
+  linkedin: "LinkedIn (connected or API key)",
   instagram: "Instagram (connected account)",
   g2: "G2 reviews (needs API key)",
   capterra: "Capterra reviews (needs API key)",
@@ -79,6 +90,7 @@ export default function DiscoveryPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [sources, setSources] = useState<DiscoverySource[]>([]);
   const [tracked, setTracked] = useState<TrackedSocialAccount[]>([]);
+  const [connections, setConnections] = useState<Connection[]>([]);
   const [inbox, setInbox] = useState<DiscoveredItem[]>([]);
   const inboxList = useShowMore(inbox, 50);
   const [error, setError] = useState<string | null>(null);
@@ -92,6 +104,13 @@ export default function DiscoveryPage() {
   const [channelId, setChannelId] = useState("");
   const [geo, setGeo] = useState("");
   const [sector, setSector] = useState("");
+  // connected-source fields (Sprint 46)
+  const [connectionId, setConnectionId] = useState("");
+  const [mode, setMode] = useState<DiscoverySourceMode | "">("");
+  const [handle, setHandle] = useState("");
+  const [listId, setListId] = useState("");
+  const [hashtag, setHashtag] = useState("");
+  const [trackedAccountId, setTrackedAccountId] = useState("");
 
   // tracked-accounts form
   const [showTrackedForm, setShowTrackedForm] = useState(false);
@@ -113,13 +132,14 @@ export default function DiscoveryPage() {
 
   const load = useCallback(async () => {
     try {
-      const [wsRes, pRes, cRes, sRes, tRes, iRes] = await Promise.all([
+      const [wsRes, pRes, cRes, sRes, tRes, iRes, connRes] = await Promise.all([
         apiFetch(`/workspaces/${id}`),
         apiFetch(`/workspaces/${id}/personas`),
         apiFetch(`/workspaces/${id}/campaigns`),
         apiFetch(`/workspaces/${id}/discovery/sources`),
         apiFetch(`/workspaces/${id}/discovery/tracked-accounts`),
         apiFetch(`/workspaces/${id}/discovery/items?status=new`),
+        apiFetch(`/workspaces/${id}/connectors`),
       ]);
       if (!wsRes.ok || !pRes.ok || !cRes.ok || !sRes.ok || !tRes.ok || !iRes.ok)
         throw new Error("not found");
@@ -129,6 +149,11 @@ export default function DiscoveryPage() {
       setSources(await sRes.json());
       setTracked(await tRes.json());
       setInbox(await iRes.json());
+      // Best-effort: the source form still works keyless if this fails.
+      if (connRes.ok) {
+        const view = (await connRes.json()) as { connections?: Connection[] };
+        setConnections(view.connections ?? []);
+      }
       setError(null);
     } catch {
       setError(`Could not load this workspace from ${API_URL}. Is "npm run dev" running?`);
@@ -143,6 +168,7 @@ export default function DiscoveryPage() {
     type: DiscoverySourceType;
     name?: string;
     config: Record<string, string | undefined>;
+    connectionId?: string;
   }) {
     setBusy(true);
     setError(null);
@@ -161,6 +187,12 @@ export default function DiscoveryPage() {
       setChannelId("");
       setGeo("");
       setSector("");
+      setConnectionId("");
+      setMode("");
+      setHandle("");
+      setListId("");
+      setHashtag("");
+      setTrackedAccountId("");
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to add source");
@@ -169,14 +201,51 @@ export default function DiscoveryPage() {
     }
   }
 
+  /** Connected accounts this source type can read through. */
+  function connectionsForType(type: DiscoverySourceType): Connection[] {
+    const provider = SOURCE_PROVIDERS[type];
+    if (!provider) return [];
+    return connections.filter((c) => c.providerKey === provider && c.status === "connected");
+  }
+
+  /** Tracked accounts on this source type's platform (source types map 1:1). */
+  function trackedForType(type: DiscoverySourceType): TrackedSocialAccount[] {
+    return tracked.filter((a) => a.platform === type && a.enabled);
+  }
+
+  // Effective listen mode while the form is open. X defaults to search; a
+  // connected LinkedIn source only supports account timelines; Instagram
+  // defaults to account posts.
+  const xMode: DiscoverySourceMode = mode === "" ? "query" : mode;
+  const igMode: DiscoverySourceMode = mode === "" ? "account_timeline" : mode;
+
+  const matchingConnections = connectionsForType(newType);
+  const showConnectionPicker = Boolean(SOURCE_PROVIDERS[newType]);
+  const instagramUnconnectable = newType === "instagram" && matchingConnections.length === 0;
+  const showQueryField =
+    newType === "google_news" ||
+    newType === "reddit" ||
+    newType === "hacker_news" ||
+    newType === "funding_news" ||
+    newType === "g2" ||
+    newType === "capterra" ||
+    newType === "intent" ||
+    (newType === "x" && (!connectionId || xMode === "query")) ||
+    (newType === "linkedin" && !connectionId);
+  const showAccountTarget =
+    (newType === "x" && Boolean(connectionId) && xMode === "account_timeline") ||
+    (newType === "linkedin" && Boolean(connectionId)) ||
+    (newType === "instagram" && igMode === "account_timeline");
+
   function submitForm(e: React.FormEvent) {
     e.preventDefault();
     const config: Record<string, string | undefined> = {};
+    const accountTarget: Record<string, string | undefined> = trackedAccountId
+      ? { trackedAccountId }
+      : { handle: handle.trim() || undefined };
     if (newType === "rss" || newType === "podcast") config.feedUrl = feedUrl.trim();
     if (
       newType === "google_news" ||
-      newType === "x" ||
-      newType === "linkedin" ||
       newType === "hacker_news" ||
       newType === "funding_news" ||
       newType === "g2" ||
@@ -188,10 +257,37 @@ export default function DiscoveryPage() {
       if (subreddit.trim()) config.subreddit = subreddit.trim();
       if (query.trim()) config.query = query.trim();
     }
+    if (newType === "x") {
+      if (connectionId) {
+        config.mode = xMode;
+        if (xMode === "query") config.query = query.trim();
+        if (xMode === "account_timeline") Object.assign(config, accountTarget);
+        if (xMode === "list_timeline") config.listId = listId.trim();
+      } else {
+        config.query = query.trim();
+      }
+    }
+    if (newType === "linkedin") {
+      if (connectionId) {
+        config.mode = "account_timeline";
+        Object.assign(config, accountTarget);
+      } else {
+        config.query = query.trim();
+      }
+    }
+    if (newType === "instagram") {
+      config.mode = igMode;
+      if (igMode === "account_timeline") Object.assign(config, accountTarget);
+      if (igMode === "hashtag") config.hashtag = hashtag.trim();
+    }
     if (newType === "youtube") config.channelId = channelId.trim();
     if (newType === "google_trends" && geo.trim()) config.geo = geo.trim();
     if (newType === "funding_news" && sector.trim()) config.sector = sector.trim();
-    void addSource({ type: newType, config });
+    void addSource({
+      type: newType,
+      config,
+      ...(connectionId ? { connectionId } : {}),
+    });
   }
 
   async function toggleSource(source: DiscoverySource) {
@@ -383,7 +479,12 @@ export default function DiscoveryPage() {
                 Type
                 <select
                   value={newType}
-                  onChange={(e) => setNewType(e.target.value as DiscoverySourceType)}
+                  onChange={(e) => {
+                    setNewType(e.target.value as DiscoverySourceType);
+                    setConnectionId("");
+                    setMode("");
+                    setTrackedAccountId("");
+                  }}
                 >
                   {DISCOVERY_SOURCE_TYPES.map((t) => (
                     <option key={t} value={t}>
@@ -392,6 +493,63 @@ export default function DiscoveryPage() {
                   ))}
                 </select>
               </label>
+              {showConnectionPicker && (
+                <label>
+                  Read through
+                  <select
+                    value={connectionId}
+                    onChange={(e) => {
+                      setConnectionId(e.target.value);
+                      setMode("");
+                      setTrackedAccountId("");
+                    }}
+                  >
+                    <option value="">
+                      {newType === "instagram"
+                        ? "Choose an account…"
+                        : newType === "reddit"
+                          ? "No account (public RSS)"
+                          : "No account (needs API key)"}
+                    </option>
+                    {matchingConnections.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.displayName}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              )}
+              {newType === "x" && connectionId && (
+                <label>
+                  Listen for
+                  <select
+                    value={xMode}
+                    onChange={(e) => {
+                      setMode(e.target.value as DiscoverySourceMode);
+                      setTrackedAccountId("");
+                    }}
+                  >
+                    <option value="query">Recent post search</option>
+                    <option value="account_timeline">Account timeline</option>
+                    <option value="list_timeline">List timeline</option>
+                  </select>
+                </label>
+              )}
+              {newType === "instagram" && (
+                <label>
+                  Listen for
+                  <select
+                    value={igMode}
+                    onChange={(e) => {
+                      setMode(e.target.value as DiscoverySourceMode);
+                      setTrackedAccountId("");
+                    }}
+                  >
+                    <option value="account_timeline">Account posts</option>
+                    <option value="hashtag">Hashtag</option>
+                  </select>
+                </label>
+              )}
               {(newType === "rss" || newType === "podcast") && (
                 <label style={{ flex: 1 }}>
                   Feed URL
@@ -402,15 +560,7 @@ export default function DiscoveryPage() {
                   />
                 </label>
               )}
-              {(newType === "google_news" ||
-                newType === "reddit" ||
-                newType === "x" ||
-                newType === "linkedin" ||
-                newType === "hacker_news" ||
-                newType === "funding_news" ||
-                newType === "g2" ||
-                newType === "capterra" ||
-                newType === "intent") && (
+              {showQueryField && (
                 <label style={{ flex: 1 }}>
                   {newType === "reddit" ? "Query (optional with subreddit)" : "Query"}
                   <input
@@ -427,6 +577,57 @@ export default function DiscoveryPage() {
                     value={subreddit}
                     onChange={(e) => setSubreddit(e.target.value)}
                     placeholder="SaaS"
+                  />
+                </label>
+              )}
+              {showAccountTarget && (
+                <>
+                  {trackedForType(newType).length > 0 && (
+                    <label>
+                      Tracked account
+                      <select
+                        value={trackedAccountId}
+                        onChange={(e) => setTrackedAccountId(e.target.value)}
+                      >
+                        <option value="">Type a handle instead…</option>
+                        {trackedForType(newType).map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {trackedHandleLabel(a)}
+                            {a.displayName ? ` — ${a.displayName}` : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {!trackedAccountId && (
+                    <label>
+                      Handle
+                      <input
+                        value={handle}
+                        onChange={(e) => setHandle(e.target.value)}
+                        placeholder="@competitor"
+                      />
+                    </label>
+                  )}
+                </>
+              )}
+              {newType === "x" && connectionId && xMode === "list_timeline" && (
+                <label>
+                  List ID
+                  <input
+                    value={listId}
+                    onChange={(e) => setListId(e.target.value)}
+                    placeholder="1234567890"
+                  />
+                </label>
+              )}
+              {newType === "instagram" && igMode === "hashtag" && (
+                <label>
+                  Hashtag
+                  <input
+                    value={hashtag}
+                    onChange={(e) => setHashtag(e.target.value)}
+                    placeholder="gtmstrategy"
                   />
                 </label>
               )}
@@ -456,10 +657,19 @@ export default function DiscoveryPage() {
                   />
                 </label>
               )}
-              <button type="submit" disabled={busy}>
+              <button
+                type="submit"
+                disabled={busy || (newType === "instagram" && !connectionId)}
+              >
                 Add
               </button>
             </div>
+            {instagramUnconnectable && (
+              <p className="empty">
+                Instagram discovery reads through a connected professional account — connect
+                Instagram on the Integrations page first.
+              </p>
+            )}
           </form>
         )}
 
