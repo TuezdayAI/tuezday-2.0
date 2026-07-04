@@ -47,85 +47,99 @@ export default function BillingPage({ params }: { params: Promise<{ id: string }
   };
 
   return (
-    <div className="flex flex-col flex-1 h-full overflow-auto bg-gray-50">
-      <header className="flex h-14 items-center gap-4 border-b bg-white px-6">
-        <h1 className="text-lg font-semibold">Billing & Plans</h1>
+    <div className="ws-content">
+      <header className="page-header">
+        <h1>Billing & Plans</h1>
       </header>
 
-      <main className="flex-1 p-6 md:p-10">
-        <div className="mx-auto max-w-4xl space-y-8">
-          <div className="bg-white p-6 rounded-lg shadow-sm border">
-            <h2 className="text-2xl font-bold mb-4">Current Plan</h2>
-            {error && <div className="text-red-500 mb-4">{error}</div>}
-            
-            {!data && !error && <div>Loading...</div>}
+      <div style={{ display: "flex", flexDirection: "column", gap: "24px", maxWidth: "800px" }}>
+        {error && <div className="error">{error}</div>}
+        
+        {!data && !error && <div className="empty">Loading...</div>}
 
-            {data && (
-              <div className="space-y-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-lg font-medium text-gray-900 capitalize">{data.plan} Plan</p>
-                    {data.plan === "free" && (
-                      <p className="text-sm text-gray-500 mt-1">Upgrade to Pro for more generations and features.</p>
-                    )}
-                  </div>
+        {data && (
+          <>
+            <div className="billing-card">
+              <div className="billing-kicker">Current Plan</div>
+              <div className="billing-plan-row">
+                <div>
+                  <h2 className="billing-plan-name">{data.plan} Plan</h2>
                   {data.plan === "free" && (
-                    <button
-                      onClick={handleUpgrade}
-                      disabled={upgrading}
-                      className="bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-md font-medium disabled:opacity-50"
-                    >
-                      {upgrading ? "Redirecting..." : "Upgrade to Pro"}
-                    </button>
+                    <p className="billing-plan-hint">Upgrade to Pro for more generations and features.</p>
                   )}
                 </div>
-
-                <div className="border-t pt-6 mt-6">
-                  <h3 className="text-lg font-semibold mb-4">Usage</h3>
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                    <UsageCard
-                      title="Monthly Generations"
-                      used={data.usage.monthlyGenerations}
-                      limit={data.entitlements.monthlyGenerations}
-                    />
-                    <UsageCard
-                      title="Connectors"
-                      used={data.usage.connectors}
-                      limit={data.entitlements.connectors}
-                    />
-                    <UsageCard
-                      title="Seats"
-                      used={data.usage.seats}
-                      limit={data.entitlements.seats}
-                    />
-                  </div>
-                </div>
+                {data.plan === "free" && (
+                  <button
+                    onClick={handleUpgrade}
+                    disabled={upgrading}
+                    className="billing-button"
+                  >
+                    {upgrading ? "Redirecting..." : "Upgrade to Pro"}
+                  </button>
+                )}
               </div>
-            )}
-          </div>
-        </div>
-      </main>
+            </div>
+
+            <div className="billing-card">
+              <div className="billing-kicker">Usage</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: "24px" }}>
+                <UsageRow
+                  title="Monthly Generations"
+                  used={data.usage.monthlyGenerations}
+                  limit={data.entitlements.monthlyGenerations}
+                />
+                <UsageRow
+                  title="Connectors"
+                  used={data.usage.connectors}
+                  limit={data.entitlements.connectors}
+                />
+                <UsageRow
+                  title="Seats"
+                  used={data.usage.seats}
+                  limit={data.entitlements.seats}
+                />
+              </div>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
 
-function UsageCard({ title, used, limit }: { title: string; used: number; limit: number }) {
-  const percent = Math.min(100, Math.round((used / limit) * 100)) || 0;
+function UsageRow({ title, used, limit }: { title: string; used: number; limit: number }) {
+  const isUnlimited = limit === -1;
+  const percent = isUnlimited ? 0 : Math.min(100, Math.round((used / limit) * 100)) || 0;
+  const overLimit = !isUnlimited && used >= limit;
   
   return (
-    <div className="bg-gray-50 p-4 rounded border">
-      <div className="flex justify-between items-center mb-2">
-        <h4 className="font-medium text-gray-700">{title}</h4>
-        <span className="text-sm font-semibold text-gray-900">
-          {used} / {limit}
-        </span>
+    <div className="billing-usage-row">
+      <div className="billing-usage-header">
+        <span className="billing-usage-label">{title}</span>
+        {isUnlimited ? (
+          <span className="billing-usage-unlimited">Unlimited</span>
+        ) : (
+          <span className="billing-usage-count">
+            {used} / {limit}
+          </span>
+        )}
       </div>
-      <div className="w-full bg-gray-200 rounded-full h-2.5">
-        <div 
-          className={`h-2.5 rounded-full ${percent > 90 ? 'bg-red-600' : 'bg-blue-600'}`} 
-          style={{ width: `${percent}%` }}
-        ></div>
-      </div>
+      
+      {!isUnlimited && (
+        <>
+          <div className="billing-usage-bar-track">
+            <div 
+              className={`billing-usage-bar-fill ${overLimit ? 'over-limit' : ''}`} 
+              style={{ width: `${percent}%` }}
+            ></div>
+          </div>
+          {overLimit && (
+            <div className="billing-upgrade-flash">
+              Upgrade for more usages.
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
