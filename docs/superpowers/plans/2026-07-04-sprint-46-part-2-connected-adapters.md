@@ -1,4 +1,4 @@
-# Sprint 46 Part 2 - Connected Adapters & Competitor Accounts Implementation Plan
+﻿# Sprint 46 Part 2 - Connected Adapters & Competitor Accounts Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -47,121 +47,121 @@
 
 ### Task 1: Tracked Social Account Contracts And Service
 
-- [ ] Add `TRACKED_SOCIAL_PLATFORMS = ["x", "linkedin", "instagram", "reddit"]`.
-- [ ] Add `trackedSocialAccountSchema`, `createTrackedSocialAccountInputSchema`, and `updateTrackedSocialAccountInputSchema`.
-- [ ] Create `tracked-social-accounts.ts` with:
+- [x] Add `TRACKED_SOCIAL_PLATFORMS = ["x", "linkedin", "instagram", "reddit"]`.
+- [x] Add `trackedSocialAccountSchema`, `createTrackedSocialAccountInputSchema`, and `updateTrackedSocialAccountInputSchema`.
+- [x] Create `tracked-social-accounts.ts` with:
   - `normalizeTrackedHandle(platform, handle)`;
   - `createTrackedSocialAccount`;
   - `listTrackedSocialAccounts`;
   - `updateTrackedSocialAccount`;
   - `deleteTrackedSocialAccount`.
-- [ ] Normalize X/Instagram handles by stripping leading `@`; normalize Reddit by stripping `r/` for subreddit-style account tracking.
-- [ ] Tests:
+- [x] Normalize X/Instagram handles by stripping leading `@`; normalize Reddit by stripping `r/` for subreddit-style account tracking.
+- [x] Tests:
   - duplicate `(workspaceId, platform, handle)` is rejected or returns `409`;
   - `@competitor` and `competitor` normalize to the same row;
   - list is workspace-scoped.
-- [ ] Commit: `feat(api): tracked social accounts for discovery`.
+- [x] Commit: `feat(api): tracked social accounts for discovery`.
 
 ### Task 2: Source Connection Validation
 
-- [ ] Add a helper in `services/discovery.ts` or a focused helper file:
+- [x] Add a helper in `services/discovery.ts` or a focused helper file:
   - `providerForDiscoverySourceType("x") -> "twitter"`;
   - `providerForDiscoverySourceType("linkedin") -> "linkedin"`;
   - `providerForDiscoverySourceType("instagram") -> "instagram"`;
   - `providerForDiscoverySourceType("reddit") -> "reddit"`.
-- [ ] On create/update, if a connected source has `connectionId`, load the connection and require:
+- [x] On create/update, if a connected source has `connectionId`, load the connection and require:
   - same workspace;
   - `status === "connected"`;
   - matching provider key.
-- [ ] Errors:
+- [x] Errors:
   - missing connection for connected-only modes -> `400 connection_required`;
   - wrong provider -> `400 wrong_provider`;
   - disconnected -> `400 connection_disconnected`.
-- [ ] Tests for each error.
-- [ ] Commit: `feat(api): validate discovery source connections`.
+- [x] Tests for each error.
+- [x] Commit: `feat(api): validate discovery source connections`.
 
 ### Task 3: Connected Adapter Seam
 
-- [ ] Create `connected-adapters.ts`.
-- [ ] Export:
+- [x] Create `connected-adapters.ts`.
+- [x] Export:
   - `ConnectedDiscoveryInput`;
   - `fetchConnectedSourceItems(input): Promise<RawDiscoveredItem[]>`;
   - `PermissionRequiredError`;
   - `RateLimitedError`.
-- [ ] Implement dispatch by source type:
+- [x] Implement dispatch by source type:
   - `x` -> `fetchXItems`;
   - `reddit` -> `fetchAuthenticatedRedditItems`;
   - `linkedin` -> `fetchLinkedInItems`;
   - `instagram` -> `fetchInstagramItems`.
-- [ ] Keep adapter output identical to existing `RawDiscoveredItem`.
-- [ ] Tests use a fake `ConnectorFabric` with captured `proxyJson` calls.
-- [ ] Commit: `feat(api): connected discovery adapter seam`.
+- [x] Keep adapter output identical to existing `RawDiscoveredItem`.
+- [x] Tests use a fake `ConnectorFabric` with captured `proxyJson` calls.
+- [x] Commit: `feat(api): connected discovery adapter seam`.
 
 ### Task 4: X Connected Sources
 
-- [ ] Implement X query mode with `/2/tweets/search/recent`.
-- [ ] Implement X account timeline mode by resolving `/2/users/by/username/:username`, then fetching `/2/users/:id/tweets`.
-- [ ] Implement optional list mode via `/2/lists/:id/tweets`; if `list.read` is missing and X returns 403, convert to `PermissionRequiredError`.
-- [ ] Normalize:
+- [x] Implement X query mode with `/2/tweets/search/recent`.
+- [x] Implement X account timeline mode by resolving `/2/users/by/username/:username`, then fetching `/2/users/:id/tweets`.
+- [x] Implement optional list mode via `/2/lists/:id/tweets`; if `list.read` is missing and X returns 403, convert to `PermissionRequiredError`.
+- [x] Normalize:
   - `externalId = "x:" + tweet.id`;
   - `title = first 90 chars of tweet text`;
   - `url = https://x.com/{username}/status/{tweet.id}`;
   - `summary = tweet text + compact metrics when present`;
   - `publishedAt = Date.parse(created_at)`.
-- [ ] Tests:
+- [x] Tests:
   - query mode fixture inserts X items;
   - account mode resolves handle before timeline;
   - 429 becomes rate-limited/backoff through the discovery run.
-- [ ] Commit: `feat(api): connected X discovery sources`.
+- [x] Commit: `feat(api): connected X discovery sources`.
 
 ### Task 5: Authenticated Reddit Sources
 
-- [ ] Add `read` to Reddit provider OAuth scopes in `CONNECTOR_PROVIDERS`.
-- [ ] Implement connected Reddit:
+- [x] Add `read` to Reddit provider OAuth scopes in `CONNECTOR_PROVIDERS`.
+- [x] Implement connected Reddit:
   - subreddit new: `/r/{subreddit}/new?limit=25`;
   - subreddit search: `/r/{subreddit}/search?q=...&restrict_sr=1&sort=new&limit=25`;
   - global search when only `query` is present: `/search?q=...&sort=new&limit=25`.
-- [ ] Normalize:
+- [x] Normalize:
   - external id: `kind + "_" + data.id` or `data.name`;
   - url: `https://www.reddit.com${permalink}`;
   - title: `data.title`;
   - summary: `data.selftext` or `data.url`;
   - publishedAt: `created_utc * 1000`.
-- [ ] Tests:
+- [x] Tests:
   - connected source uses OAuth endpoint, not RSS;
   - keyless Reddit source still uses RSS.
-- [ ] Commit: `feat(api): authenticated Reddit discovery`.
+- [x] Commit: `feat(api): authenticated Reddit discovery`.
 
 ### Task 6: LinkedIn And Instagram Permission-Gated Sources
 
-- [ ] LinkedIn:
+- [x] LinkedIn:
   - require `mode=account_timeline`;
   - accept `externalId`/author URN from tracked account when present;
   - fetch posts by author with LinkedIn version headers;
   - convert 403 to `PermissionRequiredError("LinkedIn read scope or author role required")`.
-- [ ] Instagram:
+- [x] Instagram:
   - require `mode=account_timeline` or `mode=hashtag`;
   - use Graph API through the existing Instagram connection;
   - convert 403/400 permission responses to `PermissionRequiredError("Instagram professional account or app review required")`.
-- [ ] Tests:
+- [x] Tests:
   - LinkedIn 403 marks only that source as failed/permission-required;
   - Instagram 403 marks only that source as failed/permission-required;
   - another source in the same run still succeeds.
-- [ ] Commit: `feat(api): LinkedIn and Instagram connected discovery guards`.
+- [x] Commit: `feat(api): LinkedIn and Instagram connected discovery guards`.
 
 ### Task 7: Run Integration And Backoff
 
-- [ ] In `runDiscovery`, when `source.connectionId` is present, call `fetchConnectedSourceItems`.
-- [ ] On `PermissionRequiredError`, mark source `error`, job failed, no `backoffUntil`.
-- [ ] On `RateLimitedError` or provider 429/5xx, set exponential `backoffUntil`.
-- [ ] On other errors, mark source `error` and job failed.
-- [ ] Tests:
+- [x] In `runDiscovery`, when `source.connectionId` is present, call `fetchConnectedSourceItems`.
+- [x] On `PermissionRequiredError`, mark source `error`, job failed, no `backoffUntil`.
+- [x] On `RateLimitedError` or provider 429/5xx, set exponential `backoffUntil`.
+- [x] On other errors, mark source `error` and job failed.
+- [x] Tests:
   - connected + keyless sources in one run both return source summaries;
   - duplicate URL/content across connected X and keyless Google News links to one canonical item;
   - connected accepted item copies Sprint 45 matches to a signal.
-- [ ] Run `npm test -- connected-discovery discovery`.
-- [ ] Run `npm run typecheck`.
-- [ ] Commit: `feat(api): run connected discovery through job ledger`.
+- [x] Run `npm test -- connected-discovery discovery`.
+- [x] Run `npm run typecheck`.
+- [x] Commit: `feat(api): run connected discovery through job ledger`.
 
 ## Completion Gate
 

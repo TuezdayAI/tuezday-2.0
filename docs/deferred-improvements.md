@@ -279,6 +279,31 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
   founder wants multi-source stories ranked above single-source ones.
 - **Origin:** Sprint 45.
 
+### 29. Connected-source cursors are schema-only; every run refetches the newest window
+- **What we shipped (Sprint 46 Part 2):** `discovery_sources.cursor_json` exists (Part 1 schema)
+  but no connected adapter reads or writes it. Every run fetches the newest ~25 items per source
+  (X search/timelines, Reddit listings, LinkedIn posts, IG media) and relies on external-id +
+  cross-source dedup for idempotency — correct, but it re-downloads the same recent window and
+  can miss items beyond the first page during a burst.
+- **The better version:** Store per-mode pagination state (`next_token` for X, `before` fullnames
+  for Reddit) in `cursorJson`, fetch newest-first until a known id is seen, and still treat dedup
+  as the final guarantee (the spec's stated design).
+- **Trigger to revisit:** A tracked account/search that regularly produces more than one page of
+  new items between runs, or provider read-quota pressure from refetching unchanged windows.
+- **Origin:** Sprint 46.
+
+### 30. Tracked-account provider ids are manual; no resolver populates them
+- **What we shipped (Sprint 46 Part 2):** `tracked_social_accounts.external_id` /
+  `last_resolved_at` / `last_error` exist, but nothing fills them automatically — a LinkedIn
+  author URN must be pasted into `externalId` (or typed as the handle), and X handles are
+  re-resolved to user ids on every timeline fetch (one extra API call per handle per run).
+- **The better version:** Resolve and cache provider ids on tracked-account create/first use
+  (X `users/by/username` → store the id; LinkedIn organization lookup where scopes allow),
+  stamping `lastResolvedAt`/`lastError` so the UI can show resolution state.
+- **Trigger to revisit:** X read-quota pressure from repeated handle lookups, or founders tracking
+  LinkedIn organizations who shouldn't need to know what a URN is.
+- **Origin:** Sprint 46.
+
 ---
 
 ## Done (upgraded)
