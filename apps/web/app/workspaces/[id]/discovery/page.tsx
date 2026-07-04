@@ -33,6 +33,24 @@ const SOURCE_PROVIDERS: Partial<Record<DiscoverySourceType, string>> = {
   reddit: "reddit",
 };
 
+// Compact per-platform labels for triage source badges.
+const TYPE_SHORT_LABELS: Record<DiscoverySourceType, string> = {
+  rss: "RSS",
+  google_news: "Google News",
+  reddit: "Reddit",
+  hacker_news: "Hacker News",
+  youtube: "YouTube",
+  podcast: "Podcast",
+  google_trends: "Trends",
+  funding_news: "Funding",
+  x: "X",
+  linkedin: "LinkedIn",
+  instagram: "Instagram",
+  g2: "G2",
+  capterra: "Capterra",
+  intent: "Intent",
+};
+
 const PLATFORM_LABELS: Record<TrackedSocialPlatform, string> = {
   x: "X",
   linkedin: "LinkedIn",
@@ -898,6 +916,7 @@ export default function DiscoveryPage() {
             {inboxList.visible.map((item) => {
               const persona = personaName(item.suggestedPersonaId);
               const campaign = campaignName(item.suggestedCampaignId);
+              const source = sources.find((s) => s.id === item.sourceId);
               return (
                 <li key={item.id} className="section-card">
                   <div className="section-head">
@@ -917,6 +936,19 @@ export default function DiscoveryPage() {
                         {item.title}
                       </a>
                     </span>
+                    {source && (
+                      <span
+                        className="layer-badge source-badge"
+                        title={
+                          source.connectionId
+                            ? `${source.name} — read through a connected account`
+                            : source.name
+                        }
+                      >
+                        {source.connectionId ? "🔗 " : ""}
+                        {TYPE_SHORT_LABELS[source.type]} · {source.name}
+                      </span>
+                    )}
                     {item.duplicateCount > 0 && (
                       <span
                         className="layer-badge layer-zoom"
