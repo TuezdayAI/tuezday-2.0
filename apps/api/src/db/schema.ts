@@ -354,6 +354,34 @@ export const discoveryJobs = sqliteTable(
 
 export type DiscoveryJobRow = typeof discoveryJobs.$inferSelect;
 
+// Tracked social accounts (Sprint 46): first-class competitor/source accounts.
+// Discovery sources reference them via config.trackedAccountId(s) — no FK from
+// the JSON config, so deleting one simply drops it from future fetches.
+export const trackedSocialAccounts = sqliteTable(
+  "tracked_social_accounts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    platform: text("platform").notNull(), // "x" | "linkedin" | "instagram" | "reddit"
+    handle: text("handle").notNull(),
+    displayName: text("display_name"),
+    // Provider-side id (e.g. a LinkedIn author URN) once resolved.
+    externalId: text("external_id"),
+    url: text("url"),
+    notes: text("notes").notNull().default(""),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    lastResolvedAt: integer("last_resolved_at"),
+    lastError: text("last_error"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("tracked_social_account_unique").on(t.workspaceId, t.platform, t.handle)],
+);
+
+export type TrackedSocialAccountRow = typeof trackedSocialAccounts.$inferSelect;
+
 export const discoveredItems = sqliteTable(
   "discovered_items",
   {
