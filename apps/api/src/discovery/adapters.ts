@@ -238,6 +238,7 @@ export async function fetchSourceItems(
       return fetchFundingNews(config, fetcher);
     case "x":
     case "linkedin":
+    case "instagram":
     case "g2":
     case "capterra":
     case "intent":
