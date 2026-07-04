@@ -623,6 +623,59 @@ topics you edit change routing on the very next run.
 
 ---
 
+## Sprint 46 — Connected-account & competitor sourcing
+
+> Spec: `docs/specs/sprint-46-connected-account-competitor-sourcing.md` (on the
+> `sprint-46c-connected-discovery-ui` branch; merge order: main ← 45 ← 46a ← 46b ← 46c).
+> Prereq: Nango up (`npm run nango:up`), X and/or Reddit OAuth app creds in `.env` (see the
+> connected-discovery notes there — X list sources need `list.read`, Reddit discovery needs the
+> `read` scope), and the accounts connected on the Integrations page. Connections made **before**
+> Sprint 46 carry the old scopes — disconnect/reconnect once to pick up the new ones.
+> LinkedIn/Instagram discovery additionally needs provider-side app approval most dev apps don't
+> have — the permission-error check below is the expected outcome without it.
+
+**Slice A — Connected sources produce triage items**
+
+- [ ] **X recent search.** Discover → Add source → type **X**, pick your connected account under
+      **Read through**, listen for **Recent post search**, a narrow query → **Run discovery now**
+      → posts appear in triage with an **🔗 X · <source name>** badge and the usual candidate
+      campaign/persona chips. The source row shows the 🔗 connected badge with the account name
+      (instead of **keyless**) plus `checked`/`fetched` timestamps.
+- [ ] **Tracked competitor timeline.** Tracked accounts → **+ Track account** → platform X, a
+      competitor handle (`@` is stripped on save) → in a new X source pick **Account timeline**
+      and select the tracked account from the dropdown instead of retyping → run → the
+      competitor's posts arrive; if one is the same story a search source already caught, it
+      collapses into the canonical item's **seen via N sources** badge instead of duplicating.
+- [ ] **Authenticated Reddit.** Add a Reddit source with **Read through** set to the connected
+      account (subreddit or query) → run → items arrive through OAuth (not the keyless RSS
+      fallback); a second keyless Reddit source keeps working unchanged.
+
+**Slice B — Failure and back-pressure behavior**
+
+- [ ] **Permission errors stay source-local.** Add a LinkedIn (connected, account timeline) or
+      Instagram source without the provider-side approval → run → that source flips to
+      **permission required** with the provider detail in its error line; every other source in
+      the same run still fetches and scores normally.
+- [ ] **Bounded batches.** With more than 5 enabled sources, **Run discovery now** reports e.g.
+      `8 queued · 5 processed (the rest run on the next poll)` — the leftover jobs run on the next
+      run/worker tick instead of one call doing everything or work being dropped.
+- [ ] **Instagram needs a connection.** With no Instagram connected, the source form's Instagram
+      type shows "connect Instagram on the Integrations page first" and won't submit — no fake
+      keyless Instagram source can be created.
+
+**Slice C — Routing stays Sprint 45**
+
+- [ ] **Accept routes like any signal.** Accept a connected-source item → the created signal
+      carries the full candidate match list → **Run automation now** drafts only for the matched
+      campaigns/personas, exactly as in Sprint 45.
+
+**Gate:** discovery reads through the workspace's own connected accounts — competitor handles are
+reusable tracked accounts, connected and keyless sources dedupe into one story, a provider that
+refuses access breaks only its own source, and everything downstream (scoring, accept, automation)
+behaves as if the item had come from any other source.
+
+---
+
 ## Cross-cutting things worth re-checking occasionally
 
 - [ ] `npm test` (905 tests as of Sprint 45) and `npm run typecheck` stay green.
