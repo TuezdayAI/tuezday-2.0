@@ -705,6 +705,7 @@ export const SIGNAL_SOURCES = [
   "reddit",
   "x",
   "linkedin",
+  "instagram",
   "rss",
   "news",
   "hacker_news",
@@ -804,6 +805,7 @@ export const DISCOVERY_SOURCE_TYPES = [
   "funding_news",
   "x",
   "linkedin",
+  "instagram",
   "g2",
   "capterra",
   "intent",
@@ -873,11 +875,27 @@ export const discoverySourceSchema = z.object({
 });
 export type DiscoverySource = z.infer<typeof discoverySourceSchema>;
 
+/**
+ * Connected-mode target check (Sprint 46): does the config name at least one
+ * account to listen to (inline handle(s) or tracked account reference(s))?
+ */
+function hasAccountTarget(config: DiscoverySourceConfig): boolean {
+  return Boolean(
+    config.handle?.trim() ||
+      config.handles?.length ||
+      config.trackedAccountId ||
+      config.trackedAccountIds?.length,
+  );
+}
+
 export const createDiscoverySourceInputSchema = z
   .object({
     type: z.enum(DISCOVERY_SOURCE_TYPES),
     name: z.string().trim().min(1).max(200).optional(),
     config: discoverySourceConfigSchema.default({}),
+    // Connected sourcing (Sprint 46): the workspace connection to read
+    // through. Validated against the workspace/provider in the service.
+    connectionId: z.string().uuid().nullable().optional(),
   })
   .superRefine((input, ctx) => {
     if (input.type === "rss" && !input.config.feedUrl) {
@@ -907,8 +925,51 @@ export const createDiscoverySourceInputSchema = z
     ) {
       ctx.addIssue({ code: "custom", message: `A ${input.type} source needs a query` });
     }
-    if ((input.type === "x" || input.type === "linkedin") && !input.config.query?.trim()) {
-      ctx.addIssue({ code: "custom", message: `An ${input.type} source needs a query` });
+    // Connected sourcing (Sprint 46). Keyless x/linkedin sources (no mode)
+    // keep the legacy query requirement; a mode makes them connected sources
+    // with per-mode target requirements. Instagram is connected-only.
+    if (input.type === "x" || input.type === "linkedin") {
+      const mode = input.config.mode;
+      if (!mode && !input.config.query?.trim()) {
+        ctx.addIssue({ code: "custom", message: `An ${input.type} source needs a query` });
+      }
+      if (input.type === "linkedin" && mode && mode !== "account_timeline") {
+        ctx.addIssue({
+          code: "custom",
+          message: "A LinkedIn source only supports account_timeline mode",
+        });
+      }
+      if (mode === "query" && !input.config.query?.trim()) {
+        ctx.addIssue({ code: "custom", message: "A query-mode source needs a query" });
+      }
+      if (mode === "account_timeline" && !hasAccountTarget(input.config)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "An account_timeline source needs a handle or a tracked account",
+        });
+      }
+      if (mode === "list_timeline" && !input.config.listId?.trim()) {
+        ctx.addIssue({ code: "custom", message: "A list_timeline source needs a listId" });
+      }
+    }
+    if (input.type === "instagram") {
+      if (input.config.mode === "account_timeline") {
+        if (!hasAccountTarget(input.config)) {
+          ctx.addIssue({
+            code: "custom",
+            message: "An Instagram account_timeline source needs a handle or a tracked account",
+          });
+        }
+      } else if (input.config.mode === "hashtag") {
+        if (!input.config.hashtag?.trim()) {
+          ctx.addIssue({ code: "custom", message: "An Instagram hashtag source needs a hashtag" });
+        }
+      } else {
+        ctx.addIssue({
+          code: "custom",
+          message: "An Instagram source needs mode account_timeline or hashtag",
+        });
+      }
     }
   });
 export type CreateDiscoverySourceInput = z.infer<typeof createDiscoverySourceInputSchema>;
@@ -917,6 +978,8 @@ export const updateDiscoverySourceInputSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   enabled: z.boolean().optional(),
   config: discoverySourceConfigSchema.optional(),
+  // undefined = keep the current connection; null = detach it.
+  connectionId: z.string().uuid().nullable().optional(),
 });
 export type UpdateDiscoverySourceInput = z.infer<typeof updateDiscoverySourceInputSchema>;
 
@@ -975,6 +1038,54 @@ export const discoveryJobSchema = z.object({
   createdAt: z.number().int(),
 });
 export type DiscoveryJob = z.infer<typeof discoveryJobSchema>;
+
+// Tracked social accounts (Sprint 46): first-class competitor/source accounts
+// a workspace listens to. Discovery sources reference them by id instead of
+// re-typing handles into every source config.
+export const TRACKED_SOCIAL_PLATFORMS = ["x", "linkedin", "instagram", "reddit"] as const;
+export type TrackedSocialPlatform = (typeof TRACKED_SOCIAL_PLATFORMS)[number];
+
+export const trackedSocialAccountSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  platform: z.enum(TRACKED_SOCIAL_PLATFORMS),
+  handle: z.string().min(1).max(100),
+  displayName: z.string().nullable(),
+  /** Provider-side id (e.g. a LinkedIn author URN) once resolved. */
+  externalId: z.string().nullable(),
+  url: z.string().nullable(),
+  notes: z.string(),
+  enabled: z.boolean(),
+  lastResolvedAt: z.number().int().nullable(),
+  lastError: z.string().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type TrackedSocialAccount = z.infer<typeof trackedSocialAccountSchema>;
+
+export const createTrackedSocialAccountInputSchema = z.object({
+  platform: z.enum(TRACKED_SOCIAL_PLATFORMS),
+  handle: z.string().trim().min(1).max(100),
+  displayName: z.string().trim().max(200).optional(),
+  externalId: z.string().trim().max(200).optional(),
+  url: z.string().url().optional(),
+  notes: z.string().trim().max(2_000).optional(),
+});
+export type CreateTrackedSocialAccountInput = z.infer<
+  typeof createTrackedSocialAccountInputSchema
+>;
+
+export const updateTrackedSocialAccountInputSchema = z.object({
+  handle: z.string().trim().min(1).max(100).optional(),
+  displayName: z.string().trim().max(200).nullable().optional(),
+  externalId: z.string().trim().max(200).nullable().optional(),
+  url: z.string().url().nullable().optional(),
+  notes: z.string().trim().max(2_000).optional(),
+  enabled: z.boolean().optional(),
+});
+export type UpdateTrackedSocialAccountInput = z.infer<
+  typeof updateTrackedSocialAccountInputSchema
+>;
 
 // ---------------------------------------------------------------------------
 // Evidence corpus (RAG behind the Brain Gateway boundary)
@@ -1337,6 +1448,9 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     // First social publishing platform (Sprint 17) — OAuth popup via a
     // Nango connect session; the founder's Reddit app creds come from
     // REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET in the root .env.
+    // `read` (Sprint 46) lets connected discovery sources use the OAuth
+    // listing/search endpoints; existing connections need a reconnect to
+    // pick it up.
     key: "reddit",
     label: "Reddit",
     nangoProvider: "reddit",
@@ -1344,7 +1458,7 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     categories: ["social"],
     baseUrl: "https://oauth.reddit.com",
     testPath: "/api/v1/me",
-    oauthScopes: "identity,submit",
+    oauthScopes: "identity,submit,read",
   },
   {
     // Sprint 25 social trio. OAuth popup like Reddit; creds come from
@@ -1352,6 +1466,10 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     // hits /v2/userinfo (OpenID) so a connection verifies the member identity.
     // w_member_social is provisioned now so Sprint 26 can broadcast posts
     // (LinkedIn's API forbids cold per-person DMs) without a reconnect.
+    // r_member_social (Sprint 46) is the read scope connected discovery
+    // needs to fetch member-authored posts — LinkedIn only grants it to
+    // apps with Community Management approval, so discovery surfaces a
+    // permission_required source error until the app is approved.
     key: "linkedin",
     label: "LinkedIn",
     nangoProvider: "linkedin",
@@ -1359,7 +1477,7 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     categories: ["social"],
     baseUrl: "https://api.linkedin.com",
     testPath: "/v2/userinfo",
-    oauthScopes: "openid,profile,email,w_member_social",
+    oauthScopes: "openid,profile,email,w_member_social,r_member_social",
   },
   {
     // Key stays "twitter" to match Nango's twitter-v2 template family; the UI
@@ -1367,6 +1485,8 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     // Sprint 26 can post AND send per-recipient DMs; offline.access keeps the
     // token refreshable. Scopes are stored comma-separated like every other
     // provider — Nango's twitter-v2 template emits the space separator X wants.
+    // list.read (Sprint 46) enables list_timeline discovery sources; existing
+    // connections need a reconnect to gain it.
     key: "twitter",
     label: "X (Twitter)",
     nangoProvider: "twitter-v2",
@@ -1374,7 +1494,7 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     categories: ["social"],
     baseUrl: "https://api.twitter.com",
     testPath: "/2/users/me",
-    oauthScopes: "tweet.read,tweet.write,users.read,dm.read,dm.write,offline.access",
+    oauthScopes: "tweet.read,tweet.write,users.read,dm.read,dm.write,offline.access,list.read",
   },
   {
     // Instagram content publishing runs through the Facebook Graph API and

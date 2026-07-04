@@ -87,6 +87,11 @@ import {
   discoverySourceSchema,
   discoverySourceConfigSchema,
   discoveryJobSchema,
+  SIGNAL_SOURCES,
+  TRACKED_SOCIAL_PLATFORMS,
+  trackedSocialAccountSchema,
+  createTrackedSocialAccountInputSchema,
+  updateTrackedSocialAccountInputSchema,
   signalSchema,
   socialAutomationSettingsSchema,
   updateSocialAutomationSettingsInputSchema,
@@ -1026,6 +1031,7 @@ describe("createDiscoverySourceInputSchema", () => {
       "funding_news",
       "x",
       "linkedin",
+      "instagram",
       "g2",
       "capterra",
       "intent",
@@ -1275,6 +1281,84 @@ describe("connected discovery contracts (Sprint 46)", () => {
     expect(discoveryJobSchema.safeParse({ ...job, status: "paused" }).success).toBe(false);
     expect(discoveryJobSchema.safeParse({ ...job, fetchedCount: -1 }).success).toBe(false);
     expect(discoveryJobSchema.safeParse({ ...job, attempt: 0.5 }).success).toBe(false);
+  });
+
+  it("registers instagram as a discovery source type", () => {
+    expect(DISCOVERY_SOURCE_TYPES).toContain("instagram");
+    expect(SIGNAL_SOURCES).toContain("instagram");
+  });
+
+  it("validates connected source inputs by type and mode", () => {
+    const create = (input: Record<string, unknown>) =>
+      createDiscoverySourceInputSchema.safeParse(input).success;
+    // keyless x/linkedin keep the legacy query requirement
+    expect(create({ type: "x", config: { query: "agentic gtm" } })).toBe(true);
+    expect(create({ type: "x", config: {} })).toBe(false);
+    // connected modes carry their own target requirements
+    expect(create({ type: "x", config: { mode: "query", query: "gtm" }, connectionId: uuid })).toBe(true);
+    expect(create({ type: "x", config: { mode: "query" } })).toBe(false);
+    expect(create({ type: "x", config: { mode: "account_timeline", handle: "rival" } })).toBe(true);
+    expect(create({ type: "x", config: { mode: "account_timeline", trackedAccountId: uuid } })).toBe(true);
+    expect(create({ type: "x", config: { mode: "account_timeline" } })).toBe(false);
+    expect(create({ type: "x", config: { mode: "list_timeline", listId: "123" } })).toBe(true);
+    expect(create({ type: "x", config: { mode: "list_timeline" } })).toBe(false);
+    // linkedin only supports account_timeline as a connected mode
+    expect(
+      create({ type: "linkedin", config: { mode: "account_timeline", handle: "urn:li:person:abc" } }),
+    ).toBe(true);
+    expect(create({ type: "linkedin", config: { mode: "query", query: "gtm" } })).toBe(false);
+    // instagram is connected-only: a valid mode is required
+    expect(create({ type: "instagram", config: { mode: "account_timeline", handle: "rival" } })).toBe(true);
+    expect(create({ type: "instagram", config: { mode: "hashtag", hashtag: "buildinpublic" } })).toBe(true);
+    expect(create({ type: "instagram", config: { mode: "hashtag" } })).toBe(false);
+    expect(create({ type: "instagram", config: { query: "gtm" } })).toBe(false);
+    // reddit stays valid keyless and gains nothing mandatory
+    expect(create({ type: "reddit", config: { subreddit: "startups" } })).toBe(true);
+    expect(create({ type: "reddit", config: {} })).toBe(false);
+    // connectionId must look like a uuid when present
+    expect(create({ type: "rss", config: { feedUrl: "https://a.dev/f.xml" }, connectionId: "nope" })).toBe(
+      false,
+    );
+  });
+
+  it("validates tracked social accounts", () => {
+    const account = {
+      id: uuid,
+      workspaceId: sourceUuid,
+      platform: "x",
+      handle: "rivalco",
+      displayName: "Rival Co",
+      externalId: null,
+      url: null,
+      notes: "",
+      enabled: true,
+      lastResolvedAt: null,
+      lastError: null,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    expect(trackedSocialAccountSchema.safeParse(account).success).toBe(true);
+    expect(trackedSocialAccountSchema.safeParse({ ...account, platform: "tiktok" }).success).toBe(false);
+    expect(trackedSocialAccountSchema.safeParse({ ...account, handle: "" }).success).toBe(false);
+
+    expect(TRACKED_SOCIAL_PLATFORMS).toEqual(["x", "linkedin", "instagram", "reddit"]);
+    expect(
+      createTrackedSocialAccountInputSchema.safeParse({ platform: "x", handle: "@rivalco" }).success,
+    ).toBe(true);
+    expect(createTrackedSocialAccountInputSchema.safeParse({ platform: "x", handle: "  " }).success).toBe(
+      false,
+    );
+    expect(
+      updateTrackedSocialAccountInputSchema.safeParse({ enabled: false, displayName: null }).success,
+    ).toBe(true);
+  });
+
+  it("provisions the connected discovery read scopes on the social providers", () => {
+    const scopes = (key: string) =>
+      CONNECTOR_PROVIDERS.find((p) => p.key === key)?.oauthScopes?.split(",") ?? [];
+    expect(scopes("reddit")).toContain("read");
+    expect(scopes("linkedin")).toContain("r_member_social");
+    expect(scopes("twitter")).toContain("list.read");
   });
 });
 
@@ -1618,7 +1702,8 @@ describe("social publishing contracts (Sprint 17)", () => {
     expect(reddit?.categories).toEqual(["social"]);
     expect(reddit?.baseUrl).toBe("https://oauth.reddit.com");
     expect(reddit?.testPath?.startsWith("/")).toBe(true);
-    expect(reddit?.oauthScopes).toBe("identity,submit");
+    // `read` added in Sprint 46 for connected discovery listings/search.
+    expect(reddit?.oauthScopes).toBe("identity,submit,read");
   });
 
   it("extends the category vocabulary with social", () => {
