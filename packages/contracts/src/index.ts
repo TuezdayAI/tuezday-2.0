@@ -100,12 +100,34 @@ export const updateGuidanceInputSchema = z.object({
 export type UpdateGuidanceInput = z.infer<typeof updateGuidanceInputSchema>;
 
 // ---------------------------------------------------------------------------
-// Workspace
+// Workspace & onboarding (Sprint 36.1)
 // ---------------------------------------------------------------------------
+
+/**
+ * The seven visible steps of the guided onboarding wizard, in order. Single
+ * source of truth for the wizard's progress rail and the workspace's
+ * onboarding cursor — sprints 36.2–36.6 fill the steps in.
+ */
+export const ONBOARDING_STEPS = [
+  "name",
+  "website",
+  "connect",
+  "verify",
+  "brain",
+  "campaign",
+  "draft",
+] as const;
+export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
+
+/** Where a workspace's onboarding stands: any step, or the terminal "done". */
+export const ONBOARDING_CURSORS = [...ONBOARDING_STEPS, "done"] as const;
+export type OnboardingCursor = (typeof ONBOARDING_CURSORS)[number];
 
 export const workspaceSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1).max(100),
+  websiteUrl: z.string().url().nullable(),
+  onboardingStep: z.enum(ONBOARDING_CURSORS).nullable(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 });
@@ -117,8 +139,19 @@ export const createWorkspaceInputSchema = z.object({
     .trim()
     .min(1, "Workspace name is required")
     .max(100, "Workspace name must be 100 characters or fewer"),
+  websiteUrl: z.string().url("Enter a valid URL, e.g. https://acme.com").optional(),
+  onboardingStep: z.enum(ONBOARDING_CURSORS).optional(),
 });
 export type CreateWorkspaceInput = z.infer<typeof createWorkspaceInputSchema>;
+
+export const updateUserInputSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Name is required")
+    .max(100, "Name must be 100 characters or fewer"),
+});
+export type UpdateUserInput = z.infer<typeof updateUserInputSchema>;
 
 // ---------------------------------------------------------------------------
 // Users, teams & auth (Sprint 19)
