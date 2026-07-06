@@ -7,6 +7,10 @@ export const workspaces = sqliteTable("workspaces", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   analyticsOptOut: integer("analytics_opt_out", { mode: "boolean" }).notNull().default(false),
+  // Onboarding wizard (Sprint 36.1): the site the brain will be drafted from,
+  // and where the workspace stands in the wizard (null = pre-wizard workspace).
+  websiteUrl: text("website_url"),
+  onboardingStep: text("onboarding_step"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -59,7 +63,6 @@ export const workspaceMembers = sqliteTable(
       .references(() => users.id, { onDelete: "cascade" }),
     role: text("role").notNull(),
     createdAt: integer("created_at").notNull(),
-    onboardingDismissedAt: integer("onboarding_dismissed_at"),
   },
   (t) => [uniqueIndex("workspace_members_workspace_user").on(t.workspaceId, t.userId)],
 );
