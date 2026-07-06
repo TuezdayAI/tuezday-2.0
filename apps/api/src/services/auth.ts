@@ -52,6 +52,11 @@ export function getUser(db: Db, id: string): User | undefined {
   return row ? rowToUser(row) : undefined;
 }
 
+export function updateUserName(db: Db, id: string, name: string): User | undefined {
+  db.update(users).set({ name, updatedAt: Date.now() }).where(eq(users.id, id)).run();
+  return getUser(db, id);
+}
+
 export function createSession(db: Db, userId: string): string {
   const token = randomBytes(32).toString("hex");
   const now = Date.now();
