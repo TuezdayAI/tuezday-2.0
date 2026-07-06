@@ -26,6 +26,7 @@ function connection(overrides: Partial<Connection>): Connection {
     status: "connected",
     lastCheckedAt: null,
     lastError: null,
+    contentProfile: { topics: [], guidance: "" },
     createdAt: 1,
     updatedAt: 1,
     ...overrides,

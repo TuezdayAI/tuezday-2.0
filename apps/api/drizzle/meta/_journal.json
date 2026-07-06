@@ -215,8 +215,43 @@
     {
       "idx": 30,
       "version": "6",
-      "when": 1783362216211,
-      "tag": "0030_same_loki",
+      "when": 1782987503322,
+      "tag": "0030_numerous_hitman",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1783052749791,
+      "tag": "0031_far_madelyne_pryor",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1783069321612,
+      "tag": "0032_same_scorpion",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1783151700788,
+      "tag": "0033_flawless_pepper_potts",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1783156551033,
+      "tag": "0034_watery_zeigeist",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1783367118433,
+      "tag": "0035_woozy_maverick",
       "breakpoints": true
     }
   ]

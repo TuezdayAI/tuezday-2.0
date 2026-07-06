@@ -1,7 +1,7 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "36e83a40-dfed-4d23-a451-972a0fe8524a",
+  "id": "61169201-9a4a-46df-950b-aecb1fcf7f33",
   "prevId": "3d6e57a8-ca11-4c57-b116-7a7fe4d10d39",
   "tables": {
     "ad_accounts": {
@@ -1313,6 +1313,13 @@
           "autoincrement": false,
           "default": "''"
         },
+        "outline_json": {
+          "name": "outline_json",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -1714,6 +1721,96 @@
         "connections_workspace_id_workspaces_id_fk": {
           "name": "connections_workspace_id_workspaces_id_fk",
           "tableFrom": "connections",
+          "tableTo": "workspaces",
+          "columnsFrom": [
+            "workspace_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "context_matrix_overrides": {
+      "name": "context_matrix_overrides",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "workspace_id": {
+          "name": "workspace_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "task_type": {
+          "name": "task_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "doc_type": {
+          "name": "doc_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "mode": {
+          "name": "mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "context_matrix_overrides_workspace_task_doc": {
+          "name": "context_matrix_overrides_workspace_task_doc",
+          "columns": [
+            "workspace_id",
+            "task_type",
+            "doc_type"
+          ],
+          "isUnique": true
+        }
+      },
+      "foreignKeys": {
+        "context_matrix_overrides_workspace_id_workspaces_id_fk": {
+          "name": "context_matrix_overrides_workspace_id_workspaces_id_fk",
+          "tableFrom": "context_matrix_overrides",
           "tableTo": "workspaces",
           "columnsFrom": [
             "workspace_id"
@@ -5686,6 +5783,13 @@
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
+        },
+        "onboarding_dismissed_at": {
+          "name": "onboarding_dismissed_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
         }
       },
       "indexes": {
@@ -5754,20 +5858,6 @@
           "notNull": true,
           "autoincrement": false,
           "default": false
-        },
-        "website_url": {
-          "name": "website_url",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "onboarding_step": {
-          "name": "onboarding_step",
-          "type": "text",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
         },
         "created_at": {
           "name": "created_at",

@@ -70,21 +70,12 @@ interface ConnectorsView {
   fabric: { healthy: boolean; detail?: string };
 }
 
-interface EventView {
-  id: string;
-  type: string;
-  payloadJson: string;
-  createdAt: number;
-  deliveries: { status: string; httpStatus: number | null; error: string | null }[];
-}
-
 export default function ConnectorsPage() {
   const { id } = useParams<{ id: string }>();
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [view, setView] = useState<ConnectorsView | null>(null);
   const [webhooks, setWebhooks] = useState<WebhookSubscription[]>([]);
-  const [eventLog, setEventLog] = useState<EventView[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -101,19 +92,25 @@ export default function ConnectorsPage() {
   const [hookSecret, setHookSecret] = useState("");
   const [hookTypes, setHookTypes] = useState<EventType[]>(["draft.approved"]);
 
+  // Content profiles (Sprint 44) — what each social account posts about;
+  // injected into drafts that publish from that account. Topics edited as a
+  // comma-separated line.
+  const [profileDrafts, setProfileDrafts] = useState<
+    Record<string, { topics: string; guidance: string }>
+  >({});
+  const [profileBusy, setProfileBusy] = useState<string | null>(null);
+
   const load = useCallback(async () => {
     try {
-      const [wsRes, cRes, wRes, eRes] = await Promise.all([
+      const [wsRes, cRes, wRes] = await Promise.all([
         apiFetch(`/workspaces/${id}`),
         apiFetch(`/workspaces/${id}/connectors`),
         apiFetch(`/workspaces/${id}/webhooks`),
-        apiFetch(`/workspaces/${id}/events`),
       ]);
       if (!wsRes.ok || !cRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
       setView(await cRes.json());
       setWebhooks(await wRes.json());
-      setEventLog(await eRes.json());
       setError(null);
     } catch {
       setError(`Could not load this workspace from ${API_URL}. Is "npm run dev" running?`);
@@ -217,6 +214,45 @@ export default function ConnectorsPage() {
       return;
     await apiFetch(`/workspaces/${id}/connections/${connection.id}`, { method: "DELETE" });
     await load();
+  }
+
+  function profileDraftFor(connection: Connection): { topics: string; guidance: string } {
+    return (
+      profileDrafts[connection.id] ?? {
+        topics: connection.contentProfile.topics.join(", "),
+        guidance: connection.contentProfile.guidance,
+      }
+    );
+  }
+
+  async function saveProfile(connection: Connection) {
+    const draft = profileDraftFor(connection);
+    setProfileBusy(connection.id);
+    setError(null);
+    try {
+      const res = await apiFetch(
+        `/workspaces/${id}/connections/${connection.id}/content-profile`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            topics: draft.topics.split(",").map((t) => t.trim()).filter(Boolean),
+            guidance: draft.guidance,
+          }),
+        },
+      );
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message ?? body?.error ?? `API returned ${res.status}`);
+      setProfileDrafts((d) => {
+        const { [connection.id]: _saved, ...rest } = d;
+        return rest;
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save content profile");
+    } finally {
+      setProfileBusy(null);
+    }
   }
 
   async function addWebhook(e: React.FormEvent) {
@@ -405,6 +441,58 @@ export default function ConnectorsPage() {
                             </button>
                           </div>
                         )}
+                        {connection.status === "connected" &&
+                          provider.categories?.includes("social") && (
+                            <details className="outline-preview" style={{ marginTop: 8 }}>
+                              <summary
+                                className="link-button"
+                                style={{ cursor: "pointer", listStyle: "none" }}
+                              >
+                                Content profile
+                                {connection.contentProfile.topics.length > 0 &&
+                                  ` — covers ${connection.contentProfile.topics.join(", ")}`}
+                              </summary>
+                              <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                                <input
+                                  value={profileDraftFor(connection).topics}
+                                  onChange={(e) =>
+                                    setProfileDrafts((d) => ({
+                                      ...d,
+                                      [connection.id]: {
+                                        ...profileDraftFor(connection),
+                                        topics: e.target.value,
+                                      },
+                                    }))
+                                  }
+                                  placeholder="Topics this account covers, comma-separated…"
+                                />
+                                <textarea
+                                  value={profileDraftFor(connection).guidance}
+                                  onChange={(e) =>
+                                    setProfileDrafts((d) => ({
+                                      ...d,
+                                      [connection.id]: {
+                                        ...profileDraftFor(connection),
+                                        guidance: e.target.value,
+                                      },
+                                    }))
+                                  }
+                                  placeholder="Account guidelines — injected into every draft that publishes from this account…"
+                                  rows={3}
+                                  maxLength={2000}
+                                />
+                                <div className="editor-actions">
+                                  <button
+                                    type="button"
+                                    disabled={profileBusy === connection.id}
+                                    onClick={() => void saveProfile(connection)}
+                                  >
+                                    {profileBusy === connection.id ? "Saving…" : "Save profile"}
+                                  </button>
+                                </div>
+                              </div>
+                            </details>
+                          )}
                       </div>
                     ))}
                   </div>
@@ -583,30 +671,6 @@ export default function ConnectorsPage() {
         )}
       </section>
 
-      <section className="panel">
-        <h2>Event log</h2>
-        {eventLog.length === 0 ? (
-          <EmptyState description={<>No events yet. Approve a draft or ping a webhook.</>} />
-        ) : (
-          <ul className="draft-chain">
-            {eventLog.map((e) => (
-              <li key={e.id}>
-                <span className="layer-badge">{e.type}</span>{" "}
-                <span className="meta">{new Date(e.createdAt).toLocaleString()}</span>{" "}
-                {e.deliveries.map((d, i) => (
-                  <span
-                    key={i}
-                    className={`layer-badge ${d.status === "delivered" ? "state-approved" : "state-rejected"}`}
-                    style={{ marginLeft: 6 }}
-                  >
-                    {d.status === "delivered" ? `delivered (${d.httpStatus})` : `failed${d.httpStatus ? ` (${d.httpStatus})` : ""}`}
-                  </span>
-                ))}
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
     </>
   );
 }

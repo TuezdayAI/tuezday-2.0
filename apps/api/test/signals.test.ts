@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import { draftSchema, signalSchema } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
+import { signalMatches } from "../src/db/schema";
 import { GatewayError, type LlmGateway } from "../src/llm/gateway";
 import { buildAuthedApp, createTestDb } from "./helpers";
 
@@ -194,6 +196,206 @@ describe("signals API", () => {
         payload: { channel: "linkedin" },
       });
       expect(res.statusCode).toBe(404);
+    });
+  });
+
+  // Sprint 45: POST /signals runs the same persona×campaign matching a
+  // discovered item gets — unless the caller named a persona/campaign
+  // explicitly, in which case that input is trusted and the LLM never runs.
+  describe("manual signal matching", () => {
+    /**
+     * Fresh app + workspace with one persona assigned to one active campaign.
+     * Deliberately no brain-doc PUT: saving a brain doc makes a best-effort
+     * outline-summary LLM call (Sprint 43) that would pollute the strict
+     * gateway-invocation counts these tests assert on.
+     */
+    async function buildMatchingApp(llm: LlmGateway) {
+      const db = createTestDb();
+      const matchApp = await buildAuthedApp({ db, llm });
+      const wsId = (
+        await matchApp.inject({ method: "POST", url: "/workspaces", payload: { name: "Match Co" } })
+      ).json().id as string;
+      const persona = (
+        await matchApp.inject({
+          method: "POST",
+          url: `/workspaces/${wsId}/personas`,
+          payload: { name: "Field CTO" },
+        })
+      ).json();
+      // The persona must be assigned to the campaign — matching drops a
+      // suggested persona the campaign doesn't allow.
+      const campaign = (
+        await matchApp.inject({
+          method: "POST",
+          url: `/workspaces/${wsId}/campaigns`,
+          payload: { name: "Launch", objective: "Win fintech VPs", personaIds: [persona.id] },
+        })
+      ).json();
+      return {
+        matchApp,
+        db,
+        wsId,
+        personaId: persona.id as string,
+        campaignId: campaign.id as string,
+      };
+    }
+
+    /** Records every prompt; answers scoring calls with one persona×campaign match. */
+    function matchingGateway(
+      refs: { personaId: string | null; campaignId: string | null },
+      calls: string[],
+    ): LlmGateway {
+      return {
+        async generate({ prompt }) {
+          calls.push(prompt);
+          return {
+            text: JSON.stringify([
+              {
+                index: 0,
+                score: 88,
+                matches: [
+                  {
+                    personaId: refs.personaId,
+                    campaignId: refs.campaignId,
+                    score: 74,
+                    reason: "Fits the launch pipeline.",
+                  },
+                ],
+              },
+            ]),
+            model: "fake",
+            provider: "fake",
+            durationMs: 3,
+          };
+        },
+      };
+    }
+
+    it("scores an unmapped signal through the LLM into signal_matches rows", async () => {
+      const refs: { personaId: string | null; campaignId: string | null } = {
+        personaId: null,
+        campaignId: null,
+      };
+      const calls: string[] = [];
+      const { matchApp, db, wsId, personaId, campaignId } = await buildMatchingApp(
+        matchingGateway(refs, calls),
+      );
+      refs.personaId = personaId;
+      refs.campaignId = campaignId;
+
+      const res = await matchApp.inject({
+        method: "POST",
+        url: `/workspaces/${wsId}/signals`,
+        payload: { content: "A new agentic-coding benchmark just dropped", source: "other" },
+      });
+      expect(res.statusCode).toBe(201);
+      const signal = res.json();
+      expect(signalSchema.safeParse(signal).success).toBe(true);
+      // one LLM judgment call, carrying the signal content
+      expect(calls).toHaveLength(1);
+      expect(calls[0]).toContain("A new agentic-coding benchmark just dropped");
+      expect(signal.matches).toHaveLength(1);
+      expect(signal.matches[0]).toMatchObject({
+        personaId,
+        personaName: "Field CTO",
+        campaignId,
+        campaignName: "Launch",
+        score: 74,
+        reason: "Fits the launch pipeline.",
+      });
+      // the best match is patched onto the convenience fields
+      expect(signal.suggestedPersonaId).toBe(personaId);
+      expect(signal.suggestedCampaignId).toBe(campaignId);
+      // and it is backed by a real signal_matches row
+      const rows = db
+        .select()
+        .from(signalMatches)
+        .where(eq(signalMatches.signalId, signal.id))
+        .all();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ personaId, campaignId, score: 74 });
+      await matchApp.close();
+    });
+
+    it("an explicit persona skips the LLM and writes one score-100 match", async () => {
+      const calls: string[] = [];
+      const { matchApp, wsId, personaId } = await buildMatchingApp(
+        matchingGateway({ personaId: null, campaignId: null }, calls),
+      );
+      const res = await matchApp.inject({
+        method: "POST",
+        url: `/workspaces/${wsId}/signals`,
+        payload: { content: "Founder already knows who this is for", source: "other", suggestedPersonaId: personaId },
+      });
+      expect(res.statusCode).toBe(201);
+      expect(calls).toHaveLength(0); // explicit intent: the LLM was never invoked
+      const signal = res.json();
+      expect(signal.matches).toEqual([
+        {
+          personaId,
+          personaName: "Field CTO",
+          campaignId: null,
+          campaignName: null,
+          score: 100,
+          reason: "Set explicitly at signal creation.",
+        },
+      ]);
+      expect(signal.suggestedPersonaId).toBe(personaId);
+      await matchApp.close();
+    });
+
+    it("an explicit campaign skips the LLM and writes one score-100 match", async () => {
+      const calls: string[] = [];
+      const { matchApp, wsId, campaignId } = await buildMatchingApp(
+        matchingGateway({ personaId: null, campaignId: null }, calls),
+      );
+      const res = await matchApp.inject({
+        method: "POST",
+        url: `/workspaces/${wsId}/signals`,
+        payload: { content: "Slot this under the launch push", source: "other", suggestedCampaignId: campaignId },
+      });
+      expect(res.statusCode).toBe(201);
+      expect(calls).toHaveLength(0);
+      const signal = res.json();
+      expect(signal.matches).toEqual([
+        {
+          personaId: null,
+          personaName: null,
+          campaignId,
+          campaignName: "Launch",
+          score: 100,
+          reason: "Set explicitly at signal creation.",
+        },
+      ]);
+      expect(signal.suggestedCampaignId).toBe(campaignId);
+      await matchApp.close();
+    });
+
+    it("still creates the signal with zero matches when the LLM fails", async () => {
+      const calls: string[] = [];
+      const throwing: LlmGateway = {
+        async generate({ prompt }) {
+          calls.push(prompt);
+          throw new GatewayError("provider_error", "boom");
+        },
+      };
+      const { matchApp, wsId } = await buildMatchingApp(throwing);
+      const res = await matchApp.inject({
+        method: "POST",
+        url: `/workspaces/${wsId}/signals`,
+        payload: { content: "Signal that arrives during an LLM outage", source: "other" },
+      });
+      expect(res.statusCode).toBe(201);
+      expect(calls).toHaveLength(1); // matching was attempted...
+      const signal = res.json();
+      expect(signalSchema.safeParse(signal).success).toBe(true);
+      expect(signal.matches).toEqual([]); // ...but its failure never blocked creation
+      // the signal really persisted
+      const list = (
+        await matchApp.inject({ method: "GET", url: `/workspaces/${wsId}/signals` })
+      ).json();
+      expect(list.map((s: { id: string }) => s.id)).toContain(signal.id);
+      await matchApp.close();
     });
   });
 

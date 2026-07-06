@@ -7,7 +7,7 @@ import { getCampaign } from "../services/campaigns";
 import type { EvidenceStore } from "../evidence/store";
 import { getPersona } from "../services/personas";
 import { runPreReview, setGenerationReview } from "../services/review";
-import { createSignal, getSignal, listSignals } from "../services/signals";
+import { createSignalWithMatching, getSignal, listSignals } from "../services/signals";
 import { generateSignalDraft } from "../services/signal-drafting";
 import { getWorkspace } from "../services/workspaces";
 
@@ -34,7 +34,11 @@ export function registerSignalRoutes(
         message: parsed.error.issues.map((i) => i.message).join("; "),
       });
     }
-    return reply.status(201).send(createSignal(db, request.params.id, parsed.data));
+    // Sprint 45: auto-match unmapped signals; explicit persona/campaign input
+    // becomes one trusted match with no LLM call. LLM failures never block
+    // creation (the service catches them and returns the signal matchless).
+    const signal = await createSignalWithMatching(db, llm, request.params.id, parsed.data);
+    return reply.status(201).send(signal);
   });
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/signals", async (request, reply) => {

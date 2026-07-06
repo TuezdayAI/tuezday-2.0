@@ -80,22 +80,48 @@ export const CHANNEL_LABELS: Record<Channel, string> = {
   instagram: "Instagram",
 };
 
-/** Where a channel's resolved guidance came from. */
+/** Where a channel's resolved guidance came from: built-in text vs founder-written. */
 export const GUIDANCE_SOURCES = ["default", "workspace"] as const;
 export type GuidanceSource = (typeof GUIDANCE_SOURCES)[number];
 
-/** A channel's resolved guidance + its source (read model for the editor). */
+export const GUIDANCE_CONTENT_MAX_CHARS = 4_000;
+
+/**
+ * A channel's resolved guidance + its source (read model for the editor).
+ * Sprint 44: guidance can be scoped to a persona and/or campaign
+ * (most-specific-wins: persona+campaign > persona > campaign > workspace >
+ * default); personaId/campaignId name the winning row's scope, both null for
+ * workspace-level and default guidance.
+ */
 export const channelGuidanceSchema = z.object({
   channel: z.enum(CHANNELS),
   content: z.string(),
   source: z.enum(GUIDANCE_SOURCES),
+  personaId: z.string().uuid().nullable(),
+  campaignId: z.string().uuid().nullable(),
   // null when source === "default" (no override row exists).
   updatedAt: z.number().int().nullable(),
 });
 export type ChannelGuidance = z.infer<typeof channelGuidanceSchema>;
 
+/** One scoped guidance override row (management read model, names joined in). */
+export const guidanceOverrideSchema = z.object({
+  id: z.string().uuid(),
+  channel: z.enum(CHANNELS),
+  content: z.string(),
+  personaId: z.string().uuid().nullable(),
+  campaignId: z.string().uuid().nullable(),
+  personaName: z.string().nullable(),
+  campaignName: z.string().nullable(),
+  updatedAt: z.number().int(),
+});
+export type GuidanceOverride = z.infer<typeof guidanceOverrideSchema>;
+
 export const updateGuidanceInputSchema = z.object({
-  content: z.string().trim().min(1, "Guidance cannot be empty").max(4000),
+  content: z.string().trim().min(1, "Guidance cannot be empty").max(GUIDANCE_CONTENT_MAX_CHARS),
+  // Sprint 44: optional scope — omit both for the workspace-level override.
+  personaId: z.string().uuid().optional(),
+  campaignId: z.string().uuid().optional(),
 });
 export type UpdateGuidanceInput = z.infer<typeof updateGuidanceInputSchema>;
 
@@ -227,11 +253,39 @@ export type CreateInviteInput = z.infer<typeof createInviteInputSchema>;
 
 export const BRAIN_DOC_MAX_CHARS = 50_000;
 
+// --- Doc outlines (Sprint 43) — the "map" in map-then-zoom, computed at save time ---
+
+export const OUTLINE_SUMMARY_SOURCES = ["llm", "fallback"] as const;
+export type OutlineSummarySource = (typeof OUTLINE_SUMMARY_SOURCES)[number];
+
+export const docOutlineSectionSchema = z.object({
+  /** Stable slug path, e.g. "operating-principles/brain-first". */
+  id: z.string(),
+  /** Parent H2's id for an H3 section; null for top-level sections. */
+  parentId: z.string().nullable(),
+  heading: z.string(),
+  level: z.union([z.literal(2), z.literal(3)]),
+  /** One-line summary — LLM-composed at save, deterministic fallback otherwise. */
+  summary: z.string(),
+  summarySource: z.enum(OUTLINE_SUMMARY_SOURCES),
+  tokens: z.number().int(),
+});
+export type DocOutlineSection = z.infer<typeof docOutlineSectionSchema>;
+
+export const docOutlineSchema = z.object({
+  sections: z.array(docOutlineSectionSchema),
+  generatedAt: z.number().int(),
+});
+export type DocOutline = z.infer<typeof docOutlineSchema>;
+
 export const brainDocumentSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
   docType: z.enum(BRAIN_DOC_TYPES),
   content: z.string(),
+  // Sprint 43: parsed section outline, regenerated on every save. Null for
+  // empty docs and docs saved before outlines existed (derived on the fly).
+  outline: docOutlineSchema.nullable().optional(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 });
@@ -262,12 +316,35 @@ export type BrainDocVersion = z.infer<typeof brainDocVersionSchema>;
 
 export const PERSONA_OVERLAY_MAX_CHARS = 10_000;
 
+// Sprint 44: structured drafting fields + topics. Topics feed the Tier-3 zoom
+// query now and discovery matching in Sprint 45.
+export const PERSONA_TOPICS_MAX = 20;
+export const PERSONA_TOPIC_MAX_CHARS = 80;
+export const PERSONA_TONE_MAX_CHARS = 300;
+export const PERSONA_STYLE_RULES_MAX_CHARS = 2_000;
+export const PERSONA_AVOID_MAX_CHARS = 1_000;
+
+/** Shared by personas and connection content profiles (Sprint 44). */
+const topicsSchema = z
+  .array(
+    z
+      .string()
+      .trim()
+      .min(1, "Topics cannot be empty")
+      .max(PERSONA_TOPIC_MAX_CHARS, `Topics must be ${PERSONA_TOPIC_MAX_CHARS} characters or fewer`),
+  )
+  .max(PERSONA_TOPICS_MAX, `At most ${PERSONA_TOPICS_MAX} topics`);
+
 export const personaSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
   name: z.string().min(1).max(100),
   description: z.string().max(500),
   overlay: z.string().max(PERSONA_OVERLAY_MAX_CHARS),
+  topics: z.array(z.string()),
+  tone: z.string().max(PERSONA_TONE_MAX_CHARS),
+  styleRules: z.string().max(PERSONA_STYLE_RULES_MAX_CHARS),
+  avoid: z.string().max(PERSONA_AVOID_MAX_CHARS),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 });
@@ -283,6 +360,20 @@ export const upsertPersonaInputSchema = z.object({
   overlay: z
     .string()
     .max(PERSONA_OVERLAY_MAX_CHARS, `Overlay must be ${PERSONA_OVERLAY_MAX_CHARS} characters or fewer`)
+    .default(""),
+  topics: topicsSchema.default([]),
+  tone: z
+    .string()
+    .trim()
+    .max(PERSONA_TONE_MAX_CHARS, `Tone must be ${PERSONA_TONE_MAX_CHARS} characters or fewer`)
+    .default(""),
+  styleRules: z
+    .string()
+    .max(PERSONA_STYLE_RULES_MAX_CHARS, `Style rules must be ${PERSONA_STYLE_RULES_MAX_CHARS} characters or fewer`)
+    .default(""),
+  avoid: z
+    .string()
+    .max(PERSONA_AVOID_MAX_CHARS, `Avoid list must be ${PERSONA_AVOID_MAX_CHARS} characters or fewer`)
     .default(""),
 });
 export type UpsertPersonaInput = z.infer<typeof upsertPersonaInputSchema>;
@@ -302,6 +393,146 @@ export const resolveRequestSchema = z.object({
   useEvidence: z.boolean().optional(),
 });
 export type ResolveRequest = z.infer<typeof resolveRequestSchema>;
+
+// ---------------------------------------------------------------------------
+// Selective context (Sprint 43) — Resolver v2 vocabulary.
+//
+// Tier 1 (constitutional: soul/voice/now + keyed overlays + task payload) is
+// always included and never scored. Tier 2 is the task matrix below: how each
+// *informational* doc (icp/history) enters a given task's prompt. Tier 3
+// ("map-then-zoom") applies to docs in `outline` mode: the outline is always
+// present, and full sections are pulled only when they score against the
+// composed query. The matrix is data — defaults here, per-workspace overrides
+// in `context_matrix_overrides` — so the selection policy itself is
+// inspectable and editable.
+// ---------------------------------------------------------------------------
+
+/** How a doc enters a task's prompt: whole, outline + zoomed sections, or not at all. */
+export const DOC_CONTEXT_MODES = ["full", "outline", "omit"] as const;
+export type DocContextMode = (typeof DOC_CONTEXT_MODES)[number];
+
+/**
+ * The docs the task matrix governs. soul/voice/now are constitutional — always
+ * full, never in the matrix (identity is not information).
+ */
+export const MATRIX_DOC_TYPES = ["icp", "history"] as const;
+export type MatrixDocType = (typeof MATRIX_DOC_TYPES)[number];
+
+/** Resolver assembly modes. "brief" = angle-step brief: full→outline demotion, no zoom. */
+export const RESOLVE_MODES = ["draft", "brief"] as const;
+export type ResolveMode = (typeof RESOLVE_MODES)[number];
+
+/** Docs at or under this size are included whole even in `outline` mode. */
+export const ZOOM_SMALL_DOC_TOKENS = 600;
+/** Per-doc token cap on zoomed-in full sections. */
+export const ZOOM_DOC_TOKEN_CAP = 1_500;
+/** Per-doc cap on how many sections zoom may pull. */
+export const ZOOM_MAX_SECTIONS_PER_DOC = 4;
+/** Brain-editor warning threshold for constitutional docs (they ride every prompt). */
+export const BRAIN_DOC_TOKEN_WARNING = 2_000;
+export const MATRIX_CELL_REASON_MAX_CHARS = 300;
+
+export interface TaskDocMatrixCell {
+  mode: DocContextMode;
+  /** Human-readable why — shown in the matrix editor and the resolve trace. */
+  reason: string;
+}
+
+/**
+ * Shipped defaults: every task type × every matrix doc, each cell with a
+ * reason. Outreach tasks keep `icp` full (pain specificity is the task); PR
+ * tasks keep `history` full (the company story is the material); replies omit
+ * both (the conversation is the context; identity docs suffice).
+ */
+export const DEFAULT_TASK_DOC_MATRIX: Record<
+  TaskType,
+  Record<MatrixDocType, TaskDocMatrixCell>
+> = {
+  linkedin_post: {
+    icp: { mode: "outline", reason: "Audience awareness helps a post; the full ICP catalogue rarely does. Zoom pulls the segment the query touches." },
+    history: { mode: "outline", reason: "Lessons and launches are pulled per topic — the full history buries the hook." },
+  },
+  cold_email_opener: {
+    icp: { mode: "full", reason: "The opener lives or dies on ICP pain specificity." },
+    history: { mode: "outline", reason: "Only the history relevant to this lead's situation earns tokens." },
+  },
+  ad_copy_variant: {
+    icp: { mode: "full", reason: "Ad copy targets the ICP's pains and objections directly." },
+    history: { mode: "outline", reason: "Past angle learnings zoom in when the query touches them." },
+  },
+  landing_page_hero: {
+    icp: { mode: "full", reason: "The hero speaks to the ICP's exact pain and trigger." },
+    history: { mode: "outline", reason: "Proof points zoom in; the full timeline doesn't belong in a hero." },
+  },
+  signal_response: {
+    icp: { mode: "outline", reason: "The signal decides which audience matters; zoom follows the signal." },
+    history: { mode: "outline", reason: "Only history related to the signal's topic is useful." },
+  },
+  outbound_email: {
+    icp: { mode: "full", reason: "Personalized outbound needs the full pain/trigger detail." },
+    history: { mode: "outline", reason: "Relevant proof zooms in against the lead facts." },
+  },
+  meta_ad_creative: {
+    icp: { mode: "full", reason: "Creative variants target ICP pains and objections." },
+    history: { mode: "outline", reason: "Past creative learnings zoom in by campaign topic." },
+  },
+  google_rsa: {
+    icp: { mode: "full", reason: "RSA assets speak to the searcher's (ICP's) intent." },
+    history: { mode: "outline", reason: "Proof points zoom in; the timeline doesn't fit 30-char headlines." },
+  },
+  pr_pitch: {
+    icp: { mode: "outline", reason: "The journalist's readers matter more than our ICP detail." },
+    history: { mode: "full", reason: "The pitch is built from what actually happened — milestones, traction, story." },
+  },
+  press_boilerplate: {
+    icp: { mode: "outline", reason: "Boilerplate states who it's for in one line — the outline carries that." },
+    history: { mode: "full", reason: "Boilerplate is facts: founding, milestones, numbers — all history." },
+  },
+  x_dm: {
+    icp: { mode: "full", reason: "A cold DM needs the same pain specificity as cold email." },
+    history: { mode: "outline", reason: "Only history relevant to this recipient earns space in two sentences." },
+  },
+  instagram_post: {
+    icp: { mode: "outline", reason: "The caption rides the visual; audience outline suffices, zoom follows the topic." },
+    history: { mode: "outline", reason: "Topical lessons zoom in; the full history drowns a caption." },
+  },
+  engagement_reply: {
+    icp: { mode: "omit", reason: "The reply answers a specific person in a live thread — the conversation is the context." },
+    history: { mode: "omit", reason: "Thread replies are voice + the conversation; company history is a distractor here." },
+  },
+};
+
+/** A merged matrix cell as the API serves it (default overlaid by any workspace row). */
+export const matrixCellSchema = z.object({
+  taskType: z.enum(TASK_TYPES),
+  docType: z.enum(MATRIX_DOC_TYPES),
+  mode: z.enum(DOC_CONTEXT_MODES),
+  reason: z.string(),
+  // Reuses the guidance vocabulary: "default" (shipped) or "workspace" (override row).
+  source: z.enum(GUIDANCE_SOURCES),
+  // null when source === "default".
+  updatedAt: z.number().int().nullable(),
+});
+export type MatrixCell = z.infer<typeof matrixCellSchema>;
+
+export const updateMatrixCellInputSchema = z.object({
+  mode: z.enum(DOC_CONTEXT_MODES),
+  reason: z
+    .string()
+    .trim()
+    .max(MATRIX_CELL_REASON_MAX_CHARS, `Reason must be ${MATRIX_CELL_REASON_MAX_CHARS} characters or fewer`)
+    .optional(),
+});
+export type UpdateMatrixCellInput = z.infer<typeof updateMatrixCellInputSchema>;
+
+/** The resolver-facing merged matrix (built by the API from defaults + overrides). */
+export type ResolvedTaskDocMatrix = Record<
+  TaskType,
+  Record<MatrixDocType, { mode: DocContextMode; reason: string; source: GuidanceSource }>
+>;
+
+// (Doc outline schemas live in the Brain documents section above, so
+// brainDocumentSchema can embed them.)
 
 // ---------------------------------------------------------------------------
 // Generation quality (Sprint 22) — angle-first + dual-LLM pre-review.
@@ -507,6 +738,7 @@ export const SIGNAL_SOURCES = [
   "reddit",
   "x",
   "linkedin",
+  "instagram",
   "rss",
   "news",
   "hacker_news",
@@ -523,6 +755,29 @@ export type SignalSource = (typeof SIGNAL_SOURCES)[number];
 
 export const SIGNAL_MAX_CHARS = 10_000;
 
+// Persona×campaign matching (Sprint 45) — one candidate pairing a discovered
+// item (or signal) scored as a fit for. Declared here (before `signalSchema`)
+// because both `signalSchema` and `discoveredItemSchema` embed it.
+
+/**
+ * Default minimum match score (0–100) a candidate needs before automation
+ * routes a signal to its campaign. Workspace-overridable via `matchThreshold`
+ * on social automation settings.
+ */
+export const DEFAULT_MATCH_THRESHOLD = 50;
+/** Scoring keeps at most this many candidates per item/signal (top scores win). */
+export const DISCOVERY_MAX_MATCHES_PER_ITEM = 5;
+
+export const discoveredItemMatchSchema = z.object({
+  personaId: z.string().uuid().nullable(),
+  personaName: z.string().nullable(),
+  campaignId: z.string().uuid().nullable(),
+  campaignName: z.string().nullable(),
+  score: z.number().int().min(0).max(100),
+  reason: z.string(),
+});
+export type DiscoveredItemMatch = z.infer<typeof discoveredItemMatchSchema>;
+
 export const signalSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
@@ -533,6 +788,9 @@ export const signalSchema = z.object({
   // Content draft can pre-fill persona + campaign. Null for manual signals.
   suggestedPersonaId: z.string().uuid().nullable(),
   suggestedCampaignId: z.string().uuid().nullable(),
+  // Sprint 45: every persona×campaign candidate this signal matched (names
+  // joined in for display). Empty when nothing cleared scoring.
+  matches: z.array(discoveredItemMatchSchema),
   createdAt: z.number().int(),
 });
 export type Signal = z.infer<typeof signalSchema>;
@@ -580,6 +838,7 @@ export const DISCOVERY_SOURCE_TYPES = [
   "funding_news",
   "x",
   "linkedin",
+  "instagram",
   "g2",
   "capterra",
   "intent",
@@ -589,16 +848,40 @@ export type DiscoverySourceType = (typeof DISCOVERY_SOURCE_TYPES)[number];
 export const DISCOVERY_SOURCE_STATUSES = ["active", "needs_api_key", "error"] as const;
 export type DiscoverySourceStatus = (typeof DISCOVERY_SOURCE_STATUSES)[number];
 
-export const DISCOVERED_ITEM_STATUSES = ["new", "accepted", "skipped"] as const;
+// Connected sourcing (Sprint 46): how a source listens. Keyless sources leave
+// `mode` unset; connected sources pick a provider-supported mode (X: query /
+// account_timeline / list_timeline; Reddit: subreddit / query; LinkedIn:
+// account_timeline; Instagram: account_timeline / hashtag).
+export const DISCOVERY_SOURCE_MODES = [
+  "query",
+  "account_timeline",
+  "list_timeline",
+  "subreddit",
+  "hashtag",
+] as const;
+export type DiscoverySourceMode = (typeof DISCOVERY_SOURCE_MODES)[number];
+
+// `duplicate` (Sprint 45): a cross-source copy of an already-seen story,
+// linked to the canonical item via `duplicateOfId` — never enters triage.
+export const DISCOVERED_ITEM_STATUSES = ["new", "accepted", "skipped", "duplicate"] as const;
 export type DiscoveredItemStatus = (typeof DISCOVERED_ITEM_STATUSES)[number];
 
 export const discoverySourceConfigSchema = z.object({
   feedUrl: z.string().url().optional(),
-  query: z.string().trim().max(200).optional(),
+  query: z.string().trim().max(300).optional(),
   subreddit: z.string().trim().max(100).optional(),
   channelId: z.string().trim().max(100).optional(),
   geo: z.string().trim().max(10).optional(),
   sector: z.string().trim().max(100).optional(),
+  // Connected sourcing (Sprint 46): mode + provider-specific targets. All
+  // optional here; type/mode combinations are validated on source create.
+  mode: z.enum(DISCOVERY_SOURCE_MODES).optional(),
+  handle: z.string().trim().max(100).optional(),
+  handles: z.array(z.string().trim().max(100)).max(25).optional(),
+  listId: z.string().trim().max(100).optional(),
+  hashtag: z.string().trim().max(100).optional(),
+  trackedAccountId: z.string().uuid().optional(),
+  trackedAccountIds: z.array(z.string().uuid()).max(25).optional(),
 });
 export type DiscoverySourceConfig = z.infer<typeof discoverySourceConfigSchema>;
 
@@ -612,15 +895,40 @@ export const discoverySourceSchema = z.object({
   status: z.enum(DISCOVERY_SOURCE_STATUSES),
   lastError: z.string().nullable(),
   lastFetchedAt: z.number().int().nullable(),
+  // Connected sourcing (Sprint 46): the workspace connection this source reads
+  // through. Null for keyless sources (RSS, Google News, keyless Reddit, ...).
+  connectionId: z.string().uuid().nullable(),
+  // Best-effort provider pagination state keyed by mode; dedup on external ids
+  // remains the idempotency guarantee.
+  cursor: z.record(z.string(), z.unknown()),
+  // Rate-limit back-pressure: the source is not enqueued until this passes.
+  backoffUntil: z.number().int().nullable(),
+  lastAttemptedAt: z.number().int().nullable(),
   createdAt: z.number().int(),
 });
 export type DiscoverySource = z.infer<typeof discoverySourceSchema>;
+
+/**
+ * Connected-mode target check (Sprint 46): does the config name at least one
+ * account to listen to (inline handle(s) or tracked account reference(s))?
+ */
+function hasAccountTarget(config: DiscoverySourceConfig): boolean {
+  return Boolean(
+    config.handle?.trim() ||
+      config.handles?.length ||
+      config.trackedAccountId ||
+      config.trackedAccountIds?.length,
+  );
+}
 
 export const createDiscoverySourceInputSchema = z
   .object({
     type: z.enum(DISCOVERY_SOURCE_TYPES),
     name: z.string().trim().min(1).max(200).optional(),
     config: discoverySourceConfigSchema.default({}),
+    // Connected sourcing (Sprint 46): the workspace connection to read
+    // through. Validated against the workspace/provider in the service.
+    connectionId: z.string().uuid().nullable().optional(),
   })
   .superRefine((input, ctx) => {
     if (input.type === "rss" && !input.config.feedUrl) {
@@ -650,8 +958,51 @@ export const createDiscoverySourceInputSchema = z
     ) {
       ctx.addIssue({ code: "custom", message: `A ${input.type} source needs a query` });
     }
-    if ((input.type === "x" || input.type === "linkedin") && !input.config.query?.trim()) {
-      ctx.addIssue({ code: "custom", message: `An ${input.type} source needs a query` });
+    // Connected sourcing (Sprint 46). Keyless x/linkedin sources (no mode)
+    // keep the legacy query requirement; a mode makes them connected sources
+    // with per-mode target requirements. Instagram is connected-only.
+    if (input.type === "x" || input.type === "linkedin") {
+      const mode = input.config.mode;
+      if (!mode && !input.config.query?.trim()) {
+        ctx.addIssue({ code: "custom", message: `An ${input.type} source needs a query` });
+      }
+      if (input.type === "linkedin" && mode && mode !== "account_timeline") {
+        ctx.addIssue({
+          code: "custom",
+          message: "A LinkedIn source only supports account_timeline mode",
+        });
+      }
+      if (mode === "query" && !input.config.query?.trim()) {
+        ctx.addIssue({ code: "custom", message: "A query-mode source needs a query" });
+      }
+      if (mode === "account_timeline" && !hasAccountTarget(input.config)) {
+        ctx.addIssue({
+          code: "custom",
+          message: "An account_timeline source needs a handle or a tracked account",
+        });
+      }
+      if (mode === "list_timeline" && !input.config.listId?.trim()) {
+        ctx.addIssue({ code: "custom", message: "A list_timeline source needs a listId" });
+      }
+    }
+    if (input.type === "instagram") {
+      if (input.config.mode === "account_timeline") {
+        if (!hasAccountTarget(input.config)) {
+          ctx.addIssue({
+            code: "custom",
+            message: "An Instagram account_timeline source needs a handle or a tracked account",
+          });
+        }
+      } else if (input.config.mode === "hashtag") {
+        if (!input.config.hashtag?.trim()) {
+          ctx.addIssue({ code: "custom", message: "An Instagram hashtag source needs a hashtag" });
+        }
+      } else {
+        ctx.addIssue({
+          code: "custom",
+          message: "An Instagram source needs mode account_timeline or hashtag",
+        });
+      }
     }
   });
 export type CreateDiscoverySourceInput = z.infer<typeof createDiscoverySourceInputSchema>;
@@ -660,6 +1011,8 @@ export const updateDiscoverySourceInputSchema = z.object({
   name: z.string().trim().min(1).max(200).optional(),
   enabled: z.boolean().optional(),
   config: discoverySourceConfigSchema.optional(),
+  // undefined = keep the current connection; null = detach it.
+  connectionId: z.string().uuid().nullable().optional(),
 });
 export type UpdateDiscoverySourceInput = z.infer<typeof updateDiscoverySourceInputSchema>;
 
@@ -678,9 +1031,94 @@ export const discoveredItemSchema = z.object({
   scoreReason: z.string().nullable(),
   status: z.enum(DISCOVERED_ITEM_STATUSES),
   signalId: z.string().uuid().nullable(),
+  // Sprint 45: every persona×campaign candidate this item matched (names
+  // joined in for display). The item's suggested*/score fields stay the
+  // top-scoring match, kept for triage sort order and accept pre-fill.
+  matches: z.array(discoveredItemMatchSchema),
+  // Sprint 45 cross-source dedup: set when this row is a `duplicate`-status
+  // copy of an earlier canonical item.
+  duplicateOfId: z.string().uuid().nullable(),
+  // Number of linked duplicates for a canonical item (0 for plain/duplicate rows).
+  duplicateCount: z.number().int(),
   createdAt: z.number().int(),
 });
 export type DiscoveredItem = z.infer<typeof discoveredItemSchema>;
+
+// Discovery job ledger (Sprint 46): one row per source fetch attempt.
+// `/discovery/run` enqueues due sources and processes a bounded batch, so one
+// slow source cannot serialize the whole workspace and runs stay observable.
+export const DISCOVERY_JOB_STATUSES = [
+  "queued",
+  "running",
+  "succeeded",
+  "failed",
+  "skipped",
+] as const;
+export type DiscoveryJobStatus = (typeof DISCOVERY_JOB_STATUSES)[number];
+
+export const discoveryJobSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  sourceId: z.string().uuid(),
+  status: z.enum(DISCOVERY_JOB_STATUSES),
+  attempt: z.number().int().min(0),
+  lockedAt: z.number().int().nullable(),
+  startedAt: z.number().int().nullable(),
+  finishedAt: z.number().int().nullable(),
+  fetchedCount: z.number().int().min(0),
+  newCount: z.number().int().min(0),
+  error: z.string().nullable(),
+  createdAt: z.number().int(),
+});
+export type DiscoveryJob = z.infer<typeof discoveryJobSchema>;
+
+// Tracked social accounts (Sprint 46): first-class competitor/source accounts
+// a workspace listens to. Discovery sources reference them by id instead of
+// re-typing handles into every source config.
+export const TRACKED_SOCIAL_PLATFORMS = ["x", "linkedin", "instagram", "reddit"] as const;
+export type TrackedSocialPlatform = (typeof TRACKED_SOCIAL_PLATFORMS)[number];
+
+export const trackedSocialAccountSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  platform: z.enum(TRACKED_SOCIAL_PLATFORMS),
+  handle: z.string().min(1).max(100),
+  displayName: z.string().nullable(),
+  /** Provider-side id (e.g. a LinkedIn author URN) once resolved. */
+  externalId: z.string().nullable(),
+  url: z.string().nullable(),
+  notes: z.string(),
+  enabled: z.boolean(),
+  lastResolvedAt: z.number().int().nullable(),
+  lastError: z.string().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type TrackedSocialAccount = z.infer<typeof trackedSocialAccountSchema>;
+
+export const createTrackedSocialAccountInputSchema = z.object({
+  platform: z.enum(TRACKED_SOCIAL_PLATFORMS),
+  handle: z.string().trim().min(1).max(100),
+  displayName: z.string().trim().max(200).optional(),
+  externalId: z.string().trim().max(200).optional(),
+  url: z.string().url().optional(),
+  notes: z.string().trim().max(2_000).optional(),
+});
+export type CreateTrackedSocialAccountInput = z.infer<
+  typeof createTrackedSocialAccountInputSchema
+>;
+
+export const updateTrackedSocialAccountInputSchema = z.object({
+  handle: z.string().trim().min(1).max(100).optional(),
+  displayName: z.string().trim().max(200).nullable().optional(),
+  externalId: z.string().trim().max(200).nullable().optional(),
+  url: z.string().url().nullable().optional(),
+  notes: z.string().trim().max(2_000).optional(),
+  enabled: z.boolean().optional(),
+});
+export type UpdateTrackedSocialAccountInput = z.infer<
+  typeof updateTrackedSocialAccountInputSchema
+>;
 
 // ---------------------------------------------------------------------------
 // Evidence corpus (RAG behind the Brain Gateway boundary)
@@ -1043,6 +1481,9 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     // First social publishing platform (Sprint 17) — OAuth popup via a
     // Nango connect session; the founder's Reddit app creds come from
     // REDDIT_CLIENT_ID / REDDIT_CLIENT_SECRET in the root .env.
+    // `read` (Sprint 46) lets connected discovery sources use the OAuth
+    // listing/search endpoints; existing connections need a reconnect to
+    // pick it up.
     key: "reddit",
     label: "Reddit",
     nangoProvider: "reddit",
@@ -1050,7 +1491,7 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     categories: ["social"],
     baseUrl: "https://oauth.reddit.com",
     testPath: "/api/v1/me",
-    oauthScopes: "identity,submit",
+    oauthScopes: "identity,submit,read",
   },
   {
     // Sprint 25 social trio. OAuth popup like Reddit; creds come from
@@ -1058,6 +1499,10 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     // hits /v2/userinfo (OpenID) so a connection verifies the member identity.
     // w_member_social is provisioned now so Sprint 26 can broadcast posts
     // (LinkedIn's API forbids cold per-person DMs) without a reconnect.
+    // r_member_social (Sprint 46) is the read scope connected discovery
+    // needs to fetch member-authored posts — LinkedIn only grants it to
+    // apps with Community Management approval, so discovery surfaces a
+    // permission_required source error until the app is approved.
     key: "linkedin",
     label: "LinkedIn",
     nangoProvider: "linkedin",
@@ -1065,7 +1510,7 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     categories: ["social"],
     baseUrl: "https://api.linkedin.com",
     testPath: "/v2/userinfo",
-    oauthScopes: "openid,profile,email,w_member_social",
+    oauthScopes: "openid,profile,email,w_member_social,r_member_social",
   },
   {
     // Key stays "twitter" to match Nango's twitter-v2 template family; the UI
@@ -1073,6 +1518,8 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     // Sprint 26 can post AND send per-recipient DMs; offline.access keeps the
     // token refreshable. Scopes are stored comma-separated like every other
     // provider — Nango's twitter-v2 template emits the space separator X wants.
+    // list.read (Sprint 46) enables list_timeline discovery sources; existing
+    // connections need a reconnect to gain it.
     key: "twitter",
     label: "X (Twitter)",
     nangoProvider: "twitter-v2",
@@ -1080,7 +1527,7 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     categories: ["social"],
     baseUrl: "https://api.twitter.com",
     testPath: "/2/users/me",
-    oauthScopes: "tweet.read,tweet.write,users.read,dm.read,dm.write,offline.access",
+    oauthScopes: "tweet.read,tweet.write,users.read,dm.read,dm.write,offline.access,list.read",
   },
   {
     // Instagram content publishing runs through the Facebook Graph API and
@@ -1112,6 +1559,25 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
 export const CONNECTION_STATUSES = ["connected", "error", "disconnected"] as const;
 export type ConnectionStatus = (typeof CONNECTION_STATUSES)[number];
 
+// Sprint 44: what this account posts about + how — injected as the tier-1
+// "account" context section when the publishing account is known at draft time.
+export const CONNECTION_GUIDANCE_MAX_CHARS = 2_000;
+
+export const connectionContentProfileSchema = z.object({
+  topics: topicsSchema.default([]),
+  guidance: z
+    .string()
+    .trim()
+    .max(CONNECTION_GUIDANCE_MAX_CHARS, `Guidance must be ${CONNECTION_GUIDANCE_MAX_CHARS} characters or fewer`)
+    .default(""),
+});
+export type ConnectionContentProfile = z.infer<typeof connectionContentProfileSchema>;
+
+export const updateConnectionContentProfileInputSchema = connectionContentProfileSchema;
+export type UpdateConnectionContentProfileInput = z.infer<
+  typeof updateConnectionContentProfileInputSchema
+>;
+
 export const connectionSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
@@ -1121,6 +1587,7 @@ export const connectionSchema = z.object({
     baseUrl: z.string().optional(),
     testPath: z.string().optional(),
   }),
+  contentProfile: connectionContentProfileSchema,
   displayName: z.string(),
   externalAccountId: z.string().nullable(),
   externalAccountName: z.string().nullable(),
@@ -2048,6 +2515,9 @@ export const socialAutomationSettingsSchema = z.object({
   // Sprint 29: master switch for auto-posting engagement replies. Off by default —
   // even scheduled_auto campaigns gate their replies until the founder opts in.
   autoReplyEnabled: z.boolean(),
+  // Sprint 45: minimum persona×campaign match score (0–100) a signal needs
+  // before automation generates for that campaign. Default DEFAULT_MATCH_THRESHOLD.
+  matchThreshold: z.number().int().min(0).max(100),
   updatedAt: z.number().int(),
 });
 export type SocialAutomationSettings = z.infer<typeof socialAutomationSettingsSchema>;
@@ -2057,6 +2527,7 @@ export const updateSocialAutomationSettingsInputSchema = z.object({
   perConnectionDailyCap: z.number().int().positive().max(1000).optional(),
   perCampaignDailyCap: z.number().int().positive().max(1000).optional(),
   autoReplyEnabled: z.boolean().optional(),
+  matchThreshold: z.number().int().min(0).max(100).optional(),
 });
 export type UpdateSocialAutomationSettingsInput = z.infer<
   typeof updateSocialAutomationSettingsInputSchema
@@ -2717,6 +3188,22 @@ export const checkoutInputSchema = z.object({
 });
 export type CheckoutInput = z.infer<typeof checkoutInputSchema>;
 
+/** UI state for a plan-usage meter. A limit of -1 means unlimited. */
+export type UsageMeterState = "ok" | "near" | "over" | "unlimited";
+export interface UsageMeterView {
+  percent: number; // 0–100, clamped
+  state: UsageMeterState;
+}
+
+/** Pure meter logic for the billing page's usage bars (kept here so it is Vitest-tested). */
+export function usageMeter(used: number, limit: number): UsageMeterView {
+  if (limit === -1) return { percent: 100, state: "unlimited" };
+  if (limit <= 0) return used > 0 ? { percent: 100, state: "over" } : { percent: 0, state: "ok" };
+  if (used >= limit) return { percent: 100, state: "over" };
+  const raw = (used / limit) * 100;
+  return { percent: Math.min(100, Math.round(raw)), state: raw >= 80 ? "near" : "ok" };
+}
+
 // GTM insights (Sprint 34) — read-only response schemas for native insights.
 // No new enums; reuses CHANNELS, APPROVAL_STATES, OUTPUT_RATINGS, BRAIN_DOC_TYPES.
 // ---------------------------------------------------------------------------
@@ -2981,6 +3468,7 @@ export const WORKSPACE_NAV: NavItem[] = [
       { label: "Integrations", path: "/connectors", summary: "Connect the stack", tone: "system" },
       { label: "Team", path: "/team", summary: "Members and invites", tone: "icp" },
       { label: "Billing", path: "/billing", summary: "Plan and usage", tone: "history" },
+      { label: "Activity", path: "/activity", summary: "Event log and audit trail", tone: "system" },
     ],
   },
 ];

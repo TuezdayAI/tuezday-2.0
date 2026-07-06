@@ -1007,6 +1007,42 @@ a.workspace-card:hover {
 .layer-campaign { color: var(--peach-ink); background: var(--peach); }
 .layer-persona { color: var(--amber-ink); background: var(--amber); }
 .layer-task { color: var(--rose-ink); background: var(--rose); }
+.layer-zoom { color: var(--c3-deep); background: var(--c3-wash); }
+/* Sprint 44: the publishing account's content profile */
+.layer-account { color: var(--mint-ink); background: var(--mint); border: 1px solid var(--mint-ink); }
+
+/* Sprint 46: connection / source-origin badges — keep long account and source
+   names from blowing up card headers on narrow screens. */
+.layer-badge.source-badge {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: bottom;
+}
+
+/* Sprint 43: selective-context trace badges */
+.tier-badge,
+.mode-badge {
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  background: var(--panel);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.mode-badge.mode-outline { color: var(--c3-deep); }
+.mode-badge.mode-omit { color: var(--danger); }
+
+.zoom-score {
+  font-size: 12px;
+  color: var(--c3-deep);
+  white-space: nowrap;
+}
 
 .section-reason {
   margin: 6px 0 0;
@@ -1410,4 +1446,228 @@ a.workspace-card:hover {
 
 .quick-create[open] > summary {
   color: var(--text);
+}
+
+/* ---------- Selective context (Sprint 43) ---------- */
+
+.token-warning {
+  margin: 8px 0 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: var(--amber-ink);
+  background: var(--amber);
+  border-radius: var(--radius-sm);
+}
+
+.matrix-table-wrap {
+  overflow-x: auto;
+}
+
+.matrix-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.matrix-table th,
+.matrix-table td {
+  text-align: left;
+  padding: 10px 12px;
+  border-top: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.matrix-table thead th {
+  border-top: none;
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.matrix-table tbody th {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.matrix-cell-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.matrix-cell-reason {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  max-width: 420px;
+}
+
+.outline-preview {
+  margin-top: 14px;
+}
+
+.outline-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.outline-list li {
+  font-size: 13px;
+}
+
+.outline-list li.outline-h3 {
+  padding-left: 18px;
+}
+
+.outline-heading {
+  font-weight: 600;
+}
+
+.outline-llm-badge {
+  margin-left: 6px;
+  font-size: 11px;
+  border-radius: 999px;
+  padding: 1px 8px;
+  color: var(--mint-ink);
+  background: var(--mint);
+}
+
+/* --- UI polish (2026-07-03): billing meters, module motion, smooth scroll --- */
+
+.plan-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 18px 20px;
+  margin: 12px 0 20px;
+}
+
+.plan-hero-name {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.plan-hero-price {
+  text-align: right;
+}
+
+.plan-hero-amount {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.usage-heading {
+  margin: 0 0 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
+.usage-meters {
+  display: grid;
+  gap: 16px;
+}
+
+.usage-meter-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.usage-meter-title {
+  font-weight: 600;
+}
+
+.usage-meter-figure {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.meter-track {
+  height: 10px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.4s var(--ease-out);
+}
+
+.meter-fill.near {
+  background: var(--c2-deep);
+}
+
+.meter-fill.over {
+  background: var(--danger);
+}
+
+.meter-fill.unlimited {
+  background: var(--accent);
+  opacity: 0.35;
+}
+
+.usage-alert {
+  margin: 6px 0 0;
+  color: var(--danger);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+
+  .usage-alert {
+    animation: usage-pulse 1.2s ease-in-out infinite;
+  }
+
+  .module-in {
+    animation: module-in 0.45s var(--ease-out) backwards;
+  }
+
+  /* Content fades in when it mounts (module pages render data async, so the
+     visible "module loaded" moment is the panels appearing, not the route). */
+  .module-in .panel,
+  .module-in .page-header {
+    animation: module-in 0.45s var(--ease-out) backwards;
+  }
+}
+
+@keyframes usage-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
+@keyframes module-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
 }

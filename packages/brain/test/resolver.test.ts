@@ -6,6 +6,7 @@ import {
   composeBrandVoiceReviewInstruction,
   composeChannelFitReviewInstruction,
   composePrPitchInstruction,
+  defaultResolvedMatrix,
   estimateTokens,
   resolveContext,
   type ResolveInput,
@@ -166,17 +167,20 @@ describe("resolveContext", () => {
     expect(result.prompt).toContain(override);
   });
 
-  it("drops history first to fit a tight token budget", () => {
-    const docs = { ...fullDocs, history: "history ".repeat(2000) };
-    const result = resolveContext(baseInput({ docs, tokenBudget: 1500 }));
+  it("demotes an over-budget matrix-full history to its outline (Sprint 43 ladder)", () => {
+    // pr_pitch keeps history full by default; a huge history + tight budget
+    // demotes it to outline instead of dropping it whole (v1 behavior).
+    const docs = { ...fullDocs, history: "The launch went well and taught us pricing. ".repeat(400) };
+    const result = resolveContext(baseInput({ taskType: "pr_pitch", docs, tokenBudget: 1500 }));
     const history = result.sections.find((s) => s.key === "org:history")!;
-    expect(history.included).toBe(false);
+    expect(history.included).toBe(true);
+    expect(history.mode).toBe("outline");
     expect(history.reason).toMatch(/token budget/i);
     expect(result.includedTokens).toBeLessThanOrEqual(1500);
     expect(result.overBudget).toBe(false);
   });
 
-  it("drops channel guidance after history if still over budget", () => {
+  it("never drops channel guidance: constitutional overflow flags overBudget instead", () => {
     const docs = {
       soul: "soul ".repeat(1200),
       icp: "icp ".repeat(1200),
@@ -186,8 +190,8 @@ describe("resolveContext", () => {
     };
     const result = resolveContext(baseInput({ docs, tokenBudget: 4000 }));
     const channel = result.sections.find((s) => s.key === "channel")!;
-    expect(channel.included).toBe(false);
-    expect(channel.reason).toMatch(/token budget/i);
+    expect(channel.included).toBe(true);
+    expect(result.overBudget).toBe(true);
   });
 
   it("flags overBudget instead of silently cutting protected sections", () => {
@@ -506,5 +510,310 @@ describe("generation quality sections (Sprint 22)", () => {
     }
     expect(brand).toMatch(/voice/i);
     expect(fit).toMatch(/linkedin/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Resolver v2 — tiered selective context (Sprint 43)
+// ---------------------------------------------------------------------------
+
+// Big enough to clear the small-doc escape hatch (> 600 tokens), with real
+// H2 sections so outline + zoom have something to work with.
+const PAD = " This paragraph is deliberate filler prose to push the document past the small-doc escape hatch so outline mode engages.".repeat(14);
+
+const bigHistory = [
+  `## Launch of reporting dashboards\n\nWe shipped weekly reporting dashboards in March. Agencies loved the export.${PAD}`,
+  `## Pricing experiment\n\nWe tested usage-based pricing in April. Churn dropped for small agencies.${PAD}`,
+  `## Conference talk\n\nThe founder spoke at SaaSCon about onboarding.${PAD}`,
+].join("\n\n");
+
+const bigIcp = [
+  `## Founder-led SaaS\n\nSmall GTM teams, positioning still in the founder's head.${PAD}`,
+  `## Marketing agencies\n\nAgencies drowning in weekly reporting busywork for clients.${PAD}`,
+].join("\n\n");
+
+const bigDocs = { ...fullDocs, history: bigHistory, icp: bigIcp };
+
+describe("resolver v2: task matrix (tier 2)", () => {
+  it("renders large icp/history as outlines for a linkedin_post, with tier + mode traced", () => {
+    const result = resolveContext(baseInput({ docs: bigDocs }));
+    const icp = result.sections.find((s) => s.key === "org:icp")!;
+    const history = result.sections.find((s) => s.key === "org:history")!;
+    for (const section of [icp, history]) {
+      expect(section.included).toBe(true);
+      expect(section.mode).toBe("outline");
+      expect(section.tier).toBe(2);
+      expect(section.title).toMatch(/\(outline\)$/);
+      expect(section.content).toMatch(/^- /m);
+      expect(section.reason).toMatch(/tier 2, task matrix/);
+    }
+    // Outlines are dramatically smaller than the docs they map.
+    expect(icp.tokens).toBeLessThan(estimateTokens(bigIcp) / 4);
+    const soul = result.sections.find((s) => s.key === "org:soul")!;
+    expect(soul.tier).toBe(1);
+    expect(soul.mode).toBe("full");
+    expect(soul.reason).toMatch(/tier 1, constitutional/);
+  });
+
+  it("keeps small docs whole even in outline mode (escape hatch)", () => {
+    const result = resolveContext(baseInput());
+    const icp = result.sections.find((s) => s.key === "org:icp")!;
+    expect(icp.mode).toBe("full");
+    expect(icp.content).toBe(fullDocs.icp.trim());
+    expect(icp.reason).toMatch(/included whole/);
+  });
+
+  it("omits docs the matrix says to omit, with the cell reason in the trace", () => {
+    const result = resolveContext(baseInput({ taskType: "engagement_reply", docs: bigDocs }));
+    const icp = result.sections.find((s) => s.key === "org:icp")!;
+    expect(icp.included).toBe(false);
+    expect(icp.mode).toBe("omit");
+    expect(icp.reason).toMatch(/omitted for engagement_reply/);
+    expect(result.prompt).not.toContain("Marketing agencies");
+  });
+
+  it("honors a workspace matrix override and labels its source", () => {
+    const matrix = defaultResolvedMatrix();
+    matrix.linkedin_post.history = {
+      mode: "full",
+      reason: "We want the whole story in every post.",
+      source: "workspace",
+    };
+    const result = resolveContext(baseInput({ docs: bigDocs, matrix }));
+    const history = result.sections.find((s) => s.key === "org:history")!;
+    expect(history.mode).toBe("full");
+    expect(history.content).toBe(bigHistory.trim());
+    expect(history.reason).toMatch(/workspace override/);
+    expect(history.reason).toContain("We want the whole story in every post.");
+  });
+});
+
+describe("resolver v2: zoom (tier 3)", () => {
+  const signalInput = () =>
+    baseInput({
+      docs: bigDocs,
+      signal: {
+        content: "Thread about usage-based pricing and churn for agencies",
+        source: "reddit",
+      },
+    });
+
+  it("pulls matching sections in full, after persona and before lead, with scores", () => {
+    const result = resolveContext(signalInput());
+    const keys = result.sections.map((s) => s.key);
+    const pricing = result.sections.find((s) => s.key === "zoom:history:pricing-experiment")!;
+    expect(pricing).toBeDefined();
+    expect(pricing.included).toBe(true);
+    expect(pricing.tier).toBe(3);
+    expect(pricing.layer).toBe("zoom");
+    expect(pricing.zoom!.score).toBeGreaterThan(0);
+    expect(pricing.title).toBe("History § Pricing experiment");
+    expect(pricing.content).toContain("usage-based pricing in April");
+    // Placement: stable prefix (…persona) → zoom → volatile payload (lead…).
+    expect(keys.indexOf("zoom:history:pricing-experiment")).toBeGreaterThan(keys.indexOf("persona"));
+    expect(keys.indexOf("zoom:history:pricing-experiment")).toBeLessThan(keys.indexOf("lead"));
+    // The composed query is traced and folds in the signal.
+    expect(result.zoomQuery).toContain("usage-based pricing");
+    // The outline section says how many sections were pulled.
+    const history = result.sections.find((s) => s.key === "org:history")!;
+    expect(history.reason).toMatch(/\d+ of 3 sections zoomed in below/);
+  });
+
+  it("adds no zoom sections when nothing matches, and says so", () => {
+    const result = resolveContext(
+      baseInput({ docs: bigDocs, signal: { content: "quantum blockchain metaverse", source: "hn" } }),
+    );
+    expect(result.sections.some((s) => s.layer === "zoom")).toBe(false);
+    const history = result.sections.find((s) => s.key === "org:history")!;
+    expect(history.reason).toMatch(/no sections matched the zoom query/);
+  });
+
+  it("uses stored outlines (LLM summaries) when provided", () => {
+    const result = resolveContext(
+      baseInput({
+        docs: bigDocs,
+        outlines: {
+          history: {
+            generatedAt: 1,
+            sections: [
+              {
+                id: "pricing-experiment",
+                parentId: null,
+                heading: "Pricing experiment",
+                level: 2,
+                summary: "CUSTOM LLM SUMMARY OF PRICING",
+                summarySource: "llm",
+                tokens: 40,
+              },
+            ],
+          },
+        },
+      }),
+    );
+    const history = result.sections.find((s) => s.key === "org:history")!;
+    expect(history.content).toContain("CUSTOM LLM SUMMARY OF PRICING");
+  });
+
+  it("drops zoomed sections (lowest score first) before demoting anything (budget ladder)", () => {
+    const generous = resolveContext(signalInput());
+    const zoomed = generous.sections.filter((s) => s.layer === "zoom" && s.included);
+    expect(zoomed.length).toBeGreaterThan(0);
+    // Budget just below what the generous bundle needs forces the ladder to
+    // shed zoom sections; org outlines must survive.
+    const tight = resolveContext({ ...signalInput(), tokenBudget: generous.includedTokens - 50 });
+    const tightZoomed = tight.sections.filter((s) => s.layer === "zoom");
+    expect(tightZoomed.some((s) => !s.included)).toBe(true);
+    const droppedFirst = [...tightZoomed].sort((a, b) => a.zoom!.score - b.zoom!.score)[0]!;
+    expect(droppedFirst.included).toBe(false);
+    expect(droppedFirst.reason).toMatch(/token budget/);
+    expect(tight.sections.find((s) => s.key === "org:history")!.included).toBe(true);
+    expect(tight.sections.find((s) => s.key === "channel")!.included).toBe(true);
+  });
+});
+
+describe("resolver v2: brief mode (angle step)", () => {
+  it("demotes matrix-full docs to outline, skips zoom, and flags the mode", () => {
+    const result = resolveContext(
+      baseInput({
+        taskType: "pr_pitch",
+        docs: bigDocs,
+        resolveMode: "brief",
+        signal: { content: "usage-based pricing churn agencies", source: "reddit" },
+      }),
+    );
+    expect(result.resolveMode).toBe("brief");
+    expect(result.zoomQuery).toBeUndefined();
+    expect(result.sections.some((s) => s.layer === "zoom")).toBe(false);
+    const history = result.sections.find((s) => s.key === "org:history")!;
+    expect(history.mode).toBe("outline");
+    expect(history.reason).toMatch(/brief mode/);
+    const outlineNote = result.sections.find((s) => s.key === "org:icp")!;
+    expect(outlineNote.reason).toMatch(/zoom off \(brief mode\)/);
+  });
+
+  it("draft mode is the default and is byte-identical for legacy inputs", () => {
+    const result = resolveContext(baseInput());
+    expect(result.resolveMode).toBe("draft");
+  });
+});
+
+describe("scoped guidance & persona topics (Sprint 44)", () => {
+  it("names the winning scope in the channel guidance reason", () => {
+    const scoped = resolveContext(
+      baseInput({
+        channelGuidance: {
+          content: "First-person musings only.",
+          source: "workspace",
+          scope: 'persona "Consciousness"',
+        },
+      }),
+    );
+    expect(scoped.sections.find((s) => s.key === "channel")!.reason).toBe(
+      'Channel guidance for linkedin (tier 1, keyed — workspace override, scoped: persona "Consciousness").',
+    );
+    // No scope → the Sprint 43 reason, byte-for-byte.
+    const unscoped = resolveContext(
+      baseInput({ channelGuidance: { content: "Override.", source: "workspace" } }),
+    );
+    expect(unscoped.sections.find((s) => s.key === "channel")!.reason).toBe(
+      "Channel guidance for linkedin (tier 1, keyed — workspace override).",
+    );
+  });
+
+  it("renders persona topics + structured drafting fields as labeled lines", () => {
+    const result = resolveContext(
+      baseInput({
+        persona: {
+          name: "Field CTO",
+          description: "Technical founder voice",
+          overlay: "Write from hands-on experience.",
+          topics: ["agentic coding", "evals"],
+          tone: "dry, technical",
+          styleRules: "- no emoji\n- one idea per post",
+          avoid: "synergy, game-changer",
+        },
+      }),
+    );
+    const persona = result.sections.find((s) => s.key === "persona")!;
+    expect(persona.content).toContain("Topics this persona covers: agentic coding, evals");
+    expect(persona.content).toContain("Tone: dry, technical");
+    expect(persona.content).toContain("Style rules:\n- no emoji\n- one idea per post");
+    expect(persona.content).toContain("Never say / avoid:\nsynergy, game-changer");
+  });
+
+  it("keeps legacy personas byte-identical when the new fields are empty", () => {
+    const legacy = resolveContext(
+      baseInput({ persona: { name: "CEO", description: "Founder", overlay: "Confident." } }),
+    );
+    const withEmpty = resolveContext(
+      baseInput({
+        persona: {
+          name: "CEO",
+          description: "Founder",
+          overlay: "Confident.",
+          topics: [],
+          tone: "",
+          styleRules: "",
+          avoid: "",
+        },
+      }),
+    );
+    expect(withEmpty.sections.find((s) => s.key === "persona")!.content).toBe(
+      legacy.sections.find((s) => s.key === "persona")!.content,
+    );
+  });
+
+  it("pushes an account section between persona and lead when a publishing account is given", () => {
+    const result = resolveContext(
+      baseInput({
+        account: {
+          name: "Consciousness Lab",
+          handle: "conscious_lab",
+          provider: "twitter",
+          topics: ["consciousness", "psychology"],
+          guidance: "Long-form threads welcome; never tech takes.",
+        },
+      }),
+    );
+    const keys = result.sections.map((s) => s.key);
+    expect(keys.indexOf("account")).toBe(keys.indexOf("persona") + 1);
+    expect(keys.indexOf("account")).toBeLessThan(keys.indexOf("lead"));
+    const account = result.sections.find((s) => s.key === "account")!;
+    expect(account.layer).toBe("account");
+    expect(account.tier).toBe(1);
+    expect(account.included).toBe(true);
+    expect(account.title).toBe("Account: Consciousness Lab (@conscious_lab)");
+    expect(account.content).toContain("Publishing as: Consciousness Lab (@conscious_lab) on twitter.");
+    expect(account.content).toContain("This account covers: consciousness, psychology");
+    expect(account.content).toContain("Account guidelines:\nLong-form threads welcome; never tech takes.");
+    expect(account.reason).toContain("tier 1, keyed");
+  });
+
+  it("omits the account section entirely when no account is given (section list unchanged)", () => {
+    const result = resolveContext(baseInput());
+    expect(result.sections.some((s) => s.key === "account")).toBe(false);
+  });
+
+  it("folds persona and account topics into the zoom query", () => {
+    const result = resolveContext(
+      baseInput({
+        docs: bigDocs,
+        persona: {
+          name: "Field CTO",
+          description: "",
+          overlay: "",
+          topics: ["usage-based pricing"],
+        },
+        account: {
+          name: "Agency Desk",
+          provider: "linkedin",
+          topics: ["churn for agencies"],
+        },
+      }),
+    );
+    expect(result.zoomQuery).toContain("usage-based pricing");
+    expect(result.zoomQuery).toContain("churn for agencies");
+    // The topics actually drive zoom: the pricing section scores in.
+    expect(result.sections.some((s) => s.key === "zoom:history:pricing-experiment")).toBe(true);
   });
 });

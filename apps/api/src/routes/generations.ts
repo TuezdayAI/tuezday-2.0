@@ -13,13 +13,15 @@ import { assertWithinLimit, EntitlementError, getUsage } from "../services/entit
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { generateAngles } from "../services/angles";
 import { getBrain } from "../services/brain";
-import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
+import { composeResolveCampaign, getCampaign } from "../services/campaigns";
 import { resolveChannelGuidance } from "../services/guidance";
 import { retrieveEvidence } from "../services/evidence";
 import type { EvidenceStore } from "../evidence/store";
 import { getGenerationSettings } from "../services/generation-settings";
 import { listGenerations, rateGeneration, storeGeneration } from "../services/generations";
-import { getPersona } from "../services/personas";
+import { getPersona, toResolvePersona } from "../services/personas";
+import { resolveDraftAccount } from "../services/resolve-account";
+import { selectiveContextInputs } from "../services/resolve-input";
 import { runPreReview, setGenerationReview } from "../services/review";
 import { getWorkspace } from "../services/workspaces";
 
@@ -88,19 +90,25 @@ export function registerGenerationRoutes(
 
     const { docs } = getBrain(db, request.params.id);
     const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
-    const channelGuidance = resolveChannelGuidance(db, request.params.id, parsed.data.channel);
+    const channelGuidance = resolveChannelGuidance(db, request.params.id, parsed.data.channel, {
+      personaId: parsed.data.personaId ?? null,
+      campaignId: parsed.data.campaignId ?? null,
+    });
     const settings = getGenerationSettings(db, request.params.id);
+    const selective = selectiveContextInputs(db, request.params.id);
 
-    const personaInput = persona
-      ? { name: persona.name, description: persona.description, overlay: persona.overlay }
-      : undefined;
-    const campaignInput = campaign
-      ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
-      : undefined;
+    const personaInput = persona ? toResolvePersona(persona) : undefined;
+    const campaignInput = campaign ? composeResolveCampaign(campaign) : undefined;
+    const account = resolveDraftAccount(db, request.params.id, {
+      personaId: parsed.data.personaId,
+      channel: parsed.data.channel,
+    });
 
     try {
       // Angle step (Sprint 22): a manual `angle` is drafted from directly;
       // `autoAngle` generates candidates server-side and picks the strongest.
+      // Sprint 43: the angle call is the *brief* — Tier 1 + outlines, no zoom,
+      // no evidence — and the chosen angle then feeds the draft's zoom query.
       let chosenAngle = parsed.data.angle?.trim() || undefined;
       let angles: string[] | undefined;
       if (!chosenAngle && parsed.data.autoAngle) {
@@ -110,11 +118,17 @@ export function registerGenerationRoutes(
           docs: contents,
           taskType: parsed.data.taskType,
           channel: parsed.data.channel,
-          channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
+          channelGuidance: {
+            content: channelGuidance.content,
+            source: channelGuidance.source,
+            scope: channelGuidance.scopeLabel,
+          },
           persona: personaInput,
           campaign: campaignInput,
-          evidence: evidenceResolution.evidence,
-          evidenceExclusionReason: evidenceResolution.exclusionReason,
+          account,
+          ...selective,
+          resolveMode: "brief",
+          evidenceExclusionReason: "brief mode (angle step) runs without evidence.",
           tokenBudget: parsed.data.tokenBudget,
           taskInstruction: composeAngleInstruction(parsed.data.taskType, parsed.data.channel, count),
         });
@@ -138,9 +152,15 @@ export function registerGenerationRoutes(
         docs: contents,
         taskType: parsed.data.taskType,
         channel: parsed.data.channel,
-        channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
+        channelGuidance: {
+          content: channelGuidance.content,
+          source: channelGuidance.source,
+          scope: channelGuidance.scopeLabel,
+        },
         persona: personaInput,
         campaign: campaignInput,
+        account,
+        ...selective,
         evidence: evidenceResolution.evidence,
         evidenceExclusionReason: evidenceResolution.exclusionReason,
         angle: chosenAngle,
@@ -175,6 +195,7 @@ export function registerGenerationRoutes(
             channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
             persona: personaInput,
             campaign: campaignInput,
+            ...selective,
           },
           result.text,
           settings.flagThreshold,
@@ -226,37 +247,35 @@ export function registerGenerationRoutes(
       }
     }
 
-    const evidenceResolution = await retrieveEvidence(
-      db,
-      evidence,
-      request.params.id,
-      {
-        taskType: parsed.data.taskType,
-        channel: parsed.data.channel,
-        campaignObjective: campaign?.objective,
-      },
-      parsed.data.useEvidence ?? true,
-    );
-
+    // Sprint 43: angle suggestions run as the brief — Tier 1 + outlines only,
+    // no zoom, no evidence retrieval. Cheap by construction.
     const settings = getGenerationSettings(db, request.params.id);
     const count = parsed.data.angleCount ?? settings.angleCount ?? DEFAULT_ANGLE_COUNT;
     const { docs } = getBrain(db, request.params.id);
     const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
-    const channelGuidance = resolveChannelGuidance(db, request.params.id, parsed.data.channel);
+    const channelGuidance = resolveChannelGuidance(db, request.params.id, parsed.data.channel, {
+      personaId: parsed.data.personaId ?? null,
+      campaignId: parsed.data.campaignId ?? null,
+    });
     const resolved = resolveContext({
       workspaceName: workspace.name,
       docs: contents,
       taskType: parsed.data.taskType,
       channel: parsed.data.channel,
-      channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
-      persona: persona
-        ? { name: persona.name, description: persona.description, overlay: persona.overlay }
-        : undefined,
-      campaign: campaign
-        ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
-        : undefined,
-      evidence: evidenceResolution.evidence,
-      evidenceExclusionReason: evidenceResolution.exclusionReason,
+      channelGuidance: {
+        content: channelGuidance.content,
+        source: channelGuidance.source,
+        scope: channelGuidance.scopeLabel,
+      },
+      persona: persona ? toResolvePersona(persona) : undefined,
+      campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+      account: resolveDraftAccount(db, request.params.id, {
+        personaId: parsed.data.personaId,
+        channel: parsed.data.channel,
+      }),
+      ...selectiveContextInputs(db, request.params.id),
+      resolveMode: "brief",
+      evidenceExclusionReason: "brief mode (angle step) runs without evidence.",
       tokenBudget: parsed.data.tokenBudget,
       taskInstruction: composeAngleInstruction(parsed.data.taskType, parsed.data.channel, count),
     });

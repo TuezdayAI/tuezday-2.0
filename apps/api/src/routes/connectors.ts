@@ -5,6 +5,7 @@ import {
   CONNECTOR_PROVIDERS,
   connectInputSchema,
   createWebhookInputSchema,
+  updateConnectionContentProfileInputSchema,
   updateConnectionInputSchema,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
@@ -19,6 +20,7 @@ import {
   oauthAppCredentials,
   providerByKey,
   registerOAuthConnection,
+  setConnectionContentProfile,
   testConnection,
   updateConnection,
 } from "../services/connections";
@@ -272,6 +274,28 @@ export function registerConnectorRoutes(
         });
       }
       const updated = updateConnection(db, request.params.id, request.params.connectionId, parsed.data);
+      if (!updated) return reply.status(404).send({ error: "connection_not_found" });
+      return updated;
+    },
+  );
+
+  app.put<{ Params: { id: string; connectionId: string } }>(
+    "/workspaces/:id/connections/:connectionId/content-profile",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const parsed = updateConnectionContentProfileInputSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.status(400).send({
+          error: "invalid_input",
+          message: parsed.error.issues.map((i) => i.message).join("; "),
+        });
+      }
+      const updated = setConnectionContentProfile(
+        db,
+        request.params.id,
+        request.params.connectionId,
+        parsed.data,
+      );
       if (!updated) return reply.status(404).send({ error: "connection_not_found" });
       return updated;
     },

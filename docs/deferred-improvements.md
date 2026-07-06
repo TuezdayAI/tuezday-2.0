@@ -103,15 +103,6 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
 - **Trigger to revisit:** If the few-minute lag between flipping the switch and a due post matters.
 - **Origin:** Sprint 28.
 
-### 11. No relevance triage — every signal fans out to every automated campaign's channels
-- **What we shipped (Sprint 28):** A new signal generates a draft for each channel of every active
-  automated campaign, with no scoring of which signal actually fits which campaign/persona.
-- **The better version:** Score signal↔campaign/persona fit and route only relevant signals (extends
-  `suggestedPersonaId` / `scoreReason`).
-- **Trigger to revisit:** **Sprint 31** owns this (discovery source expansion + auto-mapping); the
-  post-2026-06-21 reorg moved discovery expansion to S31 (Sprint 29 became the reply inbox).
-- **Origin:** Sprint 28.
-
 ### 12. Inbox polls synchronously on a worker tick
 - **What we shipped (Sprint 29):** `pollInbox` fetches replies + engagement per published post/DM
   inline on the inbox tick, one platform call at a time, with no per-post cursors.
@@ -207,8 +198,126 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
 - **Trigger to revisit:** Demand for cross-channel cadences, or once open/click tracking lands.
 - **Origin:** Sprint 30.
 
+### 22. Zoom ranking is lexical BM25 only — no embeddings
+- **What we shipped (Sprint 43):** Tier-3 map-then-zoom ranks brain-doc sections against the composed
+  task query with in-process BM25 (k1=1.2, b=0.75, shared IDF corpus). Deterministic, dependency-free,
+  and fully explainable in the trace — but purely lexical: a query about "pricing" won't pull a section
+  that only says "what we charge".
+- **The better version:** Hybrid lexical + vector ranking (RRF) once the gateway grows `embed()` and
+  the evidence store owns a sqlite-vec index (Sprint 47 / gap-assessment Sprint E) — same seam, zoom
+  swaps its scorer.
+- **Trigger to revisit:** Brain docs grow past ~50 sections, or the trace/learning loop shows zoom
+  repeatedly missing topically-relevant sections phrased with different words.
+- **Origin:** Sprint 43.
+
+### 23. Outline summaries aren't editable
+- **What we shipped (Sprint 43):** A doc's outline summaries are machine-made — one best-effort LLM
+  pass at save (deterministic first-sentence fallback when the gateway is absent/fails). The founder
+  can see them (brain page, resolve trace) but not fix a bad one; the next save regenerates everything.
+- **The better version:** Per-section founder-editable summaries with a "locked" flag that survives
+  regeneration — the outline is brain content, so humans should get the last word.
+- **Trigger to revisit:** An AI summary misrepresents a section in a way that visibly steers drafts,
+  or the founder asks to hand-tune the map.
+- **Origin:** Sprint 43.
+
+### 24. Zoomed sections duplicate their outline row
+- **What we shipped (Sprint 43):** When a doc enters as an outline and zoom pulls sections in full,
+  the prompt carries both the outline bullet ("Pricing experiment — …") and the full section body.
+  A few tokens of redundancy per zoomed section, kept because the outline preserves the doc's overall
+  shape for the model.
+- **The better version:** Mark zoomed rows in the rendered outline ("(included in full below)") or
+  drop them, saving the duplicate summary tokens without losing the map.
+- **Trigger to revisit:** Token-budget pressure on outline-mode bundles, or models visibly echoing
+  the summary line instead of the section content.
+- **Origin:** Sprint 43.
+
+### 25. Engagement replies don't get persona-scoped guidance
+- **What we shipped (Sprint 44):** A reply draft gets the **account** section from the inbox item's
+  own `connectionId` (the account the reply publishes from), but its channel guidance stays
+  workspace-level — inbox items don't carry a persona, so the scoped-guidance lookup has nothing to
+  key on.
+- **The better version:** Derive the persona from the item's connection (reverse the
+  persona-social-account assignment: which persona is this connection primary for?) and pass it as
+  the guidance scope and persona overlay, so replies speak in the owning persona's voice with that
+  persona's scoped rules.
+- **Trigger to revisit:** Sprint 45 (discovery routing passes persona through `runAutomation`), or
+  the founder notices replies ignoring a persona-scoped guidance override that posts respect.
+- **Origin:** Sprint 44.
+
+### 26. Guidance scope FKs don't cascade in SQLite (service-level cleanup instead)
+- **What we shipped (Sprint 44):** `guidance_overrides.persona_id/campaign_id` are declared
+  `ON DELETE cascade` in `schema.ts`, but drizzle-kit's SQLite `ALTER TABLE ADD` drops the action
+  (same gap as `publications.cadence_id` in 0021), so `deletePersona` deletes the scoped rows
+  explicitly via `deleteGuidanceForScope`. Campaigns have no delete path today, so only the persona
+  side needs it.
+- **The better version:** Real DB-enforced cascades — free on the planned Postgres swap, since the
+  schema already declares them; SQLite would need a table rebuild migration.
+- **Trigger to revisit:** The Postgres swap, or a campaign-delete feature (which must then call
+  `deleteGuidanceForScope` too — grep for it).
+- **Origin:** Sprint 44.
+
+### 27. Re-score on config change is full-backlog, not incremental
+- **What we shipped (Sprint 45):** When any persona or campaign changes, the next discovery run
+  re-scores **every** still-`new` (untriaged, non-duplicate) item whose `scoredAt` is older than the
+  workspace's config watermark (`max(personas.updatedAt, campaigns.updatedAt)`) — not just the items
+  actually affected by what changed. One persona edit re-judges the whole triage backlog.
+- **The better version:** Incremental invalidation — re-score only the items whose stored matches
+  reference the edited persona/campaign (or whose no-match verdict could plausibly flip), so a
+  config edit costs LLM calls proportional to its blast radius.
+- **Trigger to revisit:** A large untriaged backlog makes a persona/campaign edit visibly expensive
+  — a discovery run stalls on re-scoring, or LLM spend spikes after config edits.
+- **Origin:** Sprint 45.
+
+### 28. Cross-source duplicates are a linked list, not a merge
+- **What we shipped (Sprint 45):** A duplicate stays its own row (own source, own `externalId`)
+  with `status: "duplicate"` pointing at the canonical item via `duplicateOfId`; the canonical item
+  shows a "seen via N sources" count with an expandable source list. There is no merged/diffed view
+  of what differs between the copies, and corroboration doesn't influence the item's score.
+- **The better version:** Treat corroboration as signal — a merged view of the linked copies, and
+  multi-source pickup feeding relevance ("3 sources picked this up" as a score/rank boost in triage).
+- **Trigger to revisit:** When corroboration itself becomes a signal worth surfacing — e.g. the
+  founder wants multi-source stories ranked above single-source ones.
+- **Origin:** Sprint 45.
+
+### 29. Connected-source cursors are schema-only; every run refetches the newest window
+- **What we shipped (Sprint 46 Part 2):** `discovery_sources.cursor_json` exists (Part 1 schema)
+  but no connected adapter reads or writes it. Every run fetches the newest ~25 items per source
+  (X search/timelines, Reddit listings, LinkedIn posts, IG media) and relies on external-id +
+  cross-source dedup for idempotency — correct, but it re-downloads the same recent window and
+  can miss items beyond the first page during a burst.
+- **The better version:** Store per-mode pagination state (`next_token` for X, `before` fullnames
+  for Reddit) in `cursorJson`, fetch newest-first until a known id is seen, and still treat dedup
+  as the final guarantee (the spec's stated design).
+- **Trigger to revisit:** A tracked account/search that regularly produces more than one page of
+  new items between runs, or provider read-quota pressure from refetching unchanged windows.
+- **Origin:** Sprint 46.
+
+### 30. Tracked-account provider ids are manual; no resolver populates them
+- **What we shipped (Sprint 46 Part 2):** `tracked_social_accounts.external_id` /
+  `last_resolved_at` / `last_error` exist, but nothing fills them automatically — a LinkedIn
+  author URN must be pasted into `externalId` (or typed as the handle), and X handles are
+  re-resolved to user ids on every timeline fetch (one extra API call per handle per run).
+- **The better version:** Resolve and cache provider ids on tracked-account create/first use
+  (X `users/by/username` → store the id; LinkedIn organization lookup where scopes allow),
+  stamping `lastResolvedAt`/`lastError` so the UI can show resolution state.
+- **Trigger to revisit:** X read-quota pressure from repeated handle lookups, or founders tracking
+  LinkedIn organizations who shouldn't need to know what a URN is.
+- **Origin:** Sprint 46.
+
 ---
 
 ## Done (upgraded)
 
-_(none yet)_
+### 11. No relevance triage — every signal fans out to every automated campaign's channels — **closed by Sprint 45**
+- **What we shipped (Sprint 28):** A new signal generates a draft for each channel of every active
+  automated campaign, with no scoring of which signal actually fits which campaign/persona.
+- **The better version:** Score signal↔campaign/persona fit and route only relevant signals (extends
+  `suggestedPersonaId` / `scoreReason`).
+- **Closed (Sprint 45, branch `sprint-45-discovery-routing`, 2026-07-03):** `runAutomation` is now
+  match-driven — a signal only reaches a campaign with a `signal_matches` row at or above the
+  workspace match threshold (Automation settings, default 50), and the draft is generated **as**
+  the matched persona. Sprint 31 built the scoring; Sprint 45 made automation consume it, for both
+  discovery-sourced signals (accept copies the full multi-candidate match list onto the signal) and
+  manually-created ones (auto-matched at `POST /signals`; an explicit persona/campaign pick is a
+  single score-100 match with no LLM call).
+- **Origin:** Sprint 28.

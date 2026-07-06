@@ -2,11 +2,16 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import {
   BRAIN_DOC_TYPES,
+  docOutlineSchema,
   type BrainDocType,
   type BrainDocVersion,
   type BrainDocument,
+  type DocOutline,
 } from "@tuezday/contracts";
 import {
+  buildFallbackOutline,
+  firstSentenceSummary,
+  parseDocSections,
   renderBrainMarkdown,
   scoreBrain,
   type BrainContents,
@@ -14,11 +19,23 @@ import {
 } from "@tuezday/brain";
 import type { Db } from "../db";
 import { brainDocumentVersions, brainDocuments } from "../db/schema";
+import { GatewayError, type LlmGateway } from "../llm/gateway";
 
 const CANONICAL_ORDER = new Map(BRAIN_DOC_TYPES.map((t, i) => [t, i]));
 
+function parseOutline(outlineJson: string | null): DocOutline | null {
+  if (!outlineJson) return null;
+  try {
+    const parsed = docOutlineSchema.safeParse(JSON.parse(outlineJson));
+    return parsed.success ? parsed.data : null;
+  } catch {
+    return null;
+  }
+}
+
 function rowToDoc(row: typeof brainDocuments.$inferSelect): BrainDocument {
-  return { ...row, docType: row.docType as BrainDocType };
+  const { outlineJson, ...rest } = row;
+  return { ...rest, docType: row.docType as BrainDocType, outline: parseOutline(outlineJson) };
 }
 
 /**
@@ -82,8 +99,13 @@ export function updateBrainDoc(
     .get()!;
 
   const now = Date.now();
+  // Sprint 43: every save recomputes the doc's outline. The synchronous write
+  // stores deterministic fallback summaries; enrichOutlineSummaries (below)
+  // upgrades them via the LLM afterwards, best-effort.
+  const outline = buildFallbackOutline(content, now);
+  const outlineJson = outline ? JSON.stringify(outline) : null;
   db.update(brainDocuments)
-    .set({ content, updatedAt: now })
+    .set({ content, outlineJson, updatedAt: now })
     .where(eq(brainDocuments.id, doc.id))
     .run();
 
@@ -105,7 +127,114 @@ export function updateBrainDoc(
     })
     .run();
 
-  return rowToDoc({ ...doc, content, updatedAt: now });
+  return rowToDoc({ ...doc, content, outlineJson, updatedAt: now });
+}
+
+// ---------------------------------------------------------------------------
+// Outline summaries (Sprint 43)
+// ---------------------------------------------------------------------------
+
+/** Cap on how much of each section body reaches the summary prompt. */
+const SUMMARY_SECTION_MAX_CHARS = 1_500;
+
+export function composeOutlineSummaryPrompt(
+  sections: { heading: string; body: string }[],
+): string {
+  const blocks = sections.map(
+    (s, i) =>
+      `SECTION ${i + 1} (heading: "${s.heading}"):\n${s.body.slice(0, SUMMARY_SECTION_MAX_CHARS)}`,
+  );
+  return (
+    "Task: You maintain a table of contents for a company brain document. For each numbered " +
+    "section below, write ONE line (max 20 words) summarizing what the section actually says — " +
+    "concrete and specific, no marketing gloss. Respond with EXACTLY one line per section, " +
+    `formatted 'SUMMARY <n>: <one-line summary>' and nothing else — ${sections.length} lines total.\n\n` +
+    blocks.join("\n\n")
+  );
+}
+
+export function parseOutlineSummaries(text: string, count: number): Map<number, string> {
+  const summaries = new Map<number, string>();
+  for (const match of text.matchAll(/^SUMMARY\s+(\d+)\s*:\s*(.+)$/gim)) {
+    const n = Number(match[1]);
+    const summary = match[2]!.trim();
+    if (n >= 1 && n <= count && summary) summaries.set(n, summary);
+  }
+  return summaries;
+}
+
+/**
+ * Upgrade a doc's stored outline with LLM one-line summaries — one gateway
+ * call for all sections. Best-effort: any failure (gateway down, unparseable
+ * output) leaves the deterministic fallback summaries in place. Never throws.
+ */
+export async function enrichOutlineSummaries(
+  db: Db,
+  llm: LlmGateway,
+  workspaceId: string,
+  docType: BrainDocType,
+): Promise<BrainDocument> {
+  const row = db
+    .select()
+    .from(brainDocuments)
+    .where(and(eq(brainDocuments.workspaceId, workspaceId), eq(brainDocuments.docType, docType)))
+    .get()!;
+  const doc = rowToDoc(row);
+  if (!doc.content.trim() || !doc.outline) return doc;
+
+  const sections = parseDocSections(doc.content);
+  if (sections.length === 0) return doc;
+
+  let summaries: Map<number, string>;
+  try {
+    const result = await llm.generate({
+      prompt: composeOutlineSummaryPrompt(sections.map((s) => ({ heading: s.heading, body: s.body }))),
+    });
+    summaries = parseOutlineSummaries(result.text, sections.length);
+  } catch (err) {
+    if (err instanceof GatewayError) return doc; // keep fallback summaries
+    throw err;
+  }
+  if (summaries.size === 0) return doc;
+
+  const outline: DocOutline = {
+    generatedAt: doc.outline.generatedAt,
+    sections: sections.map((s, i) => {
+      const llmSummary = summaries.get(i + 1);
+      return {
+        id: s.id,
+        parentId: s.parentId,
+        heading: s.heading,
+        level: s.level,
+        summary: llmSummary ?? firstSentenceSummary(s.body),
+        summarySource: llmSummary ? ("llm" as const) : ("fallback" as const),
+        tokens: s.tokens,
+      };
+    }),
+  };
+  db.update(brainDocuments)
+    .set({ outlineJson: JSON.stringify(outline) })
+    .where(eq(brainDocuments.id, row.id))
+    .run();
+  return { ...doc, outline };
+}
+
+/**
+ * Outlines for every non-empty doc: the stored one when present, otherwise a
+ * fallback derived on the fly (docs saved before Sprint 43 have no stored
+ * outline — no backfill, no write-on-read).
+ */
+export function getBrainOutlines(
+  db: Db,
+  workspaceId: string,
+): Partial<Record<BrainDocType, DocOutline>> {
+  const { docs } = getBrain(db, workspaceId);
+  const outlines: Partial<Record<BrainDocType, DocOutline>> = {};
+  for (const doc of docs) {
+    if (!doc.content.trim()) continue;
+    outlines[doc.docType] = doc.outline ?? buildFallbackOutline(doc.content, doc.updatedAt)!;
+  }
+  return outlines;
 }
 
 export function listDocVersions(

@@ -9,9 +9,32 @@ import { API_URL, apiDownload, apiFetch } from "@/lib/api";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import type { BrainDocType, BrainDocVersion, BrainDocument, Workspace } from "@tuezday/contracts";
-import { CHANNEL_LABELS, type Channel, type ChannelGuidance } from "@tuezday/contracts";
-import { BRAIN_DOC_META, type BrainScore } from "@tuezday/brain";
+import type {
+  BrainDocType,
+  BrainDocVersion,
+  BrainDocument,
+  Campaign,
+  DocOutline,
+  GuidanceOverride,
+  Persona,
+  Workspace,
+} from "@tuezday/contracts";
+import {
+  BRAIN_DOC_TOKEN_WARNING,
+  CHANNELS,
+  CHANNEL_LABELS,
+  GUIDANCE_CONTENT_MAX_CHARS,
+  MATRIX_DOC_TYPES,
+  type Channel,
+  type ChannelGuidance,
+} from "@tuezday/contracts";
+import {
+  BRAIN_DOC_META,
+  PREAMBLE_ID,
+  buildFallbackOutline,
+  estimateTokens,
+  type BrainScore,
+} from "@tuezday/brain";
 
 interface BrainView {
   docs: BrainDocument[];
@@ -43,12 +66,32 @@ export default function WorkspaceBrainPage() {
   const [guidanceSaving, setGuidanceSaving] = useState<string | null>(null);
   const [guidanceError, setGuidanceError] = useState<string | null>(null);
 
+  // Scoped guidance (Sprint 44) — persona/campaign-scoped overrides, most-specific-wins.
+  const [scoped, setScoped] = useState<GuidanceOverride[] | null>(null);
+  const [personas, setPersonas] = useState<Persona[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [scopedChannel, setScopedChannel] = useState<Channel>("linkedin");
+  const [scopedPersonaId, setScopedPersonaId] = useState("");
+  const [scopedCampaignId, setScopedCampaignId] = useState("");
+  const [scopedContent, setScopedContent] = useState("");
+  const [scopedBusy, setScopedBusy] = useState(false);
+  const [scopedError, setScopedError] = useState<string | null>(null);
+
   const selectedDoc = useMemo(
     () => brain?.docs.find((d) => d.docType === selected) ?? null,
     [brain, selected],
   );
   const selectedMeta = BRAIN_DOC_META.find((m) => m.docType === selected)!;
   const dirty = selectedDoc !== null && draft !== selectedDoc.content;
+
+  // Sprint 43: soul/voice/now are constitutional — they ride every prompt in
+  // full, so size matters there. ICP/History are outlined + zoomed per task.
+  const isMatrixDoc = (MATRIX_DOC_TYPES as readonly string[]).includes(selected);
+  const draftTokens = estimateTokens(draft);
+  const outline = useMemo<DocOutline | null>(() => {
+    if (!selectedDoc || selectedDoc.content.trim() === "") return null;
+    return selectedDoc.outline ?? buildFallbackOutline(selectedDoc.content, selectedDoc.updatedAt);
+  }, [selectedDoc]);
 
   const load = useCallback(async () => {
     try {
@@ -129,9 +172,21 @@ export default function WorkspaceBrainPage() {
     }
   }, [id]);
 
+  const loadScoped = useCallback(async () => {
+    const [oRes, pRes, cRes] = await Promise.all([
+      apiFetch(`/workspaces/${id}/guidance/overrides`),
+      apiFetch(`/workspaces/${id}/personas`),
+      apiFetch(`/workspaces/${id}/campaigns`),
+    ]);
+    if (oRes.ok) setScoped(await oRes.json());
+    if (pRes.ok) setPersonas(await pRes.json());
+    if (cRes.ok) setCampaigns(((await cRes.json()) as Campaign[]).filter((c) => c.status === "active"));
+  }, [id]);
+
   useEffect(() => {
     void loadGuidance();
-  }, [loadGuidance]);
+    void loadScoped();
+  }, [loadGuidance, loadScoped]);
 
   async function saveGuidance(channel: Channel) {
     setGuidanceSaving(channel);
@@ -166,6 +221,59 @@ export default function WorkspaceBrainPage() {
     } finally {
       setGuidanceSaving(null);
     }
+  }
+
+  async function saveScoped(e: React.FormEvent) {
+    e.preventDefault();
+    setScopedBusy(true);
+    setScopedError(null);
+    try {
+      const res = await apiFetch(`/workspaces/${id}/guidance/${scopedChannel}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          content: scopedContent,
+          ...(scopedPersonaId ? { personaId: scopedPersonaId } : {}),
+          ...(scopedCampaignId ? { campaignId: scopedCampaignId } : {}),
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message ?? body?.error ?? `API returned ${res.status}`);
+      }
+      setScopedContent("");
+      await loadScoped();
+    } catch (err) {
+      setScopedError(err instanceof Error ? err.message : "Failed to save scoped guidance");
+    } finally {
+      setScopedBusy(false);
+    }
+  }
+
+  async function deleteScoped(row: GuidanceOverride) {
+    setScopedBusy(true);
+    setScopedError(null);
+    try {
+      const params = new URLSearchParams();
+      if (row.personaId) params.set("personaId", row.personaId);
+      if (row.campaignId) params.set("campaignId", row.campaignId);
+      const res = await apiFetch(`/workspaces/${id}/guidance/${row.channel}?${params}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error(`API returned ${res.status}`);
+      await loadScoped();
+    } catch (err) {
+      setScopedError(err instanceof Error ? err.message : "Failed to delete scoped guidance");
+    } finally {
+      setScopedBusy(false);
+    }
+  }
+
+  function editScoped(row: GuidanceOverride) {
+    setScopedChannel(row.channel);
+    setScopedPersonaId(row.personaId ?? "");
+    setScopedCampaignId(row.campaignId ?? "");
+    setScopedContent(row.content);
   }
 
   if (error && !brain) {
@@ -223,6 +331,19 @@ export default function WorkspaceBrainPage() {
 
           {error && <p className="error">{error}</p>}
           
+          <p className="meta">
+            ~{draftTokens} tokens
+            {isMatrixDoc &&
+              " — large is fine: tasks see this doc as an outline and zoom into matching sections."}
+          </p>
+          {!isMatrixDoc && draftTokens >= BRAIN_DOC_TOKEN_WARNING && (
+            <p className="token-warning">
+              {selectedMeta.title} is constitutional — it rides every prompt in full, so ~
+              {draftTokens} tokens counts against every generation. Consider trimming; reference
+              detail belongs in ICP or History, which are outlined per task.
+            </p>
+          )}
+
           <div className="editor-actions">
             <button onClick={() => save(draft)} disabled={saving || !dirty}>
               {saving ? "Saving…" : dirty ? "Save" : "Saved"}
@@ -232,6 +353,36 @@ export default function WorkspaceBrainPage() {
             </button>
             {dirty && <span className="unsaved">Unsaved changes</span>}
           </div>
+
+          {outline && (
+            <details className="outline-preview">
+              <summary className="link-button" style={{ cursor: "pointer", listStyle: "none" }}>
+                Outline — the map outline-mode tasks see ({outline.sections.length}{" "}
+                {outline.sections.length === 1 ? "section" : "sections"})
+                {dirty ? " · from last save" : ""}
+              </summary>
+              <ul className="outline-list">
+                {outline.sections.map((s) => (
+                  <li key={s.id} className={s.level === 3 ? "outline-h3" : ""}>
+                    <span className="outline-heading">
+                      {s.heading === PREAMBLE_ID ? "(intro)" : s.heading}
+                    </span>
+                    {s.summary && <span className="meta"> — {s.summary}</span>}
+                    <span className="section-tokens" style={{ marginLeft: 6 }}>
+                      ~{s.tokens} tok
+                    </span>
+                    {s.summarySource === "llm" && (
+                      <span className="outline-llm-badge">AI summary</span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+              <p className="meta">
+                Regenerated on every save. The resolver zooms into whole sections from this map when
+                a task&apos;s query matches them.
+              </p>
+            </details>
+          )}
 
           {showHistory && (
             <div className="history">
@@ -320,6 +471,128 @@ export default function WorkspaceBrainPage() {
             })}
           </div>
         )}
+      </section>
+
+      <section className="guidance-section">
+        <h2>Scoped guidance</h2>
+        <p className="subtitle">
+          Channel guidance for one persona and/or campaign. The most specific scope wins and
+          replaces the workspace text: persona + campaign, then persona, then campaign, then the
+          workspace override above.
+        </p>
+
+        {scopedError && <p className="error">{scopedError}</p>}
+
+        {scoped === null ? (
+          <EmptyState description={<>Loading scoped guidance…</>} />
+        ) : scoped.length === 0 ? (
+          <EmptyState description={<>No scoped overrides yet. Add one below — e.g. LinkedIn guidance that only applies when the “CEO” persona drafts.</>} />
+        ) : (
+          <ul className="section-list">
+            {scoped.map((row) => (
+              <li key={row.id} className="section-card">
+                <div className="section-head">
+                  <span className="layer-badge layer-channel">{CHANNEL_LABELS[row.channel]}</span>
+                  {row.personaName && (
+                    <span className="layer-badge layer-persona">persona · {row.personaName}</span>
+                  )}
+                  {row.campaignName && (
+                    <span className="layer-badge layer-campaign">campaign · {row.campaignName}</span>
+                  )}
+                  <span className="section-tokens">
+                    {new Date(row.updatedAt).toLocaleDateString()}
+                  </span>
+                </div>
+                <p className="section-reason">
+                  {row.content.length > 180 ? `${row.content.slice(0, 180)}…` : row.content}
+                </p>
+                <div className="editor-actions">
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    disabled={scopedBusy}
+                    onClick={() => editScoped(row)}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    className="button-secondary danger"
+                    disabled={scopedBusy}
+                    onClick={() => void deleteScoped(row)}
+                  >
+                    Delete
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <form className="persona-form" onSubmit={saveScoped}>
+          <div className="resolve-controls">
+            <label>
+              Channel
+              <select
+                value={scopedChannel}
+                onChange={(e) => setScopedChannel(e.target.value as Channel)}
+              >
+                {CHANNELS.map((c) => (
+                  <option key={c} value={c}>
+                    {CHANNEL_LABELS[c]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Persona
+              <select value={scopedPersonaId} onChange={(e) => setScopedPersonaId(e.target.value)}>
+                <option value="">(any persona)</option>
+                {personas.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Campaign
+              <select
+                value={scopedCampaignId}
+                onChange={(e) => setScopedCampaignId(e.target.value)}
+              >
+                <option value="">(any campaign)</option>
+                {campaigns.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          <textarea
+            value={scopedContent}
+            onChange={(e) => setScopedContent(e.target.value)}
+            placeholder="Guidance that applies only at this scope — it replaces the workspace text above…"
+            rows={4}
+            maxLength={GUIDANCE_CONTENT_MAX_CHARS}
+          />
+          <div className="editor-actions">
+            <button
+              type="submit"
+              disabled={
+                scopedBusy ||
+                scopedContent.trim().length === 0 ||
+                (!scopedPersonaId && !scopedCampaignId)
+              }
+            >
+              {scopedBusy ? "Saving…" : "Save scoped guidance"}
+            </button>
+            {!scopedPersonaId && !scopedCampaignId && (
+              <span className="meta">Pick a persona and/or campaign — unscoped text lives above.</span>
+            )}
+          </div>
+        </form>
       </section>
     </>
   );

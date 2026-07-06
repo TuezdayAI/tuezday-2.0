@@ -26,6 +26,7 @@ import {
   CHANNEL_LABELS,
   GUIDANCE_SOURCES,
   channelGuidanceSchema,
+  guidanceOverrideSchema,
   updateGuidanceInputSchema,
   CONNECTOR_AUTH_MODES,
   CONNECTOR_CATEGORIES,
@@ -46,6 +47,14 @@ import {
   pushLeadInputSchema,
   OUTPUT_RATINGS,
   PERSONA_OVERLAY_MAX_CHARS,
+  PERSONA_TOPICS_MAX,
+  PERSONA_TOPIC_MAX_CHARS,
+  PERSONA_TONE_MAX_CHARS,
+  PERSONA_STYLE_RULES_MAX_CHARS,
+  PERSONA_AVOID_MAX_CHARS,
+  CONNECTION_GUIDANCE_MAX_CHARS,
+  connectionContentProfileSchema,
+  updateConnectionContentProfileInputSchema,
   personaSocialAccountSchema,
   PUBLICATION_STATUSES,
   publicationSchema,
@@ -68,6 +77,24 @@ import {
   outboundDraftRequestSchema,
   createSignalInputSchema,
   DISCOVERY_SOURCE_TYPES,
+  DISCOVERED_ITEM_STATUSES,
+  DEFAULT_MATCH_THRESHOLD,
+  DISCOVERY_MAX_MATCHES_PER_ITEM,
+  discoveredItemMatchSchema,
+  discoveredItemSchema,
+  DISCOVERY_SOURCE_MODES,
+  DISCOVERY_JOB_STATUSES,
+  discoverySourceSchema,
+  discoverySourceConfigSchema,
+  discoveryJobSchema,
+  SIGNAL_SOURCES,
+  TRACKED_SOCIAL_PLATFORMS,
+  trackedSocialAccountSchema,
+  createTrackedSocialAccountInputSchema,
+  updateTrackedSocialAccountInputSchema,
+  signalSchema,
+  socialAutomationSettingsSchema,
+  updateSocialAutomationSettingsInputSchema,
   createWorkspaceInputSchema,
   generationSchema,
   generateRequestSchema,
@@ -216,6 +243,8 @@ describe("channel guidance (Sprint 21)", () => {
         channel: "linkedin",
         content: CHANNEL_GUIDANCE_DEFAULTS.linkedin,
         source: "default",
+        personaId: null,
+        campaignId: null,
         updatedAt: null,
       }).success,
     ).toBe(true);
@@ -224,6 +253,8 @@ describe("channel guidance (Sprint 21)", () => {
         channel: "linkedin",
         content: "Override.",
         source: "workspace",
+        personaId: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        campaignId: null,
         updatedAt: 1765400000000,
       }).success,
     ).toBe(true);
@@ -232,6 +263,8 @@ describe("channel guidance (Sprint 21)", () => {
         channel: "tiktok",
         content: "x",
         source: "workspace",
+        personaId: null,
+        campaignId: null,
         updatedAt: 1,
       }).success,
     ).toBe(false);
@@ -247,6 +280,34 @@ describe("channel guidance (Sprint 21)", () => {
 
   it("trims guidance content", () => {
     expect(updateGuidanceInputSchema.parse({ content: "  hello  " }).content).toBe("hello");
+  });
+
+  it("accepts an optional persona/campaign scope on updates (Sprint 44)", () => {
+    const personaId = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+    const campaignId = "7c9e6679-7425-40de-944b-e07fc1f90ae8";
+    expect(updateGuidanceInputSchema.parse({ content: "Scoped." })).toEqual({ content: "Scoped." });
+    expect(updateGuidanceInputSchema.parse({ content: "Scoped.", personaId }).personaId).toBe(personaId);
+    expect(
+      updateGuidanceInputSchema.parse({ content: "Scoped.", personaId, campaignId }).campaignId,
+    ).toBe(campaignId);
+    expect(updateGuidanceInputSchema.safeParse({ content: "Scoped.", personaId: "not-a-uuid" }).success).toBe(
+      false,
+    );
+  });
+
+  it("validates a scoped override row with joined names (Sprint 44)", () => {
+    expect(
+      guidanceOverrideSchema.safeParse({
+        id: "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+        channel: "x",
+        content: "Consciousness account: first-person, no threads.",
+        personaId: "7c9e6679-7425-40de-944b-e07fc1f90ae8",
+        campaignId: null,
+        personaName: "Consciousness",
+        campaignName: null,
+        updatedAt: 1765400000000,
+      }).success,
+    ).toBe(true);
   });
 });
 
@@ -361,7 +422,15 @@ describe("PR & media outreach (Sprint 16)", () => {
 describe("upsertPersonaInputSchema", () => {
   it("accepts a persona and applies defaults", () => {
     const parsed = upsertPersonaInputSchema.parse({ name: "CEO" });
-    expect(parsed).toEqual({ name: "CEO", description: "", overlay: "" });
+    expect(parsed).toEqual({
+      name: "CEO",
+      description: "",
+      overlay: "",
+      topics: [],
+      tone: "",
+      styleRules: "",
+      avoid: "",
+    });
   });
 
   it("trims name and description", () => {
@@ -381,6 +450,47 @@ describe("upsertPersonaInputSchema", () => {
     const overlay = "x".repeat(PERSONA_OVERLAY_MAX_CHARS + 1);
     expect(upsertPersonaInputSchema.safeParse({ name: "CEO", overlay }).success).toBe(false);
   });
+
+  it("accepts topics + structured drafting fields within limits (Sprint 44)", () => {
+    const parsed = upsertPersonaInputSchema.parse({
+      name: "Field CTO",
+      topics: ["  agentic coding ", "evals"],
+      tone: "dry, technical",
+      styleRules: "- no emoji\n- one idea per post",
+      avoid: "synergy, game-changer",
+    });
+    expect(parsed.topics).toEqual(["agentic coding", "evals"]);
+    expect(parsed.tone).toBe("dry, technical");
+  });
+
+  it("rejects over-limit topics and drafting fields (Sprint 44)", () => {
+    expect(
+      upsertPersonaInputSchema.safeParse({
+        name: "CEO",
+        topics: Array.from({ length: PERSONA_TOPICS_MAX + 1 }, (_, i) => `t${i}`),
+      }).success,
+    ).toBe(false);
+    expect(
+      upsertPersonaInputSchema.safeParse({
+        name: "CEO",
+        topics: ["x".repeat(PERSONA_TOPIC_MAX_CHARS + 1)],
+      }).success,
+    ).toBe(false);
+    expect(
+      upsertPersonaInputSchema.safeParse({ name: "CEO", tone: "x".repeat(PERSONA_TONE_MAX_CHARS + 1) })
+        .success,
+    ).toBe(false);
+    expect(
+      upsertPersonaInputSchema.safeParse({
+        name: "CEO",
+        styleRules: "x".repeat(PERSONA_STYLE_RULES_MAX_CHARS + 1),
+      }).success,
+    ).toBe(false);
+    expect(
+      upsertPersonaInputSchema.safeParse({ name: "CEO", avoid: "x".repeat(PERSONA_AVOID_MAX_CHARS + 1) })
+        .success,
+    ).toBe(false);
+  });
 });
 
 it("parses connection identity metadata", () => {
@@ -391,6 +501,7 @@ it("parses connection identity metadata", () => {
       providerKey: "linkedin",
       nangoConnectionId: "nango-linkedin-a",
       config: {},
+      contentProfile: { topics: [], guidance: "" },
       displayName: "Founder LinkedIn",
       externalAccountId: "person-123",
       externalAccountName: "Founder Name",
@@ -403,6 +514,22 @@ it("parses connection identity metadata", () => {
       updatedAt: 1,
     }).displayName,
   ).toBe("Founder LinkedIn");
+});
+
+it("validates connection content profiles (Sprint 44)", () => {
+  expect(connectionContentProfileSchema.parse({})).toEqual({ topics: [], guidance: "" });
+  const parsed = updateConnectionContentProfileInputSchema.parse({
+    topics: [" AI ", "dev tools"],
+    guidance: "  Hot takes welcome; no corporate voice.  ",
+  });
+  expect(parsed.topics).toEqual(["AI", "dev tools"]);
+  expect(parsed.guidance).toBe("Hot takes welcome; no corporate voice.");
+  expect(
+    updateConnectionContentProfileInputSchema.safeParse({
+      topics: [],
+      guidance: "x".repeat(CONNECTION_GUIDANCE_MAX_CHARS + 1),
+    }).success,
+  ).toBe(false);
 });
 
 it("parses persona social account assignments", () => {
@@ -904,10 +1031,334 @@ describe("createDiscoverySourceInputSchema", () => {
       "funding_news",
       "x",
       "linkedin",
+      "instagram",
       "g2",
       "capterra",
       "intent",
     ]);
+  });
+});
+
+describe("discovery routing contracts (Sprint 45)", () => {
+  const personaId = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+  const campaignId = "9b2c8a44-1d2e-4f5a-8b6c-7d8e9f0a1b2c";
+  const uuid = personaId;
+
+  const match = {
+    personaId,
+    personaName: "Field CTO",
+    campaignId,
+    campaignName: "Product Launch",
+    score: 82,
+    reason: "Directly about agentic coding benchmarks.",
+  };
+
+  const item = {
+    id: uuid,
+    workspaceId: uuid,
+    sourceId: uuid,
+    externalId: "ext-1",
+    title: "New agentic coding benchmark",
+    url: "https://example.com/a",
+    summary: "A benchmark drops.",
+    publishedAt: null,
+    score: 82,
+    suggestedPersonaId: personaId,
+    suggestedCampaignId: campaignId,
+    scoreReason: "fits",
+    status: "new",
+    signalId: null,
+    matches: [match],
+    duplicateOfId: null,
+    duplicateCount: 0,
+    createdAt: 1,
+  };
+
+  it("exposes the routing constants", () => {
+    expect(DEFAULT_MATCH_THRESHOLD).toBe(50);
+    expect(DISCOVERY_MAX_MATCHES_PER_ITEM).toBe(5);
+  });
+
+  it("round-trips a match, including a null persona or campaign side", () => {
+    expect(discoveredItemMatchSchema.parse(match)).toEqual(match);
+    const campaignOnly = { ...match, personaId: null, personaName: null };
+    expect(discoveredItemMatchSchema.parse(campaignOnly)).toEqual(campaignOnly);
+  });
+
+  it("bounds the match score to an integer 0-100", () => {
+    expect(discoveredItemMatchSchema.safeParse({ ...match, score: 0 }).success).toBe(true);
+    expect(discoveredItemMatchSchema.safeParse({ ...match, score: 100 }).success).toBe(true);
+    expect(discoveredItemMatchSchema.safeParse({ ...match, score: 101 }).success).toBe(false);
+    expect(discoveredItemMatchSchema.safeParse({ ...match, score: -1 }).success).toBe(false);
+    expect(discoveredItemMatchSchema.safeParse({ ...match, score: 82.5 }).success).toBe(false);
+  });
+
+  it("includes duplicate in the item status vocabulary", () => {
+    expect(DISCOVERED_ITEM_STATUSES).toEqual(["new", "accepted", "skipped", "duplicate"]);
+  });
+
+  it("discoveredItemSchema accepts matches and duplicate links", () => {
+    expect(discoveredItemSchema.safeParse(item).success).toBe(true);
+    // A canonical item corroborated by two sources.
+    expect(discoveredItemSchema.safeParse({ ...item, duplicateCount: 2 }).success).toBe(true);
+    // A duplicate row pointing at its canonical item, never scored.
+    expect(
+      discoveredItemSchema.safeParse({
+        ...item,
+        status: "duplicate",
+        duplicateOfId: campaignId,
+        matches: [],
+        score: null,
+        suggestedPersonaId: null,
+        suggestedCampaignId: null,
+        scoreReason: null,
+      }).success,
+    ).toBe(true);
+    expect(discoveredItemSchema.safeParse({ ...item, duplicateOfId: "not-a-uuid" }).success).toBe(false);
+    expect(discoveredItemSchema.safeParse({ ...item, duplicateCount: 1.5 }).success).toBe(false);
+    expect(discoveredItemSchema.safeParse({ ...item, matches: [{ ...match, score: 101 }] }).success).toBe(
+      false,
+    );
+  });
+
+  it("signalSchema carries the same match shape", () => {
+    const signal = {
+      id: uuid,
+      workspaceId: uuid,
+      content: "Saw a benchmark thread.",
+      source: "news",
+      sourceUrl: null,
+      suggestedPersonaId: null,
+      suggestedCampaignId: null,
+      matches: [match, { ...match, campaignId: null, campaignName: null }],
+      createdAt: 1,
+    };
+    expect(signalSchema.safeParse(signal).success).toBe(true);
+    expect(signalSchema.safeParse({ ...signal, matches: [] }).success).toBe(true);
+    expect(
+      signalSchema.safeParse({ ...signal, matches: [{ ...match, personaId: "nope" }] }).success,
+    ).toBe(false);
+  });
+
+  it("automation settings gain a matchThreshold bounded 0-100", () => {
+    const settings = {
+      workspaceId: uuid,
+      killSwitch: false,
+      perConnectionDailyCap: 5,
+      perCampaignDailyCap: 10,
+      autoReplyEnabled: false,
+      matchThreshold: DEFAULT_MATCH_THRESHOLD,
+      updatedAt: 1,
+    };
+    expect(socialAutomationSettingsSchema.safeParse(settings).success).toBe(true);
+    expect(socialAutomationSettingsSchema.safeParse({ ...settings, matchThreshold: 101 }).success).toBe(
+      false,
+    );
+    expect(socialAutomationSettingsSchema.safeParse({ ...settings, matchThreshold: -1 }).success).toBe(
+      false,
+    );
+
+    expect(updateSocialAutomationSettingsInputSchema.safeParse({}).success).toBe(true);
+    expect(updateSocialAutomationSettingsInputSchema.safeParse({ matchThreshold: 0 }).success).toBe(true);
+    expect(updateSocialAutomationSettingsInputSchema.safeParse({ matchThreshold: 100 }).success).toBe(
+      true,
+    );
+    expect(updateSocialAutomationSettingsInputSchema.safeParse({ matchThreshold: 101 }).success).toBe(
+      false,
+    );
+    expect(updateSocialAutomationSettingsInputSchema.safeParse({ matchThreshold: -1 }).success).toBe(
+      false,
+    );
+    expect(updateSocialAutomationSettingsInputSchema.safeParse({ matchThreshold: 55.5 }).success).toBe(
+      false,
+    );
+  });
+});
+
+describe("connected discovery contracts (Sprint 46)", () => {
+  const uuid = "7c9e6679-7425-40de-944b-e07fc1f90ae7";
+  const sourceUuid = "9b2c8a44-1d2e-4f5a-8b6c-7d8e9f0a1b2c";
+
+  it("exposes the source mode and job status vocabularies", () => {
+    expect(DISCOVERY_SOURCE_MODES).toEqual([
+      "query",
+      "account_timeline",
+      "list_timeline",
+      "subreddit",
+      "hashtag",
+    ]);
+    expect(DISCOVERY_JOB_STATUSES).toEqual(["queued", "running", "succeeded", "failed", "skipped"]);
+  });
+
+  it("parses a keyless rss source row with no connection", () => {
+    const source = {
+      id: sourceUuid,
+      workspaceId: uuid,
+      type: "rss",
+      name: "RSS: https://example.com/feed.xml",
+      config: { feedUrl: "https://example.com/feed.xml" },
+      enabled: true,
+      status: "active",
+      lastError: null,
+      lastFetchedAt: null,
+      connectionId: null,
+      cursor: {},
+      backoffUntil: null,
+      lastAttemptedAt: null,
+      createdAt: 1,
+    };
+    expect(discoverySourceSchema.safeParse(source).success).toBe(true);
+    // a connected source binds to a connection and may carry cursor state
+    expect(
+      discoverySourceSchema.safeParse({
+        ...source,
+        type: "x",
+        config: { mode: "query", query: "gtm memory" },
+        connectionId: uuid,
+        cursor: { query: { nextToken: "abc" } },
+        backoffUntil: 99,
+        lastAttemptedAt: 98,
+      }).success,
+    ).toBe(true);
+    expect(discoverySourceSchema.safeParse({ ...source, connectionId: "nope" }).success).toBe(false);
+  });
+
+  it("parses connected source configs by mode", () => {
+    expect(
+      discoverySourceConfigSchema.safeParse({ mode: "query", query: "agentic gtm" }).success,
+    ).toBe(true);
+    expect(
+      discoverySourceConfigSchema.safeParse({ mode: "account_timeline", handle: "@rival" }).success,
+    ).toBe(true);
+    expect(
+      discoverySourceConfigSchema.safeParse({
+        mode: "account_timeline",
+        trackedAccountIds: [uuid, sourceUuid],
+      }).success,
+    ).toBe(true);
+    expect(discoverySourceConfigSchema.safeParse({ mode: "hashtag", hashtag: "buildinpublic" }).success).toBe(
+      true,
+    );
+    expect(discoverySourceConfigSchema.safeParse({ mode: "firehose" }).success).toBe(false);
+    expect(discoverySourceConfigSchema.safeParse({ trackedAccountId: "not-a-uuid" }).success).toBe(false);
+  });
+
+  it("parses job rows across the queued -> running -> finished lifecycle", () => {
+    const job = {
+      id: uuid,
+      workspaceId: uuid,
+      sourceId: sourceUuid,
+      status: "queued",
+      attempt: 0,
+      lockedAt: null,
+      startedAt: null,
+      finishedAt: null,
+      fetchedCount: 0,
+      newCount: 0,
+      error: null,
+      createdAt: 1,
+    };
+    expect(discoveryJobSchema.safeParse(job).success).toBe(true);
+    expect(
+      discoveryJobSchema.safeParse({ ...job, status: "running", attempt: 1, lockedAt: 2, startedAt: 2 })
+        .success,
+    ).toBe(true);
+    expect(
+      discoveryJobSchema.safeParse({
+        ...job,
+        status: "succeeded",
+        attempt: 1,
+        lockedAt: 2,
+        startedAt: 2,
+        finishedAt: 3,
+        fetchedCount: 10,
+        newCount: 4,
+      }).success,
+    ).toBe(true);
+    expect(
+      discoveryJobSchema.safeParse({ ...job, status: "failed", error: "stale_lock" }).success,
+    ).toBe(true);
+    expect(discoveryJobSchema.safeParse({ ...job, status: "paused" }).success).toBe(false);
+    expect(discoveryJobSchema.safeParse({ ...job, fetchedCount: -1 }).success).toBe(false);
+    expect(discoveryJobSchema.safeParse({ ...job, attempt: 0.5 }).success).toBe(false);
+  });
+
+  it("registers instagram as a discovery source type", () => {
+    expect(DISCOVERY_SOURCE_TYPES).toContain("instagram");
+    expect(SIGNAL_SOURCES).toContain("instagram");
+  });
+
+  it("validates connected source inputs by type and mode", () => {
+    const create = (input: Record<string, unknown>) =>
+      createDiscoverySourceInputSchema.safeParse(input).success;
+    // keyless x/linkedin keep the legacy query requirement
+    expect(create({ type: "x", config: { query: "agentic gtm" } })).toBe(true);
+    expect(create({ type: "x", config: {} })).toBe(false);
+    // connected modes carry their own target requirements
+    expect(create({ type: "x", config: { mode: "query", query: "gtm" }, connectionId: uuid })).toBe(true);
+    expect(create({ type: "x", config: { mode: "query" } })).toBe(false);
+    expect(create({ type: "x", config: { mode: "account_timeline", handle: "rival" } })).toBe(true);
+    expect(create({ type: "x", config: { mode: "account_timeline", trackedAccountId: uuid } })).toBe(true);
+    expect(create({ type: "x", config: { mode: "account_timeline" } })).toBe(false);
+    expect(create({ type: "x", config: { mode: "list_timeline", listId: "123" } })).toBe(true);
+    expect(create({ type: "x", config: { mode: "list_timeline" } })).toBe(false);
+    // linkedin only supports account_timeline as a connected mode
+    expect(
+      create({ type: "linkedin", config: { mode: "account_timeline", handle: "urn:li:person:abc" } }),
+    ).toBe(true);
+    expect(create({ type: "linkedin", config: { mode: "query", query: "gtm" } })).toBe(false);
+    // instagram is connected-only: a valid mode is required
+    expect(create({ type: "instagram", config: { mode: "account_timeline", handle: "rival" } })).toBe(true);
+    expect(create({ type: "instagram", config: { mode: "hashtag", hashtag: "buildinpublic" } })).toBe(true);
+    expect(create({ type: "instagram", config: { mode: "hashtag" } })).toBe(false);
+    expect(create({ type: "instagram", config: { query: "gtm" } })).toBe(false);
+    // reddit stays valid keyless and gains nothing mandatory
+    expect(create({ type: "reddit", config: { subreddit: "startups" } })).toBe(true);
+    expect(create({ type: "reddit", config: {} })).toBe(false);
+    // connectionId must look like a uuid when present
+    expect(create({ type: "rss", config: { feedUrl: "https://a.dev/f.xml" }, connectionId: "nope" })).toBe(
+      false,
+    );
+  });
+
+  it("validates tracked social accounts", () => {
+    const account = {
+      id: uuid,
+      workspaceId: sourceUuid,
+      platform: "x",
+      handle: "rivalco",
+      displayName: "Rival Co",
+      externalId: null,
+      url: null,
+      notes: "",
+      enabled: true,
+      lastResolvedAt: null,
+      lastError: null,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    expect(trackedSocialAccountSchema.safeParse(account).success).toBe(true);
+    expect(trackedSocialAccountSchema.safeParse({ ...account, platform: "tiktok" }).success).toBe(false);
+    expect(trackedSocialAccountSchema.safeParse({ ...account, handle: "" }).success).toBe(false);
+
+    expect(TRACKED_SOCIAL_PLATFORMS).toEqual(["x", "linkedin", "instagram", "reddit"]);
+    expect(
+      createTrackedSocialAccountInputSchema.safeParse({ platform: "x", handle: "@rivalco" }).success,
+    ).toBe(true);
+    expect(createTrackedSocialAccountInputSchema.safeParse({ platform: "x", handle: "  " }).success).toBe(
+      false,
+    );
+    expect(
+      updateTrackedSocialAccountInputSchema.safeParse({ enabled: false, displayName: null }).success,
+    ).toBe(true);
+  });
+
+  it("provisions the connected discovery read scopes on the social providers", () => {
+    const scopes = (key: string) =>
+      CONNECTOR_PROVIDERS.find((p) => p.key === key)?.oauthScopes?.split(",") ?? [];
+    expect(scopes("reddit")).toContain("read");
+    expect(scopes("linkedin")).toContain("r_member_social");
+    expect(scopes("twitter")).toContain("list.read");
   });
 });
 
@@ -1253,7 +1704,8 @@ describe("social publishing contracts (Sprint 17)", () => {
     expect(reddit?.categories).toEqual(["social"]);
     expect(reddit?.baseUrl).toBe("https://oauth.reddit.com");
     expect(reddit?.testPath?.startsWith("/")).toBe(true);
-    expect(reddit?.oauthScopes).toBe("identity,submit");
+    // `read` added in Sprint 46 for connected discovery listings/search.
+    expect(reddit?.oauthScopes).toBe("identity,submit,read");
   });
 
   it("extends the category vocabulary with social", () => {

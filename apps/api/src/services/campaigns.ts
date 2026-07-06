@@ -10,6 +10,7 @@ import type {
   UpdateCampaignAutomationInput,
   UpsertCampaignInput,
 } from "@tuezday/contracts";
+import type { ResolveCampaign } from "@tuezday/brain";
 import type { Db } from "../db";
 import { campaigns, drafts, type CampaignRow } from "../db/schema";
 import { getCampaignAdMetrics, type CampaignAdMetrics } from "./ads";
@@ -145,6 +146,19 @@ export function composeCampaignOverlay(campaign: Campaign): string {
     parts.push(`Messaging pillars:\n${campaign.pillars.map((p) => `- ${p}`).join("\n")}`);
   if (campaign.overlay.trim()) parts.push(campaign.overlay.trim());
   return parts.join("\n\n");
+}
+
+/**
+ * The campaign as the resolver takes it (Sprint 43): the composed overlay plus
+ * the structured objective/pillars, which feed the Tier-3 zoom query.
+ */
+export function composeResolveCampaign(campaign: Campaign): ResolveCampaign {
+  return {
+    name: campaign.name,
+    overlay: composeCampaignOverlay(campaign),
+    objective: campaign.objective || undefined,
+    pillars: campaign.pillars.length > 0 ? campaign.pillars : undefined,
+  };
 }
 
 export interface CampaignDetail {

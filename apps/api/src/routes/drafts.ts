@@ -29,7 +29,7 @@ import {
 } from "../services/drafts";
 import { emitEvent } from "../services/events";
 import { getGenerationSettings } from "../services/generation-settings";
-import { getPersona } from "../services/personas";
+import { getPersona, toResolvePersona } from "../services/personas";
 import { runPreReview, setDraftReview } from "../services/review";
 import { getWorkspace } from "../services/workspaces";
 import type { BrainContents } from "@tuezday/brain";
@@ -117,9 +117,7 @@ export function registerDraftRoutes(
           docs: contents,
           taskType: draft.taskType,
           channel: draft.channel,
-          persona: persona
-            ? { name: persona.name, description: persona.description, overlay: persona.overlay }
-            : undefined,
+          persona: persona ? toResolvePersona(persona) : undefined,
           campaign: campaign
             ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
             : undefined,

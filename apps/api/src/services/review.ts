@@ -2,9 +2,12 @@ import { and, eq } from "drizzle-orm";
 import {
   GENERATION_REVIEW_CHECKS,
   isReviewFlagged,
+  type BrainDocType,
   type Channel,
+  type DocOutline,
   type GenerationReview,
   type GenerationReviewCheck,
+  type ResolvedTaskDocMatrix,
   type ReviewCheckResult,
   type TaskType,
 } from "@tuezday/contracts";
@@ -35,6 +38,9 @@ export interface ReviewContext {
   channelGuidance?: { content: string; source: GuidanceSource };
   persona?: ResolvePersona;
   campaign?: ResolveCampaign;
+  /** Sprint 43 selective-context inputs — reviewers resolve in brief mode. */
+  matrix?: ResolvedTaskDocMatrix;
+  outlines?: Partial<Record<BrainDocType, DocOutline>>;
 }
 
 /**
@@ -75,6 +81,8 @@ async function runCheck(
   output: string,
   check: GenerationReviewCheck,
 ): Promise<ReviewCheckResult> {
+  // Sprint 43: reviewers judge voice + channel fit, so they get the brief
+  // bundle — identity docs full, informational docs as outlines, no zoom.
   const resolved = resolveContext({
     workspaceName: ctx.workspaceName,
     docs: ctx.docs,
@@ -83,6 +91,9 @@ async function runCheck(
     channelGuidance: ctx.channelGuidance,
     persona: ctx.persona,
     campaign: ctx.campaign,
+    matrix: ctx.matrix,
+    outlines: ctx.outlines,
+    resolveMode: "brief",
     reviewSubject: output,
     taskInstruction: instructionFor(check, ctx.channel),
   });

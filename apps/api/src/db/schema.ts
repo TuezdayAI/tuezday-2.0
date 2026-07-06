@@ -1,4 +1,4 @@
-import { integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 // Keep this schema Postgres-portable: text ids, integer epoch-ms timestamps,
 // no SQLite-only column tricks. The Postgres swap is planned for Sprint 8.
@@ -101,6 +101,10 @@ export const brainDocuments = sqliteTable(
       .references(() => workspaces.id, { onDelete: "cascade" }),
     docType: text("doc_type").notNull(),
     content: text("content").notNull().default(""),
+    // Sprint 43: DocOutline JSON (headings + one-line summaries), regenerated
+    // on every save. Null for empty docs and docs saved before outlines
+    // existed (derived on the fly at resolve time).
+    outlineJson: text("outline_json"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -126,7 +130,11 @@ export type BrainDocumentVersionRow = typeof brainDocumentVersions.$inferSelect;
 
 // Per-workspace, per-channel guidance overrides (Sprint 21). The built-in
 // defaults live in @tuezday/contracts; this table holds overrides only. A
-// missing row means "use the default" for that channel.
+// missing row means "use the default" for that channel. Sprint 44 adds
+// optional persona/campaign scope: NULL persona+campaign is the workspace-wide
+// override; resolution picks the most specific matching row. SQLite treats
+// NULLs as distinct in the unique index, so the service layer upserts
+// select-first rather than relying on ON CONFLICT for the unscoped row.
 export const guidanceOverrides = sqliteTable(
   "guidance_overrides",
   {
@@ -135,14 +143,52 @@ export const guidanceOverrides = sqliteTable(
       .notNull()
       .references(() => workspaces.id, { onDelete: "cascade" }),
     channel: text("channel").notNull(),
+    personaId: text("persona_id").references(() => personas.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "cascade" }),
     content: text("content").notNull(),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (t) => [uniqueIndex("guidance_overrides_workspace_channel").on(t.workspaceId, t.channel)],
+  (t) => [
+    uniqueIndex("guidance_overrides_workspace_channel_scope").on(
+      t.workspaceId,
+      t.channel,
+      t.personaId,
+      t.campaignId,
+    ),
+  ],
 );
 
 export type GuidanceOverrideRow = typeof guidanceOverrides.$inferSelect;
+
+// Per-workspace task-matrix overrides (Sprint 43). The shipped defaults live
+// in @tuezday/contracts (DEFAULT_TASK_DOC_MATRIX); this table holds overrides
+// only. A missing row means "use the default" for that taskType × docType.
+export const contextMatrixOverrides = sqliteTable(
+  "context_matrix_overrides",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    taskType: text("task_type").notNull(),
+    docType: text("doc_type").notNull(),
+    mode: text("mode").notNull(),
+    // Optional founder-written why; falls back to the default cell's reason.
+    reason: text("reason"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("context_matrix_overrides_workspace_task_doc").on(
+      t.workspaceId,
+      t.taskType,
+      t.docType,
+    ),
+  ],
+);
+
+export type ContextMatrixOverrideRow = typeof contextMatrixOverrides.$inferSelect;
 
 export const personas = sqliteTable("personas", {
   id: text("id").primaryKey(),
@@ -152,6 +198,11 @@ export const personas = sqliteTable("personas", {
   name: text("name").notNull(),
   description: text("description").notNull().default(""),
   overlay: text("overlay").notNull().default(""),
+  // Sprint 44 structured drafting fields. topicsJson is a JSON string array.
+  topicsJson: text("topics_json").notNull().default("[]"),
+  tone: text("tone").notNull().default(""),
+  styleRules: text("style_rules").notNull().default(""),
+  avoid: text("avoid").notNull().default(""),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -260,10 +311,79 @@ export const discoverySources = sqliteTable("discovery_sources", {
   status: text("status").notNull(),
   lastError: text("last_error"),
   lastFetchedAt: integer("last_fetched_at"),
+  // Connected sourcing (Sprint 46): the workspace connection this source reads
+  // through; null for keyless sources. No declared FK to `connections`:
+  // drizzle-kit's SQLite ALTER TABLE ADD action gap (deferred #26) — cleared
+  // at the service level when a connection is deleted.
+  connectionId: text("connection_id"),
+  // Best-effort provider pagination state keyed by mode.
+  cursorJson: text("cursor_json").notNull().default("{}"),
+  // Rate-limit back-pressure: the source is not enqueued until this passes.
+  backoffUntil: integer("backoff_until"),
+  lastAttemptedAt: integer("last_attempted_at"),
   createdAt: integer("created_at").notNull(),
 });
 
 export type DiscoverySourceRow = typeof discoverySources.$inferSelect;
+
+// Discovery job ledger (Sprint 46): one row per source fetch attempt. Bounded
+// batches per `/discovery/run` give retries, per-source progress, and prevent
+// one slow provider from serializing the whole workspace — no external queue.
+export const discoveryJobs = sqliteTable(
+  "discovery_jobs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => discoverySources.id, { onDelete: "cascade" }),
+    status: text("status").notNull(), // queued | running | succeeded | failed | skipped
+    attempt: integer("attempt").notNull().default(0),
+    lockedAt: integer("locked_at"),
+    startedAt: integer("started_at"),
+    finishedAt: integer("finished_at"),
+    fetchedCount: integer("fetched_count").notNull().default(0),
+    newCount: integer("new_count").notNull().default(0),
+    error: text("error"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("discovery_jobs_workspace_status").on(t.workspaceId, t.status, t.createdAt),
+    index("discovery_jobs_source_status").on(t.sourceId, t.status),
+  ],
+);
+
+export type DiscoveryJobRow = typeof discoveryJobs.$inferSelect;
+
+// Tracked social accounts (Sprint 46): first-class competitor/source accounts.
+// Discovery sources reference them via config.trackedAccountId(s) — no FK from
+// the JSON config, so deleting one simply drops it from future fetches.
+export const trackedSocialAccounts = sqliteTable(
+  "tracked_social_accounts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    platform: text("platform").notNull(), // "x" | "linkedin" | "instagram" | "reddit"
+    handle: text("handle").notNull(),
+    displayName: text("display_name"),
+    // Provider-side id (e.g. a LinkedIn author URN) once resolved.
+    externalId: text("external_id"),
+    url: text("url"),
+    notes: text("notes").notNull().default(""),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    lastResolvedAt: integer("last_resolved_at"),
+    lastError: text("last_error"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("tracked_social_account_unique").on(t.workspaceId, t.platform, t.handle)],
+);
+
+export type TrackedSocialAccountRow = typeof trackedSocialAccounts.$inferSelect;
 
 export const discoveredItems = sqliteTable(
   "discovered_items",
@@ -286,9 +406,24 @@ export const discoveredItems = sqliteTable(
     scoreReason: text("score_reason"),
     status: text("status").notNull().default("new"),
     signalId: text("signal_id"),
+    // Sprint 45: re-score watermark — when the item was last LLM-judged. Null
+    // for never-scored items.
+    scoredAt: integer("scored_at"),
+    // Sprint 45 cross-source dedup: sha256 of the normalized URL (null when the
+    // item has no URL) and of the normalized title + summary prefix.
+    urlHash: text("url_hash"),
+    contentHash: text("content_hash").notNull().default(""),
+    // Self-reference to the canonical item when status = "duplicate". No
+    // declared FK: drizzle-kit's SQLite ALTER TABLE ADD cascade gap (deferred
+    // #26) — enforced at the service level instead.
+    duplicateOfId: text("duplicate_of_id"),
     createdAt: integer("created_at").notNull(),
   },
-  (t) => [uniqueIndex("discovered_items_source_external").on(t.sourceId, t.externalId)],
+  (t) => [
+    uniqueIndex("discovered_items_source_external").on(t.sourceId, t.externalId),
+    index("discovered_items_workspace_url_hash").on(t.workspaceId, t.urlHash),
+    index("discovered_items_workspace_content_hash").on(t.workspaceId, t.contentHash),
+  ],
 );
 
 export type DiscoveredItemRow = typeof discoveredItems.$inferSelect;
@@ -317,6 +452,57 @@ export const campaigns = sqliteTable("campaigns", {
 });
 
 export type CampaignRow = typeof campaigns.$inferSelect;
+
+// Sprint 45 multi-candidate scoring: one row per candidate persona×campaign
+// pairing a discovered item scored above zero relevance for. Replaced
+// (delete-then-insert) each time the item is scored.
+export const discoveredItemMatches = sqliteTable(
+  "discovered_item_matches",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => discoveredItems.id, { onDelete: "cascade" }),
+    personaId: text("persona_id").references(() => personas.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "cascade" }),
+    score: integer("score").notNull(),
+    reason: text("reason").notNull().default(""),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("discovered_item_matches_item").on(t.itemId)],
+);
+
+export type DiscoveredItemMatchRow = typeof discoveredItemMatches.$inferSelect;
+
+// Sprint 45: same shape for signals — copied from discovered_item_matches on
+// accept, written directly for manually-created signals. runAutomation routes
+// a signal to a campaign only via a row here at/above the match threshold.
+export const signalMatches = sqliteTable(
+  "signal_matches",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    signalId: text("signal_id")
+      .notNull()
+      .references(() => signals.id, { onDelete: "cascade" }),
+    personaId: text("persona_id").references(() => personas.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "cascade" }),
+    score: integer("score").notNull(),
+    reason: text("reason").notNull().default(""),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("signal_matches_signal").on(t.signalId),
+    index("signal_matches_signal_campaign").on(t.signalId, t.campaignId),
+  ],
+);
+
+export type SignalMatchRow = typeof signalMatches.$inferSelect;
 
 export const evidenceDocuments = sqliteTable("evidence_documents", {
   id: text("id").primaryKey(),
@@ -457,6 +643,9 @@ export const connections = sqliteTable("connections", {
   status: text("status").notNull().default("connected"),
   lastCheckedAt: integer("last_checked_at"),
   lastError: text("last_error"),
+  // Sprint 44: per-account content profile ({ topics: string[], guidance }),
+  // injected into the context bundle when a draft resolves to this connection.
+  contentProfileJson: text("content_profile_json").notNull().default("{}"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -769,6 +958,9 @@ export const socialAutomationSettings = sqliteTable("social_automation_settings"
   perCampaignDailyCap: integer("per_campaign_daily_cap").notNull().default(5),
   // Sprint 29: master switch for auto-posting engagement replies (off by default).
   autoReplyEnabled: integer("auto_reply_enabled").notNull().default(0),
+  // Sprint 45: minimum signal-match score (0-100) for runAutomation to route a
+  // signal to a campaign.
+  matchThreshold: integer("match_threshold").notNull().default(50),
   updatedAt: integer("updated_at").notNull(),
 });
 

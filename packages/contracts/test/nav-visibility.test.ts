@@ -117,6 +117,7 @@ describe("visibleNavItems", () => {
       "/connectors",
       "/team",
       "/billing",
+      "/activity",
     ]);
   });
 

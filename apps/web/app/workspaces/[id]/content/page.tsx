@@ -28,6 +28,7 @@ const SOURCE_LABELS: Record<SignalSource, string> = {
   reddit: "Reddit",
   x: "X",
   linkedin: "LinkedIn",
+  instagram: "Instagram",
   rss: "RSS",
   news: "News",
   hacker_news: "Hacker News",
