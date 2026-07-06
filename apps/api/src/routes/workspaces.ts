@@ -1,7 +1,13 @@
 import type { FastifyInstance } from "fastify";
-import { createWorkspaceInputSchema, setAnalyticsOptOutInputSchema } from "@tuezday/contracts";
+import {
+  createWorkspaceInputSchema,
+  ONBOARDING_CURSORS,
+  setAnalyticsOptOutInputSchema,
+  type OnboardingCursor,
+} from "@tuezday/contracts";
 import type { Db } from "../db";
 import {
+  advanceOnboarding,
   createWorkspace,
   getAnalyticsOptOut,
   getWorkspace,
@@ -39,6 +45,22 @@ export function registerWorkspaceRoutes(app: FastifyInstance, db: Db): void {
     }
     return workspace;
   });
+  app.patch<{ Params: { id: string }; Body: { step?: string } }>(
+    "/workspaces/:id/onboarding",
+    async (request, reply) => {
+      const step = request.body?.step;
+      if (!step || !ONBOARDING_CURSORS.includes(step as OnboardingCursor)) {
+        return reply.status(400).send({
+          error: "invalid_input",
+          message: `step must be one of: ${ONBOARDING_CURSORS.join(", ")}`,
+        });
+      }
+      const updated = advanceOnboarding(db, request.params.id, step as OnboardingCursor);
+      if (!updated) return reply.status(404).send({ error: "workspace_not_found" });
+      return updated;
+    },
+  );
+
   app.get<{ Params: { id: string } }>("/workspaces/:id/analytics-optout", async (request, reply) => {
     const workspace = getWorkspace(db, request.params.id);
     if (!workspace) return reply.status(404).send({ error: "workspace_not_found" });
