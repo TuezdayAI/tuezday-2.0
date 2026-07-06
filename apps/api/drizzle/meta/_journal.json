@@ -253,6 +253,13 @@
       "when": 1783367118433,
       "tag": "0035_woozy_maverick",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1783367353970,
+      "tag": "0036_material_psylocke",
+      "breakpoints": true
     }
   ]
 }

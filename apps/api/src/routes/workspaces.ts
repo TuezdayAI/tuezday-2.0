@@ -1,4 +1,7 @@
 import type { FastifyInstance } from "fastify";
+import type { Fetcher } from "../discovery/adapters";
+import type { LlmGateway } from "../llm/gateway";
+import { runBrandProfile } from "../services/brand-profile";
 import {
   createWorkspaceInputSchema,
   ONBOARDING_CURSORS,
@@ -20,7 +23,12 @@ import { listAdAccounts } from "../services/ads";
 import { listDrafts } from "../services/drafts";
 import { listGenerations } from "../services/generations";
 
-export function registerWorkspaceRoutes(app: FastifyInstance, db: Db): void {
+export function registerWorkspaceRoutes(
+  app: FastifyInstance,
+  db: Db,
+  llm: LlmGateway,
+  fetcher: Fetcher,
+): void {
   app.post("/workspaces", async (request, reply) => {
     const parsed = createWorkspaceInputSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -30,6 +38,11 @@ export function registerWorkspaceRoutes(app: FastifyInstance, db: Db): void {
       });
     }
     const workspace = createWorkspace(db, parsed.data, request.actor.userId);
+    if (workspace.websiteUrl) {
+      // Onboarding Step 2: reading starts the moment the URL lands. The run
+      // never throws; failures land in the brand_profiles row.
+      void runBrandProfile(db, llm, fetcher, workspace.id, workspace.websiteUrl);
+    }
     return reply.status(201).send(workspace);
   });
 

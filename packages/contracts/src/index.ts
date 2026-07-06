@@ -180,6 +180,62 @@ export const updateUserInputSchema = z.object({
 export type UpdateUserInput = z.infer<typeof updateUserInputSchema>;
 
 // ---------------------------------------------------------------------------
+// Brand profile (Sprint 36.2)
+//
+// What Tuezday extracts from the customer's website (later: socials) before
+// the brain is drafted. The seven voice dimensions are a fixed, auditable
+// vocabulary shared by extraction (36.2), the brain voice doc (36.4), and the
+// onboarding verification screen (36.5).
+// ---------------------------------------------------------------------------
+
+export const VOICE_DIMENSIONS = [
+  "purpose",
+  "audience",
+  "tone",
+  "emotions",
+  "character",
+  "syntax",
+  "language",
+] as const;
+export type VoiceDimension = (typeof VOICE_DIMENSIONS)[number];
+
+export const brandProfileSchema = z.object({
+  businessName: z.string().trim().min(1, "Business name is required").max(200),
+  tagline: z.string().max(300).default(""),
+  summary: z.string().max(2000).default(""),
+  targetAgeRange: z.string().max(100).default(""),
+  tone: z.string().max(500).default(""),
+  voiceDimensions: z.object({
+    purpose: z.string().max(500).default(""),
+    audience: z.string().max(500).default(""),
+    tone: z.string().max(500).default(""),
+    emotions: z.string().max(500).default(""),
+    character: z.string().max(500).default(""),
+    syntax: z.string().max(500).default(""),
+    language: z.string().max(500).default(""),
+  }),
+  pillars: z.array(z.string().trim().min(1).max(200)).max(8, "At most 8 pillars").default([]),
+  /** What the model says it could not find — keeps thin extractions honest. */
+  sourceNotes: z.string().max(1000).default(""),
+});
+export type BrandProfile = z.infer<typeof brandProfileSchema>;
+
+export const BRAND_PROFILE_STATUSES = ["scraping", "extracting", "ready", "failed"] as const;
+export type BrandProfileStatus = (typeof BRAND_PROFILE_STATUSES)[number];
+
+export const brandProfileViewSchema = z.object({
+  status: z.enum([...BRAND_PROFILE_STATUSES, "none"]),
+  profile: brandProfileSchema.nullable(),
+  sourceUrl: z.string().nullable(),
+  error: z.string().nullable(),
+  updatedAt: z.number().int().nullable(),
+});
+export type BrandProfileView = z.infer<typeof brandProfileViewSchema>;
+
+export const updateBrandProfileInputSchema = brandProfileSchema.partial();
+export type UpdateBrandProfileInput = z.infer<typeof updateBrandProfileInputSchema>;
+
+// ---------------------------------------------------------------------------
 // Users, teams & auth (Sprint 19)
 // ---------------------------------------------------------------------------
 

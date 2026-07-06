@@ -45,6 +45,7 @@ import { registerPersonaRoutes } from "./routes/personas";
 import { registerSignalRoutes } from "./routes/signals";
 import { registerTeamRoutes } from "./routes/teams";
 import { registerWorkspaceRoutes } from "./routes/workspaces";
+import { registerBrandProfileRoutes } from "./routes/brand-profile";
 import { registerInsightsRoutes } from "./routes/insights";
 import { registerBillingRoutes, registerStripeWebhookRoute } from "./routes/billing";
 import { registerNotificationRoutes } from "./routes/notifications";
@@ -117,7 +118,8 @@ export async function buildApp({
   });
 
   registerAuthRoutes(app, db, fetcher, analytics);
-  registerWorkspaceRoutes(app, db);
+  registerWorkspaceRoutes(app, db, llm, fetcher);
+  registerBrandProfileRoutes(app, db, llm, fetcher);
   registerApiKeyRoutes(app, db);
   registerTeamRoutes(app, db, mailer);
   registerBillingRoutes(app, db);
