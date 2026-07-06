@@ -223,9 +223,6 @@ export default function WorkspaceBrainPage() {
 
           {error && <p className="error">{error}</p>}
           
-          {selectedDoc?.content.trim() === "" && (
-          )}
-
           <div className="editor-actions">
             <button onClick={() => save(draft)} disabled={saving || !dirty}>
               {saving ? "Saving…" : dirty ? "Save" : "Saved"}

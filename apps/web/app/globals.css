@@ -1394,3 +1394,20 @@ a.workspace-card:hover {
   color: var(--rose-ink);
   background: var(--rose);
 }
+
+/* ---------- Quick create (home escape hatch, Sprint 36.1) ---------- */
+
+.quick-create {
+  margin-bottom: 24px;
+}
+
+.quick-create > summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+
+.quick-create[open] > summary {
+  color: var(--text);
+}

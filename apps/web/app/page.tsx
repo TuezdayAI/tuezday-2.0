@@ -88,17 +88,26 @@ export default function HomePage() {
         Each workspace owns one GTM brain: soul, ICP, voice, history, now.
       </p>
 
-      <form className="create-form" onSubmit={createWorkspace}>
-        <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="New workspace name (e.g. Hexalog)"
-          maxLength={100}
-        />
-        <button type="submit" disabled={submitting || name.trim().length === 0}>
-          Create
+      <div className="create-form">
+        <button type="button" onClick={() => router.push("/onboarding")}>
+          Start guided setup
         </button>
-      </form>
+      </div>
+
+      <details className="quick-create">
+        <summary>Quick create (skip onboarding)</summary>
+        <form className="create-form" onSubmit={createWorkspace}>
+          <input
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="New workspace name (e.g. Hexalog)"
+            maxLength={100}
+          />
+          <button type="submit" disabled={submitting || name.trim().length === 0}>
+            Create
+          </button>
+        </form>
+      </details>
 
       {error && <p className="error">{error}</p>}
 
