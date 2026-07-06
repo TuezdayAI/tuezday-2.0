@@ -141,13 +141,15 @@ describe("workspaces API", () => {
     const created = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Flow" } })
     ).json();
+    // "connect" is the furthest ungated step (36.3 gates verify+ behind a
+    // social connection — covered in social-corpus-service.test.ts).
     const res = await app.inject({
       method: "PATCH",
       url: `/workspaces/${created.id}/onboarding`,
-      payload: { step: "verify" },
+      payload: { step: "connect" },
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json().onboardingStep).toBe("verify");
+    expect(res.json().onboardingStep).toBe("connect");
   });
 
   it("rejects an unknown onboarding step with 400", async () => {

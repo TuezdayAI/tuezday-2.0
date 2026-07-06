@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import type { Fetcher } from "../discovery/adapters";
 import type { LlmGateway } from "../llm/gateway";
 import { runBrandProfile } from "../services/brand-profile";
+import { hasSocialConnection } from "../services/social-corpus";
 import {
   createWorkspaceInputSchema,
   ONBOARDING_CURSORS,
@@ -68,7 +69,18 @@ export function registerWorkspaceRoutes(
           message: `step must be one of: ${ONBOARDING_CURSORS.join(", ")}`,
         });
       }
-      const updated = advanceOnboarding(db, request.params.id, step as OnboardingCursor);
+      // Min-1 social gate (Sprint 36.3): steps beyond "connect" need at least
+      // one connected social account; "done" stays reachable as an escape hatch.
+      const target = step as OnboardingCursor;
+      const connectIdx = ONBOARDING_CURSORS.indexOf("connect");
+      const targetIdx = ONBOARDING_CURSORS.indexOf(target);
+      if (target !== "done" && targetIdx > connectIdx && !hasSocialConnection(db, request.params.id)) {
+        return reply.status(409).send({
+          error: "needs_social_connection",
+          message: "Connect at least one social account (LinkedIn, X, or Instagram) to continue.",
+        });
+      }
+      const updated = advanceOnboarding(db, request.params.id, target);
       if (!updated) return reply.status(404).send({ error: "workspace_not_found" });
       return updated;
     },
