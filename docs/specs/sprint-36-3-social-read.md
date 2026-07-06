@@ -229,3 +229,10 @@ the `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>` trailer.
   `OAUTH_ENV` creds + publish/engagement adapters already exist (main Sprints
   25/27); the real 36.3 work is the *read-for-onboarding* side (`readSocialProfile`
   + social corpus + min-1 gate). Awaiting founder review; not implemented.
+- 2026-07-07 — Implemented multi-agent: three parallel agents built the
+  LinkedIn/X/Instagram readSocialProfile adapters (18 tests on fake
+  fabrics) while the corpus service, GET /workspaces/:id/social-corpus,
+  and the min-1 onboarding gate were built inline (9 tests + 4 contracts
+  tests). The 36.1 "advances the onboarding cursor" test updated to an
+  ungated step. Full suite 1006/1006 across 77 files; typecheck + next
+  build green. Founder verification deferred to the batched 36.x review.
