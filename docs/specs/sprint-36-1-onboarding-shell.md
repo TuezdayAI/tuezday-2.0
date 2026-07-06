@@ -869,7 +869,25 @@ rail as placeholders and land in the workspace. Quick-create still works.
   36.1 it is opt-in via "Start guided setup" so the escape hatch de-risks the
   incremental build — flip the default in 36.6 when the flow is complete).
 
+## Task 0 (added during execution): remove the old checklist onboarding
+
+Discovered at execution time: `main` already carried a **separate** onboarding
+feature (dismissible dashboard checklist + `BRAIN_DOC_TEMPLATES` with literal
+`"..."` placeholder content + `GET/PUT /workspaces/:id/onboarding` +
+`onboardingStepSchema`/`OnboardingStep` in contracts) that collided with this
+sprint's names. The `BrainTemplates` web component was also shape-mismatched
+with its own contract (`{name, description, content}` vs `{id, label, docs}`),
+so it silently rendered nothing useful. **Founder decision (2026-07-06):
+remove the old checklist entirely**; the V2 wizard supersedes it and reclaims
+the plain names. Removed: `onboarding-checklist.tsx`, `brain-templates.tsx`
+(+ usages), `routes/onboarding.ts`, `services/onboarding.ts`, both old
+`onboarding.test.ts` files, the contracts "Onboarding (Sprint 38)" block, the
+`.checklist` CSS block. The `workspaceMembers.onboardingDismissedAt` column is
+dropped in Task 2's migration.
+
 ## Progress log
 
-- 2026-07-06 — Spec + plan written (this file). Awaiting founder review before
-  implementation.
+- 2026-07-06 — Spec + plan written (this file); roadmap + spec committed on
+  branch `sprint-36-1-onboarding-shell` (27c4d15).
+- 2026-07-06 — Task 0: old checklist onboarding removed (founder-approved);
+  801/801 tests + typecheck green after removal.

@@ -12,7 +12,6 @@ import { useParams } from "next/navigation";
 import type { BrainDocType, BrainDocVersion, BrainDocument, Workspace } from "@tuezday/contracts";
 import { CHANNEL_LABELS, type Channel, type ChannelGuidance } from "@tuezday/contracts";
 import { BRAIN_DOC_META, type BrainScore } from "@tuezday/brain";
-import { BrainTemplates } from "./_components/brain-templates";
 
 interface BrainView {
   docs: BrainDocument[];
@@ -225,7 +224,6 @@ export default function WorkspaceBrainPage() {
           {error && <p className="error">{error}</p>}
           
           {selectedDoc?.content.trim() === "" && (
-            <BrainTemplates onApply={save} />
           )}
 
           <div className="editor-actions">
