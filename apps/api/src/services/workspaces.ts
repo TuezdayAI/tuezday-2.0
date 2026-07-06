@@ -5,6 +5,13 @@ import type { Db } from "../db";
 import { workspaceMembers, workspaces } from "../db/schema";
 import { ensureBrainDocs } from "./brain";
 
+/** DB stores the cursor as plain text; narrow it back to the contract enum. */
+function rowToWorkspace<T extends { onboardingStep: string | null }>(
+  row: T,
+): Omit<T, "onboardingStep"> & { onboardingStep: OnboardingCursor | null } {
+  return { ...row, onboardingStep: row.onboardingStep as OnboardingCursor | null };
+}
+
 export function createWorkspace(
   db: Db,
   input: CreateWorkspaceInput,
@@ -42,7 +49,8 @@ export function listWorkspaces(db: Db): Workspace[] {
     })
     .from(workspaces)
     .orderBy(desc(workspaces.createdAt))
-    .all();
+    .all()
+    .map(rowToWorkspace);
 }
 
 /**
@@ -71,11 +79,12 @@ export function listWorkspacesForUser(db: Db, userId: string): Workspace[] {
     .from(workspaces)
     .where(or(inArray(workspaces.id, memberOf), notInArray(workspaces.id, everyMemberedWorkspace)))
     .orderBy(desc(workspaces.createdAt))
-    .all();
+    .all()
+    .map(rowToWorkspace);
 }
 
 export function getWorkspace(db: Db, id: string): Workspace | undefined {
-  return db
+  const row = db
     .select({
       id: workspaces.id,
       name: workspaces.name,
@@ -87,6 +96,7 @@ export function getWorkspace(db: Db, id: string): Workspace | undefined {
     .from(workspaces)
     .where(eq(workspaces.id, id))
     .get();
+  return row ? rowToWorkspace(row) : undefined;
 }
 
 export function getAnalyticsOptOut(db: Db, workspaceId: string): boolean {

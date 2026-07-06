@@ -891,3 +891,23 @@ dropped in Task 2's migration.
   branch `sprint-36-1-onboarding-shell` (27c4d15).
 - 2026-07-06 — Task 0: old checklist onboarding removed (founder-approved);
   801/801 tests + typecheck green after removal.
+- 2026-07-07 — Task 1: ONBOARDING_STEPS/CURSORS + schema fields, TDD
+  (17c35d9). Task 2: workspaces.website_url + onboarding_step columns,
+  migration 0030, drops orphaned onboarding_dismissed_at (8f555c3).
+  Task 3: service + PATCH /workspaces/:id/onboarding, 5 new tests
+  (2fe4a0f). Task 4: PATCH /auth/me, 2 new tests (733a7af). Task 5:
+  wizard UI + home entry point; fixed empty JSX conditional left in
+  brain/page.tsx by Task 0 (38bf53b).
+- 2026-07-07 — Execution notes vs plan: main's schema had an extra
+  workspaces.analyticsOptOut column and explicit projections in all three
+  workspace reads (plan assumed select-all for two of them) — all three
+  projections got the new fields plus a rowToWorkspace mapper narrowing
+  onboardingStep to the contract enum (typecheck caught it); the
+  workspaceFixture in packages/testing also gained the two fields.
+  `.module-in` does not exist on main (unmerged ui-polish branch), so the
+  wizard ships its own reduced-motion-guarded panel fade in onboarding.css.
+- 2026-07-07 — Verified: 813/813 tests across 63 files, typecheck clean,
+  `next build` green (/onboarding route emitted). Headless API smoke on a
+  spare port: register → PATCH /auth/me (name trimmed) → POST /workspaces
+  {websiteUrl, onboardingStep:"connect"} → PATCH …/onboarding to "verify"
+  → 400 on unknown step. Founder manual walkthrough pending.
