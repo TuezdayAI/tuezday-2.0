@@ -236,6 +236,49 @@ export const updateBrandProfileInputSchema = brandProfileSchema.partial();
 export type UpdateBrandProfileInput = z.infer<typeof updateBrandProfileInputSchema>;
 
 // ---------------------------------------------------------------------------
+// Social corpus (Sprint 36.3)
+//
+// What onboarding Step 3 reads from the connected social accounts: the
+// account's own profile + recent original posts, normalized across
+// LinkedIn / X (provider key "twitter") / Instagram. Consumed by the brain
+// auto-draft (36.4) alongside the 36.2 website corpus.
+// ---------------------------------------------------------------------------
+
+export const SOCIAL_READ_PROVIDERS = ["linkedin", "twitter", "instagram"] as const;
+export type SocialReadProvider = (typeof SOCIAL_READ_PROVIDERS)[number];
+
+export const socialPostReadSchema = z.object({
+  text: z.string().max(5000),
+  url: z.string().default(""),
+  createdAt: z.number().int().nullable(),
+});
+export type SocialPostRead = z.infer<typeof socialPostReadSchema>;
+
+export const socialProfileReadSchema = z.object({
+  provider: z.enum(SOCIAL_READ_PROVIDERS),
+  handle: z.string().default(""),
+  displayName: z.string().default(""),
+  bio: z.string().max(3000).default(""),
+  recentPosts: z.array(socialPostReadSchema).max(25).default([]),
+});
+export type SocialProfileRead = z.infer<typeof socialProfileReadSchema>;
+
+export const socialCorpusEntrySchema = z.object({
+  provider: z.enum(SOCIAL_READ_PROVIDERS),
+  profile: socialProfileReadSchema.nullable(),
+  error: z.string().nullable(),
+});
+export type SocialCorpusEntry = z.infer<typeof socialCorpusEntrySchema>;
+
+export const socialCorpusSchema = z.object({
+  connected: z.array(z.enum(SOCIAL_READ_PROVIDERS)),
+  entries: z.array(socialCorpusEntrySchema),
+  /** Concatenated readable text for the brain draft (36.4), capped server-side. */
+  corpus: z.string(),
+});
+export type SocialCorpus = z.infer<typeof socialCorpusSchema>;
+
+// ---------------------------------------------------------------------------
 // Users, teams & auth (Sprint 19)
 // ---------------------------------------------------------------------------
 

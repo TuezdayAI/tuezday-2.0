@@ -57,6 +57,14 @@ export interface PostEngagement {
   clicks?: number;
 }
 
+/** The connected account's own profile + recent original posts (Sprint 36.3). */
+export interface SocialProfileReadRaw {
+  handle: string;
+  displayName: string;
+  bio: string;
+  recentPosts: { text: string; url: string; createdAt: number | null }[];
+}
+
 export interface SocialAdapter {
   publishPost(input: PublishPostInput): Promise<SocialPostResult>;
   /** Per-recipient direct message (X only this sprint). */
@@ -70,6 +78,9 @@ export interface SocialAdapter {
   postReply?(input: { parentExternalId: string; body: string; target?: string }): Promise<SocialPostResult>;
   /** Inbound replies in an outbound DM thread (X). */
   fetchDmReplies?(input: { recipientHandle: string; sinceMs?: number }): Promise<InboundReply[]>;
+  // --- Sprint 36.3 (onboarding social corpus) — optional; feature-detected. ---
+  /** Read the connected account's own profile + recent original posts. */
+  readSocialProfile?(): Promise<SocialProfileReadRaw>;
 }
 
 export function socialAdapterFor(
