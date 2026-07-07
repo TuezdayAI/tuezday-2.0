@@ -279,6 +279,19 @@ export const socialCorpusSchema = z.object({
 export type SocialCorpus = z.infer<typeof socialCorpusSchema>;
 
 // ---------------------------------------------------------------------------
+// Brain auto-draft (Sprint 36.4)
+// ---------------------------------------------------------------------------
+
+/** Result of POST /workspaces/:id/brain/auto-draft (the BrainView rides along
+ * in the route response; only the accounting fields are contract-fixed). */
+export const brainAutoDraftViewSchema = z.object({
+  insufficient: z.boolean(),
+  drafted: z.array(z.enum(BRAIN_DOC_TYPES)),
+  skipped: z.array(z.enum(BRAIN_DOC_TYPES)),
+});
+export type BrainAutoDraftAccounting = z.infer<typeof brainAutoDraftViewSchema>;
+
+// ---------------------------------------------------------------------------
 // Users, teams & auth (Sprint 19)
 // ---------------------------------------------------------------------------
 
