@@ -216,3 +216,13 @@ Each task: failing test → run (fail) → implement → run (pass) → commit w
   36.3 tip `a3203d5`). Key call: draft from the verified brand profile + social
   corpus, not raw website HTML (36.2 persists only the derived profile, which the
   founder edits in Step 4). Awaiting founder review; not implemented.
+- 2026-07-07 — Implemented multi-agent: a background agent built the service
+  (draftBrain + runBrainAutoDraft, 8 tests) while the contract, route
+  (POST /workspaces/:id/brain/auto-draft), app wiring, and 2 route tests
+  were built inline in parallel. Full suite 1018/1018 across 80 files;
+  typecheck + next build green.
+- 2026-07-07 — Live Gemini smoke: workspace pointed at anthropic.com →
+  brand profile ready → auto-draft populated all five docs with on-brand
+  markdown (completeness 100%); an immediate second call drafted nothing
+  and skipped all five — the no-clobber guarantee verified live. Founder
+  verification deferred to the batched 36.x review.
