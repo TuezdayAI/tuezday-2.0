@@ -102,4 +102,65 @@ describe("workspaces API", () => {
     expect(res.statusCode).toBe(404);
     expect(res.json().error).toBe("workspace_not_found");
   });
+  it("persists websiteUrl and defaults onboardingStep to null", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/workspaces",
+      payload: { name: "Hexalog", websiteUrl: "https://hexalog.com" },
+    });
+    expect(res.statusCode).toBe(201);
+    const body = res.json();
+    expect(workspaceSchema.safeParse(body).success).toBe(true);
+    expect(body.websiteUrl).toBe("https://hexalog.com");
+    expect(body.onboardingStep).toBeNull();
+
+    const got = await app.inject({ method: "GET", url: `/workspaces/${body.id}` });
+    expect(got.json().websiteUrl).toBe("https://hexalog.com");
+  });
+
+  it("accepts an onboardingStep cursor at create", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/workspaces",
+      payload: { name: "Cursored", websiteUrl: "https://a.co", onboardingStep: "connect" },
+    });
+    expect(res.json().onboardingStep).toBe("connect");
+  });
+
+  it("rejects a bad websiteUrl with 400", async () => {
+    const res = await app.inject({
+      method: "POST",
+      url: "/workspaces",
+      payload: { name: "Bad", websiteUrl: "nope" },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.json().error).toBe("invalid_input");
+  });
+
+  it("advances the onboarding cursor", async () => {
+    const created = (
+      await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Flow" } })
+    ).json();
+    // "connect" is the furthest ungated step (36.3 gates verify+ behind a
+    // social connection — covered in social-corpus-service.test.ts).
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/workspaces/${created.id}/onboarding`,
+      payload: { step: "connect" },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(res.json().onboardingStep).toBe("connect");
+  });
+
+  it("rejects an unknown onboarding step with 400", async () => {
+    const created = (
+      await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Flow2" } })
+    ).json();
+    const res = await app.inject({
+      method: "PATCH",
+      url: `/workspaces/${created.id}/onboarding`,
+      payload: { step: "banana" },
+    });
+    expect(res.statusCode).toBe(400);
+  });
 });

@@ -45,7 +45,9 @@ import { registerPersonaRoutes } from "./routes/personas";
 import { registerSignalRoutes } from "./routes/signals";
 import { registerTeamRoutes } from "./routes/teams";
 import { registerWorkspaceRoutes } from "./routes/workspaces";
-import { registerOnboardingRoutes } from "./routes/onboarding";
+import { registerBrandProfileRoutes } from "./routes/brand-profile";
+import { registerSocialCorpusRoutes } from "./routes/social-corpus";
+import { registerBrainAutoDraftRoutes } from "./routes/brain-autodraft";
 import { registerInsightsRoutes } from "./routes/insights";
 import { registerBillingRoutes, registerStripeWebhookRoute } from "./routes/billing";
 import { registerNotificationRoutes } from "./routes/notifications";
@@ -118,10 +120,12 @@ export async function buildApp({
   });
 
   registerAuthRoutes(app, db, fetcher, analytics);
-  registerWorkspaceRoutes(app, db);
+  registerWorkspaceRoutes(app, db, llm, fetcher);
+  registerBrandProfileRoutes(app, db, llm, fetcher);
+  registerSocialCorpusRoutes(app, db, connectors);
+  registerBrainAutoDraftRoutes(app, db, llm, connectors);
   registerApiKeyRoutes(app, db);
   registerTeamRoutes(app, db, mailer);
-  app.register(registerOnboardingRoutes(db));
   registerBillingRoutes(app, db);
   registerStripeWebhookRoute(app, db);
   registerBrainRoutes(app, db, llm);

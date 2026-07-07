@@ -246,6 +246,20 @@
       "when": 1783156551033,
       "tag": "0034_watery_zeigeist",
       "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "6",
+      "when": 1783367118433,
+      "tag": "0035_woozy_maverick",
+      "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1783367353970,
+      "tag": "0036_material_psylocke",
+      "breakpoints": true
     }
   ]
 }

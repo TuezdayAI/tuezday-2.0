@@ -4,7 +4,7 @@ import { userSchema } from "@tuezday/contracts";
 import { buildApp, type TuezdayApp } from "../src/app";
 import type { Db } from "../src/db";
 import { sessions } from "../src/db/schema";
-import { createTestDb, registerUser, TEST_PASSWORD } from "./helpers";
+import { asUser, createTestDb, registerUser, TEST_PASSWORD } from "./helpers";
 
 describe("auth API", () => {
   let app: TuezdayApp;
@@ -170,6 +170,29 @@ describe("auth API", () => {
     it("keeps /health public", async () => {
       const res = await app.inject({ method: "GET", url: "/health" });
       expect(res.statusCode).toBe(200);
+    });
+  });
+  describe("profile update", () => {
+    it("updates the signed-in user's name", async () => {
+      const user = await registerUser(app, "namer@test.dev", "Old");
+      const authed = asUser(app, user.token);
+      const res = await authed.inject({
+        method: "PATCH",
+        url: "/auth/me",
+        payload: { name: "  New Name  " },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(res.json().user.name).toBe("New Name");
+
+      const me = await authed.inject({ method: "GET", url: "/auth/me" });
+      expect(me.json().user.name).toBe("New Name");
+    });
+
+    it("rejects an empty name with 400", async () => {
+      const user = await registerUser(app, "empty@test.dev", "Keep");
+      const authed = asUser(app, user.token);
+      const res = await authed.inject({ method: "PATCH", url: "/auth/me", payload: { name: "  " } });
+      expect(res.statusCode).toBe(400);
     });
   });
 });

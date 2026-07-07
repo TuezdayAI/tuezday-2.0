@@ -35,7 +35,6 @@ import {
   estimateTokens,
   type BrainScore,
 } from "@tuezday/brain";
-import { BrainTemplates } from "./_components/brain-templates";
 
 interface BrainView {
   docs: BrainDocument[];
@@ -332,10 +331,6 @@ export default function WorkspaceBrainPage() {
 
           {error && <p className="error">{error}</p>}
           
-          {selectedDoc?.content.trim() === "" && (
-            <BrainTemplates onApply={save} />
-          )}
-
           <p className="meta">
             ~{draftTokens} tokens
             {isMatrixDoc &&

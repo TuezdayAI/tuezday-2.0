@@ -126,12 +126,34 @@ export const updateGuidanceInputSchema = z.object({
 export type UpdateGuidanceInput = z.infer<typeof updateGuidanceInputSchema>;
 
 // ---------------------------------------------------------------------------
-// Workspace
+// Workspace & onboarding (Sprint 36.1)
 // ---------------------------------------------------------------------------
+
+/**
+ * The seven visible steps of the guided onboarding wizard, in order. Single
+ * source of truth for the wizard's progress rail and the workspace's
+ * onboarding cursor — sprints 36.2–36.6 fill the steps in.
+ */
+export const ONBOARDING_STEPS = [
+  "name",
+  "website",
+  "connect",
+  "verify",
+  "brain",
+  "campaign",
+  "draft",
+] as const;
+export type OnboardingStep = (typeof ONBOARDING_STEPS)[number];
+
+/** Where a workspace's onboarding stands: any step, or the terminal "done". */
+export const ONBOARDING_CURSORS = [...ONBOARDING_STEPS, "done"] as const;
+export type OnboardingCursor = (typeof ONBOARDING_CURSORS)[number];
 
 export const workspaceSchema = z.object({
   id: z.string().uuid(),
   name: z.string().min(1).max(100),
+  websiteUrl: z.string().url().nullable(),
+  onboardingStep: z.enum(ONBOARDING_CURSORS).nullable(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 });
@@ -143,8 +165,131 @@ export const createWorkspaceInputSchema = z.object({
     .trim()
     .min(1, "Workspace name is required")
     .max(100, "Workspace name must be 100 characters or fewer"),
+  websiteUrl: z.string().url("Enter a valid URL, e.g. https://acme.com").optional(),
+  onboardingStep: z.enum(ONBOARDING_CURSORS).optional(),
 });
 export type CreateWorkspaceInput = z.infer<typeof createWorkspaceInputSchema>;
+
+export const updateUserInputSchema = z.object({
+  name: z
+    .string()
+    .trim()
+    .min(1, "Name is required")
+    .max(100, "Name must be 100 characters or fewer"),
+});
+export type UpdateUserInput = z.infer<typeof updateUserInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Brand profile (Sprint 36.2)
+//
+// What Tuezday extracts from the customer's website (later: socials) before
+// the brain is drafted. The seven voice dimensions are a fixed, auditable
+// vocabulary shared by extraction (36.2), the brain voice doc (36.4), and the
+// onboarding verification screen (36.5).
+// ---------------------------------------------------------------------------
+
+export const VOICE_DIMENSIONS = [
+  "purpose",
+  "audience",
+  "tone",
+  "emotions",
+  "character",
+  "syntax",
+  "language",
+] as const;
+export type VoiceDimension = (typeof VOICE_DIMENSIONS)[number];
+
+export const brandProfileSchema = z.object({
+  businessName: z.string().trim().min(1, "Business name is required").max(200),
+  tagline: z.string().max(300).default(""),
+  summary: z.string().max(2000).default(""),
+  targetAgeRange: z.string().max(100).default(""),
+  tone: z.string().max(500).default(""),
+  voiceDimensions: z.object({
+    purpose: z.string().max(500).default(""),
+    audience: z.string().max(500).default(""),
+    tone: z.string().max(500).default(""),
+    emotions: z.string().max(500).default(""),
+    character: z.string().max(500).default(""),
+    syntax: z.string().max(500).default(""),
+    language: z.string().max(500).default(""),
+  }),
+  pillars: z.array(z.string().trim().min(1).max(200)).max(8, "At most 8 pillars").default([]),
+  /** What the model says it could not find — keeps thin extractions honest. */
+  sourceNotes: z.string().max(1000).default(""),
+});
+export type BrandProfile = z.infer<typeof brandProfileSchema>;
+
+export const BRAND_PROFILE_STATUSES = ["scraping", "extracting", "ready", "failed"] as const;
+export type BrandProfileStatus = (typeof BRAND_PROFILE_STATUSES)[number];
+
+export const brandProfileViewSchema = z.object({
+  status: z.enum([...BRAND_PROFILE_STATUSES, "none"]),
+  profile: brandProfileSchema.nullable(),
+  sourceUrl: z.string().nullable(),
+  error: z.string().nullable(),
+  updatedAt: z.number().int().nullable(),
+});
+export type BrandProfileView = z.infer<typeof brandProfileViewSchema>;
+
+export const updateBrandProfileInputSchema = brandProfileSchema.partial();
+export type UpdateBrandProfileInput = z.infer<typeof updateBrandProfileInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Social corpus (Sprint 36.3)
+//
+// What onboarding Step 3 reads from the connected social accounts: the
+// account's own profile + recent original posts, normalized across
+// LinkedIn / X (provider key "twitter") / Instagram. Consumed by the brain
+// auto-draft (36.4) alongside the 36.2 website corpus.
+// ---------------------------------------------------------------------------
+
+export const SOCIAL_READ_PROVIDERS = ["linkedin", "twitter", "instagram"] as const;
+export type SocialReadProvider = (typeof SOCIAL_READ_PROVIDERS)[number];
+
+export const socialPostReadSchema = z.object({
+  text: z.string().max(5000),
+  url: z.string().default(""),
+  createdAt: z.number().int().nullable(),
+});
+export type SocialPostRead = z.infer<typeof socialPostReadSchema>;
+
+export const socialProfileReadSchema = z.object({
+  provider: z.enum(SOCIAL_READ_PROVIDERS),
+  handle: z.string().default(""),
+  displayName: z.string().default(""),
+  bio: z.string().max(3000).default(""),
+  recentPosts: z.array(socialPostReadSchema).max(25).default([]),
+});
+export type SocialProfileRead = z.infer<typeof socialProfileReadSchema>;
+
+export const socialCorpusEntrySchema = z.object({
+  provider: z.enum(SOCIAL_READ_PROVIDERS),
+  profile: socialProfileReadSchema.nullable(),
+  error: z.string().nullable(),
+});
+export type SocialCorpusEntry = z.infer<typeof socialCorpusEntrySchema>;
+
+export const socialCorpusSchema = z.object({
+  connected: z.array(z.enum(SOCIAL_READ_PROVIDERS)),
+  entries: z.array(socialCorpusEntrySchema),
+  /** Concatenated readable text for the brain draft (36.4), capped server-side. */
+  corpus: z.string(),
+});
+export type SocialCorpus = z.infer<typeof socialCorpusSchema>;
+
+// ---------------------------------------------------------------------------
+// Brain auto-draft (Sprint 36.4)
+// ---------------------------------------------------------------------------
+
+/** Result of POST /workspaces/:id/brain/auto-draft (the BrainView rides along
+ * in the route response; only the accounting fields are contract-fixed). */
+export const brainAutoDraftViewSchema = z.object({
+  insufficient: z.boolean(),
+  drafted: z.array(z.enum(BRAIN_DOC_TYPES)),
+  skipped: z.array(z.enum(BRAIN_DOC_TYPES)),
+});
+export type BrainAutoDraftAccounting = z.infer<typeof brainAutoDraftViewSchema>;
 
 // ---------------------------------------------------------------------------
 // Users, teams & auth (Sprint 19)
@@ -3122,36 +3267,6 @@ export const launchDetailSchema = z.object({
   recipientCount: z.number().int(),
 });
 export type LaunchDetail = z.infer<typeof launchDetailSchema>;
-
-// ---------------------------------------------------------------------------
-// Onboarding (Sprint 38)
-// ---------------------------------------------------------------------------
-
-export const BRAIN_DOC_TEMPLATES = [
-  {
-    id: "b2b-saas-founder",
-    label: "B2B SaaS founder",
-    docs: { soul: "...", icp: "...", voice: "...", history: "", now: "" },
-  },
-  {
-    id: "agency",
-    label: "Agency",
-    docs: { soul: "...", icp: "...", voice: "...", history: "", now: "" },
-  },
-  {
-    id: "dev-tool",
-    label: "Dev-tool",
-    docs: { soul: "...", icp: "...", voice: "...", history: "", now: "" },
-  },
-] as const;
-
-export const onboardingStepSchema = z.object({
-  key: z.enum(["workspace", "brain", "connect", "generate", "approve"]),
-  label: z.string(),
-  done: z.boolean(),
-  cta: z.string(),
-});
-export type OnboardingStep = z.infer<typeof onboardingStepSchema>;
 
 // ---------------------------------------------------------------------------
 // Pricing plans & feature gating (Sprint 37)

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
-import { googleCallbackInputSchema, loginInputSchema, registerInputSchema } from "@tuezday/contracts";
+import { googleCallbackInputSchema, loginInputSchema, registerInputSchema, updateUserInputSchema } from "@tuezday/contracts";
 import type { Db } from "../db";
-import { EmailTakenError, getUser, login, registerAccount, revokeSession, upsertGoogleUser } from "../services/auth";
+import { EmailTakenError, getUser, login, registerAccount, revokeSession, updateUserName, upsertGoogleUser } from "../services/auth";
 import { listUserMemberships } from "../services/teams";
 import type { AnalyticsSink } from "../analytics/sink";
 import { track } from "../analytics/track";
@@ -55,6 +55,22 @@ export function registerAuthRoutes(app: FastifyInstance, db: Db, fetcher: Fetche
     const user = getUser(db, request.actor.userId);
     if (!user) return reply.status(401).send({ error: "unauthenticated" });
     return { user, memberships: listUserMemberships(db, user.id) };
+  });
+
+  app.patch("/auth/me", async (request, reply) => {
+    if (request.actor.system || !request.actor.userId) {
+      return reply.status(403).send({ error: "system_actor" });
+    }
+    const parsed = updateUserInputSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({
+        error: "invalid_input",
+        message: parsed.error.issues.map((i) => i.message).join("; "),
+      });
+    }
+    const user = updateUserName(db, request.actor.userId, parsed.data.name);
+    if (!user) return reply.status(401).send({ error: "unauthenticated" });
+    return { user };
   });
 
   app.get<{ Querystring: { state?: string } }>("/auth/google/url", async (request, reply) => {

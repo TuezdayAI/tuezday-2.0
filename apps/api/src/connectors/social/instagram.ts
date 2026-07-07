@@ -7,6 +7,7 @@ import type {
   PublishPostInput,
   SocialAdapter,
   SocialPostResult,
+  SocialProfileReadRaw,
 } from "./index";
 import type { SocialAdapterConfig } from "./linkedin";
 
@@ -33,6 +34,14 @@ interface StatusResponse {
 }
 interface PermalinkResponse {
   permalink?: string;
+}
+interface ProfileResponse {
+  username?: string;
+  name?: string;
+  biography?: string;
+}
+interface MediaListResponse {
+  data?: Array<{ caption?: string; permalink?: string; timestamp?: string }>;
 }
 
 /**
@@ -193,5 +202,54 @@ export class InstagramAdapter implements SocialAdapter {
   async postReply(input: { parentExternalId: string; body: string }): Promise<SocialPostResult> {
     const created = await this.post(`/${V}/${input.parentExternalId}/replies`, { message: input.body });
     return { externalId: created.id!, url: "" };
+  }
+
+  // --- Sprint 36.3 (onboarding social corpus): the connected IG Business
+  // account's own profile + recent media. ---
+
+  async readSocialProfile(): Promise<SocialProfileReadRaw> {
+    const igId = await this.igUserId();
+
+    const profileRes = await this.fabric.proxyJson(
+      "GET",
+      `/${V}/${igId}?fields=username,name,biography`,
+      this.config.nangoConnectionId,
+      this.config.integrationKey,
+      { baseUrlOverride: GRAPH },
+    );
+    if (profileRes.status < 200 || profileRes.status >= 300) {
+      throw new ConnectorFabricError(
+        `Instagram profile lookup returned ${profileRes.status}: ${JSON.stringify(profileRes.json ?? {}).slice(0, 200)}`,
+      );
+    }
+    const profile = (profileRes.json ?? {}) as ProfileResponse;
+
+    const mediaRes = await this.fabric.proxyJson(
+      "GET",
+      `/${V}/${igId}/media?fields=caption,permalink,timestamp&limit=25`,
+      this.config.nangoConnectionId,
+      this.config.integrationKey,
+      { baseUrlOverride: GRAPH },
+    );
+    if (mediaRes.status < 200 || mediaRes.status >= 300) {
+      throw new ConnectorFabricError(
+        `Instagram media list returned ${mediaRes.status}: ${JSON.stringify(mediaRes.json ?? {}).slice(0, 200)}`,
+      );
+    }
+    const items = ((mediaRes.json ?? {}) as MediaListResponse).data ?? [];
+
+    return {
+      handle: profile.username ?? "",
+      displayName: profile.name ?? profile.username ?? "",
+      bio: profile.biography ?? "",
+      recentPosts: items.slice(0, 25).map((m) => {
+        const parsed = m.timestamp ? Date.parse(m.timestamp) : NaN;
+        return {
+          text: m.caption ?? "",
+          url: m.permalink ?? "",
+          createdAt: Number.isFinite(parsed) ? parsed : null,
+        };
+      }),
+    };
   }
 }

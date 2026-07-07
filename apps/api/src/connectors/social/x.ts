@@ -1,5 +1,5 @@
 import { ConnectorFabricError, type ConnectorFabric } from "../fabric";
-import type { InboundReply, SocialAdapter, SocialPostResult } from "./index";
+import type { InboundReply, SocialAdapter, SocialPostResult, SocialProfileReadRaw } from "./index";
 import type { SocialAdapterConfig } from "./linkedin";
 
 const X_API = "https://api.twitter.com";
@@ -26,6 +26,25 @@ interface DmEvent {
 interface DmEventsResponse {
   data?: DmEvent[];
   errors?: Array<{ detail?: string; title?: string }>;
+}
+
+interface MeResponse {
+  data?: { id?: string; username?: string; name?: string; description?: string };
+  errors?: Array<{ detail?: string; title?: string }>;
+}
+
+interface TweetsResponse {
+  data?: Array<{ id?: string; text?: string; created_at?: string }>;
+  errors?: Array<{ detail?: string; title?: string }>;
+}
+
+/** Short body snippet for error messages when X gives no structured detail. */
+function bodySnippet(json: unknown): string {
+  try {
+    return JSON.stringify(json ?? {}).slice(0, 200);
+  } catch {
+    return "";
+  }
 }
 
 /**
@@ -113,6 +132,59 @@ export class XAdapter implements SocialAdapter {
         createdAt: e.created_at ? Date.parse(e.created_at) : Date.now(),
       }))
       .filter((r) => r.createdAt > sinceMs);
+  }
+
+  // --- Sprint 36.3 (onboarding social corpus): the connected account's own
+  // profile + recent original tweets, normalized for the read pipeline. ---
+
+  async readSocialProfile(): Promise<SocialProfileReadRaw> {
+    const meRes = await this.fabric.proxyJson(
+      "GET",
+      "/2/users/me?user.fields=description,username,name",
+      this.config.nangoConnectionId,
+      this.config.integrationKey,
+      { baseUrlOverride: X_API },
+    );
+    const me = (meRes.json ?? {}) as MeResponse;
+    if (meRes.status < 200 || meRes.status >= 300 || me.errors?.length) {
+      const detail = me.errors?.[0]?.detail ?? bodySnippet(meRes.json);
+      throw new ConnectorFabricError(`X profile read failed (status ${meRes.status}): ${detail}`);
+    }
+    const userId = me.data?.id;
+    const handle = me.data?.username;
+    if (!userId || !handle) throw new ConnectorFabricError("X /2/users/me returned no user id/username.");
+
+    const tweetsRes = await this.fabric.proxyJson(
+      "GET",
+      `/2/users/${userId}/tweets?max_results=25&tweet.fields=created_at&exclude=retweets,replies`,
+      this.config.nangoConnectionId,
+      this.config.integrationKey,
+      { baseUrlOverride: X_API },
+    );
+    const tweets = (tweetsRes.json ?? {}) as TweetsResponse;
+    if (tweetsRes.status < 200 || tweetsRes.status >= 300 || tweets.errors?.length) {
+      const detail = tweets.errors?.[0]?.detail ?? bodySnippet(tweetsRes.json);
+      throw new ConnectorFabricError(`X recent-tweets read failed (status ${tweetsRes.status}): ${detail}`);
+    }
+
+    const recentPosts = (tweets.data ?? [])
+      .filter((t) => t.id && t.text)
+      .slice(0, 25)
+      .map((t) => {
+        const parsed = t.created_at ? Date.parse(t.created_at) : Number.NaN;
+        return {
+          text: t.text!,
+          url: `https://x.com/${handle}/status/${t.id}`,
+          createdAt: Number.isNaN(parsed) ? null : parsed,
+        };
+      });
+
+    return {
+      handle,
+      displayName: me.data?.name ?? handle,
+      bio: me.data?.description ?? "",
+      recentPosts,
+    };
   }
 
   /** Reply within a DM thread — send another message to the recipient (`target`). */

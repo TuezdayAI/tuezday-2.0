@@ -15,7 +15,6 @@ import type { BrainScore } from "@tuezday/brain";
 import { API_URL, apiFetch } from "@/lib/api";
 import { EmptyState } from "@/src/components/empty-state";
 import { PageHeader } from "@/src/components/page-header";
-import { OnboardingChecklist } from "./_components/onboarding-checklist";
 
 interface BrainView {
   completeness: BrainScore;
@@ -102,8 +101,6 @@ export default function WorkspaceHomePage() {
         title="Command Center"
         subtitle={`The GTM loop for ${workspace.name}: review work, act on signals, update the Brain, and keep campaigns moving.`}
       />
-
-      <OnboardingChecklist workspaceId={workspace.id} />
 
       <div className="home-grid">
         <Link

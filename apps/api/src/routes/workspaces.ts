@@ -1,7 +1,17 @@
 import type { FastifyInstance } from "fastify";
-import { createWorkspaceInputSchema, setAnalyticsOptOutInputSchema } from "@tuezday/contracts";
+import type { Fetcher } from "../discovery/adapters";
+import type { LlmGateway } from "../llm/gateway";
+import { runBrandProfile } from "../services/brand-profile";
+import { hasSocialConnection } from "../services/social-corpus";
+import {
+  createWorkspaceInputSchema,
+  ONBOARDING_CURSORS,
+  setAnalyticsOptOutInputSchema,
+  type OnboardingCursor,
+} from "@tuezday/contracts";
 import type { Db } from "../db";
 import {
+  advanceOnboarding,
   createWorkspace,
   getAnalyticsOptOut,
   getWorkspace,
@@ -14,7 +24,12 @@ import { listAdAccounts } from "../services/ads";
 import { listDrafts } from "../services/drafts";
 import { listGenerations } from "../services/generations";
 
-export function registerWorkspaceRoutes(app: FastifyInstance, db: Db): void {
+export function registerWorkspaceRoutes(
+  app: FastifyInstance,
+  db: Db,
+  llm: LlmGateway,
+  fetcher: Fetcher,
+): void {
   app.post("/workspaces", async (request, reply) => {
     const parsed = createWorkspaceInputSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -24,6 +39,11 @@ export function registerWorkspaceRoutes(app: FastifyInstance, db: Db): void {
       });
     }
     const workspace = createWorkspace(db, parsed.data, request.actor.userId);
+    if (workspace.websiteUrl) {
+      // Onboarding Step 2: reading starts the moment the URL lands. The run
+      // never throws; failures land in the brand_profiles row.
+      void runBrandProfile(db, llm, fetcher, workspace.id, workspace.websiteUrl);
+    }
     return reply.status(201).send(workspace);
   });
 
@@ -39,6 +59,33 @@ export function registerWorkspaceRoutes(app: FastifyInstance, db: Db): void {
     }
     return workspace;
   });
+  app.patch<{ Params: { id: string }; Body: { step?: string } }>(
+    "/workspaces/:id/onboarding",
+    async (request, reply) => {
+      const step = request.body?.step;
+      if (!step || !ONBOARDING_CURSORS.includes(step as OnboardingCursor)) {
+        return reply.status(400).send({
+          error: "invalid_input",
+          message: `step must be one of: ${ONBOARDING_CURSORS.join(", ")}`,
+        });
+      }
+      // Min-1 social gate (Sprint 36.3): steps beyond "connect" need at least
+      // one connected social account; "done" stays reachable as an escape hatch.
+      const target = step as OnboardingCursor;
+      const connectIdx = ONBOARDING_CURSORS.indexOf("connect");
+      const targetIdx = ONBOARDING_CURSORS.indexOf(target);
+      if (target !== "done" && targetIdx > connectIdx && !hasSocialConnection(db, request.params.id)) {
+        return reply.status(409).send({
+          error: "needs_social_connection",
+          message: "Connect at least one social account (LinkedIn, X, or Instagram) to continue.",
+        });
+      }
+      const updated = advanceOnboarding(db, request.params.id, target);
+      if (!updated) return reply.status(404).send({ error: "workspace_not_found" });
+      return updated;
+    },
+  );
+
   app.get<{ Params: { id: string } }>("/workspaces/:id/analytics-optout", async (request, reply) => {
     const workspace = getWorkspace(db, request.params.id);
     if (!workspace) return reply.status(404).send({ error: "workspace_not_found" });

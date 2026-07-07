@@ -7,11 +7,37 @@ export const workspaces = sqliteTable("workspaces", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   analyticsOptOut: integer("analytics_opt_out", { mode: "boolean" }).notNull().default(false),
+  // Onboarding wizard (Sprint 36.1): the site the brain will be drafted from,
+  // and where the workspace stands in the wizard (null = pre-wizard workspace).
+  websiteUrl: text("website_url"),
+  onboardingStep: text("onboarding_step"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
 
 export type WorkspaceRow = typeof workspaces.$inferSelect;
+
+// One extracted brand profile per workspace (Sprint 36.2). Overwritten on
+// re-run; editable via PATCH once ready. profileJson holds a BrandProfile.
+export const brandProfiles = sqliteTable(
+  "brand_profiles",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sourceUrl: text("source_url").notNull(),
+    status: text("status").notNull().default("scraping"),
+    profileJson: text("profile_json"),
+    error: text("error"),
+    corpusChars: integer("corpus_chars").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("brand_profiles_workspace").on(t.workspaceId)],
+);
+
+export type BrandProfileRow = typeof brandProfiles.$inferSelect;
 
 export const users = sqliteTable(
   "users",
@@ -59,7 +85,6 @@ export const workspaceMembers = sqliteTable(
       .references(() => users.id, { onDelete: "cascade" }),
     role: text("role").notNull(),
     createdAt: integer("created_at").notNull(),
-    onboardingDismissedAt: integer("onboarding_dismissed_at"),
   },
   (t) => [uniqueIndex("workspace_members_workspace_user").on(t.workspaceId, t.userId)],
 );

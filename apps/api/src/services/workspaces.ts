@@ -1,9 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { desc, eq, inArray, notInArray, or } from "drizzle-orm";
-import type { CreateWorkspaceInput, Workspace } from "@tuezday/contracts";
+import type { CreateWorkspaceInput, OnboardingCursor, Workspace } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { workspaceMembers, workspaces } from "../db/schema";
 import { ensureBrainDocs } from "./brain";
+
+/** DB stores the cursor as plain text; narrow it back to the contract enum. */
+function rowToWorkspace<T extends { onboardingStep: string | null }>(
+  row: T,
+): Omit<T, "onboardingStep"> & { onboardingStep: OnboardingCursor | null } {
+  return { ...row, onboardingStep: row.onboardingStep as OnboardingCursor | null };
+}
 
 export function createWorkspace(
   db: Db,
@@ -14,6 +21,8 @@ export function createWorkspace(
   const row = {
     id: randomUUID(),
     name: input.name,
+    websiteUrl: input.websiteUrl ?? null,
+    onboardingStep: input.onboardingStep ?? null,
     createdAt: now,
     updatedAt: now,
   };
@@ -33,12 +42,15 @@ export function listWorkspaces(db: Db): Workspace[] {
     .select({
       id: workspaces.id,
       name: workspaces.name,
+      websiteUrl: workspaces.websiteUrl,
+      onboardingStep: workspaces.onboardingStep,
       createdAt: workspaces.createdAt,
       updatedAt: workspaces.updatedAt,
     })
     .from(workspaces)
     .orderBy(desc(workspaces.createdAt))
-    .all();
+    .all()
+    .map(rowToWorkspace);
 }
 
 /**
@@ -59,26 +71,32 @@ export function listWorkspacesForUser(db: Db, userId: string): Workspace[] {
     .select({
       id: workspaces.id,
       name: workspaces.name,
+      websiteUrl: workspaces.websiteUrl,
+      onboardingStep: workspaces.onboardingStep,
       createdAt: workspaces.createdAt,
       updatedAt: workspaces.updatedAt,
     })
     .from(workspaces)
     .where(or(inArray(workspaces.id, memberOf), notInArray(workspaces.id, everyMemberedWorkspace)))
     .orderBy(desc(workspaces.createdAt))
-    .all();
+    .all()
+    .map(rowToWorkspace);
 }
 
 export function getWorkspace(db: Db, id: string): Workspace | undefined {
-  return db
+  const row = db
     .select({
       id: workspaces.id,
       name: workspaces.name,
+      websiteUrl: workspaces.websiteUrl,
+      onboardingStep: workspaces.onboardingStep,
       createdAt: workspaces.createdAt,
       updatedAt: workspaces.updatedAt,
     })
     .from(workspaces)
     .where(eq(workspaces.id, id))
     .get();
+  return row ? rowToWorkspace(row) : undefined;
 }
 
 export function getAnalyticsOptOut(db: Db, workspaceId: string): boolean {
@@ -95,4 +113,17 @@ export function setAnalyticsOptOut(db: Db, workspaceId: string, optOut: boolean)
     .set({ analyticsOptOut: optOut, updatedAt: Date.now() })
     .where(eq(workspaces.id, workspaceId))
     .run();
+}
+
+/** Move a workspace's onboarding cursor. Returns undefined if it doesn't exist. */
+export function advanceOnboarding(
+  db: Db,
+  id: string,
+  step: OnboardingCursor,
+): Workspace | undefined {
+  db.update(workspaces)
+    .set({ onboardingStep: step, updatedAt: Date.now() })
+    .where(eq(workspaces.id, id))
+    .run();
+  return getWorkspace(db, id);
 }
