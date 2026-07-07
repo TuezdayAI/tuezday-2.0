@@ -292,6 +292,42 @@ export const brainAutoDraftViewSchema = z.object({
 export type BrainAutoDraftAccounting = z.infer<typeof brainAutoDraftViewSchema>;
 
 // ---------------------------------------------------------------------------
+// Onboarding reading progress (Sprint 36.5)
+//
+// Maps the brand-profile run status to the wizard's "Tuezday is reading…"
+// animation. Pure so it is unit-testable (apps/web has no test runner).
+// ---------------------------------------------------------------------------
+
+export interface OnboardingReadingProgress {
+  percent: number;
+  label: string;
+}
+
+export function onboardingReadingProgress(
+  profileStatus: BrandProfileStatus | "none",
+  connectedCount: number,
+): OnboardingReadingProgress {
+  switch (profileStatus) {
+    case "scraping":
+      return { percent: 35, label: "Reading your website…" };
+    case "extracting":
+      return { percent: 70, label: "Understanding your brand…" };
+    case "ready":
+      return { percent: 100, label: "Done — brand profile ready." };
+    case "failed":
+      return { percent: 100, label: "We couldn't read your site — you can retry or continue." };
+    default:
+      return {
+        percent: 0,
+        label:
+          connectedCount > 0
+            ? "Waiting for your website… (socials connected)"
+            : "Waiting for your website…",
+      };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Users, teams & auth (Sprint 19)
 // ---------------------------------------------------------------------------
 
