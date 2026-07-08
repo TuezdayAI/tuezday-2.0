@@ -1,0 +1,205 @@
+/* Onboarding Step 6 — campaign quick setup (Sprint 36.6).
+   Native tokens from globals.css; layout composes with .ob-panel/.ob-input. */
+
+.cp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.cp-field > span:first-child {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.cp-goal {
+  resize: vertical;
+  min-height: 72px;
+}
+
+.cp-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.cp-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: none;
+  padding: 0;
+  margin: 0;
+}
+
+.cp-group > legend {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 0;
+  margin-bottom: 8px;
+}
+
+/* Channel multi-select chips. */
+.cp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.cp-chip {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.cp-chip:hover {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.cp-chip.selected {
+  background: var(--accent);
+  border-color: var(--accent-deep);
+  color: var(--accent-ink);
+}
+
+/* Posting-frequency segmented row. */
+.cp-segmented {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: var(--panel);
+}
+
+.cp-segment {
+  flex: 1;
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 6px;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.cp-segment:last-child {
+  border-right: none;
+}
+
+.cp-segment:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+.cp-segment.selected {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+@media (max-width: 560px) {
+  .cp-segmented {
+    flex-direction: column;
+  }
+
+  .cp-segment {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .cp-segment:last-child {
+    border-bottom: none;
+  }
+}
+
+/* Optional collapsed campaign-name detail. */
+.cp-details {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cp-details > summary {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  cursor: pointer;
+  width: fit-content;
+}
+
+.cp-details[open] > summary {
+  color: var(--text);
+}
+
+.cp-details > .ob-input {
+  width: 100%;
+  margin-top: 6px;
+}
+
+.cp-details > .cp-hint {
+  margin-top: 4px;
+}
+
+/* "Campaign created" note when the user comes back to this step. */
+.cp-created {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13.5px;
+  color: var(--muted);
+  margin: 0;
+}
+
+.cp-created-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ok);
+  flex: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .cp-chip,
+  .cp-segment {
+    transition:
+      background 0.15s var(--ease-out),
+      color 0.15s var(--ease-out),
+      border-color 0.15s var(--ease-out);
+  }
+
+  .cp-chip.selected {
+    animation: cp-chip-pop 0.2s var(--ease-out);
+  }
+
+  @keyframes cp-chip-pop {
+    from {
+      transform: scale(0.94);
+    }
+    to {
+      transform: scale(1);
+    }
+  }
+
+  .cp-created-dot {
+    animation: cp-created-in 0.35s var(--ease-out) backwards;
+  }
+
+  @keyframes cp-created-in {
+    from {
+      opacity: 0;
+      transform: scale(0.5);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+}
