@@ -2,7 +2,6 @@
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import {
   ONBOARDING_STEPS,
   type OnboardingCursor,
@@ -12,6 +11,8 @@ import { apiFetch, getToken } from "@/lib/api";
 import { ConnectPanel } from "./_components/connect-panel";
 import { VerifyPanel } from "./_components/verify-panel";
 import { BrainPanel } from "./_components/brain-panel";
+import { CampaignPanel } from "./_components/campaign-panel";
+import { DraftPanel } from "./_components/draft-panel";
 import "./onboarding.css";
 
 const STEP_LABELS: Record<OnboardingStep, string> = {
@@ -49,6 +50,7 @@ function OnboardingWizard() {
   const [wsName, setWsName] = useState("");
   const [workspaceId, setWorkspaceId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [campaignId, setCampaignId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -170,7 +172,15 @@ function OnboardingWizard() {
   }
 
   const panelProps = workspaceId
-    ? { workspaceId, userName: name.trim(), onContinue: advance, onError: setError }
+    ? {
+        workspaceId,
+        userName: name.trim(),
+        onContinue: advance,
+        onError: setError,
+        campaignId,
+        onCampaignCreated: setCampaignId,
+        workspaceName: wsName,
+      }
     : null;
 
   return (
@@ -250,17 +260,8 @@ function OnboardingWizard() {
       {step === "verify" && panelProps && <VerifyPanel {...panelProps} />}
       {step === "brain" && panelProps && <BrainPanel {...panelProps} />}
 
-      {(step === "campaign" || step === "draft") && (
-        <section className="panel ob-panel">
-          <h1>{STEP_LABELS[step]}</h1>
-          <p className="subtitle">Coming up in a later sprint.</p>
-          {workspaceId && (
-            <Link className="link-button" href={`/workspaces/${workspaceId}`}>
-              Skip to workspace →
-            </Link>
-          )}
-        </section>
-      )}
+      {step === "campaign" && panelProps && <CampaignPanel {...panelProps} />}
+      {step === "draft" && panelProps && <DraftPanel {...panelProps} />}
     </main>
   );
 }

@@ -328,6 +328,70 @@ export function onboardingReadingProgress(
 }
 
 // ---------------------------------------------------------------------------
+// Onboarding quick campaign (Sprint 36.6)
+//
+// Pure mappers for the wizard's 3-field campaign step. Tested here because
+// apps/web has no test runner.
+// ---------------------------------------------------------------------------
+
+export const ONBOARDING_FREQUENCIES = ["daily", "3x_week", "weekly", "biweekly"] as const;
+export type OnboardingFrequency = (typeof ONBOARDING_FREQUENCIES)[number];
+
+export const ONBOARDING_FREQUENCY_LABELS: Record<OnboardingFrequency, string> = {
+  daily: "Daily",
+  "3x_week": "3x per week",
+  weekly: "Weekly",
+  biweekly: "Every other week",
+};
+
+/** The resolver-visible campaign-overlay line recording the frequency intent.
+ * Scheduling itself is Sprint 26's job — onboarding records intent only. */
+export function frequencyOverlayLine(frequency: OnboardingFrequency): string {
+  return `Posting frequency intent: ${ONBOARDING_FREQUENCY_LABELS[frequency]}.`;
+}
+
+/** Honest broadcast task per channel. x has no broadcast task type (x_dm is
+ * per-lead), so it falls back to linkedin_post — channel guidance still
+ * styles the draft for X. */
+export function taskTypeForChannel(channel: Channel): TaskType {
+  switch (channel) {
+    case "linkedin":
+      return "linkedin_post";
+    case "instagram":
+      return "instagram_post";
+    case "email":
+      return "cold_email_opener";
+    case "ads":
+      return "ad_copy_variant";
+    case "web":
+      return "landing_page_hero";
+    case "pr":
+      return "press_boilerplate";
+    default:
+      return "linkedin_post";
+  }
+}
+
+export interface OnboardingQuickCampaignInput {
+  workspaceName: string;
+  goal: string;
+  channels: Channel[];
+  frequency: OnboardingFrequency;
+  name?: string;
+}
+
+/** Map the wizard's 3-field quick form onto the full campaign input. Must
+ * round-trip upsertCampaignInputSchema.parse unchanged. */
+export function onboardingQuickCampaign(input: OnboardingQuickCampaignInput): UpsertCampaignInput {
+  return upsertCampaignInputSchema.parse({
+    name: input.name?.trim() || `${input.workspaceName.trim()} launch`,
+    objective: input.goal.trim(),
+    channels: input.channels,
+    overlay: frequencyOverlayLine(input.frequency),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Users, teams & auth (Sprint 19)
 // ---------------------------------------------------------------------------
 

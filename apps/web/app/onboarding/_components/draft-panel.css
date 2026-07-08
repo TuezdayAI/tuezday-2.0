@@ -1,0 +1,83 @@
+/* Onboarding Step 7 — first draft finale (Sprint 36.6).
+   Native tokens from globals.css; motion only under no-preference. */
+
+.ob-draft-hint {
+  margin: 0;
+  color: var(--muted-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* Preview card — the draft, parked at the gate. */
+.ob-draft-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ob-draft-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ob-draft-channel {
+  color: var(--accent-deep);
+  background: var(--accent-soft);
+}
+
+.ob-draft-status {
+  color: var(--amber-ink);
+  background: var(--amber);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.ob-draft-excerpt {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.55;
+  white-space: pre-line;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* Working state — the staged status line breathes while we wait. */
+  .ob-draft-pulse {
+    animation: ob-draft-pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes ob-draft-pulse {
+    0%,
+    100% {
+      opacity: 0.45;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+
+  /* Success — the preview card lands with a restrained pop-in. */
+  .ob-draft-card {
+    animation: ob-draft-card-in 0.5s var(--ease-out) backwards;
+    animation-delay: 120ms;
+  }
+
+  @keyframes ob-draft-card-in {
+    from {
+      opacity: 0;
+      transform: translateY(14px) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+}

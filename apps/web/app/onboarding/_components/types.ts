@@ -15,4 +15,10 @@ export interface WizardPanelProps {
   onContinue: () => Promise<void>;
   /** Show (or clear, with null) the wizard-level error line. */
   onError: (message: string | null) => void;
+  /** Sprint 36.6: the campaign the quick-setup step created, consumed by the
+   * first-draft step. Set via onCampaignCreated on the campaign panel. */
+  campaignId?: string | null;
+  onCampaignCreated?: (campaignId: string) => void;
+  /** The workspace name, for deriving the default campaign name. */
+  workspaceName?: string;
 }

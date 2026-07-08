@@ -258,3 +258,10 @@ verification step. Commits carry the `Co-Authored-By: Claude Opus 4.8
   chains the existing generate → submit → onboarding-done endpoints (no new
   backend), and the guided flow becomes the default path for new workspaces.
   Awaiting founder review.
+
+- 2026-07-09 — Implemented multi-agent: contracts helpers (TDD 4 tests) +
+  wizard wiring + guided-setup default flip inline; CampaignPanel and
+  DraftPanel by two parallel agents, one file each. Full suite 1026/1026
+  across 82 files; typecheck + next build green (/onboarding 9.04 kB).
+  The 7-step Onboarding V2 flow is now complete end-to-end. Founder
+  visual walkthrough deferred to the batched 36.x review.
