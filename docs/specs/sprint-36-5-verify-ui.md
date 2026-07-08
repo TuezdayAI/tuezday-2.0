@@ -131,3 +131,12 @@ verification step. Commits carry the `Co-Authored-By: Claude Opus 4.8
 - 2026-07-07 — Spec drafted on branch `sprint-36-5-verify-ui` (stacked on 36.4
   tip `2e39e9d`). Pure-web sprint; every consumed API already shipped in
   36.2–36.4. Awaiting founder review; not implemented.
+- 2026-07-08 — Implemented multi-agent: skeleton (panel components +
+  WizardPanelProps + cursor advance with 409 surfacing + resume via
+  ?workspace= + home "Resume setup") built inline; the three panels built
+  by parallel agents, one file each. Note: the OAuth completion endpoint
+  is POST …/oauth/complete (the spec's research line said "register" —
+  the connect agent copied the working connectors page, which is why
+  that instruction existed). Full suite 1022/1022 across 81 files;
+  typecheck + next build green (/onboarding 7.3 kB). Founder visual
+  walkthrough deferred to the batched 36.x review.
