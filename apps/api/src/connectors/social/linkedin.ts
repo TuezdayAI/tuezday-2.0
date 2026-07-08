@@ -213,6 +213,13 @@ export class LinkedInAdapter implements SocialAdapter {
         baseUrlOverride: LINKEDIN_API,
       },
     );
+    // Reading member posts needs r_member_social (Community Management
+    // approval). When the app lacks it LinkedIn 401/403s here — degrade to a
+    // profile-only read (empty posts) rather than failing the whole account,
+    // so onboarding still gets the member's identity for the brain.
+    if (res.status === 401 || res.status === 403) {
+      return { handle, displayName: info.name ?? nameParts.join(" ").trim(), bio: "", recentPosts: [] };
+    }
     if (res.status < 200 || res.status >= 300) {
       const snippet = res.json ? JSON.stringify(res.json).slice(0, 200) : "";
       throw new ConnectorFabricError(`LinkedIn posts read returned ${res.status}: ${snippet}`);

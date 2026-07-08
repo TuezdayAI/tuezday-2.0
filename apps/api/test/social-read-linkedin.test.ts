@@ -119,6 +119,18 @@ describe("LinkedInAdapter.readSocialProfile", () => {
     expect(profile.recentPosts[24]!.text).toBe("Post 24");
   });
 
+  it("degrades to a profile-only read when posts are unauthorized (no r_member_social)", async () => {
+    // LinkedIn 403s the posts endpoint when the app lacks Community Management
+    // approval — the read must still return the member's identity, empty posts.
+    const adapter = adapterFor({
+      userinfo: userinfoOk,
+      posts: { status: 403, json: { message: "Not enough permissions" } },
+    });
+    const profile = await adapter.readSocialProfile();
+    expect(profile.displayName).toBe("Jane Doe");
+    expect(profile.recentPosts).toEqual([]);
+  });
+
   it("defaults missing fields (post text/url/createdAt, profile name/handle)", async () => {
     const adapter = adapterFor({
       userinfo: { status: 200, json: { sub: "abc123" } },
@@ -141,14 +153,15 @@ describe("LinkedInAdapter.readSocialProfile", () => {
     expect(profile.recentPosts).toEqual([]);
   });
 
-  it("throws ConnectorFabricError on a non-2xx posts response", async () => {
+  it("throws ConnectorFabricError on a server-error posts response", async () => {
+    // 401/403 degrade to profile-only (unapproved scope); a genuine 5xx still throws.
     const adapter = adapterFor({
       userinfo: userinfoOk,
-      posts: { status: 403, json: { message: "not permitted" } },
+      posts: { status: 500, json: { message: "server error" } },
     });
 
     await expect(adapter.readSocialProfile()).rejects.toThrow(ConnectorFabricError);
-    await expect(adapter.readSocialProfile()).rejects.toThrow(/403/);
+    await expect(adapter.readSocialProfile()).rejects.toThrow(/500/);
   });
 
   it("throws ConnectorFabricError on a non-2xx userinfo response", async () => {

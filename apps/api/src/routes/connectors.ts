@@ -20,6 +20,7 @@ import {
   oauthAppCredentials,
   providerByKey,
   registerOAuthConnection,
+  resolveOAuthScopes,
   setConnectionContentProfile,
   testConnection,
   updateConnection,
@@ -109,7 +110,7 @@ export function registerConnectorRoutes(
       try {
         await fabric.ensureIntegration(integrationKey, provider.nangoProvider, {
           ...oauthApp,
-          scopes: provider.oauthScopes ?? "",
+          scopes: resolveOAuthScopes(provider),
         });
         const session = await fabric.createConnectSession(integrationKey, request.params.id);
         // The browser opens the popup itself, so it needs a host it can reach.

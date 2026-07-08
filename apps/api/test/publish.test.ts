@@ -529,8 +529,9 @@ describe("social publishing API", () => {
       expect(state.integrationOAuth.get("tuezday-reddit")).toEqual({
         clientId: "cid",
         clientSecret: "csecret",
-        // `read` added in Sprint 46 for connected discovery listings/search.
-        scopes: "identity,submit,read",
+        // `read` (Sprint 46) + `history` (Sprint 36.7: read the user's own posts
+        // for the onboarding brain draft).
+        scopes: "identity,submit,read,history",
       });
       expect(state.sessions[0]).toEqual({ integrationKey: "tuezday-reddit", endUserId: workspaceId });
     });

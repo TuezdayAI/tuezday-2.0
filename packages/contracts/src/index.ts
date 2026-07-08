@@ -1748,7 +1748,11 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     categories: ["social"],
     baseUrl: "https://api.linkedin.com",
     testPath: "/v2/userinfo",
-    oauthScopes: "openid,profile,email,w_member_social,r_member_social",
+    // r_member_social (member-post READ) needs LinkedIn Community Management
+    // approval and, being all-or-nothing, blocks the whole OAuth grant when the
+    // app lacks it. Kept OUT of the default; the API re-adds it only when
+    // LINKEDIN_COMMUNITY_APPROVED is set (see resolveOAuthScopes).
+    oauthScopes: "openid,profile,email,w_member_social",
   },
   {
     // Key stays "twitter" to match Nango's twitter-v2 template family; the UI

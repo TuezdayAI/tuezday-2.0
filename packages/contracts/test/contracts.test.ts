@@ -1357,7 +1357,10 @@ describe("connected discovery contracts (Sprint 46)", () => {
     const scopes = (key: string) =>
       CONNECTOR_PROVIDERS.find((p) => p.key === key)?.oauthScopes?.split(",") ?? [];
     expect(scopes("reddit")).toContain("read");
-    expect(scopes("linkedin")).toContain("r_member_social");
+    expect(scopes("linkedin")).toContain("w_member_social");
+    // r_member_social is env-gated at the API layer (needs LinkedIn approval),
+    // so it is not in the static default scope set.
+    expect(scopes("linkedin")).not.toContain("r_member_social");
     expect(scopes("twitter")).toContain("list.read");
   });
 });
