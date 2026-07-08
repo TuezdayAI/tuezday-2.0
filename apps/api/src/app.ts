@@ -42,6 +42,7 @@ import { registerPrRoutes } from "./routes/pr";
 import { registerPublicationRoutes } from "./routes/publications";
 import { registerGenerationRoutes } from "./routes/generations";
 import { registerPersonaRoutes } from "./routes/personas";
+import { registerRazorpayRoutes } from "./routes/razorpay";
 import { registerSignalRoutes } from "./routes/signals";
 import { registerTeamRoutes } from "./routes/teams";
 import { registerWorkspaceRoutes } from "./routes/workspaces";
@@ -53,6 +54,7 @@ import { registerBillingRoutes, registerStripeWebhookRoute } from "./routes/bill
 import { registerNotificationRoutes } from "./routes/notifications";
 import { registerApiKeyRoutes } from "./routes/api-keys";
 import { registerPublicApiRoutes } from "./routes/public-api";
+import { createRazorpayOrderClientFromEnv, type RazorpayOrderClient } from "./services/razorpay";
 
 export type TuezdayApp = FastifyInstance;
 
@@ -79,6 +81,8 @@ export interface BuildAppOptions {
   workerToken?: string;
   /** Product-analytics sink; defaults to PostHog-or-Noop from env. */
   analytics?: AnalyticsSink;
+  /** Razorpay Standard Checkout order client; tests inject a fake. */
+  razorpay?: RazorpayOrderClient;
 }
 
 export async function buildApp({
@@ -92,6 +96,7 @@ export async function buildApp({
   mailer = createDefaultMailer(fetcher),
   workerToken = process.env.TUEZDAY_WORKER_TOKEN,
   analytics = createAnalyticsSink(),
+  razorpay = createRazorpayOrderClientFromEnv(),
 }: BuildAppOptions): Promise<TuezdayApp> {
   const app = Fastify({ logger: false });
 
@@ -126,6 +131,7 @@ export async function buildApp({
   registerBrainAutoDraftRoutes(app, db, llm, connectors);
   registerApiKeyRoutes(app, db);
   registerTeamRoutes(app, db, mailer);
+  registerRazorpayRoutes(app, razorpay);
   registerBillingRoutes(app, db);
   registerStripeWebhookRoute(app, db);
   registerBrainRoutes(app, db, llm);

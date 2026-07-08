@@ -1,7 +1,16 @@
 "use client";
 
 import { use, useEffect, useState } from "react";
+import Script from "next/script";
 import { apiFetch } from "@/lib/api";
+import {
+  buildRazorpayCheckoutOptions,
+  buildRazorpayOrderRequest,
+  formatRazorpayFailure,
+  type RazorpayCheckoutOptions,
+  type RazorpayFailureEvent,
+  type RazorpayOrderResponse,
+} from "@/lib/razorpay-checkout";
 import { PLANS, usageMeter, type EntitlementUsage, type Entitlements, type PlanId } from "@tuezday/contracts";
 
 interface BillingView {
@@ -10,13 +19,26 @@ interface BillingView {
   usage: EntitlementUsage;
 }
 
-/** Display-only price copy; the checkout price always comes from Stripe. */
+/** Display-only price copy; the provider checkout amount is configured separately. */
 const PLAN_PRICE_COPY: Record<PlanId, string> = { free: "$0", pro: "$29.99", scale: "Custom" };
+const RAZORPAY_KEY_ID = process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID ?? "";
+
+interface RazorpayCheckoutInstance {
+  open: () => void;
+  on: (event: "payment.failed", handler: (response: RazorpayFailureEvent) => void) => void;
+}
+
+declare global {
+  interface Window {
+    Razorpay?: new (options: RazorpayCheckoutOptions) => RazorpayCheckoutInstance;
+  }
+}
 
 export default function BillingPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = use(params);
   const [data, setData] = useState<BillingView | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [upgrading, setUpgrading] = useState(false);
 
   useEffect(() => {
@@ -38,19 +60,57 @@ export default function BillingPage({ params }: { params: Promise<{ id: string }
   async function handleUpgrade() {
     setUpgrading(true);
     setError(null);
+    setNotice(null);
     try {
-      const res = await apiFetch(`/workspaces/${id}/billing/checkout`, {
+      if (!RAZORPAY_KEY_ID) throw new Error("Razorpay key id is not configured.");
+      if (!window.Razorpay) throw new Error("Razorpay checkout is still loading. Please try again.");
+
+      const res = await apiFetch("/api/create-order", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ plan: "pro" }),
+        body: JSON.stringify(buildRazorpayOrderRequest(id, "pro")),
       });
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.message ?? body?.error ?? "Checkout failed");
-      if (body?.url) {
-        window.location.href = body.url;
-        return;
+      if (!res.ok) throw new Error(body?.message ?? body?.error ?? "Could not create payment order.");
+
+      const order = body as RazorpayOrderResponse;
+      if (!order?.order_id || !order.amount || !order.currency) {
+        throw new Error("Payment order response was incomplete.");
       }
-      throw new Error("Checkout did not return a redirect URL.");
+
+      const checkout = new window.Razorpay(
+        buildRazorpayCheckoutOptions({
+          keyId: RAZORPAY_KEY_ID,
+          order,
+          onSuccess: async (payment) => {
+            try {
+              const verifyRes = await apiFetch("/api/verify-payment", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payment),
+              });
+              const verifyBody = await verifyRes.json().catch(() => null);
+              if (!verifyRes.ok) {
+                throw new Error(verifyBody?.message ?? verifyBody?.error ?? "Payment verification failed.");
+              }
+              setNotice("Payment verified.");
+            } catch (err) {
+              setError(err instanceof Error ? err.message : String(err));
+            } finally {
+              setUpgrading(false);
+            }
+          },
+          onDismiss: () => {
+            setError("Payment cancelled.");
+            setUpgrading(false);
+          },
+        }),
+      );
+      checkout.on("payment.failed", (response) => {
+        setError(formatRazorpayFailure(response));
+        setUpgrading(false);
+      });
+      checkout.open();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setUpgrading(false);
@@ -59,6 +119,11 @@ export default function BillingPage({ params }: { params: Promise<{ id: string }
 
   return (
     <>
+      <Script
+        src="https://checkout.razorpay.com/v1/checkout.js"
+        strategy="afterInteractive"
+        onError={() => setError("Razorpay checkout script failed to load.")}
+      />
       <div className="page-header">
         <div>
           <h1>Billing &amp; subscription</h1>
@@ -67,6 +132,7 @@ export default function BillingPage({ params }: { params: Promise<{ id: string }
       </div>
 
       {error && <p className="error">{error}</p>}
+      {notice && <p className="meta">{notice}</p>}
 
       <section className="panel">
         <h2>Current plan</h2>
@@ -104,7 +170,7 @@ export default function BillingPage({ params }: { params: Promise<{ id: string }
             {data.plan === "free" && (
               <div className="editor-actions" style={{ marginTop: 20 }}>
                 <button onClick={handleUpgrade} disabled={upgrading}>
-                  {upgrading ? "Redirecting..." : "Upgrade to Pro"}
+                  {upgrading ? "Processing..." : "Pay with Razorpay"}
                 </button>
               </div>
             )}
