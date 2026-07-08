@@ -39,6 +39,14 @@ export default function HomePage() {
     void load();
   }, [load, router]);
 
+  // Sprint 36.6: with the flow complete end-to-end, guided setup is the
+  // default first-run path. ?quick=1 keeps the manual escape hatch.
+  useEffect(() => {
+    if (workspaces && workspaces.length === 0 && !new URLSearchParams(window.location.search).has("quick")) {
+      router.push("/onboarding");
+    }
+  }, [workspaces, router]);
+
   async function logout() {
     await apiFetch("/auth/logout", { method: "POST" }).catch(() => {});
     clearToken();
@@ -114,7 +122,9 @@ export default function HomePage() {
       {workspaces === null ? (
         <p className="empty">Loading…</p>
       ) : workspaces.length === 0 ? (
-        <p className="empty">No workspaces yet. Create the first one above.</p>
+        <p className="empty">
+          No workspaces yet — guided setup is the fastest way to your first draft.
+        </p>
       ) : (
         <ul className="workspace-list">
           {workspaces.map((w) => (
