@@ -1,0 +1,112 @@
+/* Onboarding Step 5 — "Meet your Brain" reveal (Sprint 36.5).
+   Native tokens from globals.css; motion only under no-preference. */
+
+.ob-brain-guidance {
+  margin: 0;
+  padding-left: 18px;
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.6;
+}
+
+.ob-brain-grid {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ob-brain-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ob-brain-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.ob-brain-card-head h2 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.ob-brain-excerpt {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.5;
+}
+
+.ob-brain-excerpt-empty {
+  font-style: italic;
+  color: var(--muted-2);
+}
+
+.ob-brain-edit {
+  align-self: flex-start;
+  font-size: 13px;
+}
+
+/* Per-doc badges — layered on the global .layer-badge pill. */
+.ob-doc-empty {
+  color: var(--muted);
+  background: var(--panel-2);
+}
+
+.ob-doc-draft {
+  color: var(--amber-ink);
+  background: var(--amber);
+}
+
+.ob-doc-complete {
+  color: var(--mint-ink);
+  background: var(--mint);
+}
+
+/* Pre-existing content the auto-draft refused to clobber. */
+.ob-doc-skipped {
+  color: var(--accent-deep);
+  background: var(--accent-soft);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* Staggered reveal — each card's animation-delay is set inline (i * 90ms). */
+  .ob-brain-card {
+    animation: ob-brain-card-in 0.45s var(--ease-out) backwards;
+  }
+
+  @keyframes ob-brain-card-in {
+    from {
+      opacity: 0;
+      transform: translateY(14px) scale(0.985);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) scale(1);
+    }
+  }
+
+  .ob-drafting-pulse {
+    animation: ob-drafting-pulse 1.5s ease-in-out infinite;
+  }
+
+  @keyframes ob-drafting-pulse {
+    0%,
+    100% {
+      opacity: 0.45;
+    }
+    50% {
+      opacity: 1;
+    }
+  }
+}

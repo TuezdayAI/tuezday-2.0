@@ -1,10 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
-import { ONBOARDING_STEPS, type OnboardingStep } from "@tuezday/contracts";
+import {
+  ONBOARDING_STEPS,
+  type OnboardingCursor,
+  type OnboardingStep,
+} from "@tuezday/contracts";
 import { apiFetch, getToken } from "@/lib/api";
+import { ConnectPanel } from "./_components/connect-panel";
+import { VerifyPanel } from "./_components/verify-panel";
+import { BrainPanel } from "./_components/brain-panel";
 import "./onboarding.css";
 
 const STEP_LABELS: Record<OnboardingStep, string> = {
@@ -28,8 +35,14 @@ function nameFromHost(url: string): string {
   }
 }
 
-export default function OnboardingPage() {
+function nextStep(step: OnboardingStep): OnboardingCursor {
+  const i = ONBOARDING_STEPS.indexOf(step);
+  return ONBOARDING_STEPS[i + 1] ?? "done";
+}
+
+function OnboardingWizard() {
   const router = useRouter();
+  const params = useSearchParams();
   const [step, setStep] = useState<OnboardingStep>("name");
   const [name, setName] = useState("");
   const [website, setWebsite] = useState("");
@@ -42,6 +55,43 @@ export default function OnboardingPage() {
     if (!getToken()) router.push("/login");
   }, [router]);
 
+  // Resume (Sprint 36.5): /onboarding?workspace=<id> jumps to the workspace's
+  // stored cursor so a reload never loses progress.
+  const resumeId = params.get("workspace");
+  useEffect(() => {
+    if (!resumeId) return;
+    let active = true;
+    void (async () => {
+      try {
+        const [wsRes, meRes] = await Promise.all([
+          apiFetch(`/workspaces/${resumeId}`),
+          apiFetch("/auth/me"),
+        ]);
+        if (!wsRes.ok) return;
+        const ws = await wsRes.json();
+        if (meRes.ok && active) {
+          const me = await meRes.json();
+          setName(me.user?.name ?? "");
+        }
+        if (!active) return;
+        setWorkspaceId(ws.id);
+        setWebsite(ws.websiteUrl ?? "");
+        setWsName(ws.name ?? "");
+        const cursor = ws.onboardingStep as OnboardingCursor | null;
+        if (cursor === "done" || cursor === null) {
+          router.push(`/workspaces/${ws.id}`);
+          return;
+        }
+        setStep(cursor);
+      } catch {
+        // resume is best-effort; the wizard just starts at "name"
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, [resumeId, router]);
+
   const validUrl = useMemo(() => {
     try {
       const u = new URL(website);
@@ -50,6 +100,29 @@ export default function OnboardingPage() {
       return false;
     }
   }, [website]);
+
+  /** Advance the cursor server-side, then locally. Surfaces the 36.3 min-1
+   * social gate's 409 (and any other rejection) on the wizard error line. */
+  const advance = useCallback(async () => {
+    if (!workspaceId) return;
+    const to = nextStep(step);
+    setError(null);
+    const res = await apiFetch(`/workspaces/${workspaceId}/onboarding`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ step: to }),
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) {
+      setError(body?.message ?? "Could not continue");
+      return;
+    }
+    if (to === "done") {
+      router.push(`/workspaces/${workspaceId}`);
+      return;
+    }
+    setStep(to as OnboardingStep);
+  }, [workspaceId, step, router]);
 
   async function saveName() {
     setBusy(true);
@@ -96,6 +169,10 @@ export default function OnboardingPage() {
     }
   }
 
+  const panelProps = workspaceId
+    ? { workspaceId, userName: name.trim(), onContinue: advance, onError: setError }
+    : null;
+
   return (
     <main className="onboarding">
       <ol className="ob-rail">
@@ -139,8 +216,7 @@ export default function OnboardingPage() {
         <section className="panel ob-panel">
           <h1>Point us at your website</h1>
           <p className="subtitle">
-            We&apos;ll read it to draft your Brain. (Reading arrives in a later sprint — for
-            now we remember the URL.)
+            We&apos;ll read it the moment you continue, and draft your Brain from it.
           </p>
           <input
             className="ob-input"
@@ -170,7 +246,11 @@ export default function OnboardingPage() {
         </section>
       )}
 
-      {step !== "name" && step !== "website" && (
+      {step === "connect" && panelProps && <ConnectPanel {...panelProps} />}
+      {step === "verify" && panelProps && <VerifyPanel {...panelProps} />}
+      {step === "brain" && panelProps && <BrainPanel {...panelProps} />}
+
+      {(step === "campaign" || step === "draft") && (
         <section className="panel ob-panel">
           <h1>{STEP_LABELS[step]}</h1>
           <p className="subtitle">Coming up in a later sprint.</p>
@@ -182,5 +262,14 @@ export default function OnboardingPage() {
         </section>
       )}
     </main>
+  );
+}
+
+export default function OnboardingPage() {
+  // useSearchParams requires a Suspense boundary in the App Router.
+  return (
+    <Suspense fallback={null}>
+      <OnboardingWizard />
+    </Suspense>
   );
 }

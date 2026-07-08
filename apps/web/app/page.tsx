@@ -124,6 +124,18 @@ export default function HomePage() {
                 <span className="meta">
                   created {new Date(w.createdAt).toLocaleString()}
                 </span>
+                {w.onboardingStep && w.onboardingStep !== "done" && (
+                  <span
+                    className="link-button"
+                    role="link"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      router.push(`/onboarding?workspace=${w.id}`);
+                    }}
+                  >
+                    Resume setup →
+                  </span>
+                )}
               </Link>
             </li>
           ))}
