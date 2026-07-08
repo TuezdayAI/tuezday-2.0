@@ -1705,7 +1705,7 @@ describe("social publishing contracts (Sprint 17)", () => {
     expect(reddit?.baseUrl).toBe("https://oauth.reddit.com");
     expect(reddit?.testPath?.startsWith("/")).toBe(true);
     // `read` added in Sprint 46 for connected discovery listings/search.
-    expect(reddit?.oauthScopes).toBe("identity,submit,read");
+    expect(reddit?.oauthScopes).toBe("identity,submit,read,history");
   });
 
   it("extends the category vocabulary with social", () => {

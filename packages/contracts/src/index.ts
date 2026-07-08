@@ -159,13 +159,38 @@ export const workspaceSchema = z.object({
 });
 export type Workspace = z.infer<typeof workspaceSchema>;
 
+/**
+ * Accept a bare domain ("tuezdayai.com", "www.acme.com/path") as a website —
+ * no-friction onboarding. Prepends https:// when no scheme is present, then
+ * validates. Returns the normalized absolute URL, or null if unusable.
+ */
+export function normalizeWebsiteUrl(input: string): string | null {
+  const trimmed = input.trim();
+  if (!trimmed) return null;
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  let url: URL;
+  try {
+    url = new URL(withScheme);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  // A bare hostname must have a dot (reject "not a url at all" → "https://not").
+  if (!url.hostname.includes(".")) return null;
+  return url.href.replace(/\/$/, "") === withScheme.replace(/\/$/, "") ? withScheme : url.href;
+}
+
 export const createWorkspaceInputSchema = z.object({
   name: z
     .string()
     .trim()
     .min(1, "Workspace name is required")
     .max(100, "Workspace name must be 100 characters or fewer"),
-  websiteUrl: z.string().url("Enter a valid URL, e.g. https://acme.com").optional(),
+  websiteUrl: z
+    .preprocess(
+      (v) => (typeof v === "string" && v.trim() ? (normalizeWebsiteUrl(v) ?? v) : v),
+      z.string().url("Enter a valid website, e.g. acme.com").optional(),
+    ),
   onboardingStep: z.enum(ONBOARDING_CURSORS).optional(),
 });
 export type CreateWorkspaceInput = z.infer<typeof createWorkspaceInputSchema>;
@@ -244,7 +269,7 @@ export type UpdateBrandProfileInput = z.infer<typeof updateBrandProfileInputSche
 // auto-draft (36.4) alongside the 36.2 website corpus.
 // ---------------------------------------------------------------------------
 
-export const SOCIAL_READ_PROVIDERS = ["linkedin", "twitter", "instagram"] as const;
+export const SOCIAL_READ_PROVIDERS = ["linkedin", "twitter", "instagram", "reddit"] as const;
 export type SocialReadProvider = (typeof SOCIAL_READ_PROVIDERS)[number];
 
 export const socialPostReadSchema = z.object({
@@ -1703,7 +1728,8 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     categories: ["social"],
     baseUrl: "https://oauth.reddit.com",
     testPath: "/api/v1/me",
-    oauthScopes: "identity,submit,read",
+    // history: read the connected user's own posts for the onboarding brain draft.
+    oauthScopes: "identity,submit,read,history",
   },
   {
     // Sprint 25 social trio. OAuth popup like Reddit; creds come from
