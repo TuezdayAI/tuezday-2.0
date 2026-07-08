@@ -1,0 +1,149 @@
+/* Onboarding connect panel (Sprint 36.5) — native tokens from globals.css. */
+
+.ob-connect-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.ob-connect-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+
+.ob-connect-card-muted {
+  background: var(--panel-2);
+  border-style: dashed;
+}
+
+.ob-connect-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ob-connect-name {
+  font-weight: 600;
+}
+
+.ob-connect-card-muted .ob-connect-name {
+  color: var(--muted);
+}
+
+.ob-connect-handle {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.ob-connect-note {
+  font-size: 12.5px;
+  color: var(--muted-2);
+}
+
+/* "Tuezday is reading…" progress strip */
+
+.ob-reading {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.ob-reading-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.ob-reading-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ob-reading-label {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.ob-reading-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.ob-reading-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.ob-reading-fill.is-failed {
+  background: var(--c1);
+}
+
+.ob-gate-hint {
+  color: var(--amber-ink);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ob-connect-card {
+    animation: ob-card-in 0.35s var(--ease-out) backwards;
+  }
+
+  .ob-connect-cards li:nth-child(2) {
+    animation-delay: 0.06s;
+  }
+
+  .ob-connect-cards li:nth-child(3) {
+    animation-delay: 0.12s;
+  }
+
+  .ob-reading-fill {
+    transition: width 0.6s var(--ease-out);
+  }
+
+  .ob-reading-fill.is-reading {
+    background-image: linear-gradient(
+      90deg,
+      var(--accent) 0%,
+      var(--accent-deep) 50%,
+      var(--accent) 100%
+    );
+    background-size: 200% 100%;
+    animation: ob-reading-shimmer 1.6s linear infinite;
+  }
+
+  @keyframes ob-card-in {
+    from {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
+  @keyframes ob-reading-shimmer {
+    from {
+      background-position: 0% 0;
+    }
+    to {
+      background-position: -200% 0;
+    }
+  }
+}

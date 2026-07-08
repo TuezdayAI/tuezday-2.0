@@ -1,0 +1,128 @@
+/* Onboarding Step 4 — verify the extracted brand profile (Sprint 36.5).
+   Native tokens from globals.css; layout composes with .ob-panel/.ob-input. */
+
+.vp-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.vp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.vp-field > span:first-child {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.vp-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.vp-textarea {
+  resize: vertical;
+  min-height: 88px;
+}
+
+.vp-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.vp-dimensions {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px 14px;
+  margin: 0;
+}
+
+.vp-dimensions > legend {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 0 4px;
+}
+
+.vp-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+@media (max-width: 560px) {
+  .vp-row,
+  .vp-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* "What we couldn't find" — the model's honest sourceNotes, read-only. */
+.vp-notes {
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  padding: 10px 14px;
+}
+
+.vp-notes h2 {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 0 0 4px;
+}
+
+.vp-notes p {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.vp-stored-error {
+  font-size: 13px;
+  color: var(--muted);
+  border-left: 3px solid var(--border);
+  padding-left: 10px;
+  margin: 0;
+}
+
+/* "Still reading…" while the profile is scraping/extracting. */
+.vp-reading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 600;
+}
+
+.vp-reading-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .vp-reading-dot {
+    animation: vp-pulse 1.4s ease-in-out infinite;
+  }
+
+  @keyframes vp-pulse {
+    0%,
+    100% {
+      opacity: 1;
+      transform: scale(1);
+    }
+    50% {
+      opacity: 0.35;
+      transform: scale(0.75);
+    }
+  }
+}
