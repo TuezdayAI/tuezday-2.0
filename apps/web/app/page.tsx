@@ -10,9 +10,7 @@ export default function HomePage() {
   const router = useRouter();
   const [workspaces, setWorkspaces] = useState<Workspace[] | null>(null);
   const [userLabel, setUserLabel] = useState<string | null>(null);
-  const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -39,10 +37,10 @@ export default function HomePage() {
     void load();
   }, [load, router]);
 
-  // Sprint 36.6: with the flow complete end-to-end, guided setup is the
-  // default first-run path. ?quick=1 keeps the manual escape hatch.
+  // Sprint 36.7: every workspace is created through guided onboarding — there
+  // is no manual-create path. A first-time user goes straight into the flow.
   useEffect(() => {
-    if (workspaces && workspaces.length === 0 && !new URLSearchParams(window.location.search).has("quick")) {
+    if (workspaces && workspaces.length === 0) {
       router.push("/onboarding");
     }
   }, [workspaces, router]);
@@ -51,29 +49,6 @@ export default function HomePage() {
     await apiFetch("/auth/logout", { method: "POST" }).catch(() => {});
     clearToken();
     router.push("/login");
-  }
-
-  async function createWorkspace(e: React.FormEvent) {
-    e.preventDefault();
-    setSubmitting(true);
-    setError(null);
-    try {
-      const res = await apiFetch("/workspaces", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
-      if (!res.ok) {
-        const body = await res.json().catch(() => null);
-        throw new Error(body?.message ?? `API returned ${res.status}`);
-      }
-      setName("");
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to create workspace");
-    } finally {
-      setSubmitting(false);
-    }
   }
 
   return (
@@ -91,66 +66,49 @@ export default function HomePage() {
         )}
       </header>
       <main className="site-main">
-      <h1>Workspaces</h1>
-      <p className="subtitle">
-        Each workspace owns one GTM brain: soul, ICP, voice, history, now.
-      </p>
-
-      <div className="create-form">
-        <button type="button" onClick={() => router.push("/onboarding")}>
-          Start guided setup
-        </button>
-      </div>
-
-      <details className="quick-create">
-        <summary>Quick create (skip onboarding)</summary>
-        <form className="create-form" onSubmit={createWorkspace}>
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="New workspace name (e.g. Hexalog)"
-            maxLength={100}
-          />
-          <button type="submit" disabled={submitting || name.trim().length === 0}>
-            Create
-          </button>
-        </form>
-      </details>
-
-      {error && <p className="error">{error}</p>}
-
-      {workspaces === null ? (
-        <p className="empty">Loading…</p>
-      ) : workspaces.length === 0 ? (
-        <p className="empty">
-          No workspaces yet — guided setup is the fastest way to your first draft.
+        <h1>Workspaces</h1>
+        <p className="subtitle">
+          Each workspace owns one GTM brain: soul, ICP, voice, history, now.
         </p>
-      ) : (
-        <ul className="workspace-list">
-          {workspaces.map((w) => (
-            <li key={w.id}>
-              <Link href={`/workspaces/${w.id}`} className="workspace-card">
-                <span className="name">{w.name}</span>
-                <span className="meta">
-                  created {new Date(w.createdAt).toLocaleString()}
-                </span>
-                {w.onboardingStep && w.onboardingStep !== "done" && (
-                  <span
-                    className="link-button"
-                    role="link"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      router.push(`/onboarding?workspace=${w.id}`);
-                    }}
-                  >
-                    Resume setup →
+
+        <div className="create-form">
+          <button type="button" onClick={() => router.push("/onboarding")}>
+            New workspace
+          </button>
+        </div>
+
+        {error && <p className="error">{error}</p>}
+
+        {workspaces === null ? (
+          <p className="empty">Loading…</p>
+        ) : workspaces.length === 0 ? (
+          <p className="empty">Setting up your first workspace…</p>
+        ) : (
+          <ul className="workspace-list">
+            {workspaces.map((w) => (
+              <li key={w.id}>
+                <Link href={`/workspaces/${w.id}`} className="workspace-card">
+                  <span className="name">{w.name}</span>
+                  <span className="meta">
+                    created {new Date(w.createdAt).toLocaleString()}
                   </span>
-                )}
-              </Link>
-            </li>
-          ))}
-        </ul>
-      )}
+                  {w.onboardingStep && w.onboardingStep !== "done" && (
+                    <span
+                      className="link-button"
+                      role="link"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        router.push(`/onboarding?workspace=${w.id}`);
+                      }}
+                    >
+                      Resume setup →
+                    </span>
+                  )}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        )}
       </main>
     </>
   );

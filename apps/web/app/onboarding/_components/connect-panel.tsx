@@ -27,11 +27,13 @@ interface ConnectorsView {
 
 type ProfileStatus = BrandProfileStatus | "none";
 
-/** The three social cards, in display order. `twitter` is labelled "X". */
+/** The social cards, in display order. `twitter` is labelled "X". Reddit's
+ * OAuth app ships configured, so it is the one connectable out of the box. */
 const SOCIAL_CARDS = [
   { key: "linkedin", label: "LinkedIn" },
   { key: "twitter", label: "X" },
   { key: "instagram", label: "Instagram" },
+  { key: "reddit", label: "Reddit" },
 ] as const;
 
 function isSocialKey(key: string): boolean {
