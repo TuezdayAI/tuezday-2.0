@@ -258,9 +258,6 @@ export function DraftPanel({
       </div>
 
       <div className="ob-actions">
-        <button type="button" className="link-button" disabled={busy} onClick={finishViaShell}>
-          Go to workspace instead
-        </button>
         <button disabled={busy} onClick={reviewNow}>
           {busy ? "Opening…" : "Review it now →"}
         </button>

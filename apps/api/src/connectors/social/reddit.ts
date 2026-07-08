@@ -5,6 +5,7 @@ import type {
   PostRef,
   SocialAdapter,
   SocialPostResult,
+  SocialProfileReadRaw,
 } from "./index";
 
 const REDDIT_API = "https://oauth.reddit.com";
@@ -170,6 +171,60 @@ export class RedditAdapter implements SocialAdapter {
     return {
       externalId: thing.name,
       url: thing.permalink ? `https://www.reddit.com${thing.permalink}` : "",
+    };
+  }
+
+  /** Onboarding read (Sprint 36.7): the connected account's own identity +
+   * recent submissions, for the brain draft. */
+  async readSocialProfile(): Promise<SocialProfileReadRaw> {
+    const me = await this.fabric.proxyJson(
+      "GET",
+      "/api/v1/me",
+      this.config.nangoConnectionId,
+      this.config.integrationKey,
+      { headers: { "User-Agent": USER_AGENT }, baseUrlOverride: REDDIT_API },
+    );
+    if (me.status < 200 || me.status >= 300) {
+      throw new ConnectorFabricError(`Reddit /api/v1/me returned ${me.status}.`);
+    }
+    const account = ((me.json ?? {}) as {
+      data?: { name?: string; subreddit?: { title?: string; public_description?: string } };
+    }).data;
+    // Reddit's /api/v1/me is unwrapped (no "data" envelope) for some tokens.
+    const acc = account ?? (me.json as { name?: string; subreddit?: { title?: string; public_description?: string } });
+    const handle = acc?.name ?? "";
+
+    const submitted = await this.fabric.proxyJson(
+      "GET",
+      `/user/${encodeURIComponent(handle)}/submitted?limit=25`,
+      this.config.nangoConnectionId,
+      this.config.integrationKey,
+      { headers: { "User-Agent": USER_AGENT }, baseUrlOverride: REDDIT_API },
+    );
+    if (submitted.status < 200 || submitted.status >= 300) {
+      throw new ConnectorFabricError(`Reddit submissions returned ${submitted.status}.`);
+    }
+    const children =
+      ((submitted.json ?? {}) as {
+        data?: { children?: { data?: { title?: string; selftext?: string; permalink?: string; created_utc?: number } }[] };
+      }).data?.children ?? [];
+
+    const recentPosts = children.slice(0, 25).map((c) => {
+      const d = c.data ?? {};
+      const title = d.title ?? "";
+      const body = d.selftext?.trim() ? `\n${d.selftext.trim()}` : "";
+      return {
+        text: `${title}${body}`.trim(),
+        url: d.permalink ? `https://www.reddit.com${d.permalink}` : "",
+        createdAt: d.created_utc ? d.created_utc * 1000 : null,
+      };
+    });
+
+    return {
+      handle,
+      displayName: acc?.subreddit?.title || handle,
+      bio: acc?.subreddit?.public_description ?? "",
+      recentPosts,
     };
   }
 }

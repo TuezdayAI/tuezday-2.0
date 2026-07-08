@@ -215,11 +215,11 @@ export function VerifyPanel({ workspaceId, userName, onContinue, onError }: Wiza
         </p>
         {storedError && <p className="vp-stored-error">{storedError}</p>}
         <div className="ob-actions">
-          <button type="button" className="link-button" disabled={busy} onClick={skip}>
-            Skip for now
-          </button>
           <button type="button" disabled={busy} onClick={retry}>
             {busy ? "Retrying…" : "Retry"}
+          </button>
+          <button type="button" className="link-button" disabled={busy} onClick={skip}>
+            Continue anyway
           </button>
         </div>
       </section>
@@ -326,9 +326,7 @@ export function VerifyPanel({ workspaceId, userName, onContinue, onError }: Wiza
       </div>
 
       <div className="ob-actions">
-        <button type="button" className="link-button" disabled={busy} onClick={skip}>
-          Skip for now
-        </button>
+        <span />
         <button
           type="button"
           disabled={busy || form.businessName.trim().length === 0}

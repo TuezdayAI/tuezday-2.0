@@ -20,8 +20,9 @@ const SOCIAL = [
     nangoProvider: "linkedin",
     idEnv: "LINKEDIN_CLIENT_ID",
     secretEnv: "LINKEDIN_CLIENT_SECRET",
-    // r_member_social added in Sprint 46 for connected discovery reads.
-    scopes: "openid,profile,email,w_member_social,r_member_social",
+    // r_member_social is env-gated (needs LinkedIn Community Management
+    // approval) — not in the static default; see the dedicated test below.
+    scopes: "openid,profile,email,w_member_social",
   },
   {
     key: "twitter",
@@ -251,6 +252,23 @@ describe("connect social API", () => {
           integrationKey: `tuezday-${s.key}`,
           endUserId: workspaceId,
         });
+      }
+    });
+
+    it("adds r_member_social to LinkedIn only when LINKEDIN_COMMUNITY_APPROVED is set", async () => {
+      stubSocialEnv();
+      process.env.LINKEDIN_COMMUNITY_APPROVED = "1";
+      try {
+        const res = await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/connectors/linkedin/oauth/session`,
+        });
+        expect(res.statusCode).toBe(200);
+        expect(state.integrationOAuth.get("tuezday-linkedin")?.scopes).toBe(
+          "openid,profile,email,w_member_social,r_member_social",
+        );
+      } finally {
+        delete process.env.LINKEDIN_COMMUNITY_APPROVED;
       }
     });
   });

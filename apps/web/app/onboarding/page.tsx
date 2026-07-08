@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   ONBOARDING_STEPS,
+  normalizeWebsiteUrl,
   type OnboardingCursor,
   type OnboardingStep,
 } from "@tuezday/contracts";
@@ -94,14 +95,9 @@ function OnboardingWizard() {
     };
   }, [resumeId, router]);
 
-  const validUrl = useMemo(() => {
-    try {
-      const u = new URL(website);
-      return u.protocol === "http:" || u.protocol === "https:";
-    } catch {
-      return false;
-    }
-  }, [website]);
+  // No-friction: a bare domain ("acme.com") is valid — we prepend https://.
+  const normalizedUrl = useMemo(() => normalizeWebsiteUrl(website), [website]);
+  const validUrl = normalizedUrl !== null;
 
   /** Advance the cursor server-side, then locally. Surfaces the 36.3 min-1
    * social gate's 409 (and any other rejection) on the wizard error line. */
@@ -156,7 +152,7 @@ function OnboardingWizard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: (wsName || nameFromHost(website) || "My workspace").trim(),
-          websiteUrl: website.trim(),
+          websiteUrl: normalizedUrl ?? website.trim(),
           onboardingStep: "connect",
         }),
       });
@@ -226,7 +222,7 @@ function OnboardingWizard() {
         <section className="panel ob-panel">
           <h1>Point us at your website</h1>
           <p className="subtitle">
-            We&apos;ll read it the moment you continue, and draft your Brain from it.
+            Just the domain is fine — e.g. acme.com. We&apos;ll read it the moment you continue and draft your Brain from it.
           </p>
           <input
             className="ob-input"
@@ -235,7 +231,7 @@ function OnboardingWizard() {
               setWebsite(e.target.value);
               if (!wsName) setWsName(nameFromHost(e.target.value));
             }}
-            placeholder="https://acme.com"
+            placeholder="acme.com"
             autoFocus
           />
           <input

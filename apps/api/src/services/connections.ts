@@ -18,6 +18,22 @@ export function providerByKey(key: string): ConnectorProvider | undefined {
   return CONNECTOR_PROVIDERS.find((p) => p.key === key);
 }
 
+/**
+ * The OAuth scopes to request for a provider at connect time. Usually just the
+ * provider's static scopes, but LinkedIn's member-post READ scope
+ * (r_member_social) needs Community Management approval and, being
+ * all-or-nothing, blocks the entire grant when the app lacks it — so it is
+ * added back only when the operator sets LINKEDIN_COMMUNITY_APPROVED, once
+ * their LinkedIn app is approved.
+ */
+export function resolveOAuthScopes(provider: ConnectorProvider): string {
+  const base = provider.oauthScopes ?? "";
+  if (provider.key === "linkedin" && process.env.LINKEDIN_COMMUNITY_APPROVED?.trim()) {
+    return base ? `${base},r_member_social` : "r_member_social";
+  }
+  return base;
+}
+
 function rowToConnection(row: ConnectionRow): Connection {
   return {
     id: row.id,

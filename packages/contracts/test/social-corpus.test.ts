@@ -7,7 +7,7 @@ import {
 
 describe("social corpus contracts", () => {
   it("fixes the three readable social providers", () => {
-    expect(SOCIAL_READ_PROVIDERS).toEqual(["linkedin", "twitter", "instagram"]);
+    expect(SOCIAL_READ_PROVIDERS).toEqual(["linkedin", "twitter", "instagram", "reddit"]);
   });
 
   it("accepts a full profile read and defaults the rest", () => {
