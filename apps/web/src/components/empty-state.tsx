@@ -1,4 +1,5 @@
 import React from "react";
+import styles from "./empty-state.module.css";
 
 interface EmptyStateProps {
   title?: string;
@@ -9,11 +10,11 @@ interface EmptyStateProps {
 
 export function EmptyState({ title, description, icon, primaryAction }: EmptyStateProps) {
   return (
-    <div className="empty-state">
-      {icon && <div className="empty-state-icon">{icon}</div>}
-      {title && <h3>{title}</h3>}
-      <div className="empty">{description}</div>
-      {primaryAction && <div className="empty-state-action">{primaryAction}</div>}
+    <div className={styles.wrap}>
+      {icon && <div className={styles.icon}>{icon}</div>}
+      {title && <h3 className={styles.title}>{title}</h3>}
+      <div className={styles.description}>{description}</div>
+      {primaryAction && <div className={styles.action}>{primaryAction}</div>}
     </div>
   );
 }
