@@ -1,7 +1,9 @@
 "use client";
 
 import { EmptyState } from "@/src/components/empty-state";
-
+import { Button } from "@/src/components/ui/button";
+import { Card, CardHeader } from "@/src/components/ui/card";
+import { Input, Select } from "@/src/components/ui/input";
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
@@ -225,8 +227,8 @@ export default function CadencePage() {
       {error && <p className="error">{error}</p>}
       {notice && <EmptyState description={<>{notice}</>} />}
 
-      <section className="panel">
-        <h2>New cadence</h2>
+      <Card>
+        <CardHeader title="New cadence" />
         {social.length === 0 ? (
           <EmptyState description={<>No connected social account.{" "}
             <Link href={`/workspaces/${id}/connectors`}>Connect one</Link> first — a cadence posts
@@ -236,7 +238,7 @@ export default function CadencePage() {
             <div className="resolve-controls">
               <label>
                 Name
-                <input
+                <Input
                   value={form.name}
                   onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                   placeholder="Weekly thought leadership"
@@ -244,7 +246,7 @@ export default function CadencePage() {
               </label>
               <label>
                 Campaign
-                <select
+                <Select
                   value={form.campaignId}
                   onChange={(e) => setForm((f) => ({ ...f, campaignId: e.target.value }))}
                 >
@@ -254,11 +256,11 @@ export default function CadencePage() {
                       {c.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
               <label>
                 Persona (optional)
-                <select
+                <Select
                   value={form.personaId}
                   onChange={(e) =>
                     setForm((f) => ({ ...f, personaId: e.target.value, connectionId: "" }))
@@ -270,13 +272,13 @@ export default function CadencePage() {
                       {p.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
             </div>
             <div className="resolve-controls">
               <label>
                 Channel
-                <select
+                <Select
                   value={form.channel}
                   onChange={(e) =>
                     setForm((f) => ({
@@ -291,11 +293,11 @@ export default function CadencePage() {
                       {ch}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
               <label>
                 Post through
-                <select
+                <Select
                   value={form.connectionId}
                   onChange={(e) => setForm((f) => ({ ...f, connectionId: e.target.value }))}
                 >
@@ -305,11 +307,11 @@ export default function CadencePage() {
                       {connectionLabel(c)}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
               <label>
                 Target
-                <input
+                <Input
                   value={form.target}
                   onChange={(e) => setForm((f) => ({ ...f, target: e.target.value }))}
                   placeholder="subreddit, or 'feed'"
@@ -319,7 +321,7 @@ export default function CadencePage() {
             <div className="resolve-controls">
               <label>
                 Time
-                <input
+                <Input
                   type="time"
                   value={form.timeOfDay}
                   onChange={(e) => setForm((f) => ({ ...f, timeOfDay: e.target.value }))}
@@ -327,7 +329,7 @@ export default function CadencePage() {
               </label>
               <label>
                 Time zone
-                <input
+                <Input
                   value={form.timezone}
                   onChange={(e) => setForm((f) => ({ ...f, timezone: e.target.value }))}
                   placeholder="America/New_York"
@@ -352,15 +354,15 @@ export default function CadencePage() {
                 </label>
               ))}
             </div>
-            <button type="submit" disabled={submitting || !canCreate}>
+            <Button type="submit" variant="primary" disabled={submitting || !canCreate}>
               {submitting ? "Creating…" : "Create cadence"}
-            </button>
+            </Button>
           </form>
         )}
-      </section>
+      </Card>
 
-      <section className="panel">
-        <h2>Your cadences</h2>
+      <Card>
+        <CardHeader title="Your cadences" />
         {cadences === null ? (
           <EmptyState description="Loading…" />
         ) : cadences.length === 0 ? (
@@ -383,21 +385,26 @@ export default function CadencePage() {
                   </span>
                 </span>
                 <span className="page-actions">
-                  <button type="button" className="button-secondary" onClick={() => fill(c)}>
+                  <Button type="button" variant="secondary" size="sm" onClick={() => fill(c)}>
                     Fill now
-                  </button>
-                  <button type="button" className="button-secondary" onClick={() => toggleStatus(c)}>
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => toggleStatus(c)}
+                  >
                     {c.status === "active" ? "Pause" : "Resume"}
-                  </button>
-                  <button type="button" className="button-secondary" onClick={() => remove(c)}>
+                  </Button>
+                  <Button type="button" variant="secondary" size="sm" onClick={() => remove(c)}>
                     Delete
-                  </button>
+                  </Button>
                 </span>
               </li>
             ))}
           </ul>
         )}
-      </section>
+      </Card>
     </>
   );
 }
