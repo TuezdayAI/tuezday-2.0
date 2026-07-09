@@ -19,10 +19,6 @@
 }
 
 .ob-brain-card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--panel);
-  padding: 14px 16px;
   display: flex;
   flex-direction: column;
   gap: 6px;
