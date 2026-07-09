@@ -161,3 +161,9 @@ No new primitives should be needed in Phase 2 — if one is, that's a signal the
 ## Progress log
 
 - 2026-07-09 — Spec drafted on branch `ui-revamp-design` (off `main` `0bb9d7f`). Direction "Editorial" chosen after a 3-way visual comparison (Studio/Signal/Editorial) and one applied mockup on a real dense screen (workspace home + Brain + Review). Rollout capped at 2 phases per founder token-budget constraint. Awaiting founder review before writing-plans.
+
+## Phase 1 implementation log
+
+- 2026-07-09 — Phase 1 built via subagent-driven development (controller + parallel implementer agents). Delivered: `tokens.css` Editorial repaint + Fraunces font; 7 primitives (Button/IconButton, Card, Badge, Input/Textarea/Select, Tabs, Meter) + restyled PageHeader/EmptyState; workspace shell/sidebar restyle; 5 of 6 target screens re-skinned onto primitives (home, workspace home, Brain, Approvals, Billing). Full `npm run build -w apps/web` green (7/7 pages).
+- Deferred to a Phase 1 follow-up: the Onboarding wizard re-skin (Task 16) — its implementer agent died when the parent process exited, having done no real work; the screen still functions and inherits the new palette from the token repaint, but its markup is not yet on the primitives.
+- Flag for founder review: the Approvals screen's approve/reject buttons now render as solid primary (teal) / danger (red) rather than the previous neutral secondary — a deliberate emphasis improvement, but a visible change to confirm.
