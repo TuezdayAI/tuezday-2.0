@@ -1,0 +1,47 @@
+/* apps/web/src/components/ui/meter.module.css */
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.title {
+  font-weight: 500;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.figure {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.track {
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+
+.fill {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--accent);
+  transition: width 0.4s var(--ease-out);
+}
+
+.near {
+  background: var(--c2-deep);
+}
+
+.over {
+  background: var(--danger);
+}
+
+.unlimited {
+  background: var(--accent);
+  opacity: 0.35;
+}
