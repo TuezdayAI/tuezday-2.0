@@ -33,6 +33,7 @@ const TASK_LABELS: Record<TaskType, string> = {
   x_dm: "X DM",
   instagram_post: "Instagram post",
   engagement_reply: "Reply",
+  instagram_carousel: "Instagram carousel",
 };
 
 interface TrainingExample {

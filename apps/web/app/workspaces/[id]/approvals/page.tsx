@@ -34,6 +34,7 @@ const TASK_LABELS: Record<TaskType, string> = {
   x_dm: "X DM",
   instagram_post: "Instagram post",
   engagement_reply: "Reply",
+  instagram_carousel: "Instagram carousel",
 };
 
 const STATE_LABELS: Record<ApprovalState, string> = {
@@ -104,6 +105,28 @@ export default function ApprovalsPage() {
       if (historyId === draftId) await loadHistory(draftId);
     } catch (err) {
       setError(err instanceof Error ? err.message : `Failed to ${name}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function generateCarousel(draftId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await apiFetch(`/workspaces/${id}/drafts/${draftId}/carousel`, {
+        method: "POST",
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        // 402 already opened the standard upgrade modal via apiFetch.
+        if (res.status === 402) return;
+        throw new Error(body?.message ?? `API returned ${res.status}`);
+      }
+      setFilter("pending_review");
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate carousel");
     } finally {
       setBusy(false);
     }
@@ -246,6 +269,29 @@ export default function ApprovalsPage() {
                   </div>
                 ) : (
                   <>
+                    {d.media && d.media.length > 0 && (
+                      <div
+                        className="carousel-strip"
+                        style={{ display: "flex", gap: 8, overflowX: "auto", margin: "10px 0" }}
+                      >
+                        {d.media.map((m, i) => (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img
+                            key={m.url}
+                            src={m.url}
+                            alt={`Slide ${i + 1}`}
+                            style={{
+                              width: 160,
+                              height: 160,
+                              objectFit: "cover",
+                              borderRadius: 8,
+                              flexShrink: 0,
+                              border: "1px solid var(--border, #e5e7eb)",
+                            }}
+                          />
+                        ))}
+                      </div>
+                    )}
                     <pre className="output-text">{d.content}</pre>
                     {d.content !== d.originalContent && (
                       <details className="original-content">
@@ -283,6 +329,16 @@ export default function ApprovalsPage() {
                         >
                           ↓ Download .md
                         </button>
+                        {d.taskType !== "instagram_carousel" && (
+                          <button
+                            className="button-secondary"
+                            disabled={busy}
+                            title="Render this approved copy as a branded Instagram carousel"
+                            onClick={() => generateCarousel(d.id)}
+                          >
+                            ▦ Generate carousel
+                          </button>
+                        )}
                       </>
                     )}
                     {editable && (

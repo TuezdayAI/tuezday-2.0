@@ -8,6 +8,7 @@ import {
   type Channel,
   type Draft,
   type GenerationReview,
+  type LaunchMedia,
   type TaskType,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
@@ -27,12 +28,13 @@ export class InvalidTransitionError extends Error {
 }
 
 function rowToDraft(row: DraftRow): Draft {
-  const { reviewJson, ...rest } = row;
+  const { reviewJson, mediaJson, ...rest } = row;
   return {
     ...rest,
     taskType: row.taskType as TaskType,
     channel: row.channel as Channel,
     state: row.state as ApprovalState,
+    media: mediaJson ? (JSON.parse(mediaJson) as LaunchMedia[]) : null,
     review: reviewJson ? (JSON.parse(reviewJson) as GenerationReview) : null,
   };
 }
@@ -73,6 +75,8 @@ export interface SubmitDraftInput {
   channel: Channel;
   personaId: string | null;
   content: string;
+  /** Rendered visuals (Sprint 41) — carousel/ad-image drafts attach these. */
+  media?: LaunchMedia[] | null;
 }
 
 export function draftForGeneration(
@@ -116,6 +120,7 @@ export function submitDraft(db: Db, input: SubmitDraftInput, actor: DraftActor):
     content: input.content,
     state: toState,
     reviewJson: sourceReviewJson,
+    mediaJson: input.media && input.media.length > 0 ? JSON.stringify(input.media) : null,
     createdAt: now,
     updatedAt: now,
   };

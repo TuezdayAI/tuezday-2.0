@@ -40,6 +40,9 @@ export const TASK_TYPES = [
   "instagram_post",
   // Sprint 29 (engagement inbox): a reply to an inbound comment/DM.
   "engagement_reply",
+  // Sprint 41 (design layer): a rendered multi-image carousel derived from an
+  // approved content draft. Never text-generated — the pipeline renders it.
+  "instagram_carousel",
 ] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
@@ -607,6 +610,10 @@ export const DEFAULT_TASK_DOC_MATRIX: Record<
   instagram_post: {
     icp: { mode: "outline", reason: "The caption rides the visual; audience outline suffices, zoom follows the topic." },
     history: { mode: "outline", reason: "Topical lessons zoom in; the full history drowns a caption." },
+  },
+  instagram_carousel: {
+    icp: { mode: "outline", reason: "Carousel copy is derived from an approved draft; audience detail was already spent there." },
+    history: { mode: "outline", reason: "The deterministic render pipeline never re-writes copy from history." },
   },
   engagement_reply: {
     icp: { mode: "omit", reason: "The reply answers a specific person in a live thread — the conversation is the context." },
@@ -1328,6 +1335,15 @@ export function canTransition(from: ApprovalState, action: ApprovalAction): bool
   return transitionTo(from, action) !== undefined;
 }
 
+export const LAUNCH_MEDIA_TYPES = ["image", "video"] as const;
+export type LaunchMediaType = (typeof LAUNCH_MEDIA_TYPES)[number];
+
+export const launchMediaSchema = z.object({
+  url: z.string().trim().url("A valid media URL is required"),
+  type: z.enum(LAUNCH_MEDIA_TYPES),
+});
+export type LaunchMedia = z.infer<typeof launchMediaSchema>;
+
 export const draftSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
@@ -1342,6 +1358,9 @@ export const draftSchema = z.object({
   originalContent: z.string(),
   content: z.string(),
   state: z.enum(APPROVAL_STATES),
+  // Rendered visuals attached to the draft (Sprint 41): what a reviewer SEES,
+  // while content holds what they READ. Same shape launches use.
+  media: z.array(launchMediaSchema).nullable().optional(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
   // The pre-review copied from the source generation at submit, or refreshed
@@ -3060,14 +3079,8 @@ export type LaunchMessageKind = (typeof LAUNCH_MESSAGE_KINDS)[number];
 export const LAUNCH_MESSAGE_STATUSES = ["pending", "sent", "failed", "skipped"] as const;
 export type LaunchMessageStatus = (typeof LAUNCH_MESSAGE_STATUSES)[number];
 
-export const LAUNCH_MEDIA_TYPES = ["image", "video"] as const;
-export type LaunchMediaType = (typeof LAUNCH_MEDIA_TYPES)[number];
-
-export const launchMediaSchema = z.object({
-  url: z.string().trim().url("A valid media URL is required"),
-  type: z.enum(LAUNCH_MEDIA_TYPES),
-});
-export type LaunchMedia = z.infer<typeof launchMediaSchema>;
+// launchMediaSchema/LaunchMedia moved above draftSchema (Sprint 41 Part 4)
+// so drafts can carry the same media shape launches use.
 
 export const launchSchema = z.object({
   id: z.string().uuid(),

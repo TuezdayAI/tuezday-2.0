@@ -217,6 +217,7 @@ describe("task types and channels", () => {
       "x_dm",
       "instagram_post",
       "engagement_reply",
+      "instagram_carousel",
     ]);
   });
 

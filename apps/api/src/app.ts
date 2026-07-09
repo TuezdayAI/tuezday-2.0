@@ -10,7 +10,7 @@ import { NangoFabric } from "./connectors/nango";
 import type { Db } from "./db";
 import { OpenDesignProvider } from "./design/open-design";
 import type { DesignProvider } from "./design/provider";
-import { closeRenderer } from "./design/render";
+import { closeRenderer, renderSlide, type RenderInput } from "./design/render";
 import { S3AssetStorage, type AssetStorage } from "./design/storage";
 import type { Fetcher } from "./discovery/adapters";
 import { NullIntentProvider, type IntentProvider } from "./discovery/intent";
@@ -29,6 +29,7 @@ import { registerAutomationRoutes } from "./routes/automation";
 import { registerBrainRoutes } from "./routes/brain";
 import { registerCadenceRoutes } from "./routes/cadences";
 import { registerCampaignRoutes } from "./routes/campaigns";
+import { registerCarouselRoutes } from "./routes/carousels";
 import { registerConnectorRoutes } from "./routes/connectors";
 import { registerContextMatrixRoutes } from "./routes/context-matrix";
 import { registerCrmRoutes } from "./routes/crm";
@@ -88,6 +89,8 @@ export interface BuildAppOptions {
   design?: DesignProvider;
   /** Public asset storage (Sprint 41); defaults to the S3-compatible client from env. */
   assetStorage?: AssetStorage;
+  /** Slide renderer (Sprint 41); defaults to the Playwright renderer — tests inject a fake. */
+  render?: (input: RenderInput) => Promise<Uint8Array>;
 }
 
 export async function buildApp({
@@ -103,6 +106,7 @@ export async function buildApp({
   analytics = createAnalyticsSink(),
   design = new OpenDesignProvider(),
   assetStorage = new S3AssetStorage(),
+  render = renderSlide,
 }: BuildAppOptions): Promise<TuezdayApp> {
   const app = Fastify({ logger: false });
 
@@ -152,6 +156,7 @@ export async function buildApp({
   registerPersonaRoutes(app, db, evidence);
   registerGenerationRoutes(app, db, llm, evidence, analytics);
   registerDraftRoutes(app, db, fetcher, llm, analytics, mailer);
+  registerCarouselRoutes(app, db, design, assetStorage, render);
   registerNotificationRoutes(app, db, mailer, fetcher);
   registerSignalRoutes(app, db, llm, evidence);
   registerDiscoveryRoutes(app, db, llm, fetcher, intent, connectors);

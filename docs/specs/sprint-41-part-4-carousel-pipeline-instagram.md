@@ -1,6 +1,6 @@
 # Spec: Sprint 41, Part 4 — Carousel pipeline: content -> slides -> render -> approval -> Instagram publish
 
-- **Status:** spec — not started.
+- **Status:** implemented — tests green (see Progress log).
 - **Umbrella:** `docs/specs/sprint-41-design-layer-carousel-pipeline.md` (Decisions 3, 6, 7, 10). Self-contained; umbrella is context only.
 - **Branch:** `sprint-41-design-layer-carousel-pipeline` (commit this part before starting Part 5).
 - **Depends on:** Part 2 (`resolveDesignSystem()`) and Part 3 (`DesignProvider`, `AssetStorage`, `getOrAuthorTemplate`, `renderSlide`) already committed on this branch.
@@ -70,4 +70,5 @@ Contracts: extend `draftSchema` with optional `media` (reuse the existing `Launc
 
 ## Progress log
 
-*(not started)*
+- 2026-07-09 — Implemented: `drafts.media_json` (migration 0039) + `draftSchema.media` (LaunchMedia[] — `launchMediaSchema` moved above `draftSchema` in contracts to avoid TDZ); `instagram_carousel` task type added to `TASK_TYPES` (+ `TASK_INSTRUCTIONS`/`DEFAULT_TASK_DOC_MATRIX` entries to keep the exhaustive records whole, + web label maps). `services/carousels.ts`: `splitIntoSlides` (pure text logic, no LLM — hook → body/list_item → CTA archetypes with `SLIDE_WORD_BUDGETS` enforced at write time, explicit `---` break override, 2–10 clamp), template per distinct archetype via `getOrAuthorTemplate`, render+upload all slides before any draft write (failure atomicity, and the generation is metered only after success so a failed render never burns a credit), generation recorded with an inspectable design-trace section (`provider: "design-pipeline"`), derived draft submitted into the approval gate with media. Route `POST /drafts/:draftId/carousel` (402 upgrade shape identical to text generations; 503 design_unavailable; 502 asset_storage_failed; 409 source_not_approved). `buildApp` gains injectable `render` (defaults to the Playwright renderer). Publish wiring: the publications route passes `draft.media` into `createPublication` — `InstagramAdapter.publishPost` untouched. Approval UI: slide preview strip + "Generate carousel" on approved drafts (apiFetch's global 402 handler shows the standard upgrade modal). 13 tests in `test/carousels.test.ts`, including an end-to-end fake-Graph-API assertion that the rendered slide URLs reach the carousel child containers unchanged. Full suite 1080 + typecheck green.
+- Deviation: the derived draft enters the gate at `pending_review` (via `submitDraft`, decision logged), not bare `draft` — matching how every existing derived draft lands in the approval queue.

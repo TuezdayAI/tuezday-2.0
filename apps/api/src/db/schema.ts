@@ -278,6 +278,9 @@ export const drafts = sqliteTable("drafts", {
   // generation at submit or refreshed by the Re-run review action. Null when
   // never reviewed.
   reviewJson: text("review_json"),
+  // Sprint 41: rendered visuals (LaunchMedia[] JSON) — what a reviewer sees,
+  // while content holds what they read. Null for text-only drafts.
+  mediaJson: text("media_json"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });

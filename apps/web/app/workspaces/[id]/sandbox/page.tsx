@@ -42,6 +42,7 @@ const TASK_LABELS: Record<TaskType, string> = {
   x_dm: "X DM",
   instagram_post: "Instagram post",
   engagement_reply: "Reply",
+  instagram_carousel: "Instagram carousel",
 };
 
 /** Ad creative variant sets are generated on the Ad creatives page; a media

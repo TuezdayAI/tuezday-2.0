@@ -120,6 +120,9 @@ export function registerPublicationRoutes(
         draft.id,
         connection,
         input,
+        // Sprint 41: rendered visuals attached at generation time ride along —
+        // an approved carousel publishes as a real multi-image post.
+        draft.media ?? undefined,
       );
 
       track(db, analytics, {
