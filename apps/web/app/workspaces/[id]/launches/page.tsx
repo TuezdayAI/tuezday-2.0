@@ -2,6 +2,10 @@
 
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
+import { Button } from "@/src/components/ui/button";
+import { Card, CardHeader } from "@/src/components/ui/card";
+import { Badge } from "@/src/components/ui/badge";
+import { Input, Textarea, Select } from "@/src/components/ui/input";
 
 
 import { useCallback, useEffect, useState } from "react";
@@ -11,6 +15,7 @@ import {
   AUTOMATION_MODES,
   LAUNCH_CHANNELS,
   SEQUENCE_CHANNELS,
+  type ApprovalState,
   type Audience,
   type AutomationMode,
   type Campaign,
@@ -29,6 +34,14 @@ import {
 } from "@tuezday/contracts";
 import { API_URL, apiDownload, apiFetch } from "@/lib/api";
 import { launchChannelReady } from "@/lib/persona-social-routing";
+
+const DRAFT_STATE_TONE: Record<ApprovalState, "approved" | "pending" | "edited" | "rejected" | "draft"> = {
+  draft: "draft",
+  pending_review: "pending",
+  approved: "approved",
+  rejected: "rejected",
+  edited: "edited",
+};
 
 const MODE_LABELS: Record<AutomationMode, string> = {
   manual: "Manual (you drive every step)",
@@ -282,18 +295,18 @@ export default function LaunchesPage() {
     <>
       <PageHeader title="Launches" subtitle={<>Launch a personalized first-touch at a segment: per-recipient email + X DMs, and one
             broadcast post each for LinkedIn and Instagram. Every message clears Review first.</>} actions={<>
-            <button className="button-secondary" onClick={() => setShowForm(!showForm)}>
+            <Button variant="secondary" size="sm" onClick={() => setShowForm(!showForm)}>
             + New launch
-          </button>
+          </Button>
           </>} />
 
       {error && <p className="error">{error}</p>}
 
       {showForm && (
-        <section className="panel">
+        <Card>
           <h2>New launch</h2>
           <form className="persona-form" onSubmit={create}>
-            <input
+            <Input
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               placeholder="Launch name — e.g. Spring outreach"
@@ -301,7 +314,7 @@ export default function LaunchesPage() {
             <div className="resolve-controls">
               <label>
                 Audience
-                <select
+                <Select
                   value={form.audienceId}
                   onChange={(e) => setForm({ ...form, audienceId: e.target.value })}
                 >
@@ -311,11 +324,11 @@ export default function LaunchesPage() {
                       {a.name} ({a.memberCount})
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
               <label>
                 Campaign
-                <select
+                <Select
                   value={form.campaignId}
                   onChange={(e) => setForm({ ...form, campaignId: e.target.value })}
                 >
@@ -325,11 +338,11 @@ export default function LaunchesPage() {
                       {c.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
               <label>
                 Persona
-                <select
+                <Select
                   value={form.personaId}
                   onChange={(e) => {
                     const nextPersonaId = e.target.value;
@@ -348,7 +361,7 @@ export default function LaunchesPage() {
                       {p.name}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
             </div>
             <div className="checkbox-row" style={{ flexWrap: "wrap", gap: 12 }}>
@@ -387,8 +400,9 @@ export default function LaunchesPage() {
               })}
             </div>
             <div className="editor-actions">
-              <button
+              <Button
                 type="submit"
+                variant="primary"
                 disabled={
                   saving ||
                   !form.name ||
@@ -400,16 +414,16 @@ export default function LaunchesPage() {
                 }
               >
                 {saving ? "Creating…" : "Create launch"}
-              </button>
-              <button type="button" className="button-secondary" onClick={() => setShowForm(false)}>
+              </Button>
+              <Button type="button" variant="secondary" size="sm" onClick={() => setShowForm(false)}>
                 Cancel
-              </button>
+              </Button>
             </div>
           </form>
-        </section>
+        </Card>
       )}
 
-      <section className="panel">
+      <Card>
         <h2>Launches ({launches.length})</h2>
         {launches.length === 0 ? (
           <EmptyState description={<>No launches yet. Create one to target a segment.</>} />
@@ -418,21 +432,21 @@ export default function LaunchesPage() {
             {launches.map((launch) => (
               <li key={launch.id} className="section-card">
                 <div className="section-head">
-                  <button className="link-button" onClick={() => openDetail(launch.id)}>
+                  <Button variant="ghost" size="sm" onClick={() => openDetail(launch.id)}>
                     <span className="section-title">{launch.name}</span>
-                  </button>
+                  </Button>
                   <span className={`layer-badge state-${launch.status}`}>{launch.status}</span>
                   <span className="meta">
                     {launch.channels.map((c) => CHANNEL_LABELS[c]).join(" · ")} · {launch.messageCount} messages
                   </span>
                   {launch.status === "draft" && (
-                    <button disabled={busy} onClick={() => generate(launch.id)}>
+                    <Button variant="primary" disabled={busy} onClick={() => generate(launch.id)}>
                       Generate
-                    </button>
+                    </Button>
                   )}
-                  <button className="link-button" onClick={() => remove(launch)}>
+                  <Button variant="ghost" size="sm" onClick={() => remove(launch)}>
                     delete
-                  </button>
+                  </Button>
                 </div>
 
                 {openId === launch.id && detail && (
@@ -453,7 +467,7 @@ export default function LaunchesPage() {
             ))}
           </ul>
         )}
-      </section>
+      </Card>
     </>
   );
 }
@@ -505,34 +519,38 @@ function LaunchDetailView({
         const rows = byChannel(channel);
         if (rows.length === 0) return null;
         return (
-          <div key={channel} className="panel" style={{ marginTop: 10 }}>
-            <div className="panel-title-row">
-              <h3 style={{ margin: 0 }}>{CHANNEL_LABELS[channel]}</h3>
-              {channel === "email" ? (
-                <button
-                  className="button-secondary"
-                  disabled={approvedCount("email") === 0}
-                  onClick={() =>
-                    void apiDownload(
-                      `/workspaces/${workspaceId}/launches/${launch.id}/export.csv`,
-                      "tuezday-launch-email.csv",
-                    )
-                  }
-                >
-                  ↓ Download CSV ({approvedCount("email")})
-                </button>
-              ) : (
-                <button
-                  disabled={busy || approvedCount(channel) === 0 || !channelReady(channel)}
-                  onClick={() => onDispatch(channel)}
-                >
-                  {channel === "x" ? "Send DMs" : "Publish"} ({approvedCount(channel)})
-                </button>
-              )}
-            </div>
+          <Card key={channel} style={{ marginTop: 10 }}>
+            <CardHeader
+              title={CHANNEL_LABELS[channel]}
+              actions={
+                channel === "email" ? (
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={approvedCount("email") === 0}
+                    onClick={() =>
+                      void apiDownload(
+                        `/workspaces/${workspaceId}/launches/${launch.id}/export.csv`,
+                        "tuezday-launch-email.csv",
+                      )
+                    }
+                  >
+                    ↓ Download CSV ({approvedCount("email")})
+                  </Button>
+                ) : (
+                  <Button
+                    variant="primary"
+                    disabled={busy || approvedCount(channel) === 0 || !channelReady(channel)}
+                    onClick={() => onDispatch(channel)}
+                  >
+                    {channel === "x" ? "Send DMs" : "Publish"} ({approvedCount(channel)})
+                  </Button>
+                )
+              }
+            />
 
             {channel === "instagram" && (
-              <textarea
+              <Textarea
                 value={igMedia}
                 onChange={(e) => setIgMedia(e.target.value)}
                 placeholder="Image/video URL(s) — one per line. 2+ images = carousel, a .mp4 = reel."
@@ -546,7 +564,7 @@ function LaunchDetailView({
                 <MessageRow key={m.id} message={m} onApprove={onApprove} />
               ))}
             </ul>
-          </div>
+          </Card>
         );
       })}
     </div>
@@ -570,13 +588,13 @@ function MessageRow({
         ) : (
           <>
             {message.draftState && (
-              <span className={`layer-badge state-${message.draftState}`}>{message.draftState}</span>
+              <Badge tone={DRAFT_STATE_TONE[message.draftState]}>{message.draftState}</Badge>
             )}
             <span className={`layer-badge state-${message.status}`}>{message.status}</span>
             {message.draftId && message.draftState !== "approved" && message.status !== "sent" && (
-              <button className="link-button" onClick={() => onApprove(message.draftId!)}>
+              <Button variant="ghost" size="sm" onClick={() => onApprove(message.draftId!)}>
                 approve
-              </button>
+              </Button>
             )}
             {message.externalUrl && (
               <a className="link-button" href={message.externalUrl} target="_blank" rel="noreferrer">
@@ -714,18 +732,20 @@ function SequenceSection({
     setEdit((prev) => ({ ...prev, [channel]: (prev[channel] ?? []).slice(0, -1) }));
 
   return (
-    <div className="panel" style={{ marginTop: 10 }}>
-      <div className="panel-title-row">
-        <h3 style={{ margin: 0 }}>Follow-up sequence</h3>
-        <div style={{ display: "flex", gap: 8 }}>
-          <button className="button-secondary" disabled={busy} onClick={start}>
-            Start
-          </button>
-          <button className="button-secondary" disabled={busy} onClick={runNow}>
-            Run now
-          </button>
-        </div>
-      </div>
+    <Card style={{ marginTop: 10 }}>
+      <CardHeader
+        title="Follow-up sequence"
+        actions={
+          <div style={{ display: "flex", gap: 8 }}>
+            <Button variant="secondary" size="sm" disabled={busy} onClick={start}>
+              Start
+            </Button>
+            <Button variant="secondary" size="sm" disabled={busy} onClick={runNow}>
+              Run now
+            </Button>
+          </div>
+        }
+      />
       <p className="meta">
         Steps auto-advance on the scheduler. X DMs auto-stop when a recipient replies; email replies
         aren&apos;t visible to Tuezday, so stop email recipients manually below.
@@ -735,21 +755,21 @@ function SequenceSection({
       <div className="resolve-controls" style={{ marginTop: 8 }}>
         <label>
           Automation
-          <select value={mode} onChange={(e) => setMode(e.target.value as AutomationMode)}>
+          <Select value={mode} onChange={(e) => setMode(e.target.value as AutomationMode)}>
             {AUTOMATION_MODES.map((m) => (
               <option key={m} value={m}>
                 {MODE_LABELS[m]}
               </option>
             ))}
-          </select>
+          </Select>
         </label>
         <label className="checkbox-label">
           <input type="checkbox" checked={stopOnReply} onChange={(e) => setStopOnReply(e.target.checked)} />
           Stop on reply (X DMs)
         </label>
-        <button className="button-secondary" disabled={busy} onClick={saveConfig}>
+        <Button variant="secondary" size="sm" disabled={busy} onClick={saveConfig}>
           Save settings
-        </button>
+        </Button>
       </div>
 
       {seqChannels.map((channel) => (
@@ -763,7 +783,7 @@ function SequenceSection({
                   {i > 0 && (
                     <label>
                       Delay (hours after previous)
-                      <input
+                      <Input
                         type="number"
                         min={0}
                         value={s.delayHours}
@@ -773,7 +793,7 @@ function SequenceSection({
                     </label>
                   )}
                 </div>
-                <textarea
+                <Textarea
                   value={s.instruction}
                   onChange={(e) => setStepField(channel, i, { instruction: e.target.value })}
                   placeholder={i === 0 ? "First touch — leave blank for the default cold message" : "Follow-up angle (optional) — e.g. add the case study"}
@@ -784,21 +804,21 @@ function SequenceSection({
             ))}
           </ol>
           <div style={{ display: "flex", gap: 8 }}>
-            <button className="link-button" onClick={() => addStep(channel)}>
+            <Button variant="ghost" size="sm" onClick={() => addStep(channel)}>
               + add step
-            </button>
+            </Button>
             {(edit[channel]?.length ?? 0) > 1 && (
-              <button className="link-button" onClick={() => removeStep(channel)}>
+              <Button variant="ghost" size="sm" onClick={() => removeStep(channel)}>
                 remove last
-              </button>
+              </Button>
             )}
           </div>
         </div>
       ))}
       <div className="editor-actions" style={{ marginTop: 8 }}>
-        <button disabled={busy} onClick={saveSteps}>
+        <Button variant="primary" disabled={busy} onClick={saveSteps}>
           Save sequence
-        </button>
+        </Button>
       </div>
 
       {recipients.length > 0 && (
@@ -824,7 +844,7 @@ function SequenceSection({
             ))}
           </ul>
           <div className="resolve-controls" style={{ marginTop: 6 }}>
-            <textarea
+            <Textarea
               value={stopEmails}
               onChange={(e) => setStopEmails(e.target.value)}
               placeholder="Paste emails to stop (one per line) — for recipients who replied by email"
@@ -833,15 +853,15 @@ function SequenceSection({
             />
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <button className="button-secondary" disabled={busy || !stopEmails.trim()} onClick={stopEmailList}>
+            <Button variant="secondary" size="sm" disabled={busy || !stopEmails.trim()} onClick={stopEmailList}>
               Stop pasted recipients
-            </button>
-            <button className="button-danger" disabled={busy} onClick={stopWhole}>
+            </Button>
+            <Button variant="danger" size="sm" disabled={busy} onClick={stopWhole}>
               Stop whole launch
-            </button>
+            </Button>
           </div>
         </div>
       )}
-    </div>
+    </Card>
   );
 }
