@@ -21,6 +21,7 @@ import type { LlmGateway } from "./llm/gateway";
 import { CsvOutboundExporter, type OutboundExporter } from "./outbound/exporter";
 import { createDefaultMailer, type Mailer } from "./mail/mailer";
 import { registerAdCreativeRoutes } from "./routes/ad-creatives";
+import { registerAdImageRoutes } from "./routes/ad-images";
 import { registerAdLaunchRoutes } from "./routes/ad-launches";
 import { registerAdsRoutes } from "./routes/ads";
 import { registerAudienceRoutes } from "./routes/audiences";
@@ -171,6 +172,7 @@ export async function buildApp({
   registerAdsRoutes(app, db, connectors, fetcher);
   registerAdLaunchRoutes(app, db, connectors, fetcher);
   registerAdCreativeRoutes(app, db, llm, evidence);
+  registerAdImageRoutes(app, db, design, assetStorage, render);
   registerPrRoutes(app, db, llm, evidence);
   registerPublicationRoutes(app, db, connectors, fetcher, analytics);
   registerCadenceRoutes(app, db, connectors, fetcher);

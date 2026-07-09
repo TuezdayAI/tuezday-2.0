@@ -2528,6 +2528,9 @@ export const adLaunchSchema = z.object({
   externalAdSetId: z.string().nullable(),
   externalCreativeId: z.string().nullable(),
   externalAdId: z.string().nullable(),
+  // Meta adimages hash (Sprint 41 Part 5) — set after uploadAdImage succeeds,
+  // consumed by createAdCreative; null for text-only creatives.
+  metaImageHash: z.string().nullable(),
   // The Sprint 14 ad_campaigns mirror row created on launch.
   adCampaignId: z.string().uuid().nullable(),
   // Raw platform effective_status, stamped by the sync job and pause/resume.

@@ -1,6 +1,6 @@
 # Spec: Sprint 41, Part 5 — Meta Ads static image creative
 
-- **Status:** spec — not started.
+- **Status:** implemented — tests green (see Progress log).
 - **Umbrella:** `docs/specs/sprint-41-design-layer-carousel-pipeline.md` (Decisions 3, 7, 10). Self-contained; umbrella is context only.
 - **Branch:** `sprint-41-design-layer-carousel-pipeline` (final part).
 - **Depends on:** Parts 2 + 3 (resolver, templates, renderer, storage) and Part 4's gating/draft-media patterns, all committed on this branch.
@@ -63,4 +63,5 @@ metaImageHash: text("meta_image_hash"), // set after uploadAdImage succeeds, con
 
 ## Progress log
 
-*(not started)*
+- 2026-07-09 — Implemented: `ad_launches.meta_image_hash` (migration 0040, exposed on `adLaunchSchema`); `MetaAdsAdapter.uploadAdImage({url}|{bytes})` (adapter downloads the hosted URL itself via an injectable fetcher threaded through `adsExecutionAdapterFor`, then base64 `adimages` POST → hash) and `createAdCreative` gains optional `imageHash` → `object_story_spec.link_data.image_hash`. `services/ad-images.ts` `generateAdImage`: entitlement gate → `resolveDesignSystem` → `getOrAuthorTemplate` (`ad-1080x1080` shape, brief keeps text coverage under ~20% per Meta's soft guidance) → render → store → `setDraftMedia` on the SAME creative draft; metered only on success. Route `POST /workspaces/:id/ad-creatives/:draftId/image`. Launch wiring in `performLaunch`: upload-once-persist-hash before the creative step (a resumed launch never re-uploads), text-only launches byte-identical to before. UI: "Generate ad image" + preview on approved meta_ad_creative drafts. 7 tests in `test/ad-image.test.ts` (incl. end-to-end launch assertion that the hash lands in `link_data.image_hash`, and the no-media regression). Full suite 1087 + typecheck green.
+- Deviation: the spec's `channel: "meta_ads"` doesn't exist in the contracts `CHANNELS` vocabulary — the existing `"ads"` channel is used for design resolution (import, never redeclare).

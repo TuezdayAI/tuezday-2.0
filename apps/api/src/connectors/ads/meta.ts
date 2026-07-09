@@ -77,6 +77,9 @@ export class MetaAdsAdapter implements AdsAdapter, AdsExecutionAdapter {
   constructor(
     private readonly fabric: ConnectorFabric,
     private readonly opts: MetaAdsOpts,
+    // Used only by uploadAdImage to download a hosted image before the
+    // base64 adimages POST (the Graph API takes bytes, not URLs).
+    private readonly fetcher: typeof fetch = fetch,
   ) {}
 
   private async request<T>(path: string): Promise<GraphPage<T>> {
@@ -223,6 +226,42 @@ export class MetaAdsAdapter implements AdsAdapter, AdsExecutionAdapter {
     });
   }
 
+  /** Upload an image to the account's ad images library -> image_hash
+   * (Sprint 41 Part 5). Accepts a hosted URL (fetched here) or raw bytes. */
+  async uploadAdImage(
+    externalAccountId: string,
+    image: { url: string } | { bytes: Uint8Array },
+  ): Promise<{ imageHash: string }> {
+    let bytes: Uint8Array;
+    if ("bytes" in image) {
+      bytes = image.bytes;
+    } else {
+      let res: Response;
+      try {
+        res = await this.fetcher(image.url);
+      } catch (err) {
+        throw new ConnectorFabricError(
+          `Could not download the ad image from ${image.url}: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      if (!res.ok) {
+        throw new ConnectorFabricError(
+          `Could not download the ad image from ${image.url}: HTTP ${res.status}`,
+        );
+      }
+      bytes = new Uint8Array(await res.arrayBuffer());
+    }
+
+    const json = (await this.post(`/${GRAPH_VERSION}/${externalAccountId}/adimages`, {
+      bytes: Buffer.from(bytes).toString("base64"),
+    })) as { images?: Record<string, { hash?: string }> };
+    const hash = Object.values(json.images ?? {})[0]?.hash;
+    if (!hash) {
+      throw new ConnectorFabricError("Meta Ads did not return an image hash for the adimages upload.");
+    }
+    return { imageHash: hash };
+  }
+
   async createAdCreative(
     externalAccountId: string,
     input: {
@@ -232,11 +271,13 @@ export class MetaAdsAdapter implements AdsAdapter, AdsExecutionAdapter {
       primaryText: string;
       headline: string;
       description: string;
+      imageHash?: string;
     },
   ): Promise<{ externalId: string }> {
     return this.createObject(`/${GRAPH_VERSION}/${externalAccountId}/adcreatives`, {
       name: input.name,
-      // Link ad — Meta scrapes the link preview image; media upload is later.
+      // Link ad; image_hash (Sprint 41) attaches the generated static image —
+      // without it Meta scrapes the link preview image, exactly as before.
       object_story_spec: {
         page_id: input.pageId,
         link_data: {
@@ -244,6 +285,7 @@ export class MetaAdsAdapter implements AdsAdapter, AdsExecutionAdapter {
           message: input.primaryText,
           name: input.headline,
           description: input.description,
+          ...(input.imageHash ? { image_hash: input.imageHash } : {}),
         },
       },
     });

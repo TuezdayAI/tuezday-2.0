@@ -75,7 +75,7 @@ export function registerAdLaunchRoutes(
     const provider = connection ? providerByKey(connection.providerKey) : undefined;
     const adapter =
       connection && provider && connection.status === "connected"
-        ? adsExecutionAdapterFor(fabric, provider, connection)
+        ? adsExecutionAdapterFor(fabric, provider, connection, fetcher)
         : undefined;
     if (!adapter) {
       return {
@@ -310,6 +310,7 @@ export function registerAdLaunchRoutes(
           resolved.externalAccountId,
           creative,
           actorOf(request),
+          draft?.media?.[0]?.url ?? null,
         );
       } catch (err) {
         if (err instanceof ConnectorFabricError) {

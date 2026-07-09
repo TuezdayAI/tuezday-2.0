@@ -913,6 +913,9 @@ export const adLaunches = sqliteTable("ad_launches", {
   externalAdSetId: text("external_ad_set_id"),
   externalCreativeId: text("external_creative_id"),
   externalAdId: text("external_ad_id"),
+  // Meta adimages hash (Sprint 41 Part 5): persisted after uploadAdImage so a
+  // resumed launch never re-uploads; consumed by createAdCreative.
+  metaImageHash: text("meta_image_hash"),
   // The Sprint 14 reporting mirror row created on a successful launch.
   adCampaignId: text("ad_campaign_id").references(() => adCampaigns.id, { onDelete: "set null" }),
   platformStatus: text("platform_status"),

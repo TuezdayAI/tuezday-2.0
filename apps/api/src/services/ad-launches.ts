@@ -144,6 +144,7 @@ export function createLaunch(
     externalAdSetId: null,
     externalCreativeId: null,
     externalAdId: null,
+    metaImageHash: null,
     adCampaignId: null,
     platformStatus: null,
     launchedAt: null,
@@ -349,8 +350,11 @@ export async function performLaunch(
   externalAccountId: string,
   creative: LaunchCreativeFields,
   actor: DraftActor,
+  /** The creative draft's rendered image URL (Sprint 41 Part 5), if any. */
+  imageUrl?: string | null,
 ): Promise<AdLaunch> {
-  let { externalCampaignId, externalAdSetId, externalCreativeId, externalAdId } = launch;
+  let { externalCampaignId, externalAdSetId, externalCreativeId, externalAdId, metaImageHash } =
+    launch;
   try {
     if (!externalCampaignId) {
       externalCampaignId = (
@@ -378,12 +382,20 @@ export async function performLaunch(
       persist(db, launch.id, { externalAdSetId });
     }
     if (!externalCreativeId) {
+      // Generated ad image (Sprint 41): upload once, persist the hash so a
+      // resumed launch never re-uploads, then attach it to the creative.
+      if (imageUrl && !metaImageHash) {
+        metaImageHash = (await adapter.uploadAdImage(externalAccountId, { url: imageUrl }))
+          .imageHash;
+        persist(db, launch.id, { metaImageHash });
+      }
       externalCreativeId = (
         await adapter.createAdCreative(externalAccountId, {
           name: `${launch.name} — creative`,
           pageId: launch.pageId,
           linkUrl: launch.linkUrl,
           ...creative,
+          ...(metaImageHash ? { imageHash: metaImageHash } : {}),
         })
       ).externalId;
       persist(db, launch.id, { externalCreativeId });

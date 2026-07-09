@@ -129,6 +129,27 @@ export function submitDraft(db: Db, input: SubmitDraftInput, actor: DraftActor):
   return rowToDraft(row);
 }
 
+/** Attach rendered visuals to an existing draft (Sprint 41 Part 5). */
+export function setDraftMedia(
+  db: Db,
+  workspaceId: string,
+  draftId: string,
+  media: LaunchMedia[],
+): Draft | undefined {
+  const row = db
+    .select()
+    .from(drafts)
+    .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)))
+    .get();
+  if (!row) return undefined;
+  const now = Date.now();
+  db.update(drafts)
+    .set({ mediaJson: media.length > 0 ? JSON.stringify(media) : null, updatedAt: now })
+    .where(eq(drafts.id, draftId))
+    .run();
+  return rowToDraft({ ...row, mediaJson: media.length > 0 ? JSON.stringify(media) : null, updatedAt: now });
+}
+
 export function listDrafts(
   db: Db,
   workspaceId: string,
