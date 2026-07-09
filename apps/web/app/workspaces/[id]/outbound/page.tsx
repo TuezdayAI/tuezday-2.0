@@ -2,7 +2,10 @@
 
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
-
+import { Button } from "@/src/components/ui/button";
+import { Card, CardHeader } from "@/src/components/ui/card";
+import { Badge } from "@/src/components/ui/badge";
+import { Input, Textarea, Select } from "@/src/components/ui/input";
 
 import { API_URL, apiDownload, apiFetch } from "@/lib/api";
 
@@ -12,6 +15,17 @@ import { useParams } from "next/navigation";
 import type { ApprovalState, Campaign, Draft, Lead, Persona, Workspace } from "@tuezday/contracts";
 
 const STATE_LABELS: Record<ApprovalState, string> = {
+  draft: "draft",
+  pending_review: "pending",
+  edited: "edited",
+  approved: "approved",
+  rejected: "rejected",
+};
+
+const STATE_TONES: Record<
+  ApprovalState,
+  "neutral" | "approved" | "pending" | "edited" | "rejected" | "draft" | "danger"
+> = {
   draft: "draft",
   pending_review: "pending",
   edited: "edited",
@@ -188,23 +202,26 @@ export default function OutboundPage() {
       <PageHeader title="Audience" subtitle={<>Your leads and contacts, with outreach drafted in your voice per person. Drafts go
             through Review; sending stays in your sender of choice.</>} actions={<>
             {approvedCount > 0 && (
-            <button
+            <Button
               type="button"
-              className="button-secondary"
+              variant="secondary"
+              size="sm"
               onClick={() => void apiDownload(`/workspaces/${id}/outbound/export.csv`, "outbound.csv")}
             >
               ↓ Export approved CSV ({approvedCount})
-            </button>
+            </Button>
           )}
           </>} />
 
-      <section className="panel">
-        <div className="panel-title-row">
-          <h2>Leads ({leadsList.length})</h2>
-          <button className="button-secondary" onClick={() => setShowAddForm(!showAddForm)}>
-            + Add one lead
-          </button>
-        </div>
+      <Card>
+        <CardHeader
+          title={`Leads (${leadsList.length})`}
+          actions={
+            <Button variant="secondary" size="sm" onClick={() => setShowAddForm(!showAddForm)}>
+              + Add one lead
+            </Button>
+          }
+        />
 
         <form
           className="persona-form"
@@ -214,16 +231,16 @@ export default function OutboundPage() {
             void importCsv();
           }}
         >
-          <textarea
+          <Textarea
             value={csv}
             onChange={(e) => setCsv(e.target.value)}
             placeholder={`Paste a CSV of leads…\n\n${CSV_EXAMPLE}`}
             rows={4}
           />
           <div className="editor-actions">
-            <button type="submit" disabled={busy || csv.trim().length === 0}>
+            <Button type="submit" variant="primary" disabled={busy || csv.trim().length === 0}>
               Import CSV
-            </button>
+            </Button>
             {importResult && <span className="meta">{importResult}</span>}
           </div>
         </form>
@@ -233,47 +250,47 @@ export default function OutboundPage() {
             <div className="resolve-controls">
               <label style={{ flex: 1 }}>
                 Name
-                <input
+                <Input
                   value={newLead.name}
                   onChange={(e) => setNewLead({ ...newLead, name: e.target.value })}
                 />
               </label>
               <label style={{ flex: 1 }}>
                 Email
-                <input
+                <Input
                   value={newLead.email}
                   onChange={(e) => setNewLead({ ...newLead, email: e.target.value })}
                 />
               </label>
               <label>
                 Company
-                <input
+                <Input
                   value={newLead.company}
                   onChange={(e) => setNewLead({ ...newLead, company: e.target.value })}
                 />
               </label>
               <label>
                 Role
-                <input
+                <Input
                   value={newLead.role}
                   onChange={(e) => setNewLead({ ...newLead, role: e.target.value })}
                 />
               </label>
             </div>
-            <input
+            <Input
               value={newLead.notes}
               onChange={(e) => setNewLead({ ...newLead, notes: e.target.value })}
               placeholder="Notes — what do you actually know about them?"
             />
-            <input
+            <Input
               value={newLead.xHandle}
               onChange={(e) => setNewLead({ ...newLead, xHandle: e.target.value })}
               placeholder="X (Twitter) handle for DMs — e.g. @founder (optional)"
             />
             <div className="editor-actions">
-              <button type="submit" disabled={busy}>
+              <Button type="submit" variant="primary" disabled={busy}>
                 Add lead
-              </button>
+              </Button>
             </div>
           </form>
         )}
@@ -307,21 +324,19 @@ export default function OutboundPage() {
                       )}
                       {lead.xHandle && <span className="meta"> · X @{lead.xHandle}</span>}
                     </span>
-                    <button className="link-button" onClick={() => editHandle(lead)}>
+                    <Button variant="ghost" size="sm" onClick={() => editHandle(lead)}>
                       {lead.xHandle ? "edit X handle" : "+ X handle"}
-                    </button>
-                    <button className="link-button" onClick={() => removeLead(lead)}>
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => removeLead(lead)}>
                       delete
-                    </button>
+                    </Button>
                   </div>
                   {lead.notes && <p className="section-reason">{lead.notes}</p>}
                   {chain.length > 0 && (
                     <ul className="draft-chain">
                       {chain.map((d) => (
                         <li key={d.id}>
-                          <span className={`layer-badge state-${d.state}`}>
-                            {STATE_LABELS[d.state]}
-                          </span>{" "}
+                          <Badge tone={STATE_TONES[d.state]}>{STATE_LABELS[d.state]}</Badge>{" "}
                           <span className="meta">{d.content.slice(0, 70)}…</span>{" "}
                           <Link className="link-button" href={`/workspaces/${id}/approvals`}>
                             open in queue
@@ -335,33 +350,33 @@ export default function OutboundPage() {
             })}
           </ul>
         )}
-      </section>
+      </Card>
 
-      <section className="panel">
+      <Card>
         <h2>Draft outbound emails</h2>
         <div className="resolve-controls">
           <label>
             Persona
-            <select value={personaId} onChange={(e) => setPersonaId(e.target.value)}>
+            <Select value={personaId} onChange={(e) => setPersonaId(e.target.value)}>
               <option value="">(none — org voice)</option>
               {personas.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           {campaigns.length > 0 && (
             <label>
               Campaign
-              <select value={campaignId} onChange={(e) => setCampaignId(e.target.value)}>
+              <Select value={campaignId} onChange={(e) => setCampaignId(e.target.value)}>
                 <option value="">(no campaign)</option>
                 {campaigns.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
           )}
           <label className="checkbox-label" style={{ alignSelf: "center" }}>
@@ -372,14 +387,14 @@ export default function OutboundPage() {
             />
             Use evidence
           </label>
-          <button disabled={drafting || selectedCount === 0} onClick={draftEmails}>
+          <Button variant="primary" disabled={drafting || selectedCount === 0} onClick={draftEmails}>
             {drafting
               ? "Drafting…"
               : `Draft ${selectedCount || ""} personalized email${selectedCount === 1 ? "" : "s"}`}
-          </button>
+          </Button>
         </div>
         {draftSummary && <p className="bundle-summary">{draftSummary}</p>}
-      </section>
+      </Card>
     </>
   );
 }
