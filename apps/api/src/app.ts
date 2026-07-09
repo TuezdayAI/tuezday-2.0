@@ -12,7 +12,7 @@ import type { Fetcher } from "./discovery/adapters";
 import { NullIntentProvider, type IntentProvider } from "./discovery/intent";
 import { R2REvidenceStore } from "./evidence/r2r";
 import type { EvidenceStore } from "./evidence/store";
-import { GeminiGateway } from "./llm/gemini";
+import { createLlmGatewayFromEnv } from "./llm";
 import type { LlmGateway } from "./llm/gateway";
 import { CsvOutboundExporter, type OutboundExporter } from "./outbound/exporter";
 import { createDefaultMailer, type Mailer } from "./mail/mailer";
@@ -83,7 +83,7 @@ export interface BuildAppOptions {
 
 export async function buildApp({
   db,
-  llm = new GeminiGateway(),
+  llm = createLlmGatewayFromEnv(),
   fetcher = fetch,
   evidence = new R2REvidenceStore(),
   connectors = new NangoFabric(undefined, undefined, fetcher),
