@@ -16,7 +16,6 @@ import { API_URL, apiFetch } from "@/lib/api";
 import { EmptyState } from "@/src/components/empty-state";
 import { PageHeader } from "@/src/components/page-header";
 import { Card, CardHeader } from "@/src/components/ui/card";
-import { Button } from "@/src/components/ui/button";
 import buttonStyles from "@/src/components/ui/button.module.css";
 
 interface BrainView {

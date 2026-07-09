@@ -70,7 +70,7 @@ export default function BillingPage({ params }: { params: Promise<{ id: string }
 
       {error && <p className="error">{error}</p>}
 
-      <Card className="panel">
+      <Card>
         <h2>Current plan</h2>
         {!data ? (
           <p className="meta">Loading...</p>
