@@ -8,6 +8,9 @@ import {
   type VoiceDimension,
 } from "@tuezday/contracts";
 import { apiFetch } from "@/lib/api";
+import { Button } from "@/src/components/ui/button";
+import { Card } from "@/src/components/ui/card";
+import { Input, Textarea } from "@/src/components/ui/input";
 import type { WizardPanelProps } from "./types";
 import "./verify-panel.css";
 
@@ -183,16 +186,16 @@ export function VerifyPanel({ workspaceId, userName, onContinue, onError }: Wiza
 
   if (phase === "loading") {
     return (
-      <section className="panel ob-panel">
+      <Card className="ob-panel">
         <h1>{heading}</h1>
         <p className="subtitle">Fetching what we learned about your brand…</p>
-      </section>
+      </Card>
     );
   }
 
   if (phase === "reading") {
     return (
-      <section className="panel ob-panel">
+      <Card className="ob-panel">
         <h1>{heading}</h1>
         <div className="vp-reading" role="status">
           <span className="vp-reading-dot" aria-hidden="true" />
@@ -202,32 +205,32 @@ export function VerifyPanel({ workspaceId, userName, onContinue, onError }: Wiza
           Tuezday is still reading your website and socials. This usually takes under a
           minute — this screen will update on its own.
         </p>
-      </section>
+      </Card>
     );
   }
 
   if (phase === "failed" || !form) {
     return (
-      <section className="panel ob-panel">
+      <Card className="ob-panel">
         <h1>{heading}</h1>
         <p className="subtitle">
           We couldn&apos;t read your website, so there&apos;s nothing to verify yet.
         </p>
         {storedError && <p className="vp-stored-error">{storedError}</p>}
         <div className="ob-actions">
-          <button type="button" disabled={busy} onClick={retry}>
+          <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={retry}>
             {busy ? "Retrying…" : "Retry"}
-          </button>
-          <button type="button" className="link-button" disabled={busy} onClick={skip}>
+          </Button>
+          <Button type="button" variant="ghost" size="sm" disabled={busy} onClick={skip}>
             Continue anyway
-          </button>
+          </Button>
         </div>
-      </section>
+      </Card>
     );
   }
 
   return (
-    <section className="panel ob-panel">
+    <Card className="ob-panel">
       <h1>{heading}</h1>
       <p className="subtitle">
         This is what we learned about your brand. Fix anything that&apos;s off — it seeds
@@ -237,8 +240,7 @@ export function VerifyPanel({ workspaceId, userName, onContinue, onError }: Wiza
       <div className="vp-form">
         <label className="vp-field">
           <span>Business name</span>
-          <input
-            className="ob-input"
+          <Input
             value={form.businessName}
             maxLength={200}
             onChange={(e) => setField("businessName", e.target.value)}
@@ -247,8 +249,7 @@ export function VerifyPanel({ workspaceId, userName, onContinue, onError }: Wiza
 
         <label className="vp-field">
           <span>Tagline</span>
-          <input
-            className="ob-input"
+          <Input
             value={form.tagline}
             maxLength={300}
             onChange={(e) => setField("tagline", e.target.value)}
@@ -257,8 +258,8 @@ export function VerifyPanel({ workspaceId, userName, onContinue, onError }: Wiza
 
         <label className="vp-field">
           <span>Summary</span>
-          <textarea
-            className="ob-input vp-textarea"
+          <Textarea
+            className="vp-textarea"
             value={form.summary}
             maxLength={2000}
             rows={4}
@@ -269,8 +270,7 @@ export function VerifyPanel({ workspaceId, userName, onContinue, onError }: Wiza
         <div className="vp-row">
           <label className="vp-field">
             <span>Target age range</span>
-            <input
-              className="ob-input"
+            <Input
               value={form.targetAgeRange}
               maxLength={100}
               placeholder="e.g. 25-45"
@@ -280,8 +280,7 @@ export function VerifyPanel({ workspaceId, userName, onContinue, onError }: Wiza
           </label>
           <label className="vp-field">
             <span>Tone</span>
-            <input
-              className="ob-input"
+            <Input
               value={form.tone}
               maxLength={500}
               onChange={(e) => setField("tone", e.target.value)}
@@ -295,8 +294,7 @@ export function VerifyPanel({ workspaceId, userName, onContinue, onError }: Wiza
             {VOICE_DIMENSIONS.map((dim) => (
               <label key={dim} className="vp-field">
                 <span>{DIMENSION_LABELS[dim]}</span>
-                <input
-                  className="ob-input"
+                <Input
                   value={form.voiceDimensions[dim]}
                   maxLength={500}
                   onChange={(e) => setDimension(dim, e.target.value)}
@@ -308,8 +306,7 @@ export function VerifyPanel({ workspaceId, userName, onContinue, onError }: Wiza
 
         <label className="vp-field">
           <span>Content pillars</span>
-          <input
-            className="ob-input"
+          <Input
             value={form.pillarsText}
             onChange={(e) => setField("pillarsText", e.target.value)}
             placeholder="Product education, Founder stories, Industry news"
@@ -327,14 +324,15 @@ export function VerifyPanel({ workspaceId, userName, onContinue, onError }: Wiza
 
       <div className="ob-actions">
         <span />
-        <button
+        <Button
           type="button"
+          variant="primary"
           disabled={busy || form.businessName.trim().length === 0}
           onClick={saveAndContinue}
         >
           {busy ? "Saving…" : "Save & continue"}
-        </button>
+        </Button>
       </div>
-    </section>
+    </Card>
   );
 }
