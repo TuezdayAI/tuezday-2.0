@@ -2,7 +2,9 @@
 
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
-
+import { Button } from "@/src/components/ui/button";
+import { Card, CardHeader } from "@/src/components/ui/card";
+import { Input, Select } from "@/src/components/ui/input";
 
 import { API_URL, apiFetch } from "@/lib/api";
 
@@ -293,9 +295,9 @@ export default function SandboxPage() {
         in Review →
       </Link>
     ) : (
-      <button className="button-secondary" onClick={() => sendToQueue(generationId)}>
+      <Button variant="secondary" size="sm" onClick={() => sendToQueue(generationId)}>
         Send to Review
-      </button>
+      </Button>
     );
   }
 
@@ -314,14 +316,14 @@ export default function SandboxPage() {
     <>
       <PageHeader title="Playground" subtitle={<>Try a one-off generation: see exactly what Tuezday will use, generate, then rate the
             result. Your ratings teach it what good looks like.</>} actions={<>
-            <button className="button-secondary" onClick={() => setShowSettings((s) => !s)}>
+            <Button variant="secondary" size="sm" onClick={() => setShowSettings((s) => !s)}>
             {showSettings ? "Hide quality settings" : "Quality settings"}
-          </button>
+          </Button>
           </>} />
 
       {showSettings && settings && (
-        <section className="panel">
-          <h2>Generation quality</h2>
+        <Card>
+          <CardHeader title="Generation quality" />
           <p className="subtitle">
             Pre-review and the angle step run before you ever look at a draft. Both apply across
             every module in this workspace.
@@ -345,7 +347,7 @@ export default function SandboxPage() {
             </label>
             <label>
               Angles to suggest
-              <input
+              <Input
                 type="number"
                 min={2}
                 max={5}
@@ -355,7 +357,7 @@ export default function SandboxPage() {
             </label>
             <label>
               Flag below score
-              <input
+              <Input
                 type="number"
                 min={0}
                 max={100}
@@ -364,59 +366,59 @@ export default function SandboxPage() {
               />
             </label>
           </div>
-        </section>
+        </Card>
       )}
 
-      <section className="panel">
-        <h2>1 · Choose the task</h2>
+      <Card>
+        <CardHeader title="1 · Choose the task" />
         <div className="resolve-controls">
           <label>
             Task
-            <select value={taskType} onChange={(e) => setTaskType(e.target.value as TaskType)}>
+            <Select value={taskType} onChange={(e) => setTaskType(e.target.value as TaskType)}>
               {SANDBOX_TASK_TYPES.map((t) => (
                 <option key={t} value={t}>
                   {TASK_LABELS[t]}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <label>
             Channel
-            <select value={channel} onChange={(e) => setChannel(e.target.value as Channel)}>
+            <Select value={channel} onChange={(e) => setChannel(e.target.value as Channel)}>
               {CHANNELS.map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <label>
             Persona
-            <select value={personaId} onChange={(e) => setPersonaId(e.target.value)}>
+            <Select value={personaId} onChange={(e) => setPersonaId(e.target.value)}>
               <option value="">(none — org voice)</option>
               {personas.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           {campaigns.length > 0 && (
             <label>
               Campaign
-              <select value={campaignId} onChange={(e) => setCampaignId(e.target.value)}>
+              <Select value={campaignId} onChange={(e) => setCampaignId(e.target.value)}>
                 <option value="">(no campaign)</option>
                 {campaigns.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
           )}
           <label>
             Token budget
-            <input
+            <Input
               type="number"
               min={500}
               max={200000}
@@ -432,9 +434,9 @@ export default function SandboxPage() {
             />
             Use evidence
           </label>
-          <button className="button-secondary" onClick={previewContext}>
+          <Button variant="secondary" size="sm" onClick={previewContext}>
             Preview context
-          </button>
+          </Button>
         </div>
 
         {preview && !previewStale && (
@@ -443,12 +445,13 @@ export default function SandboxPage() {
               {preview.sections.filter((s) => s.included).length} of {preview.sections.length}{" "}
               sections · ~{preview.includedTokens} tokens of {preview.tokenBudget}
               {preview.overBudget && <span className="error"> — over budget</span>}{" "}
-              <button
-                className="link-button"
+              <Button
+                variant="ghost"
+                size="sm"
                 onClick={() => setShowPreviewDetail(!showPreviewDetail)}
               >
                 {showPreviewDetail ? "hide" : "show"} sections
-              </button>
+              </Button>
             </p>
             {showPreviewDetail && (
               <>
@@ -477,30 +480,32 @@ export default function SandboxPage() {
             )}
           </div>
         )}
-      </section>
+      </Card>
 
-      <section className="panel">
-        <h2>2 · Generate</h2>
+      <Card>
+        <CardHeader title="2 · Generate" />
         {(!preview || previewStale) && (
           <p className="subtitle">Preview the context first — always read what the model reads.</p>
         )}
 
         {settings?.angleEnabled && (
           <div style={{ marginBottom: 14 }}>
-            <button
-              className="button-secondary"
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={suggestAngles}
               disabled={anglesLoading || !preview || previewStale}
             >
               {anglesLoading ? "Thinking…" : "Suggest angles"}
-            </button>
+            </Button>
             {angles && angles.length > 0 && (
               <ul className="angle-list">
                 {angles.map((a, i) => (
                   <li key={i} className={`angle-card ${chosenAngle === a ? "chosen" : ""}`}>
                     <span>{a}</span>
-                    <button
-                      className="button-secondary"
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       disabled={generating}
                       onClick={() => {
                         setChosenAngle(a);
@@ -508,7 +513,7 @@ export default function SandboxPage() {
                       }}
                     >
                       Draft from this
-                    </button>
+                    </Button>
                   </li>
                 ))}
               </ul>
@@ -519,9 +524,9 @@ export default function SandboxPage() {
           </div>
         )}
 
-        <button onClick={() => generate()} disabled={generating || !preview || previewStale}>
+        <Button variant="primary" onClick={() => generate()} disabled={generating || !preview || previewStale}>
           {generating ? "Generating…" : "Generate with brain"}
-        </button>
+        </Button>
 
         {error && <p className="error">{error}</p>}
 
@@ -540,23 +545,25 @@ export default function SandboxPage() {
             <pre className="output-text">{latest.output}</pre>
             <div className="rating-row">
               {OUTPUT_RATINGS.map((r) => (
-                <button
+                <Button
                   key={r}
-                  className={`button-secondary rating-${r} ${latest.rating === r ? "active" : ""}`}
+                  variant={latest.rating === r ? "primary" : "secondary"}
+                  size="sm"
+                  className={`rating-${r}`}
                   onClick={() => rate(latest.id, r)}
                 >
                   {RATING_LABELS[r]}
-                </button>
+                </Button>
               ))}
               {latest.rating && <span className="meta">stored as training signal</span>}
               {queueButton(latest.id)}
             </div>
           </div>
         )}
-      </section>
+      </Card>
 
-      <section className="panel">
-        <h2>Training signal log</h2>
+      <Card>
+        <CardHeader title="Training signal log" />
         {log.length === 0 ? (
           <EmptyState description={<>No generations yet.</>} />
         ) : (
@@ -601,13 +608,15 @@ export default function SandboxPage() {
                     <ReviewPanel review={g.review} />
                     <div className="rating-row">
                       {OUTPUT_RATINGS.map((r) => (
-                        <button
+                        <Button
                           key={r}
-                          className={`button-secondary rating-${r} ${g.rating === r ? "active" : ""}`}
+                          variant={g.rating === r ? "primary" : "secondary"}
+                          size="sm"
+                          className={`rating-${r}`}
                           onClick={() => rate(g.id, r)}
                         >
                           {RATING_LABELS[r]}
-                        </button>
+                        </Button>
                       ))}
                       {queueButton(g.id)}
                     </div>
@@ -617,7 +626,7 @@ export default function SandboxPage() {
             ))}
           </ul>
         )}
-      </section>
+      </Card>
     </>
   );
 }
