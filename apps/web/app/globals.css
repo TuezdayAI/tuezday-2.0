@@ -1518,56 +1518,6 @@ a.workspace-card:hover {
   border-top: 1px solid var(--border);
 }
 
-.usage-meters {
-  display: grid;
-  gap: 16px;
-}
-
-.usage-meter-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: 6px;
-}
-
-.usage-meter-title {
-  font-weight: 600;
-}
-
-.usage-meter-figure {
-  color: var(--muted);
-  font-size: 0.9rem;
-  font-weight: 600;
-}
-
-.meter-track {
-  height: 10px;
-  border-radius: 999px;
-  background: var(--accent-soft);
-  border: 1px solid var(--border);
-  overflow: hidden;
-}
-
-.meter-fill {
-  height: 100%;
-  border-radius: 999px;
-  background: var(--accent);
-  transition: width 0.4s var(--ease-out);
-}
-
-.meter-fill.near {
-  background: var(--c2-deep);
-}
-
-.meter-fill.over {
-  background: var(--danger);
-}
-
-.meter-fill.unlimited {
-  background: var(--accent);
-  opacity: 0.35;
-}
-
 .usage-alert {
   margin: 6px 0 0;
   color: var(--danger);
