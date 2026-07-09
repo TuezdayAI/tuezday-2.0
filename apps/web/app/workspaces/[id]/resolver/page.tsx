@@ -1,6 +1,10 @@
 "use client";
 
 import { EmptyState } from "@/src/components/empty-state";
+import { Button } from "@/src/components/ui/button";
+import { Card, CardHeader } from "@/src/components/ui/card";
+import { Badge } from "@/src/components/ui/badge";
+import { Input, Textarea, Select } from "@/src/components/ui/input";
 
 
 import { API_URL, apiFetch } from "@/lib/api";
@@ -424,13 +428,15 @@ export default function ResolverPage() {
         </div>
       </div>
 
-      <section className="panel">
-        <div className="panel-title-row">
-          <h2>Personas</h2>
-          <button className="button-secondary" onClick={() => startEdit()}>
-            + New persona
-          </button>
-        </div>
+      <Card>
+        <CardHeader
+          title="Personas"
+          actions={
+            <Button variant="secondary" size="sm" onClick={() => startEdit()}>
+              + New persona
+            </Button>
+          }
+        />
         {personas.length === 0 ? (
           <EmptyState description={<>No personas yet. Create one (e.g. “CEO voice”, “Company page”) to see the same brain
             resolve differently.</>} />
@@ -446,12 +452,12 @@ export default function ResolverPage() {
                   )}
                 </div>
                 <div className="persona-actions">
-                  <button className="button-secondary" onClick={() => startEdit(p)}>
+                  <Button variant="secondary" size="sm" onClick={() => startEdit(p)}>
                     Edit
-                  </button>
-                  <button className="button-secondary danger" onClick={() => removePersona(p)}>
+                  </Button>
+                  <Button variant="danger" size="sm" onClick={() => removePersona(p)}>
                     Delete
-                  </button>
+                  </Button>
                 </div>
               </li>
             ))}
@@ -460,58 +466,59 @@ export default function ResolverPage() {
 
         {showPersonaForm && (
           <form className="persona-form" onSubmit={savePersona}>
-            <input
+            <Input
               value={pName}
               onChange={(e) => setPName(e.target.value)}
               placeholder="Persona name (e.g. CEO)"
               maxLength={100}
             />
-            <input
+            <Input
               value={pDescription}
               onChange={(e) => setPDescription(e.target.value)}
               placeholder="Who is speaking? (e.g. Founder, first person)"
               maxLength={500}
             />
-            <textarea
+            <Textarea
               value={pOverlay}
               onChange={(e) => setPOverlay(e.target.value)}
               placeholder="Overlay — voice and point-of-view adjustments layered on the org brain…"
               rows={5}
             />
-            <input
+            <Input
               value={pTopics}
               onChange={(e) => setPTopics(e.target.value)}
               placeholder="Topics this persona covers, comma-separated (feed the zoom + discovery)…"
             />
-            <input
+            <Input
               value={pTone}
               onChange={(e) => setPTone(e.target.value)}
               placeholder="Tone (e.g. dry, technical, first-person)…"
               maxLength={300}
             />
-            <textarea
+            <Textarea
               value={pStyleRules}
               onChange={(e) => setPStyleRules(e.target.value)}
               placeholder="Style rules — one per line (e.g. Short sentences. No emoji.)…"
               rows={3}
             />
-            <textarea
+            <Textarea
               value={pAvoid}
               onChange={(e) => setPAvoid(e.target.value)}
               placeholder="Never say / avoid (words, claims, topics this persona won't touch)…"
               rows={2}
             />
             <div className="editor-actions">
-              <button type="submit" disabled={pName.trim().length === 0}>
+              <Button variant="primary" type="submit" disabled={pName.trim().length === 0}>
                 {editingId ? "Update persona" : "Create persona"}
-              </button>
-              <button
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
                 type="button"
-                className="button-secondary"
                 onClick={() => setShowPersonaForm(false)}
               >
                 Cancel
-              </button>
+              </Button>
             </div>
           </form>
         )}
@@ -560,26 +567,28 @@ export default function ResolverPage() {
                                     : `${assignment.providerKey} account`}
                                 </span>{" "}
                                 {assignment.isPrimary && (
-                                  <span className="layer-badge state-approved">primary</span>
+                                  <Badge tone="approved">primary</Badge>
                                 )}{" "}
                                 {!assignment.isPrimary && (
-                                  <button
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
                                     type="button"
-                                    className="link-button"
                                     disabled={assignmentBusy === persona.id}
                                     onClick={() => void makePrimary(persona.id, assignment)}
                                   >
                                     make primary
-                                  </button>
+                                  </Button>
                                 )}{" "}
-                                <button
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
                                   type="button"
-                                  className="link-button"
                                   disabled={assignmentBusy === persona.id}
                                   onClick={() => void removeAssignment(persona.id, assignment.id)}
                                 >
                                   remove
-                                </button>
+                                </Button>
                               </li>
                             );
                           })}
@@ -589,7 +598,7 @@ export default function ResolverPage() {
                       <div className="resolve-controls" style={{ marginTop: 10 }}>
                         <label>
                           Channel
-                          <select
+                          <Select
                             value={draft.channel}
                             onChange={(e) =>
                               updateAssignmentDraft(persona.id, {
@@ -602,11 +611,11 @@ export default function ResolverPage() {
                                 {socialChannel}
                               </option>
                             ))}
-                          </select>
+                          </Select>
                         </label>
                         <label>
                           Account
-                          <select
+                          <Select
                             value={draft.connectionId}
                             onChange={(e) =>
                               updateAssignmentDraft(persona.id, { connectionId: e.target.value })
@@ -618,7 +627,7 @@ export default function ResolverPage() {
                                 {connectionLabel(account)}
                               </option>
                             ))}
-                          </select>
+                          </Select>
                         </label>
                         <label className="checkbox-label" style={{ alignSelf: "center" }}>
                           <input
@@ -630,13 +639,14 @@ export default function ResolverPage() {
                           />
                           Primary
                         </label>
-                        <button
+                        <Button
+                          variant="primary"
                           type="button"
                           disabled={!draft.connectionId || assignmentBusy === persona.id}
                           onClick={() => void assignAccount(persona.id)}
                         >
                           Assign account
-                        </button>
+                        </Button>
                       </div>
                       {accountOptions.length === 0 && (
                         <p className="section-reason">
@@ -650,58 +660,58 @@ export default function ResolverPage() {
             )}
           </div>
         )}
-      </section>
+      </Card>
 
-      <section className="panel">
+      <Card>
         <h2>Resolve</h2>
         <div className="resolve-controls">
           <label>
             Task
-            <select value={taskType} onChange={(e) => setTaskType(e.target.value as TaskType)}>
+            <Select value={taskType} onChange={(e) => setTaskType(e.target.value as TaskType)}>
               {TASK_TYPES.map((t) => (
                 <option key={t} value={t}>
                   {TASK_LABELS[t]}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <label>
             Channel
-            <select value={channel} onChange={(e) => setChannel(e.target.value as Channel)}>
+            <Select value={channel} onChange={(e) => setChannel(e.target.value as Channel)}>
               {CHANNELS.map((c) => (
                 <option key={c} value={c}>
                   {c}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <label>
             Persona
-            <select value={personaId} onChange={(e) => setPersonaId(e.target.value)}>
+            <Select value={personaId} onChange={(e) => setPersonaId(e.target.value)}>
               <option value="">(none — org voice)</option>
               {personas.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           {campaigns.length > 0 && (
             <label>
               Campaign
-              <select value={campaignId} onChange={(e) => setCampaignId(e.target.value)}>
+              <Select value={campaignId} onChange={(e) => setCampaignId(e.target.value)}>
                 <option value="">(no campaign)</option>
                 {campaigns.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
           )}
           <label>
             Token budget
-            <input
+            <Input
               type="number"
               min={500}
               max={200000}
@@ -717,9 +727,9 @@ export default function ResolverPage() {
             />
             Use evidence
           </label>
-          <button onClick={resolve} disabled={resolving}>
+          <Button variant="primary" onClick={resolve} disabled={resolving}>
             {resolving ? "Resolving…" : "Resolve context"}
-          </button>
+          </Button>
         </div>
 
         {error && <p className="error">{error}</p>}
@@ -761,9 +771,9 @@ export default function ResolverPage() {
             </ol>
           </div>
         )}
-      </section>
+      </Card>
 
-      <section className="panel">
+      <Card>
         <h2>Task × doc context matrix</h2>
         <p className="subtitle">
           Tier 2 of the resolver: how much of ICP and History each task type sees — the whole doc,
@@ -797,7 +807,7 @@ export default function ResolverPage() {
                       return (
                         <td key={d}>
                           <div className="matrix-cell-head">
-                            <select
+                            <Select
                               value={cell.mode}
                               disabled={busy}
                               onChange={(e) =>
@@ -809,18 +819,19 @@ export default function ResolverPage() {
                                   {m}
                                 </option>
                               ))}
-                            </select>
+                            </Select>
                             {cell.source === "workspace" && (
                               <>
                                 <span className="guidance-source source-workspace">override</span>
-                                <button
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
                                   type="button"
-                                  className="link-button"
                                   disabled={busy}
                                   onClick={() => void resetMatrixCell(t, d)}
                                 >
                                   reset
-                                </button>
+                                </Button>
                               </>
                             )}
                           </div>
@@ -834,7 +845,7 @@ export default function ResolverPage() {
             </table>
           </div>
         )}
-      </section>
+      </Card>
     </>
   );
 }
