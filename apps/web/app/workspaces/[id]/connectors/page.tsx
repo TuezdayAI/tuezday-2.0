@@ -1,6 +1,10 @@
 "use client";
 
 import { EmptyState } from "@/src/components/empty-state";
+import { Button } from "@/src/components/ui/button";
+import { Card } from "@/src/components/ui/card";
+import { Badge } from "@/src/components/ui/badge";
+import { Input, Textarea } from "@/src/components/ui/input";
 
 
 import { API_URL, apiFetch } from "@/lib/api";
@@ -335,7 +339,7 @@ export default function ConnectorsPage() {
         </p>
       )}
 
-      <section className="panel">
+      <Card>
         <h2>Providers</h2>
         <ul className="section-list">
           {view.providers.map((provider) => {
@@ -353,16 +357,16 @@ export default function ConnectorsPage() {
             return (
               <li key={provider.key} className="section-card">
                 <div className="section-head">
-                  <span
-                    className={`layer-badge ${
+                  <Badge
+                    tone={
                       isConnected
-                        ? "state-approved"
+                        ? "approved"
                         : hasError
-                          ? "state-rejected"
+                          ? "rejected"
                           : needsOAuthApp
-                            ? "state-edited"
-                            : ""
-                    }`}
+                            ? "edited"
+                            : "neutral"
+                    }
                   >
                     {isConnected
                       ? "connected"
@@ -373,7 +377,7 @@ export default function ConnectorsPage() {
                           : hasDisconnected
                             ? "disconnected"
                             : "not connected"}
-                  </span>
+                  </Badge>
                   <span className="section-title">{provider.label}</span>
                   {providerConnections.length > 0 && (
                     <span className="section-tokens">{providerConnections.length} account(s)</span>
@@ -389,17 +393,17 @@ export default function ConnectorsPage() {
                         style={{ borderTop: "1px solid var(--border)", paddingTop: 10 }}
                       >
                         <div className="section-head">
-                          <span
-                            className={`layer-badge ${
+                          <Badge
+                            tone={
                               connection.status === "connected"
-                                ? "state-approved"
+                                ? "approved"
                                 : connection.status === "error"
-                                  ? "state-rejected"
-                                  : ""
-                            }`}
+                                  ? "rejected"
+                                  : "neutral"
+                            }
                           >
                             {connection.status}
-                          </span>
+                          </Badge>
                           <span className="section-title">
                             {connectionLabel(connection, provider.label)}
                           </span>
@@ -425,20 +429,22 @@ export default function ConnectorsPage() {
                         )}
                         {connection.status !== "disconnected" && (
                           <div className="rating-row" style={{ marginTop: 8 }}>
-                            <button
-                              className="button-secondary"
+                            <Button
+                              variant="secondary"
+                              size="sm"
                               disabled={busy}
                               onClick={() => testConnection(connection)}
                             >
                               Test
-                            </button>
-                            <button
-                              className="button-secondary danger"
+                            </Button>
+                            <Button
+                              variant="danger"
+                              size="sm"
                               disabled={busy}
                               onClick={() => disconnect(connection)}
                             >
                               Disconnect
-                            </button>
+                            </Button>
                           </div>
                         )}
                         {connection.status === "connected" &&
@@ -453,7 +459,7 @@ export default function ConnectorsPage() {
                                   ` — covers ${connection.contentProfile.topics.join(", ")}`}
                               </summary>
                               <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-                                <input
+                                <Input
                                   value={profileDraftFor(connection).topics}
                                   onChange={(e) =>
                                     setProfileDrafts((d) => ({
@@ -466,7 +472,7 @@ export default function ConnectorsPage() {
                                   }
                                   placeholder="Topics this account covers, comma-separated…"
                                 />
-                                <textarea
+                                <Textarea
                                   value={profileDraftFor(connection).guidance}
                                   onChange={(e) =>
                                     setProfileDrafts((d) => ({
@@ -482,13 +488,14 @@ export default function ConnectorsPage() {
                                   maxLength={2000}
                                 />
                                 <div className="editor-actions">
-                                  <button
+                                  <Button
+                                    variant="primary"
                                     type="button"
                                     disabled={profileBusy === connection.id}
                                     onClick={() => void saveProfile(connection)}
                                   >
                                     {profileBusy === connection.id ? "Saving…" : "Save profile"}
-                                  </button>
+                                  </Button>
                                 </div>
                               </div>
                             </details>
@@ -503,7 +510,7 @@ export default function ConnectorsPage() {
                     {provider.authMode === "api_key" && (
                       <label style={{ flex: 1 }}>
                         API key
-                        <input
+                        <Input
                           type="password"
                           value={apiKey}
                           onChange={(e) => setApiKey(e.target.value)}
@@ -514,7 +521,7 @@ export default function ConnectorsPage() {
                     {provider.authMode === "access_token" && (
                       <label style={{ flex: 1 }}>
                         Access token
-                        <input
+                        <Input
                           type="password"
                           value={accessToken}
                           onChange={(e) => setAccessToken(e.target.value)}
@@ -529,7 +536,7 @@ export default function ConnectorsPage() {
                     {provider.requiresBaseUrl && (
                       <label style={{ flex: 1 }}>
                         Base URL
-                        <input
+                        <Input
                           value={baseUrl}
                           onChange={(e) => setBaseUrl(e.target.value)}
                           placeholder={
@@ -543,14 +550,15 @@ export default function ConnectorsPage() {
                     {provider.key === "custom" && (
                       <label>
                         Test path
-                        <input
+                        <Input
                           value={testPath}
                           onChange={(e) => setTestPath(e.target.value)}
                           placeholder="/v1/status"
                         />
                       </label>
                     )}
-                    <button
+                    <Button
+                      variant="primary"
                       disabled={
                         busy ||
                         (provider.authMode === "api_key" && !apiKey.trim()) ||
@@ -560,30 +568,32 @@ export default function ConnectorsPage() {
                       onClick={() => connect(provider)}
                     >
                       {connectLabel}
-                    </button>
-                    <button className="button-secondary" onClick={() => setConnectingKey(null)}>
+                    </Button>
+                    <Button variant="secondary" size="sm" onClick={() => setConnectingKey(null)}>
                       Cancel
-                    </button>
+                    </Button>
                   </div>
                 ) : (
                   <div className="rating-row" style={{ marginTop: 8 }}>
                     {provider.authMode !== "oauth" && (
-                      <button
-                        className="button-secondary"
+                      <Button
+                        variant="secondary"
+                        size="sm"
                         disabled={busy || !view.fabric.healthy}
                         onClick={() => setConnectingKey(provider.key)}
                       >
                         {connectLabel}
-                      </button>
+                      </Button>
                     )}
                     {provider.authMode === "oauth" && provider.oauthConfigured && (
-                      <button
-                        className="button-secondary"
+                      <Button
+                        variant="secondary"
+                        size="sm"
                         disabled={busy || !view.fabric.healthy}
                         onClick={() => connectOAuth(provider)}
                       >
                         {connectLabel}
-                      </button>
+                      </Button>
                     )}
                   </div>
                 )}
@@ -596,15 +606,15 @@ export default function ConnectorsPage() {
             );
           })}
         </ul>
-      </section>
+      </Card>
 
-      <section className="panel">
+      <Card>
         <h2>Webhooks</h2>
         <form className="persona-form" style={{ borderTop: "none", paddingTop: 0, marginTop: 0 }} onSubmit={addWebhook}>
           <div className="resolve-controls">
             <label style={{ flex: 1 }}>
               Endpoint URL
-              <input
+              <Input
                 value={hookUrl}
                 onChange={(e) => setHookUrl(e.target.value)}
                 placeholder="https://hooks.example.com/tuezday (try webhook.site)"
@@ -612,7 +622,7 @@ export default function ConnectorsPage() {
             </label>
             <label>
               Secret (optional)
-              <input
+              <Input
                 value={hookSecret}
                 onChange={(e) => setHookSecret(e.target.value)}
                 placeholder="for HMAC signatures"
@@ -637,9 +647,13 @@ export default function ConnectorsPage() {
             ))}
           </div>
           <div className="editor-actions">
-            <button type="submit" disabled={busy || !hookUrl.trim() || hookTypes.length === 0}>
+            <Button
+              variant="primary"
+              type="submit"
+              disabled={busy || !hookUrl.trim() || hookTypes.length === 0}
+            >
               Add webhook
-            </button>
+            </Button>
           </div>
         </form>
 
@@ -648,28 +662,28 @@ export default function ConnectorsPage() {
             {webhooks.map((w) => (
               <li key={w.id} className={`section-card ${w.enabled ? "" : "excluded"}`}>
                 <div className="section-head">
-                  <span className={`layer-badge ${w.enabled ? "state-approved" : ""}`}>
+                  <Badge tone={w.enabled ? "approved" : "neutral"}>
                     {w.enabled ? "enabled" : "disabled"}
-                  </span>
+                  </Badge>
                   <span className="section-title">{w.url}</span>
                 </div>
                 <p className="section-reason">{w.eventTypes.join(" · ")}</p>
                 <div className="rating-row" style={{ marginTop: 8 }}>
-                  <button className="button-secondary" disabled={busy} onClick={() => pingWebhook(w.id)}>
+                  <Button variant="secondary" size="sm" disabled={busy} onClick={() => pingWebhook(w.id)}>
                     Ping
-                  </button>
-                  <button className="button-secondary" onClick={() => toggleWebhook(w)}>
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => toggleWebhook(w)}>
                     {w.enabled ? "Disable" : "Enable"}
-                  </button>
-                  <button className="button-secondary danger" onClick={() => removeWebhook(w)}>
+                  </Button>
+                  <Button variant="danger" size="sm" onClick={() => removeWebhook(w)}>
                     Delete
-                  </button>
+                  </Button>
                 </div>
               </li>
             ))}
           </ul>
         )}
-      </section>
+      </Card>
 
     </>
   );
