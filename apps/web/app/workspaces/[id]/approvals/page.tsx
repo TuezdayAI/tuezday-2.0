@@ -19,6 +19,9 @@ import {
   type Workspace,
 } from "@tuezday/contracts";
 import { WhyThisOutput } from "@/components/why-this-output";
+import { Button } from "@/src/components/ui/button";
+import { Badge } from "@/src/components/ui/badge";
+import { Tabs } from "@/src/components/ui/tabs";
 
 const TASK_LABELS: Record<TaskType, string> = {
   linkedin_post: "LinkedIn post",
@@ -45,6 +48,14 @@ const STATE_LABELS: Record<ApprovalState, string> = {
 };
 
 type Filter = ApprovalState | "all";
+
+const STATE_BADGE_TONE: Record<ApprovalState, "approved" | "pending" | "edited" | "rejected" | "draft"> = {
+  draft: "draft",
+  pending_review: "pending",
+  edited: "edited",
+  approved: "approved",
+  rejected: "rejected",
+};
 
 export default function ApprovalsPage() {
   const { id } = useParams<{ id: string }>();
@@ -174,17 +185,14 @@ export default function ApprovalsPage() {
         </div>
       </div>
 
-      <div className="filter-tabs">
-        {filters.map((f) => (
-          <button
-            key={f}
-            className={`filter-tab ${filter === f ? "active" : ""}`}
-            onClick={() => setFilter(f)}
-          >
-            {f === "all" ? "All" : STATE_LABELS[f]} ({counts(f)})
-          </button>
-        ))}
-      </div>
+      <Tabs
+        tabs={filters.map((f) => ({
+          key: f,
+          label: `${f === "all" ? "All" : STATE_LABELS[f]} (${counts(f)})`,
+        }))}
+        active={filter}
+        onChange={(key) => setFilter(key as Filter)}
+      />
 
       {error && <p className="error">{error}</p>}
 
@@ -200,17 +208,17 @@ export default function ApprovalsPage() {
             return (
               <li key={d.id} className="section-card">
                 <div className="section-head">
-                  <span className={`layer-badge state-${d.state}`}>{STATE_LABELS[d.state]}</span>
+                  <Badge tone={STATE_BADGE_TONE[d.state]}>{STATE_LABELS[d.state]}</Badge>
                   {decisions[d.id]?.some(
                     (dec) => dec.action === "approve" && dec.actor === "system",
                   ) && (
-                    <span
-                      className="layer-badge state-approved"
+                    <Badge
+                      tone="approved"
                       style={{ marginLeft: 8 }}
                       title="Approved automatically by scheduled-auto"
                     >
                       Auto-approved
-                    </span>
+                    </Badge>
                   )}
                   <span className="section-title">
                     {TASK_LABELS[d.taskType]} · {d.channel} · {personaName(d.personaId)}
@@ -239,9 +247,9 @@ export default function ApprovalsPage() {
                       >
                         Save edit
                       </button>
-                      <button className="button-secondary" onClick={() => setEditingId(null)}>
+                      <Button variant="secondary" size="sm" onClick={() => setEditingId(null)}>
                         Cancel
-                      </button>
+                      </Button>
                     </div>
                   </div>
                 ) : (
@@ -261,16 +269,18 @@ export default function ApprovalsPage() {
                   <div className="rating-row">
                     {d.state === "approved" && (
                       <>
-                        <button
-                          className="button-secondary"
+                        <Button
+                          variant="secondary"
+                          size="sm"
                           onClick={async () => {
                             await navigator.clipboard.writeText(d.content);
                           }}
                         >
                           ⧉ Copy
-                        </button>
-                        <button
-                          className="button-secondary"
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
                           onClick={() => {
                             const a = document.createElement("a");
                             a.href = URL.createObjectURL(
@@ -282,20 +292,22 @@ export default function ApprovalsPage() {
                           }}
                         >
                           ↓ Download .md
-                        </button>
+                        </Button>
                       </>
                     )}
                     {editable && (
                       <>
-                        <button
-                          className="button-secondary rating-accepted"
+                        <Button
+                          variant="primary"
+                          size="sm"
                           disabled={busy}
                           onClick={() => action(d.id, "approve")}
                         >
                           ✓ Approve
-                        </button>
-                        <button
-                          className="button-secondary"
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
                           disabled={busy}
                           onClick={() => {
                             setEditingId(d.id);
@@ -303,35 +315,38 @@ export default function ApprovalsPage() {
                           }}
                         >
                           ✎ Edit
-                        </button>
-                        <button
-                          className="button-secondary rating-rejected"
+                        </Button>
+                        <Button
+                          variant="danger"
+                          size="sm"
                           disabled={busy}
                           onClick={() => action(d.id, "reject")}
                         >
                           ✗ Reject
-                        </button>
+                        </Button>
                         {d.state === "edited" && (
-                          <button
-                            className="button-secondary"
+                          <Button
+                            variant="secondary"
+                            size="sm"
                             disabled={busy}
                             onClick={() => action(d.id, "resubmit")}
                           >
                             ↺ Resubmit for review
-                          </button>
+                          </Button>
                         )}
                       </>
                     )}
-                    <button
-                      className="button-secondary"
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       disabled={busy}
                       onClick={() => rerunReview(d.id)}
                     >
                       ⟳ {d.review ? "Re-run review" : "Run review"}
-                    </button>
-                    <button className="link-button" onClick={() => toggleHistory(d.id)}>
+                    </Button>
+                    <Button variant="ghost" size="sm" onClick={() => toggleHistory(d.id)}>
                       {historyId === d.id ? "hide history" : "history"}
-                    </button>
+                    </Button>
                   </div>
                 )}
 
