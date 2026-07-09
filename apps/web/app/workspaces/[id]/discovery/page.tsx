@@ -2,6 +2,10 @@
 
 import { EmptyState } from "@/src/components/empty-state";
 import { ShowMoreButton, useShowMore } from "@/src/components/show-more";
+import { Badge } from "@/src/components/ui/badge";
+import { Button } from "@/src/components/ui/button";
+import { Card, CardHeader } from "@/src/components/ui/card";
+import { Input, Select } from "@/src/components/ui/input";
 
 
 import { API_URL, apiFetch } from "@/lib/api";
@@ -460,16 +464,18 @@ export default function DiscoveryPage() {
   }
 
   /** One badge summarizing where the source stands (Sprint 46 statuses). */
-  function sourceStatusBadge(s: DiscoverySource): { label: string; className: string } {
+  function sourceStatusBadge(
+    s: DiscoverySource,
+  ): { label: string; tone: "rejected" | "edited" | "approved" } {
     if (s.status === "error" && s.lastError?.startsWith("permission_required"))
-      return { label: "permission required", className: "state-rejected" };
+      return { label: "permission required", tone: "rejected" };
     if (s.status === "error" && s.lastError === "connection_disconnected")
-      return { label: "needs connection", className: "state-rejected" };
-    if (s.status === "error") return { label: "error", className: "state-rejected" };
-    if (s.status === "needs_api_key") return { label: "needs API key", className: "state-edited" };
+      return { label: "needs connection", tone: "rejected" };
+    if (s.status === "error") return { label: "error", tone: "rejected" };
+    if (s.status === "needs_api_key") return { label: "needs API key", tone: "edited" };
     if (s.backoffUntil && s.backoffUntil > Date.now())
-      return { label: "backing off", className: "state-edited" };
-    return { label: "active", className: "state-approved" };
+      return { label: "backing off", tone: "edited" };
+    return { label: "active", tone: "approved" };
   }
 
   if (error && !workspace) {
@@ -495,28 +501,30 @@ export default function DiscoveryPage() {
         </div>
       </div>
 
-      <section className="panel">
-        <div className="panel-title-row">
-          <h2>Sources</h2>
-          <div className="persona-actions">
-            <button className="button-secondary" disabled={suggesting} onClick={suggest}>
-              {suggesting ? "Asking the brain…" : "✨ Suggest sources"}
-            </button>
-            <button className="button-secondary" onClick={() => setShowForm(!showForm)}>
-              + Add source
-            </button>
-            <button disabled={running || sources.length === 0} onClick={runNow}>
-              {running ? "Running…" : "▶ Run discovery now"}
-            </button>
-          </div>
-        </div>
+      <Card>
+        <CardHeader
+          title="Sources"
+          actions={
+            <>
+              <Button variant="secondary" size="sm" disabled={suggesting} onClick={suggest}>
+                {suggesting ? "Asking the brain…" : "✨ Suggest sources"}
+              </Button>
+              <Button variant="secondary" size="sm" onClick={() => setShowForm(!showForm)}>
+                + Add source
+              </Button>
+              <Button variant="primary" disabled={running || sources.length === 0} onClick={runNow}>
+                {running ? "Running…" : "▶ Run discovery now"}
+              </Button>
+            </>
+          }
+        />
 
         {showForm && (
           <form className="persona-form" onSubmit={submitForm}>
             <div className="resolve-controls">
               <label>
                 Type
-                <select
+                <Select
                   value={newType}
                   onChange={(e) => {
                     setNewType(e.target.value as DiscoverySourceType);
@@ -530,12 +538,12 @@ export default function DiscoveryPage() {
                       {TYPE_LABELS[t]}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
               {showConnectionPicker && (
                 <label>
                   Read through
-                  <select
+                  <Select
                     value={connectionId}
                     onChange={(e) => {
                       setConnectionId(e.target.value);
@@ -555,13 +563,13 @@ export default function DiscoveryPage() {
                         {c.displayName}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </label>
               )}
               {newType === "x" && connectionId && (
                 <label>
                   Listen for
-                  <select
+                  <Select
                     value={xMode}
                     onChange={(e) => {
                       setMode(e.target.value as DiscoverySourceMode);
@@ -571,13 +579,13 @@ export default function DiscoveryPage() {
                     <option value="query">Recent post search</option>
                     <option value="account_timeline">Account timeline</option>
                     <option value="list_timeline">List timeline</option>
-                  </select>
+                  </Select>
                 </label>
               )}
               {newType === "instagram" && (
                 <label>
                   Listen for
-                  <select
+                  <Select
                     value={igMode}
                     onChange={(e) => {
                       setMode(e.target.value as DiscoverySourceMode);
@@ -586,13 +594,13 @@ export default function DiscoveryPage() {
                   >
                     <option value="account_timeline">Account posts</option>
                     <option value="hashtag">Hashtag</option>
-                  </select>
+                  </Select>
                 </label>
               )}
               {(newType === "rss" || newType === "podcast") && (
                 <label style={{ flex: 1 }}>
                   Feed URL
-                  <input
+                  <Input
                     value={feedUrl}
                     onChange={(e) => setFeedUrl(e.target.value)}
                     placeholder="https://example.com/feed.xml"
@@ -602,7 +610,7 @@ export default function DiscoveryPage() {
               {showQueryField && (
                 <label style={{ flex: 1 }}>
                   {newType === "reddit" ? "Query (optional with subreddit)" : "Query"}
-                  <input
+                  <Input
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
                     placeholder='e.g. "AI GTM tools"'
@@ -612,7 +620,7 @@ export default function DiscoveryPage() {
               {newType === "reddit" && (
                 <label>
                   Subreddit
-                  <input
+                  <Input
                     value={subreddit}
                     onChange={(e) => setSubreddit(e.target.value)}
                     placeholder="SaaS"
@@ -624,7 +632,7 @@ export default function DiscoveryPage() {
                   {trackedForType(newType).length > 0 && (
                     <label>
                       Tracked account
-                      <select
+                      <Select
                         value={trackedAccountId}
                         onChange={(e) => setTrackedAccountId(e.target.value)}
                       >
@@ -635,13 +643,13 @@ export default function DiscoveryPage() {
                             {a.displayName ? ` — ${a.displayName}` : ""}
                           </option>
                         ))}
-                      </select>
+                      </Select>
                     </label>
                   )}
                   {!trackedAccountId && (
                     <label>
                       Handle
-                      <input
+                      <Input
                         value={handle}
                         onChange={(e) => setHandle(e.target.value)}
                         placeholder="@competitor"
@@ -653,7 +661,7 @@ export default function DiscoveryPage() {
               {newType === "x" && connectionId && xMode === "list_timeline" && (
                 <label>
                   List ID
-                  <input
+                  <Input
                     value={listId}
                     onChange={(e) => setListId(e.target.value)}
                     placeholder="1234567890"
@@ -663,7 +671,7 @@ export default function DiscoveryPage() {
               {newType === "instagram" && igMode === "hashtag" && (
                 <label>
                   Hashtag
-                  <input
+                  <Input
                     value={hashtag}
                     onChange={(e) => setHashtag(e.target.value)}
                     placeholder="gtmstrategy"
@@ -673,7 +681,7 @@ export default function DiscoveryPage() {
               {newType === "youtube" && (
                 <label style={{ flex: 1 }}>
                   Channel ID
-                  <input
+                  <Input
                     value={channelId}
                     onChange={(e) => setChannelId(e.target.value)}
                     placeholder="UCxxxxxxxxxxxxxxxxxxxxxx"
@@ -683,25 +691,26 @@ export default function DiscoveryPage() {
               {newType === "google_trends" && (
                 <label>
                   Geo (optional)
-                  <input value={geo} onChange={(e) => setGeo(e.target.value)} placeholder="US" />
+                  <Input value={geo} onChange={(e) => setGeo(e.target.value)} placeholder="US" />
                 </label>
               )}
               {newType === "funding_news" && (
                 <label>
                   Sector (optional)
-                  <input
+                  <Input
                     value={sector}
                     onChange={(e) => setSector(e.target.value)}
                     placeholder="fintech"
                   />
                 </label>
               )}
-              <button
+              <Button
+                variant="primary"
                 type="submit"
                 disabled={busy || (newType === "instagram" && !connectionId)}
               >
                 Add
-              </button>
+              </Button>
             </div>
             {instagramUnconnectable && (
               <p className="empty">
@@ -721,13 +730,14 @@ export default function DiscoveryPage() {
                   <div className="section-head">
                     <span className="layer-badge">{TYPE_LABELS[p.type]}</span>
                     <span className="section-title">{p.name}</span>
-                    <button
-                      className="button-secondary"
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       disabled={busy}
                       onClick={() => addSource({ type: p.type, name: p.name, config: p.config })}
                     >
                       + Add
-                    </button>
+                    </Button>
                   </div>
                   <p className="section-reason">
                     {JSON.stringify(p.config)} — {p.reason}
@@ -747,7 +757,7 @@ export default function DiscoveryPage() {
               return (
                 <li key={s.id} className={`section-card ${s.enabled ? "" : "excluded"}`}>
                   <div className="section-head">
-                    <span className={`layer-badge ${badge.className}`}>{badge.label}</span>
+                    <Badge tone={badge.tone}>{badge.label}</Badge>
                     {s.connectionId ? (
                       <span
                         className="layer-badge layer-zoom source-badge"
@@ -756,7 +766,7 @@ export default function DiscoveryPage() {
                         🔗 {connectionName(s.connectionId)}
                       </span>
                     ) : (
-                      <span className="layer-badge state-draft">keyless</span>
+                      <Badge tone="draft">keyless</Badge>
                     )}
                     <span className="section-title">{s.name}</span>
                     <span className="section-tokens">
@@ -770,12 +780,12 @@ export default function DiscoveryPage() {
                   </div>
                   {s.lastError && <p className="error">{s.lastError}</p>}
                   <div className="rating-row" style={{ marginTop: 8 }}>
-                    <button className="button-secondary" onClick={() => toggleSource(s)}>
+                    <Button variant="secondary" size="sm" onClick={() => toggleSource(s)}>
                       {s.enabled ? "Disable" : "Enable"}
-                    </button>
-                    <button className="button-secondary danger" onClick={() => removeSource(s)}>
+                    </Button>
+                    <Button variant="danger" size="sm" onClick={() => removeSource(s)}>
                       Delete
-                    </button>
+                    </Button>
                   </div>
                 </li>
               );
@@ -801,20 +811,21 @@ export default function DiscoveryPage() {
           </p>
         )}
         {error && <p className="error">{error}</p>}
-      </section>
+      </Card>
 
-      <section className="panel">
-        <div className="panel-title-row">
-          <h2>Tracked accounts</h2>
-          <div className="persona-actions">
-            <button
-              className="button-secondary"
+      <Card>
+        <CardHeader
+          title="Tracked accounts"
+          actions={
+            <Button
+              variant="secondary"
+              size="sm"
               onClick={() => setShowTrackedForm(!showTrackedForm)}
             >
               + Track account
-            </button>
-          </div>
-        </div>
+            </Button>
+          }
+        />
         <p className="subtitle">
           Competitor and source handles your connected sources can listen to — pick them in a
           source instead of retyping handles.
@@ -825,7 +836,7 @@ export default function DiscoveryPage() {
             <div className="resolve-controls">
               <label>
                 Platform
-                <select
+                <Select
                   value={trackedPlatform}
                   onChange={(e) => setTrackedPlatform(e.target.value as TrackedSocialPlatform)}
                 >
@@ -834,11 +845,11 @@ export default function DiscoveryPage() {
                       {PLATFORM_LABELS[p]}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
               <label>
                 Handle
-                <input
+                <Input
                   value={trackedHandle}
                   onChange={(e) => setTrackedHandle(e.target.value)}
                   placeholder={trackedPlatform === "reddit" ? "u/competitor" : "@competitor"}
@@ -846,7 +857,7 @@ export default function DiscoveryPage() {
               </label>
               <label>
                 Display name (optional)
-                <input
+                <Input
                   value={trackedDisplayName}
                   onChange={(e) => setTrackedDisplayName(e.target.value)}
                   placeholder="Competitor Inc"
@@ -854,15 +865,15 @@ export default function DiscoveryPage() {
               </label>
               <label style={{ flex: 1 }}>
                 Notes (optional)
-                <input
+                <Input
                   value={trackedNotes}
                   onChange={(e) => setTrackedNotes(e.target.value)}
                   placeholder="why this account matters"
                 />
               </label>
-              <button type="submit" disabled={busy || !trackedHandle.trim()}>
+              <Button variant="primary" type="submit" disabled={busy || !trackedHandle.trim()}>
                 Add
-              </button>
+              </Button>
             </div>
           </form>
         )}
@@ -891,23 +902,24 @@ export default function DiscoveryPage() {
                 {a.notes && <p className="section-reason">{a.notes}</p>}
                 {a.lastError && <p className="error">{a.lastError}</p>}
                 <div className="rating-row" style={{ marginTop: 8 }}>
-                  <button className="button-secondary" onClick={() => toggleTrackedAccount(a)}>
+                  <Button variant="secondary" size="sm" onClick={() => toggleTrackedAccount(a)}>
                     {a.enabled ? "Disable" : "Enable"}
-                  </button>
-                  <button
-                    className="button-secondary danger"
+                  </Button>
+                  <Button
+                    variant="danger"
+                    size="sm"
                     onClick={() => removeTrackedAccount(a)}
                   >
                     Delete
-                  </button>
+                  </Button>
                 </div>
               </li>
             ))}
           </ul>
         )}
-      </section>
+      </Card>
 
-      <section className="panel">
+      <Card>
         <h2>Triage inbox ({inbox.length})</h2>
         {inbox.length === 0 ? (
           <EmptyState description={<>Nothing to triage. Run discovery, or wait for the worker's next poll.</>} />
@@ -920,17 +932,17 @@ export default function DiscoveryPage() {
               return (
                 <li key={item.id} className="section-card">
                   <div className="section-head">
-                    <span
-                      className={`layer-badge ${
+                    <Badge
+                      tone={
                         (item.score ?? 0) >= 70
-                          ? "state-approved"
+                          ? "approved"
                           : (item.score ?? 0) >= 40
-                            ? "state-edited"
-                            : ""
-                      }`}
+                            ? "edited"
+                            : "neutral"
+                      }
                     >
                       {item.score === null ? "unscored" : `${item.score}/100`}
-                    </span>
+                    </Badge>
                     <span className="section-title">
                       <a href={item.url} target="_blank" rel="noreferrer" className="signal-link">
                         {item.title}
@@ -969,18 +981,16 @@ export default function DiscoveryPage() {
                   {item.matches.length > 0 ? (
                     <p className="section-reason">
                       {item.matches.map((m, i) => (
-                        <span
+                        <Badge
                           key={i}
-                          className={`layer-badge ${
-                            m.score >= 70 ? "state-approved" : m.score >= 40 ? "state-edited" : ""
-                          }`}
+                          tone={m.score >= 70 ? "approved" : m.score >= 40 ? "edited" : "neutral"}
                           style={{ marginRight: 6, cursor: "help" }}
                           title={m.reason || "No reason given"}
                         >
                           {m.personaName ? `→ ${m.personaName} · ` : ""}
                           {m.campaignName ? `◆ ${m.campaignName} · ` : ""}
                           {m.score}/100
-                        </span>
+                        </Badge>
                       ))}
                       {item.scoreReason ?? ""}
                     </p>
@@ -1013,20 +1023,23 @@ export default function DiscoveryPage() {
                     </div>
                   )}
                   <div className="rating-row" style={{ marginTop: 8 }}>
-                    <button
-                      className="button-secondary rating-accepted"
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      className="rating-accepted"
                       disabled={busy}
                       onClick={() => triage(item.id, "accept")}
                     >
                       ✓ Accept as signal
-                    </button>
-                    <button
-                      className="button-secondary"
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       disabled={busy}
                       onClick={() => triage(item.id, "skip")}
                     >
                       Skip
-                    </button>
+                    </Button>
                   </div>
                 </li>
               );
@@ -1038,7 +1051,7 @@ export default function DiscoveryPage() {
           remaining={inboxList.remaining}
           onClick={inboxList.showMore}
         />
-      </section>
+      </Card>
     </>
   );
 }
