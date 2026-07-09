@@ -74,13 +74,13 @@ h2 {
 
 .ws-shell {
   display: grid;
-  grid-template-columns: 292px 1fr;
+  grid-template-columns: 272px 1fr;
   min-height: 100vh;
   background: var(--bg);
 }
 
 .ws-sidebar {
-  background: var(--panel-2);
+  background: var(--panel);
   border-right: 1px solid var(--border);
   padding: 16px;
   display: flex;
@@ -100,9 +100,9 @@ h2 {
 
 .ws-logo {
   font-family: var(--font-display);
-  font-size: 20px;
-  font-weight: 780;
-  letter-spacing: -0.035em;
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
   color: var(--text);
   text-decoration: none;
   display: inline-flex;
@@ -111,20 +111,16 @@ h2 {
 }
 
 .ws-mark {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border-radius: var(--radius-sm);
   display: inline-grid;
   place-items: center;
   background: var(--text);
   color: var(--panel);
-  font-weight: 780;
+  font-family: var(--font-display);
+  font-weight: 500;
   line-height: 1;
-  box-shadow:
-    inset 0 -4px 0 var(--c5),
-    inset 8px -4px 0 var(--c4),
-    inset 15px -4px 0 var(--c1),
-    inset 22px -4px 0 var(--c6);
 }
 
 .ws-kicker,
@@ -132,13 +128,13 @@ h2 {
   color: var(--muted-2);
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
   font-size: 10.5px;
-  font-weight: 650;
-  letter-spacing: 0.08em;
+  font-weight: 500;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
 .ws-workspace-card {
-  background: var(--panel);
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 12px;
@@ -147,8 +143,9 @@ h2 {
 }
 
 .ws-name {
-  font-size: 14px;
-  font-weight: 680;
+  font-family: var(--font-display);
+  font-size: 15px;
+  font-weight: 500;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -165,7 +162,7 @@ h2 {
   border: 1px solid var(--border);
   border-radius: 999px;
   color: var(--muted);
-  background: var(--bg);
+  background: var(--panel);
   padding: 3px 7px;
   font-size: 11.5px;
   line-height: 1.2;
@@ -236,20 +233,20 @@ h2 {
   color: var(--text);
   text-decoration: none;
   font-size: 13px;
-  font-weight: 650;
+  font-weight: 500;
   border: 1px solid transparent;
   transition:
-    background 180ms var(--ease-out),
-    border-color 180ms var(--ease-out),
-    color 180ms var(--ease-out);
+    background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
 }
 
 .ws-nav-item:hover {
-  background: var(--panel);
+  background: var(--bg);
 }
 
 .ws-nav-item.active {
-  background: var(--panel);
+  background: var(--bg);
   border-color: var(--border);
   box-shadow: inset 3px 0 0 var(--nav-tone);
 }
@@ -269,7 +266,7 @@ h2 {
 .ws-nav-summary {
   color: var(--muted);
   font-size: 11.5px;
-  font-weight: 450;
+  font-weight: 400;
   line-height: 1.3;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -286,7 +283,7 @@ h2 {
 
 .ws-nav-child {
   color: var(--muted);
-  font-weight: 560;
+  font-weight: 500;
   font-size: 12.5px;
   min-height: 28px;
   padding: 6px 9px;
@@ -327,7 +324,7 @@ h2 {
 .ws-nav-hint {
   font-size: 11px;
   background: var(--accent-soft);
-  color: var(--accent-ink);
+  color: var(--accent-deep);
   border-radius: 999px;
   padding: 1px 8px;
 }
@@ -344,7 +341,7 @@ h2 {
 .ws-sidebar-foot a {
   color: var(--muted);
   text-decoration: none;
-  font-weight: 560;
+  font-weight: 500;
 }
 
 .ws-sidebar-foot a:hover {
