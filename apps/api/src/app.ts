@@ -8,6 +8,10 @@ import { registerAuthGuard } from "./auth/guard";
 import type { ConnectorFabric } from "./connectors/fabric";
 import { NangoFabric } from "./connectors/nango";
 import type { Db } from "./db";
+import { OpenDesignProvider } from "./design/open-design";
+import type { DesignProvider } from "./design/provider";
+import { closeRenderer } from "./design/render";
+import { S3AssetStorage, type AssetStorage } from "./design/storage";
 import type { Fetcher } from "./discovery/adapters";
 import { NullIntentProvider, type IntentProvider } from "./discovery/intent";
 import { R2REvidenceStore } from "./evidence/r2r";
@@ -80,6 +84,10 @@ export interface BuildAppOptions {
   workerToken?: string;
   /** Product-analytics sink; defaults to PostHog-or-Noop from env. */
   analytics?: AnalyticsSink;
+  /** Design template author (Sprint 41); defaults to the self-hosted Open Design client. */
+  design?: DesignProvider;
+  /** Public asset storage (Sprint 41); defaults to the S3-compatible client from env. */
+  assetStorage?: AssetStorage;
 }
 
 export async function buildApp({
@@ -93,8 +101,15 @@ export async function buildApp({
   mailer = createDefaultMailer(fetcher),
   workerToken = process.env.TUEZDAY_WORKER_TOKEN,
   analytics = createAnalyticsSink(),
+  design = new OpenDesignProvider(),
+  assetStorage = new S3AssetStorage(),
 }: BuildAppOptions): Promise<TuezdayApp> {
   const app = Fastify({ logger: false });
+
+  // The design renderer keeps one shared headless browser per process.
+  app.addHook("onClose", async () => {
+    await closeRenderer();
+  });
 
   // @fastify/cors only allows GET/HEAD/POST by default — the brain editor
   // saves with PUT, and later slices use PATCH/DELETE.

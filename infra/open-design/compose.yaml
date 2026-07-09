@@ -1,0 +1,25 @@
+# Self-hosted Open Design daemon (Sprint 41 Part 3) — template authoring only.
+#
+# Same posture as infra/r2r and infra/nango: a separate service Tuezday talks
+# to over an internal network, never exposed to browsers or customers. The
+# container needs the free, open-source `opencode-cli` binary for the
+# byok-opencode runtime (no CLI subscription of any kind); Tuezday passes its
+# own LLM credential per-run via `byokProvider`, which the daemon never
+# persists.
+#
+# Image/tag per the Open Design repo's deploy/README.md
+# (github.com/nexu-io/open-design). Not needed for tests — they inject fakes.
+services:
+  open-design:
+    image: ghcr.io/nexu-io/open-design:latest
+    ports:
+      # Bind to localhost only — the API is the daemon's only caller.
+      - "127.0.0.1:4000:4000"
+    environment:
+      - OD_API_TOKEN=${OPEN_DESIGN_API_TOKEN}
+    volumes:
+      - open_design_data:/data
+    restart: unless-stopped
+
+volumes:
+  open_design_data:

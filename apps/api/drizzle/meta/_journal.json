@@ -267,6 +267,13 @@
       "when": 1783579274300,
       "tag": "0037_deep_black_tarantula",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1783579706539,
+      "tag": "0038_moaning_master_mold",
+      "breakpoints": true
     }
   ]
 }

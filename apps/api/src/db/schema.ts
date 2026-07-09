@@ -1414,3 +1414,39 @@ export const designOverlays = sqliteTable(
 );
 
 export type DesignOverlayRow = typeof designOverlays.$inferSelect;
+
+// Cached, agent-authored HTML/CSS slide templates (Sprint 41 Part 3) —
+// authored ONCE per (workspace, design system, skill, fingerprint, shape) via
+// Open Design, then reused forever by the deterministic renderer. A design
+// edit changes the fingerprint so stale templates simply never match again —
+// rows are immutable, which also makes approved creatives reproducible.
+export const designTemplates = sqliteTable(
+  "design_templates",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    designSystemId: text("design_system_id")
+      .notNull()
+      .references(() => designSystems.id, { onDelete: "cascade" }),
+    skillId: text("skill_id").notNull(), // e.g. "social-carousel"
+    designSystemFingerprint: text("design_system_fingerprint").notNull(), // sha256 of *resolved* design markdown
+    slideShape: text("slide_shape").notNull(), // SLIDE_ARCHETYPES member or ad shape, e.g. "hook", "ad-1080x1080"
+    html: text("html").notNull(),
+    css: text("css").notNull(),
+    placeholders: text("placeholders_json").notNull(), // string[] of {{token}} names
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("design_templates_lookup").on(
+      t.workspaceId,
+      t.designSystemId,
+      t.skillId,
+      t.designSystemFingerprint,
+      t.slideShape,
+    ),
+  ],
+);
+
+export type DesignTemplateRow = typeof designTemplates.$inferSelect;

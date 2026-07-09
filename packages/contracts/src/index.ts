@@ -3791,3 +3791,43 @@ How the brand *sounds* lives in the Voice brain doc; this doc is only how it
 - Never use more than two font families or crop the hook headline out of the
   center 3:4 safe zone.
 `;
+
+// ---------------------------------------------------------------------------
+// Slide archetypes (Sprint 41 Parts 3-4)
+//
+// Explicit, named slide roles for carousel templates — competitor tools bake
+// these into templates implicitly (only Taplio names any in its UI), so a
+// first-class vocabulary is a differentiator (see
+// docs/research/sprint-41-competitor-scan.md). Template authoring produces one
+// layout per archetype; the splitter assigns archetypes and enforces the word
+// budgets at generation time, which is cheaper than text-fit-at-render.
+// ---------------------------------------------------------------------------
+
+export const SLIDE_ARCHETYPES = [
+  "hook", // cover: 5-8 word headline, biggest type on deck, swipe cue
+  "body", // heading + 15-30 word body
+  "list_item", // one idea, big index number
+  "stat", // one oversized metric + one-line context
+  "quote", // large quotation + attribution
+  "tldr", // mid/late-deck recap
+  "cta", // outro: save/follow ask + author strip, strongest branding
+] as const;
+export type SlideArchetype = (typeof SLIDE_ARCHETYPES)[number];
+
+/** Word budgets enforced when copy is written, not fitted at render. */
+export const SLIDE_WORD_BUDGETS: Record<SlideArchetype, { title: number; body: number }> = {
+  hook: { title: 8, body: 12 },
+  body: { title: 10, body: 30 },
+  list_item: { title: 10, body: 30 },
+  stat: { title: 6, body: 20 },
+  quote: { title: 30, body: 10 }, // title carries the quote, body the attribution
+  tldr: { title: 8, body: 40 },
+  cta: { title: 8, body: 20 },
+};
+
+/** Meta Ads static image shape (Part 5) — same template machinery, single slide. */
+export const AD_IMAGE_SLIDE_SHAPE = "ad-1080x1080" as const;
+
+/** The only Open Design skills Tuezday will ever request (umbrella Decision 9). */
+export const DESIGN_SKILL_ALLOWLIST = ["social-carousel"] as const;
+export type DesignSkillId = (typeof DESIGN_SKILL_ALLOWLIST)[number];

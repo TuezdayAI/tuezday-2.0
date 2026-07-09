@@ -49,12 +49,13 @@ describe("OpenRouterGateway", () => {
     expect(result.durationMs).toBeGreaterThanOrEqual(0);
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].url).toBe("https://openrouter.ai/api/v1/chat/completions");
-    const headers = calls[0].init.headers as Record<string, string>;
+    const call = calls[0]!;
+    expect(call.url).toBe("https://openrouter.ai/api/v1/chat/completions");
+    const headers = call.init.headers as Record<string, string>;
     expect(headers.Authorization).toBe("Bearer or-key");
     expect(headers["X-Title"]).toBe("Tuezday");
     expect(headers["HTTP-Referer"]).toBeTruthy();
-    const body = JSON.parse(String(calls[0].init.body));
+    const body = JSON.parse(String(call.init.body));
     expect(body.messages).toEqual([{ role: "user", content: "say hello" }]);
   });
 

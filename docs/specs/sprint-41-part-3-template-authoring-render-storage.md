@@ -1,6 +1,6 @@
 # Spec: Sprint 41, Part 3 — Template authoring (Open Design), deterministic renderer, asset storage
 
-- **Status:** spec — not started.
+- **Status:** implemented — tests green (see Progress log).
 - **Umbrella:** `docs/specs/sprint-41-design-layer-carousel-pipeline.md` (Decisions 1, 2, 3, 5, 8, 9, 11). Self-contained; umbrella is context only.
 - **Branch:** `sprint-41-design-layer-carousel-pipeline` (commit this part before starting Part 4).
 - **Depends on:** Part 2 (`resolveDesignSystem()` provides the design markdown that gets fingerprinted here) and Part 1 (provider selection for the authoring key). Both must already be committed on this branch.
@@ -131,4 +131,4 @@ Browser lifecycle: one lazily-launched shared browser instance per process, page
 
 ## Progress log
 
-*(not started)*
+- 2026-07-09 — Implemented: `design/provider.ts` (interface + `extractPlaceholders`), `design/open-design.ts` (project-create → byok-opencode chat → files read-back; byok protocol follows the Part 1 primary: `google` for Gemini, `openai-compatible` + OpenRouter base URL otherwise — the latter still to be verified against the live daemon per Known limitations; refuses to cache token-less templates), `design/storage.ts` (`S3AssetStorage` with hand-rolled SigV4 single-chunk PUT — no SDK; content-addressed `design/<sha256>.<ext>` keys; injectable clock for signature tests), `design/render.ts` (pure `substituteTemplate` with escaping + missing-placeholder throw, shared lazily-launched chromium closed via `app.onClose`), `design/templates.ts` (`getOrAuthorTemplate` fingerprint cache). `design_templates` table (migration 0038). Contracts gain `SLIDE_ARCHETYPES` + `SLIDE_WORD_BUDGETS` + `AD_IMAGE_SLIDE_SHAPE` + `DESIGN_SKILL_ALLOWLIST` (competitor-scan Tier 1: explicit archetype vocabulary; word budgets enforced at write time instead of render-time text-fit). `buildApp` options `design`/`assetStorage` with real defaults. `infra/open-design/compose.yaml` + `opendesign:up`/`:down` scripts; `.env.example` block. playwright added to apps/api; chromium installed locally. 14 tests in `test/design-pipeline.test.ts` (cache-hit zero-call guarantee, daemon sequence/auth/tag assertions, SigV4 shape, PNG dimension check via real chromium — browser test auto-skips where chromium is missing, e.g. CI). Full suite 1067 + typecheck clean (also fixed noUncheckedIndexedAccess errors that had slipped into the Part 1/2 test files).

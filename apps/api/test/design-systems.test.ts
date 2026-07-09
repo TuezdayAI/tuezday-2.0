@@ -99,9 +99,9 @@ describe("design systems (Sprint 41 Part 2)", () => {
     it("workspace creation seeds exactly one org-level default system", () => {
       const systems = listDesignSystems(db, workspaceId);
       expect(systems).toHaveLength(1);
-      expect(systems[0].name).toBe("Default");
-      expect(systems[0].isDefault).toBe(true);
-      expect(systems[0].content).toBe(DEFAULT_DESIGN_SYSTEM_CONTENT);
+      expect(systems[0]!.name).toBe("Default");
+      expect(systems[0]!.isDefault).toBe(true);
+      expect(systems[0]!.content).toBe(DEFAULT_DESIGN_SYSTEM_CONTENT);
     });
 
     it("repeat reads and ensure calls never duplicate the default", async () => {
