@@ -13,6 +13,8 @@ import {
   oauthSessionErrorMessage,
   type NangoOAuthSession,
 } from "@/lib/nango-oauth";
+import { Button } from "@/src/components/ui/button";
+import { Card } from "@/src/components/ui/card";
 import type { WizardPanelProps } from "./types";
 import "./connect-panel.css";
 
@@ -171,7 +173,7 @@ export function ConnectPanel({ workspaceId, onContinue, onError }: WizardPanelPr
   }
 
   return (
-    <section className="panel ob-panel">
+    <Card className="ob-panel">
       <h1>Connect your socials</h1>
       <p className="subtitle">
         Connect at least one account so Tuezday can learn your voice from what you already post.
@@ -213,13 +215,14 @@ export function ConnectPanel({ workspaceId, onContinue, onError }: WizardPanelPr
               ) : needsOAuthApp ? (
                 <span className="layer-badge state-edited">needs setup</span>
               ) : (
-                <button
-                  className="button-secondary"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   disabled={busyKey !== null || !canConnect}
                   onClick={() => provider && void connectOAuth(provider)}
                 >
                   {busyKey === card.key ? "Connecting…" : "Connect"}
-                </button>
+                </Button>
               )}
             </li>
           );
@@ -248,9 +251,9 @@ export function ConnectPanel({ workspaceId, onContinue, onError }: WizardPanelPr
         </div>
         {profileStatus === "failed" && (
           <div>
-            <button className="button-secondary" disabled={retrying} onClick={retryProfile}>
+            <Button variant="ghost" size="sm" disabled={retrying} onClick={retryProfile}>
               {retrying ? "Retrying…" : "Retry"}
-            </button>
+            </Button>
           </div>
         )}
       </div>
@@ -261,10 +264,10 @@ export function ConnectPanel({ workspaceId, onContinue, onError }: WizardPanelPr
             ? "At least one connection required — connect an account above to continue"
             : "At least one connection required"}
         </span>
-        <button disabled={continuing} onClick={handleContinue}>
+        <Button variant="primary" disabled={continuing} onClick={handleContinue}>
           {continuing ? "Continuing…" : "Continue"}
-        </button>
+        </Button>
       </div>
-    </section>
+    </Card>
   );
 }

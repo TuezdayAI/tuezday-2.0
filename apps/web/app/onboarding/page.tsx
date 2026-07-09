@@ -9,6 +9,9 @@ import {
   type OnboardingStep,
 } from "@tuezday/contracts";
 import { apiFetch, getToken } from "@/lib/api";
+import { Button } from "@/src/components/ui/button";
+import { Card } from "@/src/components/ui/card";
+import { Input } from "@/src/components/ui/input";
 import { ConnectPanel } from "./_components/connect-panel";
 import { VerifyPanel } from "./_components/verify-panel";
 import { BrainPanel } from "./_components/brain-panel";
@@ -195,11 +198,10 @@ function OnboardingWizard() {
       {error && <p className="error">{error}</p>}
 
       {step === "name" && (
-        <section className="panel ob-panel">
+        <Card className="ob-panel">
           <h1>Welcome to Tuezday</h1>
           <p className="subtitle">First — what should we call you?</p>
-          <input
-            className="ob-input"
+          <Input
             value={name}
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
@@ -211,21 +213,24 @@ function OnboardingWizard() {
           />
           <div className="ob-actions">
             <span />
-            <button disabled={busy || name.trim().length === 0} onClick={saveName}>
+            <Button
+              variant="primary"
+              disabled={busy || name.trim().length === 0}
+              onClick={saveName}
+            >
               {busy ? "Saving…" : "Continue"}
-            </button>
+            </Button>
           </div>
-        </section>
+        </Card>
       )}
 
       {step === "website" && (
-        <section className="panel ob-panel">
+        <Card className="ob-panel">
           <h1>Point us at your website</h1>
           <p className="subtitle">
             Just the domain is fine — e.g. acme.com. We&apos;ll read it the moment you continue and draft your Brain from it.
           </p>
-          <input
-            className="ob-input"
+          <Input
             value={website}
             onChange={(e) => {
               setWebsite(e.target.value);
@@ -234,22 +239,25 @@ function OnboardingWizard() {
             placeholder="acme.com"
             autoFocus
           />
-          <input
-            className="ob-input"
+          <Input
             value={wsName}
             onChange={(e) => setWsName(e.target.value)}
             placeholder="Workspace name"
             maxLength={100}
           />
           <div className="ob-actions">
-            <button type="button" className="link-button" onClick={() => setStep("name")}>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setStep("name")}>
               Back
-            </button>
-            <button disabled={busy || !validUrl} onClick={createWorkspace}>
+            </Button>
+            <Button
+              variant="primary"
+              disabled={busy || !validUrl}
+              onClick={createWorkspace}
+            >
               {busy ? "Creating…" : "Continue"}
-            </button>
+            </Button>
           </div>
-        </section>
+        </Card>
       )}
 
       {step === "connect" && panelProps && <ConnectPanel {...panelProps} />}

@@ -1,4 +1,5 @@
 import React from "react";
+import styles from "./page-header.module.css";
 
 interface PageHeaderProps {
   title: string;
@@ -8,16 +9,12 @@ interface PageHeaderProps {
 
 export function PageHeader({ title, subtitle, actions }: PageHeaderProps) {
   return (
-    <div className="page-header">
+    <div className={`${styles.header} ui-page-header`}>
       <div>
-        <h1>{title}</h1>
-        {subtitle && (
-          <div className="subtitle">
-            {subtitle}
-          </div>
-        )}
+        <h1 className={styles.title}>{title}</h1>
+        {subtitle && <div className={styles.subtitle}>{subtitle}</div>}
       </div>
-      {actions && <div className="page-actions">{actions}</div>}
+      {actions && <div className={styles.actions}>{actions}</div>}
     </div>
   );
 }

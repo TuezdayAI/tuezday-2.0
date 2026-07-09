@@ -1,0 +1,24 @@
+/* apps/web/src/components/ui/tabs.module.css */
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.tab {
+  padding: 7px 15px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 13px;
+  font-family: var(--font-body);
+  cursor: pointer;
+}
+
+.active {
+  background: var(--text);
+  border-color: var(--text);
+  color: var(--bg);
+}

@@ -20,6 +20,9 @@ import {
   type Draft,
   type Workspace,
 } from "@tuezday/contracts";
+import { Button } from "@/src/components/ui/button";
+import { Card, CardHeader } from "@/src/components/ui/card";
+import { Input, Select } from "@/src/components/ui/input";
 
 interface AccountView {
   id: string;
@@ -332,17 +335,19 @@ export default function AdLaunchesPage() {
       {note && <p className="section-reason">{note}</p>}
       {error && <p className="error">{error}</p>}
 
-      <section className="panel">
-        <div className="panel-title-row">
-          <h2>Spend guardrails</h2>
-          <span className={`layer-badge ${settings.killSwitch ? "badge-danger" : ""}`}>
-            {settings.killSwitch ? "Kill switch ON" : "Live"}
-          </span>
-        </div>
+      <Card>
+        <CardHeader
+          title="Spend guardrails"
+          actions={
+            <span className={`layer-badge ${settings.killSwitch ? "badge-danger" : ""}`}>
+              {settings.killSwitch ? "Kill switch ON" : "Live"}
+            </span>
+          }
+        />
         <div className="resolve-controls">
           <label>
             Daily spend cap
-            <input
+            <Input
               type="number"
               min="0"
               step="0.01"
@@ -351,16 +356,17 @@ export default function AdLaunchesPage() {
               style={{ width: 120 }}
             />
           </label>
-          <button className="button-secondary" disabled={busy} onClick={saveCap}>
+          <Button variant="secondary" size="sm" disabled={busy} onClick={saveCap}>
             Save cap
-          </button>
-          <button
+          </Button>
+          <Button
+            variant={settings.killSwitch ? "primary" : "danger"}
+            size="sm"
             disabled={busy}
             onClick={toggleKillSwitch}
-            className={settings.killSwitch ? "" : "button-danger"}
           >
             {settings.killSwitch ? "Turn kill switch off" : "Pause everything (kill switch)"}
-          </button>
+          </Button>
         </div>
         <p className="section-reason">
           {money(committedCents)} of {money(capCents)} committed per day across{" "}
@@ -372,9 +378,9 @@ export default function AdLaunchesPage() {
             style={{ width: `${meterPct}%`, background: meterPct >= 100 ? "#d23f57" : undefined }}
           />
         </div>
-      </section>
+      </Card>
 
-      <section className="panel">
+      <Card>
         <h2>New launch</h2>
         {connectedAccounts.length === 0 ? (
           <EmptyState description={<>No connected ad account.{" "}
@@ -389,7 +395,7 @@ export default function AdLaunchesPage() {
             <div className="resolve-controls">
               <label>
                 Ad account
-                <select
+                <Select
                   value={form.adAccountId || connectedAccounts[0]?.id}
                   onChange={(e) => setForm((f) => ({ ...f, adAccountId: e.target.value }))}
                 >
@@ -398,11 +404,11 @@ export default function AdLaunchesPage() {
                       {a.name} ({a.currency})
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
               <label>
                 Approved creative
-                <select
+                <Select
                   value={form.creativeDraftId}
                   onChange={(e) => setForm((f) => ({ ...f, creativeDraftId: e.target.value }))}
                 >
@@ -414,11 +420,11 @@ export default function AdLaunchesPage() {
                       {c.primaryText.length > 40 ? "…" : ""}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
               <label>
                 Objective
-                <select
+                <Select
                   value={form.objective}
                   onChange={(e) =>
                     setForm((f) => ({ ...f, objective: e.target.value as AdLaunchObjective }))
@@ -429,13 +435,13 @@ export default function AdLaunchesPage() {
                       {AD_LAUNCH_OBJECTIVE_LABELS[o]}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
             </div>
             <div className="resolve-controls">
               <label>
                 Campaign name
-                <input
+                <Input
                   value={form.name}
                   onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
                   placeholder="June traffic push"
@@ -443,7 +449,7 @@ export default function AdLaunchesPage() {
               </label>
               <label>
                 Facebook Page ID
-                <input
+                <Input
                   value={form.pageId}
                   onChange={(e) => setForm((f) => ({ ...f, pageId: e.target.value }))}
                   placeholder="123456789"
@@ -451,7 +457,7 @@ export default function AdLaunchesPage() {
               </label>
               <label>
                 Destination URL
-                <input
+                <Input
                   value={form.linkUrl}
                   onChange={(e) => setForm((f) => ({ ...f, linkUrl: e.target.value }))}
                   placeholder="https://…"
@@ -461,7 +467,7 @@ export default function AdLaunchesPage() {
             <div className="resolve-controls">
               <label>
                 Daily budget
-                <input
+                <Input
                   type="number"
                   min="1"
                   step="0.01"
@@ -472,7 +478,7 @@ export default function AdLaunchesPage() {
               </label>
               <label>
                 Countries
-                <input
+                <Input
                   value={form.countries}
                   onChange={(e) => setForm((f) => ({ ...f, countries: e.target.value }))}
                   placeholder="US, DE"
@@ -481,7 +487,7 @@ export default function AdLaunchesPage() {
               </label>
               <label>
                 Age min
-                <input
+                <Input
                   type="number"
                   min="18"
                   max="65"
@@ -492,7 +498,7 @@ export default function AdLaunchesPage() {
               </label>
               <label>
                 Age max
-                <input
+                <Input
                   type="number"
                   min="18"
                   max="65"
@@ -503,21 +509,20 @@ export default function AdLaunchesPage() {
               </label>
             </div>
             <div className="editor-actions">
-              <button
+              <Button
+                variant="primary"
                 disabled={busy || !form.name.trim() || !form.creativeDraftId || !form.pageId.trim()}
                 onClick={createLaunch}
               >
                 Create draft launch
-              </button>
+              </Button>
             </div>
           </>
         )}
-      </section>
+      </Card>
 
-      <section className="panel">
-        <div className="panel-title-row">
-          <h2>Launches</h2>
-        </div>
+      <Card>
+        <CardHeader title="Launches" />
         {launches.length === 0 ? (
           <EmptyState description={<>No launches yet. Build one above.</>} />
         ) : (
@@ -551,42 +556,46 @@ export default function AdLaunchesPage() {
                   <div className="editor-actions">
                     {launch.status === "draft" && (
                       <>
-                        <button disabled={busy} onClick={() => act(launch, "submit")}>
+                        <Button variant="primary" disabled={busy} onClick={() => act(launch, "submit")}>
                           Submit for approval
-                        </button>
-                        <button
-                          className="button-secondary"
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
                           disabled={busy}
                           onClick={() => remove(launch)}
                         >
                           Delete
-                        </button>
+                        </Button>
                       </>
                     )}
                     {launch.status === "pending_review" && (
                       <>
-                        <button disabled={busy} onClick={() => act(launch, "approve")}>
+                        <Button variant="primary" disabled={busy} onClick={() => act(launch, "approve")}>
                           Approve spend
-                        </button>
-                        <button
-                          className="button-secondary"
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
                           disabled={busy}
                           onClick={() => act(launch, "reject")}
                         >
                           Reject
-                        </button>
-                        <button
-                          className="button-secondary"
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
                           disabled={busy}
                           onClick={() => act(launch, "revise")}
                         >
                           Back to draft
-                        </button>
+                        </Button>
                       </>
                     )}
                     {launch.status === "approved" && (
                       <>
-                        <button
+                        <Button
+                          variant="primary"
                           disabled={busy}
                           onClick={() =>
                             act(
@@ -597,38 +606,40 @@ export default function AdLaunchesPage() {
                           }
                         >
                           {launch.lastError ? "Retry launch" : "Launch"}
-                        </button>
-                        <button
-                          className="button-secondary"
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          size="sm"
                           disabled={busy}
                           onClick={() => act(launch, "revise")}
                         >
                           Back to draft
-                        </button>
+                        </Button>
                       </>
                     )}
                     {launch.status === "rejected" && (
-                      <button disabled={busy} onClick={() => act(launch, "revise")}>
+                      <Button variant="primary" disabled={busy} onClick={() => act(launch, "revise")}>
                         Back to draft
-                      </button>
+                      </Button>
                     )}
                     {launch.status === "launched" &&
                       (spending ? (
-                        <button
-                          className="button-secondary"
+                        <Button
+                          variant="secondary"
+                          size="sm"
                           disabled={busy}
                           onClick={() => act(launch, "pause")}
                         >
                           Pause
-                        </button>
+                        </Button>
                       ) : (
-                        <button disabled={busy} onClick={() => act(launch, "resume")}>
+                        <Button variant="primary" disabled={busy} onClick={() => act(launch, "resume")}>
                           Resume
-                        </button>
+                        </Button>
                       ))}
-                    <button className="link-button" onClick={() => toggleDetail(launch.id)}>
+                    <Button variant="ghost" size="sm" onClick={() => toggleDetail(launch.id)}>
                       {d ? "Hide log" : "Decision log"}
-                    </button>
+                    </Button>
                   </div>
 
                   {d && (
@@ -651,7 +662,7 @@ export default function AdLaunchesPage() {
             })}
           </ul>
         )}
-      </section>
+      </Card>
     </>
   );
 }

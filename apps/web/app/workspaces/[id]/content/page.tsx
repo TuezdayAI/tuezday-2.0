@@ -1,7 +1,10 @@
 "use client";
 
 import { EmptyState } from "@/src/components/empty-state";
-
+import { Button } from "@/src/components/ui/button";
+import { Card, CardHeader } from "@/src/components/ui/card";
+import { Badge } from "@/src/components/ui/badge";
+import { Input, Textarea, Select } from "@/src/components/ui/input";
 
 import { API_URL, apiFetch } from "@/lib/api";
 
@@ -50,6 +53,17 @@ const STATE_LABELS: Record<ApprovalState, string> = {
   rejected: "Rejected",
 };
 
+const STATE_BADGE_TONES: Record<
+  ApprovalState,
+  "draft" | "pending" | "edited" | "approved" | "rejected"
+> = {
+  draft: "draft",
+  pending_review: "pending",
+  edited: "edited",
+  approved: "approved",
+  rejected: "rejected",
+};
+
 interface SignalView {
   id: string;
   content: string;
@@ -77,10 +91,10 @@ function metricSummary(m: PublicationMetric): string {
   return parts.length > 0 ? parts.join(" · ") : "no counts available";
 }
 
-const PUBLICATION_BADGES: Record<Publication["status"], string> = {
-  scheduled: "state-edited",
-  published: "state-approved",
-  failed: "state-rejected",
+const PUBLICATION_BADGE_TONES: Record<Publication["status"], "edited" | "approved" | "rejected"> = {
+  scheduled: "edited",
+  published: "approved",
+  failed: "rejected",
 };
 
 export default function ContentPage() {
@@ -312,10 +326,10 @@ export default function ContentPage() {
         </div>
       </div>
 
-      <section className="panel">
-        <h2>New signal</h2>
+      <Card>
+        <CardHeader title="New signal" />
         <form className="persona-form" style={{ borderTop: "none", paddingTop: 0, marginTop: 0 }} onSubmit={addSignal}>
-          <textarea
+          <Textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
             placeholder="Paste the post, thread, comment, or customer quote you want to respond to…"
@@ -325,32 +339,32 @@ export default function ContentPage() {
           <div className="resolve-controls">
             <label>
               Source
-              <select value={source} onChange={(e) => setSource(e.target.value as SignalSource)}>
+              <Select value={source} onChange={(e) => setSource(e.target.value as SignalSource)}>
                 {SIGNAL_SOURCES.map((s) => (
                   <option key={s} value={s}>
                     {SOURCE_LABELS[s]}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             <label style={{ flex: 1 }}>
               Source URL (optional)
-              <input
+              <Input
                 value={sourceUrl}
                 onChange={(e) => setSourceUrl(e.target.value)}
                 placeholder="https://…"
               />
             </label>
-            <button type="submit" disabled={saving || content.trim().length === 0}>
+            <Button variant="primary" type="submit" disabled={saving || content.trim().length === 0}>
               {saving ? "Adding…" : "Add signal"}
-            </button>
+            </Button>
           </div>
         </form>
         {error && <p className="error">{error}</p>}
-      </section>
+      </Card>
 
-      <section className="panel">
-        <h2>Signal inbox</h2>
+      <Card>
+        <CardHeader title="Signal inbox" />
         {signalsList.length === 0 ? (
           <EmptyState description={<>No signals yet. Paste something the market said above.</>} />
         ) : (
@@ -380,9 +394,9 @@ export default function ContentPage() {
                   <ul className="draft-chain">
                     {s.drafts.map((d) => (
                       <li key={d.id}>
-                        <span className={`layer-badge state-${d.state}`}>
+                        <Badge tone={STATE_BADGE_TONES[d.state]}>
                           {STATE_LABELS[d.state]}
-                        </span>{" "}
+                        </Badge>{" "}
                         <span className="meta">{d.channel} response</span>{" "}
                         <Link className="link-button" href={`/workspaces/${id}/approvals`}>
                           open in queue
@@ -390,24 +404,25 @@ export default function ContentPage() {
                         {d.state === "approved" && (
                           <>
                             {" "}
-                            <button className="link-button" onClick={() => copyDraft(d.id)}>
+                            <Button variant="ghost" size="sm" onClick={() => copyDraft(d.id)}>
                               {copied === d.id ? "copied!" : "copy"}
-                            </button>{" "}
-                            <button
-                              className="link-button"
+                            </Button>{" "}
+                            <Button
+                              variant="ghost"
+                              size="sm"
                               onClick={() => downloadDraft(d.id, d.channel)}
                             >
                               download .md
-                            </button>{" "}
-                            <button className="link-button" onClick={() => openPublish(d.id)}>
+                            </Button>{" "}
+                            <Button variant="ghost" size="sm" onClick={() => openPublish(d.id)}>
                               publish…
-                            </button>
+                            </Button>
                             {publications
                               .filter((p) => p.draftId === d.id)
                               .map((p) => (
-                                <span
+                                <Badge
                                   key={p.id}
-                                  className={`layer-badge ${PUBLICATION_BADGES[p.status]}`}
+                                  tone={PUBLICATION_BADGE_TONES[p.status]}
                                   style={{ marginLeft: 6 }}
                                 >
                                   {p.status === "published" && p.externalUrl ? (
@@ -419,7 +434,7 @@ export default function ContentPage() {
                                   ) : (
                                     `failed · r/${p.target}`
                                   )}
-                                </span>
+                                </Badge>
                               ))}
                           </>
                         )}
@@ -435,7 +450,7 @@ export default function ContentPage() {
                               <>
                                 <label>
                                   Account
-                                  <select
+                                  <Select
                                     value={pubConnectionId}
                                     onChange={(e) => setPubConnectionId(e.target.value)}
                                   >
@@ -444,11 +459,11 @@ export default function ContentPage() {
                                         {c.providerKey}
                                       </option>
                                     ))}
-                                  </select>
+                                  </Select>
                                 </label>
                                 <label>
                                   Subreddit
-                                  <input
+                                  <Input
                                     value={pubTarget}
                                     onChange={(e) => setPubTarget(e.target.value)}
                                     placeholder="r/test"
@@ -457,20 +472,21 @@ export default function ContentPage() {
                                 <label style={{ flex: 1 }}>
                                   Title ({pubTitle.length}/
                                   {SOCIAL_POST_CONSTRAINTS.reddit.titleMaxChars})
-                                  <input
+                                  <Input
                                     value={pubTitle}
                                     onChange={(e) => setPubTitle(e.target.value)}
                                   />
                                 </label>
                                 <label>
                                   Schedule (optional)
-                                  <input
+                                  <Input
                                     type="datetime-local"
                                     value={pubSchedule}
                                     onChange={(e) => setPubSchedule(e.target.value)}
                                   />
                                 </label>
-                                <button
+                                <Button
+                                  variant="primary"
                                   disabled={
                                     publishing ||
                                     !pubConnectionId ||
@@ -485,15 +501,16 @@ export default function ContentPage() {
                                     : pubSchedule
                                       ? "Schedule"
                                       : "Post now"}
-                                </button>
+                                </Button>
                               </>
                             )}
-                            <button
-                              className="button-secondary"
+                            <Button
+                              variant="secondary"
+                              size="sm"
                               onClick={() => setPublishingFor(null)}
                             >
                               Cancel
-                            </button>
+                            </Button>
                             {publishError && <p className="error">{publishError}</p>}
                           </div>
                         )}
@@ -506,7 +523,7 @@ export default function ContentPage() {
                   <div className="resolve-controls" style={{ marginTop: 10 }}>
                     <label>
                       Channel
-                      <select
+                      <Select
                         value={draftChannel}
                         onChange={(e) => setDraftChannel(e.target.value as Channel)}
                       >
@@ -515,11 +532,11 @@ export default function ContentPage() {
                             {c}
                           </option>
                         ))}
-                      </select>
+                      </Select>
                     </label>
                     <label>
                       Persona
-                      <select
+                      <Select
                         value={draftPersonaId}
                         onChange={(e) => setDraftPersonaId(e.target.value)}
                       >
@@ -529,12 +546,12 @@ export default function ContentPage() {
                             {p.name}
                           </option>
                         ))}
-                      </select>
+                      </Select>
                     </label>
                     {campaigns.length > 0 && (
                       <label>
                         Campaign
-                        <select
+                        <Select
                           value={draftCampaignId}
                           onChange={(e) => setDraftCampaignId(e.target.value)}
                         >
@@ -544,23 +561,25 @@ export default function ContentPage() {
                               {c.name}
                             </option>
                           ))}
-                        </select>
+                        </Select>
                       </label>
                     )}
-                    <button disabled={generating} onClick={() => draftResponse(s.id)}>
+                    <Button variant="primary" disabled={generating} onClick={() => draftResponse(s.id)}>
                       {generating ? "Drafting…" : "Generate draft"}
-                    </button>
-                    <button
-                      className="button-secondary"
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       onClick={() => setDraftingFor(null)}
                     >
                       Cancel
-                    </button>
+                    </Button>
                   </div>
                 ) : (
                   <div className="rating-row" style={{ marginTop: 10 }}>
-                    <button
-                      className="button-secondary"
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       onClick={() => {
                         setDraftingFor(s.id);
                         setDraftPersonaId(s.suggestedPersonaId ?? "");
@@ -568,17 +587,17 @@ export default function ContentPage() {
                       }}
                     >
                       Draft response
-                    </button>
+                    </Button>
                   </div>
                 )}
               </li>
             ))}
           </ul>
         )}
-      </section>
+      </Card>
 
-      <section className="panel">
-        <h2>Published</h2>
+      <Card>
+        <CardHeader title="Published" />
         {publications.length === 0 ? (
           <EmptyState description={<>Nothing published yet. Approve a draft, then use publish… to post it to a connected
             social account.</>} />
@@ -587,7 +606,7 @@ export default function ContentPage() {
             {publications.map((p) => (
               <li key={p.id} className="section-card">
                 <div className="section-head">
-                  <span className={`layer-badge ${PUBLICATION_BADGES[p.status]}`}>{p.status}</span>
+                  <Badge tone={PUBLICATION_BADGE_TONES[p.status]}>{p.status}</Badge>
                   <span className="section-title">{p.title}</span>
                   <span className="section-tokens">
                     {p.providerKey} · r/{p.target}
@@ -622,28 +641,30 @@ export default function ContentPage() {
                 )}
                 <div className="rating-row" style={{ marginTop: 8 }}>
                   {p.status === "failed" && (
-                    <button
-                      className="button-secondary"
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       disabled={publishing}
                       onClick={() => retryPublication(p.id)}
                     >
                       Retry
-                    </button>
+                    </Button>
                   )}
                   {p.status === "scheduled" && (
-                    <button
-                      className="button-secondary danger"
+                    <Button
+                      variant="danger"
+                      size="sm"
                       onClick={() => cancelPublication(p.id)}
                     >
                       Cancel
-                    </button>
+                    </Button>
                   )}
                 </div>
               </li>
             ))}
           </ul>
         )}
-      </section>
+      </Card>
     </>
   );
 }

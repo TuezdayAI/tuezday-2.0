@@ -14,8 +14,13 @@ import Link from "next/link";
 import type { BrainDocType, BrainDocument } from "@tuezday/contracts";
 import { BRAIN_DOC_META, type BrainScore, type DocStatus } from "@tuezday/brain";
 import { apiFetch } from "@/lib/api";
+import { Button } from "@/src/components/ui/button";
+import { Card } from "@/src/components/ui/card";
+import buttonStyles from "@/src/components/ui/button.module.css";
 import type { WizardPanelProps } from "./types";
 import "./brain-panel.css";
+
+const ghostLinkClass = `${buttonStyles.button} ${buttonStyles.ghost} ${buttonStyles.sm}`;
 
 interface AutoDraftView {
   insufficient: boolean;
@@ -96,39 +101,39 @@ export function BrainPanel({ workspaceId, userName, onContinue, onError }: Wizar
 
   if (phase === "drafting") {
     return (
-      <section className="panel ob-panel">
+      <Card className="ob-panel">
         <h1>Drafting your Brain…</h1>
         <p className="subtitle ob-drafting-pulse">
           Reading your brand profile and socials, then writing the first pass of your five brain
           docs. Nothing here is final — every word stays editable.
         </p>
-      </section>
+      </Card>
     );
   }
 
   if (phase === "error") {
     return (
-      <section className="panel ob-panel">
+      <Card className="ob-panel">
         <h1>Your Brain isn&apos;t drafted yet</h1>
         <p className="subtitle">
           The drafting call failed — the details are in the message above. You can retry now, or
           continue and draft later from the Brain editor.
         </p>
         <div className="ob-actions">
-          <button type="button" onClick={() => void draft()}>
+          <Button type="button" variant="ghost" size="sm" onClick={() => void draft()}>
             Retry
-          </button>
-          <button disabled={busy} onClick={handleContinue}>
+          </Button>
+          <Button variant="primary" disabled={busy} onClick={handleContinue}>
             {busy ? "Continuing…" : "Continue"}
-          </button>
+          </Button>
         </div>
-      </section>
+      </Card>
     );
   }
 
   if (phase === "insufficient") {
     return (
-      <section className="panel ob-panel">
+      <Card className="ob-panel">
         <h1>We don&apos;t have enough to draft from yet</h1>
         <p className="subtitle">
           Your Brain drafts from your verified brand profile and connected socials — and right now
@@ -139,18 +144,18 @@ export function BrainPanel({ workspaceId, userName, onContinue, onError }: Wizar
           <li>Connect a social account so we can learn from what you already publish.</li>
           <li>Or write the docs yourself in the Brain editor — it&apos;s built for that.</li>
         </ul>
-        <Link className="link-button" href={`/workspaces/${workspaceId}`}>
+        <Link className={ghostLinkClass} href={`/workspaces/${workspaceId}`}>
           Back to your workspace
         </Link>
         <div className="ob-actions">
-          <Link className="link-button" href={`/workspaces/${workspaceId}/brain`}>
+          <Link className={ghostLinkClass} href={`/workspaces/${workspaceId}/brain`}>
             Open the full Brain editor →
           </Link>
-          <button disabled={busy} onClick={handleContinue}>
+          <Button variant="primary" disabled={busy} onClick={handleContinue}>
             {busy ? "Continuing…" : "Continue"}
-          </button>
+          </Button>
         </div>
-      </section>
+      </Card>
     );
   }
 
@@ -159,7 +164,7 @@ export function BrainPanel({ workspaceId, userName, onContinue, onError }: Wizar
   const skipped = new Set(view!.skipped);
 
   return (
-    <section className="panel ob-panel">
+    <Card className="ob-panel">
       <h1>
         Meet your Brain
         {userName ? `, ${userName}` : ""}
@@ -178,42 +183,43 @@ export function BrainPanel({ workspaceId, userName, onContinue, onError }: Wizar
           const wasSkipped = skipped.has(meta.docType);
           const excerpt = doc ? excerptOf(doc.content) : "";
           return (
-            <li
-              key={meta.docType}
-              className="ob-brain-card"
-              style={{ animationDelay: `${i * 90}ms` }}
-            >
-              <div className="ob-brain-card-head">
-                <h2>{meta.title}</h2>
-                <span
-                  className={`layer-badge ${wasSkipped ? "ob-doc-skipped" : `ob-doc-${status}`}`}
+            <li key={meta.docType}>
+              <Card className="ob-brain-card" style={{ animationDelay: `${i * 90}ms` }}>
+                <div className="ob-brain-card-head">
+                  <h2>{meta.title}</h2>
+                  <span
+                    className={`layer-badge ${wasSkipped ? "ob-doc-skipped" : `ob-doc-${status}`}`}
+                  >
+                    {wasSkipped ? "already yours" : STATUS_LABEL[status]}
+                  </span>
+                </div>
+                {excerpt ? (
+                  <p className="ob-brain-excerpt">{excerpt}</p>
+                ) : (
+                  <p className="ob-brain-excerpt ob-brain-excerpt-empty">
+                    Nothing drafted yet — {meta.description}
+                  </p>
+                )}
+                <Link
+                  className="link-button ob-brain-edit"
+                  href={`/workspaces/${workspaceId}/brain`}
                 >
-                  {wasSkipped ? "already yours" : STATUS_LABEL[status]}
-                </span>
-              </div>
-              {excerpt ? (
-                <p className="ob-brain-excerpt">{excerpt}</p>
-              ) : (
-                <p className="ob-brain-excerpt ob-brain-excerpt-empty">
-                  Nothing drafted yet — {meta.description}
-                </p>
-              )}
-              <Link className="link-button ob-brain-edit" href={`/workspaces/${workspaceId}/brain`}>
-                Edit
-              </Link>
+                  Edit
+                </Link>
+              </Card>
             </li>
           );
         })}
       </ol>
 
       <div className="ob-actions">
-        <Link className="link-button" href={`/workspaces/${workspaceId}/brain`}>
+        <Link className={ghostLinkClass} href={`/workspaces/${workspaceId}/brain`}>
           Open the full Brain editor →
         </Link>
-        <button disabled={busy} onClick={handleContinue}>
+        <Button variant="primary" disabled={busy} onClick={handleContinue}>
           {busy ? "Continuing…" : "Continue"}
-        </button>
+        </Button>
       </div>
-    </section>
+    </Card>
   );
 }

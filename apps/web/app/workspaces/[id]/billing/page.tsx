@@ -3,6 +3,8 @@
 import { use, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { PLANS, usageMeter, type EntitlementUsage, type Entitlements, type PlanId } from "@tuezday/contracts";
+import { Card } from "@/src/components/ui/card";
+import { Meter } from "@/src/components/ui/meter";
 
 interface BillingView {
   plan: PlanId;
@@ -68,7 +70,7 @@ export default function BillingPage({ params }: { params: Promise<{ id: string }
 
       {error && <p className="error">{error}</p>}
 
-      <section className="panel">
+      <Card>
         <h2>Current plan</h2>
         {!data ? (
           <p className="meta">Loading...</p>
@@ -91,15 +93,13 @@ export default function BillingPage({ params }: { params: Promise<{ id: string }
             </div>
 
             <h3 className="usage-heading">Usage</h3>
-            <div className="usage-meters">
-              <MeterRow
-                title="Monthly generations"
-                used={data.usage.monthlyGenerations}
-                limit={data.entitlements.monthlyGenerations}
-              />
-              <MeterRow title="Connectors" used={data.usage.connectors} limit={data.entitlements.connectors} />
-              <MeterRow title="Seats" used={data.usage.seats} limit={data.entitlements.seats} />
-            </div>
+            <MeterRow
+              title="Monthly generations"
+              used={data.usage.monthlyGenerations}
+              limit={data.entitlements.monthlyGenerations}
+            />
+            <MeterRow title="Connectors" used={data.usage.connectors} limit={data.entitlements.connectors} />
+            <MeterRow title="Seats" used={data.usage.seats} limit={data.entitlements.seats} />
 
             {data.plan === "free" && (
               <div className="editor-actions" style={{ marginTop: 20 }}>
@@ -110,24 +110,17 @@ export default function BillingPage({ params }: { params: Promise<{ id: string }
             )}
           </>
         )}
-      </section>
+      </Card>
     </>
   );
 }
 
 function MeterRow({ title, used, limit }: { title: string; used: number; limit: number }) {
   const meter = usageMeter(used, limit);
+  const figure = meter.state === "unlimited" ? `${used} / Unlimited` : `${used} / ${limit}`;
   return (
-    <div className="usage-meter">
-      <div className="usage-meter-head">
-        <span className="usage-meter-title">{title}</span>
-        <span className="usage-meter-figure">
-          {meter.state === "unlimited" ? `${used} / Unlimited` : `${used} / ${limit}`}
-        </span>
-      </div>
-      <div className="meter-track">
-        <div className={`meter-fill ${meter.state}`} style={{ width: `${meter.percent}%` }} />
-      </div>
+    <div style={{ marginBottom: 16 }}>
+      <Meter label={title} figure={figure} percent={meter.percent} state={meter.state} />
       {meter.state === "over" && <p className="usage-alert">Upgrade for more usage</p>}
     </div>
   );
