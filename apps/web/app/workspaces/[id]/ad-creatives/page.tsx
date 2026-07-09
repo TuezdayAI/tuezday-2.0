@@ -1,6 +1,10 @@
 "use client";
 
 import { EmptyState } from "@/src/components/empty-state";
+import { Button } from "@/src/components/ui/button";
+import { Card, CardHeader } from "@/src/components/ui/card";
+import { Badge } from "@/src/components/ui/badge";
+import { Input, Textarea, Select } from "@/src/components/ui/input";
 
 
 import { API_URL, apiDownload, apiFetch } from "@/lib/api";
@@ -29,6 +33,14 @@ const STATE_LABELS: Record<ApprovalState, string> = {
   edited: "Edited",
   approved: "Approved",
   rejected: "Rejected",
+};
+
+const STATE_TONES: Record<ApprovalState, "draft" | "pending" | "edited" | "approved" | "rejected"> = {
+  draft: "draft",
+  pending_review: "pending",
+  edited: "edited",
+  approved: "approved",
+  rejected: "rejected",
 };
 
 interface SetDraft extends Draft {
@@ -230,10 +242,8 @@ export default function AdCreativesPage() {
         </div>
       </div>
 
-      <section className="panel">
-        <div className="panel-title-row">
-          <h2>Generate a variant set</h2>
-        </div>
+      <Card>
+        <CardHeader title="Generate a variant set" />
         {activeCampaigns.length === 0 ? (
           <EmptyState description={<>Ad creative is generated for a campaign — the campaign overlay drives the offer and
             angle. <Link href={`/workspaces/${id}/campaigns`}>Create a campaign first</Link>.</>} />
@@ -241,17 +251,17 @@ export default function AdCreativesPage() {
           <div className="resolve-controls">
             <label>
               Campaign
-              <select value={selectedCampaignId} onChange={(e) => setCampaignId(e.target.value)}>
+              <Select value={selectedCampaignId} onChange={(e) => setCampaignId(e.target.value)}>
                 {activeCampaigns.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             <label>
               Platform
-              <select
+              <Select
                 value={taskType}
                 onChange={(e) => setTaskType(e.target.value as AdCreativeTaskType)}
               >
@@ -260,23 +270,23 @@ export default function AdCreativesPage() {
                     {AD_CREATIVE_FORMATS[t].label}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             <label>
               Persona
-              <select value={personaId} onChange={(e) => setPersonaId(e.target.value)}>
+              <Select value={personaId} onChange={(e) => setPersonaId(e.target.value)}>
                 <option value="">org voice</option>
                 {personas.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             {format.variantCount && (
               <label>
                 Variants
-                <input
+                <Input
                   type="number"
                   min={format.variantCount.min}
                   max={format.variantCount.max}
@@ -286,9 +296,9 @@ export default function AdCreativesPage() {
                 />
               </label>
             )}
-            <button disabled={busy || !selectedCampaignId} onClick={generate}>
+            <Button variant="primary" disabled={busy || !selectedCampaignId} onClick={generate}>
               {busy ? "Working…" : "Generate"}
-            </button>
+            </Button>
           </div>
         )}
         <p className="meta">
@@ -297,46 +307,49 @@ export default function AdCreativesPage() {
             : "Google RSA: up to 15 headlines ≤30 chars and 4 descriptions ≤90 chars in one asset set, enforced before approval."}
         </p>
         {error && <p className="error">{error}</p>}
-      </section>
+      </Card>
 
-      <section className="panel">
-        <div className="panel-title-row">
-          <h2>Variant sets</h2>
-          {sets.length > 0 && (
-            <div className="resolve-controls" style={{ marginLeft: "auto" }}>
-              <select
-                value={exportTaskType}
-                onChange={(e) => setExportTaskType(e.target.value as AdCreativeTaskType)}
-              >
-                {AD_CREATIVE_TASK_TYPES.map((t) => (
-                  <option key={t} value={t}>
-                    {AD_CREATIVE_FORMATS[t].label}
-                  </option>
-                ))}
-              </select>
-              <select
-                value={exportState}
-                onChange={(e) => setExportState(e.target.value as ApprovalState)}
-              >
-                <option value="approved">approved</option>
-                <option value="edited">edited</option>
-                <option value="pending_review">pending review</option>
-              </select>
-              <button
-                type="button"
-                className="button-secondary"
-                onClick={() =>
-                  void apiDownload(
-                    `/workspaces/${id}/ad-creatives/export.csv?taskType=${exportTaskType}&state=${exportState}`,
-                    "ad-creatives.csv",
-                  )
-                }
-              >
-                ↓ Export CSV
-              </button>
-            </div>
-          )}
-        </div>
+      <Card>
+        <CardHeader
+          title="Variant sets"
+          actions={
+            sets.length > 0 && (
+              <div className="resolve-controls" style={{ marginLeft: "auto" }}>
+                <Select
+                  value={exportTaskType}
+                  onChange={(e) => setExportTaskType(e.target.value as AdCreativeTaskType)}
+                >
+                  {AD_CREATIVE_TASK_TYPES.map((t) => (
+                    <option key={t} value={t}>
+                      {AD_CREATIVE_FORMATS[t].label}
+                    </option>
+                  ))}
+                </Select>
+                <Select
+                  value={exportState}
+                  onChange={(e) => setExportState(e.target.value as ApprovalState)}
+                >
+                  <option value="approved">approved</option>
+                  <option value="edited">edited</option>
+                  <option value="pending_review">pending review</option>
+                </Select>
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  type="button"
+                  onClick={() =>
+                    void apiDownload(
+                      `/workspaces/${id}/ad-creatives/export.csv?taskType=${exportTaskType}&state=${exportState}`,
+                      "ad-creatives.csv",
+                    )
+                  }
+                >
+                  ↓ Export CSV
+                </Button>
+              </div>
+            )
+          }
+        />
 
         {sets.length === 0 ? (
           <EmptyState description={<>No ad creative yet. Pick a campaign above and generate a set.</>} />
@@ -380,9 +393,9 @@ export default function AdCreativesPage() {
                       return (
                         <li key={draft.id} className="section-card">
                           <div className="section-head">
-                            <span className={`layer-badge state-${draft.state}`}>
+                            <Badge tone={STATE_TONES[draft.state]}>
                               {STATE_LABELS[draft.state]}
-                            </span>
+                            </Badge>
                             {draft.violations.length > 0 && (
                               <span className="layer-badge" style={{ background: "#7f1d1d" }}>
                                 over limit
@@ -409,7 +422,7 @@ export default function AdCreativesPage() {
                                           </span>
                                           <div style={{ display: "flex", gap: 6 }}>
                                             {spec.key === "primary_text" ? (
-                                              <textarea
+                                              <Textarea
                                                 rows={3}
                                                 value={field.value}
                                                 onChange={(e) =>
@@ -421,7 +434,7 @@ export default function AdCreativesPage() {
                                                 }
                                               />
                                             ) : (
-                                              <input
+                                              <Input
                                                 value={field.value}
                                                 onChange={(e) =>
                                                   setEditFields((fields) =>
@@ -433,8 +446,9 @@ export default function AdCreativesPage() {
                                               />
                                             )}
                                             {spec.maxCount > 1 && values.length > spec.minCount && (
-                                              <button
-                                                className="button-secondary"
+                                              <Button
+                                                variant="secondary"
+                                                size="sm"
                                                 title={`Remove this ${spec.label.toLowerCase()}`}
                                                 onClick={() =>
                                                   setEditFields((fields) =>
@@ -443,15 +457,16 @@ export default function AdCreativesPage() {
                                                 }
                                               >
                                                 ✕
-                                              </button>
+                                              </Button>
                                             )}
                                           </div>
                                         </label>
                                       );
                                     })}
                                     {spec.maxCount > 1 && values.length < spec.maxCount && (
-                                      <button
-                                        className="link-button"
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
                                         onClick={() =>
                                           setEditFields((fields) => [
                                             ...fields,
@@ -460,21 +475,22 @@ export default function AdCreativesPage() {
                                         }
                                       >
                                         + add {spec.label.toLowerCase()}
-                                      </button>
+                                      </Button>
                                     )}
                                   </div>
                                 );
                               })}
                               <div className="editor-actions">
-                                <button disabled={busy} onClick={() => saveEdit(set)}>
+                                <Button variant="primary" disabled={busy} onClick={() => saveEdit(set)}>
                                   Save edit
-                                </button>
-                                <button
-                                  className="button-secondary"
+                                </Button>
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
                                   onClick={() => setEditingId(null)}
                                 >
                                   Cancel
-                                </button>
+                                </Button>
                               </div>
                             </div>
                           ) : (
@@ -507,43 +523,50 @@ export default function AdCreativesPage() {
                                 </p>
                               )}
                               <div className="rating-row">
-                                <button
-                                  className="button-secondary"
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
                                   onClick={() => copyDraft(draft)}
                                 >
                                   {copiedId === draft.id ? "✓ Copied" : "⧉ Copy"}
-                                </button>
+                                </Button>
                                 {editable && (
                                   <>
-                                    <button
-                                      className="button-secondary rating-accepted"
+                                    <Button
+                                      variant="secondary"
+                                      size="sm"
+                                      className="rating-accepted"
                                       disabled={busy || draft.violations.length > 0}
                                       onClick={() => draftAction(draft.id, "approve")}
                                     >
                                       ✓ Approve
-                                    </button>
-                                    <button
-                                      className="button-secondary"
+                                    </Button>
+                                    <Button
+                                      variant="secondary"
+                                      size="sm"
                                       disabled={busy}
                                       onClick={() => startEdit(set, draft)}
                                     >
                                       ✎ Edit
-                                    </button>
-                                    <button
-                                      className="button-secondary rating-rejected"
+                                    </Button>
+                                    <Button
+                                      variant="secondary"
+                                      size="sm"
+                                      className="rating-rejected"
                                       disabled={busy}
                                       onClick={() => draftAction(draft.id, "reject")}
                                     >
                                       ✗ Reject
-                                    </button>
+                                    </Button>
                                     {draft.state === "edited" && (
-                                      <button
-                                        className="button-secondary"
+                                      <Button
+                                        variant="secondary"
+                                        size="sm"
                                         disabled={busy}
                                         onClick={() => draftAction(draft.id, "resubmit")}
                                       >
                                         ↺ Resubmit
-                                      </button>
+                                      </Button>
                                     )}
                                   </>
                                 )}
@@ -559,7 +582,7 @@ export default function AdCreativesPage() {
             })}
           </ul>
         )}
-      </section>
+      </Card>
     </>
   );
 }
