@@ -20,6 +20,8 @@ import {
   type Channel,
 } from "@tuezday/contracts";
 import { apiFetch } from "@/lib/api";
+import { Button } from "@/src/components/ui/button";
+import { Card } from "@/src/components/ui/card";
 import type { WizardPanelProps } from "./types";
 import "./draft-panel.css";
 
@@ -185,7 +187,7 @@ export function DraftPanel({
 
   if (phase === "working") {
     return (
-      <section className="panel ob-panel">
+      <Card className="ob-panel">
         <h1>One draft, coming up</h1>
         <p className="subtitle ob-draft-pulse" aria-live="polite">
           {stages[stage]}
@@ -193,13 +195,13 @@ export function DraftPanel({
         <p className="ob-draft-hint">
           Everything it writes goes through your review — nothing publishes itself.
         </p>
-      </section>
+      </Card>
     );
   }
 
   if (phase === "limit") {
     return (
-      <section className="panel ob-panel">
+      <Card className="ob-panel">
         <h1>You&apos;ve hit the generation limit</h1>
         <p className="subtitle">
           Your plan&apos;s monthly generations are used up, so we couldn&apos;t write this first
@@ -209,37 +211,37 @@ export function DraftPanel({
           <Link className="link-button" href={`/workspaces/${workspaceId}/billing`}>
             See plans &amp; billing →
           </Link>
-          <button disabled={busy} onClick={finishViaShell}>
+          <Button variant="ghost" size="sm" disabled={busy} onClick={finishViaShell}>
             {busy ? "Finishing…" : "Finish without a draft"}
-          </button>
+          </Button>
         </div>
-      </section>
+      </Card>
     );
   }
 
   if (phase === "error") {
     return (
-      <section className="panel ob-panel">
+      <Card className="ob-panel">
         <h1>The draft didn&apos;t come through</h1>
         <p className="subtitle">
           Something went wrong on the way — the details are in the message above. Retry now, or
           finish setup and draft your first post from the workspace instead.
         </p>
         <div className="ob-actions">
-          <button type="button" className="link-button" disabled={busy} onClick={finishViaShell}>
+          <Button variant="ghost" size="sm" disabled={busy} onClick={finishViaShell}>
             Finish without a draft
-          </button>
-          <button disabled={busy} onClick={() => void run()}>
+          </Button>
+          <Button variant="ghost" size="sm" disabled={busy} onClick={() => void run()}>
             Retry
-          </button>
+          </Button>
         </div>
-      </section>
+      </Card>
     );
   }
 
   // phase === "ready" — celebratory, but restrained.
   return (
-    <section className="panel ob-panel">
+    <Card className="ob-panel">
       <h1>
         Your first draft is waiting for review
         {userName ? `, ${userName}` : ""}
@@ -249,19 +251,19 @@ export function DraftPanel({
         gate until you say so.
       </p>
 
-      <div className="ob-draft-card">
+      <Card className="ob-draft-card">
         <div className="ob-draft-card-head">
           <span className="layer-badge ob-draft-channel">{CHANNEL_LABELS[channel]} draft</span>
           <span className="ob-draft-status">pending review</span>
         </div>
         <p className="ob-draft-excerpt">{excerptOf(output) || "Your draft is ready to read."}</p>
-      </div>
+      </Card>
 
       <div className="ob-actions">
-        <button disabled={busy} onClick={reviewNow}>
+        <Button variant="primary" disabled={busy} onClick={reviewNow}>
           {busy ? "Opening…" : "Review it now →"}
-        </button>
+        </Button>
       </div>
-    </section>
+    </Card>
   );
 }

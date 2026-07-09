@@ -8,12 +8,9 @@
   line-height: 1.5;
 }
 
-/* Preview card — the draft, parked at the gate. */
+/* Preview card — the draft, parked at the gate. Border/background/padding
+   now come from the Card primitive; this keeps only the inner layout. */
 .ob-draft-card {
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--panel);
-  padding: 14px 16px;
   display: flex;
   flex-direction: column;
   gap: 8px;
