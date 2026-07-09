@@ -1,0 +1,32 @@
+/* apps/web/src/components/ui/input.module.css */
+.field {
+  width: 100%;
+  padding: 9px 12px;
+  min-height: 36px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 14px;
+  font-family: var(--font-body);
+}
+
+.field:focus-visible {
+  outline: 2px solid var(--accent-soft);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+.field::placeholder {
+  color: var(--muted-2);
+}
+
+.textarea {
+  min-height: 96px;
+  resize: vertical;
+  line-height: 1.6;
+}
+
+.select {
+  cursor: pointer;
+}
