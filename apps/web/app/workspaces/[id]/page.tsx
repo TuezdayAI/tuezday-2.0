@@ -15,6 +15,9 @@ import type { BrainScore } from "@tuezday/brain";
 import { API_URL, apiFetch } from "@/lib/api";
 import { EmptyState } from "@/src/components/empty-state";
 import { PageHeader } from "@/src/components/page-header";
+import { Card, CardHeader } from "@/src/components/ui/card";
+import { Button } from "@/src/components/ui/button";
+import buttonStyles from "@/src/components/ui/button.module.css";
 
 interface BrainView {
   completeness: BrainScore;
@@ -129,19 +132,27 @@ export default function WorkspaceHomePage() {
         </Link>
       </div>
 
-      <section className="panel">
-        <div className="panel-title-row">
-          <h2>Recent drafts</h2>
-          <Link className="button-secondary" href={`/workspaces/${id}/content`}>
-            Create draft
-          </Link>
-        </div>
+      <Card>
+        <CardHeader
+          title="Recent drafts"
+          actions={
+            <Link
+              className={`${buttonStyles.button} ${buttonStyles.secondary} ${buttonStyles.sm}`}
+              href={`/workspaces/${id}/content`}
+            >
+              Create draft
+            </Link>
+          }
+        />
         {recentDrafts.length === 0 ? (
           <EmptyState
             title="No drafts yet"
             description="Drafts appear here after you create from the Brain, turn a signal into a post, or generate campaign assets."
             primaryAction={
-              <Link className="button-secondary" href={`/workspaces/${id}/content`}>
+              <Link
+                className={`${buttonStyles.button} ${buttonStyles.secondary} ${buttonStyles.sm}`}
+                href={`/workspaces/${id}/content`}
+              >
                 Start in Create
               </Link>
             }
@@ -170,7 +181,7 @@ export default function WorkspaceHomePage() {
             ))}
           </ul>
         )}
-      </section>
+      </Card>
     </>
   );
 }
