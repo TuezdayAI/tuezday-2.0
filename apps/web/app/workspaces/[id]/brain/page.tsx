@@ -2,6 +2,8 @@
 
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
+import { Button } from "@/src/components/ui/button";
+import { Textarea } from "@/src/components/ui/input";
 
 
 import { API_URL, apiDownload, apiFetch } from "@/lib/api";
@@ -291,13 +293,14 @@ export default function WorkspaceBrainPage() {
     <>
       <PageHeader title="Brain" subtitle={<>Everything Tuezday knows about your company — edit it anytime. Completeness:{" "}
             <strong>{brain.completeness.percent}%</strong></>} actions={<>
-            <button
+            <Button
             type="button"
-            className="button-secondary"
+            variant="secondary"
+            size="sm"
             onClick={() => void apiDownload(`/workspaces/${id}/brain/export`, "gtm-brain.md")}
           >
             Export brain (.md)
-          </button>
+          </Button>
           </>} />
 
       <div className="brain-layout">
@@ -322,7 +325,7 @@ export default function WorkspaceBrainPage() {
         <section className="doc-editor">
           <p className="doc-description">{selectedMeta.description}</p>
 
-          <textarea
+          <Textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             placeholder={`Write the ${selectedMeta.title} doc in markdown…`}
@@ -348,9 +351,9 @@ export default function WorkspaceBrainPage() {
             <button onClick={() => save(draft)} disabled={saving || !dirty}>
               {saving ? "Saving…" : dirty ? "Save" : "Saved"}
             </button>
-            <button className="button-secondary" onClick={toggleHistory}>
+            <Button variant="secondary" size="sm" onClick={toggleHistory}>
               {showHistory ? "Hide history" : "History"}
-            </button>
+            </Button>
             {dirty && <span className="unsaved">Unsaved changes</span>}
           </div>
 
@@ -405,13 +408,14 @@ export default function WorkspaceBrainPage() {
               {previewVersion && (
                 <div className="version-preview">
                   <pre>{previewVersion.content || "(empty)"}</pre>
-                  <button
-                    className="button-secondary"
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     disabled={saving}
                     onClick={() => save(previewVersion.content)}
                   >
                     Restore v{previewVersion.version}
-                  </button>
+                  </Button>
                 </div>
               )}
             </div>
@@ -444,7 +448,7 @@ export default function WorkspaceBrainPage() {
                       {g.source === "workspace" ? "Workspace override" : "Default"}
                     </span>
                   </div>
-                  <textarea
+                  <Textarea
                     value={value}
                     onChange={(e) =>
                       setGuidanceDrafts((d) => ({ ...d, [g.channel]: e.target.value }))
@@ -456,13 +460,14 @@ export default function WorkspaceBrainPage() {
                       {busy ? "Saving…" : dirty ? "Save" : "Saved"}
                     </button>
                     {g.source === "workspace" && (
-                      <button
-                        className="button-secondary"
+                      <Button
+                        variant="secondary"
+                        size="sm"
                         onClick={() => void resetGuidance(g.channel)}
                         disabled={busy}
                       >
                         Reset to default
-                      </button>
+                      </Button>
                     )}
                     {dirty && <span className="unsaved">Unsaved changes</span>}
                   </div>
@@ -507,22 +512,24 @@ export default function WorkspaceBrainPage() {
                   {row.content.length > 180 ? `${row.content.slice(0, 180)}…` : row.content}
                 </p>
                 <div className="editor-actions">
-                  <button
+                  <Button
                     type="button"
-                    className="button-secondary"
+                    variant="secondary"
+                    size="sm"
                     disabled={scopedBusy}
                     onClick={() => editScoped(row)}
                   >
                     Edit
-                  </button>
-                  <button
+                  </Button>
+                  <Button
                     type="button"
-                    className="button-secondary danger"
+                    variant="danger"
+                    size="sm"
                     disabled={scopedBusy}
                     onClick={() => void deleteScoped(row)}
                   >
                     Delete
-                  </button>
+                  </Button>
                 </div>
               </li>
             ))}
@@ -570,7 +577,7 @@ export default function WorkspaceBrainPage() {
               </select>
             </label>
           </div>
-          <textarea
+          <Textarea
             value={scopedContent}
             onChange={(e) => setScopedContent(e.target.value)}
             placeholder="Guidance that applies only at this scope — it replaces the workspace text above…"
