@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Workspace } from "@tuezday/contracts";
 import { API_URL, apiFetch, clearToken, getToken } from "@/lib/api";
+import { Button } from "@/src/components/ui/button";
+import styles from "./home.module.css";
 
 export default function HomePage() {
   const router = useRouter();
@@ -71,10 +73,10 @@ export default function HomePage() {
           Each workspace owns one GTM brain: soul, ICP, voice, history, now.
         </p>
 
-        <div className="create-form">
-          <button type="button" onClick={() => router.push("/onboarding")}>
+        <div className={styles.actions}>
+          <Button variant="primary" onClick={() => router.push("/onboarding")}>
             New workspace
-          </button>
+          </Button>
         </div>
 
         {error && <p className="error">{error}</p>}
@@ -93,16 +95,16 @@ export default function HomePage() {
                     created {new Date(w.createdAt).toLocaleString()}
                   </span>
                   {w.onboardingStep && w.onboardingStep !== "done" && (
-                    <span
-                      className="link-button"
-                      role="link"
+                    <Button
+                      variant="ghost"
+                      size="sm"
                       onClick={(e) => {
                         e.preventDefault();
                         router.push(`/onboarding?workspace=${w.id}`);
                       }}
                     >
                       Resume setup →
-                    </span>
+                    </Button>
                   )}
                 </Link>
               </li>
