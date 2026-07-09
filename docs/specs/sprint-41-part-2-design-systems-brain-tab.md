@@ -1,6 +1,6 @@
 # Spec: Sprint 41, Part 2 — Design systems: Brain "Design" tab, overlays, resolver
 
-- **Status:** spec — not started.
+- **Status:** implemented — tests green (see Progress log).
 - **Umbrella:** `docs/specs/sprint-41-design-layer-carousel-pipeline.md` (Decisions 4, 10). Self-contained; umbrella is context only.
 - **Branch:** `sprint-41-design-layer-carousel-pipeline` (commit this part before starting Part 3).
 - **Depends on:** nothing in Sprint 41 (independent of Part 1). Reuses Sprint 44's `guidance_overrides` pattern (already on `main`).
@@ -99,4 +99,6 @@ Mirror `apps/api/src/services/guidance.ts` structurally:
 
 ## Progress log
 
-*(not started)*
+- 2026-07-09 — Implemented as specced: `design_systems` + `design_overlays` tables (migration 0037), contracts (`designSystemSchema`, `designOverlaySchema`, `resolvedDesignSystemSchema`, `DEFAULT_DESIGN_SYSTEM_CONTENT`), `services/design-systems.ts` (seeding, CRUD, one-default invariant, `resolveDesignSystem()` with the five-rung winner chain + trace), routes registered in `app.ts`, seeding wired into workspace creation next to `ensureBrainDocs`. Brain UI gets the Design tab (6th position), overlay manager with scope chips, and a "Preview resolution" control that shows the winning source. 17 tests in `apps/api/test/design-systems.test.ts`; full suite 1053 + typecheck green.
+- Competitor-scan influence (docs/research/sprint-41-competitor-scan.md): the starter DESIGN.md skeleton uses **semantic color roles** (`primary`/`on-primary`/`background`/`surface`/`text`/`accent` — Material's on-X convention, absent from every consumer brand kit scanned), heading/body font roles with weights + fallbacks, a spacing/radius scale, an author-strip block (name/@handle/headshot — ContentDrips pattern), and a "Never do" list. Voice explicitly stays in the `voice` brain doc.
+- Deviation from spec text: overlay upsert is `PUT /design-system/overlays` with scope in the body (mirrors how the UI consumes it) rather than upsert-by-scope query params; delete is by overlay id as specced. Resolved overlay content is appended under an explicit `## Overlay (<source>)` heading so downstream template briefs can see what was scoped.

@@ -31,6 +31,7 @@ import { registerCrmRoutes } from "./routes/crm";
 import { registerDiscoveryRoutes } from "./routes/discovery";
 import { registerDraftRoutes } from "./routes/drafts";
 import { registerEvidenceRoutes } from "./routes/evidence";
+import { registerDesignSystemRoutes } from "./routes/design-systems";
 import { registerGuidanceRoutes } from "./routes/guidance";
 import { registerGenerationSettingsRoutes } from "./routes/generation-settings";
 import { registerInboxRoutes } from "./routes/inbox";
@@ -130,6 +131,7 @@ export async function buildApp({
   registerStripeWebhookRoute(app, db);
   registerBrainRoutes(app, db, llm);
   registerGuidanceRoutes(app, db);
+  registerDesignSystemRoutes(app, db);
   registerContextMatrixRoutes(app, db);
   registerGenerationSettingsRoutes(app, db);
   registerPersonaRoutes(app, db, evidence);

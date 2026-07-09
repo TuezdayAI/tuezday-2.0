@@ -3653,3 +3653,141 @@ export const createApiKeyInputSchema = z.object({
   scopes: z.array(z.enum(API_SCOPES)).min(1),
 });
 export type CreateApiKeyInput = z.infer<typeof createApiKeyInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Design systems (Sprint 41 Part 2)
+//
+// Brain-adjacent visual identity: a DESIGN.md-shaped markdown doc per named
+// design system, plus channel/persona/campaign overlays resolved
+// most-specific-wins (Sprint 44's guidance pattern, scoped to a system).
+// Deliberately NOT a brain doc type — never added to BRAIN_DOC_TYPES, never
+// resolved by packages/brain; only the design pipeline reads it.
+// ---------------------------------------------------------------------------
+
+export const DESIGN_CONTENT_MAX_CHARS = 24_000;
+export const DESIGN_SYSTEM_NAME_MAX_CHARS = 80;
+
+export const designSystemSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  name: z.string(),
+  isDefault: z.boolean(),
+  content: z.string(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type DesignSystem = z.infer<typeof designSystemSchema>;
+
+export const updateDesignSystemInputSchema = z.object({
+  content: z
+    .string()
+    .trim()
+    .min(1, "Design system cannot be empty")
+    .max(DESIGN_CONTENT_MAX_CHARS),
+});
+export type UpdateDesignSystemInput = z.infer<typeof updateDesignSystemInputSchema>;
+
+/** One overlay row (management read model, scope names joined in). */
+export const designOverlaySchema = z.object({
+  id: z.string().uuid(),
+  designSystemId: z.string().uuid(),
+  channel: z.enum(CHANNELS),
+  content: z.string(),
+  personaId: z.string().uuid().nullable(),
+  campaignId: z.string().uuid().nullable(),
+  personaName: z.string().nullable(),
+  campaignName: z.string().nullable(),
+  updatedAt: z.number().int(),
+});
+export type DesignOverlay = z.infer<typeof designOverlaySchema>;
+
+export const upsertDesignOverlayInputSchema = z.object({
+  channel: z.enum(CHANNELS),
+  content: z
+    .string()
+    .trim()
+    .min(1, "Overlay cannot be empty")
+    .max(DESIGN_CONTENT_MAX_CHARS),
+  personaId: z.string().uuid().optional(),
+  campaignId: z.string().uuid().optional(),
+  // Multi-system readiness: omit to target the workspace default system.
+  designSystemId: z.string().uuid().optional(),
+});
+export type UpsertDesignOverlayInput = z.infer<typeof upsertDesignOverlayInputSchema>;
+
+/** Which rung of the winner chain produced the resolved content. */
+export const DESIGN_TRACE_SOURCES = [
+  "persona+campaign",
+  "persona",
+  "campaign",
+  "channel",
+  "base",
+] as const;
+export type DesignTraceSource = (typeof DESIGN_TRACE_SOURCES)[number];
+
+/**
+ * Resolved design context: base system content plus (at most) the single
+ * winning overlay appended as an addendum, and a trace explaining why —
+ * readable before any template is authored, same transparency contract as
+ * the brain resolver.
+ */
+export const resolvedDesignSystemSchema = z.object({
+  content: z.string(),
+  trace: z.object({
+    source: z.enum(DESIGN_TRACE_SOURCES),
+    overlayId: z.string().uuid().nullable(),
+    designSystemId: z.string().uuid(),
+  }),
+});
+export type ResolvedDesignSystem = z.infer<typeof resolvedDesignSystemSchema>;
+
+/**
+ * Starter DESIGN.md seeded into every workspace's default system. Field set
+ * informed by the Sprint 41 competitor scan (docs/research/): semantic color
+ * roles (the one field no consumer brand kit has — Material's on-X convention
+ * gives templates auto-contrast), heading/body font roles with weights and
+ * fallbacks, a spacing/radius scale, an author strip block, and a "never do"
+ * list. Voice stays in the `voice` brain doc — linked, not duplicated.
+ */
+export const DEFAULT_DESIGN_SYSTEM_CONTENT = `# Visual identity
+
+The design pipeline reads this document every time it authors a slide or ad
+template — the palette, type, and rules below become the rendered look.
+How the brand *sounds* lives in the Voice brain doc; this doc is only how it
+*looks*.
+
+## Palette (semantic roles)
+
+- primary: #111827 — brand color; hook-slide and CTA backgrounds
+- on-primary: #FFFFFF — text and icons placed on primary
+- background: #FFFFFF — default slide background
+- surface: #F3F4F6 — cards, stat blocks, quote panels
+- text: #111827 — body copy on background/surface
+- accent: #2563EB — highlights, big numbers, swipe cues (use sparingly)
+
+## Typography
+
+- Heading: Inter, weight 800, tight line height. Fallback: system-ui, sans-serif.
+- Body: Inter, weight 450, line height 1.4. Fallback: system-ui, sans-serif.
+- At most two font families anywhere. Body text no smaller than ~40px on a
+  1080px canvas.
+
+## Spacing & shape
+
+- Spacing scale (1080px canvas): 8 / 16 / 24 / 40 / 64px.
+- Corner radius: 24px on cards and panels.
+- Shadows: flat by default; one soft shadow only when a card needs lift.
+
+## Logo & author strip
+
+- Logo: (paste a public URL; note light/dark variants if you have them)
+- Author strip: name, @handle, headshot URL — rendered small on every slide,
+  full-size on the CTA/outro slide.
+
+## Never do
+
+- Never place text over busy imagery without a solid or gradient scrim.
+- Never use colors outside the palette above.
+- Never use more than two font families or crop the hook headline out of the
+  center 3:4 safe zone.
+`;

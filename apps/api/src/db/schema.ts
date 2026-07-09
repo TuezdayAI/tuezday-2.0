@@ -1355,3 +1355,62 @@ export const apiKeys = sqliteTable("api_keys", {
 }, (t) => [uniqueIndex("api_keys_hash").on(t.keyHash)]);
 
 export type ApiKeyRow = typeof apiKeys.$inferSelect;
+
+// Design systems (Sprint 41 Part 2) — the Brain UI's additional "Design" tab.
+// Deliberately NOT part of brain_documents / BRAIN_DOC_TYPES: only the design
+// pipeline reads these, via resolveDesignSystem(), never packages/brain.
+// Multiple named systems per workspace are supported at the schema level;
+// v1 seeds exactly one org-level default (isDefault = 1) and the UI surfaces
+// only that one. Uniqueness is (workspaceId, name), NOT workspaceId; the
+// one-default-per-workspace invariant lives in the service.
+export const designSystems = sqliteTable(
+  "design_systems",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull().default("Default"),
+    isDefault: integer("is_default").notNull().default(0),
+    content: text("content").notNull(), // DESIGN.md-shaped markdown
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("design_systems_workspace_name").on(t.workspaceId, t.name)],
+);
+
+export type DesignSystemRow = typeof designSystems.$inferSelect;
+
+// Channel/persona/campaign overlays — clones guidance_overrides' shape and
+// most-specific-wins precedence (Sprint 44), scoped to a design system. The
+// winning overlay is appended to the base content as an addendum. Same SQLite
+// NULLs-are-distinct caveat as guidance_overrides: the service upserts
+// select-first instead of relying on ON CONFLICT.
+export const designOverlays = sqliteTable(
+  "design_overlays",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    designSystemId: text("design_system_id")
+      .notNull()
+      .references(() => designSystems.id, { onDelete: "cascade" }),
+    channel: text("channel").notNull(),
+    personaId: text("persona_id").references(() => personas.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "cascade" }),
+    content: text("content").notNull(), // partial DESIGN.md override/addendum
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("design_overlays_system_channel_scope").on(
+      t.designSystemId,
+      t.channel,
+      t.personaId,
+      t.campaignId,
+    ),
+  ],
+);
+
+export type DesignOverlayRow = typeof designOverlays.$inferSelect;

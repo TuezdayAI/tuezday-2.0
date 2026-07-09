@@ -260,6 +260,13 @@
       "when": 1783367353970,
       "tag": "0036_material_psylocke",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1783579274300,
+      "tag": "0037_deep_black_tarantula",
+      "breakpoints": true
     }
   ]
 }
