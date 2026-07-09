@@ -1,7 +1,10 @@
 "use client";
 
 import { EmptyState } from "@/src/components/empty-state";
-
+import { Button } from "@/src/components/ui/button";
+import { Card, CardHeader } from "@/src/components/ui/card";
+import { Badge } from "@/src/components/ui/badge";
+import { Input, Textarea } from "@/src/components/ui/input";
 
 import { API_URL, apiFetch } from "@/lib/api";
 
@@ -128,27 +131,28 @@ export default function EvidencePage() {
         </p>
       )}
 
-      <section className="panel">
-        <h2>Add evidence</h2>
+      <Card>
+        <CardHeader title="Add evidence" />
         <form
           className="persona-form"
           style={{ borderTop: "none", paddingTop: 0, marginTop: 0 }}
           onSubmit={upload}
         >
-          <input
+          <Input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Title (e.g. Website copy, June launch post, Customer call notes)"
             maxLength={200}
           />
-          <textarea
+          <Textarea
             value={content}
             onChange={(e) => setContent(e.target.value)}
             placeholder="Paste the document text…"
             rows={8}
           />
           <div className="editor-actions">
-            <button
+            <Button
+              variant="primary"
               type="submit"
               disabled={
                 uploading ||
@@ -158,17 +162,17 @@ export default function EvidencePage() {
               }
             >
               {uploading ? "Ingesting…" : "Add to corpus"}
-            </button>
+            </Button>
             {!view.store.healthy && (
               <span className="meta">Start the store with `npm run r2r:up` first.</span>
             )}
           </div>
         </form>
         {error && <p className="error">{error}</p>}
-      </section>
+      </Card>
 
-      <section className="panel">
-        <h2>Ingest candidates ({candidates.length})</h2>
+      <Card>
+        <CardHeader title={`Ingest candidates (${candidates.length})`} />
         <p className="subtitle" style={{ marginTop: 0 }}>
           Signals and published posts the worker proposes for the corpus. Accept the useful ones —
           nothing is ingested until you do.
@@ -194,21 +198,21 @@ export default function EvidencePage() {
                   {c.content.length > 240 ? "…" : ""}
                 </p>
                 <div className="rating-row" style={{ marginTop: 8 }}>
-                  <button onClick={() => acceptCandidate(c)} disabled={!view.store.healthy}>
+                  <Button variant="primary" onClick={() => acceptCandidate(c)} disabled={!view.store.healthy}>
                     Accept into corpus
-                  </button>
-                  <button className="button-secondary" onClick={() => dismissCandidate(c)}>
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => dismissCandidate(c)}>
                     Dismiss
-                  </button>
+                  </Button>
                 </div>
               </li>
             ))}
           </ul>
         )}
-      </section>
+      </Card>
 
-      <section className="panel">
-        <h2>Corpus ({view.documents.length})</h2>
+      <Card>
+        <CardHeader title={`Corpus (${view.documents.length})`} />
         {view.documents.length === 0 ? (
           <EmptyState description={<>No evidence yet. Paste your website copy and a few past posts to give the brain
             something to cite.</>} />
@@ -217,17 +221,17 @@ export default function EvidencePage() {
             {view.documents.map((doc) => (
               <li key={doc.id} className="section-card">
                 <div className="section-head">
-                  <span
-                    className={`layer-badge ${
+                  <Badge
+                    tone={
                       doc.status === "ready"
-                        ? "state-approved"
+                        ? "approved"
                         : doc.status === "failed"
-                          ? "state-rejected"
-                          : "state-edited"
-                    }`}
+                          ? "rejected"
+                          : "edited"
+                    }
                   >
                     {doc.status}
-                  </span>
+                  </Badge>
                   <span className="layer-badge">{originLabel(doc.kind)}</span>
                   <span className="section-title">{doc.title}</span>
                   <span className="section-tokens">
@@ -237,15 +241,15 @@ export default function EvidencePage() {
                 </div>
                 {doc.error && <p className="error">{doc.error}</p>}
                 <div className="rating-row" style={{ marginTop: 8 }}>
-                  <button className="button-secondary danger" onClick={() => remove(doc)}>
+                  <Button variant="danger" size="sm" onClick={() => remove(doc)}>
                     Delete
-                  </button>
+                  </Button>
                 </div>
               </li>
             ))}
           </ul>
         )}
-      </section>
+      </Card>
     </>
   );
 }
