@@ -11,6 +11,9 @@ import {
   type OnboardingFrequency,
 } from "@tuezday/contracts";
 import { apiFetch } from "@/lib/api";
+import { Button } from "@/src/components/ui/button";
+import { Card } from "@/src/components/ui/card";
+import { Input, Textarea } from "@/src/components/ui/input";
 import type { WizardPanelProps } from "./types";
 import "./campaign-panel.css";
 
@@ -90,7 +93,7 @@ export function CampaignPanel({
   // campaign already exists, so Continue just re-advances the cursor.
   if (campaignId) {
     return (
-      <section className="panel ob-panel">
+      <Card className="ob-panel">
         <h1>{heading}</h1>
         <p className="cp-created" role="status">
           <span className="cp-created-dot" aria-hidden="true" />
@@ -98,18 +101,18 @@ export function CampaignPanel({
         </p>
         <div className="ob-actions">
           <span />
-          <button type="button" disabled={busy} onClick={reAdvance}>
+          <Button type="button" variant="primary" disabled={busy} onClick={reAdvance}>
             {busy ? "Continuing…" : "Continue"}
-          </button>
+          </Button>
         </div>
-      </section>
+      </Card>
     );
   }
 
   const canSubmit = goal.trim().length > 0 && channels.length > 0;
 
   return (
-    <section className="panel ob-panel">
+    <Card className="ob-panel">
       <h1>{heading}</h1>
       <p className="subtitle">
         What&apos;s this push for? You can refine everything later in Campaigns.
@@ -117,8 +120,8 @@ export function CampaignPanel({
 
       <label className="cp-field">
         <span>Goal</span>
-        <textarea
-          className="ob-input cp-goal"
+        <Textarea
+          className="cp-goal"
           value={goal}
           rows={3}
           maxLength={2000}
@@ -169,8 +172,7 @@ export function CampaignPanel({
 
       <details className="cp-details">
         <summary>Campaign name</summary>
-        <input
-          className="ob-input"
+        <Input
           value={name}
           maxLength={200}
           placeholder={derivedName}
@@ -183,10 +185,15 @@ export function CampaignPanel({
 
       <div className="ob-actions">
         <span />
-        <button type="button" disabled={busy || !canSubmit} onClick={createAndContinue}>
+        <Button
+          type="button"
+          variant="primary"
+          disabled={busy || !canSubmit}
+          onClick={createAndContinue}
+        >
           {busy ? "Creating…" : "Create campaign & continue"}
-        </button>
+        </Button>
       </div>
-    </section>
+    </Card>
   );
 }

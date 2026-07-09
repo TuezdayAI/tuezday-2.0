@@ -1,5 +1,6 @@
 /* Onboarding Step 6 — campaign quick setup (Sprint 36.6).
-   Native tokens from globals.css; layout composes with .ob-panel/.ob-input. */
+   Native tokens from globals.css; layout composes with .ob-panel and the
+   Card/Input/Textarea/Button primitives (see campaign-panel.tsx). */
 
 .cp-field {
   display: flex;
@@ -137,11 +138,6 @@
 
 .cp-details[open] > summary {
   color: var(--text);
-}
-
-.cp-details > .ob-input {
-  width: 100%;
-  margin-top: 6px;
 }
 
 .cp-details > .cp-hint {
