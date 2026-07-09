@@ -1,7 +1,10 @@
 "use client";
 
 import { EmptyState } from "@/src/components/empty-state";
-
+import { Badge } from "@/src/components/ui/badge";
+import { Button } from "@/src/components/ui/button";
+import { Card, CardHeader } from "@/src/components/ui/card";
+import { Input, Select } from "@/src/components/ui/input";
 
 import { API_URL, apiFetch } from "@/lib/api";
 
@@ -251,10 +254,8 @@ export default function CrmPage() {
         </p>
       )}
 
-      <section className="panel">
-        <div className="panel-title-row">
-          <h2>Sync</h2>
-        </div>
+      <Card>
+        <CardHeader title="Sync" />
         {crmConnections.length === 0 ? (
           <EmptyState description={<>No CRM connected yet.{" "}
             <Link href={`/workspaces/${id}/connectors`}>Connect Freshsales on the connectors page</Link>{" "}
@@ -264,24 +265,25 @@ export default function CrmPage() {
             <div className="resolve-controls">
               <label>
                 Connection
-                <select value={activeConnectionId} onChange={(e) => setConnectionId(e.target.value)}>
+                <Select value={activeConnectionId} onChange={(e) => setConnectionId(e.target.value)}>
                   {crmConnections.map((c) => (
                     <option key={c.id} value={c.id}>
                       {providerLabel(c.providerKey)}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
-              <button disabled={busy || !activeConnectionId} onClick={sync}>
+              <Button variant="primary" disabled={busy || !activeConnectionId} onClick={sync}>
                 {busy ? "Working…" : "Sync contacts"}
-              </button>
-              <button
-                className="button-secondary"
+              </Button>
+              <Button
+                variant="secondary"
+                size="sm"
                 type="button"
                 onClick={() => setFilterOpen((o) => !o)}
               >
                 {filterOpen ? "Hide filter" : filterActive ? "Filter: on" : "Filter"}
-              </button>
+              </Button>
               {syncResult && (
                 <span className="meta" style={{ alignSelf: "center" }}>
                   {syncResult.fetched} fetched · {syncResult.created} new · {syncResult.updated}{" "}
@@ -306,34 +308,36 @@ export default function CrmPage() {
               <div className="resolve-controls" style={{ marginTop: "0.5rem", flexWrap: "wrap" }}>
                 <label>
                   View / list
-                  <select value={filterViewId} onChange={(e) => setFilterViewId(e.target.value)}>
+                  <Select value={filterViewId} onChange={(e) => setFilterViewId(e.target.value)}>
                     <option value="">All Contacts (default)</option>
                     {views.map((v) => (
                       <option key={v.id} value={v.id}>
                         {v.name}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                 </label>
                 <label>
                   Updated since
-                  <input
+                  <Input
                     type="date"
                     value={filterSince}
                     onChange={(e) => setFilterSince(e.target.value)}
                   />
                 </label>
-                <button
-                  className="button-secondary"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   disabled={busy}
                   onClick={saveFilter}
                   style={{ alignSelf: "flex-end" }}
                 >
                   Save filter
-                </button>
+                </Button>
                 {(filterViewId || filterSince) && (
-                  <button
-                    className="button-secondary"
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     disabled={busy}
                     onClick={() => {
                       setFilterViewId("");
@@ -342,7 +346,7 @@ export default function CrmPage() {
                     style={{ alignSelf: "flex-end" }}
                   >
                     Clear
-                  </button>
+                  </Button>
                 )}
                 {filterSaved && (
                   <span className="meta" style={{ alignSelf: "center" }}>
@@ -354,9 +358,9 @@ export default function CrmPage() {
           </>
         )}
         {error && <p className="error">{error}</p>}
-      </section>
+      </Card>
 
-      <section className="panel">
+      <Card>
         <h2>CRM contacts ({contacts.length})</h2>
         {contacts.length === 0 ? (
           <EmptyState description={<>Nothing synced yet. Run a sync above.</>} />
@@ -377,35 +381,37 @@ export default function CrmPage() {
                   </span>
                   <span className="section-actions">
                     {contact.lead ? (
-                      <span className="layer-badge state-approved">lead: {contact.lead.name}</span>
+                      <Badge tone="approved">lead: {contact.lead.name}</Badge>
                     ) : (
-                      <button
-                        className="button-secondary"
+                      <Button
+                        variant="secondary"
+                        size="sm"
                         disabled={busy || !contact.email}
                         title={contact.email ? "" : "This contact has no email address"}
                         onClick={() => importLead(contact)}
                       >
                         Import as lead
-                      </button>
+                      </Button>
                     )}
-                    <button
-                      className="button-secondary"
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       disabled={busy}
                       title="Removes it from Tuezday only; a re-sync won't bring it back. Nothing is deleted in your CRM."
                       onClick={() => discardContact(contact)}
                     >
                       Discard
-                    </button>
+                    </Button>
                   </span>
                 </div>
               </li>
             ))}
           </ul>
         )}
-      </section>
+      </Card>
 
       {discarded.length > 0 && (
-        <section className="panel">
+        <Card>
           <h2>Discarded ({discarded.length})</h2>
           <p className="section-reason">
             These are hidden locally and a re-sync won't bring them back. Restore one to sync it
@@ -419,21 +425,22 @@ export default function CrmPage() {
                     {contact.name || "(no name)"}{" "}
                     <span className="meta">&lt;{contact.email || "no email"}&gt;</span>
                   </span>
-                  <button
-                    className="button-secondary"
+                  <Button
+                    variant="secondary"
+                    size="sm"
                     disabled={busy}
                     onClick={() => restoreContact(contact)}
                   >
                     Restore
-                  </button>
+                  </Button>
                 </div>
               </li>
             ))}
           </ul>
-        </section>
+        </Card>
       )}
 
-      <section className="panel">
+      <Card>
         <h2>Leads → CRM</h2>
         {leadsList.length === 0 ? (
           <EmptyState description={<>No leads yet. Import a contact above or add leads on the{" "}
@@ -447,24 +454,25 @@ export default function CrmPage() {
                     {lead.name} <span className="meta">&lt;{lead.email}&gt;</span>
                   </span>
                   {linkedLeadIds.has(lead.id) ? (
-                    <span className="layer-badge state-approved">linked</span>
+                    <Badge tone="approved">linked</Badge>
                   ) : (
-                    <button
-                      className="button-secondary"
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       disabled={busy || crmConnections.length === 0}
                       onClick={() => pushLead(lead)}
                     >
                       Push to CRM
-                    </button>
+                    </Button>
                   )}
                 </div>
               </li>
             ))}
           </ul>
         )}
-      </section>
+      </Card>
 
-      <section className="panel">
+      <Card>
         <h2>Approved outbound drafts → CRM notes</h2>
         {approvedDrafts.length === 0 ? (
           <EmptyState description={<>No approved outbound drafts yet. Draft on the{" "}
@@ -483,18 +491,19 @@ export default function CrmPage() {
                       <span className="meta">{draft.content.slice(0, 80)}…</span>
                     </span>
                     {logged[draft.id] ? (
-                      <span className="layer-badge state-approved">
+                      <Badge tone="approved">
                         logged at {logged[draft.id]}
-                      </span>
+                      </Badge>
                     ) : (
-                      <button
-                        className="button-secondary"
+                      <Button
+                        variant="secondary"
+                        size="sm"
                         disabled={busy || !linked}
                         title={linked ? "" : "Link this lead to a CRM contact first (push or import)"}
                         onClick={() => logDraft(draft)}
                       >
                         Log to CRM
-                      </button>
+                      </Button>
                     )}
                   </div>
                   {!linked && (
@@ -508,7 +517,7 @@ export default function CrmPage() {
             })}
           </ul>
         )}
-      </section>
+      </Card>
     </>
   );
 }
