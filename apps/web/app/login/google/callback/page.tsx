@@ -1,6 +1,7 @@
 "use client";
 
 import { Suspense, useEffect, useState } from "react";
+import { Button } from "@/src/components/ui/button";
 import { useRouter, useSearchParams } from "next/navigation";
 import { API_URL, setToken } from "@/lib/api";
 
@@ -68,9 +69,9 @@ function CallbackHandler() {
       <main className="site-main">
         <h1>Login failed</h1>
         <p className="error">{error}</p>
-        <button className="link-button" onClick={() => router.push("/login")} style={{ marginTop: "1rem" }}>
+        <Button variant="ghost" size="sm" onClick={() => router.push("/login")} style={{ marginTop: "1rem" }}>
           Return to login
-        </button>
+        </Button>
       </main>
     );
   }
