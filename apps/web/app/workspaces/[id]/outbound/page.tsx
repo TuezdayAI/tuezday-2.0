@@ -11,7 +11,7 @@ import { API_URL, apiDownload, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import type { ApprovalState, Campaign, Draft, Lead, Persona, Workspace } from "@tuezday/contracts";
 
 const STATE_LABELS: Record<ApprovalState, string> = {
@@ -36,8 +36,35 @@ const STATE_TONES: Record<
 const CSV_EXAMPLE = `name,email,company,role,notes
 Asha Patel,asha@acme.io,Acme Robotics,Head of Growth,"Complained about AI slop on LinkedIn"`;
 
+// Sample leads for the preview-value empty state (spec §5.7.3 / §6.5) —
+// blurred behind the CTA, never shown as real data.
+const SAMPLE_LEADS = [
+  {
+    name: "Asha Patel",
+    email: "asha@acme.io",
+    detail: "Head of Growth at Acme Robotics",
+    state: "approved" as const,
+    snippet: "Saw your post on AI slop — we obsess over the same thing…",
+  },
+  {
+    name: "Diego Fernández",
+    email: "diego@northbeam.co",
+    detail: "Founder at Northbeam",
+    state: "pending" as const,
+    snippet: "Your teardown of attribution models made the rounds here…",
+  },
+  {
+    name: "Mei Lin",
+    email: "mei@driftline.io",
+    detail: "VP Marketing at Driftline",
+    state: "draft" as const,
+    snippet: "Congrats on the Series A — the timing on lifecycle…",
+  },
+];
+
 export default function OutboundPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [leadsList, setLeadsList] = useState<Lead[]>([]);
@@ -297,7 +324,43 @@ export default function OutboundPage() {
         {error && <p className="error">{error}</p>}
 
         {leadsList.length === 0 ? (
-          <EmptyState description={<>No leads yet. Paste a CSV above.</>} />
+          <EmptyState
+            preview={
+              <ul className="section-list">
+                {SAMPLE_LEADS.map((lead) => (
+                  <li key={lead.email} className="section-card">
+                    <div className="section-head">
+                      <span className="section-title">
+                        {lead.name} <span className="meta">&lt;{lead.email}&gt;</span>
+                        <span className="meta"> — {lead.detail}</span>
+                      </span>
+                      <Badge tone={STATE_TONES[lead.state === "pending" ? "pending_review" : lead.state]}>
+                        {lead.state}
+                      </Badge>
+                    </div>
+                    <p className="section-reason">{lead.snippet}</p>
+                  </li>
+                ))}
+              </ul>
+            }
+            title="Send approved sequences from your own sender"
+            description={
+              <>
+                Paste a CSV of leads above — Tuezday drafts outreach in your voice, routes it
+                through Review, and exports approved sequences to Smartlead or Instantly. Your
+                sender keeps deliverability.
+              </>
+            }
+            primaryAction={
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => router.push(`/workspaces/${id}/connectors`)}
+              >
+                Open Integrations
+              </Button>
+            }
+          />
         ) : (
           <ul className="section-list">
             {leadsList.map((lead) => {

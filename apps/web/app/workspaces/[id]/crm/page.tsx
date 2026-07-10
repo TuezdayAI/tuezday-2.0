@@ -1,6 +1,7 @@
 "use client";
 
 import { EmptyState } from "@/src/components/empty-state";
+import { ConnectPrompt } from "@/src/components/connect-prompt";
 import { Badge } from "@/src/components/ui/badge";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
@@ -10,7 +11,7 @@ import { API_URL, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import type {
   Connection,
   ConnectorProvider,
@@ -44,8 +45,17 @@ function msToDate(ms?: number): string {
   return ms ? new Date(ms).toISOString().slice(0, 10) : "";
 }
 
+// Sample contacts for the preview-value empty state (spec §5.7.3 / §6.5) —
+// blurred behind the connect prompt, never shown as real data.
+const SAMPLE_CONTACTS = [
+  { name: "Asha Patel", email: "asha@acme.io", detail: "Head of Growth at Acme Robotics", linked: true },
+  { name: "Diego Fernández", email: "diego@northbeam.co", detail: "Founder at Northbeam", linked: false },
+  { name: "Mei Lin", email: "mei@driftline.io", detail: "VP Marketing at Driftline", linked: true },
+];
+
 export default function CrmPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [view, setView] = useState<ConnectorsView | null>(null);
@@ -257,9 +267,34 @@ export default function CrmPage() {
       <Card>
         <CardHeader title="Sync" />
         {crmConnections.length === 0 ? (
-          <EmptyState description={<>No CRM connected yet.{" "}
-            <Link href={`/workspaces/${id}/connectors`}>Connect Freshsales on the connectors page</Link>{" "}
-            first.</>} />
+          <EmptyState
+            preview={
+              <ul className="section-list">
+                {SAMPLE_CONTACTS.map((contact) => (
+                  <li key={contact.email} className="section-card">
+                    <div className="section-head">
+                      <span className="section-title">
+                        {contact.name} <span className="meta">&lt;{contact.email}&gt;</span>
+                        <span className="meta"> — {contact.detail}</span>
+                      </span>
+                      <Badge tone={contact.linked ? "approved" : "neutral"}>
+                        {contact.linked ? "lead: linked" : "synced"}
+                      </Badge>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            }
+            description={
+              <div style={{ display: "flex", justifyContent: "center" }}>
+                <ConnectPrompt
+                  provider="freshsales"
+                  promise="Your CRM stays the system of record — contacts in as leads, approved emails back as notes."
+                  onConnect={() => router.push(`/workspaces/${id}/connectors`)}
+                />
+              </div>
+            }
+          />
         ) : (
           <>
             <div className="resolve-controls">

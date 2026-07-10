@@ -21,6 +21,8 @@ export const ICON_REGISTRY = {
   create: PenTool, review: CircleCheckBig, audience: Users, settings: Settings,
   // content types
   email: Mail, post: Image, blog: FileText, ad: Target, carousel: Layers,
+  // resolver output (FlowStrip bundle node)
+  bundle: Layers,
   // status (pairs with Badge)
   "status-review": CircleAlert, "status-live": Radio, "status-generating": Sparkles,
   "status-approved": Check, "status-rejected": X, "status-learning": TrendingUp,
