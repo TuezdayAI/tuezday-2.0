@@ -3,6 +3,8 @@
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { API_URL, setToken } from "@/lib/api";
+import { Button } from "@/src/components/ui/button";
+import { Input } from "@/src/components/ui/input";
 
 function LoginForm() {
   const router = useRouter();
@@ -69,23 +71,23 @@ function LoginForm() {
           {mode === "login" ? (
             <>
               New here?{" "}
-              <button type="button" className="link-button" onClick={() => setMode("register")}>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setMode("register")}>
                 Create an account
-              </button>
+              </Button>
             </>
           ) : (
             <>
               Already have an account?{" "}
-              <button type="button" className="link-button" onClick={() => setMode("login")}>
+              <Button type="button" variant="ghost" size="sm" onClick={() => setMode("login")}>
                 Log in
-              </button>
+              </Button>
             </>
           )}
         </p>
 
         <form className="create-form auth-form" onSubmit={submit}>
           {mode === "register" && (
-            <input
+            <Input
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Your name"
@@ -93,7 +95,7 @@ function LoginForm() {
               autoComplete="name"
             />
           )}
-          <input
+          <Input
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
@@ -101,7 +103,7 @@ function LoginForm() {
             autoComplete="email"
             required
           />
-          <input
+          <Input
             type="password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
@@ -110,9 +112,9 @@ function LoginForm() {
             minLength={mode === "register" ? 8 : undefined}
             required
           />
-          <button type="submit" disabled={submitting || !email || !password}>
+          <Button variant="primary" type="submit" disabled={submitting || !email || !password}>
             {mode === "login" ? "Log in" : "Sign up"}
-          </button>
+          </Button>
         </form>
 
         <div className="auth-divider">
