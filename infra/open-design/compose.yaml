@@ -1,25 +1,51 @@
 # Self-hosted Open Design daemon (Sprint 41 Part 3) — template authoring only.
 #
-# Same posture as infra/r2r and infra/nango: a separate service Tuezday talks
-# to over an internal network, never exposed to browsers or customers. The
-# container needs the free, open-source `opencode-cli` binary for the
-# byok-opencode runtime (no CLI subscription of any kind); Tuezday passes its
-# own LLM credential per-run via `byokProvider`, which the daemon never
-# persists.
+# Mirrors the upstream deploy/docker-compose.yml (github.com/nexu-io/open-design)
+# with Tuezday's env names. Same posture as infra/r2r and infra/nango: a
+# separate service Tuezday's API talks to over localhost, never exposed to
+# browsers or customers. Tuezday passes its own LLM credential per-run via
+# `byokProvider`, which the daemon never persists.
 #
-# Image/tag per the Open Design repo's deploy/README.md
-# (github.com/nexu-io/open-design). Not needed for tests — they inject fakes.
+# NOTE (byok-opencode): on Linux hosts the free opencode CLI must be mounted
+# into the container per upstream's docker-compose.linux.yml. On macOS dev
+# machines the daemon runs, but agentic template authoring needs the CLI
+# available to the container — see upstream deploy/README.md.
 services:
   open-design:
-    image: ghcr.io/nexu-io/open-design:latest
+    container_name: tuezday-open-design
+    image: ghcr.io/nexu-io/od:latest
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NODE_OPTIONS: --max-old-space-size=192
+      OD_BIND_HOST: 0.0.0.0
+      OD_PORT: 7456
+      OD_WEB_PORT: 7456
+      OD_API_TOKEN: ${OPEN_DESIGN_API_TOKEN:-}
     ports:
       # Bind to localhost only — the API is the daemon's only caller.
-      - "127.0.0.1:4000:4000"
-    environment:
-      - OD_API_TOKEN=${OPEN_DESIGN_API_TOKEN}
+      - "127.0.0.1:7456:7456"
     volumes:
-      - open_design_data:/data
-    restart: unless-stopped
+      - open_design_data:/app/.od
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 384m
+    pids_limit: 256
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:7456/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
 
 volumes:
   open_design_data:

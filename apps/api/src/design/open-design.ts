@@ -37,7 +37,7 @@ export class OpenDesignProvider implements DesignProvider {
     byok?: { protocol: string; apiKey: string; baseUrl?: string },
   ) {
     const fromEnv = process.env.OPEN_DESIGN_BASE_URL?.trim();
-    this.baseUrl = (baseUrl ?? (fromEnv || "http://localhost:4000")).replace(/\/$/, "");
+    this.baseUrl = (baseUrl ?? (fromEnv || "http://localhost:7456")).replace(/\/$/, "");
     this.apiToken = (apiToken ?? process.env.OPEN_DESIGN_API_TOKEN)?.trim() || undefined;
     this.byok = byok ?? OpenDesignProvider.byokFromEnv();
   }
