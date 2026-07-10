@@ -66,6 +66,8 @@
   /* Elevation — reserved for popovers/modals/toasts only; cards use borders */
   --shadow-low: 0 1px 2px oklch(0.22 0.02 60 / 0.06), 0 3px 10px oklch(0.22 0.02 60 / 0.05);
   --shadow-modal: 0 16px 50px oklch(0.22 0.03 60 / 0.16);
+  /* Elevation for rendered content previews ONLY (spec §3.3) */
+  --shadow-preview: 0 1px 3px oklch(0.22 0.02 60 / 0.08), 0 6px 18px oklch(0.22 0.02 60 / 0.07);
 
   /* Motion */
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
