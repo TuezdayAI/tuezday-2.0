@@ -12,6 +12,7 @@
     "@nangohq/frontend": "^0.70.6",
     "@tuezday/brain": "*",
     "@tuezday/contracts": "*",
+    "lucide-react": "^1.24.0",
     "next": "^15.3.0",
     "posthog-js": "^1.393.5",
     "react": "^19.0.0",

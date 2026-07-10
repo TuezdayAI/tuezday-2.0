@@ -75,4 +75,10 @@
   /* Type */
   --font-display: var(--font-fraunces, Georgia, serif);
   --font-body: var(--font-inter, ui-sans-serif, system-ui, "Segoe UI", sans-serif);
+
+  /* Icons (2026-07-10 spine) — Lucide at hairline weight */
+  --icon-sm: 16px;
+  --icon-md: 20px;
+  --icon-lg: 24px;
+  --icon-stroke: 1.75;
 }
