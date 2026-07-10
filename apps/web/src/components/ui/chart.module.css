@@ -1,5 +1,26 @@
 .frame { border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); padding: 12px; }
 .placeholder { background: var(--panel-2); border-radius: var(--radius); }
+
+/* recharts v3 accessibilityLayer makes the chart svg keyboard-focusable. */
+.frame svg:focus-visible,
+.spark svg:focus-visible {
+  outline: 2px solid var(--accent-soft);
+  outline-offset: 1px;
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 8px 4px 0;
+  padding: 0;
+  list-style: none;
+  font-size: 11px;
+  font-family: var(--font-body);
+  color: var(--muted);
+}
+.legendItem { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { width: 10px; height: 10px; border-radius: 2px; flex: none; }
 .tooltip {
   font-size: 12px !important;
   font-family: var(--font-body) !important;

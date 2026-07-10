@@ -36,6 +36,25 @@ function useToneColors(): Record<ToneIndex, string> | null {
 
 const AXIS = { fontSize: 11, fontFamily: "var(--font-body)" } as const;
 
+function toneOf(tones: Record<ToneIndex, string>, s: ChartSeries, i: number): string {
+  return tones[s.tone ?? (((i % 6) + 1) as ToneIndex)];
+}
+
+/** Plain-DOM legend so multi-series identity is never color-alone (dataviz: legend for two or more series). */
+function SeriesLegend({ series, tones }: { series: ChartSeries[]; tones: Record<ToneIndex, string> }) {
+  if (series.length < 2) return null;
+  return (
+    <ul className={styles.legend}>
+      {series.map((s, i) => (
+        <li key={s.key} className={styles.legendItem}>
+          <span className={styles.swatch} style={{ background: toneOf(tones, s, i) }} aria-hidden="true" />
+          {s.label}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 interface ChartProps {
   data: Array<Record<string, string | number>>;
   xKey: string;
@@ -59,7 +78,7 @@ export function TrendChart({ data, xKey, series, height = 220 }: ChartProps) {
               key={s.key}
               dataKey={s.key}
               name={s.label}
-              stroke={tones[(s.tone ?? (((i % 6) + 1) as ToneIndex))]}
+              stroke={toneOf(tones, s, i)}
               strokeWidth={1.75}
               dot={false}
               isAnimationActive={false}
@@ -67,6 +86,7 @@ export function TrendChart({ data, xKey, series, height = 220 }: ChartProps) {
           ))}
         </LineChart>
       </ResponsiveContainer>
+      <SeriesLegend series={series} tones={tones} />
     </div>
   );
 }
@@ -87,13 +107,14 @@ export function CompareChart({ data, xKey, series, height = 220 }: ChartProps) {
               key={s.key}
               dataKey={s.key}
               name={s.label}
-              fill={tones[(s.tone ?? (((i % 6) + 1) as ToneIndex))]}
+              fill={toneOf(tones, s, i)}
               radius={[3, 3, 0, 0]}
               isAnimationActive={false}
             />
           ))}
         </BarChart>
       </ResponsiveContainer>
+      <SeriesLegend series={series} tones={tones} />
     </div>
   );
 }
@@ -109,7 +130,7 @@ export function Sparkline({ data, dataKey, tone = 5, height = 36 }: SparklinePro
   const tones = useToneColors();
   if (!tones) return <div className={styles.placeholder} style={{ height }} />;
   return (
-    <ResponsiveContainer width="100%" height={height}>
+    <ResponsiveContainer width="100%" height={height} className={styles.spark}>
       <LineChart data={data} margin={{ top: 2, right: 0, bottom: 2, left: 0 }}>
         <Line dataKey={dataKey} stroke={tones[tone]} strokeWidth={1.5} dot={false} isAnimationActive={false} />
       </LineChart>
