@@ -15,6 +15,7 @@ import { initAnalytics, identify } from "@/src/analytics";
 import { UpgradeModal } from "@/components/upgrade-modal";
 import { Icon, type IconName } from "@/src/components/ui/icon";
 import { TopBar } from "@/src/components/top-bar";
+import { Toaster } from "@/src/components/ui/toast";
 
 const EMPTY_CAPABILITIES: WorkspaceCapabilities = {
   hasAds: false,
@@ -172,6 +173,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
         <main className="ws-content">{children}</main>
       </div>
       <UpgradeModal />
+      <Toaster />
     </div>
   );
 }
