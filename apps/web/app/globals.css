@@ -348,6 +348,8 @@ h2 {
   color: var(--text);
 }
 
+.ws-content-col { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+
 .ws-content {
   padding: 34px 42px 72px;
   max-width: 1180px;

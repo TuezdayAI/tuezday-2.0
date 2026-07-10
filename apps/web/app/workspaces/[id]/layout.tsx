@@ -14,6 +14,7 @@ import { apiFetch, clearToken } from "@/lib/api";
 import { initAnalytics, identify } from "@/src/analytics";
 import { UpgradeModal } from "@/components/upgrade-modal";
 import { Icon, type IconName } from "@/src/components/ui/icon";
+import { TopBar } from "@/src/components/top-bar";
 
 const EMPTY_CAPABILITIES: WorkspaceCapabilities = {
   hasAds: false,
@@ -162,7 +163,14 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
           )}
         </div>
       </aside>
-      <main className="ws-content">{children}</main>
+      <div className="ws-content-col">
+        <TopBar
+          workspaceName={workspace?.name ?? null}
+          reviewCount={caps.draftCount}
+          userLabel={userLabel}
+        />
+        <main className="ws-content">{children}</main>
+      </div>
       <UpgradeModal />
     </div>
   );
