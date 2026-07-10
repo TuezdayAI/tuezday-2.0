@@ -3,6 +3,9 @@
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
 import { ShowMoreButton, useShowMore } from "@/src/components/show-more";
+import { Button } from "@/src/components/ui/button";
+import { Badge } from "@/src/components/ui/badge";
+import { Tabs } from "@/src/components/ui/tabs";
 
 
 import { useCallback, useEffect, useState } from "react";
@@ -160,9 +163,9 @@ export default function InboxPage() {
       <PageHeader title="Inbox" subtitle={<>Comments on your published posts and replies to your DMs, in one place. Draft a reply in
             your voice, approve it on <Link href={`/workspaces/${id}/approvals`}>Review</Link>, and
             it posts back to the platform.</>} actions={<>
-            <button onClick={runNow} disabled={running}>
+            <Button variant="primary" onClick={runNow} disabled={running}>
             {running ? "Running…" : "Run inbox now"}
-          </button>
+          </Button>
           </>} />
 
       {lastRun && (
@@ -173,17 +176,14 @@ export default function InboxPage() {
         </p>
       )}
 
-      <div className="filter-tabs">
-        {filters.map((f) => (
-          <button
-            key={f}
-            className={`filter-tab ${filter === f ? "active" : ""}`}
-            onClick={() => setFilter(f)}
-          >
-            {f === "all" ? "All" : STATUS_LABELS[f]} ({counts(f)})
-          </button>
-        ))}
-      </div>
+      <Tabs
+        tabs={filters.map((f) => ({
+          key: f,
+          label: `${f === "all" ? "All" : STATUS_LABELS[f]} (${counts(f)})`,
+        }))}
+        active={filter}
+        onChange={(key) => setFilter(key as Filter)}
+      />
 
       {error && <p className="error">{error}</p>}
 
@@ -199,9 +199,9 @@ export default function InboxPage() {
             return (
               <li key={item.id} className="section-card">
                 <div className="section-head">
-                  <span className={`layer-badge state-${item.status === "replied" ? "approved" : item.status === "dismissed" ? "rejected" : "edited"}`}>
+                  <Badge tone={item.status === "replied" ? "approved" : item.status === "dismissed" ? "rejected" : "edited"}>
                     {STATUS_LABELS[item.status]}
-                  </span>
+                  </Badge>
                   <span className="section-title">
                     {item.authorName || item.authorHandle || "someone"}
                     <span className="layer-badge" style={{ marginLeft: 8 }}>
@@ -243,9 +243,9 @@ export default function InboxPage() {
                 {draft && (
                   <div className="draft-chain" style={{ marginTop: 10 }}>
                     <div className="section-head">
-                      <span className={`layer-badge state-${draft.state}`}>
+                      <Badge tone={draft.state === "pending_review" ? "pending" : draft.state}>
                         {STATE_LABELS[draft.state]}
-                      </span>
+                      </Badge>
                       <span className="meta">drafted reply</span>
                     </div>
                     <pre className="section-content">{draft.content}</pre>
@@ -254,18 +254,21 @@ export default function InboxPage() {
 
                 <div className="rating-row" style={{ marginTop: 10 }}>
                   {!draft && !replyPosted && item.status !== "dismissed" && (
-                    <button
-                      className="button-secondary"
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       disabled={busyId === item.id}
                       onClick={() => draftReply(item.id)}
                     >
                       {busyId === item.id ? "Drafting…" : "Draft reply"}
-                    </button>
+                    </Button>
                   )}
                   {draft && !replyPosted && (
                     <>
-                      <button
-                        className="button-secondary rating-accepted"
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        className="rating-accepted"
                         disabled={busyId === item.id}
                         onClick={() => approveAndPost(item)}
                       >
@@ -274,7 +277,7 @@ export default function InboxPage() {
                           : draft.state === "approved"
                             ? "Post reply"
                             : "Approve & post reply"}
-                      </button>
+                      </Button>
                       <Link className="link-button" href={`/workspaces/${id}/approvals`}>
                         review on Review
                       </Link>
@@ -296,21 +299,23 @@ export default function InboxPage() {
                   {item.status !== "replied" && item.status !== "dismissed" && (
                     <>
                       {item.status === "unread" && (
-                        <button
-                          className="link-button"
+                        <Button
+                          variant="ghost"
+                          size="sm"
                           disabled={busyId === item.id}
                           onClick={() => setStatus(item.id, "read")}
                         >
                           mark read
-                        </button>
+                        </Button>
                       )}
-                      <button
-                        className="link-button"
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         disabled={busyId === item.id}
                         onClick={() => setStatus(item.id, "dismissed")}
                       >
                         dismiss
-                      </button>
+                      </Button>
                     </>
                   )}
                 </div>
