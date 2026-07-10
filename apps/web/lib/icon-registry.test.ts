@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { ICON_REGISTRY, ICON_NAMES } from "../src/components/ui/icon";
 import { BRAND_ICONS } from "../src/components/ui/brand-icons";
+import { WORKSPACE_NAV } from "@tuezday/contracts";
 
 // The spec §4 vocabulary — nav, content types, status, brain docs, actions.
 const REQUIRED: string[] = [
@@ -35,6 +36,17 @@ describe("icon registry", () => {
     );
     for (const path of Object.values(BRAND_ICONS)) {
       expect(path.length).toBeGreaterThan(20); // real path data, not a stub
+    }
+  });
+});
+
+describe("nav icon coverage", () => {
+  it("every nav icon name resolves in the registry", () => {
+    for (const item of WORKSPACE_NAV) {
+      expect(ICON_REGISTRY[item.icon as keyof typeof ICON_REGISTRY], item.label).toBeDefined();
+      for (const child of item.children ?? []) {
+        expect(ICON_REGISTRY[child.icon as keyof typeof ICON_REGISTRY], child.label).toBeDefined();
+      }
     }
   });
 });

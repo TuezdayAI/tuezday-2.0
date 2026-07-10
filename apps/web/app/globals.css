@@ -251,6 +251,18 @@ h2 {
   box-shadow: inset 3px 0 0 var(--nav-tone);
 }
 
+.ws-nav-icon {
+  color: var(--muted-2);
+}
+
+.ws-nav-item.active .ws-nav-icon {
+  color: var(--accent);
+}
+
+.ws-nav-group[data-tone] .ws-nav-parent.active .ws-nav-icon {
+  color: currentColor;
+}
+
 .ws-nav-copy {
   min-width: 0;
   display: grid;

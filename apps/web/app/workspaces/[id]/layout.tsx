@@ -13,6 +13,7 @@ import {
 import { apiFetch, clearToken } from "@/lib/api";
 import { initAnalytics, identify } from "@/src/analytics";
 import { UpgradeModal } from "@/components/upgrade-modal";
+import { Icon, type IconName } from "@/src/components/ui/icon";
 
 const EMPTY_CAPABILITIES: WorkspaceCapabilities = {
   hasAds: false,
@@ -120,6 +121,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
                   className={`ws-nav-item ws-nav-parent ${groupActive ? "active" : ""}`}
                   href={`${base}${item.path}`}
                 >
+                  {item.icon && <Icon name={item.icon as IconName} size="md" className="ws-nav-icon" />}
                   <span className="ws-nav-copy">
                     <span className="ws-nav-label">{item.label}</span>
                     {item.summary && <span className="ws-nav-summary">{item.summary}</span>}
@@ -137,6 +139,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
                         href={`${base}${child.path}`}
                         data-tone={child.tone ?? item.tone ?? "system"}
                       >
+                        {child.icon && <Icon name={child.icon as IconName} size="sm" className="ws-nav-icon" />}
                         <span>{child.label}</span>
                       </Link>
                     ))}

@@ -3614,6 +3614,7 @@ export interface NavChild {
   label: string;
   path: string;
   summary?: string;
+  icon?: string;
   tone?: "belief" | "voice" | "history" | "icp" | "system" | "signal";
   requires?: NavRequirement;
 }
@@ -3622,6 +3623,7 @@ export interface NavItem {
   label: string;
   path: string;
   summary?: string;
+  icon?: string;
   tone?: "belief" | "voice" | "history" | "icp" | "system" | "signal";
   requires?: NavRequirement;
   children?: NavChild[];
@@ -3633,16 +3635,18 @@ export const WORKSPACE_NAV: NavItem[] = [
     path: "",
     summary: "What needs attention now",
     tone: "system",
+    icon: "home",
   },
   {
     label: "Brain",
     path: "/brain",
     summary: "Company context, evidence, and inspection",
     tone: "system",
+    icon: "brain",
     children: [
-      { label: "Brain docs", path: "/brain", summary: "The editable GTM memory", tone: "system" },
-      { label: "Evidence library", path: "/evidence", summary: "Proof and source material", tone: "history" },
-      { label: "Context inspector", path: "/resolver", summary: "See what Tuezday will use", tone: "icp" },
+      { label: "Brain docs", path: "/brain", summary: "The editable GTM memory", tone: "system", icon: "brain" },
+      { label: "Evidence library", path: "/evidence", summary: "Proof and source material", tone: "history", icon: "doc-history" },
+      { label: "Context inspector", path: "/resolver", summary: "See what Tuezday will use", tone: "icp", icon: "search" },
     ],
   },
   {
@@ -3650,14 +3654,15 @@ export const WORKSPACE_NAV: NavItem[] = [
     path: "/campaigns",
     summary: "Plans, calendar, automation, ads, and reporting",
     tone: "voice",
+    icon: "campaigns",
     children: [
-      { label: "Campaign home", path: "/campaigns", summary: "Goals and GTM pushes", tone: "voice" },
-      { label: "Calendar", path: "/calendar", summary: "Scheduled posts and work", tone: "history" },
-      { label: "Cadence", path: "/cadence", summary: "Publishing rhythm", tone: "history" },
-      { label: "Automation", path: "/automation", summary: "Human-in-the-loop rules", tone: "signal" },
-      { label: "Ads", path: "/ads", summary: "Paid channel performance", tone: "belief", requires: "ads" },
-      { label: "Launch ads", path: "/ad-launches", summary: "Spend-controlled ad launches", tone: "belief", requires: "ads" },
-      { label: "Insights", path: "/insights", summary: "What worked and why", tone: "icp", requires: "insights" },
+      { label: "Campaign home", path: "/campaigns", summary: "Goals and GTM pushes", tone: "voice", icon: "campaigns" },
+      { label: "Calendar", path: "/calendar", summary: "Scheduled posts and work", tone: "history", icon: "calendar" },
+      { label: "Cadence", path: "/cadence", summary: "Publishing rhythm", tone: "history", icon: "status-live" },
+      { label: "Automation", path: "/automation", summary: "Human-in-the-loop rules", tone: "signal", icon: "regenerate" },
+      { label: "Ads", path: "/ads", summary: "Paid channel performance", tone: "belief", requires: "ads", icon: "ad" },
+      { label: "Launch ads", path: "/ad-launches", summary: "Spend-controlled ad launches", tone: "belief", requires: "ads", icon: "status-live" },
+      { label: "Insights", path: "/insights", summary: "What worked and why", tone: "icp", requires: "insights", icon: "status-learning" },
     ],
   },
   {
@@ -3665,16 +3670,18 @@ export const WORKSPACE_NAV: NavItem[] = [
     path: "/discovery",
     summary: "Market signals worth acting on",
     tone: "signal",
+    icon: "discover",
   },
   {
     label: "Create",
     path: "/content",
     summary: "Draft content, ads, and channel assets",
     tone: "belief",
+    icon: "create",
     children: [
-      { label: "Content", path: "/content", summary: "Posts and signal responses", tone: "belief" },
-      { label: "Playground", path: "/sandbox", summary: "Generate from the Brain", tone: "system" },
-      { label: "Ad creatives", path: "/ad-creatives", summary: "Platform-ready variants", tone: "voice" },
+      { label: "Content", path: "/content", summary: "Posts and signal responses", tone: "belief", icon: "post" },
+      { label: "Playground", path: "/sandbox", summary: "Generate from the Brain", tone: "system", icon: "status-generating" },
+      { label: "Ad creatives", path: "/ad-creatives", summary: "Platform-ready variants", tone: "voice", icon: "ad" },
     ],
   },
   {
@@ -3682,10 +3689,11 @@ export const WORKSPACE_NAV: NavItem[] = [
     path: "/approvals",
     summary: "Approve, edit, reply, and teach the Brain",
     tone: "icp",
+    icon: "review",
     children: [
-      { label: "Approval queue", path: "/approvals", summary: "Nothing ships without review", tone: "icp" },
-      { label: "Inbox", path: "/inbox", summary: "Replies and engagement", tone: "signal" },
-      { label: "Learning", path: "/learning", summary: "Brain updates from decisions", tone: "history" },
+      { label: "Approval queue", path: "/approvals", summary: "Nothing ships without review", tone: "icp", icon: "review" },
+      { label: "Inbox", path: "/inbox", summary: "Replies and engagement", tone: "signal", icon: "email" },
+      { label: "Learning", path: "/learning", summary: "Brain updates from decisions", tone: "history", icon: "status-learning" },
     ],
   },
   {
@@ -3693,12 +3701,13 @@ export const WORKSPACE_NAV: NavItem[] = [
     path: "/outbound",
     summary: "Leads, lists, launches, CRM, and PR contacts",
     tone: "icp",
+    icon: "audience",
     children: [
-      { label: "Outbound", path: "/outbound", summary: "Lead-driven drafts", tone: "icp" },
-      { label: "Lists & segments", path: "/lists", summary: "Reusable audiences", tone: "icp" },
-      { label: "Launches", path: "/launches", summary: "Targeted campaign sends", tone: "voice" },
-      { label: "CRM", path: "/crm", summary: "Contacts and account context", tone: "icp" },
-      { label: "PR & media", path: "/pr", summary: "Media contacts and pitches", tone: "belief" },
+      { label: "Outbound", path: "/outbound", summary: "Lead-driven drafts", tone: "icp", icon: "external" },
+      { label: "Lists & segments", path: "/lists", summary: "Reusable audiences", tone: "icp", icon: "audience" },
+      { label: "Launches", path: "/launches", summary: "Targeted campaign sends", tone: "voice", icon: "campaigns" },
+      { label: "CRM", path: "/crm", summary: "Contacts and account context", tone: "icp", icon: "user" },
+      { label: "PR & media", path: "/pr", summary: "Media contacts and pitches", tone: "belief", icon: "notification" },
     ],
   },
   {
@@ -3706,11 +3715,12 @@ export const WORKSPACE_NAV: NavItem[] = [
     path: "/connectors",
     summary: "Integrations, team, billing, and account control",
     tone: "system",
+    icon: "settings",
     children: [
-      { label: "Integrations", path: "/connectors", summary: "Connect the stack", tone: "system" },
-      { label: "Team", path: "/team", summary: "Members and invites", tone: "icp" },
-      { label: "Billing", path: "/billing", summary: "Plan and usage", tone: "history" },
-      { label: "Activity", path: "/activity", summary: "Event log and audit trail", tone: "system" },
+      { label: "Integrations", path: "/connectors", summary: "Connect the stack", tone: "system", icon: "connect" },
+      { label: "Team", path: "/team", summary: "Members and invites", tone: "icp", icon: "audience" },
+      { label: "Billing", path: "/billing", summary: "Plan and usage", tone: "history", icon: "doc-history" },
+      { label: "Activity", path: "/activity", summary: "Event log and audit trail", tone: "system", icon: "info" },
     ],
   },
 ];
