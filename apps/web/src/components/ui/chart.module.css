@@ -1,0 +1,10 @@
+.frame { border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); padding: 12px; }
+.placeholder { background: var(--panel-2); border-radius: var(--radius); }
+.tooltip {
+  font-size: 12px !important;
+  font-family: var(--font-body) !important;
+  border: 1px solid var(--border-strong) !important;
+  border-radius: var(--radius-sm) !important;
+  background: var(--panel) !important;
+  box-shadow: var(--shadow-low) !important;
+}
