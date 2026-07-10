@@ -1,0 +1,62 @@
+/* Activity — the workspace event log on Editorial tokens (spec §7 Wave D). */
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.sectionHead h2 {
+  margin: 0;
+  flex: none;
+}
+
+.sectionIcon {
+  color: var(--muted);
+}
+
+.eventList {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.eventRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 9px 0;
+  border-top: 1px solid var(--border);
+  font-size: 13.5px;
+}
+
+.eventList .eventRow:first-child {
+  border-top: none;
+}
+
+.eventIcon {
+  color: var(--muted);
+  display: inline-flex;
+  flex-shrink: 0;
+}
+
+.eventType {
+  font-weight: 550;
+  color: var(--text);
+}
+
+.eventTime {
+  color: var(--muted-2);
+  font-size: 12.5px;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.deliveries {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}

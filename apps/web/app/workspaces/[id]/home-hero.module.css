@@ -1,0 +1,187 @@
+/* Home hero (spec §5.4) — slim stat strip + three stacked zones:
+   Needs you now · Setup checklist · What the brain learned. */
+
+/* --- Slim icon+count strip (replaces the four large stat cards) --- */
+
+.statStrip {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 10px 2px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.stat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.stat:hover {
+  color: var(--text);
+}
+
+.statSep {
+  color: var(--muted-2);
+  user-select: none;
+}
+
+/* --- Shared zone chrome --- */
+
+.zone {
+  margin-top: 28px;
+}
+
+.zoneHead {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
+  margin-bottom: 14px;
+}
+
+.zoneTitle {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 500;
+  margin: 0;
+}
+
+.zoneMeta {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.zoneLink {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+/* --- Zone 1: Needs you now (horizontal PreviewCard queue) --- */
+
+.queue {
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  padding: 4px 2px 12px;
+  scroll-snap-type: x proximity;
+}
+
+.queueItem {
+  flex: 0 0 300px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  scroll-snap-align: start;
+}
+
+.caption {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--muted-2);
+  min-height: 20px;
+}
+
+.captionText {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nextTag {
+  color: var(--accent-deep);
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
+.allClear {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0;
+  padding: 6px 2px;
+}
+
+.generating {
+  color: var(--muted-2);
+  font-size: 13px;
+}
+
+/* --- Zone 2: Setup checklist --- */
+
+.checklist {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 10px 12px;
+  text-decoration: none;
+  color: var(--text);
+  font-size: 13.5px;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.step:hover {
+  border-color: var(--border-strong);
+}
+
+.step[data-done] {
+  color: var(--muted-2);
+  background: var(--panel-2);
+}
+
+.step[data-next] {
+  border-color: var(--accent);
+}
+
+.stepIcon {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--panel-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+.step[data-done] .stepIcon {
+  color: var(--accent-deep);
+  background: var(--accent-soft);
+}
+
+.stepLabel {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* --- Zone 3: What the brain learned --- */
+
+.learned {
+  display: grid;
+  gap: 8px;
+}

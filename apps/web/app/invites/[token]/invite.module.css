@@ -1,0 +1,32 @@
+/* Invite accept — Editorial polish (spec §7 Wave D): hairline card, tokens only. */
+
+.card {
+  max-width: 440px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+}
+
+.card h1 {
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
+.badgeRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.inviteFor {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.help {
+  color: var(--muted);
+  font-size: 13.5px;
+  margin: 12px 0 0;
+}

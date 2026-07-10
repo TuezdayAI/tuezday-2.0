@@ -1,0 +1,19 @@
+/* PR & media (Wave C sweep) — Editorial tokens only. */
+
+.cardTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cardTitle svg {
+  color: var(--muted);
+}
+
+/* Drafted-pitch previews replace the raw text chain (spec §6.1). */
+.previewGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}

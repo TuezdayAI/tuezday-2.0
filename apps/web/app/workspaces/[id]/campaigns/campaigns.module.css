@@ -1,0 +1,19 @@
+/* Campaigns (Wave A) — icon detail labels + settings-modal hint. */
+
+.detailLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+
+.detailLabel svg {
+  color: var(--muted);
+}
+
+.settingsHint {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}

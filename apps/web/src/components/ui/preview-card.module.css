@@ -1,0 +1,44 @@
+/* Real content floats (--shadow-preview); structure stays flat (spec §6.1). */
+.card { display: flex; flex-direction: column; gap: 0; min-width: 0; }
+.chrome {
+  display: flex; align-items: center; gap: 8px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: var(--panel-2);
+  font-size: 12px; color: var(--muted);
+}
+.kind { display: inline-flex; align-items: center; gap: 5px; font-weight: 550; }
+.time { margin-left: auto; color: var(--muted-2); font-variant-numeric: tabular-nums; }
+.surface {
+  display: block; width: 100%; text-align: left;
+  border: 1px solid var(--border);
+  border-radius: 0 0 var(--radius) var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow-preview);
+  padding: 0; cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.surface:disabled { cursor: default; }
+.surface:not(:disabled):hover { transform: translateY(-1px); }
+.social, .letter, .blog, .adFrame { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.socialTop { display: flex; align-items: center; gap: 8px; }
+.avatar { width: 24px; height: 24px; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border); }
+.handle { font-size: 12.5px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.platform { margin-left: auto; color: var(--muted-2); }
+.media { width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--border); display: block; max-height: 220px; object-fit: cover; }
+.copy { font-size: 13px; color: var(--text); line-height: 1.5; margin: 0; display: -webkit-box; -webkit-line-clamp: 6; -webkit-box-orient: vertical; overflow: hidden; }
+.copyClamp { composes: copy; -webkit-line-clamp: 2; }
+.subject { font-weight: 650; font-size: 13.5px; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+.blogTitle { font-family: var(--font-display); font-size: 16px; margin: 0; color: var(--text); }
+.dek { composes: copy; -webkit-line-clamp: 3; color: var(--muted); }
+.readTime { font-size: 11.5px; color: var(--muted-2); }
+.adMeta { display: flex; align-items: center; gap: 8px; }
+.adHeadline { font-weight: 600; font-size: 13px; color: var(--text); }
+.actions {
+  display: flex; gap: 8px; justify-content: flex-end;
+  padding-top: 8px;
+  opacity: 0; transition: opacity var(--dur-fast) var(--ease-out);
+}
+.card:hover .actions, .card:focus-within .actions { opacity: 1; }

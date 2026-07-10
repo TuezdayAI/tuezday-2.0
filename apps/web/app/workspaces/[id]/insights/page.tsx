@@ -2,12 +2,16 @@
 
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
+import { ConnectPrompt } from "@/src/components/connect-prompt";
 import { Card, CardHeader } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
 import { Badge } from "@/src/components/ui/badge";
+import { Icon } from "@/src/components/ui/icon";
+import styles from "./insights.module.css";
+import { TrendChart, CompareChart } from "@/src/components/ui/chart";
 
 import { useEffect, useState } from "react";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { apiFetch, apiDownload } from "@/lib/api";
 import type { WorkspaceInsights } from "@tuezday/contracts";
 import Link from "next/link";
@@ -20,8 +24,27 @@ function money(cents: number, currency: string = "USD"): string {
   }
 }
 
+// Sample shapes for the preview-value empty state (spec §5.7.3 / §6.5) —
+// blurred behind the connect prompt, never shown as real data.
+const SAMPLE_CHANNEL_TREND = [
+  { week: "W1", impressions: 1800, engagements: 120 },
+  { week: "W2", impressions: 2600, engagements: 210 },
+  { week: "W3", impressions: 2300, engagements: 180 },
+  { week: "W4", impressions: 3400, engagements: 290 },
+  { week: "W5", impressions: 4100, engagements: 360 },
+  { week: "W6", impressions: 5200, engagements: 430 },
+];
+
+const SAMPLE_CHANNEL_TOTALS = [
+  { channel: "LinkedIn", published: 14 },
+  { channel: "X", published: 9 },
+  { channel: "Reddit", published: 5 },
+  { channel: "Email", published: 11 },
+];
+
 export default function WorkspaceInsightsPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
   const [insights, setInsights] = useState<WorkspaceInsights | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -55,7 +78,14 @@ export default function WorkspaceInsightsPage() {
           </>} />
 
       <Card>
-        <CardHeader title="Brain Completeness" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="brain" size="sm" />
+              Brain Completeness
+            </span>
+          }
+        />
         <div className="automation-row" style={{ display: "flex", gap: "20px", flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
           <div style={{ flex: 1, minWidth: "200px" }}>
             <div style={{ fontSize: "2.5rem", fontWeight: "bold", color: "var(--brand)" }}>
@@ -95,9 +125,45 @@ export default function WorkspaceInsightsPage() {
       </Card>
 
       <Card style={{ marginTop: "24px" }}>
-        <CardHeader title="Metrics by Channel" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="status-learning" size="sm" />
+              Metrics by Channel
+            </span>
+          }
+        />
         {insights.byChannel.length === 0 ? (
-          <EmptyState description={<>No channel metrics available.</>} />
+          <EmptyState
+            preview={
+              <div style={{ display: "grid", gridTemplateColumns: "3fr 2fr", gap: 16 }}>
+                <TrendChart
+                  data={SAMPLE_CHANNEL_TREND}
+                  xKey="week"
+                  series={[
+                    { key: "impressions", label: "Impressions", tone: 5 },
+                    { key: "engagements", label: "Engagements", tone: 2 },
+                  ]}
+                  height={230}
+                />
+                <CompareChart
+                  data={SAMPLE_CHANNEL_TOTALS}
+                  xKey="channel"
+                  series={[{ key: "published", label: "Published", tone: 3 }]}
+                  height={230}
+                />
+              </div>
+            }
+            description={
+              <div style={{ display: "flex", justifyContent: "center" }}>
+                <ConnectPrompt
+                  provider="linkedin"
+                  promise="See your numbers — published posts, impressions, and replies by channel."
+                  onConnect={() => router.push(`/workspaces/${id}/connectors`)}
+                />
+              </div>
+            }
+          />
         ) : (
           <table className="data-table" style={{ width: "100%", textAlign: "left" }}>
             <thead>
@@ -127,9 +193,25 @@ export default function WorkspaceInsightsPage() {
       </Card>
 
       <Card style={{ marginTop: "24px" }}>
-        <CardHeader title="Campaigns Summary" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="campaigns" size="sm" />
+              Campaigns Summary
+            </span>
+          }
+        />
         {insights.campaigns.length === 0 ? (
-          <EmptyState description={<>No campaigns available.</>} />
+          <EmptyState
+            title="No campaigns yet"
+            description={
+              <>
+                Campaign-level generation and approval stats land here.{" "}
+                <Link href={`/workspaces/${id}/campaigns`}>Create a campaign</Link> to segment your
+                numbers.
+              </>
+            }
+          />
         ) : (
           <table className="data-table" style={{ width: "100%", textAlign: "left" }}>
             <thead>

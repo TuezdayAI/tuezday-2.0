@@ -1,10 +1,15 @@
 "use client";
 
+import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
-import { Badge } from "@/src/components/ui/badge";
+import { Badge, CountBadge } from "@/src/components/ui/badge";
+import { Icon } from "@/src/components/ui/icon";
+import { PreviewCard } from "@/src/components/ui/preview-card";
+import type { BrandName } from "@/src/components/ui/brand-icons";
 import { Input, Textarea, Select } from "@/src/components/ui/input";
+import styles from "./content.module.css";
 
 import { API_URL, apiFetch } from "@/lib/api";
 
@@ -96,6 +101,47 @@ const PUBLICATION_BADGE_TONES: Record<Publication["status"], "edited" | "approve
   published: "approved",
   failed: "rejected",
 };
+
+const BRAND_KEYS = ["linkedin", "x", "reddit", "instagram", "meta", "google"] as const;
+
+function brandOf(providerKey: string): BrandName | undefined {
+  return (BRAND_KEYS as readonly string[]).includes(providerKey)
+    ? (providerKey as BrandName)
+    : undefined;
+}
+
+// Sample signals for the preview-value empty state (spec §6.5) — blurred
+// behind the CTA, never shown as real data.
+const SAMPLE_SIGNALS = [
+  {
+    source: "LinkedIn",
+    title: "“Every AI content tool sounds the same — where's the one that knows my company?”",
+    meta: "VP Marketing thread · 214 reactions",
+  },
+  {
+    source: "Reddit",
+    title: "r/SaaS: what's your GTM stack in 2026? Ours is 9 tools and none of them talk.",
+    meta: "68 comments · trending",
+  },
+  {
+    source: "News",
+    title: "Gartner: 40% of GTM teams will consolidate content ops onto one platform by 2028",
+    meta: "press release",
+  },
+];
+
+const SAMPLE_PUBLICATIONS = [
+  {
+    title: "Why your AI posts sound like everyone else's",
+    body: "The problem isn't the model — it's that the model knows nothing about you. We rebuilt our GTM around one editable brain…",
+    status: "published",
+  },
+  {
+    title: "The 9-tool GTM stack is dead",
+    body: "We asked 50 founders what they'd keep if they could only keep one tool. The answers surprised us…",
+    status: "scheduled",
+  },
+];
 
 export default function ContentPage() {
   const { id } = useParams<{ id: string }>();
@@ -316,18 +362,20 @@ export default function ContentPage() {
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>Create</h1>
-          <p className="subtitle">
-            Turn a market signal into a post, email, or ad in your voice. Every draft goes to
-            Review before it ships.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title="Create"
+        subtitle="Turn a market signal into a post, email, or ad in your voice. Every draft goes to Review before it ships."
+      />
 
       <Card>
-        <CardHeader title="New signal" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="add" size="sm" />
+              New signal
+            </span>
+          }
+        />
         <form className="persona-form" style={{ borderTop: "none", paddingTop: 0, marginTop: 0 }} onSubmit={addSignal}>
           <Textarea
             value={content}
@@ -364,9 +412,35 @@ export default function ContentPage() {
       </Card>
 
       <Card>
-        <CardHeader title="Signal inbox" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="discover" size="sm" />
+              Signal inbox{" "}
+              {signalsList.length > 0 && (
+                <CountBadge count={signalsList.length} label="signals in the inbox" />
+              )}
+            </span>
+          }
+        />
         {signalsList.length === 0 ? (
-          <EmptyState description={<>No signals yet. Paste something the market said above.</>} />
+          <EmptyState
+            title="No signals yet"
+            description="Paste something the market said above — a thread, a comment, a customer quote — and draft your response in your voice."
+            preview={
+              <ul className="section-list">
+                {SAMPLE_SIGNALS.map((s) => (
+                  <li key={s.title} className="section-card">
+                    <div className="section-head">
+                      <span className="layer-badge">{s.source}</span>
+                      <span className="section-title">{s.title}</span>
+                      <span className="meta">{s.meta}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            }
+          />
         ) : (
           <ul className="section-list">
             {signalsList.map((s) => (
@@ -511,7 +585,7 @@ export default function ContentPage() {
                             >
                               Cancel
                             </Button>
-                            {publishError && <p className="error">{publishError}</p>}
+                            {publishError && <p className="error-inline">{publishError}</p>}
                           </div>
                         )}
                       </li>
@@ -597,72 +671,106 @@ export default function ContentPage() {
       </Card>
 
       <Card>
-        <CardHeader title="Published" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="status-live" size="sm" />
+              Published{" "}
+              {publications.length > 0 && (
+                <CountBadge count={publications.length} label="publication receipts" />
+              )}
+            </span>
+          }
+        />
         {publications.length === 0 ? (
-          <EmptyState description={<>Nothing published yet. Approve a draft, then use publish… to post it to a connected
-            social account.</>} />
+          <EmptyState
+            title="Nothing published yet"
+            description="Approve a draft, then use publish… to post it to a connected social account. Receipts and engagement land here."
+            preview={
+              <div className={styles.previewGrid}>
+                {SAMPLE_PUBLICATIONS.map((p) => (
+                  <PreviewCard
+                    key={p.title}
+                    kind="social"
+                    platform="reddit"
+                    title={p.title}
+                    body={p.body}
+                    status={p.status}
+                    statusTone={p.status === "published" ? "approved" : "edited"}
+                  />
+                ))}
+              </div>
+            }
+          />
         ) : (
-          <ul className="section-list">
+          <div className={styles.previewGrid}>
             {publications.map((p) => (
-              <li key={p.id} className="section-card">
-                <div className="section-head">
-                  <Badge tone={PUBLICATION_BADGE_TONES[p.status]}>{p.status}</Badge>
-                  <span className="section-title">{p.title}</span>
-                  <span className="section-tokens">
-                    {p.providerKey} · r/{p.target}
-                  </span>
-                </div>
-                <p className="section-reason">
+              <div key={p.id} className={styles.pubCell}>
+                <PreviewCard
+                  kind="social"
+                  platform={brandOf(p.providerKey)}
+                  title={p.title}
+                  body={p.draft?.content ?? ""}
+                  status={p.status}
+                  statusTone={PUBLICATION_BADGE_TONES[p.status]}
+                  scheduledAt={
+                    p.status === "scheduled"
+                      ? new Date(p.scheduledFor).toLocaleString(undefined, {
+                          month: "short",
+                          day: "numeric",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })
+                      : undefined
+                  }
+                  actions={
+                    <>
+                      {p.status === "failed" && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          disabled={publishing}
+                          onClick={() => retryPublication(p.id)}
+                        >
+                          Retry
+                        </Button>
+                      )}
+                      {p.status === "scheduled" && (
+                        <Button variant="danger" size="sm" onClick={() => cancelPublication(p.id)}>
+                          Cancel
+                        </Button>
+                      )}
+                    </>
+                  }
+                />
+                <div className={styles.pubMeta}>
                   {p.status === "published" && p.externalUrl && (
                     <>
                       Live at{" "}
                       <a href={p.externalUrl} target="_blank" rel="noreferrer">
-                        {p.externalUrl}
+                        r/{p.target}
                       </a>{" "}
                       ({new Date(p.publishedAt ?? p.updatedAt).toLocaleString()})
                     </>
                   )}
-                  {p.status === "scheduled" &&
-                    `Posts at ${new Date(p.scheduledFor).toLocaleString()}`}
+                  {p.status === "scheduled" && `${p.providerKey} · r/${p.target}`}
                   {p.status === "failed" && (p.lastError ?? "The platform refused the post.")}
-                </p>
+                </div>
                 {p.status === "published" && p.metrics.length > 0 && (
-                  <ul className="draft-chain" style={{ marginTop: 8 }}>
+                  <div className={styles.pubMetrics}>
                     {p.metrics
                       .slice()
                       .sort((a, b) => a.window.localeCompare(b.window))
                       .map((m) => (
-                        <li key={m.id}>
-                          <span className="layer-badge">{m.window}</span>{" "}
-                          <span className="meta">{metricSummary(m)}</span>
-                        </li>
+                        <span key={m.id}>
+                          <span className="layer-badge">{m.window}</span> {metricSummary(m)}
+                        </span>
                       ))}
-                  </ul>
+                  </div>
                 )}
-                <div className="rating-row" style={{ marginTop: 8 }}>
-                  {p.status === "failed" && (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      disabled={publishing}
-                      onClick={() => retryPublication(p.id)}
-                    >
-                      Retry
-                    </Button>
-                  )}
-                  {p.status === "scheduled" && (
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      onClick={() => cancelPublication(p.id)}
-                    >
-                      Cancel
-                    </Button>
-                  )}
-                </div>
-              </li>
+              </div>
             ))}
-          </ul>
+          </div>
         )}
       </Card>
     </>

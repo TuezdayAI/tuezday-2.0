@@ -1,9 +1,12 @@
 "use client";
 
+import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
-import { Badge } from "@/src/components/ui/badge";
+import { Badge, CountBadge } from "@/src/components/ui/badge";
+import { Icon } from "@/src/components/ui/icon";
+import styles from "./resolver.module.css";
 import { Input, Textarea, Select } from "@/src/components/ui/input";
 
 
@@ -418,19 +421,20 @@ export default function ResolverPage() {
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>Context inspector</h1>
-          <p className="subtitle">
-            See the exact context Tuezday would assemble for any task — before any AI sees it.
-            Personas live here too.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title="Context inspector"
+        subtitle="See the exact context Tuezday would assemble for any task — before any AI sees it. Personas live here too."
+      />
 
       <Card>
         <CardHeader
-          title="Personas"
+          title={
+            <span className={styles.head}>
+              <Icon name="user" size="sm" />
+              Personas{" "}
+              {personas.length > 0 && <CountBadge count={personas.length} label="personas" />}
+            </span>
+          }
           actions={
             <Button variant="secondary" size="sm" onClick={() => startEdit()}>
               + New persona
@@ -438,8 +442,15 @@ export default function ResolverPage() {
           }
         />
         {personas.length === 0 ? (
-          <EmptyState description={<>No personas yet. Create one (e.g. “CEO voice”, “Company page”) to see the same brain
-            resolve differently.</>} />
+          <EmptyState
+            title="No personas yet"
+            description="Create one (e.g. “CEO voice”, “Company page”) to see the same brain resolve differently per voice."
+            primaryAction={
+              <Button variant="secondary" size="sm" onClick={() => startEdit()}>
+                + New persona
+              </Button>
+            }
+          />
         ) : (
           <ul className="persona-list">
             {personas.map((p) => (
@@ -525,7 +536,10 @@ export default function ResolverPage() {
 
         {personas.length > 0 && (
           <div style={{ borderTop: "1px solid var(--border)", marginTop: 18, paddingTop: 16 }}>
-            <h2>Social account routing</h2>
+            <h2 className={styles.head}>
+              <Icon name="connect" size="sm" />
+              Social account routing
+            </h2>
             <p className="subtitle">
               Assign connected social accounts to personas and mark the default account per channel.
             </p>
@@ -663,7 +677,14 @@ export default function ResolverPage() {
       </Card>
 
       <Card>
-        <h2>Resolve</h2>
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="bundle" size="sm" />
+              Resolve
+            </span>
+          }
+        />
         <div className="resolve-controls">
           <label>
             Task
@@ -774,7 +795,14 @@ export default function ResolverPage() {
       </Card>
 
       <Card>
-        <h2>Task × doc context matrix</h2>
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="doc-icp" size="sm" />
+              Task × doc context matrix
+            </span>
+          }
+        />
         <p className="subtitle">
           Tier 2 of the resolver: how much of ICP and History each task type sees — the whole doc,
           an outline the resolver zooms into per topic, or nothing. Soul, Voice, and Now are

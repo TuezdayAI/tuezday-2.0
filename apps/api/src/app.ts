@@ -37,6 +37,7 @@ import { registerInboxRoutes } from "./routes/inbox";
 import { registerLaunchRoutes } from "./routes/launches";
 import { registerLearningRoutes } from "./routes/learning";
 import { registerMailRoutes } from "./routes/mail";
+import { registerNextActionRoutes } from "./routes/next-action";
 import { registerOutboundRoutes } from "./routes/outbound";
 import { registerPrRoutes } from "./routes/pr";
 import { registerPublicationRoutes } from "./routes/publications";
@@ -156,6 +157,7 @@ export async function buildApp({
   registerAutomationRoutes(app, db, llm, evidence);
   registerInboxRoutes(app, db, llm, evidence, connectors, fetcher);
   registerInsightsRoutes(app, db);
+  registerNextActionRoutes(app, db);
 
   return app;
 }

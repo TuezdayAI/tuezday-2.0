@@ -1,15 +1,20 @@
 "use client";
 
+import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
+import { ConnectPrompt } from "@/src/components/connect-prompt";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
+import { CountBadge } from "@/src/components/ui/badge";
+import { Icon } from "@/src/components/ui/icon";
+import styles from "./ads.module.css";
 import { Input, Select, Textarea } from "@/src/components/ui/input";
 
 import { API_URL, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import type {
   AdAccount,
   AdCampaign,
@@ -86,6 +91,26 @@ function money(cents: number, currency: string): string {
 
 const CSV_COLUMNS = ["date", "campaign", "spend", "impressions", "clicks", "conversions"] as const;
 
+// Sample rows for the preview-value empty state (spec §5.7.3 / §6.5) —
+// blurred behind the connect prompt, never shown as real data.
+const SAMPLE_AD_ROWS = [
+  {
+    name: "Spring launch — prospecting",
+    account: "Acme Main",
+    stats: "$1,240.00 spend · 84,200 impressions · 1,120 clicks · CTR 1.33% · 46 conversions",
+  },
+  {
+    name: "Retargeting — site visitors",
+    account: "Acme Main",
+    stats: "$620.00 spend · 31,400 impressions · 780 clicks · CTR 2.48% · 38 conversions",
+  },
+  {
+    name: "Founder story — video views",
+    account: "Acme Main",
+    stats: "$310.00 spend · 52,900 impressions · 340 clicks · CTR 0.64% · 9 conversions",
+  },
+];
+
 /** Parse `date,campaign,spend,impressions,clicks,conversions` (header required,
  * any column order). Returns rows or a message describing what is wrong. */
 function parseCsv(text: string): { rows: CsvRow[] } | { error: string } {
@@ -132,6 +157,7 @@ function parseCsv(text: string): { rows: CsvRow[] } | { error: string } {
 
 export default function AdsPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [view, setView] = useState<ConnectorsView | null>(null);
@@ -305,15 +331,10 @@ export default function AdsPage() {
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>Ads</h1>
-          <p className="subtitle">
-            What paid spend is doing, in Tuezday&apos;s own metric model. Read-only — campaigns are
-            managed on the platform.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title="Ads"
+        subtitle="What paid spend is doing, in Tuezday's own metric model. Read-only — campaigns are managed on the platform."
+      />
 
       {!view.fabric.healthy && accounts.length === 0 && (
         <p className="error">
@@ -323,11 +344,48 @@ export default function AdsPage() {
       )}
 
       <Card>
-        <CardHeader title="Ad accounts" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="connect" size="sm" />
+              Ad accounts{" "}
+              {adsConnections.length > 0 && (
+                <CountBadge count={adsConnections.length} label="connected ad accounts" />
+              )}
+            </span>
+          }
+        />
         {adsConnections.length === 0 ? (
-          <EmptyState description={<>No ad platform connected yet.{" "}
-            <Link href={`/workspaces/${id}/connectors`}>Connect Meta Ads on the integrations page</Link>{" "}
-            — or use the CSV import below without connecting anything.</>} />
+          <EmptyState
+            preview={
+              <ul className="section-list">
+                {SAMPLE_AD_ROWS.map((row) => (
+                  <li key={row.name} className="section-card">
+                    <div className="section-head">
+                      <span className="section-title">{row.name}</span>
+                      <span className="meta">{row.account}</span>
+                      <span className="layer-badge">meta ads</span>
+                    </div>
+                    <p className="section-reason">{row.stats}</p>
+                  </li>
+                ))}
+              </ul>
+            }
+            description={
+              <>
+                <div style={{ display: "flex", justifyContent: "center" }}>
+                  <ConnectPrompt
+                    provider="meta"
+                    promise="Pull ad results into the learning loop."
+                    onConnect={() => router.push(`/workspaces/${id}/connectors`)}
+                  />
+                </div>
+                <span className="meta">
+                  Or use the CSV import below without connecting anything.
+                </span>
+              </>
+            }
+          />
         ) : (
           <div className="resolve-controls">
             <label>
@@ -374,7 +432,7 @@ export default function AdsPage() {
                     </Button>
                   )}
                 </div>
-                {account.lastError && <p className="error">{account.lastError}</p>}
+                {account.lastError && <p className="error-inline">{account.lastError}</p>}
               </li>
             ))}
           </ul>
@@ -382,7 +440,14 @@ export default function AdsPage() {
       </Card>
 
       <Card>
-        <CardHeader title="Campaign performance" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="ad" size="sm" />
+              Campaign performance
+            </span>
+          }
+        />
         <div className="resolve-controls">
           <label>
             From
@@ -461,7 +526,14 @@ export default function AdsPage() {
       </Card>
 
       <Card>
-        <CardHeader title="CSV import" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="add" size="sm" />
+              CSV import
+            </span>
+          }
+        />
         <p className="meta">
           Header: <code>{CSV_COLUMNS.join(",")}</code> — one row per campaign per day; spend in
           currency units (12.34). Re-importing the same rows updates them in place.

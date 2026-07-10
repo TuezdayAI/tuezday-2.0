@@ -3,8 +3,14 @@
 import { use, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
 import { PLANS, usageMeter, type EntitlementUsage, type Entitlements, type PlanId } from "@tuezday/contracts";
+import { EmptyState } from "@/src/components/empty-state";
+import { TopBarActions } from "@/src/components/top-bar";
+import { Badge } from "@/src/components/ui/badge";
+import { Button } from "@/src/components/ui/button";
 import { Card } from "@/src/components/ui/card";
+import { Icon } from "@/src/components/ui/icon";
 import { Meter } from "@/src/components/ui/meter";
+import styles from "./billing.module.css";
 
 interface BillingView {
   plan: PlanId;
@@ -61,6 +67,14 @@ export default function BillingPage({ params }: { params: Promise<{ id: string }
 
   return (
     <>
+      {data?.plan === "free" && (
+        <TopBarActions>
+          <Button variant="primary" size="sm" onClick={handleUpgrade} disabled={upgrading}>
+            {upgrading ? "Redirecting…" : "Upgrade to Pro"}
+          </Button>
+        </TopBarActions>
+      )}
+
       <div className="page-header">
         <div>
           <h1>Billing &amp; subscription</h1>
@@ -71,16 +85,19 @@ export default function BillingPage({ params }: { params: Promise<{ id: string }
       {error && <p className="error">{error}</p>}
 
       <Card>
-        <h2>Current plan</h2>
+        <div className={styles.sectionHead}>
+          <Icon name="doc-history" size="sm" className={styles.sectionIcon} />
+          <h2>Current plan</h2>
+        </div>
         {!data ? (
-          <p className="meta">Loading...</p>
+          <EmptyState description="Loading your plan and usage…" />
         ) : (
           <>
             <div className="plan-hero">
               <div>
                 <div className="plan-hero-name">
                   {PLANS[data.plan].label} Plan
-                  <span className="layer-badge state-approved">Active</span>
+                  <Badge tone="approved">Active</Badge>
                 </div>
                 {data.plan === "free" && (
                   <p className="meta">Upgrade to Pro for more generations and features.</p>
@@ -92,7 +109,10 @@ export default function BillingPage({ params }: { params: Promise<{ id: string }
               </div>
             </div>
 
-            <h3 className="usage-heading">Usage</h3>
+            <div className={styles.usageHead}>
+              <Icon name="status-learning" size="sm" className={styles.sectionIcon} />
+              <h3>Usage</h3>
+            </div>
             <MeterRow
               title="Monthly generations"
               used={data.usage.monthlyGenerations}
@@ -102,10 +122,10 @@ export default function BillingPage({ params }: { params: Promise<{ id: string }
             <MeterRow title="Seats" used={data.usage.seats} limit={data.entitlements.seats} />
 
             {data.plan === "free" && (
-              <div className="editor-actions" style={{ marginTop: 20 }}>
-                <button onClick={handleUpgrade} disabled={upgrading}>
-                  {upgrading ? "Redirecting..." : "Upgrade to Pro"}
-                </button>
+              <div className={styles.upgradeRow}>
+                <Button variant="primary" onClick={handleUpgrade} disabled={upgrading}>
+                  {upgrading ? "Redirecting…" : "Upgrade to Pro"}
+                </Button>
               </div>
             )}
           </>
@@ -119,7 +139,7 @@ function MeterRow({ title, used, limit }: { title: string; used: number; limit: 
   const meter = usageMeter(used, limit);
   const figure = meter.state === "unlimited" ? `${used} / Unlimited` : `${used} / ${limit}`;
   return (
-    <div style={{ marginBottom: 16 }}>
+    <div className={styles.meterRow}>
       <Meter label={title} figure={figure} percent={meter.percent} state={meter.state} />
       {meter.state === "over" && <p className="usage-alert">Upgrade for more usage</p>}
     </div>

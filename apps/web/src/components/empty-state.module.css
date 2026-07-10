@@ -32,3 +32,26 @@
   display: flex;
   justify-content: center;
 }
+
+/* Preview-value mode — blurred sample data behind the CTA (spec §6.5) */
+.previewShell { position: relative; min-height: 260px; }
+.previewBackdrop {
+  filter: blur(5px);
+  opacity: 0.55;
+  pointer-events: none;
+  user-select: none;
+}
+.previewCenter {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.previewCenter > * {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-low);
+  padding: 20px 28px;
+}

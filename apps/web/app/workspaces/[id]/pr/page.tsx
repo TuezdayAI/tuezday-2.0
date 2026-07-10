@@ -2,10 +2,14 @@
 
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
+import { TopBarActions } from "@/src/components/top-bar";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
-import { Badge } from "@/src/components/ui/badge";
+import { Badge, CountBadge } from "@/src/components/ui/badge";
+import { Icon } from "@/src/components/ui/icon";
+import { PreviewCard } from "@/src/components/ui/preview-card";
 import { Input, Textarea, Select } from "@/src/components/ui/input";
+import styles from "./pr.module.css";
 
 
 import { API_URL, apiDownload, apiFetch } from "@/lib/api";
@@ -68,6 +72,40 @@ function mailtoHref(email: string, content: string): string {
   const body = match ? match[2]!.trim() : content.trim();
   return `mailto:${email}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
 }
+
+/** Subject/body split for the email PreviewCard renderer (pitches lead with a subject line). */
+function splitPitch(content: string): { title: string; body: string } {
+  const lines = content.split("\n");
+  const first = (lines[0] ?? "").replace(/^Subject:\s*/i, "").trim();
+  if (!first) return { title: "Media pitch", body: content };
+  return { title: first, body: lines.slice(1).join("\n").trim() };
+}
+
+// Sample media contacts for the preview-value empty state (spec §6.5) —
+// blurred behind the CTA, never shown as real data.
+const SAMPLE_MEDIA_CONTACTS = [
+  {
+    name: "Riya Sen",
+    email: "riya@techcrunch.com",
+    detail: "Journalist at TechCrunch India · AI startups, developer tools",
+    state: "approved" as const,
+    snippet: "Subject: The GTM stack founders actually keep — your May teardown…",
+  },
+  {
+    name: "Tom Alder",
+    email: "tom@strategybreakdowns.com",
+    detail: "Publication at Strategy Breakdowns · GTM, positioning",
+    state: "pending" as const,
+    snippet: "Subject: A counter-take on AI slop for your next issue…",
+  },
+  {
+    name: "Lenny's Podcast",
+    email: "pitches@lennyspodcast.com",
+    detail: "Podcast · product, growth",
+    state: "draft" as const,
+    snippet: "Subject: Founder story — rebuilding GTM around one editable brain…",
+  },
+];
 
 const EMPTY_CONTACT = {
   name: "",

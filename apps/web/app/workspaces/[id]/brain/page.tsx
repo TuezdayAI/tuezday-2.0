@@ -4,6 +4,9 @@ import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
 import { Button } from "@/src/components/ui/button";
 import { Textarea } from "@/src/components/ui/input";
+import { DocTile, FlowStrip } from "@/src/components/ui/diagram-kit";
+import { Icon, type IconName } from "@/src/components/ui/icon";
+import heroStyles from "./brain-hero.module.css";
 
 
 import { API_URL, apiDownload, apiFetch } from "@/lib/api";
@@ -49,6 +52,75 @@ const STATUS_LABEL: Record<string, string> = {
   complete: "complete",
 };
 
+// ---------------------------------------------------------------------------
+// Hero layer (spec §5.6): DocTiles + resolver trace strip
+// ---------------------------------------------------------------------------
+
+/** Icon-registry names for the five brain docs (spec §4 vocabulary). */
+const DOC_ICON: Record<BrainDocType, IconName> = {
+  soul: "doc-soul",
+  icp: "doc-icp",
+  voice: "doc-voice",
+  history: "doc-history",
+  now: "doc-now",
+};
+
+/** DocTile tone per doc — the c1–c6 family DiagramKit already maps. */
+const DOC_TONE = {
+  soul: "belief",
+  icp: "icp",
+  voice: "voice",
+  history: "history",
+  now: "signal",
+} as const;
+
+/** Docs in the resolver trace strip, in resolution order (spec §5.6). */
+const TRACE_DOCS: readonly BrainDocType[] = ["soul", "icp", "voice", "now"];
+
+/** "2h ago"-style relative time for tile freshness. */
+function relativeTime(ts: number): string {
+  const seconds = Math.floor((Date.now() - ts) / 1000);
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return `${weeks}w ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
+/**
+ * Update source from the latest version's actor label. Brain writes carry
+ * "system" (worker/learning loop), "system:onboarding" (autodraft), or the
+ * saving user's name/email; pre-auth versions have no actor.
+ */
+function updateSource(actor: string | null | undefined, myLabel: string | null): string | null {
+  if (!actor) return null;
+  if (actor === "system") return "by learning loop";
+  if (actor === "system:onboarding") return "by onboarding draft";
+  if (myLabel && actor === myLabel) return "by you";
+  return `by ${actor}`;
+}
+
+/** DocTile meta strings: freshness + update source, degrading gracefully. */
+function tileMeta(
+  doc: BrainDocument | undefined,
+  actor: string | null | undefined,
+  myLabel: string | null,
+): { freshness: string; updatedBy: string } {
+  if (!doc || (doc.content.trim() === "" && !actor)) {
+    return { freshness: "empty", updatedBy: "start here" };
+  }
+  const rel = relativeTime(doc.updatedAt);
+  const source = updateSource(actor, myLabel);
+  // No attributable source (never saved / pre-auth version): freshness only.
+  if (!source) return { freshness: "updated", updatedBy: rel };
+  return { freshness: `updated ${rel}`, updatedBy: source };
+}
+
 export default function WorkspaceBrainPage() {
   const { id } = useParams<{ id: string }>();
 
@@ -61,6 +133,11 @@ export default function WorkspaceBrainPage() {
   const [versions, setVersions] = useState<BrainDocVersion[] | null>(null);
   const [showHistory, setShowHistory] = useState(false);
   const [previewVersion, setPreviewVersion] = useState<BrainDocVersion | null>(null);
+
+  // Hero layer (§5.6): latest version actor per doc + the signed-in user's
+  // label, so tiles can say "by you" vs "by learning loop".
+  const [docActors, setDocActors] = useState<Partial<Record<BrainDocType, string | null>>>({});
+  const [myLabel, setMyLabel] = useState<string | null>(null);
 
   // Channel guidance (Sprint 21) — editable per channel, overrides the built-in default.
   const [guidance, setGuidance] = useState<ChannelGuidance[] | null>(null);
@@ -110,9 +187,41 @@ export default function WorkspaceBrainPage() {
     }
   }, [id]);
 
+  // Who last touched each doc — from the newest entry of each doc's existing
+  // version-history endpoint. Best-effort: tiles degrade to freshness only.
+  const loadProvenance = useCallback(async () => {
+    try {
+      const responses = await Promise.all(
+        BRAIN_DOC_META.map((m) => apiFetch(`/workspaces/${id}/brain/${m.docType}/versions`)),
+      );
+      const entries = await Promise.all(
+        responses.map(async (res, i) => {
+          const docType = BRAIN_DOC_META[i]!.docType;
+          if (!res.ok) return [docType, null] as const;
+          const rows = (await res.json()) as BrainDocVersion[];
+          return [docType, rows[0]?.actor ?? null] as const;
+        }),
+      );
+      setDocActors(Object.fromEntries(entries));
+    } catch {
+      // Provenance is decorative — leave tiles on freshness only.
+    }
+  }, [id]);
+
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadProvenance();
+  }, [load, loadProvenance]);
+
+  useEffect(() => {
+    apiFetch("/auth/me")
+      .then(async (res) => {
+        if (!res.ok) return;
+        const body = (await res.json()) as { user: { name: string; email: string } };
+        setMyLabel(body.user.name || body.user.email);
+      })
+      .catch(() => {});
+  }, []);
 
   // When the loaded doc or selection changes, reset the editor to saved content.
   useEffect(() => {
@@ -136,6 +245,7 @@ export default function WorkspaceBrainPage() {
         throw new Error(body?.message ?? `API returned ${res.status}`);
       }
       await load();
+      void loadProvenance();
       setDraft(content);
       if (showHistory) await loadVersions();
     } catch (err) {
@@ -302,6 +412,59 @@ export default function WorkspaceBrainPage() {
             Export brain (.md)
           </Button>
           </>} />
+
+      <section className={heroStyles.hero} aria-label="Brain documents">
+        <div className={heroStyles.tiles}>
+          {BRAIN_DOC_META.map((meta) => {
+            const doc = brain.docs.find((d) => d.docType === meta.docType);
+            const { freshness, updatedBy } = tileMeta(doc, docActors[meta.docType], myLabel);
+            return (
+              <div
+                key={meta.docType}
+                className={heroStyles.tileWrap}
+                data-active={selected === meta.docType}
+              >
+                <DocTile
+                  icon={DOC_ICON[meta.docType]}
+                  title={meta.title}
+                  tone={DOC_TONE[meta.docType]}
+                  freshness={freshness}
+                  updatedBy={updatedBy}
+                  onOpen={() => setSelected(meta.docType)}
+                />
+              </div>
+            );
+          })}
+        </div>
+
+        <div className={heroStyles.trace}>
+          <div className={heroStyles.traceHead}>
+            <h2 className={heroStyles.traceTitle}>How context resolves</h2>
+            <Link href={`/workspaces/${id}/resolver`} className={heroStyles.traceLink}>
+              Open context inspector
+              <Icon name="chevron-right" size="sm" />
+            </Link>
+          </div>
+          <FlowStrip
+            nodes={[
+              ...TRACE_DOCS.map((docType) => {
+                const doc = brain.docs.find((d) => d.docType === docType);
+                const tokens = doc && doc.content.trim() !== "" ? estimateTokens(doc.content) : 0;
+                return {
+                  icon: DOC_ICON[docType],
+                  label: BRAIN_DOC_META.find((m) => m.docType === docType)!.title.toLowerCase(),
+                  detail: tokens > 0 ? `~${tokens} tok` : "empty",
+                };
+              }),
+              { icon: "bundle", label: "bundle", detail: "per task", emphasis: true },
+            ]}
+          />
+          <p className={heroStyles.traceNote}>
+            Every generation resolves through these layers into one inspectable bundle — Soul,
+            Voice, and Now ride in full; ICP and History are outlined and zoomed per task.
+          </p>
+        </div>
+      </section>
 
       <div className="brain-layout">
         <nav className="doc-nav">

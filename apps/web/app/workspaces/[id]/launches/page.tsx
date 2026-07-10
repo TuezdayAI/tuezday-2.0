@@ -2,10 +2,13 @@
 
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
+import { TopBarActions } from "@/src/components/top-bar";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
-import { Badge } from "@/src/components/ui/badge";
+import { Badge, CountBadge } from "@/src/components/ui/badge";
+import { Icon } from "@/src/components/ui/icon";
 import { Input, Textarea, Select } from "@/src/components/ui/input";
+import styles from "./launches.module.css";
 
 
 import { useCallback, useEffect, useState } from "react";
@@ -68,6 +71,14 @@ interface ConnectorsView {
   providers: ConnectorProvider[];
   connections: Connection[];
 }
+
+// Sample launches for the preview-value empty state (spec §6.5) — blurred
+// behind the CTA, never shown as real data.
+const SAMPLE_LAUNCHES = [
+  { name: "Spring outreach", status: "sent", detail: "Email · X (DMs) · 38 messages" },
+  { name: "Fintech VPs — case study", status: "generating", detail: "Email · LinkedIn · 14 messages" },
+  { name: "Beta invite wave 2", status: "draft", detail: "Email (CSV) · 0 messages" },
+];
 
 export default function LaunchesPage() {
   const { id } = useParams<{ id: string }>();
@@ -294,17 +305,25 @@ export default function LaunchesPage() {
   return (
     <>
       <PageHeader title="Launches" subtitle={<>Launch a personalized first-touch at a segment: per-recipient email + X DMs, and one
-            broadcast post each for LinkedIn and Instagram. Every message clears Review first.</>} actions={<>
-            <Button variant="secondary" size="sm" onClick={() => setShowForm(!showForm)}>
-            + New launch
-          </Button>
-          </>} />
+            broadcast post each for LinkedIn and Instagram. Every message clears Review first.</>} />
+
+      <TopBarActions>
+        <Button variant="primary" size="sm" onClick={() => setShowForm(!showForm)}>
+          <Icon name="add" size="sm" /> New launch
+        </Button>
+      </TopBarActions>
 
       {error && <p className="error">{error}</p>}
 
       {showForm && (
         <Card>
-          <h2>New launch</h2>
+          <CardHeader
+            title={
+              <span className={styles.cardTitle}>
+                <Icon name="add" size="sm" /> New launch
+              </span>
+            }
+          />
           <form className="persona-form" onSubmit={create}>
             <Input
               value={form.name}
@@ -424,9 +443,44 @@ export default function LaunchesPage() {
       )}
 
       <Card>
-        <h2>Launches ({launches.length})</h2>
+        <CardHeader
+          title={
+            <span className={styles.cardTitle}>
+              <Icon name="campaigns" size="sm" /> Launches
+              <CountBadge count={launches.length} label="launches" />
+            </span>
+          }
+        />
         {launches.length === 0 ? (
-          <EmptyState description={<>No launches yet. Create one to target a segment.</>} />
+          <EmptyState
+            preview={
+              <ul className="section-list">
+                {SAMPLE_LAUNCHES.map((l) => (
+                  <li key={l.name} className="section-card">
+                    <div className="section-head">
+                      <span className="section-title">{l.name}</span>
+                      <span className={`layer-badge state-${l.status}`}>{l.status}</span>
+                      <span className="meta">{l.detail}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            }
+            icon={<Icon name="campaigns" size="lg" />}
+            title="Point a segment at every channel at once"
+            description={
+              <>
+                A launch drafts a personalized first touch per recipient (email, X DMs) plus one
+                broadcast post per social channel — every message clears Review before anything
+                sends.
+              </>
+            }
+            primaryAction={
+              <Button variant="primary" size="sm" onClick={() => setShowForm(true)}>
+                <Icon name="add" size="sm" /> New launch
+              </Button>
+            }
+          />
         ) : (
           <ul className="section-list">
             {launches.map((launch) => (
@@ -521,7 +575,12 @@ function LaunchDetailView({
         return (
           <Card key={channel} style={{ marginTop: 10 }}>
             <CardHeader
-              title={CHANNEL_LABELS[channel]}
+              title={
+                <span className={styles.cardTitle}>
+                  <Icon name={channel === "email" ? "email" : "post"} size="sm" />{" "}
+                  {CHANNEL_LABELS[channel]}
+                </span>
+              }
               actions={
                 channel === "email" ? (
                   <Button
@@ -605,7 +664,7 @@ function MessageRow({
         )}
       </div>
       {message.draftContent && <p className="section-reason">{message.draftContent.slice(0, 200)}</p>}
-      {message.lastError && <p className="error">{message.lastError}</p>}
+      {message.lastError && <p className="error-inline">{message.lastError}</p>}
     </li>
   );
 }
@@ -734,7 +793,11 @@ function SequenceSection({
   return (
     <Card style={{ marginTop: 10 }}>
       <CardHeader
-        title="Follow-up sequence"
+        title={
+          <span className={styles.cardTitle}>
+            <Icon name="calendar" size="sm" /> Follow-up sequence
+          </span>
+        }
         actions={
           <div style={{ display: "flex", gap: 8 }}>
             <Button variant="secondary" size="sm" disabled={busy} onClick={start}>

@@ -1,0 +1,46 @@
+/* Inbox — Wave B sweep (spec §7): provider marks on items, count tabs,
+   preview-value empty state. Editorial tokens only. */
+
+.itemMark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+/* Blurred sample conversation behind the empty state (spec §6.5). */
+.previewList {
+  display: grid;
+  gap: 12px;
+  padding: 24px 28px;
+}
+
+.previewCard {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  padding: 12px 14px;
+  display: grid;
+  gap: 6px;
+}
+
+.previewAuthor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--text);
+}
+
+.previewBody {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+}

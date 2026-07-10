@@ -1,11 +1,14 @@
 "use client";
 
-import { PageHeader } from "@/src/components/page-header";
+import { TopBarActions } from "@/src/components/top-bar";
 import { EmptyState } from "@/src/components/empty-state";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
-import { Badge } from "@/src/components/ui/badge";
+import { Badge, CountBadge } from "@/src/components/ui/badge";
+import { Icon, type IconName } from "@/src/components/ui/icon";
+import { LoopGlyph } from "@/src/components/ui/diagram-kit";
 import { Input, Select } from "@/src/components/ui/input";
+import styles from "./learning.module.css";
 
 import { API_URL, apiFetch } from "@/lib/api";
 
@@ -56,6 +59,20 @@ interface Stats {
   decisions: { approved: number; rejected: number };
   editedCount: number;
   metricsCount: number;
+}
+
+/** Registry icon per training-example outcome (spec §4 status vocabulary). */
+function exampleIcon(e: TrainingExample): IconName {
+  const outcome = e.rating ?? e.decision;
+  if (outcome === "accepted" || outcome === "approved") return "status-approved";
+  if (outcome === "rejected") return "status-rejected";
+  return "status-learning";
+}
+
+/** What a training example changed, phrased as the LoopGlyph "change" side. */
+function exampleChange(e: TrainingExample): string {
+  const outcome = e.kind === "rating" ? `rated ${e.rating}` : (e.decision ?? "decided");
+  return e.wasEdited ? `${outcome} · edited first` : outcome;
 }
 
 export default function LearningPage() {
@@ -191,35 +208,72 @@ export default function LearningPage() {
 
   return (
     <>
-      <PageHeader title="Learning" subtitle={<>What Tuezday learns from your decisions, edits, and results — proposed as brain
-            updates that you approve or dismiss.</>} actions={<>
-            <Button variant="primary" disabled={synthesizing} onClick={synthesize}>
-            {synthesizing ? "Synthesizing…" : "✨ Synthesize learnings"}
-          </Button>
-          </>} />
+      <TopBarActions>
+        <Button variant="primary" size="sm" disabled={synthesizing} onClick={synthesize}>
+          <Icon name="status-generating" size="sm" />
+          {synthesizing ? "Synthesizing…" : "Synthesize learnings"}
+        </Button>
+      </TopBarActions>
+
+      <p className="subtitle">
+        What Tuezday learns from your decisions, edits, and results — proposed as brain updates
+        that you approve or dismiss.
+      </p>
 
       <Card>
-        <CardHeader title="Signal so far" />
-        <p className="bundle-summary">
-          Ratings: {stats.ratings.accepted ?? 0} accepted · {stats.ratings.needs_edit ?? 0} needs
-          edit · {stats.ratings.rejected ?? 0} rejected — Drafts: {stats.decisions.approved}{" "}
-          approved · {stats.decisions.rejected} rejected · {stats.editedCount} edited before
-          decision — {stats.metricsCount} metric record(s)
-        </p>
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="status-learning" size="sm" className={styles.headIcon} />
+              Signal so far
+            </span>
+          }
+        />
+        <div className={styles.statRow}>
+          <Badge tone="approved">{stats.ratings.accepted ?? 0} rated accepted</Badge>
+          <Badge tone="edited">{stats.ratings.needs_edit ?? 0} needs edit</Badge>
+          <Badge tone="rejected">{stats.ratings.rejected ?? 0} rated rejected</Badge>
+          <Badge tone="approved">{stats.decisions.approved} drafts approved</Badge>
+          <Badge tone="rejected">{stats.decisions.rejected} drafts rejected</Badge>
+          <Badge tone="edited">{stats.editedCount} edited before decision</Badge>
+          <Badge tone="neutral">{stats.metricsCount} metric record(s)</Badge>
+        </div>
       </Card>
 
       <Card>
         <CardHeader
           title={
-            <>
+            <span className={styles.head}>
+              <Icon name="doc-now" size="sm" className={styles.headIconNow} />
               Proposed now updates{" "}
-              {proposed.length > 0 && <Badge tone="edited">{proposed.length} awaiting review</Badge>}
-            </>
+              {proposed.length > 0 && <CountBadge count={proposed.length} label="proposed now updates awaiting review" />}
+            </span>
           }
         />
         {syntheses.length === 0 ? (
-          <EmptyState description={<>No syntheses yet. Approve/reject some work, then synthesize — or let the worker propose
-            one weekly.</>} />
+          <EmptyState
+            description={<>No syntheses yet. Approve/reject some work, then synthesize — or let the worker propose
+            one weekly.</>}
+            primaryAction={
+              <Button variant="secondary" size="sm" disabled={synthesizing} onClick={synthesize}>
+                <Icon name="status-generating" size="sm" />
+                Synthesize now
+              </Button>
+            }
+            preview={
+              <div className={styles.previewList}>
+                <div className={styles.previewCard}>
+                  <LoopGlyph signal="12 approvals this week" change="voice: shorter openers" />
+                </div>
+                <div className={styles.previewCard}>
+                  <LoopGlyph signal="3 rejected drafts mentioned pricing" change="now: avoid discount framing" />
+                </div>
+                <div className={styles.previewCard}>
+                  <LoopGlyph signal="launch post outperformed 4×" change="now: lead with customer numbers" />
+                </div>
+              </div>
+            }
+          />
         ) : (
           <ul className="section-list">
             {syntheses.map((s) => (
@@ -255,7 +309,8 @@ export default function LearningPage() {
                       disabled={busy}
                       onClick={() => decide(s.id, "accept")}
                     >
-                      ✓ Accept into now
+                      <Icon name="status-approved" size="sm" />
+                      Accept into now
                     </Button>
                     <Button
                       variant="secondary"
@@ -263,7 +318,8 @@ export default function LearningPage() {
                       disabled={busy}
                       onClick={() => decide(s.id, "dismiss")}
                     >
-                      ✗ Dismiss
+                      <Icon name="status-rejected" size="sm" />
+                      Dismiss
                     </Button>
                   </div>
                 )}
@@ -275,7 +331,14 @@ export default function LearningPage() {
       </Card>
 
       <Card>
-        <CardHeader title="Record engagement metrics" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="status-live" size="sm" className={styles.headIconLive} />
+              Record engagement metrics
+            </span>
+          }
+        />
         <form className="persona-form" style={{ borderTop: "none", paddingTop: 0, marginTop: 0 }} onSubmit={addMetric}>
           <div className="resolve-controls">
             <label style={{ flex: 1 }}>
@@ -355,9 +418,32 @@ export default function LearningPage() {
       </Card>
 
       <Card>
-        <CardHeader title={`Training examples (${examples.length})`} />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="status-learning" size="sm" className={styles.headIcon} />
+              Training examples <CountBadge count={examples.length} label="training examples" />
+            </span>
+          }
+        />
         {examples.length === 0 ? (
-          <EmptyState description={<>Nothing yet — rate outputs in the Playground and decide drafts in Review.</>} />
+          <EmptyState
+            description={<>Nothing yet — rate outputs in the Playground and decide drafts in Review. Every decision
+            becomes a training example like these.</>}
+            preview={
+              <div className={styles.previewList}>
+                <div className={styles.previewCard}>
+                  <LoopGlyph icon="status-approved" signal="LinkedIn post · linkedin" change="rated accepted" />
+                </div>
+                <div className={styles.previewCard}>
+                  <LoopGlyph icon="status-learning" signal="Cold email opener · email" change="approved · edited first" />
+                </div>
+                <div className={styles.previewCard}>
+                  <LoopGlyph icon="status-rejected" signal="Ad copy variant · meta" change="rated rejected" />
+                </div>
+              </div>
+            }
+          />
         ) : (
           <ul className="section-list">
             {examples.map((e) => (
@@ -366,22 +452,12 @@ export default function LearningPage() {
                   className="section-head"
                   onClick={() => setExpanded((x) => ({ ...x, [e.id]: !x[e.id] }))}
                 >
-                  <span
-                    className={`layer-badge ${
-                      (e.rating ?? e.decision) === "accepted" || e.decision === "approved"
-                        ? "state-approved"
-                        : (e.rating ?? e.decision) === "rejected"
-                          ? "state-rejected"
-                          : "state-edited"
-                    }`}
-                  >
-                    {e.kind === "rating" ? `rated ${e.rating}` : e.decision}
-                    {e.wasEdited ? " (edited)" : ""}
-                  </span>
-                  <span className="section-title">
-                    {TASK_LABELS[e.taskType]} · {e.channel}
-                  </span>
-                  <span className="section-tokens">
+                  <LoopGlyph
+                    icon={exampleIcon(e)}
+                    signal={`${TASK_LABELS[e.taskType]} · ${e.channel}`}
+                    change={exampleChange(e)}
+                  />
+                  <span className={`section-tokens ${styles.entryDate}`}>
                     {new Date(e.createdAt).toLocaleDateString()}
                   </span>
                 </div>

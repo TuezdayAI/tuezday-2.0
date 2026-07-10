@@ -1,0 +1,47 @@
+/* FlowStrip */
+.flow { display: flex; align-items: stretch; flex-wrap: wrap; gap: 0; }
+.flowSeg { display: flex; align-items: center; }
+.node {
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 10px 14px;
+  min-width: 84px;
+  color: var(--muted);
+}
+.nodeEmphasis { border-color: var(--accent); color: var(--accent-deep); background: var(--accent-soft); }
+.nodeLabel { font-size: 12px; font-weight: 600; color: var(--text); }
+.nodeDetail { font-size: 11px; color: var(--muted-2); }
+.connector { width: 22px; height: 1px; background: var(--border-strong); }
+
+/* DocTile */
+.tile {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 14px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color var(--dur-fast) var(--ease-out);
+  min-width: 0;
+}
+.tile:disabled { cursor: default; }
+.tile:not(:disabled):hover { border-color: var(--border-strong); }
+.tileIcon { color: var(--muted); }
+.tile[data-tone="belief"] .tileIcon { color: var(--c1-deep); }
+.tile[data-tone="voice"] .tileIcon { color: var(--c2-deep); }
+.tile[data-tone="history"] .tileIcon { color: var(--c3-deep); }
+.tile[data-tone="icp"] .tileIcon { color: var(--c4-deep); }
+.tile[data-tone="system"] .tileIcon { color: var(--c5-deep); }
+.tile[data-tone="signal"] .tileIcon { color: var(--c6-deep); }
+.tileTitle { font-family: var(--font-display); font-size: 15px; font-weight: 550; color: var(--text); }
+.tileMeta { font-size: 11.5px; color: var(--muted-2); }
+
+/* LoopGlyph */
+.loop { display: flex; align-items: baseline; gap: 8px; font-size: 13px; min-width: 0; }
+.loopIcon { color: var(--c3-deep); align-self: center; }
+.loopSignal { color: var(--muted); }
+.loopArrow { color: var(--muted-2); }
+.loopChange { color: var(--text); font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

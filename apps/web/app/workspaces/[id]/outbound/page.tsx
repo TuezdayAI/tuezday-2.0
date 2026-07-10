@@ -2,16 +2,20 @@
 
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
+import { TopBarActions } from "@/src/components/top-bar";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
-import { Badge } from "@/src/components/ui/badge";
+import { Badge, CountBadge } from "@/src/components/ui/badge";
+import { Icon } from "@/src/components/ui/icon";
+import { PreviewCard } from "@/src/components/ui/preview-card";
 import { Input, Textarea, Select } from "@/src/components/ui/input";
+import styles from "./outbound.module.css";
 
 import { API_URL, apiDownload, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import type { ApprovalState, Campaign, Draft, Lead, Persona, Workspace } from "@tuezday/contracts";
 
 const STATE_LABELS: Record<ApprovalState, string> = {
@@ -33,11 +37,46 @@ const STATE_TONES: Record<
   rejected: "rejected",
 };
 
+/** Subject/body split for the email PreviewCard renderer (first line reads as the subject). */
+function splitEmail(content: string): { title: string; body: string } {
+  const lines = content.split("\n");
+  const first = (lines[0] ?? "").replace(/^Subject:\s*/i, "").trim();
+  if (!first) return { title: "Outbound email", body: content };
+  return { title: first, body: lines.slice(1).join("\n").trim() };
+}
+
 const CSV_EXAMPLE = `name,email,company,role,notes
 Asha Patel,asha@acme.io,Acme Robotics,Head of Growth,"Complained about AI slop on LinkedIn"`;
 
+// Sample leads for the preview-value empty state (spec §5.7.3 / §6.5) —
+// blurred behind the CTA, never shown as real data.
+const SAMPLE_LEADS = [
+  {
+    name: "Asha Patel",
+    email: "asha@acme.io",
+    detail: "Head of Growth at Acme Robotics",
+    state: "approved" as const,
+    snippet: "Saw your post on AI slop — we obsess over the same thing…",
+  },
+  {
+    name: "Diego Fernández",
+    email: "diego@northbeam.co",
+    detail: "Founder at Northbeam",
+    state: "pending" as const,
+    snippet: "Your teardown of attribution models made the rounds here…",
+  },
+  {
+    name: "Mei Lin",
+    email: "mei@driftline.io",
+    detail: "VP Marketing at Driftline",
+    state: "draft" as const,
+    snippet: "Congrats on the Series A — the timing on lifecycle…",
+  },
+];
+
 export default function OutboundPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [leadsList, setLeadsList] = useState<Lead[]>([]);
@@ -200,25 +239,32 @@ export default function OutboundPage() {
   return (
     <>
       <PageHeader title="Audience" subtitle={<>Your leads and contacts, with outreach drafted in your voice per person. Drafts go
-            through Review; sending stays in your sender of choice.</>} actions={<>
-            {approvedCount > 0 && (
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => void apiDownload(`/workspaces/${id}/outbound/export.csv`, "outbound.csv")}
-            >
-              ↓ Export approved CSV ({approvedCount})
-            </Button>
-          )}
-          </>} />
+            through Review; sending stays in your sender of choice.</>} />
+
+      <TopBarActions>
+        {approvedCount > 0 && (
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => void apiDownload(`/workspaces/${id}/outbound/export.csv`, "outbound.csv")}
+          >
+            <Icon name="external" size="sm" /> Export approved CSV ({approvedCount})
+          </Button>
+        )}
+      </TopBarActions>
 
       <Card>
         <CardHeader
-          title={`Leads (${leadsList.length})`}
+          title={
+            <span className={styles.cardTitle}>
+              <Icon name="audience" size="sm" /> Leads
+              <CountBadge count={leadsList.length} label="leads" />
+            </span>
+          }
           actions={
             <Button variant="secondary" size="sm" onClick={() => setShowAddForm(!showAddForm)}>
-              + Add one lead
+              <Icon name="add" size="sm" /> Add one lead
             </Button>
           }
         />
@@ -297,7 +343,43 @@ export default function OutboundPage() {
         {error && <p className="error">{error}</p>}
 
         {leadsList.length === 0 ? (
-          <EmptyState description={<>No leads yet. Paste a CSV above.</>} />
+          <EmptyState
+            preview={
+              <ul className="section-list">
+                {SAMPLE_LEADS.map((lead) => (
+                  <li key={lead.email} className="section-card">
+                    <div className="section-head">
+                      <span className="section-title">
+                        {lead.name} <span className="meta">&lt;{lead.email}&gt;</span>
+                        <span className="meta"> — {lead.detail}</span>
+                      </span>
+                      <Badge tone={STATE_TONES[lead.state === "pending" ? "pending_review" : lead.state]}>
+                        {lead.state}
+                      </Badge>
+                    </div>
+                    <p className="section-reason">{lead.snippet}</p>
+                  </li>
+                ))}
+              </ul>
+            }
+            title="Send approved sequences from your own sender"
+            description={
+              <>
+                Paste a CSV of leads above — Tuezday drafts outreach in your voice, routes it
+                through Review, and exports approved sequences to Smartlead or Instantly. Your
+                sender keeps deliverability.
+              </>
+            }
+            primaryAction={
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => router.push(`/workspaces/${id}/connectors`)}
+              >
+                Open Integrations
+              </Button>
+            }
+          />
         ) : (
           <ul className="section-list">
             {leadsList.map((lead) => {
@@ -333,17 +415,31 @@ export default function OutboundPage() {
                   </div>
                   {lead.notes && <p className="section-reason">{lead.notes}</p>}
                   {chain.length > 0 && (
-                    <ul className="draft-chain">
-                      {chain.map((d) => (
-                        <li key={d.id}>
-                          <Badge tone={STATE_TONES[d.state]}>{STATE_LABELS[d.state]}</Badge>{" "}
-                          <span className="meta">{d.content.slice(0, 70)}…</span>{" "}
-                          <Link className="link-button" href={`/workspaces/${id}/approvals`}>
-                            open in queue
-                          </Link>
-                        </li>
-                      ))}
-                    </ul>
+                    <div className={styles.previewGrid}>
+                      {chain.map((d) => {
+                        const { title, body } = splitEmail(d.content);
+                        return (
+                          <PreviewCard
+                            key={d.id}
+                            kind="email"
+                            title={title}
+                            body={body}
+                            scheduledAt={new Date(d.createdAt).toLocaleDateString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                            })}
+                            status={STATE_LABELS[d.state]}
+                            statusTone={STATE_TONES[d.state]}
+                            onOpen={() => router.push(`/workspaces/${id}/approvals`)}
+                            actions={
+                              <Link className="link-button" href={`/workspaces/${id}/approvals`}>
+                                open in queue
+                              </Link>
+                            }
+                          />
+                        );
+                      })}
+                    </div>
                   )}
                 </li>
               );
@@ -353,7 +449,13 @@ export default function OutboundPage() {
       </Card>
 
       <Card>
-        <h2>Draft outbound emails</h2>
+        <CardHeader
+          title={
+            <span className={styles.cardTitle}>
+              <Icon name="email" size="sm" /> Draft outbound emails
+            </span>
+          }
+        />
         <div className="resolve-controls">
           <label>
             Persona

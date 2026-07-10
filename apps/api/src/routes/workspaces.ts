@@ -4,7 +4,9 @@ import type { LlmGateway } from "../llm/gateway";
 import { runBrandProfile } from "../services/brand-profile";
 import { hasSocialConnection } from "../services/social-corpus";
 import {
+  CONNECTOR_PROVIDERS,
   createWorkspaceInputSchema,
+  integrationProgress,
   ONBOARDING_CURSORS,
   setAnalyticsOptOutInputSchema,
   type OnboardingCursor,
@@ -115,13 +117,16 @@ export function registerWorkspaceRoutes(
     const drafts = listDrafts(db, request.params.id, "pending_review");
     const generations = listGenerations(db, request.params.id);
     
+    const progress = integrationProgress(CONNECTOR_PROVIDERS, connections);
     return {
       hasAds: adAccounts.length > 0,
       hasInsights: false, // reserved for Sprint 34
       hasCrm: connections.some(c => c.providerKey === "salesforce" || c.providerKey === "hubspot" || c.providerKey === "freshsales"),
       hasConnections: connections.length > 0,
       draftCount: drafts.length,
-      generationCount: generations.length
+      generationCount: generations.length,
+      integrationsConnected: progress.connected,
+      integrationsTotal: progress.total,
     };
   });
 }

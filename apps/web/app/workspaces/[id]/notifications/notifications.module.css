@@ -1,0 +1,104 @@
+/* Notifications — approval-ping channels on Editorial tokens (spec §7 Wave D). */
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.sectionHead h2 {
+  margin: 0;
+  flex: none;
+}
+
+.sectionIcon {
+  color: var(--muted);
+}
+
+.column {
+  max-width: 800px;
+  display: grid;
+  gap: 8px;
+}
+
+.addForm {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-top: 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  padding: 12px;
+  border-radius: var(--radius);
+}
+
+.addTarget {
+  flex: 1;
+}
+
+.help {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 8px 0 0;
+}
+
+.channelList {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.channelRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.channelIcon {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: var(--muted);
+}
+
+.channelType {
+  font-weight: 600;
+}
+
+.channelTarget {
+  color: var(--muted);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.rowEnd {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--muted);
+  cursor: pointer;
+}

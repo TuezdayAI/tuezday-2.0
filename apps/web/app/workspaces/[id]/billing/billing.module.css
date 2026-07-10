@@ -1,0 +1,39 @@
+/* Billing — plan + usage meters, light Wave D pass (spec §7). */
+
+.sectionHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.sectionHead h2 {
+  margin: 0;
+  flex: none;
+}
+
+.sectionIcon {
+  color: var(--muted);
+}
+
+/* Reproduces the global .usage-heading rule with the icon inside the rule line. */
+.usageHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding-top: 16px;
+  margin-bottom: 12px;
+}
+
+.usageHead h3 {
+  margin: 0;
+}
+
+.meterRow {
+  margin-bottom: 16px;
+}
+
+.upgradeRow {
+  margin-top: 20px;
+}

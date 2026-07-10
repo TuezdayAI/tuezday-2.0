@@ -1,0 +1,75 @@
+/* Brain hero layer (spec §5.6) — five DocTiles + the resolver trace strip,
+   sitting above the existing editor. Editorial tokens only, hairline cards. */
+
+.hero {
+  display: grid;
+  gap: 16px;
+  margin: 2px 0 26px;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+/* DocTile owns its own look; the wrapper only sizes it to the grid cell and
+   marks the doc currently open in the editor below. */
+.tileWrap {
+  display: grid;
+  min-width: 0;
+}
+
+.tileWrap > button {
+  width: 100%;
+  height: 100%;
+}
+
+.tileWrap[data-active="true"] > button {
+  border-color: var(--accent);
+}
+
+/* Resolver trace — the moat made visible. */
+.trace {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  padding: 14px 16px 16px;
+  display: grid;
+  gap: 12px;
+}
+
+.traceHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.traceTitle {
+  font-family: var(--font-display);
+  font-size: 18px;
+  font-weight: 500;
+  margin: 0;
+}
+
+.traceLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 13px;
+  color: var(--accent-deep);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.traceLink:hover {
+  text-decoration: underline;
+}
+
+.traceNote {
+  color: var(--muted-2);
+  font-size: 12.5px;
+  margin: 0;
+}

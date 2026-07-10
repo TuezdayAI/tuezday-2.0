@@ -1801,6 +1801,61 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
 export const CONNECTION_STATUSES = ["connected", "error", "disconnected"] as const;
 export type ConnectionStatus = (typeof CONNECTION_STATUSES)[number];
 
+// Spec §5.7: the Integrations hub groups providers by what they unlock, not by
+// auth mechanics. Order is the hub's display order; uncategorized providers
+// (Slack, custom proxy) trail as "other".
+export const CONNECTOR_HUB_GROUP_META: readonly {
+  category: ConnectorCategory | "other";
+  title: string;
+  unlocks: string;
+}[] = [
+  { category: "social", title: "Publishing", unlocks: "Approved posts go out on schedule, replies come back in" },
+  { category: "ads", title: "Ads", unlocks: "Ad results feed the learning loop" },
+  { category: "crm", title: "CRM", unlocks: "Your CRM stays the system of record" },
+  { category: "outbound", title: "Outbound", unlocks: "Sequences send from your own sender" },
+  { category: "other", title: "Workspace", unlocks: "Everything else the workspace talks to" },
+] as const;
+
+export interface ConnectorHubGroup<P extends ConnectorProvider = ConnectorProvider> {
+  category: ConnectorCategory | "other";
+  title: string;
+  unlocks: string;
+  providers: P[];
+}
+
+export function connectorHubGroups<P extends ConnectorProvider>(
+  providers: readonly P[],
+): ConnectorHubGroup<P>[] {
+  return CONNECTOR_HUB_GROUP_META.map((meta) => ({
+    ...meta,
+    providers: providers.filter((p) =>
+      meta.category === "other" ? !p.categories?.length : p.categories?.includes(meta.category),
+    ),
+  })).filter((group) => group.providers.length > 0);
+}
+
+/**
+ * Nav progress for the Integrations entry ("1/4"): connected capabilities
+ * (categories with at least one live connection) over the capabilities the
+ * registry offers. Accounts don't stack — two social accounts still count one.
+ */
+export function integrationProgress(
+  providers: readonly ConnectorProvider[],
+  connections: readonly Pick<Connection, "providerKey" | "status">[],
+): { connected: number; total: number } {
+  const categoryOf = new Map<string, readonly ConnectorCategory[]>(
+    providers.map((p) => [p.key, p.categories ?? []]),
+  );
+  const all = new Set<ConnectorCategory>();
+  for (const p of providers) for (const c of p.categories ?? []) all.add(c);
+  const live = new Set<ConnectorCategory>();
+  for (const connection of connections) {
+    if (connection.status !== "connected") continue;
+    for (const c of categoryOf.get(connection.providerKey) ?? []) live.add(c);
+  }
+  return { connected: live.size, total: all.size };
+}
+
 // Sprint 44: what this account posts about + how — injected as the tier-1
 // "account" context section when the publishing account is known at draft time.
 export const CONNECTION_GUIDANCE_MAX_CHARS = 2_000;
@@ -3605,6 +3660,10 @@ export const workspaceCapabilitiesSchema = z.object({
   hasConnections: z.boolean(),
   draftCount: z.number().int(),
   generationCount: z.number().int(),
+  // Spec §5.7.1 nav progress ("1/4") — from integrationProgress(); optional so
+  // older API responses stay valid and the badge simply hides until reported.
+  integrationsConnected: z.number().int().optional(),
+  integrationsTotal: z.number().int().optional(),
 });
 export type WorkspaceCapabilities = z.infer<typeof workspaceCapabilitiesSchema>;
 
@@ -3614,6 +3673,7 @@ export interface NavChild {
   label: string;
   path: string;
   summary?: string;
+  icon?: string;
   tone?: "belief" | "voice" | "history" | "icp" | "system" | "signal";
   requires?: NavRequirement;
 }
@@ -3622,6 +3682,7 @@ export interface NavItem {
   label: string;
   path: string;
   summary?: string;
+  icon?: string;
   tone?: "belief" | "voice" | "history" | "icp" | "system" | "signal";
   requires?: NavRequirement;
   children?: NavChild[];
@@ -3633,16 +3694,18 @@ export const WORKSPACE_NAV: NavItem[] = [
     path: "",
     summary: "What needs attention now",
     tone: "system",
+    icon: "home",
   },
   {
     label: "Brain",
     path: "/brain",
     summary: "Company context, evidence, and inspection",
     tone: "system",
+    icon: "brain",
     children: [
-      { label: "Brain docs", path: "/brain", summary: "The editable GTM memory", tone: "system" },
-      { label: "Evidence library", path: "/evidence", summary: "Proof and source material", tone: "history" },
-      { label: "Context inspector", path: "/resolver", summary: "See what Tuezday will use", tone: "icp" },
+      { label: "Brain docs", path: "/brain", summary: "The editable GTM memory", tone: "system", icon: "brain" },
+      { label: "Evidence library", path: "/evidence", summary: "Proof and source material", tone: "history", icon: "doc-history" },
+      { label: "Context inspector", path: "/resolver", summary: "See what Tuezday will use", tone: "icp", icon: "search" },
     ],
   },
   {
@@ -3650,14 +3713,15 @@ export const WORKSPACE_NAV: NavItem[] = [
     path: "/campaigns",
     summary: "Plans, calendar, automation, ads, and reporting",
     tone: "voice",
+    icon: "campaigns",
     children: [
-      { label: "Campaign home", path: "/campaigns", summary: "Goals and GTM pushes", tone: "voice" },
-      { label: "Calendar", path: "/calendar", summary: "Scheduled posts and work", tone: "history" },
-      { label: "Cadence", path: "/cadence", summary: "Publishing rhythm", tone: "history" },
-      { label: "Automation", path: "/automation", summary: "Human-in-the-loop rules", tone: "signal" },
-      { label: "Ads", path: "/ads", summary: "Paid channel performance", tone: "belief", requires: "ads" },
-      { label: "Launch ads", path: "/ad-launches", summary: "Spend-controlled ad launches", tone: "belief", requires: "ads" },
-      { label: "Insights", path: "/insights", summary: "What worked and why", tone: "icp", requires: "insights" },
+      { label: "Campaign home", path: "/campaigns", summary: "Goals and GTM pushes", tone: "voice", icon: "campaigns" },
+      { label: "Calendar", path: "/calendar", summary: "Scheduled posts and work", tone: "history", icon: "calendar" },
+      { label: "Cadence", path: "/cadence", summary: "Publishing rhythm", tone: "history", icon: "status-live" },
+      { label: "Automation", path: "/automation", summary: "Human-in-the-loop rules", tone: "signal", icon: "regenerate" },
+      { label: "Ads", path: "/ads", summary: "Paid channel performance", tone: "belief", requires: "ads", icon: "ad" },
+      { label: "Launch ads", path: "/ad-launches", summary: "Spend-controlled ad launches", tone: "belief", requires: "ads", icon: "status-live" },
+      { label: "Insights", path: "/insights", summary: "What worked and why", tone: "icp", requires: "insights", icon: "status-learning" },
     ],
   },
   {
@@ -3665,16 +3729,18 @@ export const WORKSPACE_NAV: NavItem[] = [
     path: "/discovery",
     summary: "Market signals worth acting on",
     tone: "signal",
+    icon: "discover",
   },
   {
     label: "Create",
     path: "/content",
     summary: "Draft content, ads, and channel assets",
     tone: "belief",
+    icon: "create",
     children: [
-      { label: "Content", path: "/content", summary: "Posts and signal responses", tone: "belief" },
-      { label: "Playground", path: "/sandbox", summary: "Generate from the Brain", tone: "system" },
-      { label: "Ad creatives", path: "/ad-creatives", summary: "Platform-ready variants", tone: "voice" },
+      { label: "Content", path: "/content", summary: "Posts and signal responses", tone: "belief", icon: "post" },
+      { label: "Playground", path: "/sandbox", summary: "Generate from the Brain", tone: "system", icon: "status-generating" },
+      { label: "Ad creatives", path: "/ad-creatives", summary: "Platform-ready variants", tone: "voice", icon: "ad" },
     ],
   },
   {
@@ -3682,10 +3748,11 @@ export const WORKSPACE_NAV: NavItem[] = [
     path: "/approvals",
     summary: "Approve, edit, reply, and teach the Brain",
     tone: "icp",
+    icon: "review",
     children: [
-      { label: "Approval queue", path: "/approvals", summary: "Nothing ships without review", tone: "icp" },
-      { label: "Inbox", path: "/inbox", summary: "Replies and engagement", tone: "signal" },
-      { label: "Learning", path: "/learning", summary: "Brain updates from decisions", tone: "history" },
+      { label: "Approval queue", path: "/approvals", summary: "Nothing ships without review", tone: "icp", icon: "review" },
+      { label: "Inbox", path: "/inbox", summary: "Replies and engagement", tone: "signal", icon: "email" },
+      { label: "Learning", path: "/learning", summary: "Brain updates from decisions", tone: "history", icon: "status-learning" },
     ],
   },
   {
@@ -3693,12 +3760,13 @@ export const WORKSPACE_NAV: NavItem[] = [
     path: "/outbound",
     summary: "Leads, lists, launches, CRM, and PR contacts",
     tone: "icp",
+    icon: "audience",
     children: [
-      { label: "Outbound", path: "/outbound", summary: "Lead-driven drafts", tone: "icp" },
-      { label: "Lists & segments", path: "/lists", summary: "Reusable audiences", tone: "icp" },
-      { label: "Launches", path: "/launches", summary: "Targeted campaign sends", tone: "voice" },
-      { label: "CRM", path: "/crm", summary: "Contacts and account context", tone: "icp" },
-      { label: "PR & media", path: "/pr", summary: "Media contacts and pitches", tone: "belief" },
+      { label: "Outbound", path: "/outbound", summary: "Lead-driven drafts", tone: "icp", icon: "external" },
+      { label: "Lists & segments", path: "/lists", summary: "Reusable audiences", tone: "icp", icon: "audience" },
+      { label: "Launches", path: "/launches", summary: "Targeted campaign sends", tone: "voice", icon: "campaigns" },
+      { label: "CRM", path: "/crm", summary: "Contacts and account context", tone: "icp", icon: "user" },
+      { label: "PR & media", path: "/pr", summary: "Media contacts and pitches", tone: "belief", icon: "notification" },
     ],
   },
   {
@@ -3706,11 +3774,12 @@ export const WORKSPACE_NAV: NavItem[] = [
     path: "/connectors",
     summary: "Integrations, team, billing, and account control",
     tone: "system",
+    icon: "settings",
     children: [
-      { label: "Integrations", path: "/connectors", summary: "Connect the stack", tone: "system" },
-      { label: "Team", path: "/team", summary: "Members and invites", tone: "icp" },
-      { label: "Billing", path: "/billing", summary: "Plan and usage", tone: "history" },
-      { label: "Activity", path: "/activity", summary: "Event log and audit trail", tone: "system" },
+      { label: "Integrations", path: "/connectors", summary: "Connect the stack", tone: "system", icon: "connect" },
+      { label: "Team", path: "/team", summary: "Members and invites", tone: "icp", icon: "audience" },
+      { label: "Billing", path: "/billing", summary: "Plan and usage", tone: "history", icon: "doc-history" },
+      { label: "Activity", path: "/activity", summary: "Event log and audit trail", tone: "system", icon: "info" },
     ],
   },
 ];
@@ -3750,6 +3819,51 @@ export function visibleNavItems(nav: NavItem[], caps: WorkspaceCapabilities): Na
     });
 }
 
+export interface NavEntry {
+  label: string;
+  icon?: string;
+  tone?: NavItem["tone"];
+  parentLabel?: string;
+}
+
+/**
+ * Resolve a workspace-relative path ("" | "/approvals" | "/campaigns/abc") to
+ * the nav entry that owns it. Longest path wins so children beat their group
+ * and detail sub-routes resolve to their page. Used by the TopBar for titles.
+ */
+export function navEntryForPath(nav: NavItem[], relativePath: string): NavEntry | null {
+  if (relativePath === "") {
+    const home = nav.find((item) => item.path === "");
+    return home ? { label: home.label, icon: home.icon, tone: home.tone } : null;
+  }
+  let best: NavEntry | null = null;
+  let bestDepth = 0;
+  // ">=" so on equal depth the LAST considered wins — children are considered
+  // after their group, so a child sharing its group's path (e.g. "/approvals")
+  // beats the group, giving "Approval queue" with parentLabel "Review".
+  const consider = (path: string, entry: NavEntry) => {
+    if (path === "") return;
+    if (relativePath === path || relativePath.startsWith(`${path}/`)) {
+      if (path.length >= bestDepth) {
+        best = entry;
+        bestDepth = path.length;
+      }
+    }
+  };
+  for (const item of nav) {
+    consider(item.path, { label: item.label, icon: item.icon, tone: item.tone });
+    for (const child of item.children ?? []) {
+      consider(child.path, {
+        label: child.label,
+        icon: child.icon,
+        tone: child.tone ?? item.tone,
+        parentLabel: item.label,
+      });
+    }
+  }
+  return best;
+}
+
 // ---------------------------------------------------------------------------
 // Notification channels (Sprint 39)
 // ---------------------------------------------------------------------------
@@ -3783,3 +3897,125 @@ export const createApiKeyInputSchema = z.object({
   scopes: z.array(z.enum(API_SCOPES)).min(1),
 });
 export type CreateApiKeyInput = z.infer<typeof createApiKeyInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Next-action engine (UI industry-ready spec §5.1). Pure priority function —
+// the API exposes the computed value; guide dot / smart landing / Home
+// checklist all derive from this ONE answer so they can never disagree.
+// ---------------------------------------------------------------------------
+
+export const SETUP_CHECKLIST_ITEMS = [
+  "brain_reviewed",
+  "channel_connected",
+  "first_campaign",
+  "first_approval",
+  "insights_live",
+  "team_invited",
+] as const;
+export type SetupChecklistItem = (typeof SETUP_CHECKLIST_ITEMS)[number];
+
+export const nextActionStateSchema = z.object({
+  draftCount: z.number().int().min(0),
+  blockedPublishCount: z.number().int().min(0),
+  liveCampaignsWithoutContent: z.number().int().min(0),
+  insightsAvailableUnconnected: z.boolean(),
+  generatingCount: z.number().int().min(0),
+  checklist: z.object({
+    brain_reviewed: z.boolean(),
+    channel_connected: z.boolean(),
+    first_campaign: z.boolean(),
+    first_approval: z.boolean(),
+    insights_live: z.boolean(),
+    team_invited: z.boolean(),
+  }),
+});
+export type NextActionState = z.infer<typeof nextActionStateSchema>;
+
+export type NextActionKind =
+  | "review"
+  | "connect_blocked"
+  | "campaign_content"
+  | "connect_insights"
+  | "checklist"
+  | "system_working"
+  | "none";
+
+export interface NextAction {
+  kind: NextActionKind;
+  /** Workspace-relative nav path the guide dot attaches to ("" = Home). */
+  module: string;
+  /** Short imperative label, e.g. "Review drafts". */
+  label: string;
+  /** Hover explanation for the guide dot, e.g. "1 draft waiting for review". */
+  reason: string;
+  checklistItem?: SetupChecklistItem;
+}
+
+const CHECKLIST_TARGETS: Record<SetupChecklistItem, { module: string; label: string; reason: string }> = {
+  brain_reviewed: { module: "/brain", label: "Review your Brain", reason: "Your GTM memory needs a first review" },
+  channel_connected: { module: "/connectors", label: "Connect a channel", reason: "No publishing channel is connected yet" },
+  first_campaign: { module: "/campaigns", label: "Create your first campaign", reason: "No campaign exists yet" },
+  first_approval: { module: "/approvals", label: "Approve your first draft", reason: "Nothing has been approved yet" },
+  insights_live: { module: "/connectors", label: "Turn on insights", reason: "Connect a channel with analytics to see results" },
+  team_invited: { module: "/team", label: "Invite your team", reason: "You are the only member of this workspace" },
+};
+
+export function checklistProgress(state: NextActionState): { done: number; total: number; complete: boolean } {
+  const total = SETUP_CHECKLIST_ITEMS.length;
+  const done = SETUP_CHECKLIST_ITEMS.filter((item) => state.checklist[item]).length;
+  return { done, total, complete: done === total };
+}
+
+export function nextActionFor(state: NextActionState): NextAction {
+  if (state.draftCount > 0) {
+    const n = state.draftCount;
+    return {
+      kind: "review",
+      module: "/approvals",
+      label: "Review drafts",
+      reason: `${n} draft${n === 1 ? "" : "s"} waiting for review`,
+    };
+  }
+  if (state.blockedPublishCount > 0) {
+    const n = state.blockedPublishCount;
+    return {
+      kind: "connect_blocked",
+      module: "/connectors",
+      label: "Connect a channel",
+      reason: `${n} approved post${n === 1 ? "" : "s"} can't publish without a connected channel`,
+    };
+  }
+  if (state.liveCampaignsWithoutContent > 0) {
+    const n = state.liveCampaignsWithoutContent;
+    return {
+      kind: "campaign_content",
+      module: "/campaigns",
+      label: "Add campaign content",
+      reason: `${n} live campaign${n === 1 ? "" : "s"} with no content generating`,
+    };
+  }
+  if (state.insightsAvailableUnconnected) {
+    return {
+      kind: "connect_insights",
+      module: "/connectors",
+      label: "Connect insights",
+      reason: "Connect a channel to see what worked",
+    };
+  }
+  for (const item of SETUP_CHECKLIST_ITEMS) {
+    if (!state.checklist[item]) {
+      const target = CHECKLIST_TARGETS[item];
+      return { kind: "checklist", checklistItem: item, ...target };
+    }
+  }
+  if (state.generatingCount > 0) {
+    const n = state.generatingCount;
+    return {
+      kind: "system_working",
+      module: "",
+      label: "Generating",
+      reason: `${n} post${n === 1 ? "" : "s"} generating — nothing needs you right now`,
+    };
+  }
+  return { kind: "none", module: "", label: "All clear", reason: "Nothing needs you right now" };
+}
