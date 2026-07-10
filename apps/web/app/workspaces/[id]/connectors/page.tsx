@@ -3,9 +3,11 @@
 import { EmptyState } from "@/src/components/empty-state";
 import { Button } from "@/src/components/ui/button";
 import { Card } from "@/src/components/ui/card";
-import { Badge } from "@/src/components/ui/badge";
+import { Badge, CountBadge } from "@/src/components/ui/badge";
 import { Input, Textarea } from "@/src/components/ui/input";
-
+import { BrandIcon, Icon } from "@/src/components/ui/icon";
+import type { BrandName } from "@/src/components/ui/brand-icons";
+import styles from "./connectors.module.css";
 
 import { API_URL, apiFetch } from "@/lib/api";
 import {
@@ -18,7 +20,9 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
+  connectorHubGroups,
   EVENT_TYPES,
+  integrationProgress,
   type Connection,
   type ConnectorProvider,
   type EventType,
@@ -29,6 +33,32 @@ import { connectionLabel } from "@/lib/persona-social-routing";
 
 /** The API decorates OAuth providers with whether their app creds are set. */
 type ProviderView = ConnectorProvider & { oauthConfigured?: boolean };
+
+/** Providers with a real brand mark (spec §4 carve-out); the rest get the plug. */
+const PROVIDER_BRAND: Record<string, BrandName> = {
+  linkedin: "linkedin",
+  twitter: "x",
+  reddit: "reddit",
+  instagram: "instagram",
+  meta_ads: "meta",
+  freshsales: "freshsales",
+};
+
+/** One-line GTM value promise per provider (spec §5.7.2) — outcome, not feature. */
+const PROVIDER_PROMISE: Record<string, string> = {
+  linkedin: "Publish approved posts on schedule, straight from Review",
+  twitter: "Post approved content and reply from your own handle",
+  instagram: "Publish approved posts from your business account",
+  reddit: "Post to your subreddits and feed threads into Discovery",
+  meta_ads: "Pull ad results into the learning loop",
+  freshsales: "Pull contacts in as leads; approved emails flow back as notes",
+  pipedrive: "Pull contacts in as leads; approved emails flow back as notes",
+  hubspot: "Pull contacts in as leads; approved emails flow back as notes",
+  smartlead: "Send approved sequences from your own warmed sender",
+  instantly: "Send approved sequences from your own warmed sender",
+  slack: "Get review pings where the team already lives",
+  custom: "Proxy any API through the connector service",
+};
 
 /**
  * Per-provider setup hint shown when an OAuth provider has no app creds in
@@ -310,6 +340,279 @@ export default function ConnectorsPage() {
     await load();
   }
 
+  function renderConnectControls(provider: ProviderView) {
+    const providerConnections = connectionsFor(provider.key);
+    const connectLabel = providerConnections.length > 0 ? "Connect another account" : "Connect";
+    const needsOAuthApp = provider.authMode === "oauth" && !provider.oauthConfigured;
+
+    if (connectingKey === provider.key) {
+      return (
+        <div className="resolve-controls">
+          {provider.authMode === "api_key" && (
+            <label style={{ flex: 1 }}>
+              API key
+              <Input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder="Pasted into the connector service, not stored here"
+              />
+            </label>
+          )}
+          {provider.authMode === "access_token" && (
+            <label style={{ flex: 1 }}>
+              Access token
+              <Input
+                type="password"
+                value={accessToken}
+                onChange={(e) => setAccessToken(e.target.value)}
+                placeholder={
+                  provider.key === "meta_ads"
+                    ? "System-user token with ads_read (Business settings → System users)"
+                    : "Pasted into the connector service, not stored here"
+                }
+              />
+            </label>
+          )}
+          {provider.requiresBaseUrl && (
+            <label style={{ flex: 1 }}>
+              Base URL
+              <Input
+                value={baseUrl}
+                onChange={(e) => setBaseUrl(e.target.value)}
+                placeholder={
+                  provider.key === "freshsales"
+                    ? "https://yourcompany.myfreshworks.com/crm/sales"
+                    : "https://api.example.com"
+                }
+              />
+            </label>
+          )}
+          {provider.key === "custom" && (
+            <label>
+              Test path
+              <Input
+                value={testPath}
+                onChange={(e) => setTestPath(e.target.value)}
+                placeholder="/v1/status"
+              />
+            </label>
+          )}
+          <Button
+            variant="primary"
+            disabled={
+              busy ||
+              (provider.authMode === "api_key" && !apiKey.trim()) ||
+              (provider.authMode === "access_token" && !accessToken.trim()) ||
+              (Boolean(provider.requiresBaseUrl) && !baseUrl.trim())
+            }
+            onClick={() => connect(provider)}
+          >
+            {connectLabel}
+          </Button>
+          <Button variant="secondary" size="sm" onClick={() => setConnectingKey(null)}>
+            Cancel
+          </Button>
+        </div>
+      );
+    }
+
+    return (
+      <div className={styles.cardActions}>
+        {provider.authMode !== "oauth" && (
+          <Button
+            variant={providerConnections.length > 0 ? "secondary" : "primary"}
+            size="sm"
+            disabled={busy || !view?.fabric.healthy}
+            onClick={() => setConnectingKey(provider.key)}
+          >
+            {connectLabel}
+          </Button>
+        )}
+        {provider.authMode === "oauth" && provider.oauthConfigured && (
+          <Button
+            variant={providerConnections.length > 0 ? "secondary" : "primary"}
+            size="sm"
+            disabled={busy || !view?.fabric.healthy}
+            onClick={() => connectOAuth(provider)}
+          >
+            {connectLabel}
+          </Button>
+        )}
+        {needsOAuthApp && OAUTH_APP_HINTS[provider.key] && (
+          <details>
+            <summary className="link-button" style={{ cursor: "pointer" }}>
+              Setup
+            </summary>
+            <p className={styles.hint}>{OAUTH_APP_HINTS[provider.key]}</p>
+          </details>
+        )}
+      </div>
+    );
+  }
+
+  function renderProviderCard(provider: ProviderView) {
+    const providerConnections = connectionsFor(provider.key);
+    const isConnected = providerConnections.some((c) => c.status === "connected");
+    const hasError = providerConnections.some((c) => c.status === "error");
+    const hasDisconnected = providerConnections.some((c) => c.status === "disconnected");
+    const needsOAuthApp = provider.authMode === "oauth" && !provider.oauthConfigured;
+    const brand = PROVIDER_BRAND[provider.key];
+
+    return (
+      <div key={provider.key} className={styles.card}>
+        <div className={styles.cardHead}>
+          <span className={styles.mark}>
+            {brand ? (
+              <BrandIcon name={brand} size="md" brandColor />
+            ) : (
+              <Icon name="connect" size="md" />
+            )}
+          </span>
+          <span className={styles.cardName}>{provider.label}</span>
+          <Badge
+            tone={
+              isConnected ? "approved" : hasError ? "rejected" : needsOAuthApp ? "edited" : "neutral"
+            }
+          >
+            {isConnected
+              ? "connected"
+              : hasError
+                ? "error"
+                : needsOAuthApp
+                  ? "needs OAuth app"
+                  : hasDisconnected
+                    ? "disconnected"
+                    : "not connected"}
+          </Badge>
+        </div>
+
+        <p className={styles.promise}>{PROVIDER_PROMISE[provider.key] ?? ""}</p>
+
+        {providerConnections.length > 0 && (
+          <div className={styles.accounts}>
+            {providerConnections.map((connection) => (
+              <div
+                key={connection.id}
+                className={connection.status === "disconnected" ? "excluded" : ""}
+              >
+                <div className={styles.accountRow}>
+                  <Badge
+                    tone={
+                      connection.status === "connected"
+                        ? "approved"
+                        : connection.status === "error"
+                          ? "rejected"
+                          : "neutral"
+                    }
+                  >
+                    {connection.status}
+                  </Badge>
+                  <span className={styles.accountName}>
+                    {connection.externalAccountUrl ? (
+                      <a href={connection.externalAccountUrl} target="_blank" rel="noreferrer">
+                        {connectionLabel(connection, provider.label)}
+                      </a>
+                    ) : (
+                      connectionLabel(connection, provider.label)
+                    )}
+                  </span>
+                  {connection.externalAccountHandle && (
+                    <span className="meta">@{connection.externalAccountHandle}</span>
+                  )}
+                  {connection.lastCheckedAt && (
+                    <span className={styles.accountMeta}>
+                      checked {new Date(connection.lastCheckedAt).toLocaleString()}
+                    </span>
+                  )}
+                </div>
+                {connection.lastError && <p className="error">{connection.lastError}</p>}
+                {testResults[connection.id] && (
+                  <p className="section-reason">{testResults[connection.id]}</p>
+                )}
+                {connection.status !== "disconnected" && (
+                  <div className="rating-row" style={{ marginTop: 6 }}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => testConnection(connection)}
+                    >
+                      Test
+                    </Button>
+                    <Button
+                      variant="danger"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => disconnect(connection)}
+                    >
+                      Disconnect
+                    </Button>
+                  </div>
+                )}
+                {connection.status === "connected" &&
+                  provider.categories?.includes("social") && (
+                    <details className="outline-preview" style={{ marginTop: 6 }}>
+                      <summary
+                        className="link-button"
+                        style={{ cursor: "pointer", listStyle: "none" }}
+                      >
+                        Content profile
+                        {connection.contentProfile.topics.length > 0 &&
+                          ` — covers ${connection.contentProfile.topics.join(", ")}`}
+                      </summary>
+                      <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                        <Input
+                          value={profileDraftFor(connection).topics}
+                          onChange={(e) =>
+                            setProfileDrafts((d) => ({
+                              ...d,
+                              [connection.id]: {
+                                ...profileDraftFor(connection),
+                                topics: e.target.value,
+                              },
+                            }))
+                          }
+                          placeholder="Topics this account covers, comma-separated…"
+                        />
+                        <Textarea
+                          value={profileDraftFor(connection).guidance}
+                          onChange={(e) =>
+                            setProfileDrafts((d) => ({
+                              ...d,
+                              [connection.id]: {
+                                ...profileDraftFor(connection),
+                                guidance: e.target.value,
+                              },
+                            }))
+                          }
+                          placeholder="Account guidelines — injected into every draft that publishes from this account…"
+                          rows={3}
+                          maxLength={2000}
+                        />
+                        <div className="editor-actions">
+                          <Button
+                            variant="primary"
+                            type="button"
+                            disabled={profileBusy === connection.id}
+                            onClick={() => void saveProfile(connection)}
+                          >
+                            {profileBusy === connection.id ? "Saving…" : "Save profile"}
+                          </Button>
+                        </div>
+                      </div>
+                    </details>
+                  )}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {renderConnectControls(provider)}
+      </div>
+    );
+  }
+
   if (error && !workspace) {
     return (
       <>
@@ -321,6 +624,9 @@ export default function ConnectorsPage() {
 
   if (!workspace || !view) return <EmptyState description="Loading…" />;
 
+  const groups = connectorHubGroups(view.providers);
+  const progress = integrationProgress(view.providers, view.connections);
+
   return (
     <>
       <div className="page-header">
@@ -331,6 +637,14 @@ export default function ConnectorsPage() {
             never inside Tuezday.
           </p>
         </div>
+        <div className={styles.progressRow}>
+          <CountBadge
+            count={progress.connected}
+            max={progress.total}
+            label="capabilities connected"
+          />
+          <span className="meta">capabilities connected</span>
+        </div>
       </div>
 
       {!view.fabric.healthy && (
@@ -338,353 +652,110 @@ export default function ConnectorsPage() {
           Connector service offline: {view.fabric.detail ?? "Nango is not reachable."}
         </p>
       )}
+      {error && workspace && <p className="error">{error}</p>}
 
-      <Card>
-        <h2>Providers</h2>
-        <ul className="section-list">
-          {view.providers.map((provider) => {
-            const providerConnections = connectionsFor(provider.key);
-            const isConnected = providerConnections.some((connection) => connection.status === "connected");
-            const hasError = providerConnections.some((connection) => connection.status === "error");
-            const hasDisconnected = providerConnections.some(
-              (connection) => connection.status === "disconnected",
-            );
-            // An OAuth provider with app creds in .env behaves like any other
-            // connectable provider; without them it stays informational.
-            const needsOAuthApp = provider.authMode === "oauth" && !provider.oauthConfigured;
-            const connectLabel =
-              providerConnections.length > 0 ? "Connect another account" : "Connect";
-            return (
-              <li key={provider.key} className="section-card">
-                <div className="section-head">
-                  <Badge
-                    tone={
-                      isConnected
-                        ? "approved"
-                        : hasError
-                          ? "rejected"
-                          : needsOAuthApp
-                            ? "edited"
-                            : "neutral"
-                    }
-                  >
-                    {isConnected
-                      ? "connected"
-                      : hasError
-                        ? "error"
-                        : needsOAuthApp
-                          ? "needs OAuth app"
-                          : hasDisconnected
-                            ? "disconnected"
-                            : "not connected"}
-                  </Badge>
-                  <span className="section-title">{provider.label}</span>
-                  {providerConnections.length > 0 && (
-                    <span className="section-tokens">{providerConnections.length} account(s)</span>
-                  )}
-                </div>
-
-                {providerConnections.length > 0 && (
-                  <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
-                    {providerConnections.map((connection) => (
-                      <div
-                        key={connection.id}
-                        className={connection.status === "disconnected" ? "excluded" : ""}
-                        style={{ borderTop: "1px solid var(--border)", paddingTop: 10 }}
-                      >
-                        <div className="section-head">
-                          <Badge
-                            tone={
-                              connection.status === "connected"
-                                ? "approved"
-                                : connection.status === "error"
-                                  ? "rejected"
-                                  : "neutral"
-                            }
-                          >
-                            {connection.status}
-                          </Badge>
-                          <span className="section-title">
-                            {connectionLabel(connection, provider.label)}
-                          </span>
-                          {connection.externalAccountHandle && (
-                            <span className="meta">@{connection.externalAccountHandle}</span>
-                          )}
-                          {connection.lastCheckedAt && (
-                            <span className="section-tokens">
-                              checked {new Date(connection.lastCheckedAt).toLocaleString()}
-                            </span>
-                          )}
-                        </div>
-                        {connection.externalAccountUrl && (
-                          <p className="section-reason">
-                            <a href={connection.externalAccountUrl} target="_blank" rel="noreferrer">
-                              {connection.externalAccountUrl}
-                            </a>
-                          </p>
-                        )}
-                        {connection.lastError && <p className="error">{connection.lastError}</p>}
-                        {testResults[connection.id] && (
-                          <p className="section-reason">{testResults[connection.id]}</p>
-                        )}
-                        {connection.status !== "disconnected" && (
-                          <div className="rating-row" style={{ marginTop: 8 }}>
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              disabled={busy}
-                              onClick={() => testConnection(connection)}
-                            >
-                              Test
-                            </Button>
-                            <Button
-                              variant="danger"
-                              size="sm"
-                              disabled={busy}
-                              onClick={() => disconnect(connection)}
-                            >
-                              Disconnect
-                            </Button>
-                          </div>
-                        )}
-                        {connection.status === "connected" &&
-                          provider.categories?.includes("social") && (
-                            <details className="outline-preview" style={{ marginTop: 8 }}>
-                              <summary
-                                className="link-button"
-                                style={{ cursor: "pointer", listStyle: "none" }}
-                              >
-                                Content profile
-                                {connection.contentProfile.topics.length > 0 &&
-                                  ` — covers ${connection.contentProfile.topics.join(", ")}`}
-                              </summary>
-                              <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-                                <Input
-                                  value={profileDraftFor(connection).topics}
-                                  onChange={(e) =>
-                                    setProfileDrafts((d) => ({
-                                      ...d,
-                                      [connection.id]: {
-                                        ...profileDraftFor(connection),
-                                        topics: e.target.value,
-                                      },
-                                    }))
-                                  }
-                                  placeholder="Topics this account covers, comma-separated…"
-                                />
-                                <Textarea
-                                  value={profileDraftFor(connection).guidance}
-                                  onChange={(e) =>
-                                    setProfileDrafts((d) => ({
-                                      ...d,
-                                      [connection.id]: {
-                                        ...profileDraftFor(connection),
-                                        guidance: e.target.value,
-                                      },
-                                    }))
-                                  }
-                                  placeholder="Account guidelines — injected into every draft that publishes from this account…"
-                                  rows={3}
-                                  maxLength={2000}
-                                />
-                                <div className="editor-actions">
-                                  <Button
-                                    variant="primary"
-                                    type="button"
-                                    disabled={profileBusy === connection.id}
-                                    onClick={() => void saveProfile(connection)}
-                                  >
-                                    {profileBusy === connection.id ? "Saving…" : "Save profile"}
-                                  </Button>
-                                </div>
-                              </div>
-                            </details>
-                          )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                {connectingKey === provider.key ? (
-                  <div className="resolve-controls" style={{ marginTop: 10 }}>
-                    {provider.authMode === "api_key" && (
-                      <label style={{ flex: 1 }}>
-                        API key
-                        <Input
-                          type="password"
-                          value={apiKey}
-                          onChange={(e) => setApiKey(e.target.value)}
-                          placeholder="Pasted into the connector service, not stored here"
-                        />
-                      </label>
-                    )}
-                    {provider.authMode === "access_token" && (
-                      <label style={{ flex: 1 }}>
-                        Access token
-                        <Input
-                          type="password"
-                          value={accessToken}
-                          onChange={(e) => setAccessToken(e.target.value)}
-                          placeholder={
-                            provider.key === "meta_ads"
-                              ? "System-user token with ads_read (Business settings → System users)"
-                              : "Pasted into the connector service, not stored here"
-                          }
-                        />
-                      </label>
-                    )}
-                    {provider.requiresBaseUrl && (
-                      <label style={{ flex: 1 }}>
-                        Base URL
-                        <Input
-                          value={baseUrl}
-                          onChange={(e) => setBaseUrl(e.target.value)}
-                          placeholder={
-                            provider.key === "freshsales"
-                              ? "https://yourcompany.myfreshworks.com/crm/sales"
-                              : "https://api.example.com"
-                          }
-                        />
-                      </label>
-                    )}
-                    {provider.key === "custom" && (
-                      <label>
-                        Test path
-                        <Input
-                          value={testPath}
-                          onChange={(e) => setTestPath(e.target.value)}
-                          placeholder="/v1/status"
-                        />
-                      </label>
-                    )}
-                    <Button
-                      variant="primary"
-                      disabled={
-                        busy ||
-                        (provider.authMode === "api_key" && !apiKey.trim()) ||
-                        (provider.authMode === "access_token" && !accessToken.trim()) ||
-                        (Boolean(provider.requiresBaseUrl) && !baseUrl.trim())
-                      }
-                      onClick={() => connect(provider)}
-                    >
-                      {connectLabel}
-                    </Button>
-                    <Button variant="secondary" size="sm" onClick={() => setConnectingKey(null)}>
-                      Cancel
-                    </Button>
-                  </div>
-                ) : (
-                  <div className="rating-row" style={{ marginTop: 8 }}>
-                    {provider.authMode !== "oauth" && (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        disabled={busy || !view.fabric.healthy}
-                        onClick={() => setConnectingKey(provider.key)}
-                      >
-                        {connectLabel}
-                      </Button>
-                    )}
-                    {provider.authMode === "oauth" && provider.oauthConfigured && (
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        disabled={busy || !view.fabric.healthy}
-                        onClick={() => connectOAuth(provider)}
-                      >
-                        {connectLabel}
-                      </Button>
-                    )}
-                  </div>
-                )}
-                {needsOAuthApp && OAUTH_APP_HINTS[provider.key] && (
-                  <p className="section-reason" style={{ marginTop: 8 }}>
-                    {OAUTH_APP_HINTS[provider.key]}
-                  </p>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      </Card>
-
-      <Card>
-        <h2>Webhooks</h2>
-        <form className="persona-form" style={{ borderTop: "none", paddingTop: 0, marginTop: 0 }} onSubmit={addWebhook}>
-          <div className="resolve-controls">
-            <label style={{ flex: 1 }}>
-              Endpoint URL
-              <Input
-                value={hookUrl}
-                onChange={(e) => setHookUrl(e.target.value)}
-                placeholder="https://hooks.example.com/tuezday (try webhook.site)"
-              />
-            </label>
-            <label>
-              Secret (optional)
-              <Input
-                value={hookSecret}
-                onChange={(e) => setHookSecret(e.target.value)}
-                placeholder="for HMAC signatures"
-              />
-            </label>
+      {groups.map((group) => (
+        <section key={group.category} className={styles.group}>
+          <div className={styles.groupHead}>
+            <h2 className={styles.groupTitle}>{group.title}</h2>
+            <span className={styles.groupUnlocks}>{group.unlocks}</span>
           </div>
-          <div className="checkbox-row">
-            <span className="meta">Events:</span>
-            {EVENT_TYPES.filter((t) => t !== "webhook.ping").map((t) => (
-              <label key={t} className="checkbox-label">
-                <input
-                  type="checkbox"
-                  checked={hookTypes.includes(t)}
-                  onChange={() =>
-                    setHookTypes((prev) =>
-                      prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t],
-                    )
-                  }
+          <div className={styles.grid}>{group.providers.map(renderProviderCard)}</div>
+        </section>
+      ))}
+
+      <section className={styles.group}>
+        <div className={styles.groupHead}>
+          <h2 className={styles.groupTitle}>Webhooks</h2>
+          <span className={styles.groupUnlocks}>
+            Push approval events to your own automations
+          </span>
+        </div>
+        <Card>
+          <form
+            className="persona-form"
+            style={{ borderTop: "none", paddingTop: 0, marginTop: 0 }}
+            onSubmit={addWebhook}
+          >
+            <div className="resolve-controls">
+              <label style={{ flex: 1 }}>
+                Endpoint URL
+                <Input
+                  value={hookUrl}
+                  onChange={(e) => setHookUrl(e.target.value)}
+                  placeholder="https://hooks.example.com/tuezday (try webhook.site)"
                 />
-                {t}
               </label>
-            ))}
-          </div>
-          <div className="editor-actions">
-            <Button
-              variant="primary"
-              type="submit"
-              disabled={busy || !hookUrl.trim() || hookTypes.length === 0}
-            >
-              Add webhook
-            </Button>
-          </div>
-        </form>
+              <label>
+                Secret (optional)
+                <Input
+                  value={hookSecret}
+                  onChange={(e) => setHookSecret(e.target.value)}
+                  placeholder="for HMAC signatures"
+                />
+              </label>
+            </div>
+            <div className="checkbox-row">
+              <span className="meta">Events:</span>
+              {EVENT_TYPES.filter((t) => t !== "webhook.ping").map((t) => (
+                <label key={t} className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={hookTypes.includes(t)}
+                    onChange={() =>
+                      setHookTypes((prev) =>
+                        prev.includes(t) ? prev.filter((x) => x !== t) : [...prev, t],
+                      )
+                    }
+                  />
+                  {t}
+                </label>
+              ))}
+            </div>
+            <div className="editor-actions">
+              <Button
+                variant="primary"
+                type="submit"
+                disabled={busy || !hookUrl.trim() || hookTypes.length === 0}
+              >
+                Add webhook
+              </Button>
+            </div>
+          </form>
 
-        {webhooks.length > 0 && (
-          <ul className="section-list">
-            {webhooks.map((w) => (
-              <li key={w.id} className={`section-card ${w.enabled ? "" : "excluded"}`}>
-                <div className="section-head">
-                  <Badge tone={w.enabled ? "approved" : "neutral"}>
-                    {w.enabled ? "enabled" : "disabled"}
-                  </Badge>
-                  <span className="section-title">{w.url}</span>
-                </div>
-                <p className="section-reason">{w.eventTypes.join(" · ")}</p>
-                <div className="rating-row" style={{ marginTop: 8 }}>
-                  <Button variant="secondary" size="sm" disabled={busy} onClick={() => pingWebhook(w.id)}>
-                    Ping
-                  </Button>
-                  <Button variant="secondary" size="sm" onClick={() => toggleWebhook(w)}>
-                    {w.enabled ? "Disable" : "Enable"}
-                  </Button>
-                  <Button variant="danger" size="sm" onClick={() => removeWebhook(w)}>
-                    Delete
-                  </Button>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
-
+          {webhooks.length > 0 && (
+            <ul className="section-list">
+              {webhooks.map((w) => (
+                <li key={w.id} className={`section-card ${w.enabled ? "" : "excluded"}`}>
+                  <div className="section-head">
+                    <Badge tone={w.enabled ? "approved" : "neutral"}>
+                      {w.enabled ? "enabled" : "disabled"}
+                    </Badge>
+                    <span className="section-title">{w.url}</span>
+                  </div>
+                  <p className="section-reason">{w.eventTypes.join(" · ")}</p>
+                  <div className="rating-row" style={{ marginTop: 8 }}>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      disabled={busy}
+                      onClick={() => pingWebhook(w.id)}
+                    >
+                      Ping
+                    </Button>
+                    <Button variant="secondary" size="sm" onClick={() => toggleWebhook(w)}>
+                      {w.enabled ? "Disable" : "Enable"}
+                    </Button>
+                    <Button variant="danger" size="sm" onClick={() => removeWebhook(w)}>
+                      Delete
+                    </Button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </Card>
+      </section>
     </>
   );
 }

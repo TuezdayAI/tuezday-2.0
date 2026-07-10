@@ -1801,6 +1801,61 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
 export const CONNECTION_STATUSES = ["connected", "error", "disconnected"] as const;
 export type ConnectionStatus = (typeof CONNECTION_STATUSES)[number];
 
+// Spec §5.7: the Integrations hub groups providers by what they unlock, not by
+// auth mechanics. Order is the hub's display order; uncategorized providers
+// (Slack, custom proxy) trail as "other".
+export const CONNECTOR_HUB_GROUP_META: readonly {
+  category: ConnectorCategory | "other";
+  title: string;
+  unlocks: string;
+}[] = [
+  { category: "social", title: "Publishing", unlocks: "Approved posts go out on schedule, replies come back in" },
+  { category: "ads", title: "Ads", unlocks: "Ad results feed the learning loop" },
+  { category: "crm", title: "CRM", unlocks: "Your CRM stays the system of record" },
+  { category: "outbound", title: "Outbound", unlocks: "Sequences send from your own sender" },
+  { category: "other", title: "Workspace", unlocks: "Everything else the workspace talks to" },
+] as const;
+
+export interface ConnectorHubGroup<P extends ConnectorProvider = ConnectorProvider> {
+  category: ConnectorCategory | "other";
+  title: string;
+  unlocks: string;
+  providers: P[];
+}
+
+export function connectorHubGroups<P extends ConnectorProvider>(
+  providers: readonly P[],
+): ConnectorHubGroup<P>[] {
+  return CONNECTOR_HUB_GROUP_META.map((meta) => ({
+    ...meta,
+    providers: providers.filter((p) =>
+      meta.category === "other" ? !p.categories?.length : p.categories?.includes(meta.category),
+    ),
+  })).filter((group) => group.providers.length > 0);
+}
+
+/**
+ * Nav progress for the Integrations entry ("1/4"): connected capabilities
+ * (categories with at least one live connection) over the capabilities the
+ * registry offers. Accounts don't stack — two social accounts still count one.
+ */
+export function integrationProgress(
+  providers: readonly ConnectorProvider[],
+  connections: readonly Pick<Connection, "providerKey" | "status">[],
+): { connected: number; total: number } {
+  const categoryOf = new Map<string, readonly ConnectorCategory[]>(
+    providers.map((p) => [p.key, p.categories ?? []]),
+  );
+  const all = new Set<ConnectorCategory>();
+  for (const p of providers) for (const c of p.categories ?? []) all.add(c);
+  const live = new Set<ConnectorCategory>();
+  for (const connection of connections) {
+    if (connection.status !== "connected") continue;
+    for (const c of categoryOf.get(connection.providerKey) ?? []) live.add(c);
+  }
+  return { connected: live.size, total: all.size };
+}
+
 // Sprint 44: what this account posts about + how — injected as the tier-1
 // "account" context section when the publishing account is known at draft time.
 export const CONNECTION_GUIDANCE_MAX_CHARS = 2_000;
@@ -3605,6 +3660,10 @@ export const workspaceCapabilitiesSchema = z.object({
   hasConnections: z.boolean(),
   draftCount: z.number().int(),
   generationCount: z.number().int(),
+  // Spec §5.7.1 nav progress ("1/4") — from integrationProgress(); optional so
+  // older API responses stay valid and the badge simply hides until reported.
+  integrationsConnected: z.number().int().optional(),
+  integrationsTotal: z.number().int().optional(),
 });
 export type WorkspaceCapabilities = z.infer<typeof workspaceCapabilitiesSchema>;
 

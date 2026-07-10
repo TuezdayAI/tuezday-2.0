@@ -33,7 +33,9 @@ describe("GET /workspaces/:id/capabilities", () => {
       hasCrm: false,
       hasConnections: false,
       draftCount: 0,
-      generationCount: 0
+      generationCount: 0,
+      integrationsConnected: 0,
+      integrationsTotal: 4
     });
   });
   

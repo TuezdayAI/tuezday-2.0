@@ -14,6 +14,7 @@ import { apiFetch, clearToken } from "@/lib/api";
 import { initAnalytics, identify } from "@/src/analytics";
 import { UpgradeModal } from "@/components/upgrade-modal";
 import { Icon, type IconName } from "@/src/components/ui/icon";
+import { CountBadge } from "@/src/components/ui/badge";
 import { TopBar } from "@/src/components/top-bar";
 import { Toaster } from "@/src/components/ui/toast";
 
@@ -143,6 +144,16 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
                       >
                         {child.icon && <Icon name={child.icon as IconName} size="sm" className="ws-nav-icon" />}
                         <span>{child.label}</span>
+                        {child.path === "/connectors" &&
+                          caps.integrationsTotal != null &&
+                          caps.integrationsConnected != null && (
+                            <CountBadge
+                              count={caps.integrationsConnected}
+                              max={caps.integrationsTotal}
+                              label="capabilities connected"
+                              style={{ marginLeft: "auto" }}
+                            />
+                          )}
                       </Link>
                     ))}
                   </div>
