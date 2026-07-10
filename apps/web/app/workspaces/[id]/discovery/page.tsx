@@ -807,7 +807,7 @@ export default function DiscoveryPage() {
                         : ""}
                     </span>
                   </div>
-                  {s.lastError && <p className="error">{s.lastError}</p>}
+                  {s.lastError && <p className="error-inline">{s.lastError}</p>}
                   <div className="rating-row" style={{ marginTop: 8 }}>
                     <Button variant="secondary" size="sm" onClick={() => toggleSource(s)}>
                       {s.enabled ? "Disable" : "Enable"}
@@ -935,7 +935,7 @@ export default function DiscoveryPage() {
                   </span>
                 </div>
                 {a.notes && <p className="section-reason">{a.notes}</p>}
-                {a.lastError && <p className="error">{a.lastError}</p>}
+                {a.lastError && <p className="error-inline">{a.lastError}</p>}
                 <div className="rating-row" style={{ marginTop: 8 }}>
                   <Button variant="secondary" size="sm" onClick={() => toggleTrackedAccount(a)}>
                     {a.enabled ? "Disable" : "Enable"}

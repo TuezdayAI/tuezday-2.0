@@ -585,7 +585,7 @@ export default function ContentPage() {
                             >
                               Cancel
                             </Button>
-                            {publishError && <p className="error">{publishError}</p>}
+                            {publishError && <p className="error-inline">{publishError}</p>}
                           </div>
                         )}
                       </li>

@@ -518,6 +518,14 @@ select:focus-visible {
   margin: -16px 0 16px;
 }
 
+/* Per-item error line inside cards/rows — .error's -16px pull-up (page-level
+   form compensation) overlaps any container tighter than 16px. */
+.error-inline {
+  color: var(--danger);
+  font-size: 13px;
+  margin: 4px 0 0;
+}
+
 /* ---------- Workspace list ---------- */
 
 .workspace-list {

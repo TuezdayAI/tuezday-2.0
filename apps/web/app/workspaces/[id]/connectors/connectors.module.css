@@ -104,6 +104,14 @@
   margin-left: auto;
 }
 
+/* Scoped error line — the global .error utility carries a -16px pull-up
+   margin that overlaps the 8px-gap accounts grid. */
+.accountError {
+  color: var(--danger);
+  font-size: 13px;
+  margin: 0;
+}
+
 .cardActions {
   display: flex;
   gap: 8px;

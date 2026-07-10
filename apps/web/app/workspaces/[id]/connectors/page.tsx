@@ -526,7 +526,9 @@ export default function ConnectorsPage() {
                     </span>
                   )}
                 </div>
-                {connection.lastError && <p className="error">{connection.lastError}</p>}
+                {connection.lastError && (
+                  <p className={styles.accountError}>{connection.lastError}</p>
+                )}
                 {testResults[connection.id] && (
                   <p className="section-reason">{testResults[connection.id]}</p>
                 )}

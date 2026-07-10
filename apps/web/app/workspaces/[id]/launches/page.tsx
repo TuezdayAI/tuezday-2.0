@@ -664,7 +664,7 @@ function MessageRow({
         )}
       </div>
       {message.draftContent && <p className="section-reason">{message.draftContent.slice(0, 200)}</p>}
-      {message.lastError && <p className="error">{message.lastError}</p>}
+      {message.lastError && <p className="error-inline">{message.lastError}</p>}
     </li>
   );
 }

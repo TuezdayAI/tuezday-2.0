@@ -573,7 +573,7 @@ export default function AdLaunchesPage() {
                       ? `"${launch.creative.headline}" — ${launch.creative.primaryText}`
                       : "creative unavailable"}
                   </p>
-                  {launch.lastError && <p className="error">{launch.lastError}</p>}
+                  {launch.lastError && <p className="error-inline">{launch.lastError}</p>}
 
                   <div className="editor-actions">
                     {launch.status === "draft" && (

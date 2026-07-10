@@ -432,7 +432,7 @@ export default function AdsPage() {
                     </Button>
                   )}
                 </div>
-                {account.lastError && <p className="error">{account.lastError}</p>}
+                {account.lastError && <p className="error-inline">{account.lastError}</p>}
               </li>
             ))}
           </ul>

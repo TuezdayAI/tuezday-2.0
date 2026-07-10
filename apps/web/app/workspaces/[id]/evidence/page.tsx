@@ -313,7 +313,7 @@ export default function EvidencePage() {
                     {new Date(doc.createdAt).toLocaleDateString()}
                   </span>
                 </div>
-                {doc.error && <p className="error">{doc.error}</p>}
+                {doc.error && <p className="error-inline">{doc.error}</p>}
                 <div className="rating-row" style={{ marginTop: 8 }}>
                   <Button variant="danger" size="sm" onClick={() => remove(doc)}>
                     Delete
