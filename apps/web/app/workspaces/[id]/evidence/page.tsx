@@ -1,10 +1,13 @@
 "use client";
 
+import { TopBarActions } from "@/src/components/top-bar";
 import { EmptyState } from "@/src/components/empty-state";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
-import { Badge } from "@/src/components/ui/badge";
+import { Badge, CountBadge } from "@/src/components/ui/badge";
+import { Icon, type IconName } from "@/src/components/ui/icon";
 import { Input, Textarea } from "@/src/components/ui/input";
+import styles from "./evidence.module.css";
 
 import { API_URL, apiFetch } from "@/lib/api";
 
@@ -22,6 +25,11 @@ function originLabel(kind: EvidenceDocument["kind"]): string {
   return kind === "signal" ? "From signal" : kind === "published" ? "From published" : "Manual";
 }
 
+/** Registry icon per document origin (spec §4 vocabulary). */
+function kindIcon(kind: EvidenceDocument["kind"]): IconName {
+  return kind === "signal" ? "discover" : kind === "published" ? "post" : "blog";
+}
+
 export default function EvidencePage() {
   const { id } = useParams<{ id: string }>();
 
@@ -33,6 +41,7 @@ export default function EvidencePage() {
   const [title, setTitle] = useState("");
   const [content, setContent] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -114,15 +123,17 @@ export default function EvidencePage() {
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>Evidence library</h1>
-          <p className="subtitle">
-            Supporting material Tuezday can pull in and cite — website copy, past posts,
-            research, call notes.
-          </p>
-        </div>
-      </div>
+      <TopBarActions>
+        <Button variant="secondary" size="sm" onClick={() => setShowAdd((v) => !v)}>
+          <Icon name="add" size="sm" />
+          Add evidence
+        </Button>
+      </TopBarActions>
+
+      <p className="subtitle">
+        Supporting material Tuezday can pull in and cite — website copy, past posts, research,
+        call notes.
+      </p>
 
       {!view.store.healthy && (
         <p className="error">
@@ -131,60 +142,80 @@ export default function EvidencePage() {
         </p>
       )}
 
-      <Card>
-        <CardHeader title="Add evidence" />
-        <form
-          className="persona-form"
-          style={{ borderTop: "none", paddingTop: 0, marginTop: 0 }}
-          onSubmit={upload}
-        >
-          <Input
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Title (e.g. Website copy, June launch post, Customer call notes)"
-            maxLength={200}
+      {showAdd && (
+        <Card>
+          <CardHeader
+            title={
+              <span className={styles.head}>
+                <Icon name="add" size="sm" className={styles.headIcon} />
+                Add evidence
+              </span>
+            }
           />
-          <Textarea
-            value={content}
-            onChange={(e) => setContent(e.target.value)}
-            placeholder="Paste the document text…"
-            rows={8}
-          />
-          <div className="editor-actions">
-            <Button
-              variant="primary"
-              type="submit"
-              disabled={
-                uploading ||
-                !view.store.healthy ||
-                title.trim().length === 0 ||
-                content.trim().length === 0
-              }
-            >
-              {uploading ? "Ingesting…" : "Add to corpus"}
-            </Button>
-            {!view.store.healthy && (
-              <span className="meta">Start the store with `npm run r2r:up` first.</span>
-            )}
-          </div>
-        </form>
-        {error && <p className="error">{error}</p>}
-      </Card>
+          <form
+            className="persona-form"
+            style={{ borderTop: "none", paddingTop: 0, marginTop: 0 }}
+            onSubmit={upload}
+          >
+            <Input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Title (e.g. Website copy, June launch post, Customer call notes)"
+              maxLength={200}
+            />
+            <Textarea
+              value={content}
+              onChange={(e) => setContent(e.target.value)}
+              placeholder="Paste the document text…"
+              rows={8}
+            />
+            <div className="editor-actions">
+              <Button
+                variant="primary"
+                type="submit"
+                disabled={
+                  uploading ||
+                  !view.store.healthy ||
+                  title.trim().length === 0 ||
+                  content.trim().length === 0
+                }
+              >
+                {uploading ? "Ingesting…" : "Add to corpus"}
+              </Button>
+              {!view.store.healthy && (
+                <span className="meta">Start the store with `npm run r2r:up` first.</span>
+              )}
+            </div>
+          </form>
+        </Card>
+      )}
+
+      {error && <p className="error">{error}</p>}
 
       <Card>
-        <CardHeader title={`Ingest candidates (${candidates.length})`} />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="status-review" size="sm" className={styles.headIconReview} />
+              Ingest candidates <CountBadge count={candidates.length} label="pending candidates" />
+            </span>
+          }
+        />
         <p className="subtitle" style={{ marginTop: 0 }}>
           Signals and published posts the worker proposes for the corpus. Accept the useful ones —
           nothing is ingested until you do.
         </p>
         {candidates.length === 0 ? (
-          <EmptyState description={<>No pending candidates. The worker proposes your signals and published posts here as they
-            appear.</>} />
+          <EmptyState description={<>No pending candidates — the worker proposes your signals and published posts here as they
+            appear. Accepted candidates join the corpus below.</>} />
         ) : (
           <ul className="section-list">
             {candidates.map((c) => (
               <li key={c.id} className="section-card">
                 <div className="section-head">
+                  <span className={styles.kindMark} title={originLabel(c.kind)}>
+                    <Icon name={kindIcon(c.kind)} size="sm" />
+                  </span>
                   <span className="layer-badge">
                     {c.kind === "signal" ? "From signal" : "From published"}
                   </span>
@@ -212,15 +243,58 @@ export default function EvidencePage() {
       </Card>
 
       <Card>
-        <CardHeader title={`Corpus (${view.documents.length})`} />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="doc-history" size="sm" className={styles.headIcon} />
+              Corpus <CountBadge count={view.documents.length} label="documents in the corpus" />
+            </span>
+          }
+        />
         {view.documents.length === 0 ? (
-          <EmptyState description={<>No evidence yet. Paste your website copy and a few past posts to give the brain
-            something to cite.</>} />
+          <EmptyState
+            description={<>No evidence yet. Paste your website copy and a few past posts to give the brain
+            something to cite.</>}
+            primaryAction={
+              <Button variant="secondary" size="sm" onClick={() => setShowAdd(true)}>
+                <Icon name="add" size="sm" />
+                Add evidence
+              </Button>
+            }
+            preview={
+              <div className={styles.previewList}>
+                <div className={styles.previewCard}>
+                  <span className={styles.kindMark}>
+                    <Icon name="blog" size="sm" />
+                  </span>
+                  <span className={styles.previewTitle}>Website copy — homepage & pricing</span>
+                  <span className={styles.previewMeta}>4,200 chars</span>
+                </div>
+                <div className={styles.previewCard}>
+                  <span className={styles.kindMark}>
+                    <Icon name="post" size="sm" />
+                  </span>
+                  <span className={styles.previewTitle}>June launch post</span>
+                  <span className={styles.previewMeta}>1,100 chars</span>
+                </div>
+                <div className={styles.previewCard}>
+                  <span className={styles.kindMark}>
+                    <Icon name="blog" size="sm" />
+                  </span>
+                  <span className={styles.previewTitle}>Customer call notes — onboarding pains</span>
+                  <span className={styles.previewMeta}>2,700 chars</span>
+                </div>
+              </div>
+            }
+          />
         ) : (
           <ul className="section-list">
             {view.documents.map((doc) => (
               <li key={doc.id} className="section-card">
                 <div className="section-head">
+                  <span className={styles.kindMark} title={originLabel(doc.kind)}>
+                    <Icon name={kindIcon(doc.kind)} size="sm" />
+                  </span>
                   <Badge
                     tone={
                       doc.status === "ready"

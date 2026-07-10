@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { Button } from "@/src/components/ui/button";
 import { useRouter, useSearchParams } from "next/navigation";
 import { API_URL, setToken } from "@/lib/api";
+import styles from "./callback.module.css";
 
 function CallbackHandler() {
   const router = useRouter();
@@ -66,22 +67,43 @@ function CallbackHandler() {
 
   if (error) {
     return (
-      <main className="site-main">
-        <h1>Login failed</h1>
-        <p className="error">{error}</p>
-        <Button variant="ghost" size="sm" onClick={() => router.push("/login")} style={{ marginTop: "1rem" }}>
-          Return to login
-        </Button>
-      </main>
+      <>
+        <header className="site-header">
+          <span className="logo">Tuezday</span>
+          <span className="tagline">GTM that remembers</span>
+        </header>
+        <main className="site-main">
+          <div className={styles.card}>
+            <h1>Google sign-in didn&apos;t finish</h1>
+            <p className="error">{error}</p>
+            <p className={styles.waiting}>
+              Head back to the login page and try again — or sign in with your email and password
+              instead.
+            </p>
+            <div className={styles.actions}>
+              <Button variant="primary" onClick={() => router.push("/login")}>
+                Return to login
+              </Button>
+            </div>
+          </div>
+        </main>
+      </>
     );
   }
 
   return (
-    <main className="site-main">
-      <div style={{ textAlign: "center", padding: "3rem" }}>
-        <p>Logging you in...</p>
-      </div>
-    </main>
+    <>
+      <header className="site-header">
+        <span className="logo">Tuezday</span>
+        <span className="tagline">GTM that remembers</span>
+      </header>
+      <main className="site-main">
+        <div className={styles.card}>
+          <h1>Signing you in…</h1>
+          <p className={styles.waiting}>Finishing Google sign-in — one moment.</p>
+        </div>
+      </main>
+    </>
   );
 }
 

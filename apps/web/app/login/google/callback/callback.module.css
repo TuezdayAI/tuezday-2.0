@@ -1,0 +1,24 @@
+/* Google callback — Editorial polish (spec §7 Wave D): tokens only. */
+
+.card {
+  max-width: 400px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+}
+
+.card h1 {
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
+.waiting {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0;
+}
+
+.actions {
+  margin-top: 18px;
+}

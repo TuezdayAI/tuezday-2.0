@@ -1,11 +1,14 @@
 "use client";
 
-import { PageHeader } from "@/src/components/page-header";
+import { TopBarActions } from "@/src/components/top-bar";
 import { EmptyState } from "@/src/components/empty-state";
 import { ShowMoreButton, useShowMore } from "@/src/components/show-more";
 import { Button } from "@/src/components/ui/button";
-import { Badge } from "@/src/components/ui/badge";
+import { Badge, CountBadge } from "@/src/components/ui/badge";
+import { BrandIcon, Icon } from "@/src/components/ui/icon";
+import type { BrandName } from "@/src/components/ui/brand-icons";
 import { Tabs } from "@/src/components/ui/tabs";
+import styles from "./inbox.module.css";
 
 
 import { useCallback, useEffect, useState } from "react";
@@ -35,6 +38,14 @@ const STATUS_LABELS: Record<InboxItemStatus, string> = {
 };
 
 type Filter = InboxItemStatus | "all";
+
+/** Providers with a brand mark (spec §4 carve-out); others fall back to email. */
+const PROVIDER_BRAND: Partial<Record<string, BrandName>> = {
+  linkedin: "linkedin",
+  twitter: "x",
+  reddit: "reddit",
+  instagram: "instagram",
+};
 
 export default function InboxPage() {
   const { id } = useParams<{ id: string }>();
@@ -160,13 +171,18 @@ export default function InboxPage() {
 
   return (
     <>
-      <PageHeader title="Inbox" subtitle={<>Comments on your published posts and replies to your DMs, in one place. Draft a reply in
-            your voice, approve it on <Link href={`/workspaces/${id}/approvals`}>Review</Link>, and
-            it posts back to the platform.</>} actions={<>
-            <Button variant="primary" onClick={runNow} disabled={running}>
-            {running ? "Running…" : "Run inbox now"}
-          </Button>
-          </>} />
+      <TopBarActions>
+        <Button variant="primary" size="sm" onClick={runNow} disabled={running}>
+          <Icon name="regenerate" size="sm" />
+          {running ? "Running…" : "Run inbox now"}
+        </Button>
+      </TopBarActions>
+
+      <p className="subtitle">
+        Comments on your published posts and replies to your DMs, in one place. Draft a reply in
+        your voice, approve it on <Link href={`/workspaces/${id}/approvals`}>Review</Link>, and it
+        posts back to the platform.
+      </p>
 
       {lastRun && (
         <p className="subtitle">
@@ -179,7 +195,12 @@ export default function InboxPage() {
       <Tabs
         tabs={filters.map((f) => ({
           key: f,
-          label: `${f === "all" ? "All" : STATUS_LABELS[f]} (${counts(f)})`,
+          label: (
+            <>
+              {f === "all" ? "All" : STATUS_LABELS[f]}{" "}
+              <CountBadge count={counts(f)} label={`${f} items`} />
+            </>
+          ),
         }))}
         active={filter}
         onChange={(key) => setFilter(key as Filter)}
@@ -188,17 +209,65 @@ export default function InboxPage() {
       {error && <p className="error">{error}</p>}
 
       {visible.length === 0 ? (
-        <EmptyState description={<>{items.length === 0
+        <EmptyState
+          description={<>{items.length === 0
             ? "Nothing inbound yet. When someone comments on a published post or replies to a DM, it shows up here — run the inbox to pull the latest."
-            : "Nothing in this state."}</>} />
+            : "Nothing in this state."}</>}
+          primaryAction={
+            items.length === 0 ? (
+              <Button variant="secondary" size="sm" onClick={runNow} disabled={running}>
+                <Icon name="regenerate" size="sm" />
+                {running ? "Running…" : "Run inbox now"}
+              </Button>
+            ) : undefined
+          }
+          preview={
+            items.length === 0 ? (
+              <div className={styles.previewList}>
+                <div className={styles.previewCard}>
+                  <span className={styles.previewAuthor}>
+                    <BrandIcon name="linkedin" size="sm" /> Maya R. · comment
+                  </span>
+                  <p className={styles.previewBody}>
+                    This is exactly the workflow gap we hit last quarter — how does it handle approvals?
+                  </p>
+                </div>
+                <div className={styles.previewCard}>
+                  <span className={styles.previewAuthor}>
+                    <BrandIcon name="x" size="sm" /> @growthlee · DM
+                  </span>
+                  <p className={styles.previewBody}>
+                    Saw your launch post. Curious what the pricing looks like for small teams.
+                  </p>
+                </div>
+                <div className={styles.previewCard}>
+                  <span className={styles.previewAuthor}>
+                    <BrandIcon name="reddit" size="sm" /> u/saasfounder · comment
+                  </span>
+                  <p className={styles.previewBody}>
+                    Been burned by tools like this before — what makes the brain thing different?
+                  </p>
+                </div>
+              </div>
+            ) : undefined
+          }
+        />
       ) : (
         <ul className="section-list">
           {visible.map((item) => {
             const draft = item.replyDraft;
             const replyPosted = Boolean(item.postedReplyExternalId);
+            const brand = PROVIDER_BRAND[item.providerKey];
             return (
               <li key={item.id} className="section-card">
                 <div className="section-head">
+                  <span className={styles.itemMark} title={item.providerKey}>
+                    {brand ? (
+                      <BrandIcon name={brand} size="sm" />
+                    ) : (
+                      <Icon name="email" size="sm" />
+                    )}
+                  </span>
                   <Badge tone={item.status === "replied" ? "approved" : item.status === "dismissed" ? "rejected" : "edited"}>
                     {STATUS_LABELS[item.status]}
                   </Badge>

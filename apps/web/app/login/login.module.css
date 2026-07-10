@@ -1,0 +1,74 @@
+/* Login — Editorial polish (spec §7 Wave D): hairline card, tokens only. */
+
+.card {
+  max-width: 400px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+}
+
+.card h1 {
+  margin-top: 0;
+}
+
+.switchRow {
+  color: var(--muted);
+  margin: 0 0 20px;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.divider {
+  display: flex;
+  align-items: center;
+  text-align: center;
+  margin: 20px 0;
+  color: var(--muted-2);
+}
+
+.divider::before,
+.divider::after {
+  content: "";
+  flex: 1;
+  border-bottom: 1px solid var(--border);
+}
+
+.divider span {
+  padding: 0 10px;
+  font-size: 12.5px;
+}
+
+.googleButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  font-weight: 500;
+  font-family: var(--font-body);
+  font-size: 14px;
+  padding: 9px 14px;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+
+.googleButton:hover:not(:disabled) {
+  background: var(--panel-2);
+}
+
+.googleButton:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.error {
+  margin-top: 16px;
+}

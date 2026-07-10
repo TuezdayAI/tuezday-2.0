@@ -2,10 +2,13 @@
 
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
+import { TopBarActions } from "@/src/components/top-bar";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
-import { Badge } from "@/src/components/ui/badge";
+import { Badge, CountBadge } from "@/src/components/ui/badge";
+import { Icon } from "@/src/components/ui/icon";
 import { Input, Select } from "@/src/components/ui/input";
+import styles from "./lists.module.css";
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
@@ -176,6 +179,29 @@ interface AudienceDetail {
   members: AudienceMember[];
 }
 
+// Sample audiences for the preview-value empty state (spec §6.5) — blurred
+// behind the CTA, never shown as real data.
+const SAMPLE_AUDIENCES = [
+  {
+    name: "VPs at fintech",
+    kind: "dynamic" as const,
+    members: 42,
+    description: "role contains “VP” AND company industry contains “fintech”",
+  },
+  {
+    name: "Warm intros — Q3",
+    kind: "static" as const,
+    members: 12,
+    description: "Hand-picked founders we already talked to at SaaStr",
+  },
+  {
+    name: "Replied to launch email",
+    kind: "dynamic" as const,
+    members: 8,
+    description: "type is lead AND notes contains “replied”",
+  },
+];
+
 const EMPTY_FORM = {
   name: "",
   description: "",
@@ -330,13 +356,23 @@ export default function ListsPage() {
   return (
     <>
       <PageHeader title="Lists &amp; segments" subtitle={<>Group leads and contacts into reusable audiences — hand-picked lists or live
-            rule-based segments — then attach them to a campaign as its target.</>} actions={<>
-            <Button variant="primary" onClick={() => startEdit()}>+ New audience</Button>
-          </>} />
+            rule-based segments — then attach them to a campaign as its target.</>} />
+
+      <TopBarActions>
+        <Button variant="primary" size="sm" onClick={() => startEdit()}>
+          <Icon name="add" size="sm" /> New audience
+        </Button>
+      </TopBarActions>
 
       {showForm && (
         <Card>
-          <CardHeader title={editingId ? "Edit audience" : "New audience"} />
+          <CardHeader
+            title={
+              <span className={styles.cardTitle}>
+                <Icon name="audience" size="sm" /> {editingId ? "Edit audience" : "New audience"}
+              </span>
+            }
+          />
           <form className="persona-form" style={{ borderTop: "none", paddingTop: 0, marginTop: 0 }} onSubmit={save}>
             <Input
               value={form.name}
@@ -396,7 +432,35 @@ export default function ListsPage() {
       )}
 
       {audiences.length === 0 && !showForm ? (
-        <EmptyState description={<>No audiences yet. Create a static list or a dynamic segment.</>} />
+        <EmptyState
+          preview={
+            <ul className="section-list">
+              {SAMPLE_AUDIENCES.map((a) => (
+                <li key={a.name} className="section-card">
+                  <div className="section-head">
+                    <Badge tone={a.kind === "dynamic" ? "pending" : "approved"}>{a.kind}</Badge>
+                    <span className="section-title">{a.name}</span>
+                    <span className="section-tokens">{a.members} members</span>
+                  </div>
+                  <p className="section-reason">{a.description}</p>
+                </li>
+              ))}
+            </ul>
+          }
+          icon={<Icon name="audience" size="lg" />}
+          title="Group your audience once, reuse it everywhere"
+          description={
+            <>
+              Build a hand-picked list or a live rule-based segment from your leads and CRM
+              contacts, then attach it to a campaign or launch as its target.
+            </>
+          }
+          primaryAction={
+            <Button variant="primary" size="sm" onClick={() => startEdit()}>
+              <Icon name="add" size="sm" /> New audience
+            </Button>
+          }
+        />
       ) : (
         <ul className="section-list">
           {audiences.map((a) => {
@@ -408,7 +472,9 @@ export default function ListsPage() {
                     {a.kind}
                   </Badge>
                   <span className="section-title">{a.name}</span>
-                  <span className="section-tokens">{a.memberCount} members</span>
+                  <span className="section-tokens">
+                    <CountBadge count={a.memberCount} label="members" /> members
+                  </span>
                 </div>
                 {a.description && <p className="section-reason">{a.description}</p>}
 

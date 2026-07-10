@@ -1,0 +1,61 @@
+/* Evidence library — Wave B sweep (spec §7): tone section heads, kind icons
+   on rows, preview-value empty states. Editorial tokens only. */
+
+.head {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Evidence lives on the history tone (nav vocabulary: doc-history). */
+.headIcon {
+  color: var(--c3-deep);
+}
+
+/* Candidates await review — icp/review tone. */
+.headIconReview {
+  color: var(--c4-deep);
+}
+
+/* Small square mark carrying the document-kind icon on each row. */
+.kindMark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+/* Blurred sample docs behind empty states (spec §6.5 preview-value mode). */
+.previewList {
+  display: grid;
+  gap: 12px;
+  padding: 24px 28px;
+}
+
+.previewCard {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.previewTitle {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--text);
+}
+
+.previewMeta {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted-2);
+}

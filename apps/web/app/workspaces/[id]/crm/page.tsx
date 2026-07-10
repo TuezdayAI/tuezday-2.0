@@ -2,10 +2,13 @@
 
 import { EmptyState } from "@/src/components/empty-state";
 import { ConnectPrompt } from "@/src/components/connect-prompt";
-import { Badge } from "@/src/components/ui/badge";
+import { TopBarActions } from "@/src/components/top-bar";
+import { Badge, CountBadge } from "@/src/components/ui/badge";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
+import { Icon } from "@/src/components/ui/icon";
 import { Input, Select } from "@/src/components/ui/input";
+import styles from "./crm.module.css";
 
 import { API_URL, apiFetch } from "@/lib/api";
 
@@ -264,8 +267,22 @@ export default function CrmPage() {
         </p>
       )}
 
+      <TopBarActions>
+        {crmConnections.length > 0 && (
+          <Button variant="primary" size="sm" disabled={busy || !activeConnectionId} onClick={sync}>
+            <Icon name="regenerate" size="sm" /> {busy ? "Working…" : "Sync contacts"}
+          </Button>
+        )}
+      </TopBarActions>
+
       <Card>
-        <CardHeader title="Sync" />
+        <CardHeader
+          title={
+            <span className={styles.cardTitle}>
+              <Icon name="regenerate" size="sm" /> Sync
+            </span>
+          }
+        />
         {crmConnections.length === 0 ? (
           <EmptyState
             preview={
@@ -396,9 +413,19 @@ export default function CrmPage() {
       </Card>
 
       <Card>
-        <h2>CRM contacts ({contacts.length})</h2>
+        <CardHeader
+          title={
+            <span className={styles.cardTitle}>
+              <Icon name="user" size="sm" /> CRM contacts
+              <CountBadge count={contacts.length} label="contacts" />
+            </span>
+          }
+        />
         {contacts.length === 0 ? (
-          <EmptyState description={<>Nothing synced yet. Run a sync above.</>} />
+          <EmptyState
+            icon={<Icon name="user" size="lg" />}
+            description={<>Nothing synced yet. Run a sync above.</>}
+          />
         ) : (
           <ul className="section-list">
             {contacts.map((contact) => (
@@ -447,7 +474,14 @@ export default function CrmPage() {
 
       {discarded.length > 0 && (
         <Card>
-          <h2>Discarded ({discarded.length})</h2>
+          <CardHeader
+            title={
+              <span className={styles.cardTitle}>
+                <Icon name="reject" size="sm" /> Discarded
+                <CountBadge count={discarded.length} label="discarded contacts" />
+              </span>
+            }
+          />
           <p className="section-reason">
             These are hidden locally and a re-sync won't bring them back. Restore one to sync it
             again. Nothing here was deleted in your CRM.
@@ -476,9 +510,17 @@ export default function CrmPage() {
       )}
 
       <Card>
-        <h2>Leads → CRM</h2>
+        <CardHeader
+          title={
+            <span className={styles.cardTitle}>
+              <Icon name="external" size="sm" /> Leads → CRM
+            </span>
+          }
+        />
         {leadsList.length === 0 ? (
-          <EmptyState description={<>No leads yet. Import a contact above or add leads on the{" "}
+          <EmptyState
+            icon={<Icon name="external" size="lg" />}
+            description={<>No leads yet. Import a contact above or add leads on the{" "}
             <Link href={`/workspaces/${id}/outbound`}>outbound page</Link>.</>} />
         ) : (
           <ul className="section-list">
@@ -508,9 +550,17 @@ export default function CrmPage() {
       </Card>
 
       <Card>
-        <h2>Approved outbound drafts → CRM notes</h2>
+        <CardHeader
+          title={
+            <span className={styles.cardTitle}>
+              <Icon name="email" size="sm" /> Approved outbound drafts → CRM notes
+            </span>
+          }
+        />
         {approvedDrafts.length === 0 ? (
-          <EmptyState description={<>No approved outbound drafts yet. Draft on the{" "}
+          <EmptyState
+            icon={<Icon name="email" size="lg" />}
+            description={<>No approved outbound drafts yet. Draft on the{" "}
             <Link href={`/workspaces/${id}/outbound`}>outbound page</Link>, approve in the{" "}
             <Link href={`/workspaces/${id}/approvals`}>queue</Link>, then log them here.</>} />
         ) : (

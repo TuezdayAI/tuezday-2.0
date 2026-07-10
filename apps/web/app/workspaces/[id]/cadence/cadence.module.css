@@ -1,0 +1,25 @@
+/* Cadence manager — shared by the /cadence route (framed cards) and the
+   Campaigns module-settings modal (plain hairline sections, spec §3.2). */
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: 15px;
+}
+
+.head svg {
+  color: var(--muted);
+}
+
+.plain {
+  padding: 2px 0 18px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 18px;
+}
+
+.plain:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}

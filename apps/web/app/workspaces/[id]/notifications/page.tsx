@@ -1,8 +1,12 @@
 "use client";
 
 import { API_URL, apiFetch } from "@/lib/api";
+import { EmptyState } from "@/src/components/empty-state";
 import { Button } from "@/src/components/ui/button";
 import { Input, Select } from "@/src/components/ui/input";
+import { Badge, CountBadge } from "@/src/components/ui/badge";
+import { Icon } from "@/src/components/ui/icon";
+import styles from "./notifications.module.css";
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import type { Workspace } from "@tuezday/contracts";
@@ -109,6 +113,8 @@ export default function NotificationsPage() {
   if (error) return <p className="error">{error}</p>;
   if (!workspace || !channels) return <p className="empty">Loading…</p>;
 
+  const enabledCount = channels.filter((c) => c.enabled).length;
+
   return (
     <>
       <div className="page-header">
@@ -120,21 +126,13 @@ export default function NotificationsPage() {
         </div>
       </div>
 
-      <div style={{ maxWidth: 800 }}>
-        <section style={{ marginBottom: "2rem" }}>
-          <h2>Add a Channel</h2>
-          <form
-            onSubmit={addChannel}
-            style={{
-              display: "flex",
-              gap: "1rem",
-              alignItems: "center",
-              marginTop: "1rem",
-              background: "var(--color-bg-subtle)",
-              padding: "1rem",
-              borderRadius: "8px",
-            }}
-          >
+      <div className={styles.column}>
+        <section>
+          <div className={styles.sectionHead}>
+            <Icon name="add" size="sm" className={styles.sectionIcon} />
+            <h2>Add a channel</h2>
+          </div>
+          <form onSubmit={addChannel} className={styles.addForm}>
             <Select
               value={newType}
               onChange={(e) => setNewType(e.target.value as NotificationChannelType)}
@@ -147,45 +145,51 @@ export default function NotificationsPage() {
               value={newTarget}
               onChange={(e) => setNewTarget(e.target.value)}
               placeholder={newType === "email" ? "founder@example.com" : "Telegram Chat ID"}
-              style={{ flex: 1 }}
+              className={styles.addTarget}
               disabled={isAdding}
             />
             <Button variant="primary" type="submit" disabled={isAdding || !newTarget.trim()}>
-              {isAdding ? "Adding..." : "Add"}
+              {isAdding ? "Adding…" : "Add"}
             </Button>
           </form>
           {newType === "telegram" && (
-            <p className="help-text" style={{ marginTop: "0.5rem", fontSize: "0.9rem", color: "var(--color-text-dim)" }}>
-              To get your Telegram Chat ID, start a conversation with the bot and use a tool like <code>@userinfobot</code>.
+            <p className={styles.help}>
+              To get your Telegram Chat ID, start a conversation with the bot and use a tool like{" "}
+              <code>@userinfobot</code>.
             </p>
           )}
         </section>
 
         <section>
-          <h2>Configured Channels</h2>
+          <div className={styles.sectionHead}>
+            <Icon name="notification" size="sm" className={styles.sectionIcon} />
+            <h2>Configured channels</h2>
+            {channels.length > 0 && (
+              <CountBadge count={enabledCount} max={channels.length} label="channels enabled" />
+            )}
+          </div>
           {channels.length === 0 ? (
-            <p className="empty" style={{ marginTop: "1rem" }}>No channels configured yet.</p>
+            <EmptyState
+              icon={<Icon name="notification" size="lg" />}
+              title="Nothing to catch up on"
+              description="No channels yet — add your email or Telegram above and Tuezday will ping you the moment a draft needs review. Until then, the approval queue has you covered."
+            />
           ) : (
-            <ul style={{ listStyle: "none", padding: 0, marginTop: "1rem" }}>
+            <ul className={styles.channelList}>
               {channels.map((c) => (
-                <li
-                  key={c.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "space-between",
-                    padding: "1rem",
-                    border: "1px solid var(--color-border)",
-                    borderRadius: "8px",
-                    marginBottom: "0.5rem",
-                  }}
-                >
-                  <div>
-                    <strong>{c.type === "email" ? "✉️ Email" : "✈️ Telegram"}</strong>
-                    <span style={{ marginLeft: "1rem", fontFamily: "monospace" }}>{c.target}</span>
-                  </div>
-                  <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
-                    <label style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                <li key={c.id} className={styles.channelRow}>
+                  <span className={styles.channelIcon}>
+                    <Icon name={c.type === "email" ? "email" : "notification"} size="sm" />
+                  </span>
+                  <span className={styles.channelType}>
+                    {c.type === "email" ? "Email" : "Telegram"}
+                  </span>
+                  <span className={styles.channelTarget}>{c.target}</span>
+                  <Badge tone={c.enabled ? "approved" : "neutral"}>
+                    {c.enabled ? "on" : "off"}
+                  </Badge>
+                  <span className={styles.rowEnd}>
+                    <label className={styles.toggle}>
                       <input
                         type="checkbox"
                         checked={c.enabled}
@@ -194,12 +198,12 @@ export default function NotificationsPage() {
                       Enabled
                     </label>
                     <Button variant="secondary" size="sm" onClick={() => sendTest(c.id)}>
-                      Send Test
+                      Send test
                     </Button>
                     <Button variant="danger" size="sm" onClick={() => deleteChannel(c.id)}>
                       Delete
                     </Button>
-                  </div>
+                  </span>
                 </li>
               ))}
             </ul>

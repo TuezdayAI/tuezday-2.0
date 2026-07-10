@@ -1,15 +1,20 @@
 "use client";
 
 import { EmptyState } from "@/src/components/empty-state";
+import { TopBarActions } from "@/src/components/top-bar";
 import { Button } from "@/src/components/ui/button";
 import { Card } from "@/src/components/ui/card";
 import { Input } from "@/src/components/ui/input";
-
+import { Badge, CountBadge } from "@/src/components/ui/badge";
+import { Icon } from "@/src/components/ui/icon";
+import styles from "./team.module.css";
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import type { WorkspaceInvite, WorkspaceMember } from "@tuezday/contracts";
 import { apiFetch } from "@/lib/api";
+
+const INVITE_INPUT_ID = "team-invite-email";
 
 export default function TeamPage() {
   const { id } = useParams<{ id: string }>();
@@ -52,6 +57,12 @@ export default function TeamPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  function focusInvite() {
+    const el = document.getElementById(INVITE_INPUT_ID);
+    el?.scrollIntoView({ behavior: "smooth", block: "center" });
+    el?.focus({ preventScroll: true });
+  }
 
   async function sendInvite(e: React.FormEvent) {
     e.preventDefault();
@@ -121,8 +132,19 @@ export default function TeamPage() {
     await load();
   }
 
+  const initialOf = (m: WorkspaceMember) => (m.name || m.email).slice(0, 1).toUpperCase();
+  const aloneHere = members !== null && members.length === 1 && members[0]?.userId === myUserId;
+
   return (
     <>
+      {myRole === "owner" && (
+        <TopBarActions>
+          <Button variant="secondary" size="sm" type="button" onClick={focusInvite}>
+            Invite teammate
+          </Button>
+        </TopBarActions>
+      )}
+
       <div className="page-header">
         <div>
           <h1>Team</h1>
@@ -136,25 +158,44 @@ export default function TeamPage() {
       {notice && <EmptyState description={<>{notice}</>} />}
 
       <Card>
-        <h2>Members</h2>
+        <div className={styles.sectionHead}>
+          <Icon name="audience" size="sm" className={styles.sectionIcon} />
+          <h2>Members</h2>
+          {members !== null && <CountBadge count={members.length} label="members" />}
+        </div>
         {members === null ? (
           <EmptyState description="Loading…" />
+        ) : aloneHere ? (
+          <EmptyState
+            icon={<Icon name="audience" size="lg" />}
+            title="You're the only one here"
+            description="Invite your team — everyone can review and create, and approvals move faster with more eyes."
+            primaryAction={
+              myRole === "owner" ? (
+                <Button variant="primary" type="button" onClick={focusInvite}>
+                  Invite your team
+                </Button>
+              ) : undefined
+            }
+          />
         ) : (
-          <ul className="checklist">
+          <ul className={styles.memberList}>
             {members.map((m) => (
-              <li key={m.userId} className="checklist-item">
-                <span>
-                  <strong>{m.name || m.email}</strong>{" "}
-                  <span className="doc-status">
-                    {m.email} · {m.role}
-                    {m.userId === myUserId ? " · you" : ""}
-                  </span>
+              <li key={m.userId} className={styles.memberRow}>
+                <span className={styles.avatar} aria-hidden="true">
+                  {initialOf(m)}
                 </span>
-                {myRole === "owner" && m.userId !== myUserId && (
-                  <Button variant="secondary" size="sm" type="button" onClick={() => remove(m)}>
-                    Remove
-                  </Button>
-                )}
+                <span className={styles.memberName}>{m.name || m.email}</span>
+                <span className={styles.memberEmail}>{m.email}</span>
+                <span className={styles.rowEnd}>
+                  {m.userId === myUserId && <Badge tone="neutral">you</Badge>}
+                  <Badge tone={m.role === "owner" ? "icp" : "neutral"}>{m.role}</Badge>
+                  {myRole === "owner" && m.userId !== myUserId && (
+                    <Button variant="secondary" size="sm" type="button" onClick={() => remove(m)}>
+                      Remove
+                    </Button>
+                  )}
+                </span>
               </li>
             ))}
           </ul>
@@ -163,7 +204,11 @@ export default function TeamPage() {
 
       {myRole === "owner" && (
         <Card>
-          <h2>Invite a teammate</h2>
+          <div className={styles.sectionHead}>
+            <Icon name="add" size="sm" className={styles.sectionIcon} />
+            <h2>Invite a teammate</h2>
+            {invites.length > 0 && <CountBadge count={invites.length} label="pending invites" />}
+          </div>
           <p className="subtitle">
             Creating an invite emails the person a join link. The invitee signs up with the same
             email and accepts. You can also copy the link below to share it yourself. Links expire
@@ -171,6 +216,7 @@ export default function TeamPage() {
           </p>
           <form className="create-form" onSubmit={sendInvite}>
             <Input
+              id={INVITE_INPUT_ID}
               type="email"
               value={inviteEmail}
               onChange={(e) => setInviteEmail(e.target.value)}
@@ -183,16 +229,15 @@ export default function TeamPage() {
           </form>
 
           {invites.length > 0 && (
-            <ul className="checklist">
+            <ul className={styles.memberList}>
               {invites.map((inv) => (
-                <li key={inv.id} className="checklist-item">
-                  <span>
-                    <strong>{inv.email}</strong>{" "}
-                    <span className="doc-status">
-                      expires {new Date(inv.expiresAt).toLocaleDateString()}
-                    </span>
+                <li key={inv.id} className={styles.inviteRow}>
+                  <Badge tone="pending">pending</Badge>
+                  <span className={styles.memberName}>{inv.email}</span>
+                  <span className={styles.inviteExpiry}>
+                    expires {new Date(inv.expiresAt).toLocaleDateString()}
                   </span>
-                  <span className="page-actions">
+                  <span className={styles.rowEnd}>
                     <Button
                       variant="secondary"
                       size="sm"
@@ -213,7 +258,10 @@ export default function TeamPage() {
       )}
 
       <Card>
-        <h2>Send a test email</h2>
+        <div className={styles.sectionHead}>
+          <Icon name="email" size="sm" className={styles.sectionIcon} />
+          <h2>Send a test email</h2>
+        </div>
         <p className="subtitle">
           Check that transactional email is configured. With a Resend key set it sends for real;
           otherwise it logs to the API console and reports as delivered.

@@ -1,0 +1,11 @@
+/* Launches (Wave C sweep) — Editorial tokens only. */
+
+.cardTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cardTitle svg {
+  color: var(--muted);
+}

@@ -1,11 +1,17 @@
 "use client";
 
-import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
 import { Badge } from "@/src/components/ui/badge";
 import { Input, Textarea, Select } from "@/src/components/ui/input";
+import { Icon } from "@/src/components/ui/icon";
+import { SettingsModal } from "@/src/components/ui/settings-modal";
+import { toast } from "@/src/components/ui/toast";
+import { TopBarActions } from "@/src/components/top-bar";
+import { AutomationGuardrails } from "../automation/guardrails";
+import { CadenceManager } from "../cadence/cadence-manager";
+import styles from "./campaigns.module.css";
 
 import { API_URL, apiFetch, apiDownload } from "@/lib/api";
 
@@ -98,6 +104,10 @@ export default function CampaignsPage() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+
+  // Module settings (spec §3.2): cadence + automation guardrails in a modal.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState("automation");
 
   const load = useCallback(async () => {
     try {
@@ -258,17 +268,33 @@ export default function CampaignsPage() {
 
   return (
     <>
-      <PageHeader title="Campaigns" subtitle={<>Your GTM goals and everything attached to them. A campaign shapes every draft
-            created under it.</>} actions={<>
-            <Button variant="primary" onClick={() => startEdit()}>+ New campaign</Button>
-          </>} />
+      <TopBarActions>
+        <Button variant="primary" size="sm" onClick={() => startEdit()}>
+          <Icon name="add" size="sm" /> New campaign
+        </Button>
+        <Button variant="ghost" size="sm" onClick={() => setSettingsOpen(true)}>
+          <Icon name="module-settings" size="sm" /> Settings
+        </Button>
+      </TopBarActions>
+
+      <div className="page-header">
+        <div>
+          <h1>Campaigns</h1>
+          <p className="subtitle">
+            Your GTM goals and everything attached to them. A campaign shapes every draft created
+            under it.
+          </p>
+        </div>
+      </div>
 
       {showForm && (
         <Card>
           <CardHeader
             title={
               <>
-                {editingId ? "Edit campaign" : "New campaign"}
+                <span className={styles.detailLabel}>
+                  <Icon name="campaigns" size="sm" /> {editingId ? "Edit campaign" : "New campaign"}
+                </span>
                 <span style={{ fontSize: "0.8rem", color: "var(--color-fg-muted)", marginLeft: "1rem", fontWeight: "normal" }}>
                   Step {step} of 3
                 </span>
@@ -394,7 +420,16 @@ export default function CampaignsPage() {
       )}
 
       {campaignsList.length === 0 && !showForm ? (
-        <EmptyState description={<>No campaigns yet. Create the first one to make GTM goal-scoped.</>} />
+        <EmptyState
+          icon={<Icon name="campaigns" size="lg" />}
+          title="No campaigns yet"
+          description="A campaign scopes goals, channels, and voice — every draft created under it inherits them."
+          primaryAction={
+            <Button variant="primary" onClick={() => startEdit()}>
+              <Icon name="add" size="sm" /> New campaign
+            </Button>
+          }
+        />
       ) : (
         <ul className="section-list">
           {campaignsList.map((c) => {
@@ -416,7 +451,10 @@ export default function CampaignsPage() {
                 {expandedId === c.id && detail && (
                   <div className="campaign-detail">
                     <p className="bundle-summary">
-                      Drafts:{" "}
+                      <span className={styles.detailLabel}>
+                        <Icon name="edit" size="sm" /> Drafts
+                      </span>
+                      {": "}
                       {(Object.keys(detail.draftCounts) as ApprovalState[])
                         .filter((s) => detail.draftCounts[s] > 0)
                         .map((s) => `${detail.draftCounts[s]} ${STATE_LABELS[s]}`)
@@ -442,7 +480,10 @@ export default function CampaignsPage() {
                     )}
                     {detail.audiences.length > 0 && (
                       <p className="bundle-summary" style={{ marginTop: 10 }}>
-                        Audiences:{" "}
+                        <span className={styles.detailLabel}>
+                          <Icon name="audience" size="sm" /> Audiences
+                        </span>
+                        {": "}
                         {detail.audiences
                           .map((a) => `${a.name} (${a.kind}, ${a.memberCount} members)`)
                           .join(" · ")}
@@ -451,7 +492,10 @@ export default function CampaignsPage() {
                     {detail.adMetrics && (
                       <>
                         <p className="bundle-summary" style={{ marginTop: 10 }}>
-                          Paid performance:{" "}
+                          <span className={styles.detailLabel}>
+                            <Icon name="ad" size="sm" /> Paid performance
+                          </span>
+                          {": "}
                           {money(
                             detail.adMetrics.totals.spendCents,
                             detail.adMetrics.adCampaigns[0]?.currency ?? "USD",
@@ -481,7 +525,9 @@ export default function CampaignsPage() {
                     {detail.insights && (
                       <div className="bundle-summary" style={{ marginTop: 10 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                          <span className="meta" style={{ fontWeight: "bold" }}>Campaign Insights:</span>
+                          <span className={styles.detailLabel}>
+                            <Icon name="status-learning" size="sm" /> Campaign insights
+                          </span>
                           <Button
                             variant="ghost"
                             size="sm"
@@ -557,6 +603,43 @@ export default function CampaignsPage() {
           })}
         </ul>
       )}
+
+      {/* Module settings (spec §3.2): how Campaigns behaves — posting cadence
+          and the automation guardrails. Both reuse the real forms behind the
+          /cadence and /automation routes; changes apply as you make them. */}
+      <SettingsModal
+        title="Campaign settings"
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        onSave={() => {
+          setSettingsOpen(false);
+          toast("Settings saved");
+        }}
+        sections={[
+          { id: "automation", label: "Automation guardrails" },
+          { id: "cadence", label: "Posting cadence" },
+        ]}
+        activeSection={settingsSection}
+        onSectionChange={setSettingsSection}
+      >
+        {settingsSection === "automation" ? (
+          <>
+            <p className={styles.settingsHint}>
+              Limits for campaigns in an automated mode. Changes apply immediately — the same
+              controls live on the Automation page.
+            </p>
+            <AutomationGuardrails workspaceId={id} />
+          </>
+        ) : (
+          <>
+            <p className={styles.settingsHint}>
+              Recurring posting slots that approved drafts fill automatically. Changes apply
+              immediately — the same controls live on the Cadence page.
+            </p>
+            <CadenceManager workspaceId={id} />
+          </>
+        )}
+      </SettingsModal>
     </>
   );
 }

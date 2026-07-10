@@ -3,7 +3,9 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Button } from "@/src/components/ui/button";
+import { Badge } from "@/src/components/ui/badge";
 import { apiFetch } from "@/lib/api";
+import styles from "./invite.module.css";
 
 interface InvitePreview {
   workspaceName: string;
@@ -24,7 +26,7 @@ export default function InvitePage() {
       .then(async (res) => {
         if (cancelled) return;
         if (res.status === 404) {
-          setError("This invite link is not valid.");
+          setError("This invite link is not valid. Check that you copied the whole link, or ask a workspace owner to send a fresh one.");
           return;
         }
         if (res.ok) setInvite(await res.json());
@@ -47,9 +49,9 @@ export default function InvitePage() {
           `This invite was issued for ${invite?.email}. Log in with that email to accept it.`,
         );
       } else if (res.status === 410) {
-        setError("This invite has expired or was revoked. Ask for a new one.");
+        setError("This invite has expired or was revoked. Ask a workspace owner for a new one.");
       } else {
-        setError(body?.message ?? "Could not accept the invite.");
+        setError(body?.message ?? "Could not accept the invite. Try again in a moment.");
       }
       return;
     }
@@ -63,30 +65,46 @@ export default function InvitePage() {
         <span className="tagline">GTM that remembers</span>
       </header>
       <main className="site-main">
-        <h1>Workspace invite</h1>
-        {error && <p className="error">{error}</p>}
-        {!invite && !error && <p className="empty">Loading…</p>}
-        {invite && (
-          <>
-            <p className="subtitle">
-              You&apos;ve been invited to join <strong>{invite.workspaceName}</strong> (invite for{" "}
-              {invite.email}).
-            </p>
-            {invite.status === "pending" ? (
-              <div className="page-actions">
-                <Button variant="primary" type="button" onClick={accept} disabled={accepting}>
-                  {accepting ? "Joining…" : "Accept invite"}
-                </Button>
+        <div className={styles.card}>
+          <h1>{invite ? `Join ${invite.workspaceName}` : "Workspace invite"}</h1>
+          {error && <p className="error">{error}</p>}
+          {!invite && !error && <p className="empty">Loading your invite…</p>}
+          {invite && (
+            <>
+              <div className={styles.badgeRow}>
+                <Badge
+                  tone={
+                    invite.status === "pending"
+                      ? "pending"
+                      : invite.status === "accepted"
+                        ? "approved"
+                        : "neutral"
+                  }
+                >
+                  {invite.status}
+                </Badge>
+                <span className={styles.inviteFor}>invite for {invite.email}</span>
               </div>
-            ) : (
-              <p className="empty">
-                {invite.status === "accepted"
-                  ? "This invite was already accepted."
-                  : "This invite is no longer active."}
+              <p className="subtitle">
+                You&apos;ve been invited to join <strong>{invite.workspaceName}</strong>. Everyone
+                in a workspace can review and create; owners manage the team.
               </p>
-            )}
-          </>
-        )}
+              {invite.status === "pending" ? (
+                <div className="page-actions">
+                  <Button variant="primary" type="button" onClick={accept} disabled={accepting}>
+                    {accepting ? "Joining…" : "Accept invite"}
+                  </Button>
+                </div>
+              ) : (
+                <p className={styles.help}>
+                  {invite.status === "accepted"
+                    ? "This invite was already accepted — if that was you, head to your workspaces from the home page."
+                    : "This invite is no longer active. Ask a workspace owner to send a fresh one."}
+                </p>
+              )}
+            </>
+          )}
+        </div>
       </main>
     </>
   );
