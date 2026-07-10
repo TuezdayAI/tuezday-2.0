@@ -43,3 +43,38 @@
   color: var(--rose-ink);
   background: var(--rose);
 }
+
+/* Nav-tone washes (spec §3.3 — tones are the canonical mapping) */
+.belief  { color: var(--c1-deep); background: var(--c1-wash); }
+.voice   { color: var(--c2-deep); background: var(--c2-wash); }
+.history { color: var(--c3-deep); background: var(--c3-wash); }
+.icp     { color: var(--c4-deep); background: var(--c4-wash); }
+.system  { color: var(--c5-deep); background: var(--c5-wash); }
+.signal  { color: var(--c6-deep); background: var(--c6-wash); }
+
+/* Passive count — muted ink, hairline, monospace-ish tabular digits */
+.count {
+  color: var(--muted);
+  background: var(--panel-2);
+  border-color: var(--border);
+  font-variant-numeric: tabular-nums;
+  padding: 1px 7px;
+}
+
+/* The guide dot — the only animated, accent element. One pulse, then still. */
+.guideDot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--accent);
+  animation: guide-arrive 900ms var(--ease-out) 1;
+}
+@keyframes guide-arrive {
+  0% { transform: scale(0.4); opacity: 0; }
+  55% { transform: scale(1.35); opacity: 1; }
+  100% { transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .guideDot { animation: none; }
+}
