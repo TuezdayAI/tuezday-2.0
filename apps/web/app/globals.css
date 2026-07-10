@@ -314,18 +314,6 @@ h2 {
   background: var(--nav-wash);
 }
 
-.ws-nav-child::before {
-  content: "";
-  width: 7px;
-  height: 7px;
-  border-radius: 2px;
-  background: var(--border-strong);
-  flex: 0 0 auto;
-}
-
-.ws-nav-child.active::before {
-  background: var(--nav-tone);
-}
 
 .ws-nav-child span {
   overflow: hidden;
