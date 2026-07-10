@@ -3838,3 +3838,125 @@ export const createApiKeyInputSchema = z.object({
   scopes: z.array(z.enum(API_SCOPES)).min(1),
 });
 export type CreateApiKeyInput = z.infer<typeof createApiKeyInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Next-action engine (UI industry-ready spec §5.1). Pure priority function —
+// the API exposes the computed value; guide dot / smart landing / Home
+// checklist all derive from this ONE answer so they can never disagree.
+// ---------------------------------------------------------------------------
+
+export const SETUP_CHECKLIST_ITEMS = [
+  "brain_reviewed",
+  "channel_connected",
+  "first_campaign",
+  "first_approval",
+  "insights_live",
+  "team_invited",
+] as const;
+export type SetupChecklistItem = (typeof SETUP_CHECKLIST_ITEMS)[number];
+
+export const nextActionStateSchema = z.object({
+  draftCount: z.number().int().min(0),
+  blockedPublishCount: z.number().int().min(0),
+  liveCampaignsWithoutContent: z.number().int().min(0),
+  insightsAvailableUnconnected: z.boolean(),
+  generatingCount: z.number().int().min(0),
+  checklist: z.object({
+    brain_reviewed: z.boolean(),
+    channel_connected: z.boolean(),
+    first_campaign: z.boolean(),
+    first_approval: z.boolean(),
+    insights_live: z.boolean(),
+    team_invited: z.boolean(),
+  }),
+});
+export type NextActionState = z.infer<typeof nextActionStateSchema>;
+
+export type NextActionKind =
+  | "review"
+  | "connect_blocked"
+  | "campaign_content"
+  | "connect_insights"
+  | "checklist"
+  | "system_working"
+  | "none";
+
+export interface NextAction {
+  kind: NextActionKind;
+  /** Workspace-relative nav path the guide dot attaches to ("" = Home). */
+  module: string;
+  /** Short imperative label, e.g. "Review drafts". */
+  label: string;
+  /** Hover explanation for the guide dot, e.g. "1 draft waiting for review". */
+  reason: string;
+  checklistItem?: SetupChecklistItem;
+}
+
+const CHECKLIST_TARGETS: Record<SetupChecklistItem, { module: string; label: string; reason: string }> = {
+  brain_reviewed: { module: "/brain", label: "Review your Brain", reason: "Your GTM memory needs a first review" },
+  channel_connected: { module: "/connectors", label: "Connect a channel", reason: "No publishing channel is connected yet" },
+  first_campaign: { module: "/campaigns", label: "Create your first campaign", reason: "No campaign exists yet" },
+  first_approval: { module: "/approvals", label: "Approve your first draft", reason: "Nothing has been approved yet" },
+  insights_live: { module: "/connectors", label: "Turn on insights", reason: "Connect a channel with analytics to see results" },
+  team_invited: { module: "/team", label: "Invite your team", reason: "You are the only member of this workspace" },
+};
+
+export function checklistProgress(state: NextActionState): { done: number; total: number; complete: boolean } {
+  const total = SETUP_CHECKLIST_ITEMS.length;
+  const done = SETUP_CHECKLIST_ITEMS.filter((item) => state.checklist[item]).length;
+  return { done, total, complete: done === total };
+}
+
+export function nextActionFor(state: NextActionState): NextAction {
+  if (state.draftCount > 0) {
+    const n = state.draftCount;
+    return {
+      kind: "review",
+      module: "/approvals",
+      label: "Review drafts",
+      reason: `${n} draft${n === 1 ? "" : "s"} waiting for review`,
+    };
+  }
+  if (state.blockedPublishCount > 0) {
+    const n = state.blockedPublishCount;
+    return {
+      kind: "connect_blocked",
+      module: "/connectors",
+      label: "Connect a channel",
+      reason: `${n} approved post${n === 1 ? "" : "s"} can't publish without a connected channel`,
+    };
+  }
+  if (state.liveCampaignsWithoutContent > 0) {
+    const n = state.liveCampaignsWithoutContent;
+    return {
+      kind: "campaign_content",
+      module: "/campaigns",
+      label: "Add campaign content",
+      reason: `${n} live campaign${n === 1 ? "" : "s"} with no content generating`,
+    };
+  }
+  if (state.insightsAvailableUnconnected) {
+    return {
+      kind: "connect_insights",
+      module: "/connectors",
+      label: "Connect insights",
+      reason: "Connect a channel to see what worked",
+    };
+  }
+  for (const item of SETUP_CHECKLIST_ITEMS) {
+    if (!state.checklist[item]) {
+      const target = CHECKLIST_TARGETS[item];
+      return { kind: "checklist", checklistItem: item, ...target };
+    }
+  }
+  if (state.generatingCount > 0) {
+    const n = state.generatingCount;
+    return {
+      kind: "system_working",
+      module: "",
+      label: "Generating",
+      reason: `${n} post${n === 1 ? "" : "s"} generating — nothing needs you right now`,
+    };
+  }
+  return { kind: "none", module: "", label: "All clear", reason: "Nothing needs you right now" };
+}
