@@ -1,6 +1,7 @@
 "use client";
 
 import { EmptyState } from "@/src/components/empty-state";
+import { Card } from "@/src/components/ui/card";
 import { API_URL, apiFetch } from "@/lib/api";
 
 import { useCallback, useEffect, useState } from "react";
@@ -56,7 +57,7 @@ export default function ActivityPage() {
         </div>
       </div>
 
-      <section className="panel">
+      <Card>
         <h2>Event log</h2>
         {events === null ? (
           <p className="meta">Loading…</p>
@@ -83,7 +84,7 @@ export default function ActivityPage() {
             ))}
           </ul>
         )}
-      </section>
+      </Card>
     </>
   );
 }

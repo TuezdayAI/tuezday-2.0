@@ -5,6 +5,9 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { CHANNELS, type CalendarEntry, type Channel } from "@tuezday/contracts";
 import { apiFetch } from "@/lib/api";
+import { Button } from "@/src/components/ui/button";
+import { Card } from "@/src/components/ui/card";
+import { Select } from "@/src/components/ui/input";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -75,31 +78,38 @@ export default function CalendarPage() {
 
       {error && <p className="error">{error}</p>}
 
-      <section className="panel">
+      <Card>
         <div className="resolve-controls">
           <span className="page-actions">
-            <button
+            <Button
               type="button"
-              className="button-secondary"
+              variant="secondary"
+              size="sm"
               onClick={() => setWeekStart(new Date(weekStart.getTime() - 7 * DAY_MS))}
             >
               ← Prev
-            </button>
-            <button type="button" className="button-secondary" onClick={() => setWeekStart(startOfWeek(new Date()))}>
-              This week
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              className="button-secondary"
+              variant="secondary"
+              size="sm"
+              onClick={() => setWeekStart(startOfWeek(new Date()))}
+            >
+              This week
+            </Button>
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
               onClick={() => setWeekStart(new Date(weekStart.getTime() + 7 * DAY_MS))}
             >
               Next →
-            </button>
+            </Button>
           </span>
           <strong>{weekLabel}</strong>
           <label>
             Channel
-            <select
+            <Select
               value={channelFilter}
               onChange={(e) => setChannelFilter(e.target.value as Channel | "all")}
             >
@@ -109,7 +119,7 @@ export default function CalendarPage() {
                   {ch}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           <label className="cadence-day">
             <input type="checkbox" checked={showOpen} onChange={(e) => setShowOpen(e.target.checked)} />
@@ -151,7 +161,7 @@ export default function CalendarPage() {
             </div>
           ))}
         </div>
-      </section>
+      </Card>
     </>
   );
 }

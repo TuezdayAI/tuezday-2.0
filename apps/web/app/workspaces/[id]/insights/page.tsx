@@ -2,7 +2,9 @@
 
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
-
+import { Card, CardHeader } from "@/src/components/ui/card";
+import { Button } from "@/src/components/ui/button";
+import { Badge } from "@/src/components/ui/badge";
 
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
@@ -47,13 +49,13 @@ export default function WorkspaceInsightsPage() {
   return (
     <>
       <PageHeader title="Workspace Insights" subtitle={<>Aggregate metrics and brain completeness across your workspace.</>} actions={<>
-            <button onClick={() => apiDownload(`/workspaces/${id}/insights?format=csv`, `workspace-insights-${id}.csv`)}>
+            <Button variant="secondary" size="sm" onClick={() => apiDownload(`/workspaces/${id}/insights?format=csv`, `workspace-insights-${id}.csv`)}>
             Export CSV
-          </button>
+          </Button>
           </>} />
 
-      <section className="panel">
-        <h2>Brain Completeness</h2>
+      <Card>
+        <CardHeader title="Brain Completeness" />
         <div className="automation-row" style={{ display: "flex", gap: "20px", flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
           <div style={{ flex: 1, minWidth: "200px" }}>
             <div style={{ fontSize: "2.5rem", fontWeight: "bold", color: "var(--brand)" }}>
@@ -81,19 +83,19 @@ export default function WorkspaceInsightsPage() {
             <ul className="draft-chain">
               {insights.brain.docs.map((doc) => (
                 <li key={doc.type}>
-                  <span className={`layer-badge ${doc.filled ? "state-approved" : "state-draft"}`}>
+                  <Badge tone={doc.filled ? "approved" : "draft"}>
                     {doc.filled ? "Filled" : "Missing"}
-                  </span>
+                  </Badge>
                   <span className="meta">{doc.type}</span>
                 </li>
               ))}
             </ul>
           </div>
         </div>
-      </section>
+      </Card>
 
-      <section className="panel" style={{ marginTop: "24px" }}>
-        <h2>Metrics by Channel</h2>
+      <Card style={{ marginTop: "24px" }}>
+        <CardHeader title="Metrics by Channel" />
         {insights.byChannel.length === 0 ? (
           <EmptyState description={<>No channel metrics available.</>} />
         ) : (
@@ -122,10 +124,10 @@ export default function WorkspaceInsightsPage() {
             </tbody>
           </table>
         )}
-      </section>
+      </Card>
 
-      <section className="panel" style={{ marginTop: "24px" }}>
-        <h2>Campaigns Summary</h2>
+      <Card style={{ marginTop: "24px" }}>
+        <CardHeader title="Campaigns Summary" />
         {insights.campaigns.length === 0 ? (
           <EmptyState description={<>No campaigns available.</>} />
         ) : (
@@ -160,7 +162,7 @@ export default function WorkspaceInsightsPage() {
             </tbody>
           </table>
         )}
-      </section>
+      </Card>
     </>
   );
 }

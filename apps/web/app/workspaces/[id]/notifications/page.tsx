@@ -1,6 +1,8 @@
 "use client";
 
 import { API_URL, apiFetch } from "@/lib/api";
+import { Button } from "@/src/components/ui/button";
+import { Input, Select } from "@/src/components/ui/input";
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import type { Workspace } from "@tuezday/contracts";
@@ -133,25 +135,24 @@ export default function NotificationsPage() {
               borderRadius: "8px",
             }}
           >
-            <select
+            <Select
               value={newType}
               onChange={(e) => setNewType(e.target.value as NotificationChannelType)}
-              style={{ padding: "0.5rem" }}
             >
               <option value="email">Email</option>
               <option value="telegram">Telegram</option>
-            </select>
-            <input
+            </Select>
+            <Input
               type="text"
               value={newTarget}
               onChange={(e) => setNewTarget(e.target.value)}
               placeholder={newType === "email" ? "founder@example.com" : "Telegram Chat ID"}
-              style={{ flex: 1, padding: "0.5rem" }}
+              style={{ flex: 1 }}
               disabled={isAdding}
             />
-            <button type="submit" disabled={isAdding || !newTarget.trim()}>
+            <Button variant="primary" type="submit" disabled={isAdding || !newTarget.trim()}>
               {isAdding ? "Adding..." : "Add"}
-            </button>
+            </Button>
           </form>
           {newType === "telegram" && (
             <p className="help-text" style={{ marginTop: "0.5rem", fontSize: "0.9rem", color: "var(--color-text-dim)" }}>
@@ -192,12 +193,12 @@ export default function NotificationsPage() {
                       />
                       Enabled
                     </label>
-                    <button className="button-secondary" onClick={() => sendTest(c.id)}>
+                    <Button variant="secondary" size="sm" onClick={() => sendTest(c.id)}>
                       Send Test
-                    </button>
-                    <button className="button-secondary" style={{ color: "var(--color-danger)" }} onClick={() => deleteChannel(c.id)}>
+                    </Button>
+                    <Button variant="danger" size="sm" onClick={() => deleteChannel(c.id)}>
                       Delete
-                    </button>
+                    </Button>
                   </div>
                 </li>
               ))}

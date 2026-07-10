@@ -2,7 +2,10 @@
 
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
-
+import { Button } from "@/src/components/ui/button";
+import { Card, CardHeader } from "@/src/components/ui/card";
+import { Badge } from "@/src/components/ui/badge";
+import { Input, Select } from "@/src/components/ui/input";
 
 import { API_URL, apiFetch } from "@/lib/api";
 
@@ -190,26 +193,30 @@ export default function LearningPage() {
     <>
       <PageHeader title="Learning" subtitle={<>What Tuezday learns from your decisions, edits, and results — proposed as brain
             updates that you approve or dismiss.</>} actions={<>
-            <button disabled={synthesizing} onClick={synthesize}>
+            <Button variant="primary" disabled={synthesizing} onClick={synthesize}>
             {synthesizing ? "Synthesizing…" : "✨ Synthesize learnings"}
-          </button>
+          </Button>
           </>} />
 
-      <section className="panel">
-        <h2>Signal so far</h2>
+      <Card>
+        <CardHeader title="Signal so far" />
         <p className="bundle-summary">
           Ratings: {stats.ratings.accepted ?? 0} accepted · {stats.ratings.needs_edit ?? 0} needs
           edit · {stats.ratings.rejected ?? 0} rejected — Drafts: {stats.decisions.approved}{" "}
           approved · {stats.decisions.rejected} rejected · {stats.editedCount} edited before
           decision — {stats.metricsCount} metric record(s)
         </p>
-      </section>
+      </Card>
 
-      <section className="panel">
-        <h2>
-          Proposed now updates{" "}
-          {proposed.length > 0 && <span className="layer-badge state-edited">{proposed.length} awaiting review</span>}
-        </h2>
+      <Card>
+        <CardHeader
+          title={
+            <>
+              Proposed now updates{" "}
+              {proposed.length > 0 && <Badge tone="edited">{proposed.length} awaiting review</Badge>}
+            </>
+          }
+        />
         {syntheses.length === 0 ? (
           <EmptyState description={<>No syntheses yet. Approve/reject some work, then synthesize — or let the worker propose
             one weekly.</>} />
@@ -218,17 +225,17 @@ export default function LearningPage() {
             {syntheses.map((s) => (
               <li key={s.id} className="section-card">
                 <div className="section-head">
-                  <span
-                    className={`layer-badge ${
+                  <Badge
+                    tone={
                       s.status === "accepted"
-                        ? "state-approved"
+                        ? "approved"
                         : s.status === "dismissed"
-                          ? "state-rejected"
-                          : "state-edited"
-                    }`}
+                          ? "rejected"
+                          : "edited"
+                    }
                   >
                     {s.status}
-                  </span>
+                  </Badge>
                   <span className="section-title">
                     Synthesis · {new Date(s.createdAt).toLocaleString()}
                   </span>
@@ -242,20 +249,22 @@ export default function LearningPage() {
                 {s.rationale && <p className="section-reason">Why: {s.rationale}</p>}
                 {s.status === "proposed" && (
                   <div className="rating-row">
-                    <button
-                      className="button-secondary rating-accepted"
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       disabled={busy}
                       onClick={() => decide(s.id, "accept")}
                     >
                       ✓ Accept into now
-                    </button>
-                    <button
-                      className="button-secondary rating-rejected"
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       disabled={busy}
                       onClick={() => decide(s.id, "dismiss")}
                     >
                       ✗ Dismiss
-                    </button>
+                    </Button>
                   </div>
                 )}
               </li>
@@ -263,26 +272,26 @@ export default function LearningPage() {
           </ul>
         )}
         {error && <p className="error">{error}</p>}
-      </section>
+      </Card>
 
-      <section className="panel">
-        <h2>Record engagement metrics</h2>
+      <Card>
+        <CardHeader title="Record engagement metrics" />
         <form className="persona-form" style={{ borderTop: "none", paddingTop: 0, marginTop: 0 }} onSubmit={addMetric}>
           <div className="resolve-controls">
             <label style={{ flex: 1 }}>
               Approved draft (optional)
-              <select value={metricDraftId} onChange={(e) => setMetricDraftId(e.target.value)}>
+              <Select value={metricDraftId} onChange={(e) => setMetricDraftId(e.target.value)}>
                 <option value="">(not linked to a draft)</option>
                 {approvedDrafts.map((d) => (
                   <option key={d.id} value={d.id}>
                     {TASK_LABELS[d.taskType]} · {d.channel} · {d.content.slice(0, 40)}…
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
             <label>
               Channel
-              <select
+              <Select
                 value={metricChannel}
                 onChange={(e) => setMetricChannel(e.target.value as Channel)}
               >
@@ -291,13 +300,13 @@ export default function LearningPage() {
                     {c}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
           </div>
           <div className="resolve-controls">
             <label style={{ flex: 1 }}>
               Description
-              <input
+              <Input
                 value={metricDescription}
                 onChange={(e) => setMetricDescription(e.target.value)}
                 placeholder="e.g. June launch post"
@@ -305,27 +314,27 @@ export default function LearningPage() {
             </label>
             <label>
               Impressions
-              <input type="number" min={0} value={impressions} onChange={(e) => setImpressions(e.target.value)} />
+              <Input type="number" min={0} value={impressions} onChange={(e) => setImpressions(e.target.value)} />
             </label>
             <label>
               Engagements
-              <input type="number" min={0} value={engagements} onChange={(e) => setEngagements(e.target.value)} />
+              <Input type="number" min={0} value={engagements} onChange={(e) => setEngagements(e.target.value)} />
             </label>
             <label>
               Clicks
-              <input type="number" min={0} value={clicks} onChange={(e) => setClicks(e.target.value)} />
+              <Input type="number" min={0} value={clicks} onChange={(e) => setClicks(e.target.value)} />
             </label>
           </div>
-          <input
+          <Input
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             placeholder="Notes (optional — e.g. best performer this month)"
             maxLength={1000}
           />
           <div className="editor-actions">
-            <button type="submit" disabled={busy}>
+            <Button variant="primary" type="submit" disabled={busy}>
               Record metrics
-            </button>
+            </Button>
           </div>
         </form>
 
@@ -343,10 +352,10 @@ export default function LearningPage() {
             ))}
           </ul>
         )}
-      </section>
+      </Card>
 
-      <section className="panel">
-        <h2>Training examples ({examples.length})</h2>
+      <Card>
+        <CardHeader title={`Training examples (${examples.length})`} />
         {examples.length === 0 ? (
           <EmptyState description={<>Nothing yet — rate outputs in the Playground and decide drafts in Review.</>} />
         ) : (
@@ -395,7 +404,7 @@ export default function LearningPage() {
             ))}
           </ul>
         )}
-      </section>
+      </Card>
     </>
   );
 }

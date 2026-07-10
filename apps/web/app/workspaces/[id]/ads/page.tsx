@@ -1,7 +1,9 @@
 "use client";
 
 import { EmptyState } from "@/src/components/empty-state";
-
+import { Button } from "@/src/components/ui/button";
+import { Card, CardHeader } from "@/src/components/ui/card";
+import { Input, Select, Textarea } from "@/src/components/ui/input";
 
 import { API_URL, apiFetch } from "@/lib/api";
 
@@ -320,10 +322,8 @@ export default function AdsPage() {
         </p>
       )}
 
-      <section className="panel">
-        <div className="panel-title-row">
-          <h2>Ad accounts</h2>
-        </div>
+      <Card>
+        <CardHeader title="Ad accounts" />
         {adsConnections.length === 0 ? (
           <EmptyState description={<>No ad platform connected yet.{" "}
             <Link href={`/workspaces/${id}/connectors`}>Connect Meta Ads on the integrations page</Link>{" "}
@@ -332,17 +332,17 @@ export default function AdsPage() {
           <div className="resolve-controls">
             <label>
               Connection
-              <select value={activeConnectionId} onChange={(e) => setConnectionId(e.target.value)}>
+              <Select value={activeConnectionId} onChange={(e) => setConnectionId(e.target.value)}>
                 {adsConnections.map((c) => (
                   <option key={c.id} value={c.id}>
                     {providerLabel(c.providerKey)}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
-            <button disabled={busy || !activeConnectionId} onClick={importAccounts}>
+            <Button variant="primary" disabled={busy || !activeConnectionId} onClick={importAccounts}>
               {busy ? "Working…" : "Import ad accounts"}
-            </button>
+            </Button>
           </div>
         )}
         {syncNote && <p className="section-reason">{syncNote}</p>}
@@ -364,13 +364,14 @@ export default function AdsPage() {
                     </span>
                   )}
                   {account.connectionId && (
-                    <button
-                      className="button-secondary"
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       disabled={busy || account.connectionStatus !== "connected"}
                       onClick={() => syncAccount(account)}
                     >
                       Sync now
-                    </button>
+                    </Button>
                   )}
                 </div>
                 {account.lastError && <p className="error">{account.lastError}</p>}
@@ -378,16 +379,14 @@ export default function AdsPage() {
             ))}
           </ul>
         )}
-      </section>
+      </Card>
 
-      <section className="panel">
-        <div className="panel-title-row">
-          <h2>Campaign performance</h2>
-        </div>
+      <Card>
+        <CardHeader title="Campaign performance" />
         <div className="resolve-controls">
           <label>
             From
-            <input
+            <Input
               type="date"
               value={range.since}
               onChange={(e) => setRange((r) => ({ ...r, since: e.target.value }))}
@@ -395,7 +394,7 @@ export default function AdsPage() {
           </label>
           <label>
             To
-            <input
+            <Input
               type="date"
               value={range.until}
               onChange={(e) => setRange((r) => ({ ...r, until: e.target.value }))}
@@ -423,7 +422,7 @@ export default function AdsPage() {
                     )}
                     <label className="meta" style={{ marginLeft: "auto" }}>
                       Campaign{" "}
-                      <select
+                      <Select
                         value={row.adCampaign.linkedCampaign?.id ?? ""}
                         disabled={busy}
                         onChange={(e) => linkCampaign(row, e.target.value)}
@@ -434,7 +433,7 @@ export default function AdsPage() {
                             {c.name}
                           </option>
                         ))}
-                      </select>
+                      </Select>
                     </label>
                   </div>
                   <p className="section-reason">
@@ -459,10 +458,10 @@ export default function AdsPage() {
             })}
           </ul>
         )}
-      </section>
+      </Card>
 
-      <section className="panel">
-        <h2>CSV import</h2>
+      <Card>
+        <CardHeader title="CSV import" />
         <p className="meta">
           Header: <code>{CSV_COLUMNS.join(",")}</code> — one row per campaign per day; spend in
           currency units (12.34). Re-importing the same rows updates them in place.
@@ -470,7 +469,7 @@ export default function AdsPage() {
         <div className="resolve-controls">
           <label>
             Account label
-            <input
+            <Input
               value={csvName}
               onChange={(e) => setCsvName(e.target.value)}
               placeholder="CSV import"
@@ -478,7 +477,7 @@ export default function AdsPage() {
           </label>
           <label>
             Currency
-            <input
+            <Input
               value={csvCurrency}
               onChange={(e) => setCsvCurrency(e.target.value)}
               maxLength={3}
@@ -486,19 +485,19 @@ export default function AdsPage() {
             />
           </label>
         </div>
-        <textarea
+        <Textarea
           rows={6}
           value={csvText}
           onChange={(e) => setCsvText(e.target.value)}
           placeholder={`date,campaign,spend,impressions,clicks,conversions\n2026-06-01,Launch,12.34,4000,85,6`}
         />
         <div className="editor-actions">
-          <button disabled={busy || !csvText.trim()} onClick={importCsv}>
+          <Button variant="primary" disabled={busy || !csvText.trim()} onClick={importCsv}>
             Import rows
-          </button>
+          </Button>
         </div>
         {csvNote && <p className="section-reason">{csvNote}</p>}
-      </section>
+      </Card>
     </>
   );
 }

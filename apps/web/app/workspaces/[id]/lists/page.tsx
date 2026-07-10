@@ -2,7 +2,10 @@
 
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
-
+import { Button } from "@/src/components/ui/button";
+import { Card, CardHeader } from "@/src/components/ui/card";
+import { Badge } from "@/src/components/ui/badge";
+import { Input, Select } from "@/src/components/ui/input";
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
@@ -69,17 +72,17 @@ function RuleGroupEditor({
     <div className="rule-group" style={{ border: "1px solid var(--line, #e5ded3)", borderRadius: 8, padding: 10, marginTop: 8 }}>
       <div className="checkbox-row">
         <span className="meta">Match</span>
-        <select
+        <Select
           value={group.combinator}
           onChange={(e) => onChange({ ...group, combinator: e.target.value as SegmentCombinator })}
         >
           <option value="and">ALL of (AND)</option>
           <option value="or">ANY of (OR)</option>
-        </select>
+        </Select>
         {onRemove && (
-          <button type="button" className="link-button" onClick={onRemove}>
+          <Button type="button" variant="ghost" size="sm" onClick={onRemove}>
             remove group
-          </button>
+          </Button>
         )}
       </div>
 
@@ -103,13 +106,13 @@ function RuleGroupEditor({
       )}
 
       <div className="editor-actions" style={{ marginTop: 8 }}>
-        <button type="button" className="button-secondary" onClick={() => onChange({ ...group, rules: [...group.rules, emptyCondition()] })}>
+        <Button type="button" variant="secondary" size="sm" onClick={() => onChange({ ...group, rules: [...group.rules, emptyCondition()] })}>
           + condition
-        </button>
+        </Button>
         {depth < 4 && (
-          <button type="button" className="button-secondary" onClick={() => onChange({ ...group, rules: [...group.rules, emptyGroup()] })}>
+          <Button type="button" variant="secondary" size="sm" onClick={() => onChange({ ...group, rules: [...group.rules, emptyGroup()] })}>
             + nested group
-          </button>
+          </Button>
         )}
       </div>
     </div>
@@ -128,40 +131,40 @@ function ConditionEditor({
   const needsValue = !VALUELESS.includes(condition.operator);
   return (
     <div className="checkbox-row" style={{ marginTop: 6 }}>
-      <select value={condition.field} onChange={(e) => onChange({ ...condition, field: e.target.value as SegmentField })}>
+      <Select value={condition.field} onChange={(e) => onChange({ ...condition, field: e.target.value as SegmentField })}>
         {SEGMENT_FIELDS.map((f) => (
           <option key={f} value={f}>
             {label(f)}
           </option>
         ))}
-      </select>
-      <select value={condition.operator} onChange={(e) => onChange({ ...condition, operator: e.target.value as SegmentOperator })}>
+      </Select>
+      <Select value={condition.operator} onChange={(e) => onChange({ ...condition, operator: e.target.value as SegmentOperator })}>
         {SEGMENT_OPERATORS.map((o) => (
           <option key={o} value={o}>
             {label(o)}
           </option>
         ))}
-      </select>
+      </Select>
       {needsValue &&
         (condition.field === "type" ? (
-          <select value={condition.value ?? ""} onChange={(e) => onChange({ ...condition, value: e.target.value })}>
+          <Select value={condition.value ?? ""} onChange={(e) => onChange({ ...condition, value: e.target.value })}>
             <option value="">—</option>
             {AUDIENCE_MEMBER_TYPES.map((t) => (
               <option key={t} value={t}>
                 {t}
               </option>
             ))}
-          </select>
+          </Select>
         ) : (
-          <input
+          <Input
             value={condition.value ?? ""}
             placeholder="value"
             onChange={(e) => onChange({ ...condition, value: e.target.value })}
           />
         ))}
-      <button type="button" className="link-button" onClick={onRemove}>
+      <Button type="button" variant="ghost" size="sm" onClick={onRemove}>
         remove
-      </button>
+      </Button>
     </div>
   );
 }
@@ -328,20 +331,20 @@ export default function ListsPage() {
     <>
       <PageHeader title="Lists &amp; segments" subtitle={<>Group leads and contacts into reusable audiences — hand-picked lists or live
             rule-based segments — then attach them to a campaign as its target.</>} actions={<>
-            <button onClick={() => startEdit()}>+ New audience</button>
+            <Button variant="primary" onClick={() => startEdit()}>+ New audience</Button>
           </>} />
 
       {showForm && (
-        <section className="panel">
-          <h2>{editingId ? "Edit audience" : "New audience"}</h2>
+        <Card>
+          <CardHeader title={editingId ? "Edit audience" : "New audience"} />
           <form className="persona-form" style={{ borderTop: "none", paddingTop: 0, marginTop: 0 }} onSubmit={save}>
-            <input
+            <Input
               value={form.name}
               onChange={(e) => setForm({ ...form, name: e.target.value })}
               placeholder="Audience name (e.g. VPs at fintech)"
               maxLength={200}
             />
-            <input
+            <Input
               value={form.description}
               onChange={(e) => setForm({ ...form, description: e.target.value })}
               placeholder="Description (optional)"
@@ -380,16 +383,16 @@ export default function ListsPage() {
             )}
 
             <div className="editor-actions">
-              <button type="submit" disabled={saving || form.name.trim().length === 0}>
+              <Button type="submit" variant="primary" disabled={saving || form.name.trim().length === 0}>
                 {editingId ? "Update" : "Create"}
-              </button>
-              <button type="button" className="button-secondary" onClick={() => setShowForm(false)}>
+              </Button>
+              <Button type="button" variant="secondary" size="sm" onClick={() => setShowForm(false)}>
                 Cancel
-              </button>
+              </Button>
             </div>
           </form>
           {error && <p className="error">{error}</p>}
-        </section>
+        </Card>
       )}
 
       {audiences.length === 0 && !showForm ? (
@@ -401,9 +404,9 @@ export default function ListsPage() {
             return (
               <li key={a.id} className="section-card">
                 <div className="section-head" onClick={() => toggle(a.id)}>
-                  <span className={`layer-badge ${a.kind === "dynamic" ? "state-pending_review" : "state-approved"}`}>
+                  <Badge tone={a.kind === "dynamic" ? "pending" : "approved"}>
                     {a.kind}
-                  </span>
+                  </Badge>
                   <span className="section-title">{a.name}</span>
                   <span className="section-tokens">{a.memberCount} members</span>
                 </div>
@@ -420,7 +423,7 @@ export default function ListsPage() {
                     {campaigns.length > 0 && (
                       <div className="checkbox-row" style={{ marginTop: 10 }}>
                         <span className="meta">Attach to campaign:</span>
-                        <select
+                        <Select
                           defaultValue=""
                           onChange={(e) => {
                             void attach(a.id, e.target.value);
@@ -435,19 +438,19 @@ export default function ListsPage() {
                                 {c.name}
                               </option>
                             ))}
-                        </select>
+                        </Select>
                       </div>
                     )}
                   </div>
                 )}
 
                 <div className="rating-row" style={{ marginTop: 8 }}>
-                  <button className="button-secondary" onClick={() => startEdit(a)}>
+                  <Button variant="secondary" size="sm" onClick={() => startEdit(a)}>
                     Edit
-                  </button>
-                  <button className="button-secondary" onClick={() => remove(a)}>
+                  </Button>
+                  <Button variant="secondary" size="sm" onClick={() => remove(a)}>
                     Delete
-                  </button>
+                  </Button>
                 </div>
               </li>
             );
@@ -529,9 +532,10 @@ function MemberManager({
                   );
                 })}
               </ul>
-              <button
+              <Button
                 type="button"
-                className="button-secondary"
+                variant="secondary"
+                size="sm"
                 disabled={picked.length === 0}
                 onClick={() => {
                   onAdd(picked.map((k) => ({ type: k.split(":")[0]!, id: k.split(":")[1]! })));
@@ -539,7 +543,7 @@ function MemberManager({
                 }}
               >
                 Add {picked.length > 0 ? `(${picked.length})` : ""}
-              </button>
+              </Button>
             </>
           )}
         </div>

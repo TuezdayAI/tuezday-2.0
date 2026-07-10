@@ -1,6 +1,9 @@
 "use client";
 
 import { EmptyState } from "@/src/components/empty-state";
+import { Button } from "@/src/components/ui/button";
+import { Card } from "@/src/components/ui/card";
+import { Input } from "@/src/components/ui/input";
 
 
 import { useCallback, useEffect, useState } from "react";
@@ -132,7 +135,7 @@ export default function TeamPage() {
       {error && <p className="error">{error}</p>}
       {notice && <EmptyState description={<>{notice}</>} />}
 
-      <section className="panel">
+      <Card>
         <h2>Members</h2>
         {members === null ? (
           <EmptyState description="Loading…" />
@@ -148,18 +151,18 @@ export default function TeamPage() {
                   </span>
                 </span>
                 {myRole === "owner" && m.userId !== myUserId && (
-                  <button type="button" className="button-secondary" onClick={() => remove(m)}>
+                  <Button variant="secondary" size="sm" type="button" onClick={() => remove(m)}>
                     Remove
-                  </button>
+                  </Button>
                 )}
               </li>
             ))}
           </ul>
         )}
-      </section>
+      </Card>
 
       {myRole === "owner" && (
-        <section className="panel">
+        <Card>
           <h2>Invite a teammate</h2>
           <p className="subtitle">
             Creating an invite emails the person a join link. The invitee signs up with the same
@@ -167,16 +170,16 @@ export default function TeamPage() {
             in 7 days.
           </p>
           <form className="create-form" onSubmit={sendInvite}>
-            <input
+            <Input
               type="email"
               value={inviteEmail}
               onChange={(e) => setInviteEmail(e.target.value)}
               placeholder="teammate@company.com"
               required
             />
-            <button type="submit" disabled={submitting || !inviteEmail}>
+            <Button variant="primary" type="submit" disabled={submitting || !inviteEmail}>
               Create invite
-            </button>
+            </Button>
           </form>
 
           {invites.length > 0 && (
@@ -190,43 +193,44 @@ export default function TeamPage() {
                     </span>
                   </span>
                   <span className="page-actions">
-                    <button
+                    <Button
+                      variant="secondary"
+                      size="sm"
                       type="button"
-                      className="button-secondary"
                       onClick={() => copyLink(inv)}
                     >
                       Copy link
-                    </button>
-                    <button type="button" className="button-secondary" onClick={() => revoke(inv)}>
+                    </Button>
+                    <Button variant="secondary" size="sm" type="button" onClick={() => revoke(inv)}>
                       Revoke
-                    </button>
+                    </Button>
                   </span>
                 </li>
               ))}
             </ul>
           )}
-        </section>
+        </Card>
       )}
 
-      <section className="panel">
+      <Card>
         <h2>Send a test email</h2>
         <p className="subtitle">
           Check that transactional email is configured. With a Resend key set it sends for real;
           otherwise it logs to the API console and reports as delivered.
         </p>
         <form className="create-form" onSubmit={sendTestEmail}>
-          <input
+          <Input
             type="email"
             value={testEmail}
             onChange={(e) => setTestEmail(e.target.value)}
             placeholder="you@company.com"
             required
           />
-          <button type="submit" disabled={testing || !testEmail}>
+          <Button variant="primary" type="submit" disabled={testing || !testEmail}>
             {testing ? "Sending…" : "Send test email"}
-          </button>
+          </Button>
         </form>
-      </section>
+      </Card>
     </>
   );
 }

@@ -2,7 +2,9 @@
 
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
-
+import { Button } from "@/src/components/ui/button";
+import { Card } from "@/src/components/ui/card";
+import { Input } from "@/src/components/ui/input";
 
 import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
@@ -62,12 +64,12 @@ export default function AutomationPage() {
       <PageHeader title="Automation" subtitle={<>Guardrails for campaigns set to <strong>scheduled-auto</strong>. New discovery signals
             draft to each campaign channel; human-in-the-loop waits at Review, scheduled-auto
             auto-approves and posts on the campaign cadence — within these limits.</>} actions={<>
-            <button onClick={runNow} disabled={running}>
+            <Button variant="primary" onClick={runNow} disabled={running}>
             {running ? "Running…" : "Run automation now"}
-          </button>
+          </Button>
           </>} />
 
-      <section className="panel">
+      <Card>
         <h2>Kill switch</h2>
         <p className="subtitle">
           The hard stop. When on, no campaign auto-posts and pending auto-slots are cleared on the
@@ -81,9 +83,9 @@ export default function AutomationPage() {
           />
           {settings.killSwitch ? "Auto-posting is STOPPED" : "Auto-posting is allowed"}
         </label>
-      </section>
+      </Card>
 
-      <section className="panel">
+      <Card>
         <h2>Auto-reply</h2>
         <p className="subtitle">
           When on, inbox replies on <strong>scheduled-auto</strong> campaigns are auto-approved and
@@ -98,9 +100,9 @@ export default function AutomationPage() {
           />
           {settings.autoReplyEnabled ? "Replies on auto campaigns post automatically" : "All replies wait for approval"}
         </label>
-      </section>
+      </Card>
 
-      <section className="panel">
+      <Card>
         <h2>Daily caps</h2>
         <p className="subtitle">
           Maximum auto-posts per UTC day. The per-connection cap protects an account's posting
@@ -109,7 +111,7 @@ export default function AutomationPage() {
         <div className="resolve-controls">
           <label style={{ flex: 1 }}>
             Per connection / day
-            <input
+            <Input
               type="number"
               min={1}
               max={1000}
@@ -122,7 +124,7 @@ export default function AutomationPage() {
           </label>
           <label style={{ flex: 1 }}>
             Per campaign / day (default)
-            <input
+            <Input
               type="number"
               min={1}
               max={1000}
@@ -134,9 +136,9 @@ export default function AutomationPage() {
             />
           </label>
         </div>
-      </section>
+      </Card>
 
-      <section className="panel">
+      <Card>
         <h2>Match threshold</h2>
         <p className="subtitle">
           Minimum persona×campaign match score (0–100) a signal needs before automation drafts for
@@ -146,7 +148,7 @@ export default function AutomationPage() {
         <div className="resolve-controls">
           <label style={{ flex: 1 }}>
             Match threshold (0–100)
-            <input
+            <Input
               type="number"
               min={0}
               max={100}
@@ -158,10 +160,10 @@ export default function AutomationPage() {
             />
           </label>
         </div>
-      </section>
+      </Card>
 
       {lastRun && (
-        <section className="panel">
+        <Card>
           <h2>Last run</h2>
           {lastRun.length === 0 ? (
             <EmptyState description={<>No campaigns are in an automated mode yet.</>} />
@@ -179,7 +181,7 @@ export default function AutomationPage() {
               ))}
             </ul>
           )}
-        </section>
+        </Card>
       )}
     </>
   );

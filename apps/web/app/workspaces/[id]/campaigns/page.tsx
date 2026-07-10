@@ -2,7 +2,10 @@
 
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
-
+import { Button } from "@/src/components/ui/button";
+import { Card, CardHeader } from "@/src/components/ui/card";
+import { Badge } from "@/src/components/ui/badge";
+import { Input, Textarea, Select } from "@/src/components/ui/input";
 
 import { API_URL, apiFetch, apiDownload } from "@/lib/api";
 
@@ -257,27 +260,31 @@ export default function CampaignsPage() {
     <>
       <PageHeader title="Campaigns" subtitle={<>Your GTM goals and everything attached to them. A campaign shapes every draft
             created under it.</>} actions={<>
-            <button onClick={() => startEdit()}>+ New campaign</button>
+            <Button variant="primary" onClick={() => startEdit()}>+ New campaign</Button>
           </>} />
 
       {showForm && (
-        <section className="panel">
-          <h2>
-            {editingId ? "Edit campaign" : "New campaign"}
-            <span style={{ fontSize: "0.8rem", color: "var(--color-fg-muted)", marginLeft: "1rem", fontWeight: "normal" }}>
-              Step {step} of 3
-            </span>
-          </h2>
+        <Card>
+          <CardHeader
+            title={
+              <>
+                {editingId ? "Edit campaign" : "New campaign"}
+                <span style={{ fontSize: "0.8rem", color: "var(--color-fg-muted)", marginLeft: "1rem", fontWeight: "normal" }}>
+                  Step {step} of 3
+                </span>
+              </>
+            }
+          />
           <form className="persona-form" style={{ borderTop: "none", paddingTop: 0, marginTop: 0 }} onSubmit={saveCampaign}>
             {step === 1 && (
               <>
-                <input
+                <Input
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                   placeholder="Campaign name (e.g. Q3 GTM memory push)"
                   maxLength={200}
                 />
-                <textarea
+                <Textarea
                   value={form.objective}
                   onChange={(e) => setForm({ ...form, objective: e.target.value })}
                   placeholder="Objective — what is this campaign trying to achieve?"
@@ -286,7 +293,7 @@ export default function CampaignsPage() {
                 <div className="resolve-controls">
                   <label style={{ flex: 1 }}>
                     KPI
-                    <input
+                    <Input
                       value={form.kpi}
                       onChange={(e) => setForm({ ...form, kpi: e.target.value })}
                       placeholder="e.g. 20 demo calls booked"
@@ -294,7 +301,7 @@ export default function CampaignsPage() {
                   </label>
                   <label style={{ flex: 1 }}>
                     Timeframe
-                    <input
+                    <Input
                       value={form.timeframe}
                       onChange={(e) => setForm({ ...form, timeframe: e.target.value })}
                       placeholder="e.g. Jul–Sep 2026"
@@ -306,13 +313,13 @@ export default function CampaignsPage() {
 
             {step === 2 && (
               <>
-                <textarea
+                <Textarea
                   value={form.audience}
                   onChange={(e) => setForm({ ...form, audience: e.target.value })}
                   placeholder="Audience slice — who exactly is this for?"
                   rows={2}
                 />
-                <textarea
+                <Textarea
                   value={form.pillarsText}
                   onChange={(e) => setForm({ ...form, pillarsText: e.target.value })}
                   placeholder={"Messaging pillars — one per line (max 10)"}
@@ -353,7 +360,7 @@ export default function CampaignsPage() {
                     ))}
                   </div>
                 )}
-                <textarea
+                <Textarea
                   value={form.overlay}
                   onChange={(e) => setForm({ ...form, overlay: e.target.value })}
                   placeholder="Campaign now-overlay — what matters for this campaign right now (markdown)…"
@@ -364,26 +371,26 @@ export default function CampaignsPage() {
 
             <div className="editor-actions">
               {step > 1 && (
-                <button type="button" className="button-secondary" onClick={() => setStep(step - 1)}>
+                <Button variant="secondary" size="sm" type="button" onClick={() => setStep(step - 1)}>
                   Back
-                </button>
+                </Button>
               )}
               {step < 3 ? (
-                <button type="button" onClick={() => setStep(step + 1)} disabled={form.name.trim().length === 0}>
+                <Button variant="primary" type="button" onClick={() => setStep(step + 1)} disabled={form.name.trim().length === 0}>
                   Next
-                </button>
+                </Button>
               ) : (
-                <button type="submit" disabled={saving || form.name.trim().length === 0}>
+                <Button variant="primary" type="submit" disabled={saving || form.name.trim().length === 0}>
                   {editingId ? "Update campaign" : "Create campaign"}
-                </button>
+                </Button>
               )}
-              <button type="button" className="button-secondary" onClick={() => setShowForm(false)}>
+              <Button variant="secondary" size="sm" type="button" onClick={() => setShowForm(false)}>
                 Cancel
-              </button>
+              </Button>
             </div>
           </form>
           {error && <p className="error">{error}</p>}
-        </section>
+        </Card>
       )}
 
       {campaignsList.length === 0 && !showForm ? (
@@ -395,11 +402,9 @@ export default function CampaignsPage() {
             return (
               <li key={c.id} className={`section-card ${c.status === "archived" ? "excluded" : ""}`}>
                 <div className="section-head" onClick={() => toggleDetail(c.id)}>
-                  <span
-                    className={`layer-badge ${c.status === "active" ? "state-approved" : ""}`}
-                  >
+                  <Badge tone={c.status === "active" ? "approved" : "neutral"}>
                     {c.status}
-                  </span>
+                  </Badge>
                   <span className="section-title">{c.name}</span>
                   <span className="section-tokens">{c.timeframe}</span>
                 </div>
@@ -421,9 +426,9 @@ export default function CampaignsPage() {
                       <ul className="draft-chain">
                         {detail.drafts.slice(0, 8).map((d) => (
                           <li key={d.id}>
-                            <span className={`layer-badge state-${d.state}`}>
+                            <Badge tone={d.state === "pending_review" ? "pending" : d.state}>
                               {STATE_LABELS[d.state]}
-                            </span>{" "}
+                            </Badge>{" "}
                             <span className="meta">
                               {d.taskType} · {d.channel} ·{" "}
                               {new Date(d.createdAt).toLocaleDateString()}
@@ -477,12 +482,13 @@ export default function CampaignsPage() {
                       <div className="bundle-summary" style={{ marginTop: 10 }}>
                         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                           <span className="meta" style={{ fontWeight: "bold" }}>Campaign Insights:</span>
-                          <button 
-                            className="link-button" 
+                          <Button
+                            variant="ghost"
+                            size="sm"
                             onClick={(e) => { e.preventDefault(); apiDownload(`/workspaces/${id}/campaigns/${c.id}/insights?format=csv`, `campaign-insights-${c.id}.csv`); }}
                           >
                             Export CSV
-                          </button>
+                          </Button>
                         </div>
                         <ul className="draft-chain" style={{ marginTop: 4 }}>
                           <li><span className="meta">Published: {detail.insights.organic.publishedCount}</span></li>
@@ -499,7 +505,7 @@ export default function CampaignsPage() {
                   style={{ marginTop: 8, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}
                 >
                   <span className="meta">Automation:</span>
-                  <select
+                  <Select
                     value={c.automationMode}
                     onChange={(e) =>
                       saveAutomation(c, e.target.value as AutomationMode, c.autoDailyCap)
@@ -510,11 +516,11 @@ export default function CampaignsPage() {
                         {AUTOMATION_LABELS[m]}
                       </option>
                     ))}
-                  </select>
+                  </Select>
                   {c.automationMode === "scheduled_auto" && (
                     <label className="meta" style={{ display: "flex", gap: 4, alignItems: "center" }}>
                       Daily cap
-                      <input
+                      <Input
                         type="number"
                         min={1}
                         max={1000}
@@ -533,17 +539,17 @@ export default function CampaignsPage() {
                 </div>
 
                 <div className="rating-row" style={{ marginTop: 8 }}>
-                  <button className="button-secondary" onClick={() => startEdit(c)}>
+                  <Button variant="secondary" size="sm" onClick={() => startEdit(c)}>
                     Edit
-                  </button>
+                  </Button>
                   {c.status === "active" ? (
-                    <button className="button-secondary" onClick={() => setStatus(c, "archived")}>
+                    <Button variant="secondary" size="sm" onClick={() => setStatus(c, "archived")}>
                       Archive
-                    </button>
+                    </Button>
                   ) : (
-                    <button className="button-secondary" onClick={() => setStatus(c, "active")}>
+                    <Button variant="secondary" size="sm" onClick={() => setStatus(c, "active")}>
                       Unarchive
-                    </button>
+                    </Button>
                   )}
                 </div>
               </li>

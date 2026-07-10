@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { Button } from "@/src/components/ui/button";
 import { apiFetch } from "@/lib/api";
 
 interface InvitePreview {
@@ -73,9 +74,9 @@ export default function InvitePage() {
             </p>
             {invite.status === "pending" ? (
               <div className="page-actions">
-                <button type="button" onClick={accept} disabled={accepting}>
+                <Button variant="primary" type="button" onClick={accept} disabled={accepting}>
                   {accepting ? "Joining…" : "Accept invite"}
-                </button>
+                </Button>
               </div>
             ) : (
               <p className="empty">

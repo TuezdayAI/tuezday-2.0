@@ -2,6 +2,10 @@
 
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
+import { Button } from "@/src/components/ui/button";
+import { Card, CardHeader } from "@/src/components/ui/card";
+import { Badge } from "@/src/components/ui/badge";
+import { Input, Textarea, Select } from "@/src/components/ui/input";
 
 
 import { API_URL, apiDownload, apiFetch } from "@/lib/api";
@@ -24,6 +28,17 @@ import {
 } from "@tuezday/contracts";
 
 const STATE_LABELS: Record<ApprovalState, string> = {
+  draft: "draft",
+  pending_review: "pending",
+  edited: "edited",
+  approved: "approved",
+  rejected: "rejected",
+};
+
+const STATE_BADGE_TONES: Record<
+  ApprovalState,
+  "draft" | "pending" | "edited" | "approved" | "rejected"
+> = {
   draft: "draft",
   pending_review: "pending",
   edited: "edited",
@@ -257,23 +272,26 @@ export default function PrPage() {
             actual beat, never inventing coverage. Pitches go through Review; sending stays in your
             email client.</>} actions={<>
             {approvedPitches.length > 0 && (
-            <button
+            <Button
               type="button"
-              className="button-secondary"
+              variant="secondary"
+              size="sm"
               onClick={() => void apiDownload(`/workspaces/${id}/pr/export.csv`, "pr-pitches.csv")}
             >
               ↓ Export approved CSV ({approvedPitches.length})
-            </button>
+            </Button>
           )}
           </>} />
 
-      <section className="panel">
-        <div className="panel-title-row">
-          <h2>Media contacts ({contacts.length})</h2>
-          <button className="button-secondary" onClick={() => setShowAddForm(!showAddForm)}>
-            + Add one contact
-          </button>
-        </div>
+      <Card>
+        <CardHeader
+          title={`Media contacts (${contacts.length})`}
+          actions={
+            <Button variant="secondary" size="sm" onClick={() => setShowAddForm(!showAddForm)}>
+              + Add one contact
+            </Button>
+          }
+        />
 
         <form
           className="persona-form"
@@ -283,16 +301,16 @@ export default function PrPage() {
             void importCsv();
           }}
         >
-          <textarea
+          <Textarea
             value={csv}
             onChange={(e) => setCsv(e.target.value)}
             placeholder={`Paste a CSV of media contacts…\n\n${CSV_EXAMPLE}`}
             rows={4}
           />
           <div className="editor-actions">
-            <button type="submit" disabled={busy || csv.trim().length === 0}>
+            <Button type="submit" variant="primary" disabled={busy || csv.trim().length === 0}>
               Import CSV
-            </button>
+            </Button>
             {importResult && <span className="meta">{importResult}</span>}
           </div>
         </form>
@@ -302,21 +320,21 @@ export default function PrPage() {
             <div className="resolve-controls">
               <label style={{ flex: 1 }}>
                 Name
-                <input
+                <Input
                   value={newContact.name}
                   onChange={(e) => setNewContact({ ...newContact, name: e.target.value })}
                 />
               </label>
               <label style={{ flex: 1 }}>
                 Email
-                <input
+                <Input
                   value={newContact.email}
                   onChange={(e) => setNewContact({ ...newContact, email: e.target.value })}
                 />
               </label>
               <label>
                 Type
-                <select
+                <Select
                   value={newContact.type}
                   onChange={(e) =>
                     setNewContact({ ...newContact, type: e.target.value as MediaContactType })
@@ -327,32 +345,32 @@ export default function PrPage() {
                       {CONTACT_TYPE_LABELS[t]}
                     </option>
                   ))}
-                </select>
+                </Select>
               </label>
               <label>
                 Outlet
-                <input
+                <Input
                   value={newContact.outlet}
                   onChange={(e) => setNewContact({ ...newContact, outlet: e.target.value })}
                 />
               </label>
               <label>
                 Beat
-                <input
+                <Input
                   value={newContact.beat}
                   onChange={(e) => setNewContact({ ...newContact, beat: e.target.value })}
                 />
               </label>
             </div>
-            <input
+            <Input
               value={newContact.coverageNotes}
               onChange={(e) => setNewContact({ ...newContact, coverageNotes: e.target.value })}
               placeholder="Past coverage notes — what have they actually written about?"
             />
             <div className="editor-actions">
-              <button type="submit" disabled={busy}>
+              <Button type="submit" variant="primary" disabled={busy}>
                 Add contact
-              </button>
+              </Button>
             </div>
           </form>
         )}
@@ -385,9 +403,9 @@ export default function PrPage() {
                         {contact.beat && ` · ${contact.beat}`}
                       </span>
                     </span>
-                    <button className="link-button" onClick={() => removeContact(contact)}>
+                    <Button variant="ghost" size="sm" onClick={() => removeContact(contact)}>
                       delete
-                    </button>
+                    </Button>
                   </div>
                   {contact.coverageNotes && (
                     <p className="section-reason">{contact.coverageNotes}</p>
@@ -396,9 +414,9 @@ export default function PrPage() {
                     <ul className="draft-chain">
                       {chain.map((d) => (
                         <li key={d.id}>
-                          <span className={`layer-badge state-${d.state}`}>
+                          <Badge tone={STATE_BADGE_TONES[d.state]}>
                             {STATE_LABELS[d.state]}
-                          </span>{" "}
+                          </Badge>{" "}
                           <span className="meta">{d.content.slice(0, 70)}…</span>{" "}
                           {d.state === "approved" && (
                             <a className="link-button" href={mailtoHref(contact.email, d.content)}>
@@ -417,14 +435,14 @@ export default function PrPage() {
             })}
           </ul>
         )}
-      </section>
+      </Card>
 
-      <section className="panel">
+      <Card>
         <h2>Draft media pitches</h2>
         <div className="resolve-controls">
           <label>
             Pitch type
-            <select
+            <Select
               value={pitchType}
               onChange={(e) => setPitchType(e.target.value as PrPitchType)}
             >
@@ -433,43 +451,43 @@ export default function PrPage() {
                   {PITCH_TYPE_LABELS[t]}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           {pitchType === "reactive" && (
             <label>
               Signal
-              <select value={signalId} onChange={(e) => setSignalId(e.target.value)}>
+              <Select value={signalId} onChange={(e) => setSignalId(e.target.value)}>
                 <option value="">(pick a signal)</option>
                 {signals.map((s) => (
                   <option key={s.id} value={s.id}>
                     [{s.source}] {s.content.slice(0, 60)}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
           )}
           <label>
             Persona
-            <select value={personaId} onChange={(e) => setPersonaId(e.target.value)}>
+            <Select value={personaId} onChange={(e) => setPersonaId(e.target.value)}>
               <option value="">(none — org voice)</option>
               {personas.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.name}
                 </option>
               ))}
-            </select>
+            </Select>
           </label>
           {campaigns.length > 0 && (
             <label>
               Campaign
-              <select value={campaignId} onChange={(e) => setCampaignId(e.target.value)}>
+              <Select value={campaignId} onChange={(e) => setCampaignId(e.target.value)}>
                 <option value="">(no campaign)</option>
                 {campaigns.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
                 ))}
-              </select>
+              </Select>
             </label>
           )}
           <label className="checkbox-label" style={{ alignSelf: "center" }}>
@@ -480,14 +498,15 @@ export default function PrPage() {
             />
             Use evidence
           </label>
-          <button
+          <Button
+            variant="primary"
             disabled={drafting || selectedCount === 0 || (pitchType === "reactive" && !signalId)}
             onClick={draftPitches}
           >
             {drafting
               ? "Drafting…"
               : `Draft ${selectedCount || ""} pitch${selectedCount === 1 ? "" : "es"}`}
-          </button>
+          </Button>
         </div>
         {pitchType === "reactive" && signals.length === 0 && (
           <p className="meta">
@@ -497,15 +516,17 @@ export default function PrPage() {
           </p>
         )}
         {draftSummary && <p className="bundle-summary">{draftSummary}</p>}
-      </section>
+      </Card>
 
-      <section className="panel">
-        <div className="panel-title-row">
-          <h2>Press kit</h2>
-          <button className="button-secondary" disabled={kitBusy} onClick={generatePressKit}>
-            {kitBusy ? "Generating…" : "Generate from brain"}
-          </button>
-        </div>
+      <Card>
+        <CardHeader
+          title="Press kit"
+          actions={
+            <Button variant="secondary" size="sm" disabled={kitBusy} onClick={generatePressKit}>
+              {kitBusy ? "Generating…" : "Generate from brain"}
+            </Button>
+          }
+        />
         <p className="meta">
           One-liner, about paragraph, and key facts from your brain docs. Each generation is a new
           version; edit and approve it in Review like any other output.
@@ -519,7 +540,7 @@ export default function PrPage() {
                 <div className="section-head">
                   <span className="section-title">
                     Version {pressKitDrafts.length - i}{" "}
-                    <span className={`layer-badge state-${d.state}`}>{STATE_LABELS[d.state]}</span>
+                    <Badge tone={STATE_BADGE_TONES[d.state]}>{STATE_LABELS[d.state]}</Badge>
                   </span>
                   <span className="meta">{new Date(d.createdAt).toLocaleString()}</span>
                   <Link className="link-button" href={`/workspaces/${id}/approvals`}>
@@ -531,7 +552,7 @@ export default function PrPage() {
             ))}
           </ul>
         )}
-      </section>
+      </Card>
     </>
   );
 }
