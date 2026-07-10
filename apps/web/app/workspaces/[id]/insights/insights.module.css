@@ -1,0 +1,11 @@
+/* Workspace insights (Wave C sweep) — Editorial tokens only. */
+
+.head {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.head svg {
+  color: var(--muted);
+}

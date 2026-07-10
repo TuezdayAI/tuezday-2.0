@@ -4,7 +4,10 @@ import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
+import { CountBadge } from "@/src/components/ui/badge";
+import { Icon } from "@/src/components/ui/icon";
 import { Input, Select } from "@/src/components/ui/input";
+import styles from "./sandbox.module.css";
 
 import { API_URL, apiFetch } from "@/lib/api";
 
@@ -323,7 +326,14 @@ export default function SandboxPage() {
 
       {showSettings && settings && (
         <Card>
-          <CardHeader title="Generation quality" />
+          <CardHeader
+            title={
+              <span className={styles.head}>
+                <Icon name="module-settings" size="sm" />
+                Generation quality
+              </span>
+            }
+          />
           <p className="subtitle">
             Pre-review and the angle step run before you ever look at a draft. Both apply across
             every module in this workspace.
@@ -370,7 +380,14 @@ export default function SandboxPage() {
       )}
 
       <Card>
-        <CardHeader title="1 · Choose the task" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="bundle" size="sm" />
+              1 · Choose the task
+            </span>
+          }
+        />
         <div className="resolve-controls">
           <label>
             Task
@@ -483,7 +500,14 @@ export default function SandboxPage() {
       </Card>
 
       <Card>
-        <CardHeader title="2 · Generate" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="status-generating" size="sm" />
+              2 · Generate
+            </span>
+          }
+        />
         {(!preview || previewStale) && (
           <p className="subtitle">Preview the context first — always read what the model reads.</p>
         )}
@@ -563,9 +587,37 @@ export default function SandboxPage() {
       </Card>
 
       <Card>
-        <CardHeader title="Training signal log" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="status-learning" size="sm" />
+              Training signal log{" "}
+              {log.length > 0 && <CountBadge count={log.length} label="logged generations" />}
+            </span>
+          }
+        />
         {log.length === 0 ? (
-          <EmptyState description={<>No generations yet.</>} />
+          <EmptyState
+            title="No generations yet"
+            description="Every generation lands here with its rating — accept, needs-edit, or reject — and becomes a training signal for the brain."
+            preview={
+              <ul className="section-list">
+                {[
+                  { rating: "accepted", title: "LinkedIn post · org voice", body: "The problem isn't the model — it's that the model knows nothing about you…" },
+                  { rating: "needs_edit", title: "Cold email opener · Founder", body: "Saw your post on consolidating the GTM stack — we went through the same…" },
+                  { rating: "rejected", title: "Landing page hero · org voice", body: "Supercharge your growth with AI-powered synergy…" },
+                ].map((g) => (
+                  <li key={g.title} className="section-card">
+                    <div className="section-head">
+                      <span className={`layer-badge rating-${g.rating}`}>{g.rating}</span>
+                      <span className="section-title">{g.title}</span>
+                    </div>
+                    <p className="section-reason">{g.body}</p>
+                  </li>
+                ))}
+              </ul>
+            }
+          />
         ) : (
           <ul className="section-list">
             {log.map((g) => (

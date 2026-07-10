@@ -1,8 +1,11 @@
 "use client";
 
+import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
 import { ShowMoreButton, useShowMore } from "@/src/components/show-more";
-import { Badge } from "@/src/components/ui/badge";
+import { Badge, CountBadge } from "@/src/components/ui/badge";
+import { Icon } from "@/src/components/ui/icon";
+import styles from "./discovery.module.css";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
 import { Input, Select } from "@/src/components/ui/input";
@@ -491,19 +494,20 @@ export default function DiscoveryPage() {
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>Discover</h1>
-          <p className="subtitle">
-            What is happening in your market right now. Tuezday scans the sources you choose —
-            you decide what becomes content.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title="Discover"
+        subtitle="What is happening in your market right now. Tuezday scans the sources you choose — you decide what becomes content."
+      />
 
       <Card>
         <CardHeader
-          title="Sources"
+          title={
+            <span className={styles.head}>
+              <Icon name="discover" size="sm" />
+              Sources{" "}
+              {sources.length > 0 && <CountBadge count={sources.length} label="discovery sources" />}
+            </span>
+          }
           actions={
             <>
               <Button variant="secondary" size="sm" disabled={suggesting} onClick={suggest}>
@@ -749,7 +753,32 @@ export default function DiscoveryPage() {
         )}
 
         {sources.length === 0 ? (
-          <EmptyState description={<>No sources yet. Add one or let the brain suggest some.</>} />
+          <EmptyState
+            title="No sources yet"
+            description="Add a source, or let the brain propose the subreddits, feeds, and accounts your market actually talks in."
+            primaryAction={
+              <Button variant="secondary" size="sm" disabled={suggesting} onClick={suggest}>
+                {suggesting ? "Asking the brain…" : "✨ Suggest sources"}
+              </Button>
+            }
+            preview={
+              <ul className="section-list">
+                {[
+                  { type: "Reddit", name: "r/SaaS — GTM & growth threads", meta: "checked hourly" },
+                  { type: "News", name: "TechCrunch · AI startups", meta: "checked daily" },
+                  { type: "X", name: "@competitor mentions", meta: "reads through your account" },
+                ].map((s) => (
+                  <li key={s.name} className="section-card">
+                    <div className="section-head">
+                      <span className="layer-badge">{s.type}</span>
+                      <span className="section-title">{s.name}</span>
+                      <span className="meta">{s.meta}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            }
+          />
         ) : (
           <ul className="section-list">
             {sources.map((s) => {
@@ -815,7 +844,13 @@ export default function DiscoveryPage() {
 
       <Card>
         <CardHeader
-          title="Tracked accounts"
+          title={
+            <span className={styles.head}>
+              <Icon name="user" size="sm" />
+              Tracked accounts{" "}
+              {tracked.length > 0 && <CountBadge count={tracked.length} label="tracked accounts" />}
+            </span>
+          }
           actions={
             <Button
               variant="secondary"
@@ -920,9 +955,20 @@ export default function DiscoveryPage() {
       </Card>
 
       <Card>
-        <h2>Triage inbox ({inbox.length})</h2>
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="notification" size="sm" />
+              Triage inbox{" "}
+              {inbox.length > 0 && <CountBadge count={inbox.length} label="items to triage" />}
+            </span>
+          }
+        />
         {inbox.length === 0 ? (
-          <EmptyState description={<>Nothing to triage. Run discovery, or wait for the worker's next poll.</>} />
+          <EmptyState
+            title="Nothing to triage"
+            description="Run discovery, or wait for the worker's next poll — new market signals land here scored by the brain, and you decide what becomes content."
+          />
         ) : (
           <ul className="section-list">
             {inboxList.visible.map((item) => {

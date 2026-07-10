@@ -1,9 +1,12 @@
 "use client";
 
+import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
-import { Badge } from "@/src/components/ui/badge";
+import { Badge, CountBadge } from "@/src/components/ui/badge";
+import { Icon } from "@/src/components/ui/icon";
+import styles from "./ad-creatives.module.css";
 import { Input, Textarea, Select } from "@/src/components/ui/input";
 
 
@@ -232,18 +235,20 @@ export default function AdCreativesPage() {
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>Ad creatives</h1>
-          <p className="subtitle">
-            Platform-ready ad copy from your brain — generated as variant sets, reviewed like
-            everything else, and exported within each platform&apos;s character limits.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title="Ad creatives"
+        subtitle="Platform-ready ad copy from your brain — generated as variant sets, reviewed like everything else, and exported within each platform's character limits."
+      />
 
       <Card>
-        <CardHeader title="Generate a variant set" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="status-generating" size="sm" />
+              Generate a variant set
+            </span>
+          }
+        />
         {activeCampaigns.length === 0 ? (
           <EmptyState description={<>Ad creative is generated for a campaign — the campaign overlay drives the offer and
             angle. <Link href={`/workspaces/${id}/campaigns`}>Create a campaign first</Link>.</>} />
@@ -311,7 +316,13 @@ export default function AdCreativesPage() {
 
       <Card>
         <CardHeader
-          title="Variant sets"
+          title={
+            <span className={styles.head}>
+              <Icon name="ad" size="sm" />
+              Variant sets{" "}
+              {sets.length > 0 && <CountBadge count={sets.length} label="creative variant sets" />}
+            </span>
+          }
           actions={
             sets.length > 0 && (
               <div className="resolve-controls" style={{ marginLeft: "auto" }}>
@@ -352,7 +363,26 @@ export default function AdCreativesPage() {
         />
 
         {sets.length === 0 ? (
-          <EmptyState description={<>No ad creative yet. Pick a campaign above and generate a set.</>} />
+          <EmptyState
+            title="No ad creative yet"
+            description="Pick a campaign above and generate a set — variants arrive within each platform's character limits, ready for review and CSV export."
+            preview={
+              <ul className="section-list">
+                {[
+                  { format: "Meta ad creative", title: "“Your GTM stack, minus 8 tools”", state: "approved" },
+                  { format: "Google RSA", title: "“AI content that knows your company”", state: "pending_review" },
+                ].map((s) => (
+                  <li key={s.title} className="section-card">
+                    <div className="section-head">
+                      <span className="layer-badge">{s.format}</span>
+                      <span className="section-title">{s.title}</span>
+                      <span className={`layer-badge state-${s.state}`}>{s.state.replace("_", " ")}</span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            }
+          />
         ) : (
           <ul className="section-list">
             {sets.map((set) => {

@@ -6,6 +6,8 @@ import { ConnectPrompt } from "@/src/components/connect-prompt";
 import { Card, CardHeader } from "@/src/components/ui/card";
 import { Button } from "@/src/components/ui/button";
 import { Badge } from "@/src/components/ui/badge";
+import { Icon } from "@/src/components/ui/icon";
+import styles from "./insights.module.css";
 import { TrendChart, CompareChart } from "@/src/components/ui/chart";
 
 import { useEffect, useState } from "react";
@@ -76,7 +78,14 @@ export default function WorkspaceInsightsPage() {
           </>} />
 
       <Card>
-        <CardHeader title="Brain Completeness" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="brain" size="sm" />
+              Brain Completeness
+            </span>
+          }
+        />
         <div className="automation-row" style={{ display: "flex", gap: "20px", flexWrap: "wrap", alignItems: "center", marginTop: 8 }}>
           <div style={{ flex: 1, minWidth: "200px" }}>
             <div style={{ fontSize: "2.5rem", fontWeight: "bold", color: "var(--brand)" }}>
@@ -116,7 +125,14 @@ export default function WorkspaceInsightsPage() {
       </Card>
 
       <Card style={{ marginTop: "24px" }}>
-        <CardHeader title="Metrics by Channel" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="status-learning" size="sm" />
+              Metrics by Channel
+            </span>
+          }
+        />
         {insights.byChannel.length === 0 ? (
           <EmptyState
             preview={
@@ -177,9 +193,25 @@ export default function WorkspaceInsightsPage() {
       </Card>
 
       <Card style={{ marginTop: "24px" }}>
-        <CardHeader title="Campaigns Summary" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="campaigns" size="sm" />
+              Campaigns Summary
+            </span>
+          }
+        />
         {insights.campaigns.length === 0 ? (
-          <EmptyState description={<>No campaigns available.</>} />
+          <EmptyState
+            title="No campaigns yet"
+            description={
+              <>
+                Campaign-level generation and approval stats land here.{" "}
+                <Link href={`/workspaces/${id}/campaigns`}>Create a campaign</Link> to segment your
+                numbers.
+              </>
+            }
+          />
         ) : (
           <table className="data-table" style={{ width: "100%", textAlign: "left" }}>
             <thead>

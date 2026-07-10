@@ -1,9 +1,13 @@
 "use client";
 
+import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
 import { ConnectPrompt } from "@/src/components/connect-prompt";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
+import { CountBadge } from "@/src/components/ui/badge";
+import { Icon } from "@/src/components/ui/icon";
+import styles from "./ads.module.css";
 import { Input, Select, Textarea } from "@/src/components/ui/input";
 
 import { API_URL, apiFetch } from "@/lib/api";
@@ -327,15 +331,10 @@ export default function AdsPage() {
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>Ads</h1>
-          <p className="subtitle">
-            What paid spend is doing, in Tuezday&apos;s own metric model. Read-only — campaigns are
-            managed on the platform.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title="Ads"
+        subtitle="What paid spend is doing, in Tuezday's own metric model. Read-only — campaigns are managed on the platform."
+      />
 
       {!view.fabric.healthy && accounts.length === 0 && (
         <p className="error">
@@ -345,7 +344,17 @@ export default function AdsPage() {
       )}
 
       <Card>
-        <CardHeader title="Ad accounts" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="connect" size="sm" />
+              Ad accounts{" "}
+              {adsConnections.length > 0 && (
+                <CountBadge count={adsConnections.length} label="connected ad accounts" />
+              )}
+            </span>
+          }
+        />
         {adsConnections.length === 0 ? (
           <EmptyState
             preview={
@@ -431,7 +440,14 @@ export default function AdsPage() {
       </Card>
 
       <Card>
-        <CardHeader title="Campaign performance" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="ad" size="sm" />
+              Campaign performance
+            </span>
+          }
+        />
         <div className="resolve-controls">
           <label>
             From
@@ -510,7 +526,14 @@ export default function AdsPage() {
       </Card>
 
       <Card>
-        <CardHeader title="CSV import" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="add" size="sm" />
+              CSV import
+            </span>
+          }
+        />
         <p className="meta">
           Header: <code>{CSV_COLUMNS.join(",")}</code> — one row per campaign per day; spend in
           currency units (12.34). Re-importing the same rows updates them in place.

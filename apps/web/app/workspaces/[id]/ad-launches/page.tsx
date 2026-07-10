@@ -1,5 +1,6 @@
 "use client";
 
+import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
 
 
@@ -22,7 +23,10 @@ import {
 } from "@tuezday/contracts";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
+import { CountBadge } from "@/src/components/ui/badge";
+import { Icon } from "@/src/components/ui/icon";
 import { Input, Select } from "@/src/components/ui/input";
+import styles from "./ad-launches.module.css";
 
 interface AccountView {
   id: string;
@@ -322,22 +326,22 @@ export default function AdLaunchesPage() {
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <h1>Launch ads</h1>
-          <p className="subtitle">
-            Assemble a campaign from an approved creative, send it through the approval gate, then
-            launch it on Meta. Spend is gated and capped — nothing goes live without a green light.
-          </p>
-        </div>
-      </div>
+      <PageHeader
+        title="Launch ads"
+        subtitle="Assemble a campaign from an approved creative, send it through the approval gate, then launch it on Meta. Spend is gated and capped — nothing goes live without a green light."
+      />
 
       {note && <p className="section-reason">{note}</p>}
       {error && <p className="error">{error}</p>}
 
       <Card>
         <CardHeader
-          title="Spend guardrails"
+          title={
+            <span className={styles.head}>
+              <Icon name="warning" size="sm" />
+              Spend guardrails
+            </span>
+          }
           actions={
             <span className={`layer-badge ${settings.killSwitch ? "badge-danger" : ""}`}>
               {settings.killSwitch ? "Kill switch ON" : "Live"}
@@ -381,7 +385,14 @@ export default function AdLaunchesPage() {
       </Card>
 
       <Card>
-        <h2>New launch</h2>
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="add" size="sm" />
+              New launch
+            </span>
+          }
+        />
         {connectedAccounts.length === 0 ? (
           <EmptyState description={<>No connected ad account.{" "}
             <Link href={`/workspaces/${id}/connectors`}>Connect Meta Ads</Link>, then{" "}
@@ -522,9 +533,20 @@ export default function AdLaunchesPage() {
       </Card>
 
       <Card>
-        <CardHeader title="Launches" />
+        <CardHeader
+          title={
+            <span className={styles.head}>
+              <Icon name="status-live" size="sm" />
+              Launches{" "}
+              {launches.length > 0 && <CountBadge count={launches.length} label="ad launches" />}
+            </span>
+          }
+        />
         {launches.length === 0 ? (
-          <EmptyState description={<>No launches yet. Build one above.</>} />
+          <EmptyState
+            title="No launches yet"
+            description="Build one above — it goes through the approval gate before any spend starts, and lands here with its live status and delivery metrics."
+          />
         ) : (
           <ul className="section-list">
             {launches.map((launch) => {

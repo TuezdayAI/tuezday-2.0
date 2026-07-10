@@ -1,0 +1,39 @@
+/* Create / content (Wave A sweep) — Editorial tokens only. */
+
+.head {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.head svg {
+  color: var(--muted);
+}
+
+/* Published receipts render as themselves (spec §6.1). */
+.previewGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+  margin-top: 10px;
+}
+
+.pubCell {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+
+.pubMeta {
+  font-size: 12px;
+  color: var(--muted-2);
+  overflow-wrap: anywhere;
+}
+
+.pubMetrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  font-size: 12px;
+  color: var(--muted);
+}
