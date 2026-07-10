@@ -3760,6 +3760,51 @@ export function visibleNavItems(nav: NavItem[], caps: WorkspaceCapabilities): Na
     });
 }
 
+export interface NavEntry {
+  label: string;
+  icon?: string;
+  tone?: NavItem["tone"];
+  parentLabel?: string;
+}
+
+/**
+ * Resolve a workspace-relative path ("" | "/approvals" | "/campaigns/abc") to
+ * the nav entry that owns it. Longest path wins so children beat their group
+ * and detail sub-routes resolve to their page. Used by the TopBar for titles.
+ */
+export function navEntryForPath(nav: NavItem[], relativePath: string): NavEntry | null {
+  if (relativePath === "") {
+    const home = nav.find((item) => item.path === "");
+    return home ? { label: home.label, icon: home.icon, tone: home.tone } : null;
+  }
+  let best: NavEntry | null = null;
+  let bestDepth = 0;
+  // ">=" so on equal depth the LAST considered wins — children are considered
+  // after their group, so a child sharing its group's path (e.g. "/approvals")
+  // beats the group, giving "Approval queue" with parentLabel "Review".
+  const consider = (path: string, entry: NavEntry) => {
+    if (path === "") return;
+    if (relativePath === path || relativePath.startsWith(`${path}/`)) {
+      if (path.length >= bestDepth) {
+        best = entry;
+        bestDepth = path.length;
+      }
+    }
+  };
+  for (const item of nav) {
+    consider(item.path, { label: item.label, icon: item.icon, tone: item.tone });
+    for (const child of item.children ?? []) {
+      consider(child.path, {
+        label: child.label,
+        icon: child.icon,
+        tone: child.tone ?? item.tone,
+        parentLabel: item.label,
+      });
+    }
+  }
+  return best;
+}
+
 // ---------------------------------------------------------------------------
 // Notification channels (Sprint 39)
 // ---------------------------------------------------------------------------
