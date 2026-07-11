@@ -3,7 +3,7 @@ import { createSignalInputSchema, draftSignalRequestSchema } from "@tuezday/cont
 import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
-import { getCampaign } from "../services/campaigns";
+import { campaignExecutionError, getCampaign } from "../services/campaigns";
 import type { EvidenceStore } from "../evidence/store";
 import { getPersona } from "../services/personas";
 import { runPreReview, setGenerationReview } from "../services/review";
@@ -72,9 +72,8 @@ export function registerSignalRoutes(
       if (parsed.data.campaignId) {
         campaign = getCampaign(db, request.params.id, parsed.data.campaignId);
         if (!campaign) return reply.status(404).send({ error: "campaign_not_found" });
-        if (campaign.status === "archived") {
-          return reply.status(409).send({ error: "campaign_archived" });
-        }
+        const campaignError = campaignExecutionError(campaign);
+        if (campaignError) return reply.status(409).send({ error: campaignError });
       }
 
       try {

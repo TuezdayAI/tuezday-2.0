@@ -44,6 +44,14 @@ function rowToCampaign(row: CampaignRow): Campaign {
   };
 }
 
+/** Backward-compatible route error for campaign-scoped execution. */
+export function campaignExecutionError(
+  campaign: Pick<Campaign, "status">,
+): "campaign_archived" | "campaign_inactive" | null {
+  if (campaign.status === "active") return null;
+  return campaign.status === "archived" ? "campaign_archived" : "campaign_inactive";
+}
+
 function inputToColumns(input: UpsertCampaignInput) {
   return {
     name: input.name,
