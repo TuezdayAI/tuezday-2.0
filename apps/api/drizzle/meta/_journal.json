@@ -295,6 +295,13 @@
       "when": 1783754508355,
       "tag": "0041_optimal_ender_wiggin",
       "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "6",
+      "when": 1783754926673,
+      "tag": "0042_lame_squadron_supreme",
+      "breakpoints": true
     }
   ]
 }

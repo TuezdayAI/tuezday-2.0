@@ -35,6 +35,7 @@ const validPlan = {
   status: "draft" as const,
   objective: "Create qualified demand",
   kpi: "20 demo requests",
+  timeframe: "Q3 2026",
   startAt: 1_700_000_000_000,
   endAt: 1_700_604_800_000,
   audienceIds: [IDS.audience],

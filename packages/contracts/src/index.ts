@@ -969,6 +969,7 @@ export function canTransitionExternalAction(
 const campaignPlanFields = {
   objective: z.string().trim().max(1_000).default(""),
   kpi: z.string().trim().max(500).default(""),
+  timeframe: z.string().trim().max(200).default(""),
   startAt: z.number().int().nullable(),
   endAt: z.number().int().nullable(),
   audienceIds: z.array(z.string().uuid()).default([]),

@@ -501,6 +501,7 @@ export const campaignPlanRevisions = sqliteTable(
     status: text("status").notNull().default("draft"),
     objective: text("objective").notNull().default(""),
     kpi: text("kpi").notNull().default(""),
+    timeframe: text("timeframe").notNull().default(""),
     startAt: integer("start_at"),
     endAt: integer("end_at"),
     audienceIdsJson: text("audience_ids_json").notNull().default("[]"),

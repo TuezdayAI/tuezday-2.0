@@ -15,6 +15,10 @@ import type { Db } from "../db";
 import { campaigns, drafts, type CampaignRow } from "../db/schema";
 import { getCampaignAdMetrics, type CampaignAdMetrics } from "./ads";
 import { listCampaignAudiences } from "./audiences";
+import {
+  getCampaignControlPlaneSummary,
+  type ControlPlaneSummary,
+} from "./orchestration-backfill";
 
 function rowToCampaign(row: CampaignRow): Campaign {
   return {
@@ -181,6 +185,8 @@ export interface CampaignDetail {
   adMetrics: CampaignAdMetrics | null;
   /** Audiences attached as this campaign's targets (Sprint 24). */
   audiences: CampaignAudience[];
+  /** Shadow read model while legacy campaign execution remains active. */
+  controlPlane: ControlPlaneSummary;
 }
 
 export function getCampaignDetail(db: Db, campaign: Campaign): CampaignDetail {
@@ -212,5 +218,6 @@ export function getCampaignDetail(db: Db, campaign: Campaign): CampaignDetail {
     drafts: rows.map((r) => ({ ...r, state: r.state as ApprovalState })),
     adMetrics: getCampaignAdMetrics(db, campaign),
     audiences: listCampaignAudiences(db, campaign.workspaceId, campaign.id),
+    controlPlane: getCampaignControlPlaneSummary(db, campaign.workspaceId, campaign.id),
   };
 }

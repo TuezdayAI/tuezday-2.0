@@ -8,6 +8,8 @@ import {
   campaignLanes,
   campaignPlanRevisions,
   campaigns,
+  connections,
+  postingCadences,
 } from "../src/db/schema";
 import {
   CampaignPlanNotFoundError,
@@ -17,6 +19,10 @@ import {
   getCurrentCampaignPlan,
 } from "../src/services/campaign-plans";
 import { upsertLaneRevision } from "../src/services/campaign-lanes";
+import {
+  backfillCampaignControlPlane,
+  getCampaignControlPlaneSummary,
+} from "../src/services/orchestration-backfill";
 import { buildAuthedApp, createTestDb } from "./helpers";
 
 describe("orchestration foundation persistence", () => {
@@ -187,6 +193,7 @@ describe("orchestration foundation persistence", () => {
     const planInput = {
       objective: "Create qualified demand",
       kpi: "20 demo requests",
+      timeframe: "Q3 2026",
       startAt: null,
       endAt: null,
       audienceIds: [],
@@ -287,6 +294,98 @@ describe("orchestration foundation persistence", () => {
       expect(() =>
         createPlanRevision(db, randomUUID(), campaignId, planInput, { userId: null }),
       ).toThrow(CampaignPlanNotFoundError);
+    });
+  });
+
+  describe("legacy backfill", () => {
+    it("backfills an unambiguous cadence and preserves the campaign timeframe", async () => {
+      await app.inject({
+        method: "PUT",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}`,
+        payload: {
+          name: "Evergreen founder voice",
+          timeframe: "Q3 2026",
+          channels: ["linkedin"],
+          personaIds: [personaId],
+        },
+      });
+      const connectionId = randomUUID();
+      const now = Date.now();
+      db.insert(connections)
+        .values({
+          id: connectionId,
+          workspaceId,
+          providerKey: "linkedin",
+          nangoConnectionId: randomUUID(),
+          configJson: "{}",
+          displayName: "Founder LinkedIn",
+          status: "connected",
+          contentProfileJson: "{}",
+          createdAt: now,
+          updatedAt: now,
+        })
+        .run();
+      db.insert(postingCadences)
+        .values({
+          id: randomUUID(),
+          workspaceId,
+          name: "Founder LinkedIn",
+          campaignId,
+          personaId,
+          channel: "linkedin",
+          connectionId,
+          target: "feed",
+          daysOfWeekJson: "[2,4]",
+          timeOfDay: "10:00",
+          timezone: "Asia/Kolkata",
+          status: "active",
+          createdAt: now,
+          updatedAt: now,
+        })
+        .run();
+
+      const first = backfillCampaignControlPlane(db, workspaceId, campaignId);
+      const second = backfillCampaignControlPlane(db, workspaceId, campaignId);
+      const detail = getCurrentCampaignPlan(db, workspaceId, campaignId);
+
+      expect(first.status).toBe("backfilled");
+      expect(first.issues).toEqual([]);
+      expect(second.status).toBe("already_backfilled");
+      expect(second.planRevisionId).toBe(first.planRevisionId);
+      expect(detail?.plan.timeframe).toBe("Q3 2026");
+      expect(detail?.lanes).toHaveLength(1);
+      expect(detail?.lanes[0]).toMatchObject({
+        personaId,
+        channel: "linkedin",
+        format: "linkedin_post",
+        publishingConnectionId: connectionId,
+      });
+    });
+
+    it("flags campaign channels whose persona and account mapping cannot be inferred", async () => {
+      await app.inject({
+        method: "PUT",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}`,
+        payload: {
+          name: "Evergreen founder voice",
+          channels: ["linkedin", "email"],
+          personaIds: [personaId],
+        },
+      });
+
+      const result = backfillCampaignControlPlane(db, workspaceId, campaignId);
+      const summary = getCampaignControlPlaneSummary(db, workspaceId, campaignId);
+
+      expect(result.status).toBe("needs_configuration");
+      expect(result.issues.map((issue) => issue.code)).toEqual([
+        "execution_mapping_missing",
+        "execution_mapping_missing",
+      ]);
+      expect(summary).toMatchObject({
+        planRevision: 1,
+        laneCount: 0,
+        configurationIssueCount: 2,
+      });
     });
   });
 });
