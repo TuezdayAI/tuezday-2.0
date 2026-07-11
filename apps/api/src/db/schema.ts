@@ -467,16 +467,123 @@ export const campaigns = sqliteTable("campaigns", {
   channelsJson: text("channels_json").notNull().default("[]"),
   personaIdsJson: text("persona_ids_json").notNull().default("[]"),
   overlay: text("overlay").notNull().default(""),
+  // Control-plane identity. Existing campaigns migrate as user-created,
+  // initiative campaigns; always-on system campaigns opt into other values.
+  origin: text("origin").notNull().default("user"),
+  purpose: text("purpose").notNull().default("initiative"),
   status: text("status").notNull().default("active"),
   // Social automation mode (Sprint 28): manual | human_in_the_loop | scheduled_auto.
   automationMode: text("automation_mode").notNull().default("manual"),
   // Per-campaign override of the daily auto-post cap; null = workspace default.
   autoDailyCap: integer("auto_daily_cap"),
+  // Service-validated pointer to the active immutable plan revision. Kept as
+  // a plain id to avoid a circular SQLite table-recreate migration.
+  currentPlanRevisionId: text("current_plan_revision_id"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
 
 export type CampaignRow = typeof campaigns.$inferSelect;
+
+// Immutable campaign intent snapshots. Activating a new row supersedes the
+// old one; historical generations keep the exact revision they used.
+export const campaignPlanRevisions = sqliteTable(
+  "campaign_plan_revisions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    status: text("status").notNull().default("draft"),
+    objective: text("objective").notNull().default(""),
+    kpi: text("kpi").notNull().default(""),
+    startAt: integer("start_at"),
+    endAt: integer("end_at"),
+    audienceIdsJson: text("audience_ids_json").notNull().default("[]"),
+    pillarsJson: text("pillars_json").notNull().default("[]"),
+    offersJson: text("offers_json").notNull().default("[]"),
+    ctasJson: text("ctas_json").notNull().default("[]"),
+    guidance: text("guidance").notNull().default(""),
+    createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: integer("created_at").notNull(),
+    activatedAt: integer("activated_at"),
+  },
+  (t) => [
+    uniqueIndex("campaign_plan_revision_number").on(t.campaignId, t.revision),
+    index("campaign_plan_workspace_campaign").on(t.workspaceId, t.campaignId),
+  ],
+);
+
+export type CampaignPlanRevisionRow = typeof campaignPlanRevisions.$inferSelect;
+
+// Stable production thread. Its revision-scoped configuration lives below so
+// historical attribution survives campaign plan edits.
+export const campaignLanes = sqliteTable(
+  "campaign_lanes",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    name: text("name").notNull(),
+    status: text("status").notNull().default("active"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("campaign_lane_key").on(t.campaignId, t.key),
+    index("campaign_lane_workspace_campaign").on(t.workspaceId, t.campaignId),
+  ],
+);
+
+export type CampaignLaneRow = typeof campaignLanes.$inferSelect;
+
+export const campaignLaneRevisions = sqliteTable(
+  "campaign_lane_revisions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    laneId: text("lane_id")
+      .notNull()
+      .references(() => campaignLanes.id, { onDelete: "cascade" }),
+    planRevisionId: text("plan_revision_id")
+      .notNull()
+      .references(() => campaignPlanRevisions.id, { onDelete: "cascade" }),
+    personaId: text("persona_id")
+      .notNull()
+      .references(() => personas.id, { onDelete: "restrict" }),
+    audienceId: text("audience_id").references(() => audiences.id, { onDelete: "set null" }),
+    channel: text("channel").notNull(),
+    format: text("format").notNull(),
+    publishingConnectionId: text("publishing_connection_id").references(() => connections.id, {
+      onDelete: "set null",
+    }),
+    providerTarget: text("provider_target").notNull().default(""),
+    deliveryMode: text("delivery_mode").notNull(),
+    plannedQuantity: integer("planned_quantity").notNull().default(0),
+    scheduleJson: text("schedule_json"),
+    reactivePeriod: text("reactive_period"),
+    reactiveCap: integer("reactive_cap"),
+    status: text("status").notNull().default("active"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("campaign_lane_plan_revision").on(t.laneId, t.planRevisionId),
+    index("campaign_lane_revision_plan").on(t.planRevisionId),
+  ],
+);
+
+export type CampaignLaneRevisionRow = typeof campaignLaneRevisions.$inferSelect;
 
 // Sprint 45 multi-candidate scoring: one row per candidate persona×campaign
 // pairing a discovered item scored above zero relevance for. Replaced

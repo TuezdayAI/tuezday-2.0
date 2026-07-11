@@ -811,6 +811,8 @@ export const campaignSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
   name: z.string().min(1).max(200),
+  origin: z.enum(CAMPAIGN_ORIGINS),
+  purpose: z.enum(CAMPAIGN_PURPOSES),
   objective: z.string().max(1000),
   kpi: z.string().max(500),
   timeframe: z.string().max(200),
@@ -823,6 +825,7 @@ export const campaignSchema = z.object({
   automationMode: z.enum(AUTOMATION_MODES),
   /** Per-campaign override of the daily auto-post cap; null = use the workspace default. */
   autoDailyCap: z.number().int().positive().max(1000).nullable(),
+  currentPlanRevisionId: z.string().uuid().nullable(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 });
@@ -834,6 +837,7 @@ export const upsertCampaignInputSchema = z.object({
     .trim()
     .min(1, "Campaign name is required")
     .max(200, "Campaign name must be 200 characters or fewer"),
+  purpose: z.enum(CAMPAIGN_PURPOSES).default("initiative"),
   objective: z.string().trim().max(1000).default(""),
   kpi: z.string().trim().max(500).default(""),
   timeframe: z.string().trim().max(200).default(""),

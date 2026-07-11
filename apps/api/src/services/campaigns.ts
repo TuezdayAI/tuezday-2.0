@@ -21,6 +21,8 @@ function rowToCampaign(row: CampaignRow): Campaign {
     id: row.id,
     workspaceId: row.workspaceId,
     name: row.name,
+    origin: row.origin as Campaign["origin"],
+    purpose: row.purpose as Campaign["purpose"],
     objective: row.objective,
     kpi: row.kpi,
     timeframe: row.timeframe,
@@ -32,6 +34,7 @@ function rowToCampaign(row: CampaignRow): Campaign {
     status: row.status as CampaignStatus,
     automationMode: row.automationMode as AutomationMode,
     autoDailyCap: row.autoDailyCap,
+    currentPlanRevisionId: row.currentPlanRevisionId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -40,6 +43,7 @@ function rowToCampaign(row: CampaignRow): Campaign {
 function inputToColumns(input: UpsertCampaignInput) {
   return {
     name: input.name,
+    purpose: input.purpose,
     objective: input.objective,
     kpi: input.kpi,
     timeframe: input.timeframe,
@@ -57,11 +61,13 @@ export function createCampaign(db: Db, workspaceId: string, input: UpsertCampaig
   const row: CampaignRow = {
     id: randomUUID(),
     workspaceId,
+    origin: "user",
     ...inputToColumns(input),
     // Automation is set only via the dedicated toggle, never reset by a general
     // campaign edit; a new campaign starts from the input defaults (manual / null).
     automationMode: input.automationMode,
     autoDailyCap: input.autoDailyCap,
+    currentPlanRevisionId: null,
     createdAt: now,
     updatedAt: now,
   };

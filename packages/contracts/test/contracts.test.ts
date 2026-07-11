@@ -906,6 +906,7 @@ describe("upsertCampaignInputSchema", () => {
   it("accepts a name-only campaign with defaults", () => {
     const parsed = upsertCampaignInputSchema.parse({ name: "Rebuild launch" });
     expect(parsed.status).toBe("active");
+    expect(parsed.purpose).toBe("initiative");
     expect(parsed.pillars).toEqual([]);
     expect(parsed.channels).toEqual([]);
     expect(parsed.overlay).toBe("");
