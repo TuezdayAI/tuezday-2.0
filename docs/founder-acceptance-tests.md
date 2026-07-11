@@ -4,7 +4,7 @@
 > Source of truth per slice: `docs/specs/sprint-*.md`. Check items off as you verify them.
 >
 > **Prerequisites:** `npm install`, then `npm run dev` (web :3000, api :3001).
-> For Sprint 9 tests: Docker Desktop running + `npm run r2r:up` (R2R on :7272).
+> For Sprint 9 tests (historical): these predate Sprint 47 — evidence is native now; no Docker needed.
 > For Sprint 12 tests: `npm run nango:up` (Nango on :3050).
 > For Sprint 14 tests: Meta Ads `ads_read` system-user token; `npm run nango:up`.
 > For Sprint 17 tests: Reddit app credentials (`REDDIT_CLIENT_ID`, `REDDIT_CLIENT_SECRET`) in `.env`; `npm run nango:up`.
@@ -93,6 +93,9 @@
 **Gate:** the campaign visibly and sensibly changes output behavior.
 
 ## Sprint 9 — RAG Corpus / Evidence (M7)
+
+> ⚠ Historical: Sprint 47 replaced R2R with the native store — the `r2r:up`/`r2r:down` steps below
+> no longer exist; the equivalent checks live in the Sprint 47 section.
 
 - [ ] `npm run r2r:up`, wait until the Evidence page shows the store healthy.
 - [ ] Upload your website copy + 2–3 past posts as evidence documents.
@@ -676,9 +679,30 @@ behaves as if the item had come from any other source.
 
 ---
 
+## Sprint 47 — Own the evidence store (R2R exit)
+
+- [ ] **No Docker needed.** With every container stopped (never run `r2r:up` — it's gone), Brain →
+      Evidence → add a document → status **ready**, no "store offline" banner. Search-backed
+      generation works on a laptop with nothing but `npm run dev`.
+- [ ] **Citations still flow.** Playground → enable **Use evidence** → Preview context → the
+      evidence section is included with your document cited and sensible scores in the trace.
+- [ ] **Migrate the old corpus (one-time).** Start your existing R2R containers one last time
+      (`docker start` the old containers — the compose file left the repo; if you need it:
+      `git show main:infra/r2r/compose.yaml`) → `npm run evidence:migrate` → summary lists each
+      document migrated; searches find pre-migration content. Documents the script can't recover
+      are marked failed with a "re-add it" message, never silently dropped.
+- [ ] **Parity gate.** With R2R still up and the corpus migrated:
+      `npm run evidence:parity -- <workspace-id>` → average overlap@5 ≥ 0.60 and no zero-overlap
+      query. After this, stop the R2R containers for good.
+- [ ] **Deletes are real.** Delete an evidence document → a fresh context preview no longer cites
+      it (the FTS + vector rows die with it).
+- [ ] **Key-less degradation.** Blank out `GEMINI_API_KEY` → adding evidence still works and
+      retrieval falls back to lexical search (scores in the trace, no crash); restore the key and
+      the next `reindex`/re-ingest backfills embeddings.
+
 ## Cross-cutting things worth re-checking occasionally
 
 - [ ] `npm test` (905 tests as of Sprint 45) and `npm run typecheck` stay green.
 - [ ] Every generation's prompt trace is readable *before* and *after* the LLM call (sandbox → "show prompt trace").
-- [ ] Stopping any external service (R2R, Nango) degrades gracefully — the app never breaks, traces/banners say why.
+- [ ] Stopping any external service (Nango) degrades gracefully — the app never breaks, traces/banners say why. (Evidence needs no service since Sprint 47.)
 - [ ] Gemini occasionally returns 503 "high demand" — a retry succeeds; it surfaces as a clean error, never a crash.

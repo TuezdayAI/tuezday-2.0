@@ -1,6 +1,7 @@
 # Sprint 47 — Own the evidence store (R2R exit)
 
-**Status:** spec written 2026-07-11, implementation pending
+**Status:** built 2026-07-11 — all suites green; awaiting founder acceptance (migration + parity
+run on the real corpus)
 **Branch:** `sprint-47-own-evidence-store` (off `main` — builds on Sprints 9 and 32, both merged)
 **Roadmap:** Phase G, `docs/plans/sprint-guide-21-onward.md` §Sprint 47; decision path locked in
 `docs/plans/context-discovery-gap-assessment.md` ("Decision path" + "Sprint E").
@@ -233,19 +234,22 @@ with summary; second run skips already-migrated rows.
 
 ## Build order (checklist)
 
-- [ ] 1. Spec committed on `sprint-47-own-evidence-store`.
-- [ ] 2. Schema: `evidence_chunks` in `schema.ts` + generated migration committed.
-- [ ] 3. Tests: `chunkText` + `DbEvidenceStore` suite (failing).
-- [ ] 4. Gateway `embed()` (tests first in `gateway-embed.test.ts`), Gemini impl.
-- [ ] 5. `DbEvidenceStore` implementation until suite is green (FTS, vec, RRF, normalization,
+- [x] 1. Spec committed on `sprint-47-own-evidence-store`.
+- [x] 2. Schema: `evidence_chunks` in `schema.ts` + generated migration committed
+       (`0037_complex_ma_gnuci.sql`).
+- [x] 3. Tests: `chunkText` + `DbEvidenceStore` suite (failing first).
+- [x] 4. Gateway `embed()` (tests first in `gateway-embed.test.ts`), Gemini impl.
+- [x] 5. `DbEvidenceStore` implementation until suite is green (FTS, vec, RRF, normalization,
        degradation paths).
-- [ ] 6. Wire-through suite in `evidence.test.ts` green with the real store on `:memory:`.
-- [ ] 7. Migration script + `evidence-migrate.test.ts`.
-- [ ] 8. Parity script (manual gate; not in CI).
-- [ ] 9. Cutover: `server.ts` default store; retire `infra/r2r`, npm scripts, `.env.example` var,
-       `r2r.ts`; grep sweep for stale references.
-- [ ] 10. Full `npm test` + `npm run typecheck` green; push branch; update sprint guide status,
-       founder-acceptance-tests, deferred-improvements cross-references (#22 note), progress log.
+- [x] 6. Wire-through suite in `evidence.test.ts` green with the real store on `:memory:`.
+- [x] 7. Migration script + `evidence-migrate.test.ts`; CLI smoke-tested on a copy of the dev DB
+       (R2R down → both manual docs fail cleanly with the re-add message, exit 1).
+- [x] 8. Parity script (manual gate; not in CI).
+- [x] 9. Cutover: `server.ts` + `buildApp` default store; retired `infra/r2r`, npm scripts,
+       `r2r.ts`, `r2r-client.test.ts`; swept CLAUDE.md, evidence-page copy, resolver comment,
+       founder-acceptance historical notes.
+- [x] 10. Full `npm test` + `npm run typecheck` green; docs updated (sprint guide status,
+       founder-acceptance-tests §47, deferred #22 cross-ref, this log).
 
 ## Progress log
 
@@ -253,3 +257,21 @@ with summary; second run skips already-migrated rows.
   only in R2R for manual docs (candidates hold content locally); `rankEvidenceChunks` requires 0–1
   similarity scores (floor 0.2); FTS5 confirmed available in bundled SQLite 3.53.1; sprint-41's
   unmerged gateway files are additive-only (no `gateway.ts` conflict).
+- 2026-07-11 — Built. Design refinements vs the spec draft, found during TDD:
+  - `LlmGateway.embed` is **optional** (`embed?:`) rather than required — 34 test files carry fake
+    gateways, and the store must handle embeddings-unavailable anyway; an absent method is the
+    same degradation path.
+  - Vector scores are **raw cosine clamped to [0,1]**, not `(1+cos)/2` — matches the similarity
+    semantics R2R reported, keeps the 0.2 floor meaningful.
+  - When a chunk is hit by BOTH legs, the reported score is the **max** of the cosine score and
+    the scaled lexical score — a strong exact-vocabulary match must not be undersold by a weak
+    embedding (found via the wire-through test).
+  - KNN noise control: results below similarity 0.05 are dropped in the store; zero query vectors
+    skip the vector leg.
+  - vec0 uses a **partition key** on `collection_id` (verified: scoping enforced by sqlite-vec
+    itself) and `distance_metric=cosine` (distance = 1 − cos).
+  - Founder migration note: the compose file is deleted on this branch; the one-time migration run
+    uses your still-existing Docker containers (`docker start …`) or
+    `git show main:infra/r2r/compose.yaml` if they're gone.
+- Suite count after sprint: 1089 tests / 94 files (was 1072/92): +13 store, +4 embed, +5 migrate,
+  +1 wire-through, −6 retired r2r-client tests, +2 elsewhere.

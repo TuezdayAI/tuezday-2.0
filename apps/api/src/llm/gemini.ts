@@ -1,9 +1,18 @@
-import { GatewayError, type GenerateParams, type GenerateResult, type LlmGateway } from "./gateway";
+import {
+  GatewayError,
+  type EmbedParams,
+  type EmbedResult,
+  type GenerateParams,
+  type GenerateResult,
+  type LlmGateway,
+} from "./gateway";
+import { EVIDENCE_EMBEDDING_DIMENSIONS } from "../evidence/db-store";
 
 // gemini-2.5-flash with thinking disabled: ~1.5-2s per generation in testing,
 // vs 70s+ (and 503s under load) on gemini-3.5-flash. Sandbox UX needs fast
 // iterations more than frontier quality; override via GEMINI_MODEL if needed.
 const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_EMBED_MODEL = "gemini-embedding-001";
 const DEFAULT_MAX_OUTPUT_TOKENS = 2048;
 
 /** Thinking models spend output tokens on reasoning before any text appears —
@@ -20,6 +29,11 @@ interface GeminiResponse {
   error?: { message?: string };
 }
 
+interface GeminiEmbedResponse {
+  embeddings?: Array<{ values?: number[] }>;
+  error?: { message?: string };
+}
+
 /**
  * Gemini implementation of the LLM gateway via the generateContent REST API.
  * No SDK dependency — one endpoint, one body shape.
@@ -27,12 +41,14 @@ interface GeminiResponse {
 export class GeminiGateway implements LlmGateway {
   private readonly apiKey: string | undefined;
   public readonly model: string;
+  public readonly embedModel: string;
 
   // Blank env values (e.g. an unfilled `GEMINI_MODEL=` line in .env) must
   // fall back to defaults, so use truthiness, not just undefined-checks.
   constructor(apiKey?: string, model?: string) {
     this.apiKey = (apiKey ?? process.env.GEMINI_API_KEY)?.trim() || undefined;
     this.model = (model ?? process.env.GEMINI_MODEL)?.trim() || DEFAULT_MODEL;
+    this.embedModel = process.env.GEMINI_EMBED_MODEL?.trim() || DEFAULT_EMBED_MODEL;
   }
 
   async generate({ prompt, maxOutputTokens }: GenerateParams): Promise<GenerateResult> {
@@ -91,6 +107,64 @@ export class GeminiGateway implements LlmGateway {
       model: this.model,
       provider: "gemini",
       durationMs: Date.now() - started,
+    };
+  }
+
+  async embed({ texts }: EmbedParams): Promise<EmbedResult> {
+    if (!this.apiKey) {
+      throw new GatewayError(
+        "missing_api_key",
+        "GEMINI_API_KEY is not set. Add it to a .env file in the repo root and restart the dev server.",
+      );
+    }
+
+    let res: Response;
+    try {
+      res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${this.embedModel}:batchEmbedContents`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-goog-api-key": this.apiKey,
+          },
+          body: JSON.stringify({
+            requests: texts.map((text) => ({
+              model: `models/${this.embedModel}`,
+              content: { parts: [{ text }] },
+              outputDimensionality: EVIDENCE_EMBEDDING_DIMENSIONS,
+            })),
+          }),
+        },
+      );
+    } catch (err) {
+      throw new GatewayError(
+        "provider_error",
+        `Could not reach the Gemini API: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+
+    const body = (await res.json().catch(() => ({}))) as GeminiEmbedResponse;
+    if (!res.ok) {
+      throw new GatewayError(
+        "provider_error",
+        `Gemini API returned ${res.status} for model "${this.embedModel}": ${body.error?.message ?? "unknown error"}`,
+      );
+    }
+
+    const embeddings = (body.embeddings ?? []).map((e) => e.values ?? []);
+    if (embeddings.length !== texts.length || embeddings.some((v) => v.length === 0)) {
+      throw new GatewayError(
+        "provider_error",
+        `Gemini embeddings response had ${embeddings.length} vectors for ${texts.length} inputs.`,
+      );
+    }
+
+    return {
+      embeddings,
+      model: this.embedModel,
+      provider: "gemini",
+      dimensions: EVIDENCE_EMBEDDING_DIMENSIONS,
     };
   }
 }

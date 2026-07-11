@@ -10,7 +10,7 @@ import { NangoFabric } from "./connectors/nango";
 import type { Db } from "./db";
 import type { Fetcher } from "./discovery/adapters";
 import { NullIntentProvider, type IntentProvider } from "./discovery/intent";
-import { R2REvidenceStore } from "./evidence/r2r";
+import { DbEvidenceStore } from "./evidence/db-store";
 import type { EvidenceStore } from "./evidence/store";
 import { GeminiGateway } from "./llm/gemini";
 import type { LlmGateway } from "./llm/gateway";
@@ -63,7 +63,7 @@ export interface BuildAppOptions {
   llm?: LlmGateway;
   /** HTTP fetcher for discovery adapters; tests inject fixtures. */
   fetcher?: Fetcher;
-  /** Evidence store override; defaults to the R2R client from env. */
+  /** Evidence store override; defaults to the native SQLite store (Sprint 47). */
   evidence?: EvidenceStore;
   /** Connector fabric override; defaults to the Nango client from env. */
   connectors?: ConnectorFabric;
@@ -86,7 +86,7 @@ export async function buildApp({
   db,
   llm = new GeminiGateway(),
   fetcher = fetch,
-  evidence = new R2REvidenceStore(),
+  evidence = new DbEvidenceStore(db, llm),
   connectors = new NangoFabric(undefined, undefined, fetcher),
   intent = new NullIntentProvider(),
   exporter = new CsvOutboundExporter(),

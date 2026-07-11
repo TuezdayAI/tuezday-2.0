@@ -3,7 +3,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildApp } from "./app";
 import { createDb } from "./db";
-import { R2REvidenceStore } from "./evidence/r2r";
+import { DbEvidenceStore } from "./evidence/db-store";
+import { GeminiGateway } from "./llm/gemini";
 import { backfillCollections } from "./services/evidence";
 
 // Load a root .env (gitignored) so GEMINI_API_KEY etc. reach the dev server
@@ -26,14 +27,17 @@ const DB_FILE = process.env.TUEZDAY_DB ?? "tuezday.db";
 const PORT = Number(process.env.PORT ?? 3001);
 
 const db = createDb(DB_FILE);
-const evidence = new R2REvidenceStore();
-const app = await buildApp({ db, evidence });
+// One gateway instance shared by generation and the evidence store's
+// embeddings (Sprint 47: evidence is native — no external service).
+const llm = new GeminiGateway();
+const evidence = new DbEvidenceStore(db, llm);
+const app = await buildApp({ db, llm, evidence });
 
 try {
   await app.listen({ port: PORT, host: "127.0.0.1" });
   console.log(`Tuezday API listening on http://localhost:${PORT}`);
   // Best-effort on boot: ensure each workspace's evidence collection exists
-  // and its ready documents are attached. Logs and moves on if R2R is down.
+  // and its ready documents are attached.
   void backfillCollections(db, evidence);
 } catch (err) {
   console.error(err);
