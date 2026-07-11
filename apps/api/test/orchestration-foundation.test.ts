@@ -388,4 +388,127 @@ describe("orchestration foundation persistence", () => {
       });
     });
   });
+
+  describe("routes", () => {
+    const revisionPayload = {
+      objective: "Create qualified demand",
+      kpi: "20 demo requests",
+      timeframe: "Q3 2026",
+      startAt: null,
+      endAt: null,
+      audienceIds: [],
+      pillars: ["GTM memory"],
+      offers: ["Product demo"],
+      ctas: ["Book a demo"],
+      guidance: "Use customer evidence.",
+    };
+
+    function lanePayload(over: Record<string, unknown> = {}) {
+      return {
+        key: "founder-linkedin",
+        name: "Founder LinkedIn",
+        personaId,
+        audienceId: null,
+        channel: "linkedin",
+        format: "linkedin_post",
+        publishingConnectionId: null,
+        providerTarget: "feed",
+        deliveryMode: "planned",
+        plannedQuantity: 2,
+        schedule: {
+          daysOfWeek: [2, 4],
+          timeOfDay: "10:00",
+          timezone: "Asia/Kolkata",
+        },
+        reactivePeriod: null,
+        reactiveCap: null,
+        status: "active",
+        ...over,
+      };
+    }
+
+    it("creates, configures, activates, and reads a campaign plan", async () => {
+      const revisionRes = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions`,
+        payload: revisionPayload,
+      });
+      expect(revisionRes.statusCode).toBe(201);
+      const revision = revisionRes.json();
+
+      const laneRes = await app.inject({
+        method: "PUT",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions/${revision.id}/lanes`,
+        payload: lanePayload(),
+      });
+      expect(laneRes.statusCode).toBe(200);
+
+      const activateRes = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions/${revision.id}/activate`,
+      });
+      expect(activateRes.statusCode).toBe(200);
+      expect(activateRes.json().plan.status).toBe("active");
+
+      const currentRes = await app.inject({
+        method: "GET",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan`,
+      });
+      expect(currentRes.statusCode).toBe(200);
+      expect(currentRes.json()).toMatchObject({
+        plan: { id: revision.id, revision: 1, timeframe: "Q3 2026" },
+        lanes: [{ personaId, channel: "linkedin" }],
+      });
+
+      const immutableRes = await app.inject({
+        method: "PUT",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions/${revision.id}/lanes`,
+        payload: lanePayload({ plannedQuantity: 4 }),
+      });
+      expect(immutableRes.statusCode).toBe(409);
+      expect(immutableRes.json().error).toBe("plan_immutable");
+    });
+
+    it("returns structured activation issues for an unavailable connection", async () => {
+      const now = Date.now();
+      const connectionId = randomUUID();
+      db.insert(connections)
+        .values({
+          id: connectionId,
+          workspaceId,
+          providerKey: "linkedin",
+          nangoConnectionId: randomUUID(),
+          configJson: "{}",
+          displayName: "Disconnected",
+          status: "disconnected",
+          contentProfileJson: "{}",
+          createdAt: now,
+          updatedAt: now,
+        })
+        .run();
+      const revision = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions`,
+          payload: revisionPayload,
+        })
+      ).json();
+      const laneRes = await app.inject({
+        method: "PUT",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions/${revision.id}/lanes`,
+        payload: lanePayload({ publishingConnectionId: connectionId }),
+      });
+      expect(laneRes.statusCode).toBe(200);
+
+      const activateRes = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions/${revision.id}/activate`,
+      });
+      expect(activateRes.statusCode).toBe(409);
+      expect(activateRes.json()).toMatchObject({
+        error: "plan_invalid",
+        issues: [{ code: "connection_unavailable" }],
+      });
+    });
+  });
 });
