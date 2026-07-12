@@ -3897,6 +3897,84 @@ export const apiErrorSchema = z.object({
 export type ApiError = z.infer<typeof apiErrorSchema>;
 
 // ---------------------------------------------------------------------------
+// Canonical workflow status vocabulary
+// ---------------------------------------------------------------------------
+
+export const WORKFLOW_STATUS_FAMILIES = [
+  "attention",
+  "progress",
+  "ready",
+  "blocked",
+  "informational",
+] as const;
+export type WorkflowStatusFamily = (typeof WORKFLOW_STATUS_FAMILIES)[number];
+
+export const WORKFLOW_STATUSES = [
+  "draft",
+  "review_required",
+  "authorization_required",
+  "changes_requested",
+  "generating",
+  "regenerating",
+  "scheduling",
+  "publishing",
+  "sending",
+  "launching",
+  "approved",
+  "rejected",
+  "authorized",
+  "scheduled",
+  "active",
+  "connected",
+  "completed",
+  "setup_required",
+  "connection_lost",
+  "policy_blocked",
+  "partially_failed",
+  "failed",
+  "stale",
+  "paused",
+  "superseded",
+  "archived",
+  "experimental",
+] as const;
+export type WorkflowStatus = (typeof WORKFLOW_STATUSES)[number];
+export const workflowStatusSchema = z.enum(WORKFLOW_STATUSES);
+
+export const WORKFLOW_STATUS_META: Record<
+  WorkflowStatus,
+  { label: string; family: WorkflowStatusFamily }
+> = {
+  draft: { label: "Draft", family: "attention" },
+  review_required: { label: "Review required", family: "attention" },
+  authorization_required: { label: "Authorization required", family: "attention" },
+  changes_requested: { label: "Changes requested", family: "attention" },
+  generating: { label: "Generating", family: "progress" },
+  regenerating: { label: "Regenerating", family: "progress" },
+  scheduling: { label: "Scheduling", family: "progress" },
+  publishing: { label: "Publishing", family: "progress" },
+  sending: { label: "Sending", family: "progress" },
+  launching: { label: "Launching", family: "progress" },
+  approved: { label: "Approved", family: "ready" },
+  rejected: { label: "Rejected", family: "informational" },
+  authorized: { label: "Authorized", family: "ready" },
+  scheduled: { label: "Scheduled", family: "ready" },
+  active: { label: "Active", family: "ready" },
+  connected: { label: "Connected", family: "ready" },
+  completed: { label: "Completed", family: "ready" },
+  setup_required: { label: "Setup required", family: "blocked" },
+  connection_lost: { label: "Connection lost", family: "blocked" },
+  policy_blocked: { label: "Policy blocked", family: "blocked" },
+  partially_failed: { label: "Partially failed", family: "blocked" },
+  failed: { label: "Failed", family: "blocked" },
+  stale: { label: "Stale", family: "blocked" },
+  paused: { label: "Paused", family: "informational" },
+  superseded: { label: "Superseded", family: "informational" },
+  archived: { label: "Archived", family: "informational" },
+  experimental: { label: "Experimental", family: "informational" },
+};
+
+// ---------------------------------------------------------------------------
 // Product analytics (internal — PostHog). NOT the native customer dashboard.
 // ---------------------------------------------------------------------------
 
@@ -3908,6 +3986,14 @@ export const ANALYTICS_EVENTS = [
   "draft.published",
   "connector.connected",
   "publication.started",
+  "home.next_action_opened",
+  "campaign.context_opened",
+  "review.item_opened",
+  "review.revision_requested",
+  "review.content_decided",
+  "review.action_authorized",
+  "calendar.item_scheduled",
+  "execution.result_viewed",
 ] as const;
 export type AnalyticsEvent = (typeof ANALYTICS_EVENTS)[number];
 
