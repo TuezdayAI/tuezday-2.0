@@ -80,7 +80,7 @@ export function createPlanRevision(
   actor: PlanActor,
 ): CampaignPlanRevision {
   const campaign = db
-    .select({ id: campaigns.id })
+    .select({ id: campaigns.id, currentPlanRevisionId: campaigns.currentPlanRevisionId })
     .from(campaigns)
     .where(and(eq(campaigns.id, campaignId), eq(campaigns.workspaceId, workspaceId)))
     .get();
@@ -111,7 +111,25 @@ export function createPlanRevision(
     createdAt: Date.now(),
     activatedAt: null,
   };
-  db.insert(campaignPlanRevisions).values(row).run();
+  db.transaction((tx) => {
+    tx.insert(campaignPlanRevisions).values(row).run();
+    if (!campaign.currentPlanRevisionId) return;
+    const sourceLanes = tx
+      .select()
+      .from(campaignLaneRevisions)
+      .where(eq(campaignLaneRevisions.planRevisionId, campaign.currentPlanRevisionId))
+      .all();
+    for (const source of sourceLanes) {
+      tx.insert(campaignLaneRevisions)
+        .values({
+          ...source,
+          id: randomUUID(),
+          planRevisionId: row.id,
+          createdAt: row.createdAt,
+        })
+        .run();
+    }
+  });
   return rowToPlan(row);
 }
 

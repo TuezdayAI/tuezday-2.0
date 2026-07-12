@@ -486,6 +486,14 @@ describe("orchestration foundation persistence", () => {
         url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions/${revision.id}/activate`,
       });
 
+      const draftRes = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions`,
+        payload: { ...revisionPayload, objective: "Refined objective" },
+      });
+      expect(draftRes.statusCode).toBe(201);
+      const draft = draftRes.json();
+
       const response = await app.inject({
         method: "GET",
         url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/workspace`,
@@ -495,6 +503,15 @@ describe("orchestration foundation persistence", () => {
       expect(response.json()).toMatchObject({
         currentPlanRevisionId: revision.id,
         revisions: [
+          {
+            plan: { id: draft.id, revision: 2, status: "draft" },
+            lanes: [{
+              laneId: expect.any(String),
+              key: "founder-linkedin",
+              name: "Founder LinkedIn",
+              channel: "linkedin",
+            }],
+          },
           {
             plan: { id: revision.id, revision: 1, status: "active" },
             lanes: [{ key: "founder-linkedin", name: "Founder LinkedIn", channel: "linkedin" }],
