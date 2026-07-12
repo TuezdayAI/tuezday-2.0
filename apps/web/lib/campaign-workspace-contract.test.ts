@@ -28,4 +28,15 @@ describe("campaign workspace source contract", () => {
     expect(page).toContain('"channels"');
     expect(page).toContain("/plan/workspace");
   });
+
+  it("creates and activates immutable plan revisions", () => {
+    const history = read(
+      "app/workspaces/[id]/campaigns/[campaignId]/_components/campaign-plan-history.tsx",
+    );
+    const page = read("app/workspaces/[id]/campaigns/[campaignId]/page.tsx");
+    expect(history).toContain("Plan history");
+    expect(history).toContain("WorkflowStatusBadge");
+    expect(page).toContain("/plan/revisions");
+    expect(page).toContain("/activate");
+  });
 });

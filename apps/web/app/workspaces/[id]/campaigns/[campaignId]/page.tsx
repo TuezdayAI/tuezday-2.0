@@ -6,8 +6,10 @@ import { useParams, useSearchParams } from "next/navigation";
 import type {
   Audience,
   CampaignInsights,
+  CampaignPlanIssue,
   CampaignPlanWorkspace,
   Connection,
+  CreateCampaignPlanRevisionInput,
   Persona,
 } from "@tuezday/contracts";
 import { API_URL, apiFetch } from "@/lib/api";
@@ -21,6 +23,7 @@ import {
   CampaignOverview,
   type CampaignDetailView,
 } from "./_components/campaign-overview";
+import { CampaignPlanHistory } from "./_components/campaign-plan-history";
 import styles from "./campaign-workspace.module.css";
 
 interface ConnectorResponse {
@@ -45,6 +48,8 @@ export default function CampaignWorkspacePage() {
   const [insights, setInsights] = useState<CampaignInsights | null>(null);
   const [loading, setLoading] = useState(true);
   const [initializing, setInitializing] = useState(false);
+  const [mutationBusy, setMutationBusy] = useState(false);
+  const [activationIssues, setActivationIssues] = useState<CampaignPlanIssue[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [connectionWarning, setConnectionWarning] = useState(false);
 
@@ -110,6 +115,69 @@ export default function CampaignWorkspacePage() {
       setError(cause instanceof Error ? cause.message : "Could not initialize the campaign plan.");
     } finally {
       setInitializing(false);
+    }
+  }
+
+  async function createRevision(input: CreateCampaignPlanRevisionInput) {
+    setMutationBusy(true);
+    setError(null);
+    try {
+      const response = await apiFetch(
+        `/workspaces/${id}/campaigns/${campaignId}/plan/revisions`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.message ?? "Could not create the plan revision.");
+      }
+      setActivationIssues([]);
+      await load();
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Could not create the plan revision.";
+      setError(message);
+      throw cause;
+    } finally {
+      setMutationBusy(false);
+    }
+  }
+
+  async function activateRevision(revisionId: string) {
+    setMutationBusy(true);
+    setError(null);
+    try {
+      const response = await apiFetch(
+        `/workspaces/${id}/campaigns/${campaignId}/plan/revisions/${revisionId}/activate`,
+        { method: "POST" },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        setActivationIssues(
+          body?.issues ?? [
+            {
+              path: "plan",
+              code: body?.error ?? "activation_failed",
+              message: body?.message ?? "Could not activate the revision.",
+            },
+          ],
+        );
+        return;
+      }
+      setActivationIssues([]);
+      await load();
+    } catch {
+      setActivationIssues([
+        {
+          path: "plan",
+          code: "activation_failed",
+          message: "Could not reach the API to activate this revision.",
+        },
+      ]);
+    } finally {
+      setMutationBusy(false);
     }
   }
 
@@ -212,11 +280,15 @@ export default function CampaignWorkspacePage() {
       )}
 
       {activeTab === "plan" && (
-        <section className={styles.placeholderPanel}>
-          <p className={styles.panelKicker}>Plan history</p>
-          <h2>{planWorkspace.revisions.length} revision{planWorkspace.revisions.length === 1 ? "" : "s"}</h2>
-          <p>Immutable revision history and draft activation are the next control-plane component in this slice.</p>
-        </section>
+        <CampaignPlanHistory
+          revisions={planWorkspace.revisions}
+          currentPlanRevisionId={planWorkspace.currentPlanRevisionId}
+          audiences={audiences}
+          busy={mutationBusy}
+          activationIssues={activationIssues}
+          onCreateRevision={createRevision}
+          onActivate={activateRevision}
+        />
       )}
 
       {activeTab === "channels" && (
