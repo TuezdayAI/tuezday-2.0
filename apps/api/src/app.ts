@@ -8,15 +8,20 @@ import { registerAuthGuard } from "./auth/guard";
 import type { ConnectorFabric } from "./connectors/fabric";
 import { NangoFabric } from "./connectors/nango";
 import type { Db } from "./db";
+import { OpenDesignProvider } from "./design/open-design";
+import type { DesignProvider } from "./design/provider";
+import { closeRenderer, renderSlide, type RenderInput } from "./design/render";
+import { S3AssetStorage, type AssetStorage } from "./design/storage";
 import type { Fetcher } from "./discovery/adapters";
 import { NullIntentProvider, type IntentProvider } from "./discovery/intent";
 import { R2REvidenceStore } from "./evidence/r2r";
 import type { EvidenceStore } from "./evidence/store";
-import { GeminiGateway } from "./llm/gemini";
+import { createLlmGatewayFromEnv } from "./llm";
 import type { LlmGateway } from "./llm/gateway";
 import { CsvOutboundExporter, type OutboundExporter } from "./outbound/exporter";
 import { createDefaultMailer, type Mailer } from "./mail/mailer";
 import { registerAdCreativeRoutes } from "./routes/ad-creatives";
+import { registerAdImageRoutes } from "./routes/ad-images";
 import { registerAdLaunchRoutes } from "./routes/ad-launches";
 import { registerAdsRoutes } from "./routes/ads";
 import { registerAudienceRoutes } from "./routes/audiences";
@@ -25,12 +30,15 @@ import { registerAutomationRoutes } from "./routes/automation";
 import { registerBrainRoutes } from "./routes/brain";
 import { registerCadenceRoutes } from "./routes/cadences";
 import { registerCampaignRoutes } from "./routes/campaigns";
+import { registerCampaignPlanRoutes } from "./routes/campaign-plans";
+import { registerCarouselRoutes } from "./routes/carousels";
 import { registerConnectorRoutes } from "./routes/connectors";
 import { registerContextMatrixRoutes } from "./routes/context-matrix";
 import { registerCrmRoutes } from "./routes/crm";
 import { registerDiscoveryRoutes } from "./routes/discovery";
 import { registerDraftRoutes } from "./routes/drafts";
 import { registerEvidenceRoutes } from "./routes/evidence";
+import { registerDesignSystemRoutes } from "./routes/design-systems";
 import { registerGuidanceRoutes } from "./routes/guidance";
 import { registerGenerationSettingsRoutes } from "./routes/generation-settings";
 import { registerInboxRoutes } from "./routes/inbox";
@@ -80,11 +88,17 @@ export interface BuildAppOptions {
   workerToken?: string;
   /** Product-analytics sink; defaults to PostHog-or-Noop from env. */
   analytics?: AnalyticsSink;
+  /** Design template author (Sprint 41); defaults to the self-hosted Open Design client. */
+  design?: DesignProvider;
+  /** Public asset storage (Sprint 41); defaults to the S3-compatible client from env. */
+  assetStorage?: AssetStorage;
+  /** Slide renderer (Sprint 41); defaults to the Playwright renderer — tests inject a fake. */
+  render?: (input: RenderInput) => Promise<Uint8Array>;
 }
 
 export async function buildApp({
   db,
-  llm = new GeminiGateway(),
+  llm = createLlmGatewayFromEnv(),
   fetcher = fetch,
   evidence = new R2REvidenceStore(),
   connectors = new NangoFabric(undefined, undefined, fetcher),
@@ -93,8 +107,16 @@ export async function buildApp({
   mailer = createDefaultMailer(fetcher),
   workerToken = process.env.TUEZDAY_WORKER_TOKEN,
   analytics = createAnalyticsSink(),
+  design = new OpenDesignProvider(),
+  assetStorage = new S3AssetStorage(),
+  render = renderSlide,
 }: BuildAppOptions): Promise<TuezdayApp> {
   const app = Fastify({ logger: false });
+
+  // The design renderer keeps one shared headless browser per process.
+  app.addHook("onClose", async () => {
+    await closeRenderer();
+  });
 
   // @fastify/cors only allows GET/HEAD/POST by default — the brain editor
   // saves with PUT, and later slices use PATCH/DELETE.
@@ -131,15 +153,18 @@ export async function buildApp({
   registerStripeWebhookRoute(app, db);
   registerBrainRoutes(app, db, llm);
   registerGuidanceRoutes(app, db);
+  registerDesignSystemRoutes(app, db);
   registerContextMatrixRoutes(app, db);
   registerGenerationSettingsRoutes(app, db);
   registerPersonaRoutes(app, db, evidence);
   registerGenerationRoutes(app, db, llm, evidence, analytics);
   registerDraftRoutes(app, db, fetcher, llm, analytics, mailer);
+  registerCarouselRoutes(app, db, design, assetStorage, render);
   registerNotificationRoutes(app, db, mailer, fetcher);
   registerSignalRoutes(app, db, llm, evidence);
   registerDiscoveryRoutes(app, db, llm, fetcher, intent, connectors);
   registerCampaignRoutes(app, db);
+  registerCampaignPlanRoutes(app, db);
   registerAudienceRoutes(app, db);
   registerEvidenceRoutes(app, db, evidence);
   registerLearningRoutes(app, db, llm, fetcher);
@@ -150,6 +175,7 @@ export async function buildApp({
   registerAdsRoutes(app, db, connectors, fetcher);
   registerAdLaunchRoutes(app, db, connectors, fetcher);
   registerAdCreativeRoutes(app, db, llm, evidence);
+  registerAdImageRoutes(app, db, design, assetStorage, render);
   registerPrRoutes(app, db, llm, evidence);
   registerPublicationRoutes(app, db, connectors, fetcher, analytics);
   registerCadenceRoutes(app, db, connectors, fetcher);

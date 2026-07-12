@@ -173,6 +173,19 @@ export default function AdCreativesPage() {
     }
   }
 
+  async function generateAdImage(draftId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      await post(`/ad-creatives/${draftId}/image`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate ad image");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function draftAction(draftId: string, name: string, payload?: Record<string, unknown>) {
     setBusy(true);
     setError(null);
@@ -525,6 +538,21 @@ export default function AdCreativesPage() {
                             </div>
                           ) : (
                             <>
+                              {draft.media?.[0] && (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={draft.media[0].url}
+                                  alt="Generated ad image"
+                                  style={{
+                                    width: 200,
+                                    height: 200,
+                                    objectFit: "cover",
+                                    borderRadius: 8,
+                                    margin: "8px 0",
+                                    border: "1px solid var(--border, #e5e7eb)",
+                                  }}
+                                />
+                              )}
                               {parsed ? (
                                 <dl className="ad-creative-fields" style={{ margin: "8px 0" }}>
                                   {parsed.fields.map((field, i) => {
@@ -560,6 +588,17 @@ export default function AdCreativesPage() {
                                 >
                                   {copiedId === draft.id ? "✓ Copied" : "⧉ Copy"}
                                 </Button>
+                                {draft.state === "approved" && draft.taskType === "meta_ad_creative" && (
+                                  <Button
+                                    variant="secondary"
+                                    size="sm"
+                                    disabled={busy}
+                                    title="Render this approved copy as a branded 1080x1080 ad image"
+                                    onClick={() => generateAdImage(draft.id)}
+                                  >
+                                    ▦ {draft.media?.[0] ? "Regenerate ad image" : "Generate ad image"}
+                                  </Button>
+                                )}
                                 {editable && (
                                   <>
                                     <Button

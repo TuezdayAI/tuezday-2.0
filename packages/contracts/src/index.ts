@@ -40,6 +40,9 @@ export const TASK_TYPES = [
   "instagram_post",
   // Sprint 29 (engagement inbox): a reply to an inbound comment/DM.
   "engagement_reply",
+  // Sprint 41 (design layer): a rendered multi-image carousel derived from an
+  // approved content draft. Never text-generated — the pipeline renders it.
+  "instagram_carousel",
 ] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
@@ -733,6 +736,10 @@ export const DEFAULT_TASK_DOC_MATRIX: Record<
     icp: { mode: "outline", reason: "The caption rides the visual; audience outline suffices, zoom follows the topic." },
     history: { mode: "outline", reason: "Topical lessons zoom in; the full history drowns a caption." },
   },
+  instagram_carousel: {
+    icp: { mode: "outline", reason: "Carousel copy is derived from an approved draft; audience detail was already spent there." },
+    history: { mode: "outline", reason: "The deterministic render pipeline never re-writes copy from history." },
+  },
   engagement_reply: {
     icp: { mode: "omit", reason: "The reply answers a specific person in a live thread — the conversation is the context." },
     history: { mode: "omit", reason: "Thread replies are voice + the conversation; company history is a distractor here." },
@@ -900,7 +907,13 @@ export type RateGenerationInput = z.infer<typeof rateGenerationInputSchema>;
 // Campaigns
 // ---------------------------------------------------------------------------
 
-export const CAMPAIGN_STATUSES = ["active", "archived"] as const;
+export const CAMPAIGN_ORIGINS = ["user", "system"] as const;
+export type CampaignOrigin = (typeof CAMPAIGN_ORIGINS)[number];
+
+export const CAMPAIGN_PURPOSES = ["initiative", "evergreen"] as const;
+export type CampaignPurpose = (typeof CAMPAIGN_PURPOSES)[number];
+
+export const CAMPAIGN_STATUSES = ["draft", "active", "paused", "completed", "archived"] as const;
 export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number];
 
 export const CAMPAIGN_OVERLAY_MAX_CHARS = 10_000;
@@ -923,6 +936,8 @@ export const campaignSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
   name: z.string().min(1).max(200),
+  origin: z.enum(CAMPAIGN_ORIGINS),
+  purpose: z.enum(CAMPAIGN_PURPOSES),
   objective: z.string().max(1000),
   kpi: z.string().max(500),
   timeframe: z.string().max(200),
@@ -935,6 +950,7 @@ export const campaignSchema = z.object({
   automationMode: z.enum(AUTOMATION_MODES),
   /** Per-campaign override of the daily auto-post cap; null = use the workspace default. */
   autoDailyCap: z.number().int().positive().max(1000).nullable(),
+  currentPlanRevisionId: z.string().uuid().nullable(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 });
@@ -946,6 +962,7 @@ export const upsertCampaignInputSchema = z.object({
     .trim()
     .min(1, "Campaign name is required")
     .max(200, "Campaign name must be 200 characters or fewer"),
+  purpose: z.enum(CAMPAIGN_PURPOSES).default("initiative"),
   objective: z.string().trim().max(1000).default(""),
   kpi: z.string().trim().max(500).default(""),
   timeframe: z.string().trim().max(200).default(""),
@@ -966,6 +983,262 @@ export const updateCampaignAutomationInputSchema = z.object({
   autoDailyCap: z.number().int().positive().max(1000).nullable().default(null),
 });
 export type UpdateCampaignAutomationInput = z.infer<typeof updateCampaignAutomationInputSchema>;
+
+// ---------------------------------------------------------------------------
+// GTM orchestration control plane
+// ---------------------------------------------------------------------------
+
+export const PLAN_REVISION_STATUSES = ["draft", "active", "superseded"] as const;
+export type PlanRevisionStatus = (typeof PLAN_REVISION_STATUSES)[number];
+
+export const LANE_STATUSES = ["active", "paused", "retired"] as const;
+export type LaneStatus = (typeof LANE_STATUSES)[number];
+
+export const DELIVERY_MODES = ["planned", "reactive", "planned_and_reactive"] as const;
+export type DeliveryMode = (typeof DELIVERY_MODES)[number];
+
+export const REACTIVE_PERIODS = ["day", "week", "month"] as const;
+export type ReactivePeriod = (typeof REACTIVE_PERIODS)[number];
+
+export const PACKAGE_SOURCE_ROLES = [
+  "trigger",
+  "evidence",
+  "inspiration",
+  "instruction",
+  "repurposed_from",
+] as const;
+export type PackageSourceRole = (typeof PACKAGE_SOURCE_ROLES)[number];
+
+export const DELIVERABLE_PRODUCTION_STATUSES = [
+  "planned",
+  "assessing",
+  "research_needed",
+  "ready",
+  "generating",
+  "candidate_ready",
+  "fulfilled",
+  "stale",
+  "blocked",
+  "cancelled",
+] as const;
+export type DeliverableProductionStatus = (typeof DELIVERABLE_PRODUCTION_STATUSES)[number];
+
+export const EXTERNAL_ACTION_KINDS = [
+  "publish",
+  "send",
+  "reply",
+  "paid_launch",
+  "budget_change",
+  "targeting_change",
+] as const;
+export type ExternalActionKind = (typeof EXTERNAL_ACTION_KINDS)[number];
+
+export const EXTERNAL_ACTION_STATUSES = [
+  "proposed",
+  "authorization_required",
+  "authorized",
+  "scheduled",
+  "dispatching",
+  "succeeded",
+  "failed",
+  "blocked",
+  "cancelled",
+] as const;
+export type ExternalActionStatus = (typeof EXTERNAL_ACTION_STATUSES)[number];
+
+const DELIVERABLE_TRANSITIONS: Record<
+  DeliverableProductionStatus,
+  readonly DeliverableProductionStatus[]
+> = {
+  planned: ["assessing", "ready", "stale", "blocked", "cancelled"],
+  assessing: ["research_needed", "ready", "blocked", "cancelled"],
+  research_needed: ["assessing", "ready", "stale", "cancelled"],
+  ready: ["generating", "stale", "blocked", "cancelled"],
+  generating: ["candidate_ready", "ready", "blocked", "cancelled"],
+  candidate_ready: ["fulfilled", "generating", "stale", "cancelled"],
+  fulfilled: [],
+  stale: ["assessing", "cancelled"],
+  blocked: ["assessing", "cancelled"],
+  cancelled: [],
+};
+
+export function canTransitionDeliverable(
+  from: DeliverableProductionStatus,
+  to: DeliverableProductionStatus,
+): boolean {
+  return DELIVERABLE_TRANSITIONS[from].includes(to);
+}
+
+export const EXTERNAL_ACTION_TRANSITIONS: Record<
+  ExternalActionStatus,
+  readonly ExternalActionStatus[]
+> = {
+  proposed: ["authorization_required", "authorized", "blocked", "cancelled"],
+  authorization_required: ["authorized", "cancelled"],
+  authorized: ["scheduled", "dispatching", "blocked", "cancelled"],
+  scheduled: ["dispatching", "blocked", "cancelled"],
+  dispatching: ["succeeded", "failed"],
+  succeeded: [],
+  failed: ["scheduled", "dispatching", "cancelled"],
+  blocked: ["proposed", "cancelled"],
+  cancelled: [],
+};
+
+export function canTransitionExternalAction(
+  from: ExternalActionStatus,
+  to: ExternalActionStatus,
+): boolean {
+  return EXTERNAL_ACTION_TRANSITIONS[from].includes(to);
+}
+
+const campaignPlanFields = {
+  objective: z.string().trim().max(1_000).default(""),
+  kpi: z.string().trim().max(500).default(""),
+  timeframe: z.string().trim().max(200).default(""),
+  startAt: z.number().int().nullable(),
+  endAt: z.number().int().nullable(),
+  audienceIds: z.array(z.string().uuid()).default([]),
+  pillars: z.array(z.string().trim().min(1).max(200)).max(20).default([]),
+  offers: z.array(z.string().trim().min(1).max(300)).max(20).default([]),
+  ctas: z.array(z.string().trim().min(1).max(300)).max(20).default([]),
+  guidance: z.string().trim().max(CAMPAIGN_OVERLAY_MAX_CHARS).default(""),
+};
+
+function validatePlanWindow(
+  value: { startAt: number | null; endAt: number | null },
+  ctx: z.RefinementCtx,
+): void {
+  if (value.startAt !== null && value.endAt !== null && value.endAt <= value.startAt) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["endAt"],
+      message: "Campaign end must be after its start.",
+    });
+  }
+}
+
+export const campaignPlanRevisionSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    campaignId: z.string().uuid(),
+    revision: z.number().int().positive(),
+    status: z.enum(PLAN_REVISION_STATUSES),
+    ...campaignPlanFields,
+    createdBy: z.string().uuid().nullable(),
+    createdAt: z.number().int(),
+    activatedAt: z.number().int().nullable(),
+  })
+  .superRefine(validatePlanWindow);
+export type CampaignPlanRevision = z.infer<typeof campaignPlanRevisionSchema>;
+
+export const createCampaignPlanRevisionInputSchema = z
+  .object(campaignPlanFields)
+  .superRefine(validatePlanWindow);
+export type CreateCampaignPlanRevisionInput = z.infer<
+  typeof createCampaignPlanRevisionInputSchema
+>;
+
+export const campaignLaneSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  campaignId: z.string().uuid(),
+  key: z
+    .string()
+    .trim()
+    .min(1)
+    .max(120)
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use a lowercase kebab-case lane key."),
+  name: z.string().trim().min(1).max(120),
+  status: z.enum(LANE_STATUSES),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type CampaignLane = z.infer<typeof campaignLaneSchema>;
+
+export const laneScheduleSchema = z.object({
+  daysOfWeek: z
+    .array(z.number().int().min(0).max(6))
+    .min(1)
+    .transform((days) => [...new Set(days)].sort((a, b) => a - b)),
+  timeOfDay: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a HH:MM 24-hour time"),
+  timezone: z.string().min(1).refine(isValidTimeZone, "Unknown time zone"),
+});
+export type LaneSchedule = z.infer<typeof laneScheduleSchema>;
+
+const campaignLaneRevisionFields = {
+  personaId: z.string().uuid(),
+  audienceId: z.string().uuid().nullable(),
+  channel: z.enum(CHANNELS),
+  format: z.string().trim().min(1).max(100),
+  publishingConnectionId: z.string().uuid().nullable(),
+  providerTarget: z.string().trim().max(200).default(""),
+  deliveryMode: z.enum(DELIVERY_MODES),
+  plannedQuantity: z.number().int().min(0).max(1_000),
+  schedule: laneScheduleSchema.nullable(),
+  reactivePeriod: z.enum(REACTIVE_PERIODS).nullable(),
+  reactiveCap: z.number().int().positive().max(1_000).nullable(),
+  status: z.enum(LANE_STATUSES),
+};
+
+function validateLaneDelivery(
+  value: {
+    deliveryMode: DeliveryMode;
+    plannedQuantity: number;
+    schedule: LaneSchedule | null;
+    reactivePeriod: ReactivePeriod | null;
+    reactiveCap: number | null;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if (value.deliveryMode !== "reactive") {
+    if (!value.schedule) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["schedule"],
+        message: "Planned delivery requires a schedule.",
+      });
+    }
+    if (value.plannedQuantity < 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["plannedQuantity"],
+        message: "Planned delivery requires a positive quantity.",
+      });
+    }
+  }
+  if (value.deliveryMode !== "planned" && (!value.reactivePeriod || !value.reactiveCap)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["reactiveCap"],
+      message: "Reactive delivery requires a period and positive cap.",
+    });
+  }
+}
+
+export const campaignLaneRevisionSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    laneId: z.string().uuid(),
+    planRevisionId: z.string().uuid(),
+    ...campaignLaneRevisionFields,
+    createdAt: z.number().int(),
+  })
+  .superRefine(validateLaneDelivery);
+export type CampaignLaneRevision = z.infer<typeof campaignLaneRevisionSchema>;
+
+export const upsertCampaignLaneRevisionInputSchema = z
+  .object({
+    laneId: z.string().uuid().optional(),
+    key: campaignLaneSchema.shape.key,
+    name: campaignLaneSchema.shape.name,
+    ...campaignLaneRevisionFields,
+  })
+  .superRefine(validateLaneDelivery);
+export type UpsertCampaignLaneRevisionInput = z.infer<
+  typeof upsertCampaignLaneRevisionInputSchema
+>;
 
 // ---------------------------------------------------------------------------
 // Signals (manual market input — source adapters arrive in a later slice)
@@ -1453,6 +1726,15 @@ export function canTransition(from: ApprovalState, action: ApprovalAction): bool
   return transitionTo(from, action) !== undefined;
 }
 
+export const LAUNCH_MEDIA_TYPES = ["image", "video"] as const;
+export type LaunchMediaType = (typeof LAUNCH_MEDIA_TYPES)[number];
+
+export const launchMediaSchema = z.object({
+  url: z.string().trim().url("A valid media URL is required"),
+  type: z.enum(LAUNCH_MEDIA_TYPES),
+});
+export type LaunchMedia = z.infer<typeof launchMediaSchema>;
+
 export const draftSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
@@ -1467,6 +1749,9 @@ export const draftSchema = z.object({
   originalContent: z.string(),
   content: z.string(),
   state: z.enum(APPROVAL_STATES),
+  // Rendered visuals attached to the draft (Sprint 41): what a reviewer SEES,
+  // while content holds what they READ. Same shape launches use.
+  media: z.array(launchMediaSchema).nullable().optional(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
   // The pre-review copied from the source generation at submit, or refreshed
@@ -2694,6 +2979,9 @@ export const adLaunchSchema = z.object({
   externalAdSetId: z.string().nullable(),
   externalCreativeId: z.string().nullable(),
   externalAdId: z.string().nullable(),
+  // Meta adimages hash (Sprint 41 Part 5) — set after uploadAdImage succeeds,
+  // consumed by createAdCreative; null for text-only creatives.
+  metaImageHash: z.string().nullable(),
   // The Sprint 14 ad_campaigns mirror row created on launch.
   adCampaignId: z.string().uuid().nullable(),
   // Raw platform effective_status, stamped by the sync job and pause/resume.
@@ -3245,14 +3533,8 @@ export type LaunchMessageKind = (typeof LAUNCH_MESSAGE_KINDS)[number];
 export const LAUNCH_MESSAGE_STATUSES = ["pending", "sent", "failed", "skipped"] as const;
 export type LaunchMessageStatus = (typeof LAUNCH_MESSAGE_STATUSES)[number];
 
-export const LAUNCH_MEDIA_TYPES = ["image", "video"] as const;
-export type LaunchMediaType = (typeof LAUNCH_MEDIA_TYPES)[number];
-
-export const launchMediaSchema = z.object({
-  url: z.string().trim().url("A valid media URL is required"),
-  type: z.enum(LAUNCH_MEDIA_TYPES),
-});
-export type LaunchMedia = z.infer<typeof launchMediaSchema>;
+// launchMediaSchema/LaunchMedia moved above draftSchema (Sprint 41 Part 4)
+// so drafts can carry the same media shape launches use.
 
 export const launchSchema = z.object({
   id: z.string().uuid(),
@@ -4019,3 +4301,181 @@ export function nextActionFor(state: NextActionState): NextAction {
   }
   return { kind: "none", module: "", label: "All clear", reason: "Nothing needs you right now" };
 }
+
+// ---------------------------------------------------------------------------
+// Design systems (Sprint 41 Part 2)
+//
+// Brain-adjacent visual identity: a DESIGN.md-shaped markdown doc per named
+// design system, plus channel/persona/campaign overlays resolved
+// most-specific-wins (Sprint 44's guidance pattern, scoped to a system).
+// Deliberately NOT a brain doc type — never added to BRAIN_DOC_TYPES, never
+// resolved by packages/brain; only the design pipeline reads it.
+// ---------------------------------------------------------------------------
+
+export const DESIGN_CONTENT_MAX_CHARS = 24_000;
+export const DESIGN_SYSTEM_NAME_MAX_CHARS = 80;
+
+export const designSystemSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  name: z.string(),
+  isDefault: z.boolean(),
+  content: z.string(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type DesignSystem = z.infer<typeof designSystemSchema>;
+
+export const updateDesignSystemInputSchema = z.object({
+  content: z
+    .string()
+    .trim()
+    .min(1, "Design system cannot be empty")
+    .max(DESIGN_CONTENT_MAX_CHARS),
+});
+export type UpdateDesignSystemInput = z.infer<typeof updateDesignSystemInputSchema>;
+
+/** One overlay row (management read model, scope names joined in). */
+export const designOverlaySchema = z.object({
+  id: z.string().uuid(),
+  designSystemId: z.string().uuid(),
+  channel: z.enum(CHANNELS),
+  content: z.string(),
+  personaId: z.string().uuid().nullable(),
+  campaignId: z.string().uuid().nullable(),
+  personaName: z.string().nullable(),
+  campaignName: z.string().nullable(),
+  updatedAt: z.number().int(),
+});
+export type DesignOverlay = z.infer<typeof designOverlaySchema>;
+
+export const upsertDesignOverlayInputSchema = z.object({
+  channel: z.enum(CHANNELS),
+  content: z
+    .string()
+    .trim()
+    .min(1, "Overlay cannot be empty")
+    .max(DESIGN_CONTENT_MAX_CHARS),
+  personaId: z.string().uuid().optional(),
+  campaignId: z.string().uuid().optional(),
+  // Multi-system readiness: omit to target the workspace default system.
+  designSystemId: z.string().uuid().optional(),
+});
+export type UpsertDesignOverlayInput = z.infer<typeof upsertDesignOverlayInputSchema>;
+
+/** Which rung of the winner chain produced the resolved content. */
+export const DESIGN_TRACE_SOURCES = [
+  "persona+campaign",
+  "persona",
+  "campaign",
+  "channel",
+  "base",
+] as const;
+export type DesignTraceSource = (typeof DESIGN_TRACE_SOURCES)[number];
+
+/**
+ * Resolved design context: base system content plus (at most) the single
+ * winning overlay appended as an addendum, and a trace explaining why —
+ * readable before any template is authored, same transparency contract as
+ * the brain resolver.
+ */
+export const resolvedDesignSystemSchema = z.object({
+  content: z.string(),
+  trace: z.object({
+    source: z.enum(DESIGN_TRACE_SOURCES),
+    overlayId: z.string().uuid().nullable(),
+    designSystemId: z.string().uuid(),
+  }),
+});
+export type ResolvedDesignSystem = z.infer<typeof resolvedDesignSystemSchema>;
+
+/**
+ * Starter DESIGN.md seeded into every workspace's default system. Field set
+ * informed by the Sprint 41 competitor scan (docs/research/): semantic color
+ * roles (the one field no consumer brand kit has — Material's on-X convention
+ * gives templates auto-contrast), heading/body font roles with weights and
+ * fallbacks, a spacing/radius scale, an author strip block, and a "never do"
+ * list. Voice stays in the `voice` brain doc — linked, not duplicated.
+ */
+export const DEFAULT_DESIGN_SYSTEM_CONTENT = `# Visual identity
+
+The design pipeline reads this document every time it authors a slide or ad
+template — the palette, type, and rules below become the rendered look.
+How the brand *sounds* lives in the Voice brain doc; this doc is only how it
+*looks*.
+
+## Palette (semantic roles)
+
+- primary: #111827 — brand color; hook-slide and CTA backgrounds
+- on-primary: #FFFFFF — text and icons placed on primary
+- background: #FFFFFF — default slide background
+- surface: #F3F4F6 — cards, stat blocks, quote panels
+- text: #111827 — body copy on background/surface
+- accent: #2563EB — highlights, big numbers, swipe cues (use sparingly)
+
+## Typography
+
+- Heading: Inter, weight 800, tight line height. Fallback: system-ui, sans-serif.
+- Body: Inter, weight 450, line height 1.4. Fallback: system-ui, sans-serif.
+- At most two font families anywhere. Body text no smaller than ~40px on a
+  1080px canvas.
+
+## Spacing & shape
+
+- Spacing scale (1080px canvas): 8 / 16 / 24 / 40 / 64px.
+- Corner radius: 24px on cards and panels.
+- Shadows: flat by default; one soft shadow only when a card needs lift.
+
+## Logo & author strip
+
+- Logo: (paste a public URL; note light/dark variants if you have them)
+- Author strip: name, @handle, headshot URL — rendered small on every slide,
+  full-size on the CTA/outro slide.
+
+## Never do
+
+- Never place text over busy imagery without a solid or gradient scrim.
+- Never use colors outside the palette above.
+- Never use more than two font families or crop the hook headline out of the
+  center 3:4 safe zone.
+`;
+
+// ---------------------------------------------------------------------------
+// Slide archetypes (Sprint 41 Parts 3-4)
+//
+// Explicit, named slide roles for carousel templates — competitor tools bake
+// these into templates implicitly (only Taplio names any in its UI), so a
+// first-class vocabulary is a differentiator (see
+// docs/research/sprint-41-competitor-scan.md). Template authoring produces one
+// layout per archetype; the splitter assigns archetypes and enforces the word
+// budgets at generation time, which is cheaper than text-fit-at-render.
+// ---------------------------------------------------------------------------
+
+export const SLIDE_ARCHETYPES = [
+  "hook", // cover: 5-8 word headline, biggest type on deck, swipe cue
+  "body", // heading + 15-30 word body
+  "list_item", // one idea, big index number
+  "stat", // one oversized metric + one-line context
+  "quote", // large quotation + attribution
+  "tldr", // mid/late-deck recap
+  "cta", // outro: save/follow ask + author strip, strongest branding
+] as const;
+export type SlideArchetype = (typeof SLIDE_ARCHETYPES)[number];
+
+/** Word budgets enforced when copy is written, not fitted at render. */
+export const SLIDE_WORD_BUDGETS: Record<SlideArchetype, { title: number; body: number }> = {
+  hook: { title: 8, body: 12 },
+  body: { title: 10, body: 30 },
+  list_item: { title: 10, body: 30 },
+  stat: { title: 6, body: 20 },
+  quote: { title: 30, body: 10 }, // title carries the quote, body the attribution
+  tldr: { title: 8, body: 40 },
+  cta: { title: 8, body: 20 },
+};
+
+/** Meta Ads static image shape (Part 5) — same template machinery, single slide. */
+export const AD_IMAGE_SLIDE_SHAPE = "ad-1080x1080" as const;
+
+/** The only Open Design skills Tuezday will ever request (umbrella Decision 9). */
+export const DESIGN_SKILL_ALLOWLIST = ["social-carousel"] as const;
+export type DesignSkillId = (typeof DESIGN_SKILL_ALLOWLIST)[number];

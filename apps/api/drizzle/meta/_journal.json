@@ -260,6 +260,48 @@
       "when": 1783367353970,
       "tag": "0036_material_psylocke",
       "breakpoints": true
+    },
+    {
+      "idx": 37,
+      "version": "6",
+      "when": 1783579274300,
+      "tag": "0037_deep_black_tarantula",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1783579706539,
+      "tag": "0038_moaning_master_mold",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "6",
+      "when": 1783580604699,
+      "tag": "0039_nappy_scream",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1783587147976,
+      "tag": "0040_colossal_peter_parker",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1783754508355,
+      "tag": "0041_optimal_ender_wiggin",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "6",
+      "when": 1783754926673,
+      "tag": "0042_lame_squadron_supreme",
+      "breakpoints": true
     }
   ]
 }

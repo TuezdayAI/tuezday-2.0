@@ -14,6 +14,7 @@ coverage/
 
 # Local editor/agent state
 .claude/
+.worktrees/
 
 # Local SQLite backup snapshots
 *.db.bak-*

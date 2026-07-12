@@ -15,6 +15,8 @@
     "build": "npm run build --workspaces --if-present",
     "r2r:up": "docker compose --env-file .env -f infra/r2r/compose.yaml up -d",
     "r2r:down": "docker compose -f infra/r2r/compose.yaml down",
+    "opendesign:up": "docker compose --env-file .env -f infra/open-design/compose.yaml up -d",
+    "opendesign:down": "docker compose -f infra/open-design/compose.yaml down",
     "nango:up": "docker compose --env-file .env -f infra/nango/compose.yaml up -d",
     "nango:down": "docker compose -f infra/nango/compose.yaml down"
   },

@@ -23,6 +23,8 @@ import {
   type ApprovalState,
   type AutomationMode,
   type Campaign,
+  type CampaignPurpose,
+  type CampaignStatus,
   type Channel,
   type Persona,
   type Workspace,
@@ -151,7 +153,10 @@ export default function CampaignsPage() {
     );
   }
 
-  function payloadFromForm(status: "active" | "archived" = "active") {
+  function payloadFromForm(
+    status: CampaignStatus = "active",
+    purpose: CampaignPurpose = "initiative",
+  ) {
     return {
       name: form.name,
       objective: form.objective,
@@ -166,6 +171,7 @@ export default function CampaignsPage() {
       channels: form.channels,
       personaIds: form.personaIds,
       overlay: form.overlay,
+      purpose,
       status,
     };
   }
@@ -182,7 +188,9 @@ export default function CampaignsPage() {
       const res = await apiFetch(url, {
         method: editingId ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payloadFromForm(editing?.status ?? "active")),
+        body: JSON.stringify(
+          payloadFromForm(editing?.status ?? "active", editing?.purpose ?? "initiative"),
+        ),
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.message ?? `API returned ${res.status}`);
@@ -202,6 +210,7 @@ export default function CampaignsPage() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         name: c.name,
+        purpose: c.purpose,
         objective: c.objective,
         kpi: c.kpi,
         timeframe: c.timeframe,

@@ -15,12 +15,18 @@ import type { Db } from "../db";
 import { campaigns, drafts, type CampaignRow } from "../db/schema";
 import { getCampaignAdMetrics, type CampaignAdMetrics } from "./ads";
 import { listCampaignAudiences } from "./audiences";
+import {
+  getCampaignControlPlaneSummary,
+  type ControlPlaneSummary,
+} from "./orchestration-backfill";
 
 function rowToCampaign(row: CampaignRow): Campaign {
   return {
     id: row.id,
     workspaceId: row.workspaceId,
     name: row.name,
+    origin: row.origin as Campaign["origin"],
+    purpose: row.purpose as Campaign["purpose"],
     objective: row.objective,
     kpi: row.kpi,
     timeframe: row.timeframe,
@@ -32,14 +38,24 @@ function rowToCampaign(row: CampaignRow): Campaign {
     status: row.status as CampaignStatus,
     automationMode: row.automationMode as AutomationMode,
     autoDailyCap: row.autoDailyCap,
+    currentPlanRevisionId: row.currentPlanRevisionId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
 }
 
+/** Backward-compatible route error for campaign-scoped execution. */
+export function campaignExecutionError(
+  campaign: Pick<Campaign, "status">,
+): "campaign_archived" | "campaign_inactive" | null {
+  if (campaign.status === "active") return null;
+  return campaign.status === "archived" ? "campaign_archived" : "campaign_inactive";
+}
+
 function inputToColumns(input: UpsertCampaignInput) {
   return {
     name: input.name,
+    purpose: input.purpose,
     objective: input.objective,
     kpi: input.kpi,
     timeframe: input.timeframe,
@@ -57,11 +73,13 @@ export function createCampaign(db: Db, workspaceId: string, input: UpsertCampaig
   const row: CampaignRow = {
     id: randomUUID(),
     workspaceId,
+    origin: "user",
     ...inputToColumns(input),
     // Automation is set only via the dedicated toggle, never reset by a general
     // campaign edit; a new campaign starts from the input defaults (manual / null).
     automationMode: input.automationMode,
     autoDailyCap: input.autoDailyCap,
+    currentPlanRevisionId: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -175,6 +193,8 @@ export interface CampaignDetail {
   adMetrics: CampaignAdMetrics | null;
   /** Audiences attached as this campaign's targets (Sprint 24). */
   audiences: CampaignAudience[];
+  /** Shadow read model while legacy campaign execution remains active. */
+  controlPlane: ControlPlaneSummary;
 }
 
 export function getCampaignDetail(db: Db, campaign: Campaign): CampaignDetail {
@@ -206,5 +226,6 @@ export function getCampaignDetail(db: Db, campaign: Campaign): CampaignDetail {
     drafts: rows.map((r) => ({ ...r, state: r.state as ApprovalState })),
     adMetrics: getCampaignAdMetrics(db, campaign),
     audiences: listCampaignAudiences(db, campaign.workspaceId, campaign.id),
+    controlPlane: getCampaignControlPlaneSummary(db, campaign.workspaceId, campaign.id),
   };
 }
