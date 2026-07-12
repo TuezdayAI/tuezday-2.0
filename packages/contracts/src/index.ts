@@ -4037,6 +4037,15 @@ export type WorkspaceCapabilities = z.infer<typeof workspaceCapabilitiesSchema>;
 
 export type NavRequirement = "ads" | "insights" | "crm" | "connections";
 
+export const NAV_SECTIONS = [
+  { id: "operate", label: "Operate" },
+  { id: "grow", label: "Grow" },
+  { id: "foundations", label: "Foundations" },
+  { id: "library", label: "Work" },
+  { id: "workspace", label: "Workspace" },
+] as const;
+export type NavSection = (typeof NAV_SECTIONS)[number]["id"];
+
 export interface NavChild {
   label: string;
   path: string;
@@ -4049,6 +4058,7 @@ export interface NavChild {
 export interface NavItem {
   label: string;
   path: string;
+  section: NavSection;
   summary?: string;
   icon?: string;
   tone?: "belief" | "voice" | "history" | "icp" | "system" | "signal";
@@ -4063,33 +4073,39 @@ export const WORKSPACE_NAV: NavItem[] = [
     summary: "What needs attention now",
     tone: "system",
     icon: "home",
+    section: "operate",
   },
   {
-    label: "Brain",
-    path: "/brain",
-    summary: "Company context, evidence, and inspection",
-    tone: "system",
-    icon: "brain",
-    children: [
-      { label: "Brain docs", path: "/brain", summary: "The editable GTM memory", tone: "system", icon: "brain" },
-      { label: "Evidence library", path: "/evidence", summary: "Proof and source material", tone: "history", icon: "doc-history" },
-      { label: "Context inspector", path: "/resolver", summary: "See what Tuezday will use", tone: "icp", icon: "search" },
-    ],
+    label: "Calendar",
+    path: "/calendar",
+    summary: "Planned, scheduled, and completed work",
+    tone: "history",
+    icon: "calendar",
+    section: "operate",
   },
   {
     label: "Campaigns",
     path: "/campaigns",
-    summary: "Plans, calendar, automation, ads, and reporting",
+    summary: "Plans, work, channels, and results",
     tone: "voice",
     icon: "campaigns",
+    section: "operate",
     children: [
       { label: "Campaign home", path: "/campaigns", summary: "Goals and GTM pushes", tone: "voice", icon: "campaigns" },
-      { label: "Calendar", path: "/calendar", summary: "Scheduled posts and work", tone: "history", icon: "calendar" },
-      { label: "Cadence", path: "/cadence", summary: "Publishing rhythm", tone: "history", icon: "status-live" },
+      { label: "Schedule", path: "/cadence", summary: "Publishing rhythm", tone: "history", icon: "calendar" },
       { label: "Automation", path: "/automation", summary: "Human-in-the-loop rules", tone: "signal", icon: "regenerate" },
-      { label: "Ads", path: "/ads", summary: "Paid channel performance", tone: "belief", requires: "ads", icon: "ad" },
-      { label: "Launch ads", path: "/ad-launches", summary: "Spend-controlled ad launches", tone: "belief", requires: "ads", icon: "status-live" },
-      { label: "Insights", path: "/insights", summary: "What worked and why", tone: "icp", requires: "insights", icon: "status-learning" },
+    ],
+  },
+  {
+    label: "Review",
+    path: "/approvals",
+    summary: "Approve, authorize, and respond",
+    tone: "icp",
+    icon: "review",
+    section: "operate",
+    children: [
+      { label: "Approvals", path: "/approvals", summary: "Nothing ships without review", tone: "icp", icon: "review" },
+      { label: "Inbox", path: "/inbox", summary: "Replies and engagement", tone: "signal", icon: "email" },
     ],
   },
   {
@@ -4098,55 +4114,95 @@ export const WORKSPACE_NAV: NavItem[] = [
     summary: "Market signals worth acting on",
     tone: "signal",
     icon: "discover",
-  },
-  {
-    label: "Create",
-    path: "/content",
-    summary: "Draft content, ads, and channel assets",
-    tone: "belief",
-    icon: "create",
-    children: [
-      { label: "Content", path: "/content", summary: "Posts and signal responses", tone: "belief", icon: "post" },
-      { label: "Playground", path: "/sandbox", summary: "Generate from the Brain", tone: "system", icon: "status-generating" },
-      { label: "Ad creatives", path: "/ad-creatives", summary: "Platform-ready variants", tone: "voice", icon: "ad" },
-    ],
-  },
-  {
-    label: "Review",
-    path: "/approvals",
-    summary: "Approve, edit, reply, and teach the Brain",
-    tone: "icp",
-    icon: "review",
-    children: [
-      { label: "Approval queue", path: "/approvals", summary: "Nothing ships without review", tone: "icp", icon: "review" },
-      { label: "Inbox", path: "/inbox", summary: "Replies and engagement", tone: "signal", icon: "email" },
-      { label: "Learning", path: "/learning", summary: "Brain updates from decisions", tone: "history", icon: "status-learning" },
-    ],
+    section: "grow",
   },
   {
     label: "Audience",
     path: "/outbound",
-    summary: "Leads, lists, launches, CRM, and PR contacts",
+    summary: "Recipients, lists, sequences, CRM, and media",
     tone: "icp",
     icon: "audience",
+    section: "grow",
     children: [
       { label: "Outbound", path: "/outbound", summary: "Lead-driven drafts", tone: "icp", icon: "external" },
       { label: "Lists & segments", path: "/lists", summary: "Reusable audiences", tone: "icp", icon: "audience" },
-      { label: "Launches", path: "/launches", summary: "Targeted campaign sends", tone: "voice", icon: "campaigns" },
+      { label: "Sequences", path: "/launches", summary: "Targeted campaign sends", tone: "voice", icon: "campaigns" },
       { label: "CRM", path: "/crm", summary: "Contacts and account context", tone: "icp", icon: "user" },
       { label: "PR & media", path: "/pr", summary: "Media contacts and pitches", tone: "belief", icon: "notification" },
     ],
   },
   {
-    label: "Settings",
+    label: "Ads",
+    path: "/ads",
+    summary: "Creative, launch, spend, and results",
+    tone: "belief",
+    icon: "ad",
+    section: "grow",
+    requires: "ads",
+    children: [
+      { label: "Overview", path: "/ads", summary: "Paid channel performance", tone: "belief", icon: "ad" },
+      { label: "Creative", path: "/ad-creatives", summary: "Platform-ready variants", tone: "voice", icon: "post" },
+      { label: "Launch & spend", path: "/ad-launches", summary: "Spend-controlled launches", tone: "belief", icon: "status-live" },
+    ],
+  },
+  {
+    label: "Insights",
+    path: "/insights",
+    summary: "Performance and accepted learning",
+    tone: "history",
+    icon: "status-learning",
+    section: "grow",
+    requires: "insights",
+    children: [
+      { label: "Performance", path: "/insights", summary: "What worked and why", tone: "icp", icon: "status-learning" },
+      { label: "Learning", path: "/learning", summary: "Brain updates from decisions", tone: "history", icon: "doc-history" },
+    ],
+  },
+  {
+    label: "Brain",
+    path: "/brain",
+    summary: "Brand, voice, evidence, and context",
+    tone: "system",
+    icon: "brain",
+    section: "foundations",
+    children: [
+      { label: "Brain docs", path: "/brain", summary: "The editable GTM memory", tone: "system", icon: "brain" },
+      { label: "Content Preferences", path: "/brain#content-preferences", summary: "Channel and scoped guidance", tone: "voice", icon: "edit" },
+      { label: "Source materials", path: "/evidence", summary: "Proof and evidence", tone: "history", icon: "doc-history" },
+      { label: "Advanced context", path: "/resolver", summary: "Inspect what Tuezday will use", tone: "icp", icon: "search" },
+    ],
+  },
+  {
+    label: "Integrations",
     path: "/connectors",
-    summary: "Integrations, team, billing, and account control",
+    summary: "Connect the GTM stack",
+    tone: "system",
+    icon: "connect",
+    section: "foundations",
+  },
+  {
+    label: "Create New",
+    path: "/content",
+    summary: "Draft cross-channel work",
+    tone: "belief",
+    icon: "create",
+    section: "library",
+    children: [
+      { label: "Create", path: "/content", summary: "Posts and signal responses", tone: "belief", icon: "post" },
+      { label: "Advanced", path: "/sandbox", summary: "Generate directly from the Brain", tone: "system", icon: "status-generating" },
+    ],
+  },
+  {
+    label: "Settings",
+    path: "/team",
+    summary: "Workspace administration",
     tone: "system",
     icon: "settings",
+    section: "workspace",
     children: [
-      { label: "Integrations", path: "/connectors", summary: "Connect the stack", tone: "system", icon: "connect" },
       { label: "Team", path: "/team", summary: "Members and invites", tone: "icp", icon: "audience" },
       { label: "Billing", path: "/billing", summary: "Plan and usage", tone: "history", icon: "doc-history" },
+      { label: "Notifications", path: "/notifications", summary: "Email and Telegram alerts", tone: "signal", icon: "notification" },
       { label: "Activity", path: "/activity", summary: "Event log and audit trail", tone: "system", icon: "info" },
     ],
   },
@@ -4211,6 +4267,7 @@ export function navEntryForPath(nav: NavItem[], relativePath: string): NavEntry 
   // beats the group, giving "Approval queue" with parentLabel "Review".
   const consider = (path: string, entry: NavEntry) => {
     if (path === "") return;
+    if (path.includes("#")) return;
     if (relativePath === path || relativePath.startsWith(`${path}/`)) {
       if (path.length >= bestDepth) {
         best = entry;

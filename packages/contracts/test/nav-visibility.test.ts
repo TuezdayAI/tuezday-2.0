@@ -8,12 +8,13 @@ import {
 
 describe("visibleNavItems", () => {
   const CORE_NAV: NavItem[] = [
-    { label: "Home", path: "" },
-    { label: "Insights", path: "/insights" },
-    { label: "Brain", path: "/brain" },
+    { label: "Home", path: "", section: "operate" },
+    { label: "Insights", path: "/insights", section: "operate" },
+    { label: "Brain", path: "/brain", section: "operate" },
     {
       label: "Campaigns",
       path: "/campaigns",
+      section: "operate",
       children: [
         { label: "Ads", path: "/ads" },
         { label: "Ad creatives", path: "/ad-creatives" },
@@ -21,7 +22,7 @@ describe("visibleNavItems", () => {
         { label: "Other", path: "/other" },
       ],
     },
-    { label: "Calendar", path: "/calendar" },
+    { label: "Calendar", path: "/calendar", section: "operate" },
   ];
 
   it("hides Insights if hasInsights is false", () => {
@@ -81,16 +82,20 @@ describe("visibleNavItems", () => {
     expect(campaigns?.children?.length).toBe(4);
   });
 
-  it("keeps the workspace shell to workflow-level top navigation", () => {
-    expect(WORKSPACE_NAV.map((item) => item.label)).toEqual([
-      "Home",
-      "Brain",
-      "Campaigns",
-      "Discover",
-      "Create",
-      "Review",
-      "Audience",
-      "Settings",
+  it("uses the approved sectioned information architecture", () => {
+    expect(WORKSPACE_NAV.map((item) => [item.section, item.label, item.path])).toEqual([
+      ["operate", "Home", ""],
+      ["operate", "Calendar", "/calendar"],
+      ["operate", "Campaigns", "/campaigns"],
+      ["operate", "Review", "/approvals"],
+      ["grow", "Discover", "/discovery"],
+      ["grow", "Audience", "/outbound"],
+      ["grow", "Ads", "/ads"],
+      ["grow", "Insights", "/insights"],
+      ["foundations", "Brain", "/brain"],
+      ["foundations", "Integrations", "/connectors"],
+      ["library", "Create New", "/content"],
+      ["workspace", "Settings", "/team"],
     ]);
   });
 
@@ -101,22 +106,17 @@ describe("visibleNavItems", () => {
 
     expect(campaigns?.children?.map((child) => child.path)).toEqual([
       "/campaigns",
-      "/calendar",
       "/cadence",
       "/automation",
-      "/ads",
-      "/ad-launches",
-      "/insights",
     ]);
     expect(review?.children?.map((child) => child.path)).toEqual([
       "/approvals",
       "/inbox",
-      "/learning",
     ]);
     expect(settings?.children?.map((child) => child.path)).toEqual([
-      "/connectors",
       "/team",
       "/billing",
+      "/notifications",
       "/activity",
     ]);
   });
@@ -135,18 +135,21 @@ describe("visibleNavItems", () => {
 
     expect(visible.map((item) => item.label)).toEqual([
       "Home",
-      "Brain",
+      "Calendar",
       "Campaigns",
-      "Discover",
-      "Create",
       "Review",
+      "Discover",
       "Audience",
+      "Brain",
+      "Integrations",
+      "Create New",
       "Settings",
     ]);
     expect(visible.find((item) => item.label === "Campaigns")?.children?.map((child) => child.path))
-      .toEqual(["/campaigns", "/calendar", "/cadence", "/automation"]);
+      .toEqual(["/campaigns", "/cadence", "/automation"]);
     expect(visible.find((item) => item.path === "/insights")).toBeUndefined();
-    expect(visible.find((item) => item.label === "Integrations")).toBeUndefined();
+    expect(visible.find((item) => item.label === "Ads")).toBeUndefined();
+    expect(visible.find((item) => item.label === "Integrations")).toBeDefined();
     expect(visible.find((item) => item.label === "Billing")).toBeUndefined();
   });
 });
