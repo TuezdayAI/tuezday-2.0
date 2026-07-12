@@ -4,7 +4,7 @@ import { EmptyState } from "@/src/components/empty-state";
 import { ConnectPrompt } from "@/src/components/connect-prompt";
 import { WhyThisOutput } from "@/components/why-this-output";
 import { Button, IconButton } from "@/src/components/ui/button";
-import { Badge, CountBadge } from "@/src/components/ui/badge";
+import { Badge, CountBadge, WorkflowStatusBadge } from "@/src/components/ui/badge";
 import { Tabs } from "@/src/components/ui/tabs";
 import { PreviewCard } from "@/src/components/ui/preview-card";
 import { Icon, BrandIcon } from "@/src/components/ui/icon";
@@ -38,6 +38,7 @@ import {
   type Draft,
   type Persona,
   type TaskType,
+  type WorkflowStatus,
   type Workspace,
 } from "@tuezday/contracts";
 
@@ -68,10 +69,10 @@ const STATE_LABELS: Record<ApprovalState, string> = {
 
 type Filter = ApprovalState | "all";
 
-const STATE_BADGE_TONE: Record<ApprovalState, "approved" | "pending" | "edited" | "rejected" | "draft"> = {
+const APPROVAL_WORKFLOW_STATUS: Record<ApprovalState, WorkflowStatus> = {
   draft: "draft",
-  pending_review: "pending",
-  edited: "edited",
+  pending_review: "review_required",
+  edited: "changes_requested",
   approved: "approved",
   rejected: "rejected",
 };
@@ -455,8 +456,7 @@ export default function ApprovalsPage() {
         title={title}
         body={body}
         scheduledAt={fmtTime(d.createdAt)}
-        status={d.state === "pending_review" ? "Review" : STATE_LABELS[d.state]}
-        statusTone={STATE_BADGE_TONE[d.state]}
+        workflowStatus={APPROVAL_WORKFLOW_STATUS[d.state]}
         platform={platformFor(d)}
         onOpen={() => openDetail(d)}
         actions={
@@ -543,7 +543,7 @@ export default function ApprovalsPage() {
     return (
       <div className={styles.detail}>
         <div className={styles.detailHead}>
-          <Badge tone={STATE_BADGE_TONE[d.state]}>{STATE_LABELS[d.state]}</Badge>
+          <WorkflowStatusBadge status={APPROVAL_WORKFLOW_STATUS[d.state]} />
           {decisions[d.id]?.some((dec) => dec.action === "approve" && dec.actor === "system") && (
             <Badge tone="approved" title="Approved automatically by scheduled-auto">
               Auto-approved

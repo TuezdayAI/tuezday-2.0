@@ -1,10 +1,11 @@
 // apps/web/src/components/ui/preview-card.tsx — spec §6.1.
 // Content rendered as itself: social/email/blog/ad framings, one shared chrome.
 import type { ReactNode } from "react";
+import type { WorkflowStatus } from "@tuezday/contracts";
 import styles from "./preview-card.module.css";
 import { Icon, BrandIcon, type IconName } from "./icon";
 import type { BrandName } from "./brand-icons";
-import { Badge } from "./badge";
+import { Badge, WorkflowStatusBadge } from "./badge";
 import type { PreviewKind } from "../../../lib/preview-kind";
 
 const KIND_ICON: Record<PreviewKind, IconName> = {
@@ -28,6 +29,7 @@ interface PreviewCardProps {
   /** Draft copy / subject-adjacent body text. Clamped by the renderer. */
   body: string;
   scheduledAt?: string;
+  workflowStatus?: WorkflowStatus;
   status?: string;
   statusTone?: StatusTone;
   /** Platform mark for social/ad framings. */
@@ -39,7 +41,7 @@ interface PreviewCardProps {
 }
 
 export function PreviewCard({
-  kind, title, body, scheduledAt, status, statusTone = "pending",
+  kind, title, body, scheduledAt, workflowStatus, status, statusTone = "pending",
   platform, mediaUrl, onOpen, actions,
 }: PreviewCardProps) {
   return (
@@ -50,7 +52,11 @@ export function PreviewCard({
           {KIND_LABEL[kind]}
         </span>
         {scheduledAt && <time className={styles.time}>{scheduledAt}</time>}
-        {status && <Badge tone={statusTone}>{status}</Badge>}
+        {workflowStatus ? (
+          <WorkflowStatusBadge status={workflowStatus} />
+        ) : (
+          status && <Badge tone={statusTone}>{status}</Badge>
+        )}
       </header>
 
       <button type="button" className={styles.surface} onClick={onOpen} disabled={!onOpen}>

@@ -234,8 +234,7 @@ export default function WorkspaceHomePage() {
                       month: "short",
                       day: "numeric",
                     })}
-                    status="Review"
-                    statusTone="pending"
+                    workflowStatus="review_required"
                     platform={CHANNEL_BRAND[draft.channel]}
                     onOpen={() => router.push(`/workspaces/${id}/approvals`)}
                   />
