@@ -11,6 +11,7 @@ import type {
   Connection,
   CreateCampaignPlanRevisionInput,
   Persona,
+  UpsertCampaignLaneRevisionInput,
 } from "@tuezday/contracts";
 import { API_URL, apiFetch } from "@/lib/api";
 import { campaignStatus, campaignTab } from "@/lib/campaign-control-plane";
@@ -24,6 +25,7 @@ import {
   type CampaignDetailView,
 } from "./_components/campaign-overview";
 import { CampaignPlanHistory } from "./_components/campaign-plan-history";
+import { CampaignChannels } from "./_components/campaign-channels";
 import styles from "./campaign-workspace.module.css";
 
 interface ConnectorResponse {
@@ -181,6 +183,37 @@ export default function CampaignWorkspacePage() {
     }
   }
 
+  async function saveLane(
+    planRevisionId: string,
+    input: UpsertCampaignLaneRevisionInput,
+  ) {
+    setMutationBusy(true);
+    setError(null);
+    try {
+      const response = await apiFetch(
+        `/workspaces/${id}/campaigns/${campaignId}/plan/revisions/${planRevisionId}/lanes`,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(input),
+        },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.message ?? "Could not save the channel configuration.");
+      }
+      setActivationIssues([]);
+      await load();
+    } catch (cause) {
+      const message =
+        cause instanceof Error ? cause.message : "Could not save the channel configuration.";
+      setError(message);
+      throw cause;
+    } finally {
+      setMutationBusy(false);
+    }
+  }
+
   if (loading && !detail) return <EmptyState description="Loading campaign control plane…" />;
 
   if (error && !detail) {
@@ -292,14 +325,17 @@ export default function CampaignWorkspacePage() {
       )}
 
       {activeTab === "channels" && (
-        <section className={styles.placeholderPanel}>
-          <p className={styles.panelKicker}>Channels</p>
-          <h2>{activePlan?.lanes.length ?? 0} configured lane{activePlan?.lanes.length === 1 ? "" : "s"}</h2>
-          <p>Channel commitments remain readable here while draft lane editing is added in the next component.</p>
-          <span className={styles.loadedContext}>
-            {personas.length} personas · {audiences.length} audiences · {connections.length} connections
-          </span>
-        </section>
+        <CampaignChannels
+          workspaceId={id}
+          revisions={planWorkspace.revisions}
+          currentPlanRevisionId={planWorkspace.currentPlanRevisionId}
+          campaignChannels={campaign.channels}
+          personas={personas}
+          audiences={audiences}
+          connections={connections}
+          busy={mutationBusy}
+          onSaveLane={saveLane}
+        />
       )}
     </>
   );

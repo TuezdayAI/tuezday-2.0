@@ -39,4 +39,17 @@ describe("campaign workspace source contract", () => {
     expect(page).toContain("/plan/revisions");
     expect(page).toContain("/activate");
   });
+
+  it("configures campaign channels only through draft lane revisions", () => {
+    const channels = read(
+      "app/workspaces/[id]/campaigns/[campaignId]/_components/campaign-channels.tsx",
+    );
+    const laneForm = read(
+      "app/workspaces/[id]/campaigns/[campaignId]/_components/campaign-lane-form.tsx",
+    );
+    expect(channels).toContain("formatLaneSchedule");
+    expect(channels).toContain("Create a plan revision to edit channels");
+    expect(laneForm).toContain("UpsertCampaignLaneRevisionInput");
+    expect(laneForm).toContain("publishingConnectionId");
+  });
 });

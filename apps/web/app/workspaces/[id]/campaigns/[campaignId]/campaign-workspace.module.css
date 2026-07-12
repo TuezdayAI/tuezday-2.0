@@ -106,9 +106,37 @@
 .revisionDetails p { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
 .revisionDetails strong { color: var(--text); }
 
+.channelsWorkspace { display: grid; gap: 16px; }
+.planPrompt { padding: 8px 10px; border: 1px solid var(--accent); border-radius: var(--radius); color: var(--accent-deep); font-size: 12px; font-weight: 650; text-decoration: none; }
+.readOnlyNotice { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border: 1px solid var(--status-info); border-radius: var(--radius); background: var(--status-info-wash); color: var(--status-info-ink); font-size: 12px; }
+.channelCards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.channelCard { min-width: 0; padding: 16px; border: 1px solid var(--border); border-radius: var(--radius-lg); background: var(--panel); box-shadow: var(--shadow-low); }
+.channelHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
+.channelHeader p { margin: 0; color: var(--muted-2); font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; }
+.channelHeader h3 { margin: 4px 0 0; font-family: var(--font-display); font-size: 19px; }
+.channelFacts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); margin: 0; }
+.channelFacts div { min-width: 0; padding: 10px 6px; border-bottom: 1px solid var(--line-soft); }
+.channelFacts div:nth-child(odd) { padding-left: 0; }
+.channelFacts dt { color: var(--muted-2); font-size: 10px; }
+.channelFacts dd { margin: 4px 0 0; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.channelFacts a { color: var(--status-attention-ink); }
+.scheduleSummary { margin: 12px 0; color: var(--muted); font-family: var(--font-mono); font-size: 10.5px; line-height: 1.5; }
+.emptyChannels { display: grid; justify-items: center; padding: 36px 18px; border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); color: var(--muted); text-align: center; }
+.emptyChannels h3 { margin: 10px 0 4px; color: var(--text); font-family: var(--font-display); }
+.emptyChannels p { max-width: 520px; margin: 0; font-size: 12px; line-height: 1.5; }
+
+.laneForm { display: grid; gap: 16px; padding: 18px; }
+.laneForm label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 650; }
+.scheduleFields { display: grid; grid-template-columns: minmax(100px, 0.4fr) minmax(180px, 1fr) minmax(120px, 0.5fr) minmax(180px, 0.8fr); gap: 12px; margin: 0; padding: 14px; border: 1px solid var(--border); border-radius: var(--radius); }
+.scheduleFields legend { padding-inline: 5px; color: var(--muted); font-size: 11px; font-weight: 650; }
+.dayChoices { display: flex; align-items: flex-end; flex-wrap: wrap; gap: 4px; }
+.dayChoices label { display: inline-flex; align-items: center; gap: 4px; padding: 7px 6px; border: 1px solid var(--line-soft); border-radius: var(--radius-xs); }
+.mobilePlanningNote { display: none; margin: 0; padding: 9px 11px; border: 1px solid var(--status-info); border-radius: var(--radius); background: var(--status-info-wash); color: var(--status-info-ink); font-size: 11px; }
+
 @media (max-width: 980px) {
   .overviewGrid { grid-template-columns: 1fr; }
   .attentionPanel { grid-column: auto; }
+  .channelCards { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 720px) {
@@ -123,6 +151,8 @@
   .revisionFacts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .revisionFacts div:nth-child(3) { border-left: 0; border-top: 1px solid var(--line-soft); }
   .revisionFacts div:nth-child(4) { border-top: 1px solid var(--line-soft); }
+  .scheduleFields { grid-template-columns: 1fr; }
+  .mobilePlanningNote { display: block; }
 }
 
 @media (max-width: 420px) {
