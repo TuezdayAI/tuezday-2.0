@@ -469,6 +469,41 @@ describe("orchestration foundation persistence", () => {
       expect(immutableRes.json().error).toBe("plan_immutable");
     });
 
+    it("reads named lanes and revision history for the campaign workspace", async () => {
+      const revisionRes = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions`,
+        payload: revisionPayload,
+      });
+      const revision = revisionRes.json();
+      await app.inject({
+        method: "PUT",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions/${revision.id}/lanes`,
+        payload: lanePayload(),
+      });
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions/${revision.id}/activate`,
+      });
+
+      const response = await app.inject({
+        method: "GET",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/workspace`,
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toMatchObject({
+        currentPlanRevisionId: revision.id,
+        revisions: [
+          {
+            plan: { id: revision.id, revision: 1, status: "active" },
+            lanes: [{ key: "founder-linkedin", name: "Founder LinkedIn", channel: "linkedin" }],
+          },
+        ],
+        issues: [],
+      });
+    });
+
     it("returns structured activation issues for an unavailable connection", async () => {
       const now = Date.now();
       const connectionId = randomUUID();

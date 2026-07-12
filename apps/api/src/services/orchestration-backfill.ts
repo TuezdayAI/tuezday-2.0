@@ -1,4 +1,11 @@
-import type { Channel, Campaign } from "@tuezday/contracts";
+import {
+  campaignPlanWorkspaceSchema,
+  type Campaign,
+  type CampaignLaneRevisionView,
+  type CampaignPlanIssue,
+  type CampaignPlanWorkspace,
+  type Channel,
+} from "@tuezday/contracts";
 import type { Db } from "../db";
 import { getCampaign } from "./campaigns";
 import { listCadenceRows } from "./cadences";
@@ -8,8 +15,9 @@ import {
   activatePlanRevision,
   createPlanRevision,
   getCurrentCampaignPlan,
+  listCampaignPlanDetails,
 } from "./campaign-plans";
-import { CampaignPlanNotFoundError, type CampaignPlanIssue } from "./campaign-plan-errors";
+import { CampaignPlanNotFoundError } from "./campaign-plan-errors";
 
 export type BackfillStatus = "backfilled" | "needs_configuration" | "already_backfilled";
 
@@ -31,14 +39,39 @@ const LEGACY_FORMAT_BY_CHANNEL: Partial<Record<Channel, string>> = {
   x: "x_post",
 };
 
-function configurationIssues(campaign: Campaign, laneChannels: Set<string>): CampaignPlanIssue[] {
+export function getCampaignConfigurationIssues(
+  campaign: Campaign,
+  lanes: readonly Pick<CampaignLaneRevisionView, "channel" | "status">[],
+): CampaignPlanIssue[] {
+  const activeChannels = new Set(
+    lanes.filter((lane) => lane.status === "active").map((lane) => lane.channel),
+  );
   return campaign.channels
-    .filter((channel) => !laneChannels.has(channel))
+    .filter((channel) => !activeChannels.has(channel))
     .map((channel) => ({
       path: `channels.${channel}`,
       code: "execution_mapping_missing",
       message: `Choose a persona, publishing account, format, and schedule for ${channel}.`,
     }));
+}
+
+export function getCampaignPlanWorkspace(
+  db: Db,
+  workspaceId: string,
+  campaignId: string,
+): CampaignPlanWorkspace {
+  const campaign = getCampaign(db, workspaceId, campaignId);
+  if (!campaign) throw new CampaignPlanNotFoundError();
+  const revisions = listCampaignPlanDetails(db, workspaceId, campaignId);
+  const workingRevision =
+    revisions.find(({ plan }) => plan.status === "draft") ??
+    revisions.find(({ plan }) => plan.id === campaign.currentPlanRevisionId) ??
+    null;
+  return campaignPlanWorkspaceSchema.parse({
+    currentPlanRevisionId: campaign.currentPlanRevisionId,
+    revisions,
+    issues: getCampaignConfigurationIssues(campaign, workingRevision?.lanes ?? []),
+  });
 }
 
 export function getCampaignControlPlaneSummary(
@@ -56,13 +89,10 @@ export function getCampaignControlPlaneSummary(
       configurationIssueCount: campaign.channels.length,
     };
   }
-  const laneChannels = new Set(
-    detail.lanes.filter((lane) => lane.status === "active").map((lane) => lane.channel),
-  );
   return {
     planRevision: detail.plan.revision,
     laneCount: detail.lanes.length,
-    configurationIssueCount: configurationIssues(campaign, laneChannels).length,
+    configurationIssueCount: getCampaignConfigurationIssues(campaign, detail.lanes).length,
   };
 }
 
@@ -75,11 +105,10 @@ export function backfillCampaignControlPlane(
   if (!campaign) throw new CampaignPlanNotFoundError();
   const existing = getCurrentCampaignPlan(db, workspaceId, campaignId);
   if (existing) {
-    const laneChannels = new Set(existing.lanes.map((lane) => lane.channel));
     return {
       status: "already_backfilled",
       planRevisionId: existing.plan.id,
-      issues: configurationIssues(campaign, laneChannels),
+      issues: getCampaignConfigurationIssues(campaign, existing.lanes),
     };
   }
 
@@ -135,7 +164,10 @@ export function backfillCampaignControlPlane(
     laneChannels.add(cadence.channel);
   }
 
-  const issues = configurationIssues(campaign, laneChannels);
+  const issues = getCampaignConfigurationIssues(
+    campaign,
+    Array.from(laneChannels).map((channel) => ({ channel: channel as Channel, status: "active" as const })),
+  );
   activatePlanRevision(db, workspaceId, campaignId, plan.id);
   return {
     status: issues.length > 0 ? "needs_configuration" : "backfilled",

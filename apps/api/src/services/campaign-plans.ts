@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import {
   campaignPlanRevisionSchema,
+  type CampaignPlanDetail,
   type CampaignPlanRevision,
   type CreateCampaignPlanRevisionInput,
 } from "@tuezday/contracts";
@@ -27,11 +28,6 @@ export { CampaignPlanNotFoundError, PlanImmutableError, PlanValidationError } fr
 
 export interface PlanActor {
   userId: string | null;
-}
-
-export interface CampaignPlanDetail {
-  plan: CampaignPlanRevision;
-  lanes: ReturnType<typeof listLaneRevisionsForPlan>;
 }
 
 function rowToPlan(row: CampaignPlanRevisionRow): CampaignPlanRevision {
@@ -228,4 +224,26 @@ export function getCurrentCampaignPlan(
     plan: rowToPlan(row),
     lanes: listLaneRevisionsForPlan(db, workspaceId, row.id),
   };
+}
+
+export function listCampaignPlanDetails(
+  db: Db,
+  workspaceId: string,
+  campaignId: string,
+): CampaignPlanDetail[] {
+  return db
+    .select()
+    .from(campaignPlanRevisions)
+    .where(
+      and(
+        eq(campaignPlanRevisions.workspaceId, workspaceId),
+        eq(campaignPlanRevisions.campaignId, campaignId),
+      ),
+    )
+    .orderBy(desc(campaignPlanRevisions.revision))
+    .all()
+    .map((row) => ({
+      plan: rowToPlan(row),
+      lanes: listLaneRevisionsForPlan(db, workspaceId, row.id),
+    }));
 }

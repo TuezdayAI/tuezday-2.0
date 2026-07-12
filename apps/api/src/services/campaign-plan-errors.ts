@@ -1,8 +1,6 @@
-export interface CampaignPlanIssue {
-  path: string;
-  code: string;
-  message: string;
-}
+import type { CampaignPlanIssue } from "@tuezday/contracts";
+
+export type { CampaignPlanIssue } from "@tuezday/contracts";
 
 export class CampaignPlanNotFoundError extends Error {
   constructor(message = "The campaign or plan revision does not exist in this workspace.") {

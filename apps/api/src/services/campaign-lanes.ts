@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import {
   campaignLaneRevisionSchema,
+  campaignLaneRevisionViewSchema,
   upsertCampaignLaneRevisionInputSchema,
   type CampaignLaneRevision,
+  type CampaignLaneRevisionView,
   type Channel,
   type DeliveryMode,
   type LaneSchedule,
@@ -49,10 +51,11 @@ export function listLaneRevisionsForPlan(
   db: Db,
   workspaceId: string,
   planRevisionId: string,
-): CampaignLaneRevision[] {
+): CampaignLaneRevisionView[] {
   return db
-    .select()
+    .select({ revision: campaignLaneRevisions, key: campaignLanes.key, name: campaignLanes.name })
     .from(campaignLaneRevisions)
+    .innerJoin(campaignLanes, eq(campaignLanes.id, campaignLaneRevisions.laneId))
     .where(
       and(
         eq(campaignLaneRevisions.workspaceId, workspaceId),
@@ -60,7 +63,9 @@ export function listLaneRevisionsForPlan(
       ),
     )
     .all()
-    .map(rowToLaneRevision);
+    .map(({ revision, key, name }) =>
+      campaignLaneRevisionViewSchema.parse({ ...rowToLaneRevision(revision), key, name }),
+    );
 }
 
 export function upsertLaneRevision(

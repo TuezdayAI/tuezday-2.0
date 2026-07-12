@@ -17,6 +17,7 @@ import { upsertLaneRevision } from "../services/campaign-lanes";
 import {
   backfillCampaignControlPlane,
   getCampaignControlPlaneSummary,
+  getCampaignPlanWorkspace,
 } from "../services/orchestration-backfill";
 import { getWorkspace } from "../services/workspaces";
 
@@ -65,6 +66,18 @@ export function registerCampaignPlanRoutes(app: FastifyInstance, db: Db): void {
       if (!workspaceOr404(db, request.params.id, reply)) return reply;
       try {
         return getCampaignControlPlaneSummary(db, request.params.id, request.params.campaignId);
+      } catch (error) {
+        return sendPlanError(reply, error);
+      }
+    },
+  );
+
+  app.get<{ Params: CampaignParams }>(
+    "/workspaces/:id/campaigns/:campaignId/plan/workspace",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      try {
+        return getCampaignPlanWorkspace(db, request.params.id, request.params.campaignId);
       } catch (error) {
         return sendPlanError(reply, error);
       }
