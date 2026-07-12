@@ -898,7 +898,7 @@ export default function WorkspaceBrainPage() {
         </section>
       )}
 
-      <section className="guidance-section">
+      <section id="content-preferences" className="guidance-section">
         <h2>Channel guidance</h2>
         <p className="subtitle">
           Per-channel writing guidance the resolver injects into every generation. Override any

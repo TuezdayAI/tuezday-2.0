@@ -6,7 +6,8 @@ import { WORKSPACE_NAV } from "@tuezday/contracts";
 // The spec §4 vocabulary — nav, content types, status, brain docs, actions.
 const REQUIRED: string[] = [
   // nav groups
-  "home", "brain", "campaigns", "discover", "create", "review", "audience", "settings",
+  "home", "calendar", "campaigns", "review", "discover", "audience", "ad",
+  "status-learning", "brain", "connect", "create", "settings",
   // content types
   "email", "post", "blog", "ad", "carousel",
   // status

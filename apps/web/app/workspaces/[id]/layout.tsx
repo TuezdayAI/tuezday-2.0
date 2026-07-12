@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import {
+  NAV_SECTIONS,
   WORKSPACE_NAV,
   visibleNavItems,
   type NavItem,
@@ -171,8 +172,12 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
         </div>
 
         <nav className="ws-nav" aria-label="Workspace navigation">
-          {navItems.map((item) => {
+          {navItems.map((item, itemIndex) => {
             const groupActive = isGroupActive(item);
+            const previousItem = navItems[itemIndex - 1];
+            const startsSection = previousItem?.section !== item.section;
+            const sectionLabel =
+              NAV_SECTIONS.find((section) => section.id === item.section)?.label ?? item.section;
             const childrenVisible = Boolean(item.children && groupActive);
             const dotChildMatch =
               childrenVisible && item.children!.some((child) => child.path === dotAction?.module);
@@ -187,6 +192,8 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
                 key={item.label}
                 className={`ws-nav-group ${groupActive ? "active" : ""}`}
                 data-tone={item.tone ?? "system"}
+                data-section-start={startsSection ? "true" : undefined}
+                data-section-label={startsSection ? sectionLabel : undefined}
               >
                 <Link
                   className={`ws-nav-item ws-nav-parent ${groupActive ? "active" : ""}`}
