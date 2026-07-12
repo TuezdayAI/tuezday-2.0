@@ -1228,6 +1228,34 @@ export const campaignLaneRevisionSchema = z
   .superRefine(validateLaneDelivery);
 export type CampaignLaneRevision = z.infer<typeof campaignLaneRevisionSchema>;
 
+export const campaignPlanIssueSchema = z.object({
+  path: z.string().min(1),
+  code: z.string().min(1),
+  message: z.string().min(1),
+});
+export type CampaignPlanIssue = z.infer<typeof campaignPlanIssueSchema>;
+
+export const campaignLaneRevisionViewSchema = campaignLaneRevisionSchema.and(
+  z.object({
+    key: campaignLaneSchema.shape.key,
+    name: campaignLaneSchema.shape.name,
+  }),
+);
+export type CampaignLaneRevisionView = z.infer<typeof campaignLaneRevisionViewSchema>;
+
+export const campaignPlanDetailSchema = z.object({
+  plan: campaignPlanRevisionSchema,
+  lanes: z.array(campaignLaneRevisionViewSchema),
+});
+export type CampaignPlanDetail = z.infer<typeof campaignPlanDetailSchema>;
+
+export const campaignPlanWorkspaceSchema = z.object({
+  currentPlanRevisionId: z.string().uuid().nullable(),
+  revisions: z.array(campaignPlanDetailSchema),
+  issues: z.array(campaignPlanIssueSchema),
+});
+export type CampaignPlanWorkspace = z.infer<typeof campaignPlanWorkspaceSchema>;
+
 export const upsertCampaignLaneRevisionInputSchema = z
   .object({
     laneId: z.string().uuid().optional(),
