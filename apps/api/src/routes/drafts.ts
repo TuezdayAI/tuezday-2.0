@@ -3,6 +3,7 @@ import type { AnalyticsSink } from "../analytics/sink";
 import { track } from "../analytics/track";
 import {
   APPROVAL_STATES,
+  draftEditorContextSchema,
   editDraftInputSchema,
   isAdCreativeTaskType,
   validateAdCreative,
@@ -28,6 +29,7 @@ import {
   submitDraft,
 } from "../services/drafts";
 import { emitEvent } from "../services/events";
+import { getDraftEditorContext } from "../services/draft-editor";
 import { getGenerationSettings } from "../services/generation-settings";
 import { getPersona, toResolvePersona } from "../services/personas";
 import { runPreReview, setDraftReview } from "../services/review";
@@ -139,6 +141,16 @@ export function registerDraftRoutes(
         return reply.status(400).send({ error: "invalid_state" });
       }
       return listDrafts(db, request.params.id, state as ApprovalState | undefined, campaignId);
+    },
+  );
+
+  app.get<{ Params: { id: string; draftId: string } }>(
+    "/workspaces/:id/drafts/:draftId/editor",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const context = getDraftEditorContext(db, request.params.id, request.params.draftId);
+      if (!context) return reply.status(404).send({ error: "draft_not_found" });
+      return draftEditorContextSchema.parse(context);
     },
   );
 

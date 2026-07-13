@@ -375,7 +375,7 @@ git commit -m "feat(api): persist conversational draft revisions" -m "Co-Authore
 - Consumes Task 1 contracts, Task 2 turn readers, `listDecisions`, `listPublications`, `listExecutionResults`, `getCurrentCampaignPlan`, `listConnections`, and source generation `sectionsJson`.
 - Produces `getDraftEditorContext(db, workspaceId, draftId): DraftEditorContext | undefined` and the GET editor route.
 
-- [ ] **Step 1: Write projection tests first**
+- [x] **Step 1: Write projection tests first**
 
 ```ts
 it("returns an editor context conforming to the public schema", async () => {
@@ -408,12 +408,12 @@ it("scopes publications and executions by draft id", async () => {
 
 Add a second workspace and assert its user cannot read the first workspace's draft through the route.
 
-- [ ] **Step 2: Confirm RED**
+- [x] **Step 2: Confirm RED**
 
 Run: `npm test -- draft-editor-context.test.ts`  
 Expected: FAIL with GET 404 because the route does not exist.
 
-- [ ] **Step 3: Implement normalization helpers**
+- [x] **Step 3: Implement normalization helpers**
 
 Create pure internal helpers in `draft-editor.ts`:
 
@@ -443,7 +443,7 @@ function planStaleness(planActivatedAt: number | null, contextResolvedAt: number
 
 Normalize stored resolver sections without inventing a new layer enum. Join evidence trace document IDs against `evidence_documents` for title, kind, and safe source URL. Resolve destination from the draft's persona account where available, otherwise from a matching channel connection.
 
-- [ ] **Step 4: Implement and register the GET route**
+- [x] **Step 4: Implement and register the GET route**
 
 ```ts
 app.get<{ Params: { id: string; draftId: string } }>(
@@ -459,12 +459,12 @@ app.get<{ Params: { id: string; draftId: string } }>(
 
 The service sorts decisions and turns oldest-first, publications and executions newest-first, and determines `contextResolvedAt` from newest completed turn → source generation → draft creation.
 
-- [ ] **Step 5: Verify GREEN**
+- [x] **Step 5: Verify GREEN**
 
 Run: `npm test -- draft-editor-context.test.ts executions.test.ts drafts.test.ts`  
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api/src/services/draft-editor.ts apps/api/src/routes/drafts.ts apps/api/src/app.ts apps/api/test/draft-editor-context.test.ts
@@ -922,3 +922,4 @@ Expected: branch created/updated on origin; no merge command is run.
 - 2026-07-13: Implementation plan written after mapping contracts, draft state machine, resolver traces, evidence, plan revisions, publications, executions, automation modes, Review URL state, and current component ownership.
 - 2026-07-13: Task 1 RED confirmed with five missing-export failures; GREEN with five contract tests covering revision vocabulary/input/turn invariants and the composite editor projection.
 - 2026-07-13: Task 2 RED confirmed on the missing persistence module; GREEN with migration `0044`, six revision-turn service tests, health migration boot, and API typecheck.
+- 2026-07-13: Task 3 RED confirmed with the missing editor route; GREEN with schema-conforming provenance/staleness/sibling/destination/publication/execution projection, workspace isolation, 25 focused API tests, and API typecheck.
