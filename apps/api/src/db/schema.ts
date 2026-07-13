@@ -307,6 +307,41 @@ export const approvalDecisions = sqliteTable("approval_decisions", {
 
 export type ApprovalDecisionRow = typeof approvalDecisions.$inferSelect;
 
+// UI revamp conversational editor: one persisted natural-language revision
+// turn per request. The draft remains the approval object and owns the state
+// transition; these rows preserve conversation, provider metadata, and trace.
+export const draftRevisionTurns = sqliteTable(
+  "draft_revision_turns",
+  {
+    id: text("id").primaryKey(),
+    requestId: text("request_id").notNull(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    draftId: text("draft_id")
+      .notNull()
+      .references(() => drafts.id, { onDelete: "cascade" }),
+    actorId: text("actor_id").references(() => users.id, { onDelete: "set null" }),
+    instruction: text("instruction").notNull(),
+    sourceContent: text("source_content").notNull(),
+    resultContent: text("result_content"),
+    sectionsJson: text("sections_json").notNull().default("[]"),
+    status: text("status").notNull(),
+    error: text("error"),
+    model: text("model"),
+    provider: text("provider"),
+    durationMs: integer("duration_ms"),
+    createdAt: integer("created_at").notNull(),
+    completedAt: integer("completed_at"),
+  },
+  (t) => [
+    uniqueIndex("draft_revision_turn_request").on(t.draftId, t.requestId),
+    index("draft_revision_turn_draft").on(t.draftId, t.createdAt),
+  ],
+);
+
+export type DraftRevisionTurnRow = typeof draftRevisionTurns.$inferSelect;
+
 export const signals = sqliteTable("signals", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id")

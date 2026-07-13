@@ -252,7 +252,7 @@ git commit -m "feat(contracts): define conversational editor models" -m "Co-Auth
 - Consumes `DraftRevisionTurn` and `DraftRevisionStatus` from Task 1.
 - Produces `createRunningTurn`, `completeTurn`, `failTurn`, `getTurnByRequest`, `listRevisionTurns`, and `countCompletedRevisionTurnsSince`.
 
-- [ ] **Step 1: Write persistence tests first**
+- [x] **Step 1: Write persistence tests first**
 
 ```ts
 it("persists running, completed, and failed turns in chronological order", () => {
@@ -283,12 +283,12 @@ it("counts only completed turns for usage", () => {
 });
 ```
 
-- [ ] **Step 2: Confirm RED**
+- [x] **Step 2: Confirm RED**
 
 Run: `npm test -- draft-revisions.test.ts`  
 Expected: FAIL because the table and service do not exist.
 
-- [ ] **Step 3: Add the Drizzle table and generate the migration**
+- [x] **Step 3: Add the Drizzle table and generate the migration**
 
 ```ts
 export const draftRevisionTurns = sqliteTable(
@@ -321,7 +321,7 @@ export const draftRevisionTurns = sqliteTable(
 Run: `npm run db:generate -w apps/api`  
 Expected: a new checked-in migration and journal entry representing `draft_revision_turns`.
 
-- [ ] **Step 4: Implement the service and usage sum**
+- [x] **Step 4: Implement the service and usage sum**
 
 `rowToTurn()` parses `sectionsJson`. `completeTurn()` writes result/model/provider/duration, clears error, sets `status: "completed"`, and sets `completedAt`. `failTurn()` writes the bounded error, null result metadata, and `status: "failed"`.
 
@@ -349,12 +349,12 @@ return {
 };
 ```
 
-- [ ] **Step 5: Verify GREEN and migration boot**
+- [x] **Step 5: Verify GREEN and migration boot**
 
 Run: `npm test -- draft-revisions.test.ts health.test.ts`  
 Expected: PASS; the in-memory database migrates successfully.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api/src/db/schema.ts apps/api/drizzle apps/api/src/services/draft-revisions.ts apps/api/src/services/entitlements.ts apps/api/test/draft-revisions.test.ts
@@ -921,3 +921,4 @@ Expected: branch created/updated on origin; no merge command is run.
 - 2026-07-13: Approved design captured in `docs/superpowers/specs/2026-07-13-conversational-editor-design.md` and committed as `977a2f0`.
 - 2026-07-13: Implementation plan written after mapping contracts, draft state machine, resolver traces, evidence, plan revisions, publications, executions, automation modes, Review URL state, and current component ownership.
 - 2026-07-13: Task 1 RED confirmed with five missing-export failures; GREEN with five contract tests covering revision vocabulary/input/turn invariants and the composite editor projection.
+- 2026-07-13: Task 2 RED confirmed on the missing persistence module; GREEN with migration `0044`, six revision-turn service tests, health migration boot, and API typecheck.

@@ -309,6 +309,13 @@
       "when": 1783933689093,
       "tag": "0043_chilly_eternity",
       "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1783962977257,
+      "tag": "0044_cheerful_vulcan",
+      "breakpoints": true
     }
   ]
 }
