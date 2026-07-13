@@ -47,14 +47,20 @@ Nothing computes a cross-family rollup ("this launch partially failed: 3 sent, 1
 
 ## Tasks
 
-- [ ] 1. Plan doc (this file).
-- [ ] 2. Contracts: `EXECUTION_RESULT_KINDS`, `EXECUTION_RESULT_STATUSES`, `executionResultSchema` (+ types). Fields: `kind`, `id`, `title`, `channel` (nullable), `campaignId`/`campaignName` (nullable), `status`, `at`, `url` (nullable), `error` (nullable), `platformStatus` (nullable, ads only), `destinations {total, succeeded, failed, skipped, pending}`, `draftId` (nullable).
-- [ ] 3. API: `apps/api/src/services/executions.ts` (`listExecutionResults(db, workspaceId, { campaignId?, limit? })`) + `routes/executions.ts` (`GET /workspaces/:id/executions`) registered in `app.ts`. Tests first in `apps/api/test/executions.test.ts`: one fixture per family incl. a partially-failed launch, campaign filter, inclusion rules, ordering, schema conformance.
-- [ ] 4. Web view model: `apps/web/lib/execution-results.ts` (`executionWorkflowStatus`, `destinationSummary`, `executionTargetHref`, `EXECUTION_KIND_LABELS`) + unit tests; extend `CAMPAIGN_TABS` with `results`.
-- [ ] 5. Web UI: `campaign-results.tsx` component on the campaign workspace Results tab (badge, summary, error, links, retry for failed publications, empty state); `?launch=` deep link on `/launches`.
-- [ ] 6. Shell contract test `apps/web/lib/execution-results-shell-contract.test.ts` pinning the tab to the shared view model, canonical badge, and recovery routes.
-- [ ] 7. Verify (full suite, typecheck, web build), acceptance doc `docs/ui-ux/execution-results-acceptance.md`, capability registry update, push.
+- [x] 1. Plan doc (this file).
+- [x] 2. Contracts: `EXECUTION_RESULT_KINDS`, `EXECUTION_RESULT_STATUSES`, `executionResultSchema` (+ types). Fields: `kind`, `id`, `title`, `channel` (nullable), `campaignId`/`campaignName` (nullable), `status`, `at`, `url` (nullable), `error` (nullable), `platformStatus` (nullable, ads only), `destinations {total, succeeded, failed, skipped, pending}`, `draftId` (nullable).
+- [x] 3. API: `apps/api/src/services/executions.ts` (`listExecutionResults(db, workspaceId, { campaignId?, limit? })`) + `routes/executions.ts` (`GET /workspaces/:id/executions`) registered in `app.ts`. Tests first in `apps/api/test/executions.test.ts`: one fixture per family incl. a partially-failed launch, campaign filter, inclusion rules, ordering, schema conformance.
+- [x] 4. Web view model: `apps/web/lib/execution-results.ts` (`executionWorkflowStatus`, `destinationSummary`, `executionTargetHref`, `EXECUTION_KIND_LABELS`) + unit tests; extend `CAMPAIGN_TABS` with `results`.
+- [x] 5. Web UI: `campaign-results.tsx` component on the campaign workspace Results tab (badge, summary, error, links, retry for failed publications, empty state); `?launch=` deep link on `/launches`.
+- [x] 6. Shell contract test `apps/web/lib/execution-results-shell-contract.test.ts` pinning the tab to the shared view model, canonical badge, and recovery routes.
+- [x] 7. Verify (full suite, typecheck, web build), acceptance doc `docs/ui-ux/execution-results-acceptance.md`, capability registry update, push.
 
 ## Progress log
 
-- 2026-07-13: Surveyed the three result families, external-action contract gap, campaign tab set, and canonical status coverage. Plan committed.
+- 2026-07-13: Surveyed the three result families, external-action contract gap, campaign tab set, and canonical status coverage. Plan committed (df425e5).
+- 2026-07-13: Task 2 — contracts vocabulary + `executionResultSchema`, 4 tests (9a631c8).
+- 2026-07-13: Task 3 — executions service + route + app wiring, 5 API tests (b7d37da). Note: fresh worktree needed `npm install`; without it `@tuezday/contracts` resolved up the tree to the main checkout's stale copy and the new schema import was undefined.
+- 2026-07-13: Task 4 — web view model + 5 tests; `CAMPAIGN_TABS` gains `results` (b882d85).
+- 2026-07-13: Task 5 — CampaignResults tab component, CSS, page wiring, `?launch=` deep link on /launches (78380fc).
+- 2026-07-13: Task 6 — shell contract test, 5 assertions (dfe90f0).
+- 2026-07-13: Task 7 — full verification green (typecheck 0; web build 0; suite 116 files / 1,242 tests). Acceptance doc + capability registry row updated; branch pushed.
