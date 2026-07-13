@@ -690,7 +690,7 @@ git commit -m "feat(web): define conversational editor view model" -m "Co-Author
 - Component props: `{ workspaceId: string; draftId: string; previousId: string | null; nextId: string | null; onNavigate(id: string): void; onClose(): void; onChanged(): Promise<void> | void }`.
 - Fetches `GET /drafts/:draftId/editor`; mutates existing draft action/review/carousel routes and the new revise route.
 
-- [ ] **Step 1: Write the structural contract test first**
+- [x] **Step 1: Write the structural contract test first**
 
 ```ts
 it("uses the shared preview and canonical status primitives", () => {
@@ -711,12 +711,12 @@ it("keeps content and external-action decisions separate", () => {
 });
 ```
 
-- [ ] **Step 2: Confirm RED**
+- [x] **Step 2: Confirm RED**
 
 Run: `npm exec --prefix apps/web vitest -- run lib/conversational-editor-shell-contract.test.ts`  
 Expected: FAIL because the component does not exist.
 
-- [ ] **Step 3: Implement data loading, navigation, and mutation state**
+- [x] **Step 3: Implement data loading, navigation, and mutation state**
 
 The component owns `context`, `selectedVersion`, `instruction`, `busyAction`, `error`, and responsive side-rail tab state. On draft ID change it reloads context, resets selected version to Current, focuses the editor heading, and retains no stale mutation state.
 
@@ -736,7 +736,7 @@ const response = await apiFetch(`/workspaces/${workspaceId}/drafts/${draftId}/re
 
 On success clear the composer, reload Current, call `onChanged`, and announce success. On `draft_changed`, reload but retain the instruction and label the retry **Try again on latest**. Provider failure retains the instruction and exposes Retry with a new request ID.
 
-- [ ] **Step 4: Implement Guidance, Preview, and Execution landmarks**
+- [x] **Step 4: Implement Guidance, Preview, and Execution landmarks**
 
 Guidance renders pre-review checks, the collapsed disclosure, grouped source sections, evidence citations, chronological turns, model metadata, failed-turn recovery, and composer examples.
 
@@ -746,7 +746,7 @@ Execution renders `WorkflowStatusBadge`, campaign/persona links, destination sta
 
 The sticky **Content decision** bar renders only legal actions determined by `canTransition()` and never merges approval with action execution.
 
-- [ ] **Step 5: Implement responsive CSS and focus safety**
+- [x] **Step 5: Implement responsive CSS and focus safety**
 
 ```css
 .layout { display: grid; grid-template-columns: minmax(260px, .8fr) minmax(420px, 1.45fr) minmax(280px, .9fr); gap: 16px; align-items: start; }
@@ -758,14 +758,14 @@ The sticky **Content decision** bar renders only legal actions determined by `ca
 
 Use only existing token names confirmed in `globals.css`; if a listed alias is absent, substitute the nearest existing token rather than adding feature-local raw colors.
 
-- [ ] **Step 6: Verify component contract and typecheck**
+- [x] **Step 6: Verify component contract and typecheck**
 
 Run: `npm exec --prefix apps/web vitest -- run lib/conversational-editor-shell-contract.test.ts lib/conversational-editor.test.ts`  
 Expected: PASS.  
 Run: `npm run typecheck`  
 Expected: exit 0.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add 'apps/web/app/workspaces/[id]/review/_components/conversational-editor.tsx' 'apps/web/app/workspaces/[id]/review/_components/conversational-editor.module.css' apps/web/lib/conversational-editor-shell-contract.test.ts
@@ -925,3 +925,4 @@ Expected: branch created/updated on origin; no merge command is run.
 - 2026-07-13: Task 3 RED confirmed with the missing editor route; GREEN with schema-conforming provenance/staleness/sibling/destination/publication/execution projection, workspace isolation, 25 focused API tests, and API typecheck.
 - 2026-07-13: Task 4 RED confirmed with seven missing-route failures; GREEN with 12 revision workflow tests covering canonical edits, idempotency, optimistic conflicts, live scoped context, bounded history, evidence exclusion, metering, analytics, provider failures, invalid states, and workspace isolation. The focused 38-test API set and API typecheck pass.
 - 2026-07-13: Task 5 RED confirmed on the missing editor view-model module and dropped URL state; GREEN with 11 pure tests for versions, context grouping, policy/staleness copy, recovery ownership, and canonical Review deep links. Web typecheck passes.
+- 2026-07-13: Task 6 RED confirmed on the absent editor shell; GREEN with structural coverage for shared preview/status primitives, accessible Guidance/Preview/Execution landmarks, explicit authorization separation, optimistic concurrency recovery, and focus safety. The component and responsive CSS pass focused tests and web typecheck.
