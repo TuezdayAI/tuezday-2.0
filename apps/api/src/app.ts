@@ -38,6 +38,7 @@ import { registerCrmRoutes } from "./routes/crm";
 import { registerDiscoveryRoutes } from "./routes/discovery";
 import { registerDraftRoutes } from "./routes/drafts";
 import { registerEvidenceRoutes } from "./routes/evidence";
+import { registerExecutionRoutes } from "./routes/executions";
 import { registerDesignSystemRoutes } from "./routes/design-systems";
 import { registerGuidanceRoutes } from "./routes/guidance";
 import { registerGenerationSettingsRoutes } from "./routes/generation-settings";
@@ -178,6 +179,7 @@ export async function buildApp({
   registerAdImageRoutes(app, db, design, assetStorage, render);
   registerPrRoutes(app, db, llm, evidence);
   registerPublicationRoutes(app, db, connectors, fetcher, analytics);
+  registerExecutionRoutes(app, db);
   registerCadenceRoutes(app, db, connectors, fetcher);
   registerMailRoutes(app, db, mailer);
   registerAutomationRoutes(app, db, llm, evidence);
