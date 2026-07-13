@@ -15,11 +15,20 @@ export function reviewTab(value: string | null): ReviewTab {
 
 export function reviewHref(
   workspaceId: string,
-  opts?: { tab?: ReviewTab; campaign?: string },
+  opts?: {
+    tab?: ReviewTab;
+    campaign?: string;
+    state?: ApprovalState | "all";
+    channel?: Channel | "all";
+    draft?: string;
+  },
 ): string {
   const params = new URLSearchParams();
   if (opts?.tab) params.set("tab", opts.tab);
   if (opts?.campaign) params.set("campaign", opts.campaign);
+  if (opts?.state && opts.state !== "all") params.set("state", opts.state);
+  if (opts?.channel && opts.channel !== "all") params.set("channel", opts.channel);
+  if (opts?.draft) params.set("draft", opts.draft);
   const query = params.toString();
   return `/workspaces/${workspaceId}/review${query ? `?${query}` : ""}`;
 }

@@ -611,7 +611,7 @@ git commit -m "feat(api): add conversational draft revision" -m "Co-Authored-By:
 **Interfaces:**
 - Produces `editorVersionOptions`, `editorVersionContent`, `groupEditorSections`, `automationExplanation`, `stalenessExplanation`, `editorRecoveryHref`, and `reviewHref()` support for `draft`, `state`, and `channel`.
 
-- [ ] **Step 1: Write pure-function tests first**
+- [x] **Step 1: Write pure-function tests first**
 
 ```ts
 it("preserves queue context in editor URLs", () => {
@@ -641,12 +641,12 @@ it("explains automation modes in user language", () => {
 });
 ```
 
-- [ ] **Step 2: Confirm RED**
+- [x] **Step 2: Confirm RED**
 
 Run: `npm exec --prefix apps/web vitest -- run lib/conversational-editor.test.ts lib/review-workspace.test.ts`  
 Expected: FAIL because the module and URL options are missing.
 
-- [ ] **Step 3: Implement pure view-model functions**
+- [x] **Step 3: Implement pure view-model functions**
 
 ```ts
 export type EditorVersionId = "original" | "current" | `revision:${string}`;
@@ -665,12 +665,12 @@ export function editorVersionOptions(context: DraftEditorContext) {
 
 `editorRecoveryHref()` delegates publication/launch/ad-launch recovery to `executionTargetHref()` and returns Calendar/Content links for scheduled rows. `groupEditorSections()` preserves resolver order inside layer groups.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `npm exec --prefix apps/web vitest -- run lib/conversational-editor.test.ts lib/review-workspace.test.ts`  
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/web/lib/conversational-editor.ts apps/web/lib/conversational-editor.test.ts apps/web/lib/review-workspace.ts apps/web/lib/review-workspace.test.ts
@@ -924,3 +924,4 @@ Expected: branch created/updated on origin; no merge command is run.
 - 2026-07-13: Task 2 RED confirmed on the missing persistence module; GREEN with migration `0044`, six revision-turn service tests, health migration boot, and API typecheck.
 - 2026-07-13: Task 3 RED confirmed with the missing editor route; GREEN with schema-conforming provenance/staleness/sibling/destination/publication/execution projection, workspace isolation, 25 focused API tests, and API typecheck.
 - 2026-07-13: Task 4 RED confirmed with seven missing-route failures; GREEN with 12 revision workflow tests covering canonical edits, idempotency, optimistic conflicts, live scoped context, bounded history, evidence exclusion, metering, analytics, provider failures, invalid states, and workspace isolation. The focused 38-test API set and API typecheck pass.
+- 2026-07-13: Task 5 RED confirmed on the missing editor view-model module and dropped URL state; GREEN with 11 pure tests for versions, context grouping, policy/staleness copy, recovery ownership, and canonical Review deep links. Web typecheck passes.

@@ -47,6 +47,15 @@ describe("review workspace view model", () => {
     expect(reviewHref("w1", { tab: "approvals", campaign: "c9" })).toBe(
       "/workspaces/w1/review?tab=approvals&campaign=c9",
     );
+    expect(reviewHref("w1", {
+      tab: "approvals",
+      campaign: "c1",
+      state: "pending_review",
+      channel: "linkedin",
+      draft: "d1",
+    })).toBe(
+      "/workspaces/w1/review?tab=approvals&campaign=c1&state=pending_review&channel=linkedin&draft=d1",
+    );
   });
 
   it("maps approval states onto the canonical workflow vocabulary", () => {
