@@ -39,7 +39,7 @@ interface ConversationalEditorProps {
   onChanged(): Promise<void> | void;
 }
 
-type BusyAction = "revise" | "edit" | "approve" | "reject" | "resubmit" | "review" | null;
+type BusyAction = "revise" | "edit" | "approve" | "reject" | "resubmit" | "review" | "carousel" | null;
 
 const PLATFORM: Partial<Record<DraftEditorContext["draft"]["channel"], BrandName>> = {
   linkedin: "linkedin",
@@ -210,6 +210,31 @@ export function ConversationalEditor({
       setAnnouncement("Pre-review checks updated.");
     } catch (reviewError) {
       setError(reviewError instanceof Error ? reviewError.message : "Could not run review.");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function generateCarousel() {
+    setBusyAction("carousel");
+    setError(null);
+    try {
+      const response = await apiFetch(`/workspaces/${workspaceId}/drafts/${draftId}/carousel`, {
+        method: "POST",
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        if (response.status === 402) return;
+        throw new Error(body?.message ?? "Could not generate the carousel.");
+      }
+      setAnnouncement("Carousel generated and added to Review.");
+      toast("Carousel generated");
+      await onChanged();
+      if (body?.id) onNavigate(body.id as string);
+    } catch (carouselError) {
+      setError(
+        carouselError instanceof Error ? carouselError.message : "Could not generate carousel.",
+      );
     } finally {
       setBusyAction(null);
     }
@@ -477,6 +502,12 @@ export function ConversationalEditor({
           <div className={styles.tools}>
             <Button variant="secondary" size="sm" onClick={() => void copyCurrent()}>Copy</Button>
             <Button variant="secondary" size="sm" onClick={downloadCurrent}>Download .md</Button>
+            {draft.state === "approved" && draft.taskType !== "instagram_carousel" && (
+              <Button variant="secondary" size="sm" disabled={busyAction !== null} onClick={() => void generateCarousel()}>
+                <Icon name="carousel" size="sm" />
+                {busyAction === "carousel" ? "Rendering…" : "Generate carousel"}
+              </Button>
+            )}
             <Button variant="ghost" size="sm" disabled={busyAction !== null} onClick={() => void rerunReview()}>{draft.review ? "Re-run review" : "Run review"}</Button>
           </div>
 

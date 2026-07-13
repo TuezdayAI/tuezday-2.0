@@ -787,7 +787,7 @@ git commit -m "feat(web): build the conversational editor" -m "Co-Authored-By: C
 - Consumes Task 5 canonical URL builder and Task 6 component.
 - Approvals queue keeps list/filter/group ownership and delegates detail ownership to `ConversationalEditor`.
 
-- [ ] **Step 1: Extend shell tests for deep-link continuity**
+- [x] **Step 1: Extend shell tests for deep-link continuity**
 
 ```ts
 it("renders the editor from the draft query while keeping Review canonical", () => {
@@ -805,12 +805,12 @@ it("preserves campaign, state, and channel when navigating drafts", () => {
 });
 ```
 
-- [ ] **Step 2: Confirm RED**
+- [x] **Step 2: Confirm RED**
 
 Run: `npm exec --prefix apps/web vitest -- run lib/review-shell-contract.test.ts lib/conversational-editor-shell-contract.test.ts`  
 Expected: FAIL because Review does not mount the editor.
 
-- [ ] **Step 3: Move detail ownership out of the 917-line queue**
+- [x] **Step 3: Move detail ownership out of the 917-line queue**
 
 Remove `renderDetail`, editing/history/detail-only states, and detail-only helpers after their behavior exists in `ConversationalEditor`. Keep queue loading, grouping, filtering, cards, approve-all, and focus advance.
 
@@ -835,18 +835,18 @@ if (openDraftId) {
 
 The card **Open editor** action writes the draft URL. Sibling and Previous/Next navigation use the same builder. Closing removes only `draft`, not filters.
 
-- [ ] **Step 4: Preserve direct card decisions and focus advance**
+- [x] **Step 4: Preserve direct card decisions and focus advance**
 
 Keep card-level Approve/Edit/Reject controls only where they already exist and remain unambiguous. After an editor approval, `onChanged()` reloads the queue and navigates to the next visible approvable item, or closes to the filtered queue if none remains.
 
-- [ ] **Step 5: Verify focused regression set**
+- [x] **Step 5: Verify focused regression set**
 
 Run: `npm exec --prefix apps/web vitest -- run lib/review-workspace.test.ts lib/review-shell-contract.test.ts lib/conversational-editor.test.ts lib/conversational-editor-shell-contract.test.ts lib/preview-kind.test.ts lib/workflow-status.test.ts`  
 Expected: PASS.  
 Run: `npm run typecheck`  
 Expected: exit 0.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add 'apps/web/app/workspaces/[id]/review/_components/approvals-queue.tsx' 'apps/web/app/workspaces/[id]/review/_components/approvals-queue.module.css' 'apps/web/app/workspaces/[id]/review/page.tsx' apps/web/lib/review-shell-contract.test.ts apps/web/lib/conversational-editor-shell-contract.test.ts
@@ -926,3 +926,4 @@ Expected: branch created/updated on origin; no merge command is run.
 - 2026-07-13: Task 4 RED confirmed with seven missing-route failures; GREEN with 12 revision workflow tests covering canonical edits, idempotency, optimistic conflicts, live scoped context, bounded history, evidence exclusion, metering, analytics, provider failures, invalid states, and workspace isolation. The focused 38-test API set and API typecheck pass.
 - 2026-07-13: Task 5 RED confirmed on the missing editor view-model module and dropped URL state; GREEN with 11 pure tests for versions, context grouping, policy/staleness copy, recovery ownership, and canonical Review deep links. Web typecheck passes.
 - 2026-07-13: Task 6 RED confirmed on the absent editor shell; GREEN with structural coverage for shared preview/status primitives, accessible Guidance/Preview/Execution landmarks, explicit authorization separation, optimistic concurrency recovery, and focus safety. The component and responsive CSS pass focused tests and web typecheck.
+- 2026-07-13: Task 7 RED confirmed on missing Review mounting and URL continuity; GREEN after reducing ApprovalsQueue from 917 lines to queue-only ownership, mounting the editor from `draft`, preserving campaign/state/channel scope, retaining direct/batch decisions and focus advance, and routing terminal decisions to the next eligible item. The 23-test focused web regression set and web typecheck pass.

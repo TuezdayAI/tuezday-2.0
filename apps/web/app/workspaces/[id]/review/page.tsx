@@ -3,9 +3,9 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import type { Draft, InboxItem } from "@tuezday/contracts";
+import type { ApprovalState, Channel, Draft, InboxItem } from "@tuezday/contracts";
 import { apiFetch } from "@/lib/api";
-import { reviewTab, type ReviewTab } from "@/lib/review-workspace";
+import { reviewHref, reviewTab, type ReviewTab } from "@/lib/review-workspace";
 import { CountBadge } from "@/src/components/ui/badge";
 import { ApprovalsQueue } from "./_components/approvals-queue";
 import { InboxQueue } from "./_components/inbox-queue";
@@ -50,14 +50,20 @@ export default function ReviewWorkspacePage() {
   }> = [
     {
       key: "approvals",
-      href: "?tab=approvals",
+      href: reviewHref(id, {
+        tab: "approvals",
+        campaign: searchParams.get("campaign") ?? undefined,
+        state: (searchParams.get("state") as ApprovalState | "all" | null) ?? undefined,
+        channel: (searchParams.get("channel") as Channel | "all" | null) ?? undefined,
+        draft: searchParams.get("draft") ?? undefined,
+      }),
       label: "Approvals",
       count: pendingCount,
       countLabel: "drafts waiting for review",
     },
     {
       key: "inbox",
-      href: "?tab=inbox",
+      href: reviewHref(id, { tab: "inbox" }),
       label: "Inbox",
       count: unreadCount,
       countLabel: "unread inbox items",

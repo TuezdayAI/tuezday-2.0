@@ -26,6 +26,8 @@ describe("conversational editor shell contract", () => {
     expect(source).toContain("Content decision");
     expect(source).toContain("External action authorization");
     expect(source).not.toContain("Approve and publish");
+    expect(source).toContain("/carousel");
+    expect(source).toContain("Generate carousel");
   });
 
   it("uses optimistic concurrency and preserves recoverable revision input", () => {
@@ -34,5 +36,17 @@ describe("conversational editor shell contract", () => {
     expect(source).toContain("crypto.randomUUID()");
     expect(source).toContain("Try again on latest");
     expect(source).toContain("requestAnimationFrame");
+  });
+
+  it("is mounted by Review with queue navigation callbacks", () => {
+    const queue = fs.readFileSync(
+      path.join(root, "app/workspaces/[id]/review/_components/approvals-queue.tsx"),
+      "utf8",
+    );
+    expect(queue).toContain("<ConversationalEditor");
+    expect(queue).toContain("previousId");
+    expect(queue).toContain("nextId");
+    expect(queue).toContain("onNavigate");
+    expect(queue).toContain("onClose");
   });
 });
