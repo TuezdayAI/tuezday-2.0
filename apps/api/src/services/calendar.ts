@@ -1,7 +1,7 @@
 import { and, eq, gte, lte } from "drizzle-orm";
 import type { CalendarEntry, CalendarEntryStatus, Channel } from "@tuezday/contracts";
 import type { Db } from "../db";
-import { drafts, postingCadences, publications } from "../db/schema";
+import { campaigns, drafts, postingCadences, publications } from "../db/schema";
 import { deriveTitle, listCadenceRows, slotsBetween } from "./cadences";
 
 export interface CalendarView {
@@ -16,6 +16,20 @@ export interface CalendarView {
  */
 export function buildCalendar(db: Db, workspaceId: string, fromMs: number, toMs: number): CalendarView {
   const entries: CalendarEntry[] = [];
+
+  // Campaign names for both publication (via draft) and slot (via cadence) entries.
+  const campaignNames = new Map<string, string>();
+  for (const row of db
+    .select({ id: campaigns.id, name: campaigns.name })
+    .from(campaigns)
+    .where(eq(campaigns.workspaceId, workspaceId))
+    .all()) {
+    campaignNames.set(row.id, row.name);
+  }
+  const campaignOf = (campaignId: string | null | undefined) => {
+    const id = campaignId ?? null;
+    return { campaignId: id, campaignName: id ? (campaignNames.get(id) ?? null) : null };
+  };
 
   const rows = db
     .select({ publication: publications, draft: drafts, cadence: postingCadences })
@@ -39,6 +53,7 @@ export function buildCalendar(db: Db, workspaceId: string, fromMs: number, toMs:
       at: publication.scheduledFor,
       cadenceId: publication.cadenceId,
       cadenceName: cadence?.name ?? null,
+      ...campaignOf(draft?.campaignId),
       channel: (draft?.channel as Channel | undefined) ?? null,
       providerKey: publication.providerKey,
       status: publication.status as CalendarEntryStatus,
@@ -46,6 +61,7 @@ export function buildCalendar(db: Db, workspaceId: string, fromMs: number, toMs:
       draftId: publication.draftId,
       publicationId: publication.id,
       url: publication.externalUrl,
+      error: publication.status === "failed" ? publication.lastError : null,
     });
     if (publication.cadenceId) {
       const set = covered.get(publication.cadenceId) ?? new Set<number>();
@@ -64,6 +80,7 @@ export function buildCalendar(db: Db, workspaceId: string, fromMs: number, toMs:
         at,
         cadenceId: cadence.id,
         cadenceName: cadence.name,
+        ...campaignOf(cadence.campaignId),
         channel: cadence.channel,
         providerKey: null,
         status: "open",
@@ -71,6 +88,7 @@ export function buildCalendar(db: Db, workspaceId: string, fromMs: number, toMs:
         draftId: null,
         publicationId: null,
         url: null,
+        error: null,
       });
     }
   }

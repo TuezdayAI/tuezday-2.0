@@ -2902,6 +2902,8 @@ export const calendarEntrySchema = z.object({
   at: z.number().int(),
   cadenceId: z.string().uuid().nullable(),
   cadenceName: z.string().nullable(),
+  campaignId: z.string().uuid().nullable(),
+  campaignName: z.string().nullable(),
   channel: z.enum(CHANNELS).nullable(),
   providerKey: z.string().nullable(),
   status: z.enum(CALENDAR_ENTRY_STATUSES),
@@ -2909,6 +2911,8 @@ export const calendarEntrySchema = z.object({
   draftId: z.string().uuid().nullable(),
   publicationId: z.string().uuid().nullable(),
   url: z.string().nullable(),
+  /** Last failure detail for a failed publication; null otherwise. */
+  error: z.string().nullable(),
 });
 export type CalendarEntry = z.infer<typeof calendarEntrySchema>;
 

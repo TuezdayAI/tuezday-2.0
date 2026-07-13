@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   calendarEntrySchema,
@@ -9,6 +10,7 @@ import {
 import type { TuezdayApp } from "../src/app";
 import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric";
 import type { Db } from "../src/db";
+import { publications } from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
 import { applyDraftAction, submitDraft } from "../src/services/drafts";
 import { buildAuthedApp, createTestDb } from "./helpers";
@@ -378,6 +380,51 @@ describe("posting cadences", () => {
       expect(d.getUTCHours()).toBe(13); // 09:00 EDT = 13:00 UTC
       expect([1, 3, 5]).toContain(d.getUTCDay());
       expect(slot.status).toBe("open");
+    }
+  });
+
+  it("carries campaign identity and failure detail on calendar entries", async () => {
+    const connectionId = await connectReddit();
+    const campaignId = await createCampaign("Summer Launch");
+    seedApprovedDraft({ campaignId, channel: "linkedin" });
+    const cadenceId = (await createCadence(cadencePayload({ campaignId, connectionId }))).json().id;
+    const fill = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/cadences/${cadenceId}/fill`,
+    });
+    expect(fill.json().filled).toBe(1);
+
+    // Flip the receipt to failed directly — the failure path itself is covered
+    // in publish.test.ts; here we only assert the calendar projection.
+    const pub = (
+      await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/publications` })
+    ).json()[0];
+    db.update(publications)
+      .set({ status: "failed", lastError: "RATELIMIT: slow down" })
+      .where(eq(publications.id, pub.id))
+      .run();
+
+    const now = Date.now();
+    const res = await app.inject({
+      method: "GET",
+      url: `/workspaces/${workspaceId}/calendar?from=${now}&to=${now + 7 * DAY_MS}`,
+    });
+    const entries = res.json().entries.map((e: unknown) => calendarEntrySchema.parse(e));
+
+    const receipt = entries.find((e: { kind: string }) => e.kind === "publication");
+    expect(receipt).toMatchObject({
+      campaignId,
+      campaignName: "Summer Launch",
+      error: "RATELIMIT: slow down",
+      status: "failed",
+    });
+
+    const slots = entries.filter((e: { kind: string }) => e.kind === "slot");
+    expect(slots.length).toBeGreaterThan(0);
+    for (const slot of slots) {
+      expect(slot.campaignId).toBe(campaignId);
+      expect(slot.campaignName).toBe("Summer Launch");
+      expect(slot.error).toBeNull();
     }
   });
 
