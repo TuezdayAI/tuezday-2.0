@@ -1812,6 +1812,87 @@ export const editDraftInputSchema = z.object({
 export type EditDraftInput = z.infer<typeof editDraftInputSchema>;
 
 // ---------------------------------------------------------------------------
+// Conversational draft revision — persisted turns attached to the approval
+// object. Successful turns still move through the canonical edit transition.
+// ---------------------------------------------------------------------------
+
+export const DRAFT_REVISION_STATUSES = ["running", "completed", "failed"] as const;
+export type DraftRevisionStatus = (typeof DRAFT_REVISION_STATUSES)[number];
+
+export const DRAFT_REVISION_INSTRUCTION_MAX_CHARS = 2_000;
+
+export const editorEvidenceCitationSchema = z.object({
+  documentId: z.string().min(1),
+  title: z.string().min(1),
+  kind: z.string().min(1),
+  url: z.string().url().nullable(),
+  score: z.number(),
+  finalScore: z.number(),
+  kept: z.boolean(),
+  exclusionReason: z.string().nullable(),
+});
+export type EditorEvidenceCitation = z.infer<typeof editorEvidenceCitationSchema>;
+
+export const editorContextSectionSchema = z.object({
+  key: z.string().min(1),
+  layer: z.string().min(1),
+  title: z.string().min(1),
+  content: z.string(),
+  included: z.boolean(),
+  reason: z.string(),
+  tokens: z.number().int().nonnegative(),
+  evidence: z
+    .object({
+      query: z.string(),
+      chunks: z.array(editorEvidenceCitationSchema),
+    })
+    .nullable(),
+});
+export type EditorContextSection = z.infer<typeof editorContextSectionSchema>;
+
+export const draftRevisionTurnSchema = z
+  .object({
+    id: z.string().uuid(),
+    requestId: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    draftId: z.string().uuid(),
+    actorId: z.string().uuid().nullable(),
+    instruction: z.string().min(1).max(DRAFT_REVISION_INSTRUCTION_MAX_CHARS),
+    sourceContent: z.string(),
+    resultContent: z.string().nullable(),
+    contextSections: z.array(editorContextSectionSchema),
+    status: z.enum(DRAFT_REVISION_STATUSES),
+    error: z.string().nullable(),
+    model: z.string().nullable(),
+    provider: z.string().nullable(),
+    durationMs: z.number().int().nonnegative().nullable(),
+    createdAt: z.number().int(),
+    completedAt: z.number().int().nullable(),
+  })
+  .superRefine((turn, ctx) => {
+    if (
+      turn.status === "completed" &&
+      (!turn.resultContent || !turn.model || !turn.provider || turn.completedAt === null)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Completed revisions require result and provider metadata.",
+      });
+    }
+    if (turn.status === "failed" && !turn.error) {
+      ctx.addIssue({ code: "custom", message: "Failed revisions require an error." });
+    }
+  });
+export type DraftRevisionTurn = z.infer<typeof draftRevisionTurnSchema>;
+
+export const reviseDraftInputSchema = z.object({
+  requestId: z.string().uuid(),
+  instruction: z.string().trim().min(1).max(DRAFT_REVISION_INSTRUCTION_MAX_CHARS),
+  expectedDraftUpdatedAt: z.number().int().nonnegative(),
+});
+export type ReviseDraftInput = z.infer<typeof reviseDraftInputSchema>;
+
+// ---------------------------------------------------------------------------
 // Outbound leads
 // ---------------------------------------------------------------------------
 
@@ -4051,6 +4132,63 @@ export const executionResultSchema = z.object({
   draftId: z.string().uuid().nullable(),
 });
 export type ExecutionResult = z.infer<typeof executionResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Conversational editor read model. Declared after publication and execution
+// schemas so this composite projection can reuse their canonical contracts.
+// ---------------------------------------------------------------------------
+
+export const editorCampaignSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  automationMode: z.enum(AUTOMATION_MODES),
+});
+export type EditorCampaign = z.infer<typeof editorCampaignSchema>;
+
+export const editorPersonaSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+});
+export type EditorPersona = z.infer<typeof editorPersonaSchema>;
+
+export const editorStalenessSchema = z.object({
+  stale: z.boolean(),
+  planActivatedAt: z.number().int().nullable(),
+  contextResolvedAt: z.number().int(),
+  reason: z.string(),
+});
+export type EditorStaleness = z.infer<typeof editorStalenessSchema>;
+
+export const editorSiblingSchema = z.object({
+  draftId: z.string().uuid(),
+  channel: z.enum(CHANNELS),
+  state: z.enum(APPROVAL_STATES),
+});
+export type EditorSibling = z.infer<typeof editorSiblingSchema>;
+
+export const editorDestinationSchema = z.object({
+  providerKey: z.string().min(1),
+  label: z.string().min(1),
+  status: z.enum(CONNECTION_STATUSES),
+  error: z.string().nullable(),
+});
+export type EditorDestination = z.infer<typeof editorDestinationSchema>;
+
+export const draftEditorContextSchema = z.object({
+  draft: draftSchema,
+  decisions: z.array(approvalDecisionSchema),
+  turns: z.array(draftRevisionTurnSchema),
+  contextSections: z.array(editorContextSectionSchema),
+  evidenceCitations: z.array(editorEvidenceCitationSchema),
+  campaign: editorCampaignSchema.nullable(),
+  persona: editorPersonaSchema.nullable(),
+  staleness: editorStalenessSchema,
+  siblings: z.array(editorSiblingSchema),
+  destination: editorDestinationSchema.nullable(),
+  publications: z.array(publicationSchema),
+  executions: z.array(executionResultSchema),
+});
+export type DraftEditorContext = z.infer<typeof draftEditorContextSchema>;
 
 // ---------------------------------------------------------------------------
 // Product analytics (internal — PostHog). NOT the native customer dashboard.

@@ -59,7 +59,7 @@
 - Produces `DRAFT_REVISION_STATUSES`, `DraftRevisionStatus`, `DRAFT_REVISION_INSTRUCTION_MAX_CHARS`, `draftRevisionTurnSchema`, `DraftRevisionTurn`, `reviseDraftInputSchema`, `ReviseDraftInput`, `draftEditorContextSchema`, and `DraftEditorContext`.
 - Reuses `draftSchema`, `approvalDecisionSchema`, `publicationSchema`, and `executionResultSchema`.
 
-- [ ] **Step 1: Write the failing contract tests**
+- [x] **Step 1: Write the failing contract tests**
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -155,12 +155,12 @@ describe("conversational editor contracts", () => {
 });
 ```
 
-- [ ] **Step 2: Run the new test and confirm RED**
+- [x] **Step 2: Run the new test and confirm RED**
 
 Run: `npm test -w packages/contracts -- conversational-editor.test.ts`  
 Expected: FAIL because the new exports do not exist.
 
-- [ ] **Step 3: Add the schemas and refinements**
+- [x] **Step 3: Add the schemas and refinements**
 
 ```ts
 export const DRAFT_REVISION_STATUSES = ["running", "completed", "failed"] as const;
@@ -225,12 +225,12 @@ export type ReviseDraftInput = z.infer<typeof reviseDraftInputSchema>;
 
 Define `draftEditorContextSchema` with exact fields: `draft`, `decisions`, `turns`, `contextSections`, `evidenceCitations`, `campaign {id,name,automationMode}|null`, `persona {id,name}|null`, `staleness {stale,planActivatedAt,contextResolvedAt,reason}`, `siblings [{draftId,channel,state}]`, `destination {providerKey,label,status,error}|null`, `publications`, and `executions`.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `npm test -w packages/contracts -- conversational-editor.test.ts`  
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/contracts/src/index.ts packages/contracts/test/conversational-editor.test.ts
@@ -920,3 +920,4 @@ Expected: branch created/updated on origin; no merge command is run.
 - 2026-07-13: Created isolated worktree from `ui-revamp/execution-results@8f313c9`; installed workspace dependencies. Baseline: 1,241/1,242 tests passed in the restricted sandbox, with the sole Chromium renderer test passing separately outside the sandbox.
 - 2026-07-13: Approved design captured in `docs/superpowers/specs/2026-07-13-conversational-editor-design.md` and committed as `977a2f0`.
 - 2026-07-13: Implementation plan written after mapping contracts, draft state machine, resolver traces, evidence, plan revisions, publications, executions, automation modes, Review URL state, and current component ownership.
+- 2026-07-13: Task 1 RED confirmed with five missing-export failures; GREEN with five contract tests covering revision vocabulary/input/turn invariants and the composite editor projection.
