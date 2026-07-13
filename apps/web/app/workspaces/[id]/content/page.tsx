@@ -472,7 +472,7 @@ export default function ContentPage() {
                           {STATE_LABELS[d.state]}
                         </Badge>{" "}
                         <span className="meta">{d.channel} response</span>{" "}
-                        <Link className="link-button" href={`/workspaces/${id}/approvals`}>
+                        <Link className="link-button" href={`/workspaces/${id}/review`}>
                           open in queue
                         </Link>
                         {d.state === "approved" && (

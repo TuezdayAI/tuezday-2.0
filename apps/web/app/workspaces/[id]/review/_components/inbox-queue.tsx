@@ -4,7 +4,7 @@ import { TopBarActions } from "@/src/components/top-bar";
 import { EmptyState } from "@/src/components/empty-state";
 import { ShowMoreButton, useShowMore } from "@/src/components/show-more";
 import { Button } from "@/src/components/ui/button";
-import { Badge, CountBadge } from "@/src/components/ui/badge";
+import { Badge, CountBadge, WorkflowStatusBadge } from "@/src/components/ui/badge";
 import { BrandIcon, Icon } from "@/src/components/ui/icon";
 import type { BrandName } from "@/src/components/ui/brand-icons";
 import { Tabs } from "@/src/components/ui/tabs";
@@ -14,20 +14,12 @@ import styles from "./inbox-queue.module.css";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import type {
-  ApprovalState,
   InboxItemStatus,
   InboxItemWithContext,
   InboxRunResult,
 } from "@tuezday/contracts";
 import { API_URL, apiFetch } from "@/lib/api";
-
-const STATE_LABELS: Record<ApprovalState, string> = {
-  draft: "Draft",
-  pending_review: "Pending review",
-  edited: "Edited",
-  approved: "Approved",
-  rejected: "Rejected",
-};
+import { draftWorkflowStatus, inboxWorkflowStatus, reviewHref } from "@/lib/review-workspace";
 
 const STATUS_LABELS: Record<InboxItemStatus, string> = {
   unread: "Unread",
@@ -187,8 +179,8 @@ export function InboxQueue({
 
       <p className="subtitle">
         Comments on your published posts and replies to your DMs, in one place. Draft a reply in
-        your voice, approve it on <Link href={`/workspaces/${id}/approvals`}>Review</Link>, and it
-        posts back to the platform.
+        your voice, approve it on the <Link href={reviewHref(id, { tab: "approvals" })}>Approvals tab</Link>,
+        and it posts back to the platform.
       </p>
 
       {lastRun && (
@@ -275,9 +267,7 @@ export function InboxQueue({
                       <Icon name="email" size="sm" />
                     )}
                   </span>
-                  <Badge tone={item.status === "replied" ? "approved" : item.status === "dismissed" ? "rejected" : "edited"}>
-                    {STATUS_LABELS[item.status]}
-                  </Badge>
+                  <WorkflowStatusBadge status={inboxWorkflowStatus(item.status)} />
                   <span className="section-title">
                     {item.authorName || item.authorHandle || "someone"}
                     <span className="layer-badge" style={{ marginLeft: 8 }}>
@@ -319,9 +309,7 @@ export function InboxQueue({
                 {draft && (
                   <div className="draft-chain" style={{ marginTop: 10 }}>
                     <div className="section-head">
-                      <Badge tone={draft.state === "pending_review" ? "pending" : draft.state}>
-                        {STATE_LABELS[draft.state]}
-                      </Badge>
+                      <WorkflowStatusBadge status={draftWorkflowStatus(draft.state)} />
                       <span className="meta">drafted reply</span>
                     </div>
                     <pre className="section-content">{draft.content}</pre>
@@ -354,8 +342,8 @@ export function InboxQueue({
                             ? "Post reply"
                             : "Approve & post reply"}
                       </Button>
-                      <Link className="link-button" href={`/workspaces/${id}/approvals`}>
-                        review on Review
+                      <Link className="link-button" href={reviewHref(id, { tab: "approvals" })}>
+                        review on Approvals
                       </Link>
                     </>
                   )}

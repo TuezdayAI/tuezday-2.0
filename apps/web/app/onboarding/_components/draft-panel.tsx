@@ -168,7 +168,7 @@ export function DraftPanel({
         const body = await res.json().catch(() => null);
         throw new Error(body?.message ?? "Could not finish onboarding");
       }
-      router.push(`/workspaces/${workspaceId}/approvals`);
+      router.push(`/workspaces/${workspaceId}/review`);
     } catch (err) {
       onError(err instanceof Error ? err.message : "Could not finish onboarding");
       setBusy(false);

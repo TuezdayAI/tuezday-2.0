@@ -562,7 +562,7 @@ export default function CrmPage() {
             icon={<Icon name="email" size="lg" />}
             description={<>No approved outbound drafts yet. Draft on the{" "}
             <Link href={`/workspaces/${id}/outbound`}>outbound page</Link>, approve in the{" "}
-            <Link href={`/workspaces/${id}/approvals`}>queue</Link>, then log them here.</>} />
+            <Link href={`/workspaces/${id}/review`}>queue</Link>, then log them here.</>} />
         ) : (
           <ul className="section-list">
             {approvedDrafts.map((draft) => {

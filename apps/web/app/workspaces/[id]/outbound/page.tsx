@@ -430,9 +430,9 @@ export default function OutboundPage() {
                             })}
                             status={STATE_LABELS[d.state]}
                             statusTone={STATE_TONES[d.state]}
-                            onOpen={() => router.push(`/workspaces/${id}/approvals`)}
+                            onOpen={() => router.push(`/workspaces/${id}/review`)}
                             actions={
-                              <Link className="link-button" href={`/workspaces/${id}/approvals`}>
+                              <Link className="link-button" href={`/workspaces/${id}/review`}>
                                 open in queue
                               </Link>
                             }

@@ -160,7 +160,7 @@ export function CampaignOverview({
           </p>
         )}
         <nav className={styles.contextLinks} aria-label="Campaign work surfaces">
-          <Link href={`/workspaces/${workspaceId}/approvals?campaign=${campaign.id}`}>Review</Link>
+          <Link href={`/workspaces/${workspaceId}/review?tab=approvals&campaign=${campaign.id}`}>Review</Link>
           <Link href={`/workspaces/${workspaceId}/calendar?campaign=${campaign.id}`}>Calendar</Link>
           <Link href={`/workspaces/${workspaceId}/ads?campaign=${campaign.id}`}>Ads</Link>
           <Link href={`/workspaces/${workspaceId}/insights?campaign=${campaign.id}`}>Insights</Link>

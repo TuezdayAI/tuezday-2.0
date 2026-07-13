@@ -461,7 +461,7 @@ export default function PrPage() {
                               open in email client
                             </a>
                           )}{" "}
-                          <Link className="link-button" href={`/workspaces/${id}/approvals`}>
+                          <Link className="link-button" href={`/workspaces/${id}/review`}>
                             open in queue
                           </Link>
                         </li>
@@ -581,7 +581,7 @@ export default function PrPage() {
                     <Badge tone={STATE_BADGE_TONES[d.state]}>{STATE_LABELS[d.state]}</Badge>
                   </span>
                   <span className="meta">{new Date(d.createdAt).toLocaleString()}</span>
-                  <Link className="link-button" href={`/workspaces/${id}/approvals`}>
+                  <Link className="link-button" href={`/workspaces/${id}/review`}>
                     open in queue
                   </Link>
                 </div>

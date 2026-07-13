@@ -295,7 +295,7 @@ export default function SandboxPage() {
   function queueButton(generationId: string) {
     const draftId = submittedByGeneration[generationId];
     return draftId ? (
-      <Link className="link-button" href={`/workspaces/${id}/approvals`}>
+      <Link className="link-button" href={`/workspaces/${id}/review`}>
         in Review →
       </Link>
     ) : (

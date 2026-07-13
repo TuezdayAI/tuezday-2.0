@@ -59,7 +59,7 @@ const CHECKLIST_META: Record<SetupChecklistItem, { icon: IconName; label: string
   brain_reviewed: { icon: "brain", label: "Review your Brain", path: "/brain" },
   channel_connected: { icon: "connect", label: "Connect a channel", path: "/connectors" },
   first_campaign: { icon: "campaigns", label: "Create your first campaign", path: "/campaigns" },
-  first_approval: { icon: "review", label: "Approve your first draft", path: "/approvals" },
+  first_approval: { icon: "review", label: "Approve your first draft", path: "/review" },
   insights_live: { icon: "status-learning", label: "Turn on insights", path: "/connectors" },
   team_invited: { icon: "audience", label: "Invite your team", path: "/team" },
 };
@@ -163,7 +163,7 @@ export default function WorkspaceHomePage() {
 
       {/* Slim icon+count strip — passive muted-ink counts, each deep-linking. */}
       <nav className={styles.statStrip} aria-label="Workspace counts">
-        <Link className={styles.stat} href={`/workspaces/${id}/approvals`}>
+        <Link className={styles.stat} href={`/workspaces/${id}/review`}>
           <Icon name="review" size="sm" />
           Needs review
           <CountBadge count={pendingReview} label="drafts waiting for review" />
@@ -196,7 +196,7 @@ export default function WorkspaceHomePage() {
             <span className={styles.zoneMeta}>{next.nextAction.reason}</span>
           )}
           {queue.length > 0 && (
-            <Link className={`link-button ${styles.zoneLink}`} href={`/workspaces/${id}/approvals`}>
+            <Link className={`link-button ${styles.zoneLink}`} href={`/workspaces/${id}/review`}>
               Open Review →
             </Link>
           )}
@@ -236,7 +236,7 @@ export default function WorkspaceHomePage() {
                     })}
                     workflowStatus="review_required"
                     platform={CHANNEL_BRAND[draft.channel]}
-                    onOpen={() => router.push(`/workspaces/${id}/approvals`)}
+                    onOpen={() => router.push(`/workspaces/${id}/review`)}
                   />
                   <span className={styles.caption}>
                     {i === 0 && topMirrorsNextAction && (

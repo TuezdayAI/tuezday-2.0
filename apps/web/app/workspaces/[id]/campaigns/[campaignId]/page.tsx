@@ -238,7 +238,7 @@ export default function CampaignWorkspacePage() {
   return (
     <>
       <TopBarActions>
-        <Link className={styles.reviewAction} href={`/workspaces/${id}/approvals?campaign=${campaignId}`}>
+        <Link className={styles.reviewAction} href={`/workspaces/${id}/review?tab=approvals&campaign=${campaignId}`}>
           <Icon name="review" size="sm" /> Open Review
         </Link>
       </TopBarActions>
