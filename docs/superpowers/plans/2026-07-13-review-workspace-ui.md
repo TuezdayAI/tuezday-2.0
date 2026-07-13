@@ -249,4 +249,4 @@ describe("review workspace view model", () => {
 ## Progress log
 
 - 2026-07-13: Plan written after codebase survey (drafts/inbox APIs, nav contracts, workflow-status foundation, campaign control-plane patterns). External-action authorization confirmed contract-only — kept out of scope.
-- 2026-07-13: Tasks 1–5 implemented TDD-first, one commit each. Legacy-route redirects were folded into Task 3 so no interim commit shipped duplicate pages. `chevron-left` added to the shared icon registry for queue navigation. Task 6 verification in progress.
+- 2026-07-13: Tasks 1–5 implemented TDD-first, one commit each. Legacy-route redirects were folded into Task 3 so no interim commit shipped duplicate pages. `chevron-left` added to the shared icon registry for queue navigation. Task 6 verification complete: full suite 110 files / 1,208 tests passed, typecheck passed, production build passed with /review compiled and both legacy redirects in place.
