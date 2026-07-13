@@ -19,6 +19,9 @@ describe("campaign workspace source contract", () => {
     expect(page).toContain("setStatus");
     expect(page).toContain("SettingsModal");
     expect(page).toContain("/plan/summary");
+    expect(page).toContain("pendingCampaignIds.has(campaign.id)");
+    const card = read("app/workspaces/[id]/campaigns/_components/campaign-card.tsx");
+    expect(card).toContain("disabled={busy}");
   });
 
   it("defines the focused campaign workspace tabs", () => {

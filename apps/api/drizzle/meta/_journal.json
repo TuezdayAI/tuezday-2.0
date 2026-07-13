@@ -302,6 +302,13 @@
       "when": 1783754926673,
       "tag": "0042_lame_squadron_supreme",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "6",
+      "when": 1783933689093,
+      "tag": "0043_chilly_eternity",
+      "breakpoints": true
     }
   ]
 }

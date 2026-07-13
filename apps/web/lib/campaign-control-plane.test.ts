@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   campaignStatus,
+  campaignMutationResult,
   campaignTab,
+  dateOnlyToTimestamp,
   editablePlan,
   formatLaneSchedule,
   laneStatus,
+  orderCampaignInventory,
   planStatus,
+  timestampToDateOnly,
 } from "./campaign-control-plane";
 
 describe("campaign control plane presentation", () => {
@@ -50,5 +54,53 @@ describe("campaign control plane presentation", () => {
         reactiveCap: 2,
       }),
     ).toBe("Up to 2 reactive / week");
+  });
+
+  it("round-trips date-only values in a positive UTC offset", () => {
+    const originalTimezone = process.env.TZ;
+    process.env.TZ = "Asia/Kolkata";
+    try {
+      const dateOnly = "2026-07-13";
+      const timestamp = dateOnlyToTimestamp(dateOnly);
+      expect(new Date(timestamp!).getTimezoneOffset()).toBe(-330);
+      expect(timestampToDateOnly(timestamp)).toBe(dateOnly);
+    } finally {
+      if (originalTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = originalTimezone;
+    }
+  });
+
+  it("maps empty date values to the nullable timestamp contract", () => {
+    expect(dateOnlyToTimestamp("")).toBeNull();
+    expect(timestampToDateOnly(null)).toBe("");
+  });
+
+  it("stably orders active campaigns before every other status", () => {
+    const campaigns = [
+      { id: "archived-1", status: "archived" },
+      { id: "active-1", status: "active" },
+      { id: "paused-1", status: "paused" },
+      { id: "active-2", status: "active" },
+      { id: "draft-1", status: "draft" },
+      { id: "archived-2", status: "archived" },
+    ] as never;
+
+    expect(orderCampaignInventory(campaigns).map((campaign) => campaign.id)).toEqual([
+      "active-1",
+      "active-2",
+      "archived-1",
+      "paused-1",
+      "draft-1",
+      "archived-2",
+    ]);
+  });
+
+  it("turns rejected campaign mutations into the existing error message contract", async () => {
+    await expect(
+      campaignMutationResult(
+        () => Promise.reject(new Error("network unavailable")),
+        "Could not update the campaign status.",
+      ),
+    ).resolves.toEqual({ ok: false, message: "Could not update the campaign status." });
   });
 });

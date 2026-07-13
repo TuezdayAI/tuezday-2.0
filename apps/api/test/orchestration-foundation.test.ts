@@ -521,6 +521,85 @@ describe("orchestration foundation persistence", () => {
       });
     });
 
+    it("keeps historical lane identity and stable production status unchanged until activation", async () => {
+      const firstRevision = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions`,
+          payload: revisionPayload,
+        })
+      ).json();
+      const firstLane = (
+        await app.inject({
+          method: "PUT",
+          url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions/${firstRevision.id}/lanes`,
+          payload: lanePayload(),
+        })
+      ).json();
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions/${firstRevision.id}/activate`,
+      });
+
+      const draft = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions`,
+          payload: { ...revisionPayload, objective: "Refined objective" },
+        })
+      ).json();
+      await app.inject({
+        method: "PUT",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions/${draft.id}/lanes`,
+        payload: lanePayload({
+          laneId: firstLane.laneId,
+          key: "founder-proof",
+          name: "Founder Proof",
+          status: "retired",
+        }),
+      });
+
+      const beforeActivation = (
+        await app.inject({
+          method: "GET",
+          url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/workspace`,
+        })
+      ).json();
+      expect(beforeActivation.revisions).toMatchObject([
+        {
+          plan: { id: draft.id, status: "draft" },
+          lanes: [{ key: "founder-proof", name: "Founder Proof", status: "retired" }],
+        },
+        {
+          plan: { id: firstRevision.id, status: "active" },
+          lanes: [{ key: "founder-linkedin", name: "Founder LinkedIn", status: "active" }],
+        },
+      ]);
+      expect(db.select().from(campaignLanes).where(eq(campaignLanes.id, firstLane.laneId)).get())
+        .toMatchObject({
+          key: "founder-linkedin",
+          name: "Founder LinkedIn",
+          status: "active",
+        });
+
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions/${draft.id}/activate`,
+      });
+      const afterActivation = (
+        await app.inject({
+          method: "GET",
+          url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/workspace`,
+        })
+      ).json();
+      expect(afterActivation.revisions[1]).toMatchObject({
+        plan: { id: firstRevision.id, status: "superseded" },
+        lanes: [{ key: "founder-linkedin", name: "Founder LinkedIn", status: "active" }],
+      });
+      expect(db.select().from(campaignLanes).where(eq(campaignLanes.id, firstLane.laneId)).get())
+        .toMatchObject({ key: "founder-proof", name: "Founder Proof", status: "retired" });
+    });
+
     it("returns structured activation issues for an unavailable connection", async () => {
       const now = Date.now();
       const connectionId = randomUUID();

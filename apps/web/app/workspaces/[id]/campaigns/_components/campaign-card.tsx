@@ -23,6 +23,7 @@ interface CampaignCardProps {
   workspaceId: string;
   campaign: Campaign;
   summary: CampaignControlPlaneSummary;
+  busy: boolean;
   onEdit(campaign: Campaign): void;
   onSetStatus(campaign: Campaign, status: "active" | "archived"): Promise<void>;
   onAutomation(
@@ -37,6 +38,7 @@ export function CampaignCard({
   workspaceId,
   campaign,
   summary,
+  busy,
   onEdit,
   onSetStatus,
   onAutomation,
@@ -91,6 +93,7 @@ export function CampaignCard({
           <span>Automation</span>
           <Select
             value={campaign.automationMode}
+            disabled={busy}
             onChange={(event) =>
               void onAutomation(
                 campaign,
@@ -113,6 +116,7 @@ export function CampaignCard({
               max={1000}
               defaultValue={campaign.autoDailyCap ?? ""}
               placeholder="Default"
+              disabled={busy}
               onBlur={(event) => {
                 const value = event.target.value.trim();
                 const cap = value === "" ? null : Math.max(1, Math.min(1000, Number(value)));
@@ -135,11 +139,12 @@ export function CampaignCard({
           <Button
             variant="ghost"
             size="sm"
+            disabled={busy}
             onClick={() =>
               void onSetStatus(campaign, campaign.status === "archived" ? "active" : "archived")
             }
           >
-            {campaign.status === "archived" ? "Unarchive" : "Archive"}
+            {busy ? "Updating…" : campaign.status === "archived" ? "Unarchive" : "Archive"}
           </Button>
         </div>
       </div>

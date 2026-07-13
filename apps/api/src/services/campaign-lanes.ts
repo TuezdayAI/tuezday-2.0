@@ -53,9 +53,8 @@ export function listLaneRevisionsForPlan(
   planRevisionId: string,
 ): CampaignLaneRevisionView[] {
   return db
-    .select({ revision: campaignLaneRevisions, key: campaignLanes.key, name: campaignLanes.name })
+    .select()
     .from(campaignLaneRevisions)
-    .innerJoin(campaignLanes, eq(campaignLanes.id, campaignLaneRevisions.laneId))
     .where(
       and(
         eq(campaignLaneRevisions.workspaceId, workspaceId),
@@ -63,8 +62,12 @@ export function listLaneRevisionsForPlan(
       ),
     )
     .all()
-    .map(({ revision, key, name }) =>
-      campaignLaneRevisionViewSchema.parse({ ...rowToLaneRevision(revision), key, name }),
+    .map((revision) =>
+      campaignLaneRevisionViewSchema.parse({
+        ...rowToLaneRevision(revision),
+        key: revision.key,
+        name: revision.name,
+      }),
     );
 }
 
@@ -154,11 +157,6 @@ export function upsertLaneRevision(
         updatedAt: now,
       };
       tx.insert(campaignLanes).values(lane).run();
-    } else {
-      tx.update(campaignLanes)
-        .set({ name: input.name, status: input.status, updatedAt: now })
-        .where(eq(campaignLanes.id, lane.id))
-        .run();
     }
 
     const existing = tx
@@ -172,6 +170,8 @@ export function upsertLaneRevision(
       )
       .get();
     const columns = {
+      key: parsed.key,
+      name: parsed.name,
       personaId: parsed.personaId,
       audienceId: parsed.audienceId,
       channel: parsed.channel,

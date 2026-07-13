@@ -1,10 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import type { AutomationMode, Campaign, Persona, Workspace } from "@tuezday/contracts";
 import { API_URL, apiDownload, apiFetch } from "@/lib/api";
+import {
+  campaignMutationResult,
+  orderCampaignInventory,
+} from "@/lib/campaign-control-plane";
 import { EmptyState } from "@/src/components/empty-state";
 import { TopBarActions } from "@/src/components/top-bar";
 import { Button } from "@/src/components/ui/button";
@@ -39,6 +43,8 @@ export default function CampaignsPage() {
   const [editing, setEditing] = useState<Campaign | "new" | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState("automation");
+  const [pendingCampaignIds, setPendingCampaignIds] = useState<Set<string>>(() => new Set());
+  const pendingCampaignIdsRef = useRef(new Set<string>());
 
   const load = useCallback(async () => {
     try {
@@ -75,38 +81,58 @@ export default function CampaignsPage() {
   }, [load]);
 
   const visibleCampaigns = useMemo(() => {
-    if (filter === "active") return campaignsList.filter((campaign) => campaign.status === "active");
-    if (filter === "archived") return campaignsList.filter((campaign) => campaign.status === "archived");
-    return campaignsList;
+    const filtered = filter === "all"
+      ? campaignsList
+      : campaignsList.filter((campaign) => campaign.status === filter);
+    return orderCampaignInventory(filtered);
   }, [campaignsList, filter]);
 
+  function beginCampaignMutation(campaignId: string): boolean {
+    if (pendingCampaignIdsRef.current.has(campaignId)) return false;
+    pendingCampaignIdsRef.current.add(campaignId);
+    setPendingCampaignIds(new Set(pendingCampaignIdsRef.current));
+    return true;
+  }
+
+  function endCampaignMutation(campaignId: string) {
+    pendingCampaignIdsRef.current.delete(campaignId);
+    setPendingCampaignIds(new Set(pendingCampaignIdsRef.current));
+  }
+
   async function setStatus(campaign: Campaign, status: "active" | "archived") {
+    if (!beginCampaignMutation(campaign.id)) return;
     setError(null);
-    const response = await apiFetch(`/workspaces/${id}/campaigns/${campaign.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: campaign.name,
-        purpose: campaign.purpose,
-        objective: campaign.objective,
-        kpi: campaign.kpi,
-        timeframe: campaign.timeframe,
-        audience: campaign.audience,
-        pillars: campaign.pillars,
-        channels: campaign.channels,
-        personaIds: campaign.personaIds,
-        overlay: campaign.overlay,
-        status,
-        automationMode: campaign.automationMode,
-        autoDailyCap: campaign.autoDailyCap,
-      }),
-    });
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      setError(body?.message ?? "Could not update the campaign status.");
-      return;
+    try {
+      const result = await campaignMutationResult(
+        () => apiFetch(`/workspaces/${id}/campaigns/${campaign.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: campaign.name,
+            purpose: campaign.purpose,
+            objective: campaign.objective,
+            kpi: campaign.kpi,
+            timeframe: campaign.timeframe,
+            audience: campaign.audience,
+            pillars: campaign.pillars,
+            channels: campaign.channels,
+            personaIds: campaign.personaIds,
+            overlay: campaign.overlay,
+            status,
+            automationMode: campaign.automationMode,
+            autoDailyCap: campaign.autoDailyCap,
+          }),
+        }),
+        "Could not update the campaign status.",
+      );
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      await load();
+    } finally {
+      endCampaignMutation(campaign.id);
     }
-    await load();
   }
 
   async function saveAutomation(
@@ -114,18 +140,25 @@ export default function CampaignsPage() {
     automationMode: AutomationMode,
     autoDailyCap: number | null,
   ) {
+    if (!beginCampaignMutation(campaign.id)) return;
     setError(null);
-    const response = await apiFetch(`/workspaces/${id}/campaigns/${campaign.id}/automation`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ automationMode, autoDailyCap }),
-    });
-    if (!response.ok) {
-      const body = await response.json().catch(() => null);
-      setError(body?.message ?? "Could not update campaign automation.");
-      return;
+    try {
+      const result = await campaignMutationResult(
+        () => apiFetch(`/workspaces/${id}/campaigns/${campaign.id}/automation`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ automationMode, autoDailyCap }),
+        }),
+        "Could not update campaign automation.",
+      );
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      await load();
+    } finally {
+      endCampaignMutation(campaign.id);
     }
-    await load();
   }
 
   if (error && !workspace) {
@@ -219,6 +252,7 @@ export default function CampaignsPage() {
               workspaceId={id}
               campaign={campaign}
               summary={summaries[campaign.id] ?? EMPTY_SUMMARY}
+              busy={pendingCampaignIds.has(campaign.id)}
               onEdit={setEditing}
               onSetStatus={setStatus}
               onAutomation={saveAutomation}

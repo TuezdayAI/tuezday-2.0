@@ -1,4 +1,5 @@
 import type {
+  Campaign,
   CampaignLaneRevisionView,
   CampaignPlanDetail,
   CampaignStatus,
@@ -6,6 +7,52 @@ import type {
   PlanRevisionStatus,
   WorkflowStatus,
 } from "@tuezday/contracts";
+
+export type CampaignMutationResult =
+  | { ok: true }
+  | { ok: false; message: string };
+
+export async function campaignMutationResult(
+  request: () => Promise<Response>,
+  fallbackMessage: string,
+): Promise<CampaignMutationResult> {
+  try {
+    const response = await request();
+    if (response.ok) return { ok: true };
+    const body = (await response.json().catch(() => null)) as { message?: string } | null;
+    return { ok: false, message: body?.message ?? fallbackMessage };
+  } catch {
+    return { ok: false, message: fallbackMessage };
+  }
+}
+
+export function dateOnlyToTimestamp(value: string): number | null {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+  return Number.isNaN(date.getTime()) ? null : date.getTime();
+}
+
+export function timestampToDateOnly(timestamp: number | null): string {
+  if (timestamp === null) return "";
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "";
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+export function orderCampaignInventory(campaigns: Campaign[]): Campaign[] {
+  return campaigns
+    .map((campaign, index) => ({ campaign, index }))
+    .sort((left, right) => {
+      const statusRank = Number(right.campaign.status === "active") - Number(left.campaign.status === "active");
+      return statusRank || left.index - right.index;
+    })
+    .map(({ campaign }) => campaign);
+}
 
 export const CAMPAIGN_TABS = ["overview", "plan", "channels"] as const;
 export type CampaignWorkspaceTab = (typeof CAMPAIGN_TABS)[number];

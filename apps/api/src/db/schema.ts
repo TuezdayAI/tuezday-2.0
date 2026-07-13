@@ -560,6 +560,8 @@ export const campaignLaneRevisions = sqliteTable(
     planRevisionId: text("plan_revision_id")
       .notNull()
       .references(() => campaignPlanRevisions.id, { onDelete: "cascade" }),
+    key: text("key").notNull().default(""),
+    name: text("name").notNull().default(""),
     personaId: text("persona_id")
       .notNull()
       .references(() => personas.id, { onDelete: "restrict" }),

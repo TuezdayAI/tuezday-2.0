@@ -10,6 +10,7 @@ import type { Db } from "../db";
 import {
   audiences,
   campaignLaneRevisions,
+  campaignLanes,
   campaignPlanRevisions,
   campaigns,
   connections,
@@ -204,6 +205,16 @@ export function activatePlanRevision(
   if (issues.length > 0) throw new PlanValidationError(issues);
   const activatedAt = Date.now();
   db.transaction((tx) => {
+    const lanes = tx
+      .select()
+      .from(campaignLaneRevisions)
+      .where(
+        and(
+          eq(campaignLaneRevisions.workspaceId, workspaceId),
+          eq(campaignLaneRevisions.planRevisionId, planRevisionId),
+        ),
+      )
+      .all();
     tx.update(campaignPlanRevisions)
       .set({ status: "superseded" })
       .where(
@@ -221,6 +232,23 @@ export function activatePlanRevision(
       .set({ currentPlanRevisionId: planRevisionId, updatedAt: activatedAt })
       .where(and(eq(campaigns.id, campaignId), eq(campaigns.workspaceId, workspaceId)))
       .run();
+    for (const lane of lanes) {
+      tx.update(campaignLanes)
+        .set({
+          key: lane.key,
+          name: lane.name,
+          status: lane.status,
+          updatedAt: activatedAt,
+        })
+        .where(
+          and(
+            eq(campaignLanes.id, lane.laneId),
+            eq(campaignLanes.workspaceId, workspaceId),
+            eq(campaignLanes.campaignId, campaignId),
+          ),
+        )
+        .run();
+    }
   });
   return getCurrentCampaignPlan(db, workspaceId, campaignId)!;
 }

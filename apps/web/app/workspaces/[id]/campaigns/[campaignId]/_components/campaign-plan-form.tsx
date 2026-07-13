@@ -8,6 +8,7 @@ import type {
 } from "@tuezday/contracts";
 import { Button } from "@/src/components/ui/button";
 import { Input, Textarea } from "@/src/components/ui/input";
+import { dateOnlyToTimestamp, timestampToDateOnly } from "@/lib/campaign-control-plane";
 import styles from "../campaign-workspace.module.css";
 
 interface CampaignPlanFormProps {
@@ -16,12 +17,6 @@ interface CampaignPlanFormProps {
   busy: boolean;
   onCancel(): void;
   onSubmit(input: CreateCampaignPlanRevisionInput): Promise<void>;
-}
-
-function dateValue(timestamp: number | null): string {
-  if (timestamp === null) return "";
-  const date = new Date(timestamp);
-  return Number.isNaN(date.getTime()) ? "" : date.toISOString().slice(0, 10);
 }
 
 function lines(value: string): string[] {
@@ -38,8 +33,8 @@ export function CampaignPlanForm({
   const [objective, setObjective] = useState(initial?.objective ?? "");
   const [kpi, setKpi] = useState(initial?.kpi ?? "");
   const [timeframe, setTimeframe] = useState(initial?.timeframe ?? "");
-  const [startAt, setStartAt] = useState(dateValue(initial?.startAt ?? null));
-  const [endAt, setEndAt] = useState(dateValue(initial?.endAt ?? null));
+  const [startAt, setStartAt] = useState(timestampToDateOnly(initial?.startAt ?? null));
+  const [endAt, setEndAt] = useState(timestampToDateOnly(initial?.endAt ?? null));
   const [audienceIds, setAudienceIds] = useState<string[]>(initial?.audienceIds ?? []);
   const [pillars, setPillars] = useState((initial?.pillars ?? []).join("\n"));
   const [offers, setOffers] = useState((initial?.offers ?? []).join("\n"));
@@ -55,8 +50,8 @@ export function CampaignPlanForm({
 
   async function submit(event: React.FormEvent) {
     event.preventDefault();
-    const start = startAt ? new Date(`${startAt}T00:00:00`).getTime() : null;
-    const end = endAt ? new Date(`${endAt}T00:00:00`).getTime() : null;
+    const start = dateOnlyToTimestamp(startAt);
+    const end = dateOnlyToTimestamp(endAt);
     if (start !== null && end !== null && end <= start) {
       setError("Campaign end must be after its start.");
       return;
