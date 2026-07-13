@@ -7,7 +7,7 @@ import {
   CircleAlert, Radio, Sparkles, Check, X, TrendingUp,
   Flame, Crosshair, Mic, BookOpen, Zap,
   Pencil, RefreshCw, Plug, Settings2,
-  Calendar, Search, Plus, ChevronRight, ChevronDown, ExternalLink, User, Bell, TriangleAlert, Info,
+  Calendar, Search, Plus, ChevronLeft, ChevronRight, ChevronDown, ExternalLink, User, Bell, TriangleAlert, Info,
   type LucideIcon,
 } from "lucide-react";
 import { BRAND_ICONS, type BrandName } from "./brand-icons";
@@ -34,7 +34,7 @@ export const ICON_REGISTRY = {
   connect: Plug, "module-settings": Settings2,
   // common UI
   calendar: Calendar, search: Search, add: Plus, close: X,
-  "chevron-right": ChevronRight, "chevron-down": ChevronDown,
+  "chevron-left": ChevronLeft, "chevron-right": ChevronRight, "chevron-down": ChevronDown,
   external: ExternalLink, user: User, notification: Bell,
   warning: TriangleAlert, info: Info,
 } satisfies Record<string, LucideIcon>;

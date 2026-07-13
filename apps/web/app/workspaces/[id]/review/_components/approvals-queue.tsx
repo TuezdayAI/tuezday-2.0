@@ -13,7 +13,12 @@ import { toast } from "@/src/components/ui/toast";
 import styles from "./approvals-queue.module.css";
 
 import { API_URL, apiFetch } from "@/lib/api";
-import { draftWorkflowStatus } from "@/lib/review-workspace";
+import {
+  draftChannels,
+  draftWorkflowStatus,
+  filterDrafts,
+  queueNeighbors,
+} from "@/lib/review-workspace";
 import { previewKindFor } from "@/lib/preview-kind";
 import {
   connectionLabel,
@@ -27,7 +32,7 @@ import {
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   canTransition,
   type ApprovalDecision,
@@ -184,6 +189,9 @@ export function ApprovalsQueue({
   const [drafts, setDrafts] = useState<Draft[]>([]);
   const [connectors, setConnectors] = useState<ConnectorsView | null>(null);
   const [filter, setFilter] = useState<Filter>("pending_review");
+  const searchParams = useSearchParams();
+  const campaignFilter = searchParams.get("campaign") ?? "all";
+  const [channelFilter, setChannelFilter] = useState<Channel | "all">("all");
   const [error, setError] = useState<string | null>(null);
 
   const [openId, setOpenId] = useState<string | null>(null);
@@ -435,16 +443,38 @@ export function ApprovalsQueue({
     setEditingId(null);
   }
 
-  const visible = filter === "all" ? drafts : drafts.filter((d) => d.state === filter);
+  const scoped = filterDrafts(drafts, {
+    state: "all",
+    campaignId: campaignFilter,
+    channel: channelFilter,
+  });
+  const visible = filter === "all" ? scoped : scoped.filter((d) => d.state === filter);
   const counts = (state: Filter) =>
-    state === "all" ? drafts.length : drafts.filter((d) => d.state === state).length;
+    state === "all" ? scoped.length : scoped.filter((d) => d.state === state).length;
   const filters: Filter[] = ["pending_review", "edited", "approved", "rejected", "all"];
+  const channels = draftChannels(drafts);
+  const hasScopeFilter = campaignFilter !== "all" || channelFilter !== "all";
+
+  function setCampaignFilter(next: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", "approvals");
+    if (next === "all") params.delete("campaign");
+    else params.set("campaign", next);
+    router.replace(`?${params.toString()}`, { scroll: false });
+  }
+
+  function clearScopeFilters() {
+    setChannelFilter("all");
+    if (campaignFilter !== "all") setCampaignFilter("all");
+  }
 
   const groups = buildGroups(visible, campaigns);
   // The gallery's reading order — what "next card" means for focus advance.
   const orderedApprovableIds = groups.flatMap((g) =>
     g.drafts.filter((d) => canTransition(d.state, "approve")).map((d) => d.id),
   );
+  // Every visible card in reading order — what prev/next walks in the detail.
+  const orderedVisibleIds = groups.flatMap((g) => g.drafts.map((d) => d.id));
 
   function renderCard(d: Draft) {
     const editable = canTransition(d.state, "approve");
@@ -558,6 +588,35 @@ export function ApprovalsQueue({
             )}
           </span>
           <span className={styles.detailTime}>{new Date(d.createdAt).toLocaleString()}</span>
+          {(() => {
+            const { prev, next } = queueNeighbors(orderedVisibleIds, d.id);
+            return (
+              <>
+                <IconButton
+                  label="Previous in queue"
+                  disabled={!prev}
+                  onClick={() => {
+                    if (!prev) return;
+                    setOpenId(prev);
+                    setEditingId(null);
+                  }}
+                >
+                  <Icon name="chevron-left" size="sm" />
+                </IconButton>
+                <IconButton
+                  label="Next in queue"
+                  disabled={!next}
+                  onClick={() => {
+                    if (!next) return;
+                    setOpenId(next);
+                    setEditingId(null);
+                  }}
+                >
+                  <Icon name="chevron-right" size="sm" />
+                </IconButton>
+              </>
+            );
+          })()}
           <IconButton
             label="Close"
             onClick={() => {
@@ -765,6 +824,42 @@ export function ApprovalsQueue({
         onChange={(key) => setFilter(key as Filter)}
       />
 
+      <div className={styles.filterRow}>
+        <label className={styles.filterField}>
+          <span>Campaign</span>
+          <select
+            value={campaignFilter}
+            onChange={(e) => setCampaignFilter(e.target.value)}
+          >
+            <option value="all">All campaigns</option>
+            {campaigns.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className={styles.filterField}>
+          <span>Channel</span>
+          <select
+            value={channelFilter}
+            onChange={(e) => setChannelFilter(e.target.value as Channel | "all")}
+          >
+            <option value="all">All channels</option>
+            {channels.map((channel) => (
+              <option key={channel} value={channel}>
+                {channel}
+              </option>
+            ))}
+          </select>
+        </label>
+        {hasScopeFilter && (
+          <Button variant="ghost" size="sm" onClick={clearScopeFilters}>
+            Clear filters
+          </Button>
+        )}
+      </div>
+
       {error && <p className="error">{error}</p>}
 
       {visible.length === 0 ? (
@@ -773,8 +868,17 @@ export function ApprovalsQueue({
             <>
               {drafts.length === 0
                 ? "The queue is empty. Generate something in the sandbox and send it here."
-                : "Nothing in this state."}
+                : hasScopeFilter
+                  ? "Nothing matches these filters."
+                  : "Nothing in this state."}
             </>
+          }
+          primaryAction={
+            drafts.length > 0 && hasScopeFilter ? (
+              <Button variant="secondary" size="sm" onClick={clearScopeFilters}>
+                Clear filters
+              </Button>
+            ) : undefined
           }
         />
       ) : (
