@@ -14,11 +14,9 @@ describe("navEntryForPath", () => {
     });
     expect(navEntryForPath(WORKSPACE_NAV, "/calendar")?.parentLabel).toBeUndefined();
   });
-  it("prefers the deepest match (child over group sharing a prefix)", () => {
-    expect(navEntryForPath(WORKSPACE_NAV, "/approvals")).toMatchObject({
-      label: "Approvals",
-      parentLabel: "Review",
-    });
+  it("resolves the unified Review workspace as a primary surface", () => {
+    expect(navEntryForPath(WORKSPACE_NAV, "/review")).toMatchObject({ label: "Review" });
+    expect(navEntryForPath(WORKSPACE_NAV, "/review")?.parentLabel).toBeUndefined();
   });
   it("matches sub-routes of a page (detail views)", () => {
     expect(navEntryForPath(WORKSPACE_NAV, "/campaigns/abc123")).toMatchObject({

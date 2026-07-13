@@ -4125,16 +4125,14 @@ export const WORKSPACE_NAV: NavItem[] = [
     ],
   },
   {
+    // Approvals and Inbox are sibling tabs inside the unified Review
+    // workspace (/review?tab=approvals|inbox), not separate nav children.
     label: "Review",
-    path: "/approvals",
+    path: "/review",
     summary: "Approve, authorize, and respond",
     tone: "icp",
     icon: "review",
     section: "operate",
-    children: [
-      { label: "Approvals", path: "/approvals", summary: "Nothing ships without review", tone: "icp", icon: "review" },
-      { label: "Inbox", path: "/inbox", summary: "Replies and engagement", tone: "signal", icon: "email" },
-    ],
   },
   {
     label: "Discover",
@@ -4408,7 +4406,7 @@ const CHECKLIST_TARGETS: Record<SetupChecklistItem, { module: string; label: str
   brain_reviewed: { module: "/brain", label: "Review your Brain", reason: "Your GTM memory needs a first review" },
   channel_connected: { module: "/connectors", label: "Connect a channel", reason: "No publishing channel is connected yet" },
   first_campaign: { module: "/campaigns", label: "Create your first campaign", reason: "No campaign exists yet" },
-  first_approval: { module: "/approvals", label: "Approve your first draft", reason: "Nothing has been approved yet" },
+  first_approval: { module: "/review", label: "Approve your first draft", reason: "Nothing has been approved yet" },
   insights_live: { module: "/connectors", label: "Turn on insights", reason: "Connect a channel with analytics to see results" },
   team_invited: { module: "/team", label: "Invite your team", reason: "You are the only member of this workspace" },
 };
@@ -4424,7 +4422,7 @@ export function nextActionFor(state: NextActionState): NextAction {
     const n = state.draftCount;
     return {
       kind: "review",
-      module: "/approvals",
+      module: "/review",
       label: "Review drafts",
       reason: `${n} draft${n === 1 ? "" : "s"} waiting for review`,
     };

@@ -25,7 +25,7 @@ const base: NextActionState = {
 describe("nextActionFor — spec §5.1 priority order", () => {
   it("1: drafts waiting for review win over everything", () => {
     const action = nextActionFor({ ...base, draftCount: 3, blockedPublishCount: 2 });
-    expect(action).toMatchObject({ kind: "review", module: "/approvals" });
+    expect(action).toMatchObject({ kind: "review", module: "/review" });
     expect(action.reason).toBe("3 drafts waiting for review");
   });
   it("uses singular copy for one draft", () => {

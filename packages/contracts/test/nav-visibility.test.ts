@@ -87,7 +87,7 @@ describe("visibleNavItems", () => {
       ["operate", "Home", ""],
       ["operate", "Calendar", "/calendar"],
       ["operate", "Campaigns", "/campaigns"],
-      ["operate", "Review", "/approvals"],
+      ["operate", "Review", "/review"],
       ["grow", "Discover", "/discovery"],
       ["grow", "Audience", "/outbound"],
       ["grow", "Ads", "/ads"],
@@ -109,10 +109,9 @@ describe("visibleNavItems", () => {
       "/cadence",
       "/automation",
     ]);
-    expect(review?.children?.map((child) => child.path)).toEqual([
-      "/approvals",
-      "/inbox",
-    ]);
+    // Approvals and Inbox are sibling tabs inside the unified Review
+    // workspace, not separate nav children.
+    expect(review?.children).toBeUndefined();
     expect(settings?.children?.map((child) => child.path)).toEqual([
       "/team",
       "/billing",
