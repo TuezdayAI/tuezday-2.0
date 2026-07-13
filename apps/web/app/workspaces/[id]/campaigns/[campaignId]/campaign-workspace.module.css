@@ -133,6 +133,16 @@
 .dayChoices label { display: inline-flex; align-items: center; gap: 4px; padding: 7px 6px; border: 1px solid var(--line-soft); border-radius: var(--radius-xs); }
 .mobilePlanningNote { display: none; margin: 0; padding: 9px 11px; border: 1px solid var(--status-info); border-radius: var(--radius); background: var(--status-info-wash); color: var(--status-info-ink); font-size: 11px; }
 
+.resultsList { display: grid; gap: 8px; margin: 13px 0 0; padding: 0; list-style: none; }
+.resultRow { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 12px; border: 1px solid var(--line-soft); border-radius: var(--radius-sm); }
+.resultMain { min-width: 0; display: grid; gap: 4px; }
+.resultMeta { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.resultMeta > span:not([data-workflow-status]) { color: var(--muted-2); font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; }
+.resultTitle { margin: 0; color: var(--text); font-size: 13px; font-weight: 650; overflow-wrap: anywhere; }
+.resultDestinations { margin: 0; color: var(--muted); font-size: 12px; }
+.resultError { margin: 0; padding: 7px 9px; border-radius: var(--radius-xs); background: var(--status-blocked-wash); color: var(--status-blocked-ink); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.resultActions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 10px; }
+
 @media (max-width: 980px) {
   .overviewGrid { grid-template-columns: 1fr; }
   .attentionPanel { grid-column: auto; }
@@ -159,4 +169,6 @@
   .panel, .initializePanel, .placeholderPanel { padding: 14px; border-radius: var(--radius); }
   .detailList div { grid-template-columns: 1fr; gap: 4px; }
   .laneList > div > div { align-items: flex-start; flex-direction: column; }
+  .resultRow { flex-direction: column; }
+  .resultActions { justify-content: flex-start; }
 }

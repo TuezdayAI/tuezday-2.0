@@ -13,7 +13,7 @@ import styles from "./launches.module.css";
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import {
   AUTOMATION_MODES,
   LAUNCH_CHANNELS,
@@ -82,6 +82,7 @@ const SAMPLE_LAUNCHES = [
 
 export default function LaunchesPage() {
   const { id } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [launches, setLaunches] = useState<Launch[]>([]);
@@ -184,6 +185,15 @@ export default function LaunchesPage() {
     const res = await apiFetch(`/workspaces/${id}/launches/${launchId}`);
     if (res.ok) setDetail(await res.json());
   }
+
+  // Deep link from execution results: /launches?launch=<id> opens that launch.
+  const requestedLaunchId = searchParams.get("launch");
+  useEffect(() => {
+    if (requestedLaunchId) void openDetail(requestedLaunchId);
+    // Mount-time deep link only: openDetail toggles, so re-running on every
+    // render would flip the panel closed again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedLaunchId]);
 
   async function refreshDetail(launchId: string) {
     const res = await apiFetch(`/workspaces/${id}/launches/${launchId}`);

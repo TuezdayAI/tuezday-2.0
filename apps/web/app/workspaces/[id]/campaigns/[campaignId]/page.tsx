@@ -26,6 +26,7 @@ import {
 } from "./_components/campaign-overview";
 import { CampaignPlanHistory } from "./_components/campaign-plan-history";
 import { CampaignChannels } from "./_components/campaign-channels";
+import { CampaignResults } from "./_components/campaign-results";
 import styles from "./campaign-workspace.module.css";
 
 interface ConnectorResponse {
@@ -36,6 +37,7 @@ const tabs = [
   ["overview", "Overview"],
   ["plan", "Plan history"],
   ["channels", "Channels"],
+  ["results", "Results"],
 ] as const;
 
 export default function CampaignWorkspacePage() {
@@ -337,6 +339,8 @@ export default function CampaignWorkspacePage() {
           onSaveLane={saveLane}
         />
       )}
+
+      {activeTab === "results" && <CampaignResults workspaceId={id} campaignId={campaignId} />}
     </>
   );
 }
