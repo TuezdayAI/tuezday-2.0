@@ -50,7 +50,7 @@
 - `draftChannels(drafts: Draft[]): Channel[]` — distinct channels present, stable order, for the channel select.
 - `queueNeighbors(orderedIds: string[], currentId: string): { prev: string | null; next: string | null }`.
 
-- [ ] **Step 1: Write the failing test** (`apps/web/lib/review-workspace.test.ts`)
+- [x] **Step 1: Write the failing test** (`apps/web/lib/review-workspace.test.ts`)
 
 ```ts
 import { describe, expect, it } from "vitest";
@@ -150,9 +150,9 @@ describe("review workspace view model", () => {
 });
 ```
 
-- [ ] **Step 2: Run and verify failure**: `npm exec --prefix apps/web vitest -- run lib/review-workspace.test.ts` — FAIL (module missing).
-- [ ] **Step 3: Implement `apps/web/lib/review-workspace.ts`** as pure functions with no React imports.
-- [ ] **Step 4: Verify green**, then commit: `feat(web): define review workspace view model`.
+- [x] **Step 2: Run and verify failure**: `npm exec --prefix apps/web vitest -- run lib/review-workspace.test.ts` — FAIL (module missing).
+- [x] **Step 3: Implement `apps/web/lib/review-workspace.ts`** as pure functions with no React imports.
+- [x] **Step 4: Verify green**, then commit: `feat(web): define review workspace view model`.
 
 ---
 
@@ -169,10 +169,10 @@ describe("review workspace view model", () => {
 - GTM checklist / next-action module paths that point at `/approvals` (e.g. `first_approval`) change to `/review`.
 - `navEntryForPath` itself is untouched — `/review` resolves via the normal longest-path rule.
 
-- [ ] **Step 1: Update the tests first** — nav-visibility: Review tuple becomes `["operate", "Review", "/review"]` and the children assertion is removed/emptied; nav-entry: `/review` resolves to `{ label: "Review" }` with no `parentLabel`, and add a case that `/review` sub-paths resolve to Review; next-action: `first_approval.module === "/review"`.
-- [ ] **Step 2: Run and verify failure**: `npm test -w packages/contracts -- nav-visibility.test.ts nav-entry.test.ts next-action.test.ts`.
-- [ ] **Step 3: Apply the contract changes.**
-- [ ] **Step 4: Verify green** (including `nav-icons.test.ts` and `npm exec --prefix apps/web vitest -- run lib/shell-contract.test.ts`), then commit: `feat(contracts): point Review navigation at the unified workspace`.
+- [x] **Step 1: Update the tests first** — nav-visibility: Review tuple becomes `["operate", "Review", "/review"]` and the children assertion is removed/emptied; nav-entry: `/review` resolves to `{ label: "Review" }` with no `parentLabel`, and add a case that `/review` sub-paths resolve to Review; next-action: `first_approval.module === "/review"`.
+- [x] **Step 2: Run and verify failure**: `npm test -w packages/contracts -- nav-visibility.test.ts nav-entry.test.ts next-action.test.ts`.
+- [x] **Step 3: Apply the contract changes.**
+- [x] **Step 4: Verify green** (including `nav-icons.test.ts` and `npm exec --prefix apps/web vitest -- run lib/shell-contract.test.ts`), then commit: `feat(contracts): point Review navigation at the unified workspace`.
 
 ---
 
@@ -190,9 +190,9 @@ describe("review workspace view model", () => {
 - `approvals-queue.tsx` / `inbox-queue.tsx`: the existing page components renamed, receiving `workspaceId` as a prop instead of `useParams`. Behavior preserved verbatim in this task (state filters, groups, detail, actions). Both continue to use `draftWorkflowStatus` from the new lib (approvals drops its local `APPROVAL_WORKFLOW_STATUS`).
 - Keep `TopBarActions` ("Run inbox now") mounted only when the Inbox tab is active.
 
-- [ ] **Step 1: Write the failing contract test** — extend `apps/web/lib/review-workspace.test.ts` is already done; for the route, add a small structural test `apps/web/lib/review-shell-contract.test.ts` that reads `app/workspaces/[id]/review/page.tsx` source (same technique as `shell-contract.test.ts`) and asserts it references `reviewTab`, both `?tab=` links, and both queue components.
-- [ ] **Step 2: Verify failure**, implement the shell and the two moved components, delete `approvals/page.tsx` and `inbox/page.tsx` bodies (the routes themselves are replaced in Task 5 with redirects — until then keep temporary re-export pages rendering the queues to avoid a broken interim commit, or fold Task 5's redirects into this commit if smaller).
-- [ ] **Step 3: Verify green**: review tests + `npm run typecheck`. Commit: `feat(web): unify approvals and inbox under the review workspace`.
+- [x] **Step 1: Write the failing contract test** — extend `apps/web/lib/review-workspace.test.ts` is already done; for the route, add a small structural test `apps/web/lib/review-shell-contract.test.ts` that reads `app/workspaces/[id]/review/page.tsx` source (same technique as `shell-contract.test.ts`) and asserts it references `reviewTab`, both `?tab=` links, and both queue components.
+- [x] **Step 2: Verify failure**, implement the shell and the two moved components, delete `approvals/page.tsx` and `inbox/page.tsx` bodies (the routes themselves are replaced in Task 5 with redirects — until then keep temporary re-export pages rendering the queues to avoid a broken interim commit, or fold Task 5's redirects into this commit if smaller).
+- [x] **Step 3: Verify green**: review tests + `npm run typecheck`. Commit: `feat(web): unify approvals and inbox under the review workspace`.
 
 ---
 
@@ -208,9 +208,9 @@ describe("review workspace view model", () => {
 - Detail panel gains Previous/Next buttons driven by `queueNeighbors` over the visible (filtered, grouped, flattened) draft order, so a reviewer can walk the queue without closing the panel. Keyboard focus moves with the navigation; the existing approve focus-advance is untouched.
 - An active filter with zero matches shows the existing `EmptyState` with a "Clear filters" action.
 
-- [ ] **Step 1: Any new pure logic goes into `review-workspace.ts` with failing tests first** (e.g. visible-order flattening helper `visibleDraftOrder(groups)` if extracted).
-- [ ] **Step 2: Implement the filter row and prev/next navigation.**
-- [ ] **Step 3: Verify green** (`review-workspace.test.ts`, typecheck), then commit: `feat(web): add campaign and channel filters with queue navigation to review`.
+- [x] **Step 1: Any new pure logic goes into `review-workspace.ts` with failing tests first** (e.g. visible-order flattening helper `visibleDraftOrder(groups)` if extracted).
+- [x] **Step 2: Implement the filter row and prev/next navigation.**
+- [x] **Step 3: Verify green** (`review-workspace.test.ts`, typecheck), then commit: `feat(web): add campaign and channel filters with queue navigation to review`.
 
 ---
 
@@ -228,9 +228,9 @@ describe("review workspace view model", () => {
 - `/approvals` and `/inbox` become tiny client redirect pages: on mount, `router.replace(reviewHref(id, { tab, campaign }))` preserving known params (`campaign`). (Client redirect because the routes live under the authenticated client layout; a server `redirect()` in a page component is also acceptable if it composes with the layout — implementer's choice, but params must survive.)
 - Sweep every `href` containing `/approvals` or `/inbox` in `apps/web` to the `reviewHref` equivalents.
 
-- [ ] **Step 1: Extend `review-workspace.test.ts`** with a redirect-mapping test if a pure helper is used (e.g. `legacyReviewRedirect(pathname, searchParams)` → target URL) — write failing, implement.
-- [ ] **Step 2: Implement badges, redirects, and the link sweep.**
-- [ ] **Step 3: Verify green** and grep that no stale `/approvals` / `/inbox` hrefs remain outside the redirect pages. Commit: `feat(web): canonical inbox statuses and review redirects`.
+- [x] **Step 1: Extend `review-workspace.test.ts`** with a redirect-mapping test if a pure helper is used (e.g. `legacyReviewRedirect(pathname, searchParams)` → target URL) — write failing, implement.
+- [x] **Step 2: Implement badges, redirects, and the link sweep.**
+- [x] **Step 3: Verify green** and grep that no stale `/approvals` / `/inbox` hrefs remain outside the redirect pages. Commit: `feat(web): canonical inbox statuses and review redirects`.
 
 ---
 
@@ -240,12 +240,13 @@ describe("review workspace view model", () => {
 - Modify: `docs/ui-ux/capability-registry.md` (Review queue row → Implemented: unified review workspace; note authorization remains golden-loop)
 - Create: `docs/ui-ux/review-workspace-acceptance.md`
 
-- [ ] **Step 1:** `npm test -- --maxWorkers=2` — all suites green.
-- [ ] **Step 2:** `npm run typecheck` — green.
-- [ ] **Step 3:** `npm run build -w apps/web` — production build green, `/review` route compiled.
-- [ ] **Step 4:** Update the capability registry row and write the acceptance doc (delivered surface, preserved behavior, verification evidence table, responsive acceptance, known non-blocking notes, next slice pointer → Calendar).
-- [ ] **Step 5:** Commit `docs: accept unified review workspace UI` and push `ui-revamp/review-workspace` to origin.
+- [x] **Step 1:** `npm test -- --maxWorkers=2` — all suites green.
+- [x] **Step 2:** `npm run typecheck` — green.
+- [x] **Step 3:** `npm run build -w apps/web` — production build green, `/review` route compiled.
+- [x] **Step 4:** Update the capability registry row and write the acceptance doc (delivered surface, preserved behavior, verification evidence table, responsive acceptance, known non-blocking notes, next slice pointer → Calendar).
+- [x] **Step 5:** Commit `docs: accept unified review workspace UI` and push `ui-revamp/review-workspace` to origin.
 
 ## Progress log
 
 - 2026-07-13: Plan written after codebase survey (drafts/inbox APIs, nav contracts, workflow-status foundation, campaign control-plane patterns). External-action authorization confirmed contract-only — kept out of scope.
+- 2026-07-13: Tasks 1–5 implemented TDD-first, one commit each. Legacy-route redirects were folded into Task 3 so no interim commit shipped duplicate pages. `chevron-left` added to the shared icon registry for queue navigation. Task 6 verification in progress.
