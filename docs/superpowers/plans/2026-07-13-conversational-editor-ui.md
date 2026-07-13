@@ -865,24 +865,24 @@ git commit -m "feat(web): open conversational editing from Review" -m "Co-Author
 **Interfaces:**
 - Records the delivered scope and verification evidence; changes no runtime API.
 
-- [ ] **Step 1: Run all focused editor suites**
+- [x] **Step 1: Run all focused editor suites**
 
 Run: `npm test -- conversational-editor draft-editor draft-revisions review-workspace review-shell execution-results`  
 Expected: all selected files and tests pass.
 
-- [ ] **Step 2: Run the full suite unpiped**
+- [x] **Step 2: Run the full suite unpiped**
 
 Run: `npm test`  
 Expected: exit 0. If the inherited Playwright renderer is blocked by the environment, rerun the exact renderer test with the environment's approved unsandboxed mechanism, then rerun the full suite in the final capable environment; do not record a green gate from truncated output.
 
-- [ ] **Step 3: Run typecheck and production build unpiped**
+- [x] **Step 3: Run typecheck and production build unpiped**
 
 Run: `npm run typecheck`  
 Expected: exit 0.  
 Run: `npm run build -w apps/web`  
 Expected: exit 0 and `/workspaces/[id]/review` compiles.
 
-- [ ] **Step 4: Write acceptance and update registry**
+- [x] **Step 4: Write acceptance and update registry**
 
 Acceptance includes: outcome, branch/baseline/merge order, contracts, migration, API behavior, three regions, preserved behavior, staleness, responsive/accessibility behavior, error recovery, explicit authorization boundary, verification table, and known non-blocking notes.
 
@@ -894,7 +894,7 @@ Update registry rows:
 - Content approval → editor retains canonical decisions.
 - External-action authorization → still contracts-only and next slice.
 
-- [ ] **Step 5: Check repository hygiene**
+- [x] **Step 5: Check repository hygiene**
 
 Run: `git diff --check`  
 Expected: exit 0.  
@@ -903,14 +903,14 @@ Expected: no output.
 Run: `git status --short`  
 Expected: only the acceptance, registry, and plan progress changes for this task.
 
-- [ ] **Step 6: Commit documentation**
+- [x] **Step 6: Commit documentation**
 
 ```bash
 git add docs/ui-ux/conversational-editor-acceptance.md docs/ui-ux/capability-registry.md docs/superpowers/plans/2026-07-13-conversational-editor-ui.md
 git commit -m "docs: accept conversational editor slice" -m "Co-Authored-By: Claude GPT-5 <noreply@anthropic.com>"
 ```
 
-- [ ] **Step 7: Push without merging**
+- [x] **Step 7: Push without merging**
 
 Run: `git push -u origin ui-revamp/conversational-editor`  
 Expected: branch created/updated on origin; no merge command is run.
@@ -927,3 +927,5 @@ Expected: branch created/updated on origin; no merge command is run.
 - 2026-07-13: Task 5 RED confirmed on the missing editor view-model module and dropped URL state; GREEN with 11 pure tests for versions, context grouping, policy/staleness copy, recovery ownership, and canonical Review deep links. Web typecheck passes.
 - 2026-07-13: Task 6 RED confirmed on the absent editor shell; GREEN with structural coverage for shared preview/status primitives, accessible Guidance/Preview/Execution landmarks, explicit authorization separation, optimistic concurrency recovery, and focus safety. The component and responsive CSS pass focused tests and web typecheck.
 - 2026-07-13: Task 7 RED confirmed on missing Review mounting and URL continuity; GREEN after reducing ApprovalsQueue from 917 lines to queue-only ownership, mounting the editor from `draft`, preserving campaign/state/channel scope, retaining direct/batch decisions and focus advance, and routing terminal decisions to the next eligible item. The 23-test focused web regression set and web typecheck pass.
+- 2026-07-13: Acceptance audit caught missing approved-copy carousel preservation. A new shell assertion failed first, the action was restored with metering/error/navigation behavior, and Task 7 was amended before final verification.
+- 2026-07-13: Final verification refreshed after the last runtime change: focused editor set 11 files/59 tests; full suite 122 files/1,277 tests including Chromium; root typecheck and production web build all exited 0. The inherited multiple-lockfile warning remains non-blocking.
