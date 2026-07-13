@@ -5,6 +5,13 @@ const calendarPage = readFileSync(
   new URL("../app/workspaces/[id]/calendar/page.tsx", import.meta.url),
   "utf8",
 );
+const campaignOverview = readFileSync(
+  new URL(
+    "../app/workspaces/[id]/campaigns/[campaignId]/_components/campaign-overview.tsx",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 describe("calendar workspace shell contract", () => {
   it("drives view, density, and scope from the URL through the shared parsers", () => {
@@ -36,5 +43,10 @@ describe("calendar workspace shell contract", () => {
   it("links generated work awaiting review into the Review workspace", () => {
     expect(calendarPage).toContain("state=pending_review");
     expect(calendarPage).toContain("reviewHref(");
+  });
+
+  it("scopes the campaign workspace's Calendar link through the shared builder", () => {
+    expect(campaignOverview).toContain("calendarHref(");
+    expect(campaignOverview).toContain("campaign: campaign.id");
   });
 });

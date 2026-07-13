@@ -5,6 +5,7 @@ import type {
   CampaignInsights,
   CampaignPlanWorkspace,
 } from "@tuezday/contracts";
+import { calendarHref } from "@/lib/calendar-workspace";
 import { formatLaneSchedule, laneStatus } from "@/lib/campaign-control-plane";
 import { Badge, WorkflowStatusBadge } from "@/src/components/ui/badge";
 import { Icon } from "@/src/components/ui/icon";
@@ -161,7 +162,7 @@ export function CampaignOverview({
         )}
         <nav className={styles.contextLinks} aria-label="Campaign work surfaces">
           <Link href={`/workspaces/${workspaceId}/review?tab=approvals&campaign=${campaign.id}`}>Review</Link>
-          <Link href={`/workspaces/${workspaceId}/calendar?campaign=${campaign.id}`}>Calendar</Link>
+          <Link href={calendarHref(workspaceId, { campaign: campaign.id })}>Calendar</Link>
           <Link href={`/workspaces/${workspaceId}/ads?campaign=${campaign.id}`}>Ads</Link>
           <Link href={`/workspaces/${workspaceId}/insights?campaign=${campaign.id}`}>Insights</Link>
         </nav>
