@@ -486,7 +486,7 @@ git commit -m "feat(api): expose conversational editor context" -m "Co-Authored-
 - Produces `reviseDraft(deps, input): Promise<{ draft: Draft; turn: DraftRevisionTurn }>` and typed errors `RevisionInProgressError`, `DraftChangedError`, and `RevisionFailedError`.
 - Adds a transaction-safe draft edit helper that accepts the transaction database while preserving existing `applyDraftAction()` behavior.
 
-- [ ] **Step 1: Write the revision API tests first**
+- [x] **Step 1: Write the revision API tests first**
 
 ```ts
 it("revises with current context and records the canonical edit decision", async () => {
@@ -526,12 +526,12 @@ it("records provider failure without consuming usage", async () => {
 
 Also test approved/rejected invalid transitions, duplicate running request, empty model output, 402 entitlement enforcement with `TEST_BILLING_GATING`, six-turn history bounding, current campaign guidance in the prompt, evidence exclusion, analytics-after-success, and cross-workspace isolation.
 
-- [ ] **Step 2: Confirm RED**
+- [x] **Step 2: Confirm RED**
 
 Run: `npm test -- draft-editor-revision.test.ts`  
 Expected: FAIL with POST 404.
 
-- [ ] **Step 3: Add transaction-safe draft editing**
+- [x] **Step 3: Add transaction-safe draft editing**
 
 Refactor the internals of `applyDraftAction()` into a structural write helper used by both the existing function and revision transaction. Keep the exported signature unchanged for every current caller. Update Task 2's `completeTurn()` and `failTurn()` to accept the same structural write database so the turn update participates in the transaction.
 
@@ -567,7 +567,7 @@ export function applyDraftAction(
 
 Change `logDecision()` to accept `DraftWriteDb`, then export `applyDraftActionWith` under the name `applyDraftActionInTransaction` with `DraftWriteDb` as its first parameter. Drizzle's transaction callback satisfies this structural type; do not cast the transaction to `unknown`.
 
-- [ ] **Step 4: Resolve current revision context and build the bounded prompt**
+- [x] **Step 4: Resolve current revision context and build the bounded prompt**
 
 ```ts
 const recentConversation = turns
@@ -582,16 +582,16 @@ const prompt = `${resolved.prompt}\n\nREVISION RULES\nReturn only the revised de
 
 Use the same Brain, campaign, persona, channel guidance, account, signal, selective-context, and evidence services as generation. Do not call the generation route from the service.
 
-- [ ] **Step 5: Implement POST route status mapping**
+- [x] **Step 5: Implement POST route status mapping**
 
 Parse `reviseDraftInputSchema`; map entitlement to 402, duplicate running/draft changed/invalid transition to 409, and provider/empty output to 502. Pass `actorOf(request)` and track `draft.revised` only after the successful transaction.
 
-- [ ] **Step 6: Verify GREEN**
+- [x] **Step 6: Verify GREEN**
 
 Run: `npm test -- draft-editor-revision.test.ts drafts.test.ts entitlements.test.ts analytics-capture.test.ts`  
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/api/src/services/draft-editor.ts apps/api/src/services/drafts.ts apps/api/src/routes/drafts.ts apps/api/src/app.ts apps/api/test/draft-editor-revision.test.ts
@@ -923,3 +923,4 @@ Expected: branch created/updated on origin; no merge command is run.
 - 2026-07-13: Task 1 RED confirmed with five missing-export failures; GREEN with five contract tests covering revision vocabulary/input/turn invariants and the composite editor projection.
 - 2026-07-13: Task 2 RED confirmed on the missing persistence module; GREEN with migration `0044`, six revision-turn service tests, health migration boot, and API typecheck.
 - 2026-07-13: Task 3 RED confirmed with the missing editor route; GREEN with schema-conforming provenance/staleness/sibling/destination/publication/execution projection, workspace isolation, 25 focused API tests, and API typecheck.
+- 2026-07-13: Task 4 RED confirmed with seven missing-route failures; GREEN with 12 revision workflow tests covering canonical edits, idempotency, optimistic conflicts, live scoped context, bounded history, evidence exclusion, metering, analytics, provider failures, invalid states, and workspace isolation. The focused 38-test API set and API typecheck pass.

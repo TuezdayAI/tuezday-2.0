@@ -8,6 +8,8 @@ import {
 import type { Db } from "../db";
 import { draftRevisionTurns, type DraftRevisionTurnRow } from "../db/schema";
 
+type RevisionWriteDb = Pick<Db, "select" | "update">;
+
 function rowToTurn(row: DraftRevisionTurnRow): DraftRevisionTurn {
   return draftRevisionTurnSchema.parse({
     ...row,
@@ -60,7 +62,7 @@ export interface CompleteTurnInput {
 }
 
 export function completeTurn(
-  db: Db,
+  db: RevisionWriteDb,
   workspaceId: string,
   turnId: string,
   input: CompleteTurnInput,
@@ -85,7 +87,7 @@ export function completeTurn(
 }
 
 export function failTurn(
-  db: Db,
+  db: RevisionWriteDb,
   workspaceId: string,
   turnId: string,
   error: string,
@@ -108,7 +110,11 @@ export function failTurn(
   return row;
 }
 
-function getTurn(db: Db, workspaceId: string, turnId: string): DraftRevisionTurn | undefined {
+function getTurn(
+  db: RevisionWriteDb,
+  workspaceId: string,
+  turnId: string,
+): DraftRevisionTurn | undefined {
   const row = db
     .select()
     .from(draftRevisionTurns)

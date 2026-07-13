@@ -14,6 +14,8 @@ import {
 import type { Db } from "../db";
 import { approvalDecisions, drafts, generations, type DraftRow } from "../db/schema";
 
+type DraftWriteDb = Pick<Db, "insert" | "update">;
+
 /** Who performed a draft action — a user, or the worker's system identity. */
 export interface DraftActor {
   userId: string | null;
@@ -40,7 +42,7 @@ function rowToDraft(row: DraftRow): Draft {
 }
 
 function logDecision(
-  db: Db,
+  db: DraftWriteDb,
   draft: { id: string; workspaceId: string },
   actor: DraftActor,
   action: ApprovalAction,
@@ -198,6 +200,17 @@ export function listDecisions(db: Db, draftId: string): ApprovalDecision[] {
  */
 export function applyDraftAction(
   db: Db,
+  draft: Draft,
+  action: ApprovalAction,
+  actor: DraftActor,
+  newContent?: string,
+): Draft {
+  return applyDraftActionInTransaction(db, draft, action, actor, newContent);
+}
+
+/** Apply a draft action through either the root DB or an active transaction. */
+export function applyDraftActionInTransaction(
+  db: DraftWriteDb,
   draft: Draft,
   action: ApprovalAction,
   actor: DraftActor,

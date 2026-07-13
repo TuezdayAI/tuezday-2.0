@@ -159,7 +159,7 @@ export async function buildApp({
   registerGenerationSettingsRoutes(app, db);
   registerPersonaRoutes(app, db, evidence);
   registerGenerationRoutes(app, db, llm, evidence, analytics);
-  registerDraftRoutes(app, db, fetcher, llm, analytics, mailer);
+  registerDraftRoutes(app, db, fetcher, llm, analytics, mailer, evidence);
   registerCarouselRoutes(app, db, design, assetStorage, render);
   registerNotificationRoutes(app, db, mailer, fetcher);
   registerSignalRoutes(app, db, llm, evidence);

@@ -1,26 +1,75 @@
 import { and, asc, eq, ne } from "drizzle-orm";
 import {
   draftEditorContextSchema,
+  editDraftInputSchema,
+  isAdCreativeTaskType,
   publicationSchema,
+  transitionTo,
+  validateAdCreative,
+  type Draft,
   type DraftEditorContext,
+  type DraftRevisionTurn,
   type EditorContextSection,
   type EditorEvidenceCitation,
 } from "@tuezday/contracts";
-import type { ContextSection } from "@tuezday/brain";
+import { resolveContext, type BrainContents, type ContextSection } from "@tuezday/brain";
 import type { Db } from "../db";
 import { drafts, evidenceDocuments, generations } from "../db/schema";
+import type { EvidenceStore } from "../evidence/store";
+import type { LlmGateway } from "../llm/gateway";
+import { getBrain } from "./brain";
 import { getCurrentCampaignPlan } from "./campaign-plans";
-import { getCampaign } from "./campaigns";
+import { composeResolveCampaign, getCampaign } from "./campaigns";
 import { listConnections, providerByKey } from "./connections";
-import { getDraft, listDecisions } from "./drafts";
-import { listRevisionTurns } from "./draft-revisions";
+import {
+  applyDraftActionInTransaction,
+  getDraft,
+  InvalidTransitionError,
+  listDecisions,
+  type DraftActor,
+} from "./drafts";
+import {
+  completeTurn,
+  createRunningTurn,
+  failTurn,
+  getTurnByRequest,
+  listRevisionTurns,
+} from "./draft-revisions";
+import { assertWithinLimit, getUsage } from "./entitlements";
+import { retrieveEvidence } from "./evidence";
 import { listExecutionResults } from "./executions";
-import { getPersona } from "./personas";
+import { resolveChannelGuidance } from "./guidance";
+import { getPersona, toResolvePersona } from "./personas";
 import {
   providerForSocialChannel,
   resolvePersonaSocialConnection,
 } from "./persona-social-accounts";
 import { listPublications } from "./publications";
+import { resolveDraftAccount } from "./resolve-account";
+import { selectiveContextInputs } from "./resolve-input";
+import { getSignal } from "./signals";
+import { getWorkspace } from "./workspaces";
+
+export class RevisionInProgressError extends Error {
+  constructor() {
+    super("This revision request is already running.");
+    this.name = "RevisionInProgressError";
+  }
+}
+
+export class DraftChangedError extends Error {
+  constructor() {
+    super("The draft changed while Tuezday was revising it.");
+    this.name = "DraftChangedError";
+  }
+}
+
+export class RevisionFailedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "RevisionFailedError";
+  }
+}
 
 function safeSourceUrl(sourceRef: string | null): string | null {
   if (!sourceRef) return null;
@@ -36,6 +85,31 @@ interface EvidenceDocumentLookup {
   title: string;
   kind: string;
   sourceRef: string | null;
+}
+
+function evidenceDocumentLookup(db: Db, workspaceId: string) {
+  return new Map(
+    db
+      .select({
+        r2rDocumentId: evidenceDocuments.r2rDocumentId,
+        title: evidenceDocuments.title,
+        kind: evidenceDocuments.kind,
+        sourceRef: evidenceDocuments.sourceRef,
+      })
+      .from(evidenceDocuments)
+      .where(eq(evidenceDocuments.workspaceId, workspaceId))
+      .all()
+      .flatMap((row) =>
+        row.r2rDocumentId
+          ? [
+              [
+                row.r2rDocumentId,
+                { title: row.title, kind: row.kind, sourceRef: row.sourceRef },
+              ] as const,
+            ]
+          : [],
+      ),
+  );
 }
 
 export function normalizeContextSections(
@@ -117,23 +191,7 @@ export function getDraftEditorContext(
         )
         .get()
     : undefined;
-  const evidenceByR2rId = new Map(
-    db
-      .select({
-        r2rDocumentId: evidenceDocuments.r2rDocumentId,
-        title: evidenceDocuments.title,
-        kind: evidenceDocuments.kind,
-        sourceRef: evidenceDocuments.sourceRef,
-      })
-      .from(evidenceDocuments)
-      .where(eq(evidenceDocuments.workspaceId, workspaceId))
-      .all()
-      .flatMap((row) =>
-        row.r2rDocumentId
-          ? [[row.r2rDocumentId, { title: row.title, kind: row.kind, sourceRef: row.sourceRef }] as const]
-          : [],
-      ),
-  );
+  const evidenceByR2rId = evidenceDocumentLookup(db, workspaceId);
   const latestCompletedTurn = turns.filter((turn) => turn.status === "completed").at(-1);
   const contextSections = latestCompletedTurn
     ? latestCompletedTurn.contextSections
@@ -226,4 +284,181 @@ export function getDraftEditorContext(
     publications,
     executions,
   });
+}
+
+export interface ReviseDraftDeps {
+  db: Db;
+  llm: LlmGateway;
+  evidence: EvidenceStore;
+}
+
+export interface ReviseDraftServiceInput {
+  workspaceId: string;
+  draftId: string;
+  requestId: string;
+  instruction: string;
+  expectedDraftUpdatedAt: number;
+  actor: DraftActor;
+}
+
+export interface ReviseDraftResult {
+  draft: Draft;
+  turn: DraftRevisionTurn;
+}
+
+function revisionPrompt(
+  resolvedPrompt: string,
+  turns: DraftRevisionTurn[],
+  currentContent: string,
+  instruction: string,
+) {
+  const recentConversation = turns
+    .filter((turn) => turn.status === "completed")
+    .slice(-6)
+    .map((turn) => `USER: ${turn.instruction}\nTUEZDAY: ${turn.resultContent ?? ""}`)
+    .join("\n\n")
+    .slice(-12_000);
+  return `${resolvedPrompt}\n\nREVISION RULES\nReturn only the revised deliverable. Preserve supported facts and citations. Do not explain your changes.\n\nRECENT REVISIONS\n${recentConversation || "None"}\n\nCURRENT DRAFT\n${currentContent}\n\nUSER INSTRUCTION\n${instruction}`;
+}
+
+/** Resolve live context, revise once, then atomically edit the draft and finish the turn. */
+export async function reviseDraft(
+  { db, llm, evidence }: ReviseDraftDeps,
+  input: ReviseDraftServiceInput,
+): Promise<ReviseDraftResult> {
+  const existing = getTurnByRequest(db, input.workspaceId, input.draftId, input.requestId);
+  if (existing) {
+    if (existing.status === "running") throw new RevisionInProgressError();
+    if (existing.status === "failed") throw new RevisionFailedError(existing.error ?? "Revision failed.");
+    const storedDraft = getDraft(db, input.workspaceId, input.draftId);
+    if (!storedDraft) throw new Error("draft_not_found");
+    return { draft: storedDraft, turn: existing };
+  }
+
+  const workspace = getWorkspace(db, input.workspaceId);
+  const draft = getDraft(db, input.workspaceId, input.draftId);
+  if (!workspace || !draft) throw new Error("draft_not_found");
+  if (draft.updatedAt !== input.expectedDraftUpdatedAt) throw new DraftChangedError();
+  if (!transitionTo(draft.state, "edit")) {
+    throw new InvalidTransitionError(draft.state, "edit");
+  }
+  assertWithinLimit(db, input.workspaceId, "monthlyGenerations", getUsage(db, input.workspaceId).monthlyGenerations);
+
+  const running = createRunningTurn(db, {
+    requestId: input.requestId,
+    workspaceId: input.workspaceId,
+    draftId: input.draftId,
+    actorId: input.actor.userId,
+    instruction: input.instruction,
+    sourceContent: draft.content,
+  });
+
+  try {
+    const campaign = draft.campaignId
+      ? getCampaign(db, input.workspaceId, draft.campaignId)
+      : undefined;
+    const persona = draft.personaId
+      ? getPersona(db, input.workspaceId, draft.personaId)
+      : undefined;
+    const signal = draft.sourceSignalId
+      ? getSignal(db, input.workspaceId, draft.sourceSignalId)
+      : undefined;
+    const evidenceResolution = await retrieveEvidence(
+      db,
+      evidence,
+      input.workspaceId,
+      {
+        taskType: draft.taskType,
+        channel: draft.channel,
+        campaignObjective: campaign?.objective,
+      },
+      true,
+    );
+    const { docs } = getBrain(db, input.workspaceId);
+    const contents = Object.fromEntries(
+      docs.map((document) => [document.docType, document.content]),
+    ) as BrainContents;
+    const channelGuidance = resolveChannelGuidance(db, input.workspaceId, draft.channel, {
+      personaId: draft.personaId,
+      campaignId: draft.campaignId,
+    });
+    const resolved = resolveContext({
+      workspaceName: workspace.name,
+      docs: contents,
+      taskType: draft.taskType,
+      channel: draft.channel,
+      channelGuidance: {
+        content: channelGuidance.content,
+        source: channelGuidance.source,
+        scope: channelGuidance.scopeLabel,
+      },
+      persona: persona ? toResolvePersona(persona) : undefined,
+      campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+      account: resolveDraftAccount(db, input.workspaceId, {
+        personaId: draft.personaId,
+        channel: draft.channel,
+      }),
+      signal: signal
+        ? { content: signal.content, source: signal.source, sourceUrl: signal.sourceUrl }
+        : undefined,
+      ...selectiveContextInputs(db, input.workspaceId),
+      evidence: evidenceResolution.evidence,
+      evidenceExclusionReason: evidenceResolution.exclusionReason,
+    });
+    const contextSections = normalizeContextSections(
+      resolved.sections,
+      evidenceDocumentLookup(db, input.workspaceId),
+    );
+    const result = await llm.generate({
+      prompt: revisionPrompt(
+        resolved.prompt,
+        listRevisionTurns(db, input.workspaceId, input.draftId),
+        draft.content,
+        input.instruction,
+      ),
+    });
+    const content = result.text.trim();
+    const contentValidation = editDraftInputSchema.safeParse({ content });
+    if (!contentValidation.success) {
+      throw new RevisionFailedError(
+        contentValidation.error.issues.map((issue) => issue.message).join("; "),
+      );
+    }
+    if (isAdCreativeTaskType(draft.taskType)) {
+      const validation = validateAdCreative(draft.taskType, content);
+      if (!validation.ok) {
+        throw new RevisionFailedError(validation.violations.map((item) => item.message).join(" "));
+      }
+    }
+
+    const current = getDraft(db, input.workspaceId, input.draftId);
+    if (!current || current.updatedAt !== draft.updatedAt || current.state !== draft.state) {
+      throw new DraftChangedError();
+    }
+    return db.transaction((tx) => {
+      const updated = applyDraftActionInTransaction(tx, current, "edit", input.actor, content);
+      const turn = completeTurn(
+        tx,
+        input.workspaceId,
+        running.id,
+        {
+          resultContent: content,
+          contextSections,
+          model: result.model,
+          provider: result.provider,
+          durationMs: result.durationMs,
+        },
+      );
+      return { draft: updated, turn };
+    });
+  } catch (error) {
+    failTurn(
+      db,
+      input.workspaceId,
+      running.id,
+      error instanceof Error ? error.message : String(error),
+    );
+    if (error instanceof DraftChangedError || error instanceof RevisionFailedError) throw error;
+    throw new RevisionFailedError(error instanceof Error ? error.message : String(error));
+  }
 }
