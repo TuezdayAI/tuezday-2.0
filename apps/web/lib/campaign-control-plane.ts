@@ -54,7 +54,7 @@ export function orderCampaignInventory(campaigns: Campaign[]): Campaign[] {
     .map(({ campaign }) => campaign);
 }
 
-export const CAMPAIGN_TABS = ["overview", "plan", "channels"] as const;
+export const CAMPAIGN_TABS = ["overview", "plan", "channels", "results"] as const;
 export type CampaignWorkspaceTab = (typeof CAMPAIGN_TABS)[number];
 
 export function campaignTab(value: string | null): CampaignWorkspaceTab {
