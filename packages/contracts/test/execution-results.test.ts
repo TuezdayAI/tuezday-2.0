@@ -1,0 +1,58 @@
+import { describe, expect, it } from "vitest";
+import {
+  EXECUTION_RESULT_KINDS,
+  EXECUTION_RESULT_STATUSES,
+  executionResultSchema,
+} from "../src/index";
+
+const base = {
+  kind: "publication",
+  id: "0b9f6b7e-1111-4c58-9d2a-9a4a5b6c7d8e",
+  title: "Launch week teaser",
+  channel: "linkedin",
+  campaignId: null,
+  campaignName: null,
+  status: "completed",
+  at: 1_780_000_000_000,
+  url: "https://linkedin.com/feed/update/1",
+  error: null,
+  platformStatus: null,
+  destinations: { total: 1, succeeded: 1, failed: 0, skipped: 0, pending: 0 },
+  draftId: null,
+};
+
+describe("unified execution result contracts", () => {
+  it("defines the registry's result kinds and states verbatim", () => {
+    expect(EXECUTION_RESULT_KINDS).toEqual(["publication", "launch", "ad_launch"]);
+    expect(EXECUTION_RESULT_STATUSES).toEqual([
+      "running",
+      "completed",
+      "partially_failed",
+      "failed",
+    ]);
+  });
+
+  it("accepts a completed publication result", () => {
+    expect(executionResultSchema.parse(base)).toEqual(base);
+  });
+
+  it("accepts a partially failed launch with per-destination counts", () => {
+    const launch = {
+      ...base,
+      kind: "launch",
+      channel: "email, x",
+      status: "partially_failed",
+      url: null,
+      error: "2 recipients bounced",
+      destinations: { total: 6, succeeded: 3, failed: 2, skipped: 1, pending: 0 },
+    };
+    expect(executionResultSchema.parse(launch).destinations.failed).toBe(2);
+  });
+
+  it("rejects statuses outside the canonical result vocabulary", () => {
+    expect(executionResultSchema.safeParse({ ...base, status: "scheduled" }).success).toBe(false);
+    expect(executionResultSchema.safeParse({ ...base, kind: "external_action" }).success).toBe(
+      false,
+    );
+  });
+});

@@ -4007,6 +4007,52 @@ export const WORKFLOW_STATUS_META: Record<
 };
 
 // ---------------------------------------------------------------------------
+// Unified execution results (UI revamp golden loop) — one read-only projection
+// over publications, targeted launches, and ad launches. External actions join
+// this vocabulary once their API foundation exists.
+// ---------------------------------------------------------------------------
+
+export const EXECUTION_RESULT_KINDS = ["publication", "launch", "ad_launch"] as const;
+export type ExecutionResultKind = (typeof EXECUTION_RESULT_KINDS)[number];
+
+export const EXECUTION_RESULT_STATUSES = [
+  "running",
+  "completed",
+  "partially_failed",
+  "failed",
+] as const;
+export type ExecutionResultStatus = (typeof EXECUTION_RESULT_STATUSES)[number];
+
+const executionDestinationsSchema = z.object({
+  total: z.number().int().min(0),
+  succeeded: z.number().int().min(0),
+  failed: z.number().int().min(0),
+  skipped: z.number().int().min(0),
+  pending: z.number().int().min(0),
+});
+export type ExecutionDestinations = z.infer<typeof executionDestinationsSchema>;
+
+export const executionResultSchema = z.object({
+  kind: z.enum(EXECUTION_RESULT_KINDS),
+  /** Id of the underlying publication / launch / ad launch row. */
+  id: z.string().uuid(),
+  title: z.string(),
+  channel: z.string().nullable(),
+  campaignId: z.string().uuid().nullable(),
+  campaignName: z.string().nullable(),
+  status: z.enum(EXECUTION_RESULT_STATUSES),
+  /** When the execution happened (or last progressed, for running launches). */
+  at: z.number().int(),
+  url: z.string().nullable(),
+  error: z.string().nullable(),
+  /** Raw platform effective_status — ad launches only; null elsewhere. */
+  platformStatus: z.string().nullable(),
+  destinations: executionDestinationsSchema,
+  draftId: z.string().uuid().nullable(),
+});
+export type ExecutionResult = z.infer<typeof executionResultSchema>;
+
+// ---------------------------------------------------------------------------
 // Product analytics (internal — PostHog). NOT the native customer dashboard.
 // ---------------------------------------------------------------------------
 
