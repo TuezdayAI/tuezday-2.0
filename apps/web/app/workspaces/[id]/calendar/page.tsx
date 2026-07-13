@@ -2,33 +2,33 @@
 
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
-import { Button } from "@/src/components/ui/button";
+import { Button, IconButton } from "@/src/components/ui/button";
 import { Card } from "@/src/components/ui/card";
-import { Badge } from "@/src/components/ui/badge";
+import { WorkflowStatusBadge } from "@/src/components/ui/badge";
 import { Icon, type IconName } from "@/src/components/ui/icon";
-import { Select } from "@/src/components/ui/input";
+import { Tabs } from "@/src/components/ui/tabs";
 import styles from "./calendar.module.css";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
-import {
-  CHANNELS,
-  type CalendarEntry,
-  type CalendarEntryStatus,
-  type Channel,
-} from "@tuezday/contracts";
+import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
+import type { CalendarEntry, Campaign, Channel } from "@tuezday/contracts";
 import { apiFetch } from "@/lib/api";
+import {
+  calendarDensity,
+  calendarView,
+  entryChannels,
+  entryWorkflowStatus,
+  filterCalendarEntries,
+  monthGrid,
+  rangeFor,
+  shiftAnchor,
+  startOfWeek,
+  weekDays,
+  type CalendarViewMode,
+} from "@/lib/calendar-workspace";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
-
-const STATUS_TONE: Record<CalendarEntryStatus, "draft" | "pending" | "approved" | "rejected"> = {
-  open: "draft",
-  scheduled: "pending",
-  published: "approved",
-  failed: "rejected",
-};
 
 function entryIcon(e: CalendarEntry): IconName {
   if (e.kind === "slot") return "calendar";
@@ -38,54 +38,129 @@ function entryIcon(e: CalendarEntry): IconName {
   return "post";
 }
 
-function startOfWeek(d: Date): Date {
-  const date = new Date(d);
-  date.setHours(0, 0, 0, 0);
-  const day = date.getDay(); // 0 = Sun
-  date.setDate(date.getDate() + (day === 0 ? -6 : 1 - day)); // back to Monday
-  return date;
+function isSameDay(a: Date, b: Date): boolean {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+function EntryCard({
+  entry,
+  selected,
+  onSelect,
+}: {
+  entry: CalendarEntry;
+  selected: boolean;
+  onSelect: (entry: CalendarEntry) => void;
+}) {
+  const status = entryWorkflowStatus(entry);
+  return (
+    <button
+      type="button"
+      className={styles.entry}
+      data-kind={entry.kind}
+      data-status={entry.status}
+      data-selected={selected || undefined}
+      onClick={() => onSelect(entry)}
+    >
+      <div className={styles.entryHead}>
+        <Icon name={entryIcon(entry)} size="sm" />
+        <time>
+          {new Date(entry.at).toLocaleTimeString(undefined, {
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
+        </time>
+        {status ? (
+          <span className={styles.entryBadge}>
+            <WorkflowStatusBadge status={status} />
+          </span>
+        ) : (
+          <span className={styles.slotChip}>Open slot</span>
+        )}
+      </div>
+      <div className={styles.entryTitle}>{entry.title}</div>
+      {(entry.campaignName || entry.providerKey || entry.channel || entry.cadenceName) && (
+        <div className={styles.entryMeta}>
+          {[entry.campaignName, entry.providerKey ?? entry.channel, entry.cadenceName]
+            .filter(Boolean)
+            .join(" · ")}
+        </div>
+      )}
+    </button>
+  );
 }
 
 export default function CalendarPage() {
   const { id } = useParams<{ id: string }>();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  const view = calendarView(searchParams.get("view"));
+  const density = calendarDensity(searchParams.get("density"));
+  const campaignFilter = searchParams.get("campaign") ?? "all";
+  const channelFilter = (searchParams.get("channel") as Channel | null) ?? "all";
+
   // Initialized on the client only — the server can't know the viewer's week,
   // and rendering dates during SSR caused hydration mismatches.
-  const [weekStart, setWeekStart] = useState<Date | null>(null);
+  const [anchor, setAnchor] = useState<Date | null>(null);
   const [entries, setEntries] = useState<CalendarEntry[]>([]);
-  const [channelFilter, setChannelFilter] = useState<Channel | "all">("all");
-  const [showOpen, setShowOpen] = useState(true);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    setWeekStart((w) => w ?? startOfWeek(new Date()));
+    setAnchor((a) => a ?? new Date());
   }, []);
 
-  const weekEnd = useMemo(
-    () => (weekStart ? new Date(weekStart.getTime() + 7 * DAY_MS) : null),
-    [weekStart],
-  );
-
   const load = useCallback(async () => {
-    if (!weekStart || !weekEnd) return;
+    if (!anchor) return;
+    const { from, to } = rangeFor(view, anchor);
     try {
-      const res = await apiFetch(
-        `/workspaces/${id}/calendar?from=${weekStart.getTime()}&to=${weekEnd.getTime()}`,
-      );
+      const res = await apiFetch(`/workspaces/${id}/calendar?from=${from}&to=${to}`);
       if (res.ok) setEntries((await res.json()).entries as CalendarEntry[]);
       setError(null);
     } catch {
       setError("Could not load the calendar. Is the API running?");
     }
-  }, [id, weekStart, weekEnd]);
+  }, [id, view, anchor]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const visible = entries.filter(
-    (e) =>
-      (channelFilter === "all" || e.channel === channelFilter) && (showOpen || e.kind !== "slot"),
-  );
+  useEffect(() => {
+    void (async () => {
+      const res = await apiFetch(`/workspaces/${id}/campaigns`).catch(() => null);
+      if (res?.ok) setCampaigns((await res.json()) as Campaign[]);
+    })();
+  }, [id]);
+
+  function setParam(key: string, value: string | null) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (value === null) params.delete(key);
+    else params.set(key, value);
+    const query = params.toString();
+    router.replace(query ? `?${query}` : pathname, { scroll: false });
+  }
+
+  function clearScopeFilters() {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("campaign");
+    params.delete("channel");
+    const query = params.toString();
+    router.replace(query ? `?${query}` : pathname, { scroll: false });
+  }
+
+  const visible = filterCalendarEntries(entries, {
+    campaignId: campaignFilter,
+    channel: channelFilter,
+  });
+  const hasScopeFilter = campaignFilter !== "all" || channelFilter !== "all";
+  const channels = entryChannels(entries);
 
   const counts = {
     scheduled: visible.filter((e) => e.status === "scheduled").length,
@@ -94,23 +169,27 @@ export default function CalendarPage() {
     open: visible.filter((e) => e.status === "open").length,
   };
 
-  const days = weekStart
-    ? Array.from({ length: 7 }, (_, i) => {
-        const dayStart = weekStart.getTime() + i * DAY_MS;
-        return {
-          label: DAY_LABELS[i],
-          date: new Date(dayStart),
-          entries: visible
-            .filter((e) => e.at >= dayStart && e.at < dayStart + DAY_MS)
-            .sort((a, b) => a.at - b.at),
-        };
-      })
-    : [];
+  const today = new Date();
+  const entryKey = (e: CalendarEntry) => `${e.publicationId ?? e.cadenceId}-${e.at}`;
+  const entriesOn = (day: Date) =>
+    visible.filter((e) => isSameDay(new Date(e.at), day)).sort((a, b) => a.at - b.at);
 
-  const weekLabel =
-    weekStart && weekEnd
-      ? `${weekStart.toLocaleDateString(undefined, { month: "short", day: "numeric" })} – ${new Date(weekEnd.getTime() - DAY_MS).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`
-      : "";
+  const rangeLabel = !anchor
+    ? ""
+    : view === "month"
+      ? anchor.toLocaleDateString(undefined, { month: "long", year: "numeric" })
+      : (() => {
+          const start = startOfWeek(anchor);
+          const end = new Date(start);
+          end.setDate(end.getDate() + 6);
+          const fmt = (d: Date) =>
+            d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+          return `${fmt(start)} – ${fmt(end)}`;
+        })();
+
+  const selectEntry = (entry: CalendarEntry) => {
+    setSelectedKey((k) => (k === entryKey(entry) ? null : entryKey(entry)));
+  };
 
   return (
     <>
@@ -118,8 +197,10 @@ export default function CalendarPage() {
         title="Calendar"
         subtitle={
           <>
-            Everything going out across the workspace — scheduled and published posts plus open{" "}
-            <Link href={`/workspaces/${id}/cadence`}>cadence</Link> slots.
+            Everything going out across the workspace — planned slots, scheduled and published
+            posts, and anything that needs recovery. Open{" "}
+            <Link href={`/workspaces/${id}/cadence`}>cadence</Link> slots fill from approved
+            drafts.
           </>
         }
       />
@@ -127,54 +208,88 @@ export default function CalendarPage() {
       {error && <p className="error">{error}</p>}
 
       <Card>
-        <div className="resolve-controls">
-          <span className="page-actions">
+        <div className={styles.toolbar}>
+          <span className={styles.rangeNav}>
+            <IconButton
+              label="Previous"
+              disabled={!anchor}
+              onClick={() => anchor && setAnchor(shiftAnchor(view, anchor, -1))}
+            >
+              <Icon name="chevron-left" size="sm" />
+            </IconButton>
             <Button
               type="button"
               variant="secondary"
               size="sm"
-              disabled={!weekStart}
-              onClick={() => weekStart && setWeekStart(new Date(weekStart.getTime() - 7 * DAY_MS))}
+              onClick={() => setAnchor(new Date())}
             >
-              ← Prev
+              Today
             </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              onClick={() => setWeekStart(startOfWeek(new Date()))}
+            <IconButton
+              label="Next"
+              disabled={!anchor}
+              onClick={() => anchor && setAnchor(shiftAnchor(view, anchor, 1))}
             >
-              This week
-            </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              disabled={!weekStart}
-              onClick={() => weekStart && setWeekStart(new Date(weekStart.getTime() + 7 * DAY_MS))}
-            >
-              Next →
-            </Button>
+              <Icon name="chevron-right" size="sm" />
+            </IconButton>
           </span>
-          <strong className={styles.weekLabel}>{weekLabel}</strong>
-          <label>
-            Channel
-            <Select
-              value={channelFilter}
-              onChange={(e) => setChannelFilter(e.target.value as Channel | "all")}
+          <strong className={styles.rangeLabel}>{rangeLabel}</strong>
+
+          <Tabs
+            tabs={[
+              { key: "week", label: "Week" },
+              { key: "month", label: "Month" },
+            ]}
+            active={view}
+            onChange={(key) => setParam("view", key === "week" ? null : (key as CalendarViewMode))}
+          />
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setParam("density", density === "comfortable" ? "compact" : null)}
+          >
+            {density === "comfortable" ? "Compact" : "Comfortable"}
+          </Button>
+
+          <label className={styles.filterField}>
+            <span>Campaign</span>
+            <select
+              value={campaignFilter}
+              onChange={(e) =>
+                setParam("campaign", e.target.value === "all" ? null : e.target.value)
+              }
             >
-              <option value="all">All channels</option>
-              {CHANNELS.map((ch) => (
-                <option key={ch} value={ch}>
-                  {ch}
+              <option value="all">All campaigns</option>
+              {campaigns.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
                 </option>
               ))}
-            </Select>
+            </select>
           </label>
-          <label className="cadence-day">
-            <input type="checkbox" checked={showOpen} onChange={(e) => setShowOpen(e.target.checked)} />
-            Show open slots
+          <label className={styles.filterField}>
+            <span>Channel</span>
+            <select
+              value={channelFilter}
+              onChange={(e) =>
+                setParam("channel", e.target.value === "all" ? null : e.target.value)
+              }
+            >
+              <option value="all">All channels</option>
+              {channels.map((channel) => (
+                <option key={channel} value={channel}>
+                  {channel}
+                </option>
+              ))}
+            </select>
           </label>
+          {hasScopeFilter && (
+            <Button variant="ghost" size="sm" onClick={clearScopeFilters}>
+              Clear filters
+            </Button>
+          )}
+
           <span className={styles.counts}>
             <span className={styles.count}>
               <Icon name="calendar" size="sm" /> {counts.scheduled} scheduled
@@ -187,74 +302,94 @@ export default function CalendarPage() {
                 <Icon name="warning" size="sm" /> {counts.failed} failed
               </span>
             )}
-            {showOpen && (
-              <span className={styles.count}>
-                <Icon name="add" size="sm" /> {counts.open} open
-              </span>
-            )}
+            <span className={styles.count}>
+              <Icon name="add" size="sm" /> {counts.open} open
+            </span>
           </span>
         </div>
 
-        {weekStart && visible.length === 0 && !error ? (
-          <EmptyState
-            icon={<Icon name="calendar" size="lg" />}
-            title="Nothing on the calendar this week"
-            description={
-              <>
-                Scheduled and published posts land here automatically. Set a{" "}
-                <Link href={`/workspaces/${id}/cadence`}>posting cadence</Link> to open weekly
-                slots worth filling.
-              </>
-            }
-          />
+        {anchor && visible.length === 0 && !error ? (
+          hasScopeFilter ? (
+            <EmptyState
+              icon={<Icon name="calendar" size="lg" />}
+              title="Nothing matches these filters"
+              description="No planned, scheduled, or published work matches the current campaign and channel scope in this period."
+              primaryAction={
+                <Button variant="secondary" onClick={clearScopeFilters}>
+                  Clear filters
+                </Button>
+              }
+            />
+          ) : (
+            <EmptyState
+              icon={<Icon name="calendar" size="lg" />}
+              title={`Nothing on the calendar this ${view}`}
+              description={
+                <>
+                  Scheduled and published posts land here automatically. Set a{" "}
+                  <Link href={`/workspaces/${id}/cadence`}>posting cadence</Link> to open weekly
+                  slots worth filling.
+                </>
+              }
+            />
+          )
         ) : (
-          <div className="calendar-grid">
-            {days.map((d) => (
-              <div key={d.label} className="calendar-day">
-                <div className="calendar-day-head">
-                  <strong>{d.label}</strong> {d.date.getDate()}
-                </div>
-                {d.entries.length === 0 ? (
-                  <p className="empty calendar-empty">—</p>
-                ) : (
-                  d.entries.map((e, i) => (
-                    <div
-                      key={`${e.publicationId ?? e.cadenceId}-${e.at}-${i}`}
-                      className={styles.entry}
-                      data-kind={e.kind}
-                      data-status={e.status}
-                    >
-                      <div className={styles.entryHead}>
-                        <Icon name={entryIcon(e)} size="sm" />
-                        <time>
-                          {new Date(e.at).toLocaleTimeString(undefined, {
-                            hour: "2-digit",
-                            minute: "2-digit",
-                          })}
-                        </time>
-                        <span className={styles.entryBadge}>
-                          <Badge tone={STATUS_TONE[e.status]}>{e.status}</Badge>
-                        </span>
-                      </div>
-                      <div className={styles.entryTitle}>
-                        {e.url ? (
-                          <a href={e.url} target="_blank" rel="noreferrer">
-                            {e.title}
-                          </a>
-                        ) : (
-                          e.title
-                        )}
-                      </div>
-                      {(e.providerKey || e.channel || e.cadenceName) && (
-                        <div className={styles.entryMeta}>
-                          {[e.providerKey ?? e.channel, e.cadenceName].filter(Boolean).join(" · ")}
-                        </div>
-                      )}
+          <div data-density={density}>
+            {view === "week" && anchor && (
+              <div className="calendar-grid">
+                {weekDays(anchor).map((day, i) => (
+                  <div
+                    key={day.toISOString()}
+                    className={`calendar-day ${styles.weekDay}`}
+                    data-today={isSameDay(day, today) || undefined}
+                  >
+                    <div className="calendar-day-head">
+                      <strong>{DAY_LABELS[i]}</strong> {day.getDate()}
                     </div>
-                  ))
-                )}
+                    {entriesOn(day).length === 0 ? (
+                      <p className="empty calendar-empty">—</p>
+                    ) : (
+                      entriesOn(day).map((e) => (
+                        <EntryCard
+                          key={entryKey(e)}
+                          entry={e}
+                          selected={selectedKey === entryKey(e)}
+                          onSelect={selectEntry}
+                        />
+                      ))
+                    )}
+                  </div>
+                ))}
               </div>
-            ))}
+            )}
+
+            {view === "month" && anchor && (
+              <div className={styles.monthGrid}>
+                {DAY_LABELS.map((label) => (
+                  <div key={label} className={styles.monthHead}>
+                    {label}
+                  </div>
+                ))}
+                {monthGrid(anchor).map((day) => (
+                  <div
+                    key={day.toISOString()}
+                    className={styles.monthCell}
+                    data-out-month={day.getMonth() !== anchor.getMonth() || undefined}
+                    data-today={isSameDay(day, today) || undefined}
+                  >
+                    <div className={styles.monthCellHead}>{day.getDate()}</div>
+                    {entriesOn(day).map((e) => (
+                      <EntryCard
+                        key={entryKey(e)}
+                        entry={e}
+                        selected={selectedKey === entryKey(e)}
+                        onSelect={selectEntry}
+                      />
+                    ))}
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </Card>

@@ -73,8 +73,9 @@ export function monthGrid(anchor: Date): Date[] {
 /** The fetch window (ms timestamps) covering everything the view renders. */
 export function rangeFor(view: CalendarViewMode, anchor: Date): { from: number; to: number } {
   if (view === "month") {
-    const cells = monthGrid(anchor);
-    return { from: cells[0].getTime(), to: addDays(cells[41], 1).getTime() };
+    const first = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+    const start = startOfWeek(first);
+    return { from: start.getTime(), to: addDays(start, 42).getTime() };
   }
   const start = startOfWeek(anchor);
   return { from: start.getTime(), to: addDays(start, 7).getTime() };
