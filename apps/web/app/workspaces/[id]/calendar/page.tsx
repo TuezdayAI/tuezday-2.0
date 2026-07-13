@@ -12,8 +12,9 @@ import styles from "./calendar.module.css";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter, useSearchParams } from "next/navigation";
-import type { CalendarEntry, Campaign, Channel } from "@tuezday/contracts";
+import type { CalendarEntry, Campaign, Channel, Draft } from "@tuezday/contracts";
 import { apiFetch } from "@/lib/api";
+import { reviewHref } from "@/lib/review-workspace";
 import {
   calendarDensity,
   calendarView,
@@ -93,6 +94,111 @@ function EntryCard({
   );
 }
 
+function DetailPanel({
+  entry,
+  workspaceId,
+  busy,
+  onClose,
+  onRetry,
+  onCancel,
+}: {
+  entry: CalendarEntry;
+  workspaceId: string;
+  busy: boolean;
+  onClose: () => void;
+  onRetry: (publicationId: string) => void;
+  onCancel: (publicationId: string) => void;
+}) {
+  const status = entryWorkflowStatus(entry);
+  const publicationId = entry.publicationId;
+  return (
+    <aside className={styles.panel} aria-label="Calendar entry detail">
+      <Card>
+        <div className={styles.panelHead}>
+          <h3 className={styles.panelTitle}>{entry.title}</h3>
+          <IconButton label="Close details" onClick={onClose}>
+            <Icon name="close" size="sm" />
+          </IconButton>
+        </div>
+        <div>
+          {status ? (
+            <WorkflowStatusBadge status={status} />
+          ) : (
+            <span className={styles.slotChip}>Open slot</span>
+          )}
+        </div>
+        <dl className={styles.panelMeta}>
+          <dt>When</dt>
+          <dd>
+            {new Date(entry.at).toLocaleString(undefined, {
+              weekday: "short",
+              month: "short",
+              day: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </dd>
+          {entry.campaignName && (
+            <>
+              <dt>Campaign</dt>
+              <dd>{entry.campaignName}</dd>
+            </>
+          )}
+          {(entry.providerKey ?? entry.channel) && (
+            <>
+              <dt>Destination</dt>
+              <dd>{entry.providerKey ?? entry.channel}</dd>
+            </>
+          )}
+          {entry.cadenceName && (
+            <>
+              <dt>Cadence</dt>
+              <dd>{entry.cadenceName}</dd>
+            </>
+          )}
+        </dl>
+        {entry.error && <p className={styles.panelError}>{entry.error}</p>}
+        <div className={styles.panelActions}>
+          {entry.status === "failed" && publicationId && (
+            <Button size="sm" disabled={busy} onClick={() => onRetry(publicationId)}>
+              Retry now
+            </Button>
+          )}
+          {entry.status === "scheduled" && publicationId && (
+            <Button variant="danger" size="sm" disabled={busy} onClick={() => onCancel(publicationId)}>
+              Cancel
+            </Button>
+          )}
+          {entry.url && (
+            <a href={entry.url} target="_blank" rel="noreferrer">
+              View post <Icon name="external" size="sm" />
+            </a>
+          )}
+          {entry.draftId && (
+            <Link
+              href={reviewHref(workspaceId, {
+                tab: "approvals",
+                campaign: entry.campaignId ?? undefined,
+              })}
+            >
+              Open Review
+            </Link>
+          )}
+          {entry.kind === "slot" && (
+            <Link href={`/workspaces/${workspaceId}/cadence`}>Manage cadence</Link>
+          )}
+        </div>
+        {entry.kind === "slot" && (
+          <p className={styles.entryMeta}>
+            This slot fills automatically from the next approved draft matching its campaign and
+            channel.
+          </p>
+        )}
+      </Card>
+    </aside>
+  );
+}
+
 export default function CalendarPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -110,6 +216,8 @@ export default function CalendarPage() {
   const [entries, setEntries] = useState<CalendarEntry[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [pendingDrafts, setPendingDrafts] = useState<Draft[]>([]);
+  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -134,8 +242,12 @@ export default function CalendarPage() {
 
   useEffect(() => {
     void (async () => {
-      const res = await apiFetch(`/workspaces/${id}/campaigns`).catch(() => null);
-      if (res?.ok) setCampaigns((await res.json()) as Campaign[]);
+      const [cRes, dRes] = await Promise.all([
+        apiFetch(`/workspaces/${id}/campaigns`).catch(() => null),
+        apiFetch(`/workspaces/${id}/drafts?state=pending_review`).catch(() => null),
+      ]);
+      if (cRes?.ok) setCampaigns((await cRes.json()) as Campaign[]);
+      if (dRes?.ok) setPendingDrafts((await dRes.json()) as Draft[]);
     })();
   }, [id]);
 
@@ -191,6 +303,38 @@ export default function CalendarPage() {
     setSelectedKey((k) => (k === entryKey(entry) ? null : entryKey(entry)));
   };
 
+  // Resolve the selection against the visible set so it clears itself when
+  // filters, the window, or a reload drop the entry.
+  const selected = visible.find((e) => entryKey(e) === selectedKey) ?? null;
+
+  const pendingScoped = pendingDrafts.filter(
+    (d) =>
+      (campaignFilter === "all" || d.campaignId === campaignFilter) &&
+      (channelFilter === "all" || d.channel === channelFilter),
+  );
+
+  async function retryPublication(publicationId: string) {
+    setBusy(true);
+    try {
+      await apiFetch(`/workspaces/${id}/publications/${publicationId}/retry`, { method: "POST" });
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelPublication(publicationId: string) {
+    if (!confirm("Cancel this scheduled post?")) return;
+    setBusy(true);
+    try {
+      await apiFetch(`/workspaces/${id}/publications/${publicationId}`, { method: "DELETE" });
+      setSelectedKey(null);
+      await load();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <>
       <PageHeader
@@ -207,6 +351,25 @@ export default function CalendarPage() {
 
       {error && <p className="error">{error}</p>}
 
+      {pendingScoped.length > 0 && (
+        <div className={styles.reviewRail}>
+          <Icon name="review" size="sm" />
+          <span>
+            {pendingScoped.length} generated draft{pendingScoped.length === 1 ? "" : "s"} awaiting
+            review{hasScopeFilter ? " in this scope" : ""} — approve them to fill open slots.
+          </span>
+          <Link
+            href={reviewHref(id, {
+              tab: "approvals",
+              campaign: campaignFilter !== "all" ? campaignFilter : undefined,
+            })}
+          >
+            Open Review
+          </Link>
+        </div>
+      )}
+
+      <div className={styles.layout} data-panel={selected ? "" : undefined}>
       <Card>
         <div className={styles.toolbar}>
           <span className={styles.rangeNav}>
@@ -393,6 +556,18 @@ export default function CalendarPage() {
           </div>
         )}
       </Card>
+
+      {selected && (
+        <DetailPanel
+          entry={selected}
+          workspaceId={id}
+          busy={busy}
+          onClose={() => setSelectedKey(null)}
+          onRetry={(publicationId) => void retryPublication(publicationId)}
+          onCancel={(publicationId) => void cancelPublication(publicationId)}
+        />
+      )}
+      </div>
     </>
   );
 }
