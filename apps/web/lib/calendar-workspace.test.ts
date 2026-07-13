@@ -61,18 +61,18 @@ describe("calendar workspace view model", () => {
     expect(startOfWeek(new Date(2026, 6, 19, 23, 59)).getDate()).toBe(13);
     const days = weekDays(new Date(2026, 6, 15));
     expect(days).toHaveLength(7);
-    expect(days[0].getDate()).toBe(13);
-    expect(days[6].getDate()).toBe(19);
+    expect(days[0]?.getDate()).toBe(13);
+    expect(days[6]?.getDate()).toBe(19);
   });
 
   it("builds a 42-cell month grid starting the Monday on or before the 1st", () => {
     // July 2026 starts on a Wednesday → grid starts Monday June 29.
     const cells = monthGrid(new Date(2026, 6, 13));
     expect(cells).toHaveLength(42);
-    expect(cells[0].getDay()).toBe(1);
-    expect(cells[0].getMonth()).toBe(5);
-    expect(cells[0].getDate()).toBe(29);
-    expect(cells[41].getMonth()).toBe(7); // Aug 9
+    expect(cells[0]?.getDay()).toBe(1);
+    expect(cells[0]?.getMonth()).toBe(5);
+    expect(cells[0]?.getDate()).toBe(29);
+    expect(cells[41]?.getMonth()).toBe(7); // Aug 9
   });
 
   it("derives fetch windows and pages the anchor per view", () => {

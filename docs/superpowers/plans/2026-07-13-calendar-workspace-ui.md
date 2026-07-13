@@ -48,4 +48,4 @@ Rebuild `/workspaces/:id/calendar` from a single-week receipt grid into the oper
 
 - 2026-07-13: Plan written after surveying the calendar service/routes, publication recovery routes, contracts, and the current page.
 - 2026-07-13: Tasks 1–5 implemented and committed individually (API projection b1b93f3, view model 4fec7f0, page rebuild 05c0100, detail panel + rail 661c8d9, shell contract f628239). Two build-only type errors (unchecked index access in `rangeFor` and the week range label) were caught by `next build` and fixed before committing Task 3.
-- 2026-07-13: Task 6 — capability registry updated; full suite, typecheck, and production web build verified green (results recorded in the acceptance doc).
+- 2026-07-13: Task 6 — capability registry updated; the campaign workspace's Calendar link routed through `calendarHref` (previously the calendar ignored its `?campaign=` parameter); a `noUncheckedIndexedAccess` violation in the view-model test file surfaced by the unpiped typecheck was fixed. Full suite (112 files, 1,223 tests), typecheck, and production web build verified green.
