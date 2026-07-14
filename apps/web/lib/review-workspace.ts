@@ -6,7 +6,7 @@ import type {
   WorkflowStatus,
 } from "@tuezday/contracts";
 
-export const REVIEW_TABS = ["approvals", "inbox"] as const;
+export const REVIEW_TABS = ["approvals", "inbox", "authorizations"] as const;
 export type ReviewTab = (typeof REVIEW_TABS)[number];
 
 export function reviewTab(value: string | null): ReviewTab {
@@ -20,7 +20,12 @@ export function reviewHref(
     campaign?: string;
     state?: ApprovalState | "all";
     channel?: Channel | "all";
+    /** Authorization-queue filters (action kind / lifecycle status). */
+    kind?: string;
+    status?: string;
     draft?: string;
+    /** Selected external action on the authorizations tab. */
+    action?: string;
   },
 ): string {
   const params = new URLSearchParams();
@@ -28,7 +33,10 @@ export function reviewHref(
   if (opts?.campaign) params.set("campaign", opts.campaign);
   if (opts?.state && opts.state !== "all") params.set("state", opts.state);
   if (opts?.channel && opts.channel !== "all") params.set("channel", opts.channel);
+  if (opts?.kind && opts.kind !== "all") params.set("kind", opts.kind);
+  if (opts?.status && opts.status !== "all") params.set("status", opts.status);
   if (opts?.draft) params.set("draft", opts.draft);
+  if (opts?.action) params.set("action", opts.action);
   const query = params.toString();
   return `/workspaces/${workspaceId}/review${query ? `?${query}` : ""}`;
 }

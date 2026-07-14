@@ -521,7 +521,7 @@ git commit -m "feat(api): project action priorities and outcomes"
 - Adds `"authorizations"` to `REVIEW_TABS` and `action` to `reviewHref()` options.
 - Produces `externalActionWorkflowStatus()`, action labels, policy explanation, impact summary, recovery URL, and filter helpers.
 
-- [ ] **Step 1: Write failing pure view-model tests**
+- [x] **Step 1: Write failing pure view-model tests**
 
 ```ts
 expect(reviewHref("ws", { tab: "authorizations", campaign: "c", action: "a" }))
@@ -533,29 +533,29 @@ expect(policyExplanation(actionFixture())).toContain("Campaign override");
 
 Test all statuses, filter preservation, blocked/stale recovery, and exact destination/timing copy.
 
-- [ ] **Step 2: Run web model tests and confirm RED**
+- [x] **Step 2: Run web model tests and confirm RED**
 
 Run: `npm test -w apps/web -- external-actions.test.ts review-workspace.test.ts`  
 Expected: FAIL on missing module/tab.
 
-- [ ] **Step 3: Implement the pure model and URL changes**
+- [x] **Step 3: Implement the pure model and URL changes**
 
 Use contract types only. Map action states to canonical workflow statuses without local status arrays. Preserve campaign, channel, status, kind, and selected action in queue URLs.
 
-- [ ] **Step 4: Write the failing shell contract test**
+- [x] **Step 4: Write the failing shell contract test**
 
 Pin the component to `WorkflowStatusBadge`, the external-action helper module, action detail endpoint, authorize/deny mutations, labelled policy/guardrail/decision regions, and no combined content-approval copy.
 
-- [ ] **Step 5: Build the self-fetching Authorization queue**
+- [x] **Step 5: Build the self-fetching Authorization queue**
 
 Fetch filtered list and selected detail. Render exact snapshot, destination, requested timing, campaign/persona/lane, impact, effective/contributing policy, guardrail/blocker, lifecycle, decisions, and receipt. Authorize/deny only in `authorization_required`; stale shows owning-surface recovery/repropose. Use an accessible live region and disable duplicate mutations.
 
-- [ ] **Step 6: Add the Review tab/count and run tests**
+- [x] **Step 6: Add the Review tab/count and run tests**
 
 Run: `npm test -w apps/web -- external-actions.test.ts review-workspace.test.ts authorization-shell-contract.test.ts review-shell-contract.test.ts`  
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/web/lib/external-actions.ts apps/web/lib/external-actions.test.ts apps/web/lib/review-workspace.ts apps/web/lib/review-workspace.test.ts apps/web/app/workspaces/[id]/review apps/web/lib/authorization-shell-contract.test.ts
@@ -756,6 +756,7 @@ Expected: push succeeds. Do not merge this branch to main until founder review.
 - 2026-07-14: Task 4 — added canonical fingerprints, immutable action/decision mapping, guarded lifecycle transitions, idempotent proposal, transactional authorize/deny, staleness, scheduling/runner recovery, durable blockers/results, and successor lineage. Verified 22 focused contract/API tests and monorepo typecheck.
 - 2026-07-14: Task 5 — registered shared action lifecycle routes and a destination-revalidating publication adapter; cut manual publishing, cadence fill, and the due runner over to durable actions while retaining legacy receipt recovery; preserved automation caps across pending actions and updated publication consumers for the action envelope. Verified 8 focused files / 105 tests and monorepo typecheck.
 - 2026-07-14: Task 6 — added reply and send adapters that snapshot the approved draft, recipient, connection, and exact text; cut manual post-reply, inbox auto-reply posting, launch channel dispatch, and sequence X sends over to durable `send`/`reply` actions with deterministic content-hashed idempotency keys (re-dispatch reports the governing action for already-sent messages); stop-on-reply, kill switch, and daily caps remain dispatch guardrails, engine-level pre-checks keep the pause-and-retry semantics for automated sends, and email CSV export stays outside governance. Verified 4 focused files / 51 tests, full suite 128 files / 1,322 tests, and monorepo typecheck.
+- 2026-07-14: Task 9 — added the pure external-action web model (canonical workflow-status mapping including kind-aware dispatching states, kind labels, policy explanations naming every non-inherit contributing scope, impact/timing copy, owning-surface recovery links, combined filters), extended `reviewHref`/`REVIEW_TABS` with the authorizations tab plus kind/status/action params, and built the self-fetching Authorizations queue with detail panel (exact content, policy/guardrail/receipt/decision regions, live announcements, authorize/deny guarded against double submits, stale/blocked recovery + re-propose) mounted with its own Review tab count. Verified 25 focused web tests, full suite 132 files / 1,349 tests, and monorepo typecheck.
 - 2026-07-14: Task 8 — added the ranked priorities projection and `GET /workspaces/:id/priorities` (overdue failures/blocks/stale, overdue authorizations, other blockers, authorizations, then content review; linked failed executions dedupe behind their governing action); Calendar now projects timed action states until a native receipt is linked and lets queued actions hold their cadence slots; execution results carry governing action ids (unique launch-message rollups, empty for legacy rows); the editor context lists actions scoped to its draft. Verified 4 focused files / 29 tests, full suite 130 files / 1,336 tests, and monorepo typecheck.
 - 2026-07-14: Task 7 — added a paid-launch adapter that fingerprints the approved launch, parsed creative, account, budget, dates, targeting, media, and gate status; the launch route now proposes durable `paid_launch` actions (attempt-numbered keys let a founder retry after failed/blocked/denied attempts), spend guardrails run as dispatch-time blockers, `performLaunch` executes once with action attribution and emits `ad.launched`, and historic ad-launch approval decisions stay untouched. Verified 6 new boundary tests, full suite 129 files / 1,328 tests, and monorepo typecheck.
 
