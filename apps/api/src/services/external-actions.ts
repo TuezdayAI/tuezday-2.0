@@ -11,6 +11,7 @@ import {
   type ExternalActionDetail,
   type ExternalActionExecutionRef,
   type ExternalActionKind,
+  type ExternalActionListFilters,
   type ExternalActionStatus,
   type ExternalActionSubject,
   type ExternalActionContext,
@@ -48,6 +49,7 @@ export interface NewExternalActionRecord {
   policy: EffectiveExternalActionPolicy;
   actor: ExternalActionActor;
   supersedesActionId: string | null;
+  draftId: string | null;
 }
 
 function snapshot(row: ExternalActionRow): StoredSnapshot {
@@ -126,9 +128,9 @@ export function insertExternalAction(db: Db, input: NewExternalActionRecord): Ex
     status: "proposed",
     subjectKind: input.subject.kind,
     subjectId: input.subject.id,
-    // Subject identity is always durable; optional relational links are added
-    // by concrete adapters only after workspace ownership is established.
-    draftId: null,
+    // Subject identity is always durable; the relational link is populated
+    // only after the concrete adapter establishes workspace ownership.
+    draftId: input.draftId,
     campaignId: input.context.campaignId,
     personaId: input.context.personaId,
     connectionId: input.context.connectionId,
@@ -170,6 +172,25 @@ export function getExternalAction(
     .where(and(eq(externalActions.workspaceId, workspaceId), eq(externalActions.id, actionId)))
     .get();
   return row ? rowToExternalAction(row) : undefined;
+}
+
+export function listExternalActions(
+  db: Db,
+  workspaceId: string,
+  filters: ExternalActionListFilters,
+): ExternalAction[] {
+  return db
+    .select()
+    .from(externalActions)
+    .where(eq(externalActions.workspaceId, workspaceId))
+    .orderBy(desc(externalActions.createdAt))
+    .all()
+    .map(rowToExternalAction)
+    .filter((action) => !filters.status || action.status === filters.status)
+    .filter((action) => !filters.kind || action.kind === filters.kind)
+    .filter((action) => !filters.campaign || action.context.campaignId === filters.campaign)
+    .filter((action) => !filters.channel || action.subject.channel === filters.channel)
+    .slice(0, filters.limit);
 }
 
 export function getExternalActionPayload(db: Db, actionId: string): unknown {

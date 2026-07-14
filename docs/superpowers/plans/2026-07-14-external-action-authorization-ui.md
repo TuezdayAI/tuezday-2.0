@@ -316,47 +316,52 @@ git commit -m "feat(api): coordinate external action lifecycle"
 - Create: `apps/api/src/services/external-action-adapters.ts`
 - Modify: `apps/api/src/routes/publications.ts:1-190`
 - Modify: `apps/api/src/services/publications.ts:1-230`
+- Modify: `apps/api/src/services/automation.ts`
 - Modify: `apps/api/src/services/cadences.ts:280-355`
 - Modify: `apps/api/src/routes/cadences.ts`
 - Modify: `apps/api/src/app.ts:139-188`
 - Create: `apps/api/test/external-action-publication.test.ts`
 - Modify: `apps/api/test/publish.test.ts`
 - Modify: `apps/api/test/cadences.test.ts`
+- Modify: `apps/api/test/automation.test.ts`
+- Modify: `apps/api/test/carousels.test.ts`
+- Modify: `apps/api/test/inbox.test.ts`
+- Modify: `apps/web/app/workspaces/[id]/content/page.tsx`
 
 **Interfaces:**
 - Registers action list/detail/authorize/deny/repropose/run routes.
 - Adds `publishActionAdapter` and changes publication boundary responses to `ExternalActionSubmission`.
 - Adds optional `externalActionId` to `createPublication()` and uses it for idempotent operational creation.
 
-- [ ] **Step 1: Write failing route and publication tests**
+- [x] **Step 1: Write failing route and publication tests**
 
 Test queue/detail isolation, authorize-once, deny, stale conflict, runner recovery, human-required publish creating no publication, autonomous publish creating exactly one linked publication, scheduled authorization, cadence proposal, duplicate HTTP retry, and adapter failure as a durable failed action.
 
-- [ ] **Step 2: Run focused tests and confirm RED**
+- [x] **Step 2: Run focused tests and confirm RED**
 
 Run: `npm test -w apps/api -- external-action-publication.test.ts publish.test.ts cadences.test.ts`  
 Expected: FAIL on missing action routes/envelope.
 
-- [ ] **Step 3: Implement shared action routes and error mapping**
+- [x] **Step 3: Implement shared action routes and error mapping**
 
 Map invalid input to 400, inaccessible rows to 404, invalid transition/idempotency/stale errors to 409, and authorization-required proposal to 202. Other submissions return 200/201 with the same envelope shape.
 
-- [ ] **Step 4: Implement publish prepare/revalidate/guard/execute**
+- [x] **Step 4: Implement publish prepare/revalidate/guard/execute**
 
 Prepare from the approved draft, campaign, persona, connection, target/title/media, and requested time. Revalidation repeats approval, routing, connection, content, duplicate, and fingerprint checks. Guard uses existing automation caps/kill switch where applicable. Execute calls `createPublication(..., cadenceId, action.id)` and maps the publication to an execution receipt.
 
 The adapter registry treats an unregistered executable adapter as durable `adapter_unavailable` rather than calling a legacy path. At this task boundary publish is registered; Tasks 6 and 7 replace the safe block for messaging and paid launch. Budget/targeting always use `unsupported_until_ads_wave`.
 
-- [ ] **Step 5: Cut over manual publish and cadence fill**
+- [x] **Step 5: Cut over manual publish and cadence fill**
 
 The existing publish URL calls `runtime.propose()` with a client request ID or deterministic cadence slot key. Cadence fill no longer calls `createPublication()` directly. `/publish/run` invokes the external-action runner before legacy due-publication processing so already-authorized scheduled receipts continue to fire.
 
-- [ ] **Step 6: Run focused tests and confirm GREEN**
+- [x] **Step 6: Run focused tests and confirm GREEN**
 
 Run: `npm test -w apps/api -- external-action-publication.test.ts publish.test.ts cadences.test.ts external-actions.test.ts`  
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/api/src/routes/external-actions.ts apps/api/src/services/external-action-adapters.ts apps/api/src/routes/publications.ts apps/api/src/services/publications.ts apps/api/src/services/cadences.ts apps/api/src/routes/cadences.ts apps/api/src/app.ts apps/api/test/external-action-publication.test.ts apps/api/test/publish.test.ts apps/api/test/cadences.test.ts
@@ -749,6 +754,7 @@ Expected: push succeeds. Do not merge this branch to main until founder review.
 - 2026-07-14: Task 2 — persisted normalized policy, action, and immutable decision rows; linked all four current execution records; generated and inspected migration 0045; added idempotent workspace/campaign policy backfill that preserves scheduled-auto behavior. Verified 19 focused API tests and monorepo typecheck.
 - 2026-07-14: Task 3 — implemented deterministic workspace/campaign resolution with persona/connection/lane safety constraints, complete labeled contributions, bounded policy mutations, authenticated policy routes, and startup backfill. Verified 11 focused API tests and monorepo typecheck.
 - 2026-07-14: Task 4 — added canonical fingerprints, immutable action/decision mapping, guarded lifecycle transitions, idempotent proposal, transactional authorize/deny, staleness, scheduling/runner recovery, durable blockers/results, and successor lineage. Verified 22 focused contract/API tests and monorepo typecheck.
+- 2026-07-14: Task 5 — registered shared action lifecycle routes and a destination-revalidating publication adapter; cut manual publishing, cadence fill, and the due runner over to durable actions while retaining legacy receipt recovery; preserved automation caps across pending actions and updated publication consumers for the action envelope. Verified 8 focused files / 105 tests and monorepo typecheck.
 
 ## Plan self-review
 

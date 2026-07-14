@@ -73,6 +73,24 @@ export function getPublication(
   return row ? rowToPublication(row) : undefined;
 }
 
+export function getPublicationByExternalAction(
+  db: Db,
+  workspaceId: string,
+  externalActionId: string,
+): Publication | undefined {
+  const row = db
+    .select()
+    .from(publications)
+    .where(
+      and(
+        eq(publications.workspaceId, workspaceId),
+        eq(publications.externalActionId, externalActionId),
+      ),
+    )
+    .get();
+  return row ? rowToPublication(row) : undefined;
+}
+
 /** A live (scheduled or already published) receipt blocks an accidental dupe. */
 export function findLivePublication(
   db: Db,
@@ -114,13 +132,23 @@ export async function createPublication(
   input: PublishDraftInput,
   media?: PublishMedia[],
   cadenceId: string | null = null,
+  externalActionId: string | null = null,
 ): Promise<Publication> {
   const now = Date.now();
+  if (externalActionId) {
+    const existing = getPublicationByExternalAction(db, workspaceId, externalActionId);
+    if (existing) {
+      if (existing.status === "scheduled" && existing.scheduledFor <= now) {
+        return attemptPublication(db, fabric, fetcher, workspaceId, existing.id);
+      }
+      return existing;
+    }
+  }
   const row: PublicationRow = {
     id: randomUUID(),
     workspaceId,
     draftId,
-    externalActionId: null,
+    externalActionId,
     connectionId: connection.id,
     providerKey: connection.providerKey,
     target: input.target,

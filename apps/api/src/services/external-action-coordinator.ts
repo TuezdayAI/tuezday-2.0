@@ -35,6 +35,7 @@ export interface ExternalActionIntent {
   context: ExternalActionContext;
   payload: unknown;
   requestedFor: number | null;
+  links?: { draftId?: string | null };
 }
 
 export interface ExternalActionCommand extends ExternalActionIntent {
@@ -112,7 +113,7 @@ function policyFor(
   });
 }
 
-function fingerprintFor(
+export function fingerprintExternalActionIntent(
   workspaceId: string,
   kind: ExternalActionKind,
   intent: ExternalActionIntent,
@@ -125,6 +126,7 @@ function fingerprintFor(
     context: intent.context,
     payload: intent.payload ?? null,
     requestedFor: intent.requestedFor ?? null,
+    links: { draftId: intent.links?.draftId ?? null },
     policy: {
       effective: policy.effective,
       contributingRules: policy.contributingRules.map(({ scope, scopeId, rule }) => ({
@@ -138,6 +140,17 @@ function fingerprintFor(
 
 function submission(action: ExternalAction): ExternalActionSubmission {
   return { action, execution: action.execution };
+}
+
+function unavailableAdapterBlocker(kind: ExternalActionKind): ExternalActionBlocker {
+  const unsupportedAdsMutation = kind === "budget_change" || kind === "targeting_change";
+  return {
+    code: unsupportedAdsMutation ? "unsupported_until_ads_wave" : "adapter_unavailable",
+    message: unsupportedAdsMutation
+      ? "Budget and targeting mutations are not executable until the ads governance wave."
+      : "This external action adapter is not available in the current stage.",
+    retryable: false,
+  };
 }
 
 export function createExternalActionRuntime({
@@ -158,7 +171,7 @@ export function createExternalActionRuntime({
     return {
       intent,
       policy,
-      value: fingerprintFor(action.workspaceId, action.kind, intent, policy),
+      value: fingerprintExternalActionIntent(action.workspaceId, action.kind, intent, policy),
     };
   }
 
@@ -179,11 +192,7 @@ export function createExternalActionRuntime({
     const adapter = adapters[action.kind];
     if (!adapter) {
       action = transitionExternalAction(db, workspaceId, action.id, "blocked", {
-        blocker: {
-          code: "unsupported_adapter",
-          message: "This external action adapter is not available in the current stage.",
-          retryable: false,
-        },
+        blocker: unavailableAdapterBlocker(action.kind),
         completedAt: Date.now(),
       });
       return submission(action);
@@ -240,9 +249,15 @@ export function createExternalActionRuntime({
       context: command.context,
       payload: command.payload ?? null,
       requestedFor: command.requestedFor ?? null,
+      links: { draftId: command.links?.draftId ?? null },
     };
     const policy = policyFor(db, command.workspaceId, command.kind, intent.context);
-    const fingerprint = fingerprintFor(command.workspaceId, command.kind, intent, policy);
+    const fingerprint = fingerprintExternalActionIntent(
+      command.workspaceId,
+      command.kind,
+      intent,
+      policy,
+    );
     const existing = findExternalActionByIdempotencyKey(
       db,
       command.workspaceId,
@@ -268,16 +283,13 @@ export function createExternalActionRuntime({
       policy,
       actor,
       supersedesActionId,
+      draftId: intent.links?.draftId ?? null,
     });
     if (supersedesActionId) linkExternalActionSuccessor(db, supersedesActionId, action.id);
 
     if (!adapters[action.kind]) {
       action = transitionExternalAction(db, action.workspaceId, action.id, "blocked", {
-        blocker: {
-          code: "unsupported_adapter",
-          message: "This external action adapter is not available in the current stage.",
-          retryable: false,
-        },
+        blocker: unavailableAdapterBlocker(action.kind),
         completedAt: Date.now(),
       });
       return submission(action);
@@ -384,6 +396,7 @@ export function createExternalActionRuntime({
             context: action.context,
             payload: getExternalActionPayload(db, action.id),
             requestedFor: action.requestedFor,
+            links: { draftId: action.subject.kind === "draft" ? action.subject.id : null },
           };
       return proposeWithLineage(
         {

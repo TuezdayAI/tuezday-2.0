@@ -436,6 +436,15 @@ describe("carousel pipeline (Sprint 41 Part 4)", () => {
         method: "POST",
         url: `/workspaces/${workspaceId}/drafts/${carousel.id}/approve`,
       });
+      await app.inject({
+        method: "PUT",
+        url: `/workspaces/${workspaceId}/external-action-policies`,
+        payload: {
+          scope: "workspace",
+          scopeId: workspaceId,
+          rules: [{ actionKind: "publish", rule: "autonomous" }],
+        },
+      });
 
       const publish = await app.inject({
         method: "POST",
@@ -443,7 +452,7 @@ describe("carousel pipeline (Sprint 41 Part 4)", () => {
         payload: { connectionId, target: "feed", title: "Carousel" },
       });
       expect(publish.statusCode).toBe(201);
-      expect(publish.json().status).toBe("published");
+      expect(publish.json().action.status).toBe("succeeded");
 
       // 5 child containers + 1 parent container, then one publish.
       expect(ig.igContainers).toBe(carousel.media!.length + 1);

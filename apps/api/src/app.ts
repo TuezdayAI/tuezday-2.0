@@ -39,6 +39,7 @@ import { registerDiscoveryRoutes } from "./routes/discovery";
 import { registerDraftRoutes } from "./routes/drafts";
 import { registerEvidenceRoutes } from "./routes/evidence";
 import { registerExecutionRoutes } from "./routes/executions";
+import { registerExternalActionRoutes } from "./routes/external-actions";
 import { registerExternalActionPolicyRoutes } from "./routes/external-action-policies";
 import { registerDesignSystemRoutes } from "./routes/design-systems";
 import { registerGuidanceRoutes } from "./routes/guidance";
@@ -65,6 +66,8 @@ import { registerNotificationRoutes } from "./routes/notifications";
 import { registerApiKeyRoutes } from "./routes/api-keys";
 import { registerPublicApiRoutes } from "./routes/public-api";
 import { backfillExternalActionPolicies } from "./services/external-action-backfill";
+import { createExternalActionAdapters } from "./services/external-action-adapters";
+import { createExternalActionRuntime } from "./services/external-action-coordinator";
 
 export type TuezdayApp = FastifyInstance;
 
@@ -116,6 +119,11 @@ export async function buildApp({
 }: BuildAppOptions): Promise<TuezdayApp> {
   const app = Fastify({ logger: false });
   backfillExternalActionPolicies(db);
+  const externalActionRuntime = createExternalActionRuntime({
+    db,
+    adapters: createExternalActionAdapters(db, connectors, fetcher),
+    analytics,
+  });
 
   // The design renderer keeps one shared headless browser per process.
   app.addHook("onClose", async () => {
@@ -181,10 +189,11 @@ export async function buildApp({
   registerAdCreativeRoutes(app, db, llm, evidence);
   registerAdImageRoutes(app, db, design, assetStorage, render);
   registerPrRoutes(app, db, llm, evidence);
-  registerPublicationRoutes(app, db, connectors, fetcher, analytics);
+  registerPublicationRoutes(app, db, connectors, fetcher, analytics, externalActionRuntime);
   registerExecutionRoutes(app, db);
+  registerExternalActionRoutes(app, db, externalActionRuntime);
   registerExternalActionPolicyRoutes(app, db);
-  registerCadenceRoutes(app, db, connectors, fetcher);
+  registerCadenceRoutes(app, db, externalActionRuntime);
   registerMailRoutes(app, db, mailer);
   registerAutomationRoutes(app, db, llm, evidence);
   registerInboxRoutes(app, db, llm, evidence, connectors, fetcher);

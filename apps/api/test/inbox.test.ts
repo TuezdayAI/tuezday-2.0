@@ -133,6 +133,15 @@ describe("engagement & reply inbox", () => {
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Inbox" } })
     ).json().id;
+    await app.inject({
+      method: "PUT",
+      url: `/workspaces/${workspaceId}/external-action-policies`,
+      payload: {
+        scope: "workspace",
+        scopeId: workspaceId,
+        rules: [{ actionKind: "publish", rule: "autonomous" }],
+      },
+    });
   });
 
   afterEach(async () => {
@@ -169,6 +178,15 @@ describe("engagement & reply inbox", () => {
         payload: { automationMode },
       });
     }
+    await app.inject({
+      method: "PUT",
+      url: `/workspaces/${workspaceId}/external-action-policies`,
+      payload: {
+        scope: "campaign",
+        scopeId: id,
+        rules: [{ actionKind: "publish", rule: "autonomous" }],
+      },
+    });
     return id;
   }
 
@@ -197,7 +215,10 @@ describe("engagement & reply inbox", () => {
       url: `/workspaces/${workspaceId}/drafts/${draftId}/publish`,
       payload: { connectionId, target: "r/test", title: "Our original post" },
     });
-    const pub = res.json();
+    expect(res.json().action.status).toBe("succeeded");
+    const pub = (
+      await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/publications` })
+    ).json()[0];
     expect(pub.externalId).toBeTruthy();
     return pub;
   }
