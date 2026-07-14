@@ -431,25 +431,25 @@ git commit -m "feat(api): authorize reply and send actions"
 - Adds `paidLaunchActionAdapter`.
 - Existing `/ads/launches/:launchId/launch` returns `ExternalActionSubmission` and never calls `performLaunch()` directly.
 
-- [ ] **Step 1: Write failing paid-launch tests**
+- [x] **Step 1: Write failing paid-launch tests**
 
 Test setup approval remains required, human authorization creates no provider records, authorization then launches once, autonomous still checks kill switch/daily cap, creative/budget/targeting/policy change causes stale conflict, provider failure persists both action and ad-launch error, and historic approval decisions remain unchanged.
 
-- [ ] **Step 2: Run tests and confirm RED**
+- [x] **Step 2: Run tests and confirm RED**
 
 Run: `npm test -w apps/api -- external-action-paid-launch.test.ts ads-execution.test.ts`  
 Expected: FAIL because launch calls the adapter directly.
 
-- [ ] **Step 3: Implement paid prepare/revalidate/guard/execute**
+- [x] **Step 3: Implement paid prepare/revalidate/guard/execute**
 
 Fingerprint the approved ad launch, parsed creative, account, campaign, budget, dates, countries, age bounds, media URL, and effective policy. Guard calls `checkSpendGuardrails()`. Execute resolves the injected ad adapter, calls `performLaunch()` once with action attribution, emits `ad.launched`, and links the ad launch.
 
-- [ ] **Step 4: Replace the launch route body and run tests**
+- [x] **Step 4: Replace the launch route body and run tests**
 
 Run: `npm test -w apps/api -- external-action-paid-launch.test.ts ads-execution.test.ts external-actions.test.ts`  
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/services/external-action-adapters.ts apps/api/src/routes/ad-launches.ts apps/api/src/services/ad-launches.ts apps/api/src/app.ts apps/api/test/external-action-paid-launch.test.ts apps/api/test/ads-execution.test.ts
@@ -755,6 +755,7 @@ Expected: push succeeds. Do not merge this branch to main until founder review.
 - 2026-07-14: Task 3 — implemented deterministic workspace/campaign resolution with persona/connection/lane safety constraints, complete labeled contributions, bounded policy mutations, authenticated policy routes, and startup backfill. Verified 11 focused API tests and monorepo typecheck.
 - 2026-07-14: Task 4 — added canonical fingerprints, immutable action/decision mapping, guarded lifecycle transitions, idempotent proposal, transactional authorize/deny, staleness, scheduling/runner recovery, durable blockers/results, and successor lineage. Verified 22 focused contract/API tests and monorepo typecheck.
 - 2026-07-14: Task 5 — registered shared action lifecycle routes and a destination-revalidating publication adapter; cut manual publishing, cadence fill, and the due runner over to durable actions while retaining legacy receipt recovery; preserved automation caps across pending actions and updated publication consumers for the action envelope. Verified 8 focused files / 105 tests and monorepo typecheck.
+- 2026-07-14: Task 7 — added a paid-launch adapter that fingerprints the approved launch, parsed creative, account, budget, dates, targeting, media, and gate status; the launch route now proposes durable `paid_launch` actions (attempt-numbered keys let a founder retry after failed/blocked/denied attempts), spend guardrails run as dispatch-time blockers, `performLaunch` executes once with action attribution and emits `ad.launched`, and historic ad-launch approval decisions stay untouched. Verified 6 new boundary tests, full suite 129 files / 1,328 tests, and monorepo typecheck.
 - 2026-07-14: Task 6 — added reply and send adapters that snapshot the approved draft, recipient, connection, and exact text; cut manual post-reply, inbox auto-reply posting, launch channel dispatch, and sequence X sends over to durable `send`/`reply` actions with deterministic content-hashed idempotency keys (re-dispatch reports the governing action for already-sent messages); stop-on-reply, kill switch, and daily caps remain dispatch guardrails, engine-level pre-checks keep the pause-and-retry semantics for automated sends, and email CSV export stays outside governance. Verified 4 focused files / 51 tests, full suite 128 files / 1,322 tests, and monorepo typecheck.
 
 ## Plan self-review

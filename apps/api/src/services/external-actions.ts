@@ -322,6 +322,38 @@ export function linkExternalActionSuccessor(
     .run();
 }
 
+const TERMINAL_EXTERNAL_ACTION_STATUSES: ReadonlySet<ExternalActionStatus> = new Set([
+  "succeeded",
+  "failed",
+  "blocked",
+  "stale",
+  "cancelled",
+]);
+
+/** Completed attempts against one subject — used to derive fresh idempotency
+ * keys so a founder can retry a failed/blocked/denied attempt from the owning
+ * surface without colliding with the prior durable action. */
+export function countTerminalExternalActionsForSubject(
+  db: Db,
+  workspaceId: string,
+  kind: ExternalActionKind,
+  subjectId: string,
+): number {
+  return db
+    .select({ status: externalActions.status })
+    .from(externalActions)
+    .where(
+      and(
+        eq(externalActions.workspaceId, workspaceId),
+        eq(externalActions.kind, kind),
+        eq(externalActions.subjectId, subjectId),
+      ),
+    )
+    .all()
+    .filter((row) => TERMINAL_EXTERNAL_ACTION_STATUSES.has(row.status as ExternalActionStatus))
+    .length;
+}
+
 export function listRunnableExternalActions(db: Db, workspaceId: string): ExternalAction[] {
   return db
     .select()

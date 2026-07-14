@@ -263,6 +263,18 @@ describe("ads execution API (Sprint 20)", () => {
         payload: { name: "Launch", objective: "Win the launch" },
       })
     ).json().id;
+    // Legacy direct-launch scenarios: paid launches run autonomously so the
+    // provider chain stays observable. The authorization queue itself is
+    // covered in external-action-paid-launch.test.ts.
+    await app.inject({
+      method: "PUT",
+      url: `/workspaces/${workspaceId}/external-action-policies`,
+      payload: {
+        scope: "campaign",
+        scopeId: campaignId,
+        rules: [{ actionKind: "paid_launch", rule: "autonomous" }],
+      },
+    });
 
     const connection = (
       await app.inject({
@@ -452,7 +464,7 @@ describe("ads execution API (Sprint 20)", () => {
       ).toBe(204);
 
       const live = await approvedLaunch();
-      expect((await act(live, "launch")).statusCode).toBe(200);
+      expect((await act(live, "launch")).statusCode).toBe(201);
       const blocked = await app.inject({
         method: "DELETE",
         url: `/workspaces/${workspaceId}/ads/launches/${live}`,
@@ -504,9 +516,12 @@ describe("ads execution API (Sprint 20)", () => {
     it("creates the Meta object chain and activates the campaign last", async () => {
       const id = await approvedLaunch({ startAt: Date.now() + 60_000 });
       const res = await act(id, "launch");
-      expect(res.statusCode).toBe(200);
-      const launch = res.json();
+      expect(res.statusCode).toBe(201);
+      expect(res.json().action.status).toBe("succeeded");
+      expect(res.json().execution).toMatchObject({ kind: "ad_launch", status: "launched" });
+      const launch = await getLaunch(id);
       expect(launch.status).toBe("launched");
+      expect(launch.externalActionId).toBe(res.json().action.id);
       expect(launch.platformStatus).toBe("ACTIVE");
       expect(launch.launchedAt).toBeGreaterThan(0);
       expect(launch.externalCampaignId).toBe("cmp_1");
@@ -565,7 +580,7 @@ describe("ads execution API (Sprint 20)", () => {
 
     it("maps the awareness objective to REACH", async () => {
       const id = await approvedLaunch({ objective: "OUTCOME_AWARENESS" });
-      expect((await act(id, "launch")).statusCode).toBe(200);
+      expect((await act(id, "launch")).statusCode).toBe(201);
       expect(state.adSetPosts[0]!.body.optimization_goal).toBe("REACH");
     });
 
@@ -593,7 +608,7 @@ describe("ads execution API (Sprint 20)", () => {
 
       await act(id, "submit");
       await act(id, "approve");
-      expect((await act(id, "launch")).statusCode).toBe(200);
+      expect((await act(id, "launch")).statusCode).toBe(201);
       const again = await act(id, "launch");
       expect(again.statusCode).toBe(409);
       expect(again.json().error).toBe("already_launched");
@@ -603,32 +618,38 @@ describe("ads execution API (Sprint 20)", () => {
       const id = await approvedLaunch();
       await putSettings({ killSwitch: true });
       const res = await act(id, "launch");
-      expect(res.statusCode).toBe(409);
-      expect(res.json().error).toBe("kill_switch_on");
+      expect(res.statusCode).toBe(201);
+      expect(res.json().action.status).toBe("blocked");
+      expect(res.json().action.blocker.code).toBe("kill_switch_on");
       expect(state.campaignPosts).toHaveLength(0);
+      expect((await getLaunch(id)).status).toBe("approved");
     });
 
     it("enforces the workspace daily cap over committed budgets, ignoring paused launches", async () => {
       await putSettings({ dailyCapCents: 800 });
       const first = await approvedLaunch({ dailyBudgetCents: 500 });
-      expect((await act(first, "launch")).statusCode).toBe(200);
+      expect((await act(first, "launch")).statusCode).toBe(201);
 
       const second = await approvedLaunch({ dailyBudgetCents: 500, name: "Second push" });
       const blocked = await act(second, "launch");
-      expect(blocked.statusCode).toBe(409);
-      expect(blocked.json().error).toBe("daily_cap_exceeded");
+      expect(blocked.statusCode).toBe(201);
+      expect(blocked.json().action.status).toBe("blocked");
+      expect(blocked.json().action.blocker.code).toBe("daily_cap_exceeded");
 
-      // Pausing the first frees its committed budget.
+      // Pausing the first frees its committed budget for a fresh attempt.
       expect((await act(first, "pause")).statusCode).toBe(200);
-      expect((await act(second, "launch")).statusCode).toBe(200);
+      const retried = await act(second, "launch");
+      expect(retried.statusCode).toBe(201);
+      expect(retried.json().action.status).toBe("succeeded");
     });
 
     it("keeps partial progress on failure and resumes the chain on retry", async () => {
       const id = await approvedLaunch();
       state.failOn = "/adsets";
       const failed = await act(id, "launch");
-      expect(failed.statusCode).toBe(502);
-      expect(failed.json().error).toBe("launch_failed");
+      expect(failed.statusCode).toBe(201);
+      expect(failed.json().action.status).toBe("failed");
+      expect(failed.json().execution.error).toContain("graph says no");
 
       const after = await getLaunch(id);
       expect(after.status).toBe("approved");
@@ -638,11 +659,13 @@ describe("ads execution API (Sprint 20)", () => {
 
       state.failOn = null;
       const retried = await act(id, "launch");
-      expect(retried.statusCode).toBe(200);
+      expect(retried.statusCode).toBe(201);
+      expect(retried.json().action.status).toBe("succeeded");
       // The campaign from the first attempt is reused, not duplicated.
       expect(state.campaignPosts).toHaveLength(1);
-      expect(retried.json().externalCampaignId).toBe("cmp_1");
-      expect(retried.json().status).toBe("launched");
+      const relaunched = await getLaunch(id);
+      expect(relaunched.externalCampaignId).toBe("cmp_1");
+      expect(relaunched.status).toBe("launched");
     });
   });
 

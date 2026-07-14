@@ -12,10 +12,12 @@ import {
   type PublishDraftInput,
   type SocialPostConstraints,
 } from "@tuezday/contracts";
+import { adsExecutionAdapterFor, type AdsExecutionAdapter } from "../connectors/ads";
 import type { ConnectorFabric } from "../connectors/fabric";
 import { socialAdapterFor, type PublishMedia } from "../connectors/social";
 import type { Db } from "../db";
 import {
+  adLaunches,
   inboxItems,
   launchMessages,
   launches,
@@ -24,10 +26,18 @@ import {
   type LaunchMessageRow,
 } from "../db/schema";
 import {
+  checkSpendGuardrails,
+  creativeFieldsFrom,
+  getLaunch as getAdLaunch,
+  performLaunch,
+} from "./ad-launches";
+import { getAdAccount } from "./ads";
+import {
   checkPostGuardrails,
   getSocialAutomationSettings,
 } from "./automation";
 import { getCampaign } from "./campaigns";
+import { emitEvent } from "./events";
 import { getConnection, providerByKey } from "./connections";
 import type {
   ExternalActionAdapter,
@@ -36,6 +46,7 @@ import type {
   ExternalActionIntent,
 } from "./external-action-coordinator";
 import { canonicalActionFingerprint } from "./external-action-fingerprint";
+import { countTerminalExternalActionsForSubject } from "./external-actions";
 import { getDraft } from "./drafts";
 import {
   checkReplyGuardrails,
@@ -1013,6 +1024,263 @@ export function sendActionAdapter(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Paid launch actions (Meta ad launches)
+// ---------------------------------------------------------------------------
+
+const paidLaunchActionPayloadSchema = z.object({
+  launchId: z.string().uuid(),
+  adAccountId: z.string().uuid(),
+  externalAccountId: z.string().min(1),
+  creativeDraftId: z.string().uuid(),
+  creative: z.object({
+    primaryText: z.string().min(1),
+    headline: z.string().min(1),
+    description: z.string(),
+  }),
+  imageUrl: z.string().nullable(),
+  name: z.string().min(1),
+  objective: z.string().min(1),
+  pageId: z.string().min(1),
+  linkUrl: z.string().min(1),
+  dailyBudgetCents: z.number().int(),
+  startAt: z.number().int().nullable(),
+  endAt: z.number().int().nullable(),
+  countries: z.array(z.string()),
+  ageMin: z.number().int(),
+  ageMax: z.number().int(),
+  /** The setup-gate status at proposal time — a pulled-back gate goes stale. */
+  setupStatus: z.string().min(1),
+});
+
+type PaidLaunchActionPayload = z.infer<typeof paidLaunchActionPayloadSchema>;
+
+function paidLaunchIntent(db: Db, workspaceId: string, launchId: string): ExternalActionIntent {
+  const launch = getAdLaunch(db, workspaceId, launchId);
+  if (!launch) {
+    throw new ExternalActionPreparationError("launch_not_found", "Launch not found.", 404);
+  }
+  const account = getAdAccount(db, workspaceId, launch.adAccountId);
+  if (!account) {
+    throw new ExternalActionPreparationError("account_not_found", "No such ad account.", 404);
+  }
+  const draft = getDraft(db, workspaceId, launch.creativeDraftId);
+  const creative = draft ? creativeFieldsFrom(draft.content) : null;
+  if (!creative) {
+    throw new ExternalActionPreparationError(
+      "creative_unparseable",
+      "The creative draft behind this launch is gone or no longer parses.",
+      400,
+    );
+  }
+  const campaign = launch.campaignId ? getCampaign(db, workspaceId, launch.campaignId) : undefined;
+  const payload: PaidLaunchActionPayload = {
+    launchId: launch.id,
+    adAccountId: account.id,
+    externalAccountId: account.externalId,
+    creativeDraftId: launch.creativeDraftId,
+    creative,
+    imageUrl: draft?.media?.[0]?.url ?? null,
+    name: launch.name,
+    objective: launch.objective,
+    pageId: launch.pageId,
+    linkUrl: launch.linkUrl,
+    dailyBudgetCents: launch.dailyBudgetCents,
+    startAt: launch.startAt,
+    endAt: launch.endAt,
+    countries: launch.countries,
+    ageMin: launch.ageMin,
+    ageMax: launch.ageMax,
+    setupStatus: launch.status,
+  };
+  return {
+    subject: {
+      kind: "ad_launch",
+      id: launch.id,
+      title: launch.name,
+      summary: `${creative.primaryText}\n${creative.headline}`,
+      channel: "ads",
+      destination: `${account.name} · ${account.externalId}`,
+    },
+    context: {
+      campaignId: campaign?.id ?? null,
+      campaignName: campaign?.name ?? null,
+      personaId: null,
+      personaName: null,
+      connectionId: account.connectionId,
+      connectionName: account.name,
+      laneRevisionId: null,
+      laneName: null,
+    },
+    payload,
+    requestedFor: null,
+    links: { draftId: launch.creativeDraftId },
+  };
+}
+
+export function preparePaidLaunchAction(
+  db: Db,
+  workspaceId: string,
+  launchId: string,
+): ExternalActionCommand {
+  const launch = getAdLaunch(db, workspaceId, launchId);
+  if (!launch) {
+    throw new ExternalActionPreparationError("launch_not_found", "Launch not found.", 404);
+  }
+  if (launch.status === "launched") {
+    throw new ExternalActionPreparationError(
+      "already_launched",
+      "This launch already went out.",
+      409,
+    );
+  }
+  if (launch.status !== "approved") {
+    throw new ExternalActionPreparationError(
+      "launch_not_approved",
+      "A launch must clear the approval gate before it can spend.",
+      409,
+    );
+  }
+  // Each terminal attempt (failed, blocked, denied, stale) frees the founder to
+  // retry from the launch page with a fresh action, exactly like before.
+  const attempt = countTerminalExternalActionsForSubject(db, workspaceId, "paid_launch", launchId);
+  return {
+    workspaceId,
+    kind: "paid_launch",
+    idempotencyKey: `paid_launch:${launchId}:${attempt}`,
+    ...paidLaunchIntent(db, workspaceId, launchId),
+  };
+}
+
+function asPaidLaunchPayload(payload: unknown): PaidLaunchActionPayload {
+  return paidLaunchActionPayloadSchema.parse(payload);
+}
+
+function resolveAdsExecution(
+  db: Db,
+  fabric: ConnectorFabric,
+  fetcher: Fetcher,
+  workspaceId: string,
+  adAccountId: string,
+): { adapter: AdsExecutionAdapter; externalAccountId: string } | null {
+  const account = getAdAccount(db, workspaceId, adAccountId);
+  if (!account) return null;
+  const connection = account.connectionId
+    ? getConnection(db, workspaceId, account.connectionId)
+    : undefined;
+  const provider = connection ? providerByKey(connection.providerKey) : undefined;
+  const adapter =
+    connection && provider && connection.status === "connected"
+      ? adsExecutionAdapterFor(fabric, provider, connection, fetcher)
+      : undefined;
+  return adapter ? { adapter, externalAccountId: account.externalId } : null;
+}
+
+export function paidLaunchActionAdapter(
+  db: Db,
+  fabric: ConnectorFabric,
+  fetcher: Fetcher,
+): ExternalActionAdapter {
+  return {
+    async revalidate(action, rawPayload) {
+      const payload = asPaidLaunchPayload(rawPayload);
+      return paidLaunchIntent(db, action.workspaceId, payload.launchId);
+    },
+
+    async guard(action, rawPayload): Promise<ExternalActionBlocker | null> {
+      const payload = asPaidLaunchPayload(rawPayload);
+      const launch = getAdLaunch(db, action.workspaceId, payload.launchId);
+      if (!launch) {
+        return {
+          code: "launch_missing",
+          message: "The ad launch behind this action no longer exists.",
+          retryable: false,
+        };
+      }
+      if (launch.status === "launched" && launch.externalActionId !== action.id) {
+        return {
+          code: "already_launched",
+          message: "This launch already went out.",
+          retryable: false,
+        };
+      }
+      if (!resolveAdsExecution(db, fabric, fetcher, action.workspaceId, payload.adAccountId)) {
+        return {
+          code: "account_not_launchable",
+          message:
+            "This ad account has no connected ads platform behind it — launches need a live connection.",
+          retryable: true,
+        };
+      }
+      const guardrails = checkSpendGuardrails(db, launch);
+      if (!guardrails.ok) {
+        return { code: guardrails.error, message: guardrails.message, retryable: true };
+      }
+      return null;
+    },
+
+    async execute(action, rawPayload): Promise<ExternalActionExecutionRef> {
+      const payload = asPaidLaunchPayload(rawPayload);
+      const launch = getAdLaunch(db, action.workspaceId, payload.launchId);
+      if (!launch) {
+        return {
+          kind: "ad_launch",
+          id: payload.launchId,
+          status: "failed",
+          url: null,
+          error: "The ad launch behind this action no longer exists.",
+        };
+      }
+      if (launch.status === "launched" && launch.externalActionId === action.id) {
+        return { kind: "ad_launch", id: launch.id, status: "launched", url: null, error: null };
+      }
+      db.update(adLaunches)
+        .set({ externalActionId: action.id, updatedAt: Date.now() })
+        .where(eq(adLaunches.id, launch.id))
+        .run();
+      const resolved = resolveAdsExecution(db, fabric, fetcher, action.workspaceId, payload.adAccountId);
+      if (!resolved) {
+        return {
+          kind: "ad_launch",
+          id: launch.id,
+          status: "failed",
+          url: null,
+          error: "This ad account has no connected ads platform behind it.",
+        };
+      }
+      try {
+        const launched = await performLaunch(
+          db,
+          resolved.adapter,
+          launch,
+          payload.externalAccountId,
+          payload.creative,
+          { userId: action.proposedBy.userId, label: action.proposedBy.label },
+          payload.imageUrl,
+        );
+        await emitEvent(db, fetcher, action.workspaceId, "ad.launched", {
+          launchId: launched.id,
+          name: launched.name,
+          objective: launched.objective,
+          dailyBudgetCents: launched.dailyBudgetCents,
+          externalCampaignId: launched.externalCampaignId,
+          campaignId: launched.campaignId,
+          actor: action.proposedBy.label,
+        });
+        return { kind: "ad_launch", id: launched.id, status: "launched", url: null, error: null };
+      } catch (err) {
+        return {
+          kind: "ad_launch",
+          id: launch.id,
+          status: "failed",
+          url: null,
+          error: (err instanceof Error ? err.message : String(err)).slice(0, 500),
+        };
+      }
+    },
+  };
+}
+
 export function createExternalActionAdapters(
   db: Db,
   fabric: ConnectorFabric,
@@ -1022,5 +1290,6 @@ export function createExternalActionAdapters(
     publish: publishActionAdapter(db, fabric, fetcher),
     reply: replyActionAdapter(db, fabric, fetcher),
     send: sendActionAdapter(db, fabric, fetcher),
+    paid_launch: paidLaunchActionAdapter(db, fabric, fetcher),
   };
 }

@@ -185,7 +185,7 @@ export async function buildApp({
   registerConnectorRoutes(app, db, connectors, fetcher, analytics);
   registerCrmRoutes(app, db, connectors, fetcher);
   registerAdsRoutes(app, db, connectors, fetcher);
-  registerAdLaunchRoutes(app, db, connectors, fetcher);
+  registerAdLaunchRoutes(app, db, connectors, fetcher, externalActionRuntime);
   registerAdCreativeRoutes(app, db, llm, evidence);
   registerAdImageRoutes(app, db, design, assetStorage, render);
   registerPrRoutes(app, db, llm, evidence);
