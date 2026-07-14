@@ -158,7 +158,7 @@ git commit -m "feat(contracts): define external action governance"
 - Produces Drizzle tables `externalActionPolicyRules`, `externalActions`, and `externalActionDecisions` and row types.
 - Produces `ensureWorkspaceActionPolicies(db, workspaceId)`, `ensureCampaignActionPolicies(db, workspaceId, campaignId, automationMode)`, and `backfillExternalActionPolicies(db)`.
 
-- [ ] **Step 1: Write failing persistence and backfill tests**
+- [x] **Step 1: Write failing persistence and backfill tests**
 
 Test unique `(workspaceId, scope, scopeId, actionKind)`, unique `(workspaceId, idempotencyKey)`, decision/action cascade, operational nullable links, and this compatibility matrix:
 
@@ -173,30 +173,30 @@ expect(policy(db, workspace.id, "campaign", scheduled.id, "budget_change")?.rule
   .toBe("human_required");
 ```
 
-- [ ] **Step 2: Run the new API test and confirm RED**
+- [x] **Step 2: Run the new API test and confirm RED**
 
 Run: `npm test -w apps/api -- external-action-persistence.test.ts`  
 Expected: FAIL because the tables do not exist.
 
-- [ ] **Step 3: Add schema tables and links**
+- [x] **Step 3: Add schema tables and links**
 
 Place policy/action tables after connections and before publications. `external_actions` stores immutable `payloadJson`, `subjectSnapshotJson`, `fingerprint`, and `policySnapshotJson`; mutable lifecycle columns store status, blockers, successor link, execution ref/receipt, and timestamps. Add nullable indexed `externalActionId` to publications, ad launches, launch messages, and inbox items.
 
-- [ ] **Step 4: Generate and inspect the migration**
+- [x] **Step 4: Generate and inspect the migration**
 
 Run: `npm run db:generate -w apps/api`  
 Expected: one new numbered SQL migration and snapshot; SQL contains three `CREATE TABLE` statements, four `external_action_id` columns, unique idempotency/policy indexes, and no unrelated table changes.
 
-- [ ] **Step 5: Implement idempotent runtime backfill**
+- [x] **Step 5: Implement idempotent runtime backfill**
 
 `backfillExternalActionPolicies()` iterates workspaces and campaigns, calls the two ensure functions, and is safe on every app start. Workspace defaults cover all six kinds with `human_required`. Campaign rules use `autonomous` only for the four executable kinds when `automationMode === "scheduled_auto"`; all other combinations are `human_required`. `createCampaign()` calls `ensureCampaignActionPolicies()` after insertion.
 
-- [ ] **Step 6: Run persistence tests and confirm GREEN**
+- [x] **Step 6: Run persistence tests and confirm GREEN**
 
 Run: `npm test -w apps/api -- external-action-persistence.test.ts campaigns.test.ts`  
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/api/src/db/schema.ts apps/api/src/services/external-action-backfill.ts apps/api/src/services/campaigns.ts apps/api/test/external-action-persistence.test.ts apps/api/drizzle
@@ -746,6 +746,7 @@ Expected: push succeeds. Do not merge this branch to main until founder review.
 - 2026-07-14: Completed UI revamp chain through conversational editor fast-forwarded into `main`; post-merge verification passed 122 files / 1,277 tests, typecheck, and web build; pushed `main@25cbdf8`.
 - 2026-07-14: Design specification committed on this branch as `5e4ea22`; implementation plan written after mapping contracts, schema, all execution boundaries, and golden-loop consumers.
 - 2026-07-14: Task 1 — external-action policy/action/decision/priority contracts, stale transitions, action-aware Calendar/result/editor fields, and exhaustive Calendar workflow mapping. Verified 25 contract files / 273 tests, focused web test, and monorepo typecheck.
+- 2026-07-14: Task 2 — persisted normalized policy, action, and immutable decision rows; linked all four current execution records; generated and inspected migration 0045; added idempotent workspace/campaign policy backfill that preserves scheduled-auto behavior. Verified 19 focused API tests and monorepo typecheck.
 
 ## Plan self-review
 

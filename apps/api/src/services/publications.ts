@@ -120,6 +120,7 @@ export async function createPublication(
     id: randomUUID(),
     workspaceId,
     draftId,
+    externalActionId: null,
     connectionId: connection.id,
     providerKey: connection.providerKey,
     target: input.target,

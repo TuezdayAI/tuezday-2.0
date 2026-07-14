@@ -15,6 +15,7 @@ import type { Db } from "../db";
 import { campaigns, drafts, type CampaignRow } from "../db/schema";
 import { getCampaignAdMetrics, type CampaignAdMetrics } from "./ads";
 import { listCampaignAudiences } from "./audiences";
+import { ensureCampaignActionPolicies } from "./external-action-backfill";
 import {
   getCampaignControlPlaneSummary,
   type ControlPlaneSummary,
@@ -84,6 +85,7 @@ export function createCampaign(db: Db, workspaceId: string, input: UpsertCampaig
     updatedAt: now,
   };
   db.insert(campaigns).values(row).run();
+  ensureCampaignActionPolicies(db, workspaceId, row.id, input.automationMode);
   return rowToCampaign(row);
 }
 
