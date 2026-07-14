@@ -3,6 +3,7 @@ import type {
   ExternalActionEffectivePolicy,
   ExternalActionKind,
   ExternalActionStatus,
+  ExternalActionSubmission,
   WorkflowStatus,
 } from "@tuezday/contracts";
 import { reviewHref } from "./review-workspace";
@@ -108,6 +109,36 @@ export function impactSummary(action: ExternalAction): string {
       ? "immediately once authorized"
       : `at ${new Date(action.requestedFor).toLocaleString()}`;
   return `${actionKindLabel(action.kind)} “${action.subject.title}” to ${destination}, ${timing}.`;
+}
+
+/** Where to decide on this action: the Review authorization queue. */
+export function actionAuthorizationHref(action: ExternalAction): string {
+  return reviewHref(action.workspaceId, { tab: "authorizations", action: action.id });
+}
+
+/** One plain sentence an owning surface can show after proposing an action. */
+export function submissionNote(submission: ExternalActionSubmission): string {
+  const { action, execution } = submission;
+  const kind = actionKindLabel(action.kind);
+  switch (action.status) {
+    case "authorization_required":
+      return `${kind} needs your authorization before it goes out.`;
+    case "proposed":
+    case "authorized":
+    case "scheduled":
+      return `${kind} queued — ${actionTimingLabel(action)}.`;
+    case "dispatching":
+      return `${kind} is going out now.`;
+    case "succeeded":
+      return `${kind} completed.`;
+    case "blocked":
+    case "stale":
+      return action.blocker?.message ?? `${kind} is ${action.status}.`;
+    case "failed":
+      return execution?.error ?? action.execution?.error ?? `${kind} failed.`;
+    case "cancelled":
+      return `${kind} was denied.`;
+  }
 }
 
 /** Where to fix a blocked/stale action: the surface that owns its subject. */

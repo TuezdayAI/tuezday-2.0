@@ -619,29 +619,29 @@ git commit -m "feat(web): configure external action policy"
 - Editor submits existing publish URL with `idempotencyKey` and shows returned action.
 - Inbox, Launches, and Ad Launches parse action submission envelopes and link queued/blocked/stale actions to Review.
 
-- [ ] **Step 1: Write failing helper and shell tests**
+- [x] **Step 1: Write failing helper and shell tests**
 
 Test publish eligibility (approved + campaign + connected destination), initial target/title, immediate/future payload, action status/recovery links, and strict absence of **Approve and publish**. Pin owning surfaces to `ExternalActionSubmission` and `reviewHref(...authorizations...)`.
 
-- [ ] **Step 2: Run tests and confirm RED**
+- [x] **Step 2: Run tests and confirm RED**
 
 Run: `npm test -w apps/web -- conversational-editor.test.ts conversational-editor-shell-contract.test.ts action-origin-shell-contract.test.ts`  
 Expected: FAIL because the deferred note remains and clients expect legacy responses.
 
-- [ ] **Step 3: Build editor Prepare publication flow**
+- [x] **Step 3: Build editor Prepare publication flow**
 
 Replace the deferred authorization box with destination/target/title/timing fields for eligible drafts, a generated request ID retained across retry, and submission status. Render effective policy, pending/stale/blocked/result states, and **Open authorization**. Keep authorization out of the editor and keep the content decision footer unchanged.
 
-- [ ] **Step 4: Update Inbox, Launches, and Ad Launches**
+- [x] **Step 4: Update Inbox, Launches, and Ad Launches**
 
 Parse single/batch envelopes, refresh owning data after terminal autonomous results, show queued action badges/links, and surface durable blocker/failure text. Preserve email export, existing approval controls, and launch deep links.
 
-- [ ] **Step 5: Run focused tests and confirm GREEN**
+- [x] **Step 5: Run focused tests and confirm GREEN**
 
 Run: `npm test -w apps/web -- conversational-editor.test.ts conversational-editor-shell-contract.test.ts action-origin-shell-contract.test.ts`  
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/web/lib/conversational-editor.ts apps/web/lib/conversational-editor.test.ts apps/web/app/workspaces/[id]/review/_components/conversational-editor.tsx apps/web/app/workspaces/[id]/review/_components/conversational-editor.module.css apps/web/app/workspaces/[id]/review/_components/inbox-queue.tsx apps/web/app/workspaces/[id]/launches/page.tsx apps/web/app/workspaces/[id]/ad-launches/page.tsx apps/web/lib/conversational-editor-shell-contract.test.ts apps/web/lib/action-origin-shell-contract.test.ts
@@ -760,6 +760,7 @@ Expected: push succeeds. Do not merge this branch to main until founder review.
 - 2026-07-14: Task 8 — added the ranked priorities projection and `GET /workspaces/:id/priorities` (overdue failures/blocks/stale, overdue authorizations, other blockers, authorizations, then content review; linked failed executions dedupe behind their governing action); Calendar now projects timed action states until a native receipt is linked and lets queued actions hold their cadence slots; execution results carry governing action ids (unique launch-message rollups, empty for legacy rows); the editor context lists actions scoped to its draft. Verified 4 focused files / 29 tests, full suite 130 files / 1,336 tests, and monorepo typecheck.
 - 2026-07-14: Task 7 — added a paid-launch adapter that fingerprints the approved launch, parsed creative, account, budget, dates, targeting, media, and gate status; the launch route now proposes durable `paid_launch` actions (attempt-numbered keys let a founder retry after failed/blocked/denied attempts), spend guardrails run as dispatch-time blockers, `performLaunch` executes once with action attribution and emits `ad.launched`, and historic ad-launch approval decisions stay untouched. Verified 6 new boundary tests, full suite 129 files / 1,328 tests, and monorepo typecheck.
 - 2026-07-14: Task 10 — added the workspace Action permissions card on Automation (six concrete `autonomous|human_required` defaults iterated straight from `EXTERNAL_ACTION_KINDS`, one bounded six-kind PUT, effective badges via the shared `effectivePolicyWorkflowStatus` helper, polite save/error announcements, and copy separating cadence guardrails from action permission) and the campaign Who-signs-off panel on the campaign overview (per-kind inherit/human/autonomous selects where inherit deletes the stored override, read-only workspace/persona/connection/lane contributor lines, and its own bounded batch save). Verified 20 focused web tests, all 23 web files / 110 tests, and monorepo typecheck.
+- 2026-07-14: Task 11 — added the editor Prepare publication flow with approved-content/destination eligibility, retained idempotency keys, destination/target/title/timing inputs, honest action/policy/status output, and link-only authorization; Inbox, Launches, and Ad Launches now parse governed action envelopes (including stale action-only responses), show canonical action badges and Review recovery links, refresh terminal autonomous results, and preserve reply approval, email CSV export, spend approval, and launch deep links. Removed an unreachable Reddit-only editor branch because Reddit is not in the canonical `Draft.channel` vocabulary. Verified 4 focused web files / 23 tests and web typecheck.
 
 ## Plan self-review
 

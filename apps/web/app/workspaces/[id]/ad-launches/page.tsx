@@ -19,11 +19,18 @@ import {
   type AdLaunchStatus,
   type Campaign,
   type Draft,
+  type ExternalActionSubmission,
   type Workspace,
 } from "@tuezday/contracts";
+import {
+  actionAuthorizationHref,
+  externalActionWorkflowStatus,
+  submissionNote,
+} from "@/lib/external-actions";
+import { reviewHref } from "@/lib/review-workspace";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
-import { CountBadge } from "@/src/components/ui/badge";
+import { CountBadge, WorkflowStatusBadge } from "@/src/components/ui/badge";
 import { Icon } from "@/src/components/ui/icon";
 import { Input, Select } from "@/src/components/ui/input";
 import styles from "./ad-launches.module.css";
@@ -114,6 +121,9 @@ export default function AdLaunchesPage() {
   const [launches, setLaunches] = useState<LaunchView[]>([]);
   const [settings, setSettings] = useState<AdSettings | null>(null);
   const [detail, setDetail] = useState<Record<string, LaunchDetail>>({});
+  const [launchSubmissions, setLaunchSubmissions] = useState<
+    Record<string, ExternalActionSubmission>
+  >({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -278,7 +288,27 @@ export default function AdLaunchesPage() {
   async function act(launch: LaunchView, action: string, confirmMsg?: string) {
     if (confirmMsg && !window.confirm(confirmMsg)) return;
     await run(async () => {
-      await call("POST", `/ads/launches/${launch.id}/${action}`, {});
+      if (action === "launch") {
+        const res = await apiFetch(`/workspaces/${id}/ads/launches/${launch.id}/launch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        const body = await res.json().catch(() => null);
+        if (!res.ok && !body?.action) {
+          throw new Error(body?.message ?? body?.error ?? `API returned ${res.status}`);
+        }
+        // A stale 409 carries the durable action but omits the execution
+        // envelope. Preserve it so the launch still has an honest recovery UI.
+        const submission: ExternalActionSubmission =
+          body.execution !== undefined
+            ? (body as ExternalActionSubmission)
+            : { action: body.action, execution: body.action.execution ?? null };
+        setLaunchSubmissions((previous) => ({ ...previous, [launch.id]: submission }));
+        setNote(submissionNote(submission));
+      } else {
+        await call("POST", `/ads/launches/${launch.id}/${action}`, {});
+      }
       await load();
       if (detail[launch.id]) await loadDetail(launch.id);
     });
@@ -553,6 +583,7 @@ export default function AdLaunchesPage() {
               const currency = launch.account?.currency ?? "USD";
               const spending = isSpending(launch);
               const d = detail[launch.id];
+              const submission = launchSubmissions[launch.id] ?? null;
               return (
                 <li key={launch.id} className="section-card">
                   <div className="section-head">
@@ -574,6 +605,26 @@ export default function AdLaunchesPage() {
                       : "creative unavailable"}
                   </p>
                   {launch.lastError && <p className="error-inline">{launch.lastError}</p>}
+                  {submission ? (
+                    <div className={styles.actionStatus}>
+                      <WorkflowStatusBadge
+                        status={externalActionWorkflowStatus(submission.action)}
+                      />
+                      <span>{submissionNote(submission)}</span>
+                      <Link href={actionAuthorizationHref(submission.action)}>View action</Link>
+                    </div>
+                  ) : launch.externalActionId ? (
+                    <p className={styles.actionStatus}>
+                      <Link
+                        href={reviewHref(id, {
+                          tab: "authorizations",
+                          action: launch.externalActionId,
+                        })}
+                      >
+                        View governing action
+                      </Link>
+                    </p>
+                  ) : null}
 
                   <div className="editor-actions">
                     {launch.status === "draft" && (

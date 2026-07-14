@@ -5,7 +5,7 @@ import { EmptyState } from "@/src/components/empty-state";
 import { TopBarActions } from "@/src/components/top-bar";
 import { Button } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
-import { Badge, CountBadge } from "@/src/components/ui/badge";
+import { Badge, CountBadge, WorkflowStatusBadge } from "@/src/components/ui/badge";
 import { Icon } from "@/src/components/ui/icon";
 import { Input, Textarea, Select } from "@/src/components/ui/input";
 import styles from "./launches.module.css";
@@ -24,6 +24,7 @@ import {
   type Campaign,
   type Connection,
   type ConnectorProvider,
+  type ExternalActionSubmission,
   type Launch,
   type LaunchChannel,
   type LaunchDetail,
@@ -36,7 +37,13 @@ import {
   type Workspace,
 } from "@tuezday/contracts";
 import { API_URL, apiDownload, apiFetch } from "@/lib/api";
+import {
+  actionAuthorizationHref,
+  externalActionWorkflowStatus,
+  submissionNote,
+} from "@/lib/external-actions";
 import { launchChannelReady } from "@/lib/persona-social-routing";
+import { reviewHref } from "@/lib/review-workspace";
 
 const DRAFT_STATE_TONE: Record<ApprovalState, "approved" | "pending" | "edited" | "rejected" | "draft"> = {
   draft: "draft",
@@ -110,6 +117,7 @@ export default function LaunchesPage() {
   const [busy, setBusy] = useState(false);
   const [igMedia, setIgMedia] = useState("");
   const [dispatchNote, setDispatchNote] = useState<string | null>(null);
+  const [dispatchSubmissions, setDispatchSubmissions] = useState<ExternalActionSubmission[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -182,6 +190,7 @@ export default function LaunchesPage() {
     setOpenId(launchId);
     setDetail(null);
     setDispatchNote(null);
+    setDispatchSubmissions([]);
     const res = await apiFetch(`/workspaces/${id}/launches/${launchId}`);
     if (res.ok) setDetail(await res.json());
   }
@@ -268,6 +277,7 @@ export default function LaunchesPage() {
   async function dispatch(launchId: string, channel: LaunchChannel) {
     setBusy(true);
     setDispatchNote(null);
+    setDispatchSubmissions([]);
     setError(null);
     try {
       const payload: { media?: { url: string; type: "image" | "video" }[] } = {};
@@ -290,10 +300,22 @@ export default function LaunchesPage() {
         },
       );
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.message ?? body?.error ?? `API returned ${res.status}`);
-      const sent = (body.results ?? []).filter((r: { status: string }) => r.status === "sent").length;
-      const failed = (body.results ?? []).filter((r: { status: string }) => r.status === "failed").length;
-      setDispatchNote(`${CHANNEL_LABELS[channel]}: ${sent} sent${failed ? `, ${failed} failed` : ""}.`);
+      if (!res.ok && !body?.action) {
+        throw new Error(body?.message ?? body?.error ?? `API returned ${res.status}`);
+      }
+      // Normal dispatches return a batch. A stale 409 returns the durable
+      // action alone so the owning surface can still explain and recover it.
+      const submissions: ExternalActionSubmission[] = Array.isArray(body?.submissions)
+        ? body.submissions
+        : body?.action
+          ? [{ action: body.action, execution: body.execution ?? body.action.execution ?? null }]
+          : [];
+      setDispatchSubmissions(submissions);
+      setDispatchNote(
+        submissions.length > 0
+          ? `${CHANNEL_LABELS[channel]}: ${submissions.map(submissionNote).join(" ")}`
+          : `${CHANNEL_LABELS[channel]}: no approved messages were ready to dispatch.`,
+      );
       await refreshDetail(launchId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Dispatch failed");
@@ -521,6 +543,7 @@ export default function LaunchesPage() {
                     igMedia={igMedia}
                     setIgMedia={setIgMedia}
                     dispatchNote={dispatchNote}
+                    dispatchSubmissions={dispatchSubmissions}
                     channelReady={(channel) => channelReadyForPersona(channel, detail.launch.personaId)}
                     onApprove={(draftId) => approve(draftId, launch.id)}
                     onDispatch={(channel) => dispatch(launch.id, channel)}
@@ -543,6 +566,7 @@ function LaunchDetailView({
   igMedia,
   setIgMedia,
   dispatchNote,
+  dispatchSubmissions,
   channelReady,
   onApprove,
   onDispatch,
@@ -554,6 +578,7 @@ function LaunchDetailView({
   igMedia: string;
   setIgMedia: (v: string) => void;
   dispatchNote: string | null;
+  dispatchSubmissions: ExternalActionSubmission[];
   channelReady: (c: LaunchChannel) => boolean;
   onApprove: (draftId: string) => void;
   onDispatch: (channel: LaunchChannel) => void;
@@ -570,6 +595,17 @@ function LaunchDetailView({
         {recipientCount} recipient(s) · status {launch.status}
       </p>
       {dispatchNote && <p className="bundle-summary">{dispatchNote}</p>}
+      {dispatchSubmissions.length > 0 && (
+        <ul className={styles.actionList}>
+          {dispatchSubmissions.map((submission) => (
+            <li key={submission.action.id}>
+              <WorkflowStatusBadge status={externalActionWorkflowStatus(submission.action)} />
+              <span>{submissionNote(submission)}</span>
+              <Link href={actionAuthorizationHref(submission.action)}>View action</Link>
+            </li>
+          ))}
+        </ul>
+      )}
 
       <SequenceSection
         workspaceId={workspaceId}
@@ -630,7 +666,12 @@ function LaunchDetailView({
 
             <ul className="section-list">
               {rows.map((m) => (
-                <MessageRow key={m.id} message={m} onApprove={onApprove} />
+                <MessageRow
+                  key={m.id}
+                  workspaceId={workspaceId}
+                  message={m}
+                  onApprove={onApprove}
+                />
               ))}
             </ul>
           </Card>
@@ -641,9 +682,11 @@ function LaunchDetailView({
 }
 
 function MessageRow({
+  workspaceId,
   message,
   onApprove,
 }: {
+  workspaceId: string;
   message: LaunchMessage;
   onApprove: (draftId: string) => void;
 }) {
@@ -669,6 +712,17 @@ function MessageRow({
               <a className="link-button" href={message.externalUrl} target="_blank" rel="noreferrer">
                 view
               </a>
+            )}
+            {message.externalActionId && (
+              <Link
+                className="link-button"
+                href={reviewHref(workspaceId, {
+                  tab: "authorizations",
+                  action: message.externalActionId,
+                })}
+              >
+                action record
+              </Link>
             )}
           </>
         )}
