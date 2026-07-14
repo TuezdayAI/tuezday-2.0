@@ -133,13 +133,19 @@ describe("engagement & reply inbox", () => {
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Inbox" } })
     ).json().id;
+    // Legacy direct-flow scenarios: publish + reply run autonomously so the
+    // provider behaviour stays observable. The reply authorization queue is
+    // covered in external-action-messaging.test.ts.
     await app.inject({
       method: "PUT",
       url: `/workspaces/${workspaceId}/external-action-policies`,
       payload: {
         scope: "workspace",
         scopeId: workspaceId,
-        rules: [{ actionKind: "publish", rule: "autonomous" }],
+        rules: [
+          { actionKind: "publish", rule: "autonomous" },
+          { actionKind: "reply", rule: "autonomous" },
+        ],
       },
     });
   });
@@ -184,7 +190,10 @@ describe("engagement & reply inbox", () => {
       payload: {
         scope: "campaign",
         scopeId: id,
-        rules: [{ actionKind: "publish", rule: "autonomous" }],
+        rules: [
+          { actionKind: "publish", rule: "autonomous" },
+          { actionKind: "reply", rule: "autonomous" },
+        ],
       },
     });
     return id;
@@ -382,15 +391,19 @@ describe("engagement & reply inbox", () => {
     expect(early.statusCode).toBe(409);
     expect(early.json().error).toBe("reply_not_approved");
 
-    // Approve, then post.
+    // Approve, then post — the reply action executes autonomously here.
     await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/drafts/${draft.id}/approve` });
     const posted = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/inbox/${item.id}/post-reply`,
     });
-    expect(posted.statusCode).toBe(200);
-    expect(posted.json().status).toBe("replied");
-    expect(posted.json().postedReplyExternalId).toBeTruthy();
+    expect(posted.statusCode).toBe(201);
+    expect(posted.json().action.status).toBe("succeeded");
+    expect(posted.json().execution.kind).toBe("inbox_reply");
+    const replied = (await listInbox()).find((i: { id: string }) => i.id === item.id);
+    expect(replied.status).toBe("replied");
+    expect(replied.postedReplyExternalId).toBeTruthy();
+    expect(replied.externalActionId).toBe(posted.json().action.id);
     expect(state.postedReplies).toHaveLength(1);
     expect(state.postedReplies[0]?.thing_id).toBe(item.externalId);
 
@@ -524,7 +537,8 @@ describe("engagement & reply inbox", () => {
       method: "POST",
       url: `/workspaces/${workspaceId}/inbox/${item.id}/post-reply`,
     });
-    expect(posted.statusCode).toBe(200);
-    expect(posted.json().status).toBe("replied");
+    expect(posted.statusCode).toBe(201);
+    expect(posted.json().action.status).toBe("succeeded");
+    expect((await listInbox())[0].status).toBe("replied");
   });
 });

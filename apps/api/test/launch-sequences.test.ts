@@ -134,6 +134,18 @@ describe("multi-step sequences", () => {
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Seq" } })
     ).json().id;
+    // Legacy engine scenarios: sends run autonomously so kill-switch/stop-on-
+    // reply behaviour stays observable. The send authorization queue is covered
+    // in external-action-messaging.test.ts.
+    await app.inject({
+      method: "PUT",
+      url: `/workspaces/${workspaceId}/external-action-policies`,
+      payload: {
+        scope: "workspace",
+        scopeId: workspaceId,
+        rules: [{ actionKind: "send", rule: "autonomous" }],
+      },
+    });
   });
 
   afterEach(async () => {

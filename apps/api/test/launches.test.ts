@@ -284,6 +284,18 @@ describe("targeted launch API", () => {
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Launcher" } })
     ).json().id;
+    // These are legacy direct-dispatch scenarios: sends run autonomously so the
+    // per-message provider behaviour stays observable. The authorization queue
+    // itself is covered in external-action-messaging.test.ts.
+    await app.inject({
+      method: "PUT",
+      url: `/workspaces/${workspaceId}/external-action-policies`,
+      payload: {
+        scope: "workspace",
+        scopeId: workspaceId,
+        rules: [{ actionKind: "send", rule: "autonomous" }],
+      },
+    });
   });
 
   afterEach(async () => {
@@ -509,12 +521,14 @@ describe("targeted launch API", () => {
       payload: {},
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json().results[0].status).toBe("sent");
+    expect(res.json().submissions[0].action.status).toBe("succeeded");
+    expect(res.json().submissions[0].execution.status).toBe("sent");
 
     const after = await detail(launchId);
     const sent = after.messages.find((m: { channel: string }) => m.channel === "linkedin");
     expect(sent.status).toBe("sent");
     expect(sent.externalUrl).toContain("urn:li:share");
+    expect(sent.externalActionId).toBe(res.json().submissions[0].action.id);
 
     const pubs = await app
       .inject({ method: "GET", url: `/workspaces/${workspaceId}/publications` })
@@ -562,7 +576,8 @@ describe("targeted launch API", () => {
       payload: { media: [{ url: "https://img/1.jpg", type: "image" }] },
     });
     expect(withMedia.statusCode).toBe(200);
-    expect(withMedia.json().results[0].status).toBe("sent");
+    expect(withMedia.json().submissions[0].action.status).toBe("succeeded");
+    expect(withMedia.json().submissions[0].execution.status).toBe("sent");
   });
 
   it("sends X DMs per recipient, surfacing a refusal without aborting the rest", async () => {
@@ -579,6 +594,10 @@ describe("targeted launch API", () => {
       payload: {},
     });
     expect(res.statusCode).toBe(200);
+    expect(res.json().submissions).toHaveLength(2); // Carol is skipped — no action
+    expect(
+      res.json().submissions.map((s: { action: { status: string } }) => s.action.status).sort(),
+    ).toEqual(["failed", "succeeded"]);
     const after = await detail(launchId);
     const x = after.messages.filter((m: { channel: string }) => m.channel === "x");
     expect(x.find((m: { recipientName: string }) => m.recipientName === "Alice").status).toBe("sent");
@@ -596,14 +615,14 @@ describe("targeted launch API", () => {
   it("does not dispatch messages whose draft is not approved", async () => {
     await connect("linkedin");
     const { launchId } = await fullLaunch();
-    // do not approve the LinkedIn draft
+    // do not approve the LinkedIn draft — no action is proposed for it
     const res = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/launches/${launchId}/channels/linkedin/dispatch`,
       payload: {},
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json().results[0].error).toMatch(/not approved/i);
+    expect(res.json().submissions).toHaveLength(0);
     const after = await detail(launchId);
     expect(after.messages.find((m: { channel: string }) => m.channel === "linkedin").status).toBe("pending");
   });

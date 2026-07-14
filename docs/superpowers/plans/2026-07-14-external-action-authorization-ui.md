@@ -388,29 +388,29 @@ git commit -m "feat(api): authorize publication actions"
 - Route dispatch returns `{ submissions: ExternalActionSubmission[] }`.
 - Sequence runtime receives the shared `ExternalActionRuntime` and never calls the X adapter directly.
 
-- [ ] **Step 1: Write failing messaging cutover tests**
+- [x] **Step 1: Write failing messaging cutover tests**
 
 Cover manual reply queue/authorization, auto-reply queue under human policy, autonomous reply once, broadcast send action, one X action per message, partial batch outcomes, sequence-generated approved X step proposal, worker restart idempotency, content change staleness, stop-on-reply guard, and unchanged email CSV behavior.
 
-- [ ] **Step 2: Run tests and confirm RED**
+- [x] **Step 2: Run tests and confirm RED**
 
 Run: `npm test -w apps/api -- external-action-messaging.test.ts inbox.test.ts launches.test.ts launch-sequences.test.ts`  
 Expected: FAIL because messaging still dispatches directly.
 
-- [ ] **Step 3: Implement reply and send adapters**
+- [x] **Step 3: Implement reply and send adapters**
 
 Reply snapshots the approved reply draft, inbound parent, recipient, connection, campaign/persona, and exact text; execute calls `postReplyForItem()` and links the inbox item. Send snapshots one launch message/destination; execute uses the existing broadcast publication or X DM logic and links the launch message. Revalidation rejects changed draft content/state, recipient, connection, or stop state.
 
-- [ ] **Step 4: Replace direct route and worker dispatch calls**
+- [x] **Step 4: Replace direct route and worker dispatch calls**
 
 Manual channel dispatch proposes all eligible message actions and returns their envelopes. Sequence steps propose after content approval and wait when authorization is required. `postApprovedReplies()` proposes rather than posts. Email export code remains untouched apart from regression assertions.
 
-- [ ] **Step 5: Run focused tests and confirm GREEN**
+- [x] **Step 5: Run focused tests and confirm GREEN**
 
 Run: `npm test -w apps/api -- external-action-messaging.test.ts inbox.test.ts launches.test.ts launch-sequences.test.ts`  
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api/src/services/external-action-adapters.ts apps/api/src/routes/inbox.ts apps/api/src/services/inbox.ts apps/api/src/routes/launches.ts apps/api/src/services/launches.ts apps/api/src/services/launch-sequences.ts apps/api/src/app.ts apps/api/test/external-action-messaging.test.ts apps/api/test/inbox.test.ts apps/api/test/launches.test.ts apps/api/test/launch-sequences.test.ts
@@ -755,6 +755,7 @@ Expected: push succeeds. Do not merge this branch to main until founder review.
 - 2026-07-14: Task 3 — implemented deterministic workspace/campaign resolution with persona/connection/lane safety constraints, complete labeled contributions, bounded policy mutations, authenticated policy routes, and startup backfill. Verified 11 focused API tests and monorepo typecheck.
 - 2026-07-14: Task 4 — added canonical fingerprints, immutable action/decision mapping, guarded lifecycle transitions, idempotent proposal, transactional authorize/deny, staleness, scheduling/runner recovery, durable blockers/results, and successor lineage. Verified 22 focused contract/API tests and monorepo typecheck.
 - 2026-07-14: Task 5 — registered shared action lifecycle routes and a destination-revalidating publication adapter; cut manual publishing, cadence fill, and the due runner over to durable actions while retaining legacy receipt recovery; preserved automation caps across pending actions and updated publication consumers for the action envelope. Verified 8 focused files / 105 tests and monorepo typecheck.
+- 2026-07-14: Task 6 — added reply and send adapters that snapshot the approved draft, recipient, connection, and exact text; cut manual post-reply, inbox auto-reply posting, launch channel dispatch, and sequence X sends over to durable `send`/`reply` actions with deterministic content-hashed idempotency keys (re-dispatch reports the governing action for already-sent messages); stop-on-reply, kill switch, and daily caps remain dispatch guardrails, engine-level pre-checks keep the pause-and-retry semantics for automated sends, and email CSV export stays outside governance. Verified 4 focused files / 51 tests, full suite 128 files / 1,322 tests, and monorepo typecheck.
 
 ## Plan self-review
 

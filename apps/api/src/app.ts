@@ -181,7 +181,7 @@ export async function buildApp({
   registerEvidenceRoutes(app, db, evidence);
   registerLearningRoutes(app, db, llm, fetcher);
   registerOutboundRoutes(app, db, llm, evidence);
-  registerLaunchRoutes(app, db, llm, evidence, connectors, fetcher, exporter);
+  registerLaunchRoutes(app, db, llm, evidence, exporter, externalActionRuntime);
   registerConnectorRoutes(app, db, connectors, fetcher, analytics);
   registerCrmRoutes(app, db, connectors, fetcher);
   registerAdsRoutes(app, db, connectors, fetcher);
@@ -196,7 +196,7 @@ export async function buildApp({
   registerCadenceRoutes(app, db, externalActionRuntime);
   registerMailRoutes(app, db, mailer);
   registerAutomationRoutes(app, db, llm, evidence);
-  registerInboxRoutes(app, db, llm, evidence, connectors, fetcher);
+  registerInboxRoutes(app, db, llm, evidence, connectors, externalActionRuntime);
   registerInsightsRoutes(app, db);
   registerNextActionRoutes(app, db);
 

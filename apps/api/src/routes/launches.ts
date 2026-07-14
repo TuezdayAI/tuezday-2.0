@@ -11,12 +11,12 @@ import {
 } from "@tuezday/contracts";
 import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
-import type { ConnectorFabric } from "../connectors/fabric";
 import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
 import type { OutboundExporter } from "../outbound/exporter";
 import { getAudience } from "../services/audiences";
 import { getCampaign } from "../services/campaigns";
+import type { ExternalActionRuntime } from "../services/external-action-coordinator";
 import { getPersona } from "../services/personas";
 import { getWorkspace } from "../services/workspaces";
 import {
@@ -36,8 +36,7 @@ import {
   startSequence,
   stopSequence,
 } from "../services/launch-sequences";
-
-type Fetcher = typeof fetch;
+import { externalActionError } from "./external-actions";
 
 function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
   const workspace = getWorkspace(db, id);
@@ -62,9 +61,8 @@ export function registerLaunchRoutes(
   db: Db,
   llm: LlmGateway,
   evidence: EvidenceStore,
-  fabric: ConnectorFabric,
-  fetcher: Fetcher,
   exporter: OutboundExporter,
+  runtime: ExternalActionRuntime,
 ): void {
   app.post<{ Params: { id: string } }>("/workspaces/:id/launches", async (request, reply) => {
     if (!workspaceOr404(db, request.params.id, reply)) return reply;
@@ -179,21 +177,25 @@ export function registerLaunchRoutes(
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      const result = await dispatchChannel(
-        db,
-        fabric,
-        fetcher,
-        request.params.id,
-        request.params.launchId,
-        channel,
-        parsed.data,
-      );
-      if (!result.ok) {
-        return reply
-          .status(DISPATCH_ERROR_STATUS[result.error] ?? 400)
-          .send({ error: result.error, message: result.message });
+      try {
+        const result = await dispatchChannel(
+          db,
+          runtime,
+          request.params.id,
+          request.params.launchId,
+          channel,
+          parsed.data,
+          actorOf(request),
+        );
+        if (!result.ok) {
+          return reply
+            .status(DISPATCH_ERROR_STATUS[result.error] ?? 400)
+            .send({ error: result.error, message: result.message });
+        }
+        return { submissions: result.submissions };
+      } catch (error) {
+        return externalActionError(error, reply);
       }
-      return { results: result.results };
     },
   );
 
@@ -254,8 +256,7 @@ export function registerLaunchRoutes(
         db,
         llm,
         evidence,
-        fabric,
-        fetcher,
+        runtime,
         request.params.id,
         request.params.launchId,
       );
@@ -276,8 +277,7 @@ export function registerLaunchRoutes(
         db,
         llm,
         evidence,
-        fabric,
-        fetcher,
+        runtime,
         request.params.id,
         request.params.launchId,
       );
@@ -312,7 +312,7 @@ export function registerLaunchRoutes(
     "/workspaces/:id/sequences/run",
     async (request, reply) => {
       if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      return runSequences(db, llm, evidence, fabric, fetcher, request.params.id);
+      return runSequences(db, llm, evidence, runtime, request.params.id);
     },
   );
 }
