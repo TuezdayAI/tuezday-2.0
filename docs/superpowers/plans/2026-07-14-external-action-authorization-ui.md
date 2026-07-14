@@ -90,7 +90,7 @@ interface ExternalActionRuntime {
 - Extends `calendarEntrySchema` with action entries and `executionResultSchema` with `externalActionIds`.
 - Extends `draftEditorContextSchema` with `actions: z.array(externalActionSchema)` and keeps legacy operational action links nullable.
 
-- [ ] **Step 1: Write failing vocabulary, schema, and transition tests**
+- [x] **Step 1: Write failing vocabulary, schema, and transition tests**
 
 ```ts
 expect(EXTERNAL_ACTION_STATUSES).toEqual([
@@ -109,12 +109,12 @@ expect(executionResultSchema.parse({ ...executionFixture(), externalActionIds: [
   .toMatchObject({ externalActionIds: [] });
 ```
 
-- [ ] **Step 2: Run contract tests and confirm RED**
+- [x] **Step 2: Run contract tests and confirm RED**
 
 Run: `npm test -w packages/contracts -- external-actions.test.ts execution-results.test.ts`  
 Expected: FAIL on missing exports and missing `externalActionIds`.
 
-- [ ] **Step 3: Add the canonical schemas and refinements**
+- [x] **Step 3: Add the canonical schemas and refinements**
 
 Use discriminated subjects (`draft`, `inbox_item`, `launch_message`, `ad_launch`, `campaign`) and execution refs (`publication`, `inbox_reply`, `launch_message`, `ad_launch`). Require a blocker for `blocked|stale`, require an execution ref for `succeeded`, and reject `workspace` rules whose `scopeId` differs from `workspaceId`.
 
@@ -131,12 +131,12 @@ Add `externalActionId: z.string().uuid().nullable()` to `publicationSchema` and 
 
 Keep compatibility request IDs optional on existing publish/dispatch inputs; routes derive a deterministic key when an older client omits one. New editor/origin clients always send their retained request ID.
 
-- [ ] **Step 4: Run contract tests and confirm GREEN**
+- [x] **Step 4: Run contract tests and confirm GREEN**
 
 Run: `npm test -w packages/contracts -- external-actions.test.ts execution-results.test.ts`  
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/contracts/src/index.ts packages/contracts/test/external-actions.test.ts packages/contracts/test/execution-results.test.ts
@@ -745,6 +745,7 @@ Expected: push succeeds. Do not merge this branch to main until founder review.
 - 2026-07-14: Approved four-part design: shared six-kind model, workspace/campaign policy UI, immediate post-authorization execution, full current adapter cutover, and unified Home priorities.
 - 2026-07-14: Completed UI revamp chain through conversational editor fast-forwarded into `main`; post-merge verification passed 122 files / 1,277 tests, typecheck, and web build; pushed `main@25cbdf8`.
 - 2026-07-14: Design specification committed on this branch as `5e4ea22`; implementation plan written after mapping contracts, schema, all execution boundaries, and golden-loop consumers.
+- 2026-07-14: Task 1 — external-action policy/action/decision/priority contracts, stale transitions, action-aware Calendar/result/editor fields, and exhaustive Calendar workflow mapping. Verified 25 contract files / 273 tests, focused web test, and monorepo typecheck.
 
 ## Plan self-review
 

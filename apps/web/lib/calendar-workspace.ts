@@ -91,9 +91,13 @@ export function shiftAnchor(view: CalendarViewMode, anchor: Date, delta: -1 | 1)
 // no workflow status; the page renders them as distinct slot chips.
 const ENTRY_WORKFLOW_STATUS: Record<CalendarEntryStatus, WorkflowStatus | null> = {
   open: null,
+  authorization_required: "authorization_required",
+  authorized: "authorized",
   scheduled: "scheduled",
   published: "completed",
   failed: "failed",
+  blocked: "policy_blocked",
+  stale: "stale",
 };
 
 export function entryWorkflowStatus(entry: CalendarEntry): WorkflowStatus | null {

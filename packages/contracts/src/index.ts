@@ -1042,9 +1042,264 @@ export const EXTERNAL_ACTION_STATUSES = [
   "succeeded",
   "failed",
   "blocked",
+  "stale",
   "cancelled",
 ] as const;
 export type ExternalActionStatus = (typeof EXTERNAL_ACTION_STATUSES)[number];
+
+export const EXTERNAL_ACTION_POLICY_SCOPES = [
+  "workspace",
+  "campaign",
+  "persona",
+  "connection",
+  "lane",
+] as const;
+export type ExternalActionPolicyScope = (typeof EXTERNAL_ACTION_POLICY_SCOPES)[number];
+
+export const EXTERNAL_ACTION_POLICY_RULES = [
+  "inherit",
+  "autonomous",
+  "human_required",
+] as const;
+export type ExternalActionPolicyRule = (typeof EXTERNAL_ACTION_POLICY_RULES)[number];
+
+export const EXTERNAL_ACTION_EFFECTIVE_POLICIES = ["autonomous", "human_required"] as const;
+export type ExternalActionEffectivePolicy =
+  (typeof EXTERNAL_ACTION_EFFECTIVE_POLICIES)[number];
+
+export const EXTERNAL_ACTION_DECISIONS = ["authorize", "deny"] as const;
+export type ExternalActionDecisionValue = (typeof EXTERNAL_ACTION_DECISIONS)[number];
+
+export const EXTERNAL_ACTION_SUBJECT_KINDS = [
+  "draft",
+  "inbox_item",
+  "launch_message",
+  "ad_launch",
+  "campaign",
+] as const;
+export type ExternalActionSubjectKind = (typeof EXTERNAL_ACTION_SUBJECT_KINDS)[number];
+
+export const EXTERNAL_ACTION_EXECUTION_KINDS = [
+  "publication",
+  "inbox_reply",
+  "launch_message",
+  "ad_launch",
+] as const;
+export type ExternalActionExecutionKind = (typeof EXTERNAL_ACTION_EXECUTION_KINDS)[number];
+
+export const PRIORITY_ITEM_KINDS = [
+  "execution_failure",
+  "stale_action",
+  "policy_block",
+  "authorization",
+  "content_review",
+] as const;
+export type PriorityItemKind = (typeof PRIORITY_ITEM_KINDS)[number];
+
+export const externalActionPolicyRuleSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    scope: z.enum(EXTERNAL_ACTION_POLICY_SCOPES),
+    scopeId: z.string().uuid(),
+    actionKind: z.enum(EXTERNAL_ACTION_KINDS),
+    rule: z.enum(EXTERNAL_ACTION_POLICY_RULES),
+    createdBy: z.string().uuid().nullable(),
+    createdAt: z.number().int(),
+    updatedAt: z.number().int(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.scope === "workspace" && value.scopeId !== value.workspaceId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["scopeId"],
+        message: "A workspace policy must use the workspace id as its scope id.",
+      });
+    }
+    if (value.scope === "workspace" && value.rule === "inherit") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["rule"],
+        message: "Workspace policy cannot inherit.",
+      });
+    }
+  });
+export type ExternalActionPolicyRuleRecord = z.infer<typeof externalActionPolicyRuleSchema>;
+
+export const externalActionPolicyContributionSchema = z.object({
+  scope: z.enum(EXTERNAL_ACTION_POLICY_SCOPES),
+  scopeId: z.string().uuid(),
+  scopeLabel: z.string().trim().min(1),
+  rule: z.enum(EXTERNAL_ACTION_POLICY_RULES),
+});
+export type ExternalActionPolicyContribution = z.infer<
+  typeof externalActionPolicyContributionSchema
+>;
+
+export const effectiveExternalActionPolicySchema = z.object({
+  effective: z.enum(EXTERNAL_ACTION_EFFECTIVE_POLICIES),
+  contributingRules: z.array(externalActionPolicyContributionSchema),
+});
+export type EffectiveExternalActionPolicy = z.infer<typeof effectiveExternalActionPolicySchema>;
+
+export const externalActionSubjectSchema = z.object({
+  kind: z.enum(EXTERNAL_ACTION_SUBJECT_KINDS),
+  id: z.string().uuid(),
+  title: z.string().trim().min(1),
+  summary: z.string(),
+  channel: z.string().nullable(),
+  destination: z.string().nullable(),
+});
+export type ExternalActionSubject = z.infer<typeof externalActionSubjectSchema>;
+
+export const externalActionContextSchema = z.object({
+  campaignId: z.string().uuid().nullable(),
+  campaignName: z.string().nullable(),
+  personaId: z.string().uuid().nullable(),
+  personaName: z.string().nullable(),
+  connectionId: z.string().uuid().nullable(),
+  connectionName: z.string().nullable(),
+  laneRevisionId: z.string().uuid().nullable(),
+  laneName: z.string().nullable(),
+});
+export type ExternalActionContext = z.infer<typeof externalActionContextSchema>;
+
+export const externalActionBlockerSchema = z.object({
+  code: z.string().trim().min(1),
+  message: z.string().trim().min(1),
+  retryable: z.boolean(),
+});
+export type ExternalActionBlocker = z.infer<typeof externalActionBlockerSchema>;
+
+export const externalActionExecutionRefSchema = z.object({
+  kind: z.enum(EXTERNAL_ACTION_EXECUTION_KINDS),
+  id: z.string().uuid(),
+  status: z.string().trim().min(1),
+  url: z.string().url().nullable(),
+  error: z.string().nullable(),
+});
+export type ExternalActionExecutionRef = z.infer<typeof externalActionExecutionRefSchema>;
+
+export const externalActionActorSchema = z.object({
+  userId: z.string().uuid().nullable(),
+  label: z.string().trim().min(1),
+});
+export type ExternalActionActor = z.infer<typeof externalActionActorSchema>;
+
+export const externalActionSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    kind: z.enum(EXTERNAL_ACTION_KINDS),
+    status: z.enum(EXTERNAL_ACTION_STATUSES),
+    subject: externalActionSubjectSchema,
+    context: externalActionContextSchema,
+    requestedFor: z.number().int().nullable(),
+    idempotencyKey: z.string().trim().min(1).max(300),
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    policy: effectiveExternalActionPolicySchema,
+    blocker: externalActionBlockerSchema.nullable(),
+    supersedesActionId: z.string().uuid().nullable(),
+    supersededByActionId: z.string().uuid().nullable(),
+    execution: externalActionExecutionRefSchema.nullable(),
+    proposedBy: externalActionActorSchema,
+    createdAt: z.number().int(),
+    updatedAt: z.number().int(),
+    authorizedAt: z.number().int().nullable(),
+    dispatchedAt: z.number().int().nullable(),
+    completedAt: z.number().int().nullable(),
+  })
+  .superRefine((value, ctx) => {
+    if ((value.status === "blocked" || value.status === "stale") && !value.blocker) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["blocker"],
+        message: `${value.status} actions require a durable blocker.`,
+      });
+    }
+    if (value.status === "succeeded" && !value.execution) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["execution"],
+        message: "Succeeded actions require an execution receipt.",
+      });
+    }
+  });
+export type ExternalAction = z.infer<typeof externalActionSchema>;
+
+export const externalActionDecisionSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  actionId: z.string().uuid(),
+  decision: z.enum(EXTERNAL_ACTION_DECISIONS),
+  reason: z.string().max(1_000).nullable(),
+  actor: externalActionActorSchema,
+  subjectFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  policy: effectiveExternalActionPolicySchema,
+  createdAt: z.number().int(),
+});
+export type ExternalActionDecision = z.infer<typeof externalActionDecisionSchema>;
+
+export const externalActionDetailSchema = z.object({
+  action: externalActionSchema,
+  decisions: z.array(externalActionDecisionSchema),
+});
+export type ExternalActionDetail = z.infer<typeof externalActionDetailSchema>;
+
+export const externalActionSubmissionSchema = z.object({
+  action: externalActionSchema,
+  execution: externalActionExecutionRefSchema.nullable(),
+});
+export type ExternalActionSubmission = z.infer<typeof externalActionSubmissionSchema>;
+
+export const externalActionListFiltersSchema = z.object({
+  status: z.enum(EXTERNAL_ACTION_STATUSES).optional(),
+  kind: z.enum(EXTERNAL_ACTION_KINDS).optional(),
+  campaign: z.string().uuid().optional(),
+  channel: z.string().trim().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+export type ExternalActionListFilters = z.infer<typeof externalActionListFiltersSchema>;
+
+export const authorizeExternalActionInputSchema = z.object({}).strict();
+export const denyExternalActionInputSchema = z.object({
+  reason: z.string().trim().min(1).max(1_000).nullable().optional(),
+});
+export const reproposeExternalActionInputSchema = z.object({
+  idempotencyKey: z.string().trim().min(1).max(300),
+});
+
+const externalActionPolicyWriteSchema = z.object({
+  actionKind: z.enum(EXTERNAL_ACTION_KINDS),
+  rule: z.enum(EXTERNAL_ACTION_POLICY_RULES),
+});
+
+export const upsertExternalActionPoliciesInputSchema = z
+  .object({
+    scope: z.enum(EXTERNAL_ACTION_POLICY_SCOPES),
+    scopeId: z.string().uuid(),
+    rules: z.array(externalActionPolicyWriteSchema).min(1).max(EXTERNAL_ACTION_KINDS.length),
+  })
+  .superRefine((value, ctx) => {
+    if (value.scope === "workspace" && value.rules.some((rule) => rule.rule === "inherit")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["rules"],
+        message: "Workspace policy cannot inherit.",
+      });
+    }
+    const kinds = value.rules.map((rule) => rule.actionKind);
+    if (new Set(kinds).size !== kinds.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["rules"],
+        message: "Each action kind may appear only once.",
+      });
+    }
+  });
+export type UpsertExternalActionPoliciesInput = z.infer<
+  typeof upsertExternalActionPoliciesInputSchema
+>;
 
 const DELIVERABLE_TRANSITIONS: Record<
   DeliverableProductionStatus,
@@ -1073,14 +1328,15 @@ export const EXTERNAL_ACTION_TRANSITIONS: Record<
   ExternalActionStatus,
   readonly ExternalActionStatus[]
 > = {
-  proposed: ["authorization_required", "authorized", "blocked", "cancelled"],
-  authorization_required: ["authorized", "cancelled"],
-  authorized: ["scheduled", "dispatching", "blocked", "cancelled"],
-  scheduled: ["dispatching", "blocked", "cancelled"],
+  proposed: ["authorization_required", "authorized", "blocked", "stale", "cancelled"],
+  authorization_required: ["authorized", "stale", "cancelled"],
+  authorized: ["scheduled", "dispatching", "blocked", "stale", "cancelled"],
+  scheduled: ["dispatching", "blocked", "stale", "cancelled"],
   dispatching: ["succeeded", "failed"],
   succeeded: [],
   failed: ["scheduled", "dispatching", "cancelled"],
   blocked: ["proposed", "cancelled"],
+  stale: ["cancelled"],
   cancelled: [],
 };
 
@@ -2878,6 +3134,8 @@ export const publicationSchema = z.object({
   externalId: z.string().nullable(),
   externalUrl: z.string().nullable(),
   lastError: z.string().nullable(),
+  /** Governing action for new receipts; absent/null on legacy rows. */
+  externalActionId: z.string().uuid().nullable().optional(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 });
@@ -2889,6 +3147,7 @@ export const publishDraftInputSchema = z.object({
   target: z.string().trim().min(1, "Target is required"),
   title: z.string().trim().min(1, "Title is required"),
   scheduledFor: z.number().int().positive().optional(),
+  idempotencyKey: z.string().trim().min(1).max(300).optional(),
 });
 export type PublishDraftInput = z.infer<typeof publishDraftInputSchema>;
 
@@ -2975,11 +3234,20 @@ export const updatePostingCadenceInputSchema = z
 export type UpdatePostingCadenceInput = z.infer<typeof updatePostingCadenceInputSchema>;
 
 /** A calendar cell: either a published/scheduled receipt or an empty slot. */
-export const CALENDAR_ENTRY_STATUSES = ["open", "scheduled", "published", "failed"] as const;
+export const CALENDAR_ENTRY_STATUSES = [
+  "open",
+  "authorization_required",
+  "authorized",
+  "scheduled",
+  "published",
+  "failed",
+  "blocked",
+  "stale",
+] as const;
 export type CalendarEntryStatus = (typeof CALENDAR_ENTRY_STATUSES)[number];
 
 export const calendarEntrySchema = z.object({
-  kind: z.enum(["slot", "publication"]),
+  kind: z.enum(["slot", "publication", "external_action"]),
   at: z.number().int(),
   cadenceId: z.string().uuid().nullable(),
   cadenceName: z.string().nullable(),
@@ -2991,6 +3259,7 @@ export const calendarEntrySchema = z.object({
   title: z.string(),
   draftId: z.string().uuid().nullable(),
   publicationId: z.string().uuid().nullable(),
+  externalActionId: z.string().uuid().nullable().optional(),
   url: z.string().nullable(),
   /** Last failure detail for a failed publication; null otherwise. */
   error: z.string().nullable(),
@@ -3101,6 +3370,8 @@ export const adLaunchSchema = z.object({
   platformStatus: z.string().nullable(),
   launchedAt: z.number().int().nullable(),
   lastError: z.string().nullable(),
+  /** Governing paid-launch action; absent/null on legacy rows. */
+  externalActionId: z.string().uuid().nullable().optional(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 });
@@ -3284,6 +3555,8 @@ export const inboxItemSchema = z.object({
   replyDraftId: z.string().uuid().nullable(),
   postedReplyExternalId: z.string().nullable(),
   postedReplyUrl: z.string().nullable(),
+  /** Governing reply action; absent/null until a reply proposal exists. */
+  externalActionId: z.string().uuid().nullable().optional(),
   externalCreatedAt: z.number().int(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
@@ -3686,6 +3959,8 @@ export const launchMessageSchema = z.object({
   externalUrl: z.string().nullable(),
   sentAt: z.number().int().nullable(),
   lastError: z.string().nullable(),
+  /** Governing send action; absent/null on legacy rows. */
+  externalActionId: z.string().uuid().nullable().optional(),
   // Which sequence step produced this message (Sprint 30). First-touch = 1.
   stepNumber: z.number().int(),
   // The linked draft's current approval state + content, for the launch UI.
@@ -3714,6 +3989,7 @@ export type GenerateLaunchInput = z.infer<typeof generateLaunchInputSchema>;
 export const dispatchChannelInputSchema = z.object({
   connectionId: z.string().uuid().optional(),
   media: z.array(launchMediaSchema).max(10, "At most 10 media items").optional(),
+  idempotencyKey: z.string().trim().min(1).max(300).optional(),
 });
 export type DispatchChannelInput = z.infer<typeof dispatchChannelInputSchema>;
 
@@ -4087,6 +4363,27 @@ export const WORKFLOW_STATUS_META: Record<
   experimental: { label: "Experimental", family: "informational" },
 };
 
+export const priorityItemSchema = z.object({
+  id: z.string().uuid(),
+  kind: z.enum(PRIORITY_ITEM_KINDS),
+  status: workflowStatusSchema,
+  title: z.string().trim().min(1),
+  reason: z.string().trim().min(1),
+  consequence: z.string().trim().min(1),
+  href: z.string().startsWith("/"),
+  campaignId: z.string().uuid().nullable(),
+  campaignName: z.string().nullable(),
+  dueAt: z.number().int().nullable(),
+  createdAt: z.number().int(),
+});
+export type PriorityItem = z.infer<typeof priorityItemSchema>;
+
+export const priorityQueueSchema = z.object({
+  items: z.array(priorityItemSchema),
+  generatedAt: z.number().int(),
+});
+export type PriorityQueue = z.infer<typeof priorityQueueSchema>;
+
 // ---------------------------------------------------------------------------
 // Unified execution results (UI revamp golden loop) — one read-only projection
 // over publications, targeted launches, and ad launches. External actions join
@@ -4130,6 +4427,8 @@ export const executionResultSchema = z.object({
   platformStatus: z.string().nullable(),
   destinations: executionDestinationsSchema,
   draftId: z.string().uuid().nullable(),
+  /** Empty for legacy results; launch rollups may carry several message actions. */
+  externalActionIds: z.array(z.string().uuid()).optional(),
 });
 export type ExecutionResult = z.infer<typeof executionResultSchema>;
 
@@ -4187,6 +4486,7 @@ export const draftEditorContextSchema = z.object({
   destination: editorDestinationSchema.nullable(),
   publications: z.array(publicationSchema),
   executions: z.array(executionResultSchema),
+  actions: z.array(externalActionSchema).optional(),
 });
 export type DraftEditorContext = z.infer<typeof draftEditorContextSchema>;
 

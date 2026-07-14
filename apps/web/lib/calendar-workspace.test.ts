@@ -97,6 +97,21 @@ describe("calendar workspace view model", () => {
     expect(entryWorkflowStatus(entry({ kind: "slot", status: "open" }))).toBeNull();
   });
 
+  it("maps external action calendar states to the canonical vocabulary", () => {
+    expect(
+      entryWorkflowStatus(entry({ kind: "external_action", status: "authorization_required" })),
+    ).toBe("authorization_required");
+    expect(entryWorkflowStatus(entry({ kind: "external_action", status: "authorized" }))).toBe(
+      "authorized",
+    );
+    expect(entryWorkflowStatus(entry({ kind: "external_action", status: "blocked" }))).toBe(
+      "policy_blocked",
+    );
+    expect(entryWorkflowStatus(entry({ kind: "external_action", status: "stale" }))).toBe(
+      "stale",
+    );
+  });
+
   it("filters by campaign and channel", () => {
     const entries = [
       entry({ campaignId: "c1", channel: "linkedin", title: "a" }),

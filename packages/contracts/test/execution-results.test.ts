@@ -19,6 +19,7 @@ const base = {
   platformStatus: null,
   destinations: { total: 1, succeeded: 1, failed: 0, skipped: 0, pending: 0 },
   draftId: null,
+  externalActionIds: [],
 };
 
 describe("unified execution result contracts", () => {
@@ -34,6 +35,13 @@ describe("unified execution result contracts", () => {
 
   it("accepts a completed publication result", () => {
     expect(executionResultSchema.parse(base)).toEqual(base);
+  });
+
+  it("carries one or many governing external action ids", () => {
+    const actionId = "19a8af74-7ae8-4fef-98b5-9a8c285af662";
+    expect(
+      executionResultSchema.parse({ ...base, externalActionIds: [actionId] }).externalActionIds,
+    ).toEqual([actionId]);
   });
 
   it("accepts a partially failed launch with per-destination counts", () => {
