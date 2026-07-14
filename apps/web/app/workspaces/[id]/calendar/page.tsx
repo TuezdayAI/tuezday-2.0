@@ -17,6 +17,8 @@ import { apiFetch } from "@/lib/api";
 import { reviewHref } from "@/lib/review-workspace";
 import {
   calendarDensity,
+  calendarEntryKey,
+  calendarRecoveryLabel,
   calendarView,
   entryChannels,
   entryWorkflowStatus,
@@ -33,6 +35,11 @@ const DAY_LABELS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 function entryIcon(e: CalendarEntry): IconName {
   if (e.kind === "slot") return "calendar";
+  if (e.kind === "external_action") {
+    if (e.status === "blocked" || e.status === "stale") return "warning";
+    if (e.status === "authorization_required") return "status-review";
+    return "status-approved";
+  }
   if (e.channel === "email") return "email";
   if (e.channel === "ads") return "ad";
   if (e.channel === "web") return "blog";
@@ -110,6 +117,7 @@ function DetailPanel({
   onCancel: (publicationId: string) => void;
 }) {
   const status = entryWorkflowStatus(entry);
+  const recoveryLabel = calendarRecoveryLabel(entry);
   const publicationId = entry.publicationId;
   return (
     <aside className={styles.panel} aria-label="Calendar entry detail">
@@ -182,6 +190,21 @@ function DetailPanel({
               })}
             >
               Open Review
+            </Link>
+          )}
+          {entry.externalActionId && recoveryLabel && (
+            <Link
+              href={reviewHref(workspaceId, {
+                tab: "authorizations",
+                action: entry.externalActionId,
+              })}
+            >
+              {recoveryLabel}
+            </Link>
+          )}
+          {entry.campaignId && entry.kind !== "slot" && (
+            <Link href={`/workspaces/${workspaceId}/campaigns/${entry.campaignId}?tab=results`}>
+              View campaign results
             </Link>
           )}
           {entry.kind === "slot" && (
@@ -282,7 +305,6 @@ export default function CalendarPage() {
   };
 
   const today = new Date();
-  const entryKey = (e: CalendarEntry) => `${e.publicationId ?? e.cadenceId}-${e.at}`;
   const entriesOn = (day: Date) =>
     visible.filter((e) => isSameDay(new Date(e.at), day)).sort((a, b) => a.at - b.at);
 
@@ -300,12 +322,14 @@ export default function CalendarPage() {
         })();
 
   const selectEntry = (entry: CalendarEntry) => {
-    setSelectedKey((k) => (k === entryKey(entry) ? null : entryKey(entry)));
+    setSelectedKey((key) =>
+      key === calendarEntryKey(entry) ? null : calendarEntryKey(entry),
+    );
   };
 
   // Resolve the selection against the visible set so it clears itself when
   // filters, the window, or a reload drop the entry.
-  const selected = visible.find((e) => entryKey(e) === selectedKey) ?? null;
+  const selected = visible.find((entry) => calendarEntryKey(entry) === selectedKey) ?? null;
 
   const pendingScoped = pendingDrafts.filter(
     (d) =>
@@ -514,9 +538,9 @@ export default function CalendarPage() {
                     ) : (
                       entriesOn(day).map((e) => (
                         <EntryCard
-                          key={entryKey(e)}
+                          key={calendarEntryKey(e)}
                           entry={e}
-                          selected={selectedKey === entryKey(e)}
+                          selected={selectedKey === calendarEntryKey(e)}
                           onSelect={selectEntry}
                         />
                       ))
@@ -543,9 +567,9 @@ export default function CalendarPage() {
                     <div className={styles.monthCellHead}>{day.getDate()}</div>
                     {entriesOn(day).map((e) => (
                       <EntryCard
-                        key={entryKey(e)}
+                        key={calendarEntryKey(e)}
                         entry={e}
-                        selected={selectedKey === entryKey(e)}
+                        selected={selectedKey === calendarEntryKey(e)}
                         onSelect={selectEntry}
                       />
                     ))}

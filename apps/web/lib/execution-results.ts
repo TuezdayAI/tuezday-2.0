@@ -3,6 +3,7 @@ import type {
   ExecutionResultKind,
   WorkflowStatus,
 } from "@tuezday/contracts";
+import { reviewHref } from "./review-workspace";
 
 export const EXECUTION_KIND_LABELS: Record<ExecutionResultKind, string> = {
   publication: "Post",
@@ -42,4 +43,27 @@ export function executionTargetHref(workspaceId: string, result: ExecutionResult
     case "ad_launch":
       return `/workspaces/${workspaceId}/ad-launches`;
   }
+}
+
+/** Link legacy results nowhere, a single action to its decision detail, and a
+ * launch rollup to the campaign-filtered authorization queue. */
+export function executionAuthorizationLink(
+  workspaceId: string,
+  result: ExecutionResult,
+): { label: string; href: string } | null {
+  const actionIds = [...new Set(result.externalActionIds ?? [])];
+  if (actionIds.length === 0) return null;
+  if (actionIds.length === 1) {
+    return {
+      label: "View authorization",
+      href: reviewHref(workspaceId, { tab: "authorizations", action: actionIds[0] }),
+    };
+  }
+  return {
+    label: `View ${actionIds.length} actions`,
+    href: reviewHref(workspaceId, {
+      tab: "authorizations",
+      campaign: result.campaignId ?? undefined,
+    }),
+  };
 }

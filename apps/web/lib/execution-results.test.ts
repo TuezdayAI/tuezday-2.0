@@ -3,6 +3,7 @@ import type { ExecutionResult } from "@tuezday/contracts";
 import {
   EXECUTION_KIND_LABELS,
   destinationSummary,
+  executionAuthorizationLink,
   executionTargetHref,
   executionWorkflowStatus,
 } from "./execution-results";
@@ -65,6 +66,34 @@ describe("execution results view model", () => {
     expect(executionTargetHref("ws1", result({ kind: "ad_launch" }))).toBe(
       "/workspaces/ws1/ad-launches",
     );
+  });
+
+  it("links zero, one, or many governing actions without inventing legacy data", () => {
+    expect(executionAuthorizationLink("ws1", result({ externalActionIds: [] }))).toBeNull();
+    expect(
+      executionAuthorizationLink(
+        "ws1",
+        result({ externalActionIds: ["22222222-2222-4222-8222-222222222222"] }),
+      ),
+    ).toEqual({
+      label: "View authorization",
+      href: "/workspaces/ws1/review?tab=authorizations&action=22222222-2222-4222-8222-222222222222",
+    });
+    expect(
+      executionAuthorizationLink(
+        "ws1",
+        result({
+          campaignId: "33333333-3333-4333-8333-333333333333",
+          externalActionIds: [
+            "22222222-2222-4222-8222-222222222222",
+            "44444444-4444-4444-8444-444444444444",
+          ],
+        }),
+      ),
+    ).toEqual({
+      label: "View 2 actions",
+      href: "/workspaces/ws1/review?tab=authorizations&campaign=33333333-3333-4333-8333-333333333333",
+    });
   });
 
   it("labels every result kind", () => {

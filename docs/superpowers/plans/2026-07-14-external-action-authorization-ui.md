@@ -669,31 +669,31 @@ git commit -m "feat(web): propose actions from owning workflows"
 - Calendar action entries link to authorization recovery.
 - Results expose one/many governing action links.
 
-- [ ] **Step 1: Write failing pure-model tests**
+- [x] **Step 1: Write failing pure-model tests**
 
 Test priority labels/icons/status/recovery, all-clear, action Calendar detail labels, action/publication deduped UI keys, and execution links for zero/one/many action IDs.
 
-- [ ] **Step 2: Run model tests and confirm RED**
+- [x] **Step 2: Run model tests and confirm RED**
 
 Run: `npm test -w apps/web -- priorities.test.ts calendar-workspace.test.ts execution-results.test.ts`  
 Expected: FAIL on missing helpers/action cases.
 
-- [ ] **Step 3: Replace Home's local draft queue**
+- [x] **Step 3: Replace Home's local draft queue**
 
 Fetch `/priorities` with existing workspace/checklist/learning calls. Render deterministic priority cards with canonical badge, why/consequence text, campaign context, and exact CTA. Keep setup and learning zones. Show all-clear only when the projection is empty.
 
-- [ ] **Step 4: Extend Calendar and Results UI**
+- [x] **Step 4: Extend Calendar and Results UI**
 
 Calendar displays authorization required, authorized, stale, and policy blocked with text/icon/color and Review recovery. Results show **View authorization** for one action and **View N actions** to the filtered authorization queue for rolled-up launches.
 
-- [ ] **Step 5: Add the Stage 3 shell contract and run tests**
+- [x] **Step 5: Add the Stage 3 shell contract and run tests**
 
 Pin Home → campaign/review links, Review authorization → Calendar recovery, editor → authorization, Calendar → results, canonical badges, and no duplicate local status vocabularies.
 
 Run: `npm test -w apps/web -- priorities.test.ts calendar-workspace.test.ts execution-results.test.ts stage-three-loop-shell-contract.test.ts`  
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/web/lib/priorities.ts apps/web/lib/priorities.test.ts apps/web/app/workspaces/[id]/page.tsx apps/web/app/workspaces/[id]/home-hero.module.css apps/web/lib/calendar-workspace.ts apps/web/lib/calendar-workspace.test.ts apps/web/app/workspaces/[id]/calendar apps/web/lib/execution-results.ts apps/web/lib/execution-results.test.ts apps/web/app/workspaces/[id]/campaigns/[campaignId]/_components/campaign-results.tsx apps/web/lib/stage-three-loop-shell-contract.test.ts
@@ -761,6 +761,7 @@ Expected: push succeeds. Do not merge this branch to main until founder review.
 - 2026-07-14: Task 7 — added a paid-launch adapter that fingerprints the approved launch, parsed creative, account, budget, dates, targeting, media, and gate status; the launch route now proposes durable `paid_launch` actions (attempt-numbered keys let a founder retry after failed/blocked/denied attempts), spend guardrails run as dispatch-time blockers, `performLaunch` executes once with action attribution and emits `ad.launched`, and historic ad-launch approval decisions stay untouched. Verified 6 new boundary tests, full suite 129 files / 1,328 tests, and monorepo typecheck.
 - 2026-07-14: Task 10 — added the workspace Action permissions card on Automation (six concrete `autonomous|human_required` defaults iterated straight from `EXTERNAL_ACTION_KINDS`, one bounded six-kind PUT, effective badges via the shared `effectivePolicyWorkflowStatus` helper, polite save/error announcements, and copy separating cadence guardrails from action permission) and the campaign Who-signs-off panel on the campaign overview (per-kind inherit/human/autonomous selects where inherit deletes the stored override, read-only workspace/persona/connection/lane contributor lines, and its own bounded batch save). Verified 20 focused web tests, all 23 web files / 110 tests, and monorepo typecheck.
 - 2026-07-14: Task 11 — added the editor Prepare publication flow with approved-content/destination eligibility, retained idempotency keys, destination/target/title/timing inputs, honest action/policy/status output, and link-only authorization; Inbox, Launches, and Ad Launches now parse governed action envelopes (including stale action-only responses), show canonical action badges and Review recovery links, refresh terminal autonomous results, and preserve reply approval, email CSV export, spend approval, and launch deep links. Removed an unreachable Reddit-only editor branch because Reddit is not in the canonical `Draft.channel` vocabulary. Verified 4 focused web files / 23 tests and web typecheck.
+- 2026-07-14: Task 12 — replaced Home's draft-only queue with the server-ranked `/priorities` projection, exact server recovery links, canonical badges, campaign context, why/consequence copy, and an honest all-clear state; added stable action/publication Calendar keys, kind-aware action icons, authorization/blocker/stale recovery links, and campaign Results links; Results now link zero/one/many governing actions without inventing links for legacy rows. Added a Stage 3 shell contract spanning Home, Review authorization, editor, Calendar, and Results. Verified 6 focused/regression web files / 36 tests and web typecheck.
 
 ## Plan self-review
 
