@@ -270,7 +270,7 @@ git commit -m "feat(api): resolve external action policy"
 - Consumes Task 3's `resolveExternalActionPolicy()`.
 - Uses an injected adapter registry whose `revalidate`, `guard`, and `execute` functions are completed in Tasks 5–7.
 
-- [ ] **Step 1: Write failing lifecycle tests with fake adapters**
+- [x] **Step 1: Write failing lifecycle tests with fake adapters**
 
 Cover identical idempotent proposal, incompatible-key conflict, human queue with zero adapter calls, autonomous dispatch, authorization/denial decisions, stale revalidation, scheduled runner, blocked guardrail, failed execution receipt, successor reproposal, unsupported action block, and restart retry without duplicate execution.
 
@@ -282,27 +282,27 @@ expect(retry.action.id).toBe(first.action.id);
 expect(fake.execute).toHaveBeenCalledTimes(0);
 ```
 
-- [ ] **Step 2: Run coordinator tests and confirm RED**
+- [x] **Step 2: Run coordinator tests and confirm RED**
 
 Run: `npm test -w apps/api -- external-actions.test.ts`  
 Expected: FAIL because the repository/runtime do not exist.
 
-- [ ] **Step 3: Implement canonical serialization and repository operations**
+- [x] **Step 3: Implement canonical serialization and repository operations**
 
 Sort object keys recursively, preserve array order, normalize absent optionals to null in prepared commands, and hash UTF-8 JSON with SHA-256. Repository mutations call `canTransitionExternalAction()` and throw `InvalidExternalActionTransitionError` otherwise. Store payload/snapshots once; never update them.
 
-- [ ] **Step 4: Implement proposal, decision, dispatch, and runner flow**
+- [x] **Step 4: Implement proposal, decision, dispatch, and runner flow**
 
 `propose()` inserts before effect, resolves policy, then queues or invokes `dispatch()`. `authorize()` revalidates and transactionally records its decision before dispatch. `deny()` records and cancels. `dispatch()` marks blockers/results durably. `run()` selects `authorized` plus due `scheduled` actions, revalidates each, and processes independently.
 
 Emit `review.action_authorized` only after the decision commit. Return durable action submissions for blocked/failed outcomes rather than throwing provider errors.
 
-- [ ] **Step 5: Run focused tests and confirm GREEN**
+- [x] **Step 5: Run focused tests and confirm GREEN**
 
 Run: `npm test -w apps/api -- external-actions.test.ts external-action-policy.test.ts`  
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api/src/services/external-action-fingerprint.ts apps/api/src/services/external-actions.ts apps/api/src/services/external-action-coordinator.ts apps/api/test/external-actions.test.ts
@@ -748,6 +748,7 @@ Expected: push succeeds. Do not merge this branch to main until founder review.
 - 2026-07-14: Task 1 — external-action policy/action/decision/priority contracts, stale transitions, action-aware Calendar/result/editor fields, and exhaustive Calendar workflow mapping. Verified 25 contract files / 273 tests, focused web test, and monorepo typecheck.
 - 2026-07-14: Task 2 — persisted normalized policy, action, and immutable decision rows; linked all four current execution records; generated and inspected migration 0045; added idempotent workspace/campaign policy backfill that preserves scheduled-auto behavior. Verified 19 focused API tests and monorepo typecheck.
 - 2026-07-14: Task 3 — implemented deterministic workspace/campaign resolution with persona/connection/lane safety constraints, complete labeled contributions, bounded policy mutations, authenticated policy routes, and startup backfill. Verified 11 focused API tests and monorepo typecheck.
+- 2026-07-14: Task 4 — added canonical fingerprints, immutable action/decision mapping, guarded lifecycle transitions, idempotent proposal, transactional authorize/deny, staleness, scheduling/runner recovery, durable blockers/results, and successor lineage. Verified 22 focused contract/API tests and monorepo typecheck.
 
 ## Plan self-review
 
