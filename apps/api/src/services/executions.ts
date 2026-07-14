@@ -81,6 +81,7 @@ function publicationResults(db: Db, workspaceId: string, campaignOf: CampaignOf)
         pending: 0,
       },
       draftId: publication.draftId,
+      externalActionIds: publication.externalActionId ? [publication.externalActionId] : [],
     };
   });
 }
@@ -98,6 +99,7 @@ function launchResults(db: Db, workspaceId: string, campaignOf: CampaignOf): Exe
       status: launchMessages.status,
       sentAt: launchMessages.sentAt,
       lastError: launchMessages.lastError,
+      externalActionId: launchMessages.externalActionId,
     })
     .from(launchMessages)
     .where(
@@ -110,7 +112,15 @@ function launchResults(db: Db, workspaceId: string, campaignOf: CampaignOf): Exe
 
   const byLaunch = new Map<
     string,
-    { sent: number; failed: number; skipped: number; pending: number; lastSentAt: number | null; error: string | null }
+    {
+      sent: number;
+      failed: number;
+      skipped: number;
+      pending: number;
+      lastSentAt: number | null;
+      error: string | null;
+      actionIds: Set<string>;
+    }
   >();
   for (const message of messageRows) {
     const rollup = byLaunch.get(message.launchId) ?? {
@@ -120,7 +130,9 @@ function launchResults(db: Db, workspaceId: string, campaignOf: CampaignOf): Exe
       pending: 0,
       lastSentAt: null,
       error: null,
+      actionIds: new Set<string>(),
     };
+    if (message.externalActionId) rollup.actionIds.add(message.externalActionId);
     if (message.status === "sent") rollup.sent += 1;
     else if (message.status === "failed") rollup.failed += 1;
     else if (message.status === "skipped") rollup.skipped += 1;
@@ -163,6 +175,7 @@ function launchResults(db: Db, workspaceId: string, campaignOf: CampaignOf): Exe
         pending: rollup.pending,
       },
       draftId: null,
+      externalActionIds: [...rollup.actionIds].sort(),
     });
   }
   return results;
@@ -198,6 +211,7 @@ function adLaunchResults(db: Db, workspaceId: string, campaignOf: CampaignOf): E
         pending: 0,
       },
       draftId: launch.creativeDraftId,
+      externalActionIds: launch.externalActionId ? [launch.externalActionId] : [],
     });
   }
   return results;

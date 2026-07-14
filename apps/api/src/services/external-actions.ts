@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, or } from "drizzle-orm";
 import {
   canTransitionExternalAction,
   type EffectiveExternalActionPolicy,
@@ -320,6 +320,30 @@ export function linkExternalActionSuccessor(
     .set({ supersededByActionId: successorId, updatedAt: Date.now() })
     .where(eq(externalActions.id, actionId))
     .run();
+}
+
+/** Actions whose subject or linked draft is this draft — the editor's action
+ * history, newest first. */
+export function listExternalActionsForDraft(
+  db: Db,
+  workspaceId: string,
+  draftId: string,
+): ExternalAction[] {
+  return db
+    .select()
+    .from(externalActions)
+    .where(
+      and(
+        eq(externalActions.workspaceId, workspaceId),
+        or(
+          eq(externalActions.draftId, draftId),
+          and(eq(externalActions.subjectKind, "draft"), eq(externalActions.subjectId, draftId)),
+        ),
+      ),
+    )
+    .orderBy(desc(externalActions.createdAt))
+    .all()
+    .map(rowToExternalAction);
 }
 
 const TERMINAL_EXTERNAL_ACTION_STATUSES: ReadonlySet<ExternalActionStatus> = new Set([

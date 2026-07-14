@@ -13,6 +13,8 @@ import {
 } from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
 import { applyDraftAction, submitDraft } from "../src/services/drafts";
+import { canonicalActionFingerprint } from "../src/services/external-action-fingerprint";
+import { insertExternalAction } from "../src/services/external-actions";
 import { buildAuthedApp, createTestDb } from "./helpers";
 
 const fakeLlm: LlmGateway = {
@@ -83,6 +85,43 @@ describe("unified execution results", () => {
     return applyDraftAction(db, draft, "approve", { userId: null, label: "test" }).id;
   }
 
+  /** A minimal governing action row so operational FKs can link to it. */
+  function seedActionRow(kind: "publish" | "send" | "paid_launch" = "publish"): string {
+    const id = randomUUID();
+    insertExternalAction(db, {
+      id,
+      workspaceId,
+      kind,
+      subject: {
+        kind: "draft",
+        id: randomUUID(),
+        title: "Seeded",
+        summary: "Body.",
+        channel: "linkedin",
+        destination: "LinkedIn · feed",
+      },
+      context: {
+        campaignId: null,
+        campaignName: null,
+        personaId: null,
+        personaName: null,
+        connectionId: null,
+        connectionName: null,
+        laneRevisionId: null,
+        laneName: null,
+      },
+      payload: {},
+      requestedFor: null,
+      idempotencyKey: `seed:${id}`,
+      fingerprint: canonicalActionFingerprint({ id }),
+      policy: { effective: "human_required", contributingRules: [] },
+      actor: { userId: null, label: "system" },
+      supersedesActionId: null,
+      draftId: null,
+    });
+    return id;
+  }
+
   function seedPublication(over: {
     id?: string;
     draftId: string;
@@ -90,6 +129,7 @@ describe("unified execution results", () => {
     at: number;
     lastError?: string | null;
     externalUrl?: string | null;
+    externalActionId?: string | null;
   }): string {
     const id = over.id ?? randomUUID();
     db.insert(publications)
@@ -97,6 +137,7 @@ describe("unified execution results", () => {
         id,
         workspaceId,
         draftId: over.draftId,
+        externalActionId: over.externalActionId ?? null,
         connectionId,
         providerKey: "reddit",
         target: "r/startups",
@@ -117,7 +158,11 @@ describe("unified execution results", () => {
     name: string;
     campaignId?: string | null;
     at: number;
-    messages: Array<{ status: "pending" | "sent" | "failed" | "skipped"; lastError?: string }>;
+    messages: Array<{
+      status: "pending" | "sent" | "failed" | "skipped";
+      lastError?: string;
+      externalActionId?: string;
+    }>;
   }): string {
     const id = randomUUID();
     db.insert(launches)
@@ -142,6 +187,7 @@ describe("unified execution results", () => {
           kind: "personalized",
           recipientName: `Recipient ${index}`,
           recipientEmail: `r${index}@example.com`,
+          externalActionId: message.externalActionId ?? null,
           status: message.status,
           sentAt: message.status === "sent" ? over.at : null,
           lastError: message.lastError ?? null,
@@ -159,6 +205,7 @@ describe("unified execution results", () => {
     status: "draft" | "approved" | "launched";
     platformStatus?: string | null;
     lastError?: string | null;
+    externalActionId?: string | null;
   }): string {
     const adAccountId = randomUUID();
     db.insert(adAccounts)
@@ -190,6 +237,7 @@ describe("unified execution results", () => {
         platformStatus: over.platformStatus ?? null,
         launchedAt: over.status === "launched" ? over.at : null,
         lastError: over.lastError ?? null,
+        externalActionId: over.externalActionId ?? null,
         createdAt: over.at - HOUR,
         updatedAt: over.at,
       })
@@ -329,6 +377,54 @@ describe("unified execution results", () => {
     const limited = await fetchResults("?limit=1");
     expect(limited).toHaveLength(1);
     expect(limited[0]?.title).toBe("Unscoped");
+  });
+
+  it("carries governing action ids on results and keeps legacy rows empty", async () => {
+    const publishAction = seedActionRow("publish");
+    seedPublication({
+      draftId: approvedDraft(),
+      status: "published",
+      at: T0 + HOUR,
+      externalActionId: publishAction,
+    });
+    seedPublication({ draftId: approvedDraft(), status: "published", at: T0 + 2 * HOUR });
+
+    const sendA = seedActionRow("send");
+    const sendB = seedActionRow("send");
+    seedLaunch({
+      name: "Governed launch",
+      at: T0 + 3 * HOUR,
+      messages: [
+        { status: "sent", externalActionId: sendA },
+        { status: "sent", externalActionId: sendA }, // duplicate link stays unique
+        { status: "failed", externalActionId: sendB },
+        { status: "skipped" }, // legacy message without a link
+      ],
+    });
+
+    const paidAction = seedActionRow("paid_launch");
+    seedAdLaunch({
+      name: "Governed spend",
+      at: T0 + 4 * HOUR,
+      status: "launched",
+      externalActionId: paidAction,
+    });
+
+    const results = await fetchResults();
+    const governedPublication = results.find(
+      (r) => r.kind === "publication" && r.at === T0 + HOUR,
+    );
+    expect(governedPublication?.externalActionIds).toEqual([publishAction]);
+    const legacyPublication = results.find(
+      (r) => r.kind === "publication" && r.at === T0 + 2 * HOUR,
+    );
+    expect(legacyPublication?.externalActionIds).toEqual([]);
+
+    const launch = results.find((r) => r.kind === "launch");
+    expect(launch?.externalActionIds?.slice().sort()).toEqual([sendA, sendB].sort());
+
+    const adLaunch = results.find((r) => r.kind === "ad_launch");
+    expect(adLaunch?.externalActionIds).toEqual([paidAction]);
   });
 
   it("keeps workspaces isolated", async () => {

@@ -51,6 +51,7 @@ import { registerMailRoutes } from "./routes/mail";
 import { registerNextActionRoutes } from "./routes/next-action";
 import { registerOutboundRoutes } from "./routes/outbound";
 import { registerPrRoutes } from "./routes/pr";
+import { registerPriorityRoutes } from "./routes/priorities";
 import { registerPublicationRoutes } from "./routes/publications";
 import { registerGenerationRoutes } from "./routes/generations";
 import { registerPersonaRoutes } from "./routes/personas";
@@ -193,6 +194,7 @@ export async function buildApp({
   registerExecutionRoutes(app, db);
   registerExternalActionRoutes(app, db, externalActionRuntime);
   registerExternalActionPolicyRoutes(app, db);
+  registerPriorityRoutes(app, db);
   registerCadenceRoutes(app, db, externalActionRuntime);
   registerMailRoutes(app, db, mailer);
   registerAutomationRoutes(app, db, llm, evidence);

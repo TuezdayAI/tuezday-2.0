@@ -445,6 +445,59 @@ describe("posting cadences", () => {
     }
   });
 
+  it("projects a timed action on the calendar only until its receipt exists", async () => {
+    const connectionId = await connectReddit();
+    const campaignId = await createCampaign("Summer Launch");
+    seedApprovedDraft({ campaignId, channel: "linkedin" });
+    const cadenceId = (await createCadence(cadencePayload({ campaignId, connectionId }))).json().id;
+    await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/cadences/${cadenceId}/fill`,
+    });
+    const action = (await listPublishActions())[0]!;
+
+    const from = MONDAY_8AM_UTC.getTime();
+    const calendar = async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/workspaces/${workspaceId}/calendar?from=${from}&to=${from + 7 * DAY_MS}`,
+      });
+      return res.json().entries.map((e: unknown) => calendarEntrySchema.parse(e));
+    };
+
+    // Queued: the action holds its slot — no duplicate open slot at that time.
+    let entries = await calendar();
+    const queued = entries.find((e: { kind: string }) => e.kind === "external_action");
+    expect(queued).toMatchObject({
+      at: action.requestedFor,
+      status: "authorization_required",
+      externalActionId: action.id,
+      campaignId,
+      campaignName: "Summer Launch",
+    });
+    expect(entries.filter((e: { at: number }) => e.at === action.requestedFor)).toHaveLength(1);
+
+    // Authorized before its due time → still the action, now `scheduled`.
+    await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/external-actions/${action.id}/authorize`,
+      payload: {},
+    });
+    entries = await calendar();
+    expect(
+      entries.find((e: { kind: string }) => e.kind === "external_action")?.status,
+    ).toBe("scheduled");
+    expect(entries.some((e: { kind: string }) => e.kind === "publication")).toBe(false);
+
+    // Once the runner produces the native receipt, the receipt replaces it.
+    vi.setSystemTime(new Date(action.requestedFor + 1));
+    await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
+    entries = await calendar();
+    expect(entries.some((e: { kind: string }) => e.kind === "external_action")).toBe(false);
+    const receipt = entries.find((e: { kind: string }) => e.kind === "publication");
+    expect(receipt?.at).toBe(action.requestedFor);
+  });
+
   // --- Fill -----------------------------------------------------------------
 
   describe("fill", () => {

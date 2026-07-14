@@ -475,29 +475,29 @@ git commit -m "feat(api): authorize paid launch actions"
 - Adds relevant action summaries to `DraftEditorContext`.
 - Adds action entries to Calendar and action IDs to execution results.
 
-- [ ] **Step 1: Write failing projection tests**
+- [x] **Step 1: Write failing projection tests**
 
 Test deterministic rank/due-time ties, linked failure deduplication, all-clear, campaign/recovery copy, Calendar action-before-receipt and receipt-after-link deduplication, legacy result empty IDs, launch rollup multiple IDs, and editor action history scoped to its draft.
 
-- [ ] **Step 2: Run projection tests and confirm RED**
+- [x] **Step 2: Run projection tests and confirm RED**
 
 Run: `npm test -w apps/api -- priorities.test.ts cadences.test.ts executions.test.ts draft-editor-context.test.ts`  
 Expected: FAIL on missing projection fields/routes.
 
-- [ ] **Step 3: Implement priorities and route**
+- [x] **Step 3: Implement priorities and route**
 
 Rank overdue failure/block/stale, overdue authorization, other failure/block/stale, authorization, then content review. Dedupe a failed execution when its linked action already represents it. Include `reason`, `consequence`, `status`, `campaignId/name`, `dueAt`, `createdAt`, and exact Review/owner URL.
 
-- [ ] **Step 4: Extend Calendar, executions, and editor context**
+- [x] **Step 4: Extend Calendar, executions, and editor context**
 
 Calendar includes timed action states only while no native calendar receipt is linked. Execution results read operational `externalActionId` values and aggregate unique launch-message action IDs. Editor context lists actions whose subject or execution draft ID equals the draft.
 
-- [ ] **Step 5: Run projection tests and confirm GREEN**
+- [x] **Step 5: Run projection tests and confirm GREEN**
 
 Run: `npm test -w apps/api -- priorities.test.ts cadences.test.ts executions.test.ts draft-editor-context.test.ts`  
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api/src/services/priorities.ts apps/api/src/routes/priorities.ts apps/api/src/services/calendar.ts apps/api/src/services/executions.ts apps/api/src/services/draft-editor.ts apps/api/src/app.ts apps/api/test/priorities.test.ts apps/api/test/cadences.test.ts apps/api/test/executions.test.ts apps/api/test/draft-editor-context.test.ts
@@ -755,8 +755,9 @@ Expected: push succeeds. Do not merge this branch to main until founder review.
 - 2026-07-14: Task 3 — implemented deterministic workspace/campaign resolution with persona/connection/lane safety constraints, complete labeled contributions, bounded policy mutations, authenticated policy routes, and startup backfill. Verified 11 focused API tests and monorepo typecheck.
 - 2026-07-14: Task 4 — added canonical fingerprints, immutable action/decision mapping, guarded lifecycle transitions, idempotent proposal, transactional authorize/deny, staleness, scheduling/runner recovery, durable blockers/results, and successor lineage. Verified 22 focused contract/API tests and monorepo typecheck.
 - 2026-07-14: Task 5 — registered shared action lifecycle routes and a destination-revalidating publication adapter; cut manual publishing, cadence fill, and the due runner over to durable actions while retaining legacy receipt recovery; preserved automation caps across pending actions and updated publication consumers for the action envelope. Verified 8 focused files / 105 tests and monorepo typecheck.
-- 2026-07-14: Task 7 — added a paid-launch adapter that fingerprints the approved launch, parsed creative, account, budget, dates, targeting, media, and gate status; the launch route now proposes durable `paid_launch` actions (attempt-numbered keys let a founder retry after failed/blocked/denied attempts), spend guardrails run as dispatch-time blockers, `performLaunch` executes once with action attribution and emits `ad.launched`, and historic ad-launch approval decisions stay untouched. Verified 6 new boundary tests, full suite 129 files / 1,328 tests, and monorepo typecheck.
 - 2026-07-14: Task 6 — added reply and send adapters that snapshot the approved draft, recipient, connection, and exact text; cut manual post-reply, inbox auto-reply posting, launch channel dispatch, and sequence X sends over to durable `send`/`reply` actions with deterministic content-hashed idempotency keys (re-dispatch reports the governing action for already-sent messages); stop-on-reply, kill switch, and daily caps remain dispatch guardrails, engine-level pre-checks keep the pause-and-retry semantics for automated sends, and email CSV export stays outside governance. Verified 4 focused files / 51 tests, full suite 128 files / 1,322 tests, and monorepo typecheck.
+- 2026-07-14: Task 8 — added the ranked priorities projection and `GET /workspaces/:id/priorities` (overdue failures/blocks/stale, overdue authorizations, other blockers, authorizations, then content review; linked failed executions dedupe behind their governing action); Calendar now projects timed action states until a native receipt is linked and lets queued actions hold their cadence slots; execution results carry governing action ids (unique launch-message rollups, empty for legacy rows); the editor context lists actions scoped to its draft. Verified 4 focused files / 29 tests, full suite 130 files / 1,336 tests, and monorepo typecheck.
+- 2026-07-14: Task 7 — added a paid-launch adapter that fingerprints the approved launch, parsed creative, account, budget, dates, targeting, media, and gate status; the launch route now proposes durable `paid_launch` actions (attempt-numbered keys let a founder retry after failed/blocked/denied attempts), spend guardrails run as dispatch-time blockers, `performLaunch` executes once with action attribution and emits `ad.launched`, and historic ad-launch approval decisions stay untouched. Verified 6 new boundary tests, full suite 129 files / 1,328 tests, and monorepo typecheck.
 
 ## Plan self-review
 
