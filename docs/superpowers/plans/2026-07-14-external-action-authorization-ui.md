@@ -215,7 +215,7 @@ git commit -m "feat(api): persist external action governance"
 - Produces `resolveExternalActionPolicy(db, context)`, `listExternalActionPolicies()`, `upsertExternalActionPolicies()`, and `deleteExternalActionPolicy()`.
 - Produces GET/PUT/DELETE routes exactly as specified in the design.
 
-- [ ] **Step 1: Write failing policy table tests**
+- [x] **Step 1: Write failing policy table tests**
 
 Cover workspace fallback, campaign replacement, persona/connection/lane human constraints, inherit, cross-workspace scope rejection, complete contributing-rule labels, bounded batch writes, and deleting a campaign override.
 
@@ -226,16 +226,16 @@ expect(resolveExternalActionPolicy(db, {
 }).effective).toBe("human_required");
 ```
 
-- [ ] **Step 2: Run tests and confirm RED**
+- [x] **Step 2: Run tests and confirm RED**
 
 Run: `npm test -w apps/api -- external-action-policy.test.ts`  
 Expected: FAIL on missing service/routes.
 
-- [ ] **Step 3: Implement the resolver and mutations**
+- [x] **Step 3: Implement the resolver and mutations**
 
 Resolve workspace baseline, replace it with an explicit non-inherit campaign rule, then force `human_required` if any persona/connection/lane constraint requires it. Return every queried scope with its label and stored/inherited rule so UI explanations are complete. Reject workspace `inherit` and a batch larger than six kinds.
 
-- [ ] **Step 4: Add thin routes and register them**
+- [x] **Step 4: Add thin routes and register them**
 
 ```ts
 GET    /workspaces/:id/external-action-policies?scope=&scopeId=
@@ -245,12 +245,12 @@ DELETE /workspaces/:id/external-action-policies/:ruleId
 
 Call `backfillExternalActionPolicies(db)` once inside `buildApp()` before route registration.
 
-- [ ] **Step 5: Run focused tests and confirm GREEN**
+- [x] **Step 5: Run focused tests and confirm GREEN**
 
 Run: `npm test -w apps/api -- external-action-policy.test.ts external-action-persistence.test.ts`  
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api/src/services/external-action-policy.ts apps/api/src/routes/external-action-policies.ts apps/api/src/app.ts apps/api/test/external-action-policy.test.ts
@@ -747,6 +747,7 @@ Expected: push succeeds. Do not merge this branch to main until founder review.
 - 2026-07-14: Design specification committed on this branch as `5e4ea22`; implementation plan written after mapping contracts, schema, all execution boundaries, and golden-loop consumers.
 - 2026-07-14: Task 1 — external-action policy/action/decision/priority contracts, stale transitions, action-aware Calendar/result/editor fields, and exhaustive Calendar workflow mapping. Verified 25 contract files / 273 tests, focused web test, and monorepo typecheck.
 - 2026-07-14: Task 2 — persisted normalized policy, action, and immutable decision rows; linked all four current execution records; generated and inspected migration 0045; added idempotent workspace/campaign policy backfill that preserves scheduled-auto behavior. Verified 19 focused API tests and monorepo typecheck.
+- 2026-07-14: Task 3 — implemented deterministic workspace/campaign resolution with persona/connection/lane safety constraints, complete labeled contributions, bounded policy mutations, authenticated policy routes, and startup backfill. Verified 11 focused API tests and monorepo typecheck.
 
 ## Plan self-review
 

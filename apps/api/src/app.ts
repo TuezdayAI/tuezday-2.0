@@ -39,6 +39,7 @@ import { registerDiscoveryRoutes } from "./routes/discovery";
 import { registerDraftRoutes } from "./routes/drafts";
 import { registerEvidenceRoutes } from "./routes/evidence";
 import { registerExecutionRoutes } from "./routes/executions";
+import { registerExternalActionPolicyRoutes } from "./routes/external-action-policies";
 import { registerDesignSystemRoutes } from "./routes/design-systems";
 import { registerGuidanceRoutes } from "./routes/guidance";
 import { registerGenerationSettingsRoutes } from "./routes/generation-settings";
@@ -63,6 +64,7 @@ import { registerBillingRoutes, registerStripeWebhookRoute } from "./routes/bill
 import { registerNotificationRoutes } from "./routes/notifications";
 import { registerApiKeyRoutes } from "./routes/api-keys";
 import { registerPublicApiRoutes } from "./routes/public-api";
+import { backfillExternalActionPolicies } from "./services/external-action-backfill";
 
 export type TuezdayApp = FastifyInstance;
 
@@ -113,6 +115,7 @@ export async function buildApp({
   render = renderSlide,
 }: BuildAppOptions): Promise<TuezdayApp> {
   const app = Fastify({ logger: false });
+  backfillExternalActionPolicies(db);
 
   // The design renderer keeps one shared headless browser per process.
   app.addHook("onClose", async () => {
@@ -180,6 +183,7 @@ export async function buildApp({
   registerPrRoutes(app, db, llm, evidence);
   registerPublicationRoutes(app, db, connectors, fetcher, analytics);
   registerExecutionRoutes(app, db);
+  registerExternalActionPolicyRoutes(app, db);
   registerCadenceRoutes(app, db, connectors, fetcher);
   registerMailRoutes(app, db, mailer);
   registerAutomationRoutes(app, db, llm, evidence);
