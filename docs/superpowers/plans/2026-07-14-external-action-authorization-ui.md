@@ -577,25 +577,25 @@ git commit -m "feat(web): add authorization review queue"
 - Workspace control edits six concrete defaults (`autonomous|human_required`).
 - Campaign control edits six values including `inherit` and shows effective result/contributors.
 
-- [ ] **Step 1: Write failing structural/view tests**
+- [x] **Step 1: Write failing structural/view tests**
 
 Pin contract kind iteration, no redeclared kind arrays, workspace disallowing inherit, campaign inherit/reset behavior, save/error announcements, and plain-language separation between automation cadence and action permission.
 
-- [ ] **Step 2: Run test and confirm RED**
+- [x] **Step 2: Run test and confirm RED**
 
 Run: `npm test -w apps/web -- action-policy-controls.test.ts`  
 Expected: FAIL because controls do not exist.
 
-- [ ] **Step 3: Build workspace defaults and campaign overrides**
+- [x] **Step 3: Build workspace defaults and campaign overrides**
 
 Fetch policy routes independently of guardrails/campaign plan data. Save one bounded six-kind batch. Show effective status badges and contributing persona/connection/lane constraints read-only. A campaign `inherit` deletes its stored override.
 
-- [ ] **Step 4: Run focused tests and confirm GREEN**
+- [x] **Step 4: Run focused tests and confirm GREEN**
 
 Run: `npm test -w apps/web -- action-policy-controls.test.ts campaign-workspace-contract.test.ts`  
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/web/app/workspaces/[id]/automation apps/web/app/workspaces/[id]/campaigns/[campaignId]/_components/campaign-action-policy.tsx apps/web/app/workspaces/[id]/campaigns/[campaignId]/_components/campaign-overview.tsx apps/web/app/workspaces/[id]/campaigns/[campaignId]/campaign-workspace.module.css apps/web/lib/action-policy-controls.test.ts
@@ -759,6 +759,7 @@ Expected: push succeeds. Do not merge this branch to main until founder review.
 - 2026-07-14: Task 9 — added the pure external-action web model (canonical workflow-status mapping including kind-aware dispatching states, kind labels, policy explanations naming every non-inherit contributing scope, impact/timing copy, owning-surface recovery links, combined filters), extended `reviewHref`/`REVIEW_TABS` with the authorizations tab plus kind/status/action params, and built the self-fetching Authorizations queue with detail panel (exact content, policy/guardrail/receipt/decision regions, live announcements, authorize/deny guarded against double submits, stale/blocked recovery + re-propose) mounted with its own Review tab count. Verified 25 focused web tests, full suite 132 files / 1,349 tests, and monorepo typecheck.
 - 2026-07-14: Task 8 — added the ranked priorities projection and `GET /workspaces/:id/priorities` (overdue failures/blocks/stale, overdue authorizations, other blockers, authorizations, then content review; linked failed executions dedupe behind their governing action); Calendar now projects timed action states until a native receipt is linked and lets queued actions hold their cadence slots; execution results carry governing action ids (unique launch-message rollups, empty for legacy rows); the editor context lists actions scoped to its draft. Verified 4 focused files / 29 tests, full suite 130 files / 1,336 tests, and monorepo typecheck.
 - 2026-07-14: Task 7 — added a paid-launch adapter that fingerprints the approved launch, parsed creative, account, budget, dates, targeting, media, and gate status; the launch route now proposes durable `paid_launch` actions (attempt-numbered keys let a founder retry after failed/blocked/denied attempts), spend guardrails run as dispatch-time blockers, `performLaunch` executes once with action attribution and emits `ad.launched`, and historic ad-launch approval decisions stay untouched. Verified 6 new boundary tests, full suite 129 files / 1,328 tests, and monorepo typecheck.
+- 2026-07-14: Task 10 — added the workspace Action permissions card on Automation (six concrete `autonomous|human_required` defaults iterated straight from `EXTERNAL_ACTION_KINDS`, one bounded six-kind PUT, effective badges via the shared `effectivePolicyWorkflowStatus` helper, polite save/error announcements, and copy separating cadence guardrails from action permission) and the campaign Who-signs-off panel on the campaign overview (per-kind inherit/human/autonomous selects where inherit deletes the stored override, read-only workspace/persona/connection/lane contributor lines, and its own bounded batch save). Verified 20 focused web tests, all 23 web files / 110 tests, and monorepo typecheck.
 
 ## Plan self-review
 

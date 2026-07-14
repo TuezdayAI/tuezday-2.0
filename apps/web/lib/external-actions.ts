@@ -1,5 +1,6 @@
 import type {
   ExternalAction,
+  ExternalActionEffectivePolicy,
   ExternalActionKind,
   ExternalActionStatus,
   WorkflowStatus,
@@ -55,6 +56,14 @@ export function actionKindLabel(kind: ExternalActionKind): string {
   return KIND_LABELS[kind];
 }
 
+/** Badge vocabulary for a resolved policy: whether actions of a kind wait for
+ * a human decision or go out autonomously. */
+export function effectivePolicyWorkflowStatus(
+  effective: ExternalActionEffectivePolicy,
+): WorkflowStatus {
+  return effective === "human_required" ? "authorization_required" : "active";
+}
+
 const SCOPE_LABELS: Record<string, string> = {
   workspace: "Workspace default",
   campaign: "Campaign override",
@@ -62,6 +71,10 @@ const SCOPE_LABELS: Record<string, string> = {
   connection: "Connection constraint",
   lane: "Lane constraint",
 };
+
+export function policyScopeLabel(scope: string): string {
+  return SCOPE_LABELS[scope] ?? scope;
+}
 
 /** Why this action needs (or skipped) a human decision — every non-inherit
  * contributing rule is named so the founder can see where the policy came from. */
