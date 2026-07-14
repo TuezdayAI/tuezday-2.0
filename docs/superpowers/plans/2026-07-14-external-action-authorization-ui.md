@@ -707,37 +707,37 @@ git commit -m "feat(web): close the Stage 3 operating loop"
 - Modify: `docs/ui-ux/capability-registry.md`
 - Modify: this plan's progress log
 
-- [ ] **Step 1: Run the full test suite unpiped**
+- [x] **Step 1: Run the full test suite unpiped**
 
 Run: `npm test`  
 Expected: exit 0. If macOS sandboxing denies the Playwright Chromium rendezvous, rerun the same command with browser execution permitted and record only the green run.
 
-- [ ] **Step 2: Run typecheck unpiped**
+- [x] **Step 2: Run typecheck unpiped**
 
 Run: `npm run typecheck`  
 Expected: exit 0.
 
-- [ ] **Step 3: Run the production web build unpiped**
+- [x] **Step 3: Run the production web build unpiped**
 
 Run: `npm run build -w apps/web`  
 Expected: exit 0. Network access may be required for the configured Google Fonts.
 
-- [ ] **Step 4: Write acceptance evidence**
+- [x] **Step 4: Write acceptance evidence**
 
 Record delivered contracts/tables/routes/adapters, policy resolution, Review/editor/Home/Calendar/Results behavior, migration/backfill, exact test counts and exit codes, manual testing steps, and explicit deferrals for budget/targeting adapters, dedicated narrow-scope policy editors, batch authorization, and native email send.
 
-- [ ] **Step 5: Update capability registry accurately**
+- [x] **Step 5: Update capability registry accurately**
 
 Mark External-action authorization implemented; update Ranked next action, Calendar, Publication execution, Unified execution results, and editor execution rows. Do not mark deferred action adapters or later priority sources complete.
 
-- [ ] **Step 6: Commit docs**
+- [x] **Step 6: Commit docs**
 
 ```bash
 git add docs/ui-ux/external-action-authorization-acceptance.md docs/ui-ux/capability-registry.md docs/superpowers/plans/2026-07-14-external-action-authorization-ui.md
 git commit -m "docs: accept external action authorization slice"
 ```
 
-- [ ] **Step 7: Confirm clean branch and push**
+- [x] **Step 7: Confirm clean branch and push**
 
 Run: `git status --short --branch`  
 Expected: clean `ui-revamp/external-action-authorization`.
@@ -762,6 +762,7 @@ Expected: push succeeds. Do not merge this branch to main until founder review.
 - 2026-07-14: Task 10 — added the workspace Action permissions card on Automation (six concrete `autonomous|human_required` defaults iterated straight from `EXTERNAL_ACTION_KINDS`, one bounded six-kind PUT, effective badges via the shared `effectivePolicyWorkflowStatus` helper, polite save/error announcements, and copy separating cadence guardrails from action permission) and the campaign Who-signs-off panel on the campaign overview (per-kind inherit/human/autonomous selects where inherit deletes the stored override, read-only workspace/persona/connection/lane contributor lines, and its own bounded batch save). Verified 20 focused web tests, all 23 web files / 110 tests, and monorepo typecheck.
 - 2026-07-14: Task 11 — added the editor Prepare publication flow with approved-content/destination eligibility, retained idempotency keys, destination/target/title/timing inputs, honest action/policy/status output, and link-only authorization; Inbox, Launches, and Ad Launches now parse governed action envelopes (including stale action-only responses), show canonical action badges and Review recovery links, refresh terminal autonomous results, and preserve reply approval, email CSV export, spend approval, and launch deep links. Removed an unreachable Reddit-only editor branch because Reddit is not in the canonical `Draft.channel` vocabulary. Verified 4 focused web files / 23 tests and web typecheck.
 - 2026-07-14: Task 12 — replaced Home's draft-only queue with the server-ranked `/priorities` projection, exact server recovery links, canonical badges, campaign context, why/consequence copy, and an honest all-clear state; added stable action/publication Calendar keys, kind-aware action icons, authorization/blocker/stale recovery links, and campaign Results links; Results now link zero/one/many governing actions without inventing links for legacy rows. Added a Stage 3 shell contract spanning Home, Review authorization, editor, Calendar, and Results. Verified 6 focused/regression web files / 36 tests and web typecheck.
+- 2026-07-14: Task 13 — accepted the full external-action authorization slice and updated the capability registry. Fresh unpiped verification passed 136 files / 1,378 tests (including Chromium), repository-wide typecheck across seven workspaces, and the production web build, all with exit 0. Documented the remaining authenticated visual walkthrough and explicit Stage 5/later-surface deferrals.
 
 ## Plan self-review
 
