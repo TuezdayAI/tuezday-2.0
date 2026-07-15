@@ -4,6 +4,7 @@ import {
   type Channel,
   type Connection,
   type Draft,
+  type ExternalActionSubmission,
   type LaunchStatus,
   type Person,
   type SequenceChannel,
@@ -41,6 +42,12 @@ import {
   prepareSendAction,
 } from "./external-action-adapters";
 import type { ExternalActionRuntime } from "./external-action-coordinator";
+import {
+  deriveEmailSendIdempotencyKey,
+  prepareEmailAction,
+} from "./external-action-email";
+import { checkEmailRecipientSafety } from "./email-recipient-safety";
+import { getExternalAction } from "./external-actions";
 import { resolveChannelGuidance } from "./guidance";
 import { selectiveContextInputs } from "./resolve-input";
 import { listConnections } from "./connections";
@@ -496,6 +503,67 @@ interface DispatchResult {
   sentAt?: number;
   blocked?: "kill_switch_on" | "connection_cap" | "no_connection";
   error?: string;
+  submission?: ExternalActionSubmission;
+}
+
+async function proposeEmailSend(
+  ctx: RunCtx,
+  launch: LaunchRow,
+  messageId: string,
+  nowMs: number,
+): Promise<DispatchResult> {
+  const message = ctx.db.select().from(launchMessages).where(eq(launchMessages.id, messageId)).get();
+  const draft = message ? draftRow(ctx.db, message.draftId) : undefined;
+  if (!message || !draft) return { sent: false, error: "message_missing" };
+  const baseKey = deriveEmailSendIdempotencyKey(message.id, {
+    draftId: draft.id,
+    content: draft.content,
+    stepNumber: message.stepNumber,
+  });
+
+  let submission: ExternalActionSubmission;
+  const existing = message.externalActionId
+    ? getExternalAction(ctx.db, launch.workspaceId, message.externalActionId)
+    : undefined;
+  if (existing) {
+    const retryableSafetyBlocker =
+      existing.status === "blocked" &&
+      ["permission_unknown", "suppressed", "kill_switch_on", "daily_cap_reached"].includes(
+        existing.blocker?.code ?? "",
+      );
+    if (!retryableSafetyBlocker) {
+      return { sent: message.status === "sent", sentAt: message.sentAt ?? undefined, submission: { action: existing, execution: existing.execution } };
+    }
+    if (!checkEmailRecipientSafety(ctx.db, launch.workspaceId, message.recipientEmail).ok) {
+      return { sent: false, submission: { action: existing, execution: existing.execution } };
+    }
+    submission = await ctx.runtime.repropose(
+      existing.id,
+      launch.workspaceId,
+      `${baseKey}:retry:${existing.id}`,
+      SYSTEM_ACTOR,
+    );
+  } else {
+    submission = await ctx.runtime.propose(
+      prepareEmailAction(ctx.db, launch.workspaceId, {
+        origin: "launch_message",
+        originId: message.id,
+        idempotencyKey: baseKey,
+      }),
+      SYSTEM_ACTOR,
+    );
+  }
+
+  ctx.db.update(launchMessages)
+    .set({ externalActionId: submission.action.id, updatedAt: Date.now() })
+    .where(eq(launchMessages.id, message.id))
+    .run();
+  const after = ctx.db.select().from(launchMessages).where(eq(launchMessages.id, message.id)).get();
+  return {
+    sent: submission.action.status === "succeeded" && after?.status === "sent",
+    sentAt: after?.sentAt ?? nowMs,
+    submission,
+  };
 }
 
 /** Propose one X DM as a durable `send` external action. Autonomous policy
@@ -556,7 +624,7 @@ async function proposeXSend(
   }
 }
 
-/** Generate (and, in scheduled_auto, approve + for X send) one step for a recipient. */
+/** Generate and, in scheduled_auto, approve and send one step for a recipient. */
 async function startStep(
   ctx: RunCtx,
   launch: LaunchRow,
@@ -573,8 +641,10 @@ async function startStep(
   if (launch.automationMode === "scheduled_auto") {
     applyDraftAction(ctx.db, res.draft, "approve", SYSTEM_ACTOR);
     acc.autoApproved += 1;
-    if (recipient.channel === "x") {
-      const d = await proposeXSend(ctx, launch, res.messageId, true, nowMs);
+    if (recipient.channel === "x" || recipient.channel === "email") {
+      const d = recipient.channel === "x"
+        ? await proposeXSend(ctx, launch, res.messageId, true, nowMs)
+        : await proposeEmailSend(ctx, launch, res.messageId, nowMs);
       if (d.sent) {
         acc.sent += 1;
         updateRecipient(ctx.db, recipient.id, { lastSentAt: d.sentAt! });
@@ -614,21 +684,23 @@ async function advanceRecipient(
   let cur = currentMessage(ctx.db, recipient.id, k);
   if (!cur) return; // defensive — nothing generated for the current step yet
 
-  // Approved but not sent: an X step proposes its send action on this run (in
+  // Approved but not sent: a personalized step proposes its send action on this run (in
   // every mode — the mode only governs auto-approval, not whether an approved
   // step is proposed); only scheduled_auto enforces guardrails (a human already
   // vetted the others). A human_required policy leaves the action queued in
-  // Review while the recipient waits here. Email always waits for the CSV
-  // export (the deliverability boundary, manual in every mode).
+  // Review while the recipient waits here. Native email uses the same durable
+  // action boundary and keeps CSV as recovery only.
   if (draftRow(ctx.db, cur.draftId)?.state === "approved" && cur.status === "pending") {
-    if (recipient.channel === "x") {
-      const d = await proposeXSend(
-        ctx,
-        launch,
-        cur.id,
-        launch.automationMode === "scheduled_auto",
-        nowMs,
-      );
+    if (recipient.channel === "x" || recipient.channel === "email") {
+      const d = recipient.channel === "x"
+        ? await proposeXSend(
+            ctx,
+            launch,
+            cur.id,
+            launch.automationMode === "scheduled_auto",
+            nowMs,
+          )
+        : await proposeEmailSend(ctx, launch, cur.id, nowMs);
       if (d.sent) {
         acc.sent += 1;
         updateRecipient(ctx.db, recipient.id, { lastSentAt: d.sentAt! });

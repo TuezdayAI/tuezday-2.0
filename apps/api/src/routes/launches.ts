@@ -164,12 +164,6 @@ export function registerLaunchRoutes(
       if (!(LAUNCH_CHANNELS as readonly string[]).includes(channel)) {
         return reply.status(404).send({ error: "unknown_channel" });
       }
-      if (channel === "email") {
-        return reply.status(400).send({
-          error: "use_csv_export",
-          message: "Email is delivered via the CSV export, not a dispatch.",
-        });
-      }
       const parsed = dispatchChannelInputSchema.safeParse(request.body ?? {});
       if (!parsed.success) {
         return reply.status(400).send({

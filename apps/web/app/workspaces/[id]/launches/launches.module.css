@@ -31,3 +31,20 @@
   color: var(--accent-deep);
   font-weight: 650;
 }
+
+.emailHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.emailControls {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(360px, 1fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.emailControls > :only-child {
+  grid-column: 1 / -1;
+}

@@ -40,6 +40,7 @@ describe("governed email permission and delivery status", () => {
     expect(component).toContain("export function EmailSendStatus");
     expect(component).toContain('aria-live="polite"');
     expect(component).toContain("providerMessageId");
+    expect(component).toContain('submission.execution?.kind === "email_delivery"');
     expect(component).toContain("navigator.clipboard.writeText");
     expect(component).toContain("Review action");
     expect(component).toContain("Fix and retry");

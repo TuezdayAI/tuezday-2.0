@@ -40,6 +40,10 @@ import {
 } from "./external-action-adapters";
 import type { ExternalActionRuntime } from "./external-action-coordinator";
 import { getExternalAction } from "./external-actions";
+import {
+  deriveEmailSendIdempotencyKey,
+  prepareEmailAction,
+} from "./external-action-email";
 import { resolveChannelGuidance } from "./guidance";
 import { selectiveContextInputs } from "./resolve-input";
 import { listConnections } from "./connections";
@@ -54,7 +58,7 @@ import { resolvePersonaSocialConnection } from "./persona-social-accounts";
 import { hasSequence, listSequenceRecipients, listSequenceSteps } from "./launch-sequences";
 import { getWorkspace } from "./workspaces";
 
-/** Channel → connector provider key. email has no connector (CSV export). */
+/** Channel → connector provider key. Native email uses the outbound provider. */
 export const LAUNCH_CHANNEL_PROVIDER: Record<LaunchChannel, string | null> = {
   email: null,
   linkedin: "linkedin",
@@ -543,10 +547,9 @@ export function exportLaunchEmail(
     .all();
 
   const messages = [];
-  const now = Date.now();
   for (const row of rows) {
     const draft = draftRow(db, row.draftId);
-    if (draft?.state !== "approved") continue;
+    if (draft?.state !== "approved" || row.status === "sent" || row.status === "skipped") continue;
     const person = pool.get(`${row.recipientType}:${row.recipientId}`);
     messages.push({
       name: row.recipientName,
@@ -555,16 +558,12 @@ export function exportLaunchEmail(
       role: person?.role ?? "",
       body: draft.content,
     });
-    db.update(launchMessages)
-      .set({ status: "sent", sentAt: now, updatedAt: now })
-      .where(eq(launchMessages.id, row.id))
-      .run();
   }
   return { ok: true, export: exporter.export(messages) };
 }
 
 // ---------------------------------------------------------------------------
-// Social dispatch (LinkedIn / Instagram broadcast, X DMs) — proposes one
+// Native and social dispatch — proposes one
 // durable `send` external action per eligible message; the action policy
 // decides whether each executes immediately or waits for authorization.
 // ---------------------------------------------------------------------------
@@ -585,16 +584,6 @@ export async function dispatchChannel(
   }
   if (launchRow.status === "draft") return { ok: false, error: "not_generated" };
 
-  const providerKey = LAUNCH_CHANNEL_PROVIDER[channel];
-  if (!providerKey) {
-    // email is exported, not dispatched here.
-    return { ok: false, error: "channel_not_selected", message: "Use the CSV export for email." };
-  }
-  const conn = resolveLaunchConnection(db, workspaceId, launchRow, channel, input.connectionId);
-  if (!conn.ok) return { ok: false, error: conn.error };
-  const connection = conn.connection;
-
-  const media = input.media?.map((m) => ({ url: m.url, type: m.type })) ?? null;
   const rows = db
     .select()
     .from(launchMessages)
@@ -612,6 +601,55 @@ export async function dispatchChannel(
   );
 
   const submissions: ExternalActionSubmission[] = [];
+
+  if (channel === "email") {
+    for (const row of eligible) {
+      const draft = draftRow(db, row.draftId)!;
+      const idempotencyKey = input.idempotencyKey
+        ? `${input.idempotencyKey}:${row.id}`
+        : deriveEmailSendIdempotencyKey(row.id, {
+            draftId: draft.id,
+            content: draft.content,
+            stepNumber: row.stepNumber,
+          });
+      const existing = row.externalActionId
+        ? getExternalAction(db, workspaceId, row.externalActionId)
+        : undefined;
+      let submission: ExternalActionSubmission;
+      if (existing && (existing.status === "blocked" || existing.status === "stale")) {
+        submission = await runtime.repropose(
+          existing.id,
+          workspaceId,
+          `${idempotencyKey}:retry:${existing.id}`,
+          actor,
+        );
+      } else if (existing) {
+        submissions.push({ action: existing, execution: existing.execution });
+        continue;
+      } else {
+        submission = await runtime.propose(
+          prepareEmailAction(db, workspaceId, {
+            origin: "launch_message",
+            originId: row.id,
+            idempotencyKey,
+          }),
+          actor,
+        );
+      }
+      db.update(launchMessages)
+        .set({ externalActionId: submission.action.id, updatedAt: Date.now() })
+        .where(eq(launchMessages.id, row.id))
+        .run();
+      submissions.push(submission);
+    }
+    return { ok: true, submissions };
+  }
+
+  const conn = resolveLaunchConnection(db, workspaceId, launchRow, channel, input.connectionId);
+  if (!conn.ok) return { ok: false, error: conn.error };
+  const connection = conn.connection;
+  const media = input.media?.map((m) => ({ url: m.url, type: m.type })) ?? null;
+
   for (const row of eligible) {
     if (row.status === "sent") {
       const existing = row.externalActionId

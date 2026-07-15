@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { z } from "zod";
 import type {
@@ -40,6 +40,16 @@ export const emailActionPayloadSchema = z.object({
   html: z.string().nullable(),
 });
 export type EmailActionPayload = z.infer<typeof emailActionPayloadSchema>;
+
+export function deriveEmailSendIdempotencyKey(
+  originId: string,
+  input: { draftId: string; content: string; stepNumber: number | null },
+): string {
+  const fingerprint = createHash("sha256")
+    .update(JSON.stringify({ originId, ...input }))
+    .digest("hex");
+  return `email/${originId}/${fingerprint}`;
+}
 
 function parseEmailContent(content: string): { subject: string; text: string } {
   const lines = content.split(/\r?\n/);
@@ -168,6 +178,57 @@ function receipt(delivery: { id: string; status: string; lastError: string | nul
   return { kind: "email_delivery", id: delivery.id, status: delivery.status, url: null, error: delivery.lastError };
 }
 
+function markLaunchMessageAccepted(
+  db: Db,
+  workspaceId: string,
+  payload: EmailActionPayload,
+  actionId: string,
+  sentAt: number,
+): void {
+  if (payload.origin !== "launch_message") return;
+  const message = db.select({
+    launchId: launchMessages.launchId,
+    sequenceRecipientId: launchMessages.sequenceRecipientId,
+  }).from(launchMessages).where(
+    and(
+      eq(launchMessages.workspaceId, workspaceId),
+      eq(launchMessages.id, payload.originId),
+    ),
+  ).get();
+  if (!message) return;
+  db.update(launchMessages)
+    .set({
+      externalActionId: actionId,
+      status: "sent",
+      sentAt,
+      lastError: null,
+      updatedAt: Date.now(),
+    })
+    .where(
+      and(
+        eq(launchMessages.workspaceId, workspaceId),
+        eq(launchMessages.id, payload.originId),
+      ),
+    )
+    .run();
+  if (message.sequenceRecipientId) return;
+  const pending = db.select({ id: launchMessages.id })
+    .from(launchMessages)
+    .where(
+      and(
+        eq(launchMessages.launchId, message.launchId),
+        eq(launchMessages.status, "pending"),
+      ),
+    )
+    .get();
+  if (!pending) {
+    db.update(launches)
+      .set({ status: "completed", updatedAt: Date.now() })
+      .where(eq(launches.id, message.launchId))
+      .run();
+  }
+}
+
 export function emailActionAdapter(
   db: Db,
   provider: OutboundEmailProvider | undefined,
@@ -197,6 +258,13 @@ export function emailActionAdapter(
           db.update(emailDeliveries).set({ status: "accepted", acceptedAt: delivery.acceptedAt ?? now, updatedAt: now }).where(eq(emailDeliveries.id, delivery.id)).run();
           delivery = db.select().from(emailDeliveries).where(eq(emailDeliveries.id, delivery.id)).get()!;
         }
+        markLaunchMessageAccepted(
+          db,
+          action.workspaceId,
+          payload,
+          action.id,
+          delivery.acceptedAt ?? Date.now(),
+        );
         return receipt(delivery);
       }
       if (!delivery) {
@@ -245,6 +313,13 @@ export function emailActionAdapter(
         lastError: null,
         updatedAt: Date.now(),
       }).where(eq(emailDeliveries.id, delivery.id)).run();
+      markLaunchMessageAccepted(
+        db,
+        action.workspaceId,
+        payload,
+        action.id,
+        accepted.acceptedAt,
+      );
       return receipt(db.select().from(emailDeliveries).where(eq(emailDeliveries.id, delivery.id)).get()!);
     },
   };

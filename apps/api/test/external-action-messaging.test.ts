@@ -693,9 +693,9 @@ describe("external-action messaging boundary", () => {
     expect(db.select().from(publications).all()).toHaveLength(0);
   });
 
-  // --- Email stays outside governance ---------------------------------------------
+  // --- CSV remains a non-governed recovery path -----------------------------------
 
-  it("keeps email CSV export outside external-action governance", async () => {
+  it("keeps email CSV export outside governance without claiming delivery", async () => {
     const launchId = await generatedLaunch(["email"], [await createLead("Alice")]);
     await approveLaunchDrafts(launchId);
 
@@ -707,7 +707,7 @@ describe("external-action messaging boundary", () => {
     expect(res.body).toContain("Generated messaging body.");
     const d = await launchDetail(launchId);
     expect(
-      d.messages.filter((m: { channel: string; status: string }) => m.channel === "email" && m.status === "sent"),
+      d.messages.filter((m: { channel: string; status: string }) => m.channel === "email" && m.status === "pending"),
     ).toHaveLength(1);
     expect(actionRows()).toHaveLength(0);
   });

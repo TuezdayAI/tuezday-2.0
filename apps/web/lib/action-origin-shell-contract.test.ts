@@ -34,6 +34,10 @@ describe("action origin surfaces source contract", () => {
     expect(launchesPage).toContain("export.csv");
     expect(launchesPage).toContain('searchParams.get("launch")');
     expect(launchesPage).toContain("externalActionId");
+    expect(launchesPage).toContain("Send from Tuezday");
+    expect(launchesPage).toContain("Download CSV");
+    expect(launchesPage).toContain("EmailPermissionControl");
+    expect(launchesPage).toContain("EmailSendStatus");
   });
 
   it("ad launches keep the spend approval gate and surface the governing action", () => {

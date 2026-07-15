@@ -8,6 +8,10 @@ import { Card, CardHeader } from "@/src/components/ui/card";
 import { Badge, CountBadge, WorkflowStatusBadge } from "@/src/components/ui/badge";
 import { Icon } from "@/src/components/ui/icon";
 import { Input, Textarea, Select } from "@/src/components/ui/input";
+import {
+  EmailPermissionControl,
+  EmailSendStatus,
+} from "@/src/components/email-send-status";
 import styles from "./launches.module.css";
 
 
@@ -25,6 +29,7 @@ import {
   type Connection,
   type ConnectorProvider,
   type ExternalActionSubmission,
+  type EmailPermissionStatus,
   type Launch,
   type LaunchChannel,
   type LaunchDetail,
@@ -68,7 +73,7 @@ const RECIPIENT_STATUS_LABELS: Record<string, string> = {
 };
 
 const CHANNEL_LABELS: Record<LaunchChannel, string> = {
-  email: "Email (CSV)",
+  email: "Email",
   linkedin: "LinkedIn",
   instagram: "Instagram",
   x: "X (DMs)",
@@ -84,7 +89,7 @@ interface ConnectorsView {
 const SAMPLE_LAUNCHES = [
   { name: "Spring outreach", status: "sent", detail: "Email · X (DMs) · 38 messages" },
   { name: "Fintech VPs — case study", status: "generating", detail: "Email · LinkedIn · 14 messages" },
-  { name: "Beta invite wave 2", status: "draft", detail: "Email (CSV) · 0 messages" },
+  { name: "Beta invite wave 2", status: "draft", detail: "Email · 0 messages" },
 ];
 
 export default function LaunchesPage() {
@@ -629,19 +634,29 @@ function LaunchDetailView({
               }
               actions={
                 channel === "email" ? (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={approvedCount("email") === 0}
-                    onClick={() =>
-                      void apiDownload(
-                        `/workspaces/${workspaceId}/launches/${launch.id}/export.csv`,
-                        "tuezday-launch-email.csv",
-                      )
-                    }
-                  >
-                    ↓ Download CSV ({approvedCount("email")})
-                  </Button>
+                  <div className={styles.emailHeaderActions}>
+                    <Button
+                      variant="primary"
+                      size="standard"
+                      disabled={busy || approvedCount("email") === 0}
+                      onClick={() => onDispatch("email")}
+                    >
+                      Send from Tuezday ({approvedCount("email")})
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="standard"
+                      disabled={approvedCount("email") === 0}
+                      onClick={() =>
+                        void apiDownload(
+                          `/workspaces/${workspaceId}/launches/${launch.id}/export.csv`,
+                          "tuezday-launch-email.csv",
+                        )
+                      }
+                    >
+                      Download CSV ({approvedCount("email")})
+                    </Button>
+                  </div>
                 ) : (
                   <Button
                     variant="primary"
@@ -670,6 +685,9 @@ function LaunchDetailView({
                   key={m.id}
                   workspaceId={workspaceId}
                   message={m}
+                  submission={dispatchSubmissions.find(
+                    (submission) => submission.action.subject.id === m.id,
+                  )}
                   onApprove={onApprove}
                 />
               ))}
@@ -684,10 +702,12 @@ function LaunchDetailView({
 function MessageRow({
   workspaceId,
   message,
+  submission,
   onApprove,
 }: {
   workspaceId: string;
   message: LaunchMessage;
+  submission?: ExternalActionSubmission;
   onApprove: (draftId: string) => void;
 }) {
   const recipient = message.kind === "broadcast" ? "Broadcast post" : message.recipientName;
@@ -729,7 +749,56 @@ function MessageRow({
       </div>
       {message.draftContent && <p className="section-reason">{message.draftContent.slice(0, 200)}</p>}
       {message.lastError && <p className="error-inline">{message.lastError}</p>}
+      {message.channel === "email" && (
+        <EmailMessageControls
+          workspaceId={workspaceId}
+          message={message}
+          submission={submission}
+        />
+      )}
     </li>
+  );
+}
+
+function EmailMessageControls({
+  workspaceId,
+  message,
+  submission,
+}: {
+  workspaceId: string;
+  message: LaunchMessage;
+  submission?: ExternalActionSubmission;
+}) {
+  const [permission, setPermission] = useState<EmailPermissionStatus>("unknown");
+
+  useEffect(() => {
+    let current = true;
+    void apiFetch(
+      `/workspaces/${workspaceId}/email-permissions/${encodeURIComponent(
+        message.recipientEmail.toLowerCase(),
+      )}`,
+    )
+      .then(async (response) => {
+        if (!response.ok) return;
+        const body = (await response.json()) as { status: EmailPermissionStatus };
+        if (current) setPermission(body.status);
+      })
+      .catch(() => undefined);
+    return () => {
+      current = false;
+    };
+  }, [message.recipientEmail, workspaceId]);
+
+  return (
+    <div className={styles.emailControls}>
+      <EmailPermissionControl
+        workspaceId={workspaceId}
+        email={message.recipientEmail}
+        status={permission}
+        onChange={setPermission}
+      />
+      {submission && <EmailSendStatus submission={submission} delivery={null} />}
+    </div>
   );
 }
 

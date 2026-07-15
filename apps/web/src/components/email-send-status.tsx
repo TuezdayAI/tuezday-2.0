@@ -3,11 +3,13 @@
 import { useState } from "react";
 import type {
   EmailDelivery,
+  EmailDeliveryStatus,
   EmailPermissionStatus,
   EmailRecipientPermission,
   ExternalActionSubmission,
   WorkflowStatus,
 } from "@tuezday/contracts";
+import { EMAIL_DELIVERY_STATUSES } from "@tuezday/contracts";
 import { apiFetch } from "@/lib/api";
 import {
   emailDeliveryCopy,
@@ -140,13 +142,19 @@ const FAILED_DELIVERY_STATUSES = new Set<EmailDelivery["status"]>([
 
 export function EmailSendStatus({ submission, delivery }: EmailSendStatusProps) {
   const [copied, setCopied] = useState(false);
-  const workflowStatus = delivery
-    ? emailDeliveryWorkflowStatus(delivery.status)
+  const receiptStatus =
+    submission.execution?.kind === "email_delivery" &&
+    (EMAIL_DELIVERY_STATUSES as readonly string[]).includes(submission.execution.status)
+      ? (submission.execution.status as EmailDeliveryStatus)
+      : null;
+  const deliveryStatus = delivery?.status ?? receiptStatus;
+  const workflowStatus = deliveryStatus
+    ? emailDeliveryWorkflowStatus(deliveryStatus)
     : externalActionWorkflowStatus(submission.action);
-  const label = delivery ? DELIVERY_LABEL[delivery.status] : undefined;
-  const copy = delivery ? emailDeliveryCopy(delivery.status) : submissionNote(submission);
-  const needsRecovery = delivery
-    ? FAILED_DELIVERY_STATUSES.has(delivery.status)
+  const label = deliveryStatus ? DELIVERY_LABEL[deliveryStatus] : undefined;
+  const copy = deliveryStatus ? emailDeliveryCopy(deliveryStatus) : submissionNote(submission);
+  const needsRecovery = deliveryStatus
+    ? FAILED_DELIVERY_STATUSES.has(deliveryStatus)
     : RECOVERY_ACTION_STATUSES.has(submission.action.status);
 
   async function copyProviderId() {
