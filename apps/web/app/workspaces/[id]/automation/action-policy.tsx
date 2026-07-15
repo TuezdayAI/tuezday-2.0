@@ -108,7 +108,7 @@ export function ActionPolicy({ workspaceId }: { workspaceId: string }) {
   return (
     <Card>
       <h2 className={styles.head}>
-        <Icon name="status-review" size="sm" /> Action permissions
+        <Icon name="status-review" size="compact" /> Action permissions
       </h2>
       <p className="subtitle">
         The guardrails above tune cadence — how often automation drafts and posts. Permission is a
@@ -148,7 +148,7 @@ export function ActionPolicy({ workspaceId }: { workspaceId: string }) {
             })}
           </div>
           <div className={styles.policySave}>
-            <Button variant="primary" size="sm" onClick={save} disabled={saving || !dirty}>
+            <Button variant="primary" size="compact" onClick={save} disabled={saving || !dirty}>
               {saving ? "Saving…" : "Save action permissions"}
             </Button>
           </div>

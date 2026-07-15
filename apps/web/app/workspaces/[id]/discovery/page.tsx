@@ -503,7 +503,7 @@ export default function DiscoveryPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="signal" size="sm" />
+              <Icon name="signal" size="compact" />
               Sources{" "}
               {sources.length > 0 && <CountBadge count={sources.length} label="discovery sources" />}
             </span>
@@ -846,7 +846,7 @@ export default function DiscoveryPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="user" size="sm" />
+              <Icon name="user" size="compact" />
               Tracked accounts{" "}
               {tracked.length > 0 && <CountBadge count={tracked.length} label="tracked accounts" />}
             </span>
@@ -958,7 +958,7 @@ export default function DiscoveryPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="notification" size="sm" />
+              <Icon name="notification" size="compact" />
               Triage inbox{" "}
               {inbox.length > 0 && <CountBadge count={inbox.length} label="items to triage" />}
             </span>

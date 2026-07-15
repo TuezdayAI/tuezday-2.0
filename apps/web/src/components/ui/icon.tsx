@@ -52,20 +52,10 @@ const SEMANTIC_SIZE = {
   emphasized: "20px",
 } as const;
 type SemanticIconSize = keyof typeof SEMANTIC_SIZE;
-type LegacyIconSize = "sm" | "md" | "lg";
-export type IconSize = SemanticIconSize | LegacyIconSize;
-
-const LEGACY_ICON_SIZE: Record<LegacyIconSize, SemanticIconSize> = {
-  sm: "compact",
-  md: "standard",
-  lg: "emphasized",
-};
+export type IconSize = SemanticIconSize;
 
 function iconPixels(size: IconSize): (typeof SEMANTIC_SIZE)[SemanticIconSize] {
-  const semantic = size === "sm" || size === "md" || size === "lg"
-    ? LEGACY_ICON_SIZE[size]
-    : size;
-  return SEMANTIC_SIZE[semantic];
+  return SEMANTIC_SIZE[size];
 }
 
 interface IconProps {

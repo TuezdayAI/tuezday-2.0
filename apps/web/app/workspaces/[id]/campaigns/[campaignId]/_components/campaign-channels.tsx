@@ -72,7 +72,7 @@ export function CampaignChannels({
         </div>
         {draft ? (
           <Button variant="primary" onClick={() => setEditing("new")}>
-            <Icon name="add" size="sm" /> Add channel
+            <Icon name="add" size="compact" /> Add channel
           </Button>
         ) : (
           <Link className={styles.planPrompt} href="?tab=plan">Create a plan revision to edit channels</Link>
@@ -81,7 +81,7 @@ export function CampaignChannels({
 
       {!draft && (
         <div className={styles.readOnlyNotice} role="status">
-          <Icon name="info" size="sm" />
+          <Icon name="info" size="compact" />
           <span>The active plan is immutable. Create a plan revision to edit channels.</span>
         </div>
       )}
@@ -110,7 +110,7 @@ export function CampaignChannels({
 
       {selected.lanes.length === 0 ? (
         <div className={styles.emptyChannels}>
-          <Icon name="campaigns" size="lg" />
+          <Icon name="campaigns" size="emphasized" />
           <h3>No channel commitments</h3>
           <p>Add the first channel to define what Tuezday should prepare and where it can execute.</p>
         </div>
@@ -139,7 +139,7 @@ export function CampaignChannels({
                 <p className={styles.scheduleSummary}>{formatLaneSchedule(lane)}</p>
                 {draft && (
                   <Button variant="tertiary" size="compact" onClick={() => setEditing(lane)}>
-                    <Icon name="edit" size="sm" /> Edit configuration
+                    <Icon name="edit" size="compact" /> Edit configuration
                   </Button>
                 )}
               </article>

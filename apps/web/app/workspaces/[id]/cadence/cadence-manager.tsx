@@ -226,7 +226,7 @@ export function CadenceManager({ workspaceId, framed = false }: CadenceManagerPr
   function section(icon: IconName, title: ReactNode, children: ReactNode) {
     const head = (
       <h2 className={styles.head}>
-        <Icon name={icon} size="sm" /> {title}
+        <Icon name={icon} size="compact" /> {title}
       </h2>
     );
     return framed ? (
@@ -251,7 +251,7 @@ export function CadenceManager({ workspaceId, framed = false }: CadenceManagerPr
         "New cadence",
         social.length === 0 ? (
           <EmptyState
-            icon={<Icon name="connect" size="lg" />}
+            icon={<Icon name="connect" size="emphasized" />}
             title="No social account connected"
             description={
               <>
@@ -401,7 +401,7 @@ export function CadenceManager({ workspaceId, framed = false }: CadenceManagerPr
           <EmptyState description="Loading…" />
         ) : cadences.length === 0 ? (
           <EmptyState
-            icon={<Icon name="calendar" size="lg" />}
+            icon={<Icon name="calendar" size="emphasized" />}
             title="No cadences yet"
             description="Create a recurring slot above — approved drafts in the matching campaign and channel fill it automatically and publish on schedule."
           />

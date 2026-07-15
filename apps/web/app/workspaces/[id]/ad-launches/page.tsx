@@ -480,7 +480,7 @@ export default function AdLaunchesPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="warning" size="sm" />
+              <Icon name="warning" size="compact" />
               Spend guardrails
             </span>
           }
@@ -530,7 +530,7 @@ export default function AdLaunchesPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="add" size="sm" />
+              <Icon name="add" size="compact" />
               New launch
             </span>
           }
@@ -678,7 +678,7 @@ export default function AdLaunchesPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="status-live" size="sm" />
+              <Icon name="status-live" size="compact" />
               Launches{" "}
               {launches.length > 0 && <CountBadge count={launches.length} label="ad launches" />}
             </span>

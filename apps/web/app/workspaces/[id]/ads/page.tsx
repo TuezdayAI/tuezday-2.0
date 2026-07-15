@@ -347,7 +347,7 @@ export default function AdsPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="connect" size="sm" />
+              <Icon name="connect" size="compact" />
               Ad accounts{" "}
               {adsConnections.length > 0 && (
                 <CountBadge count={adsConnections.length} label="connected ad accounts" />
@@ -443,7 +443,7 @@ export default function AdsPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="ad" size="sm" />
+              <Icon name="ad" size="compact" />
               Campaign performance
             </span>
           }
@@ -529,7 +529,7 @@ export default function AdsPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="add" size="sm" />
+              <Icon name="add" size="compact" />
               CSV import
             </span>
           }

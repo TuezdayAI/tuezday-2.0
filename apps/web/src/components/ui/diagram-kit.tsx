@@ -17,7 +17,7 @@ export function FlowStrip({ nodes }: { nodes: FlowNode[] }) {
       {nodes.map((node, i) => (
         <div key={node.label} className={styles.flowSeg} role="listitem">
           <div className={`${styles.node} ${node.emphasis ? styles.nodeEmphasis : ""}`}>
-            <Icon name={node.icon} size="sm" />
+            <Icon name={node.icon} size="compact" />
             <span className={styles.nodeLabel}>{node.label}</span>
             {node.detail && <span className={styles.nodeDetail}>{node.detail}</span>}
           </div>
@@ -46,7 +46,7 @@ export function DocTile({ icon, title, tone, freshness, updatedBy, onOpen }: Doc
   return (
     <button type="button" className={styles.tile} data-tone={tone} onClick={onOpen} disabled={!onOpen}>
       <span className={styles.tileIcon}>
-        <Icon name={icon} size="lg" />
+        <Icon name={icon} size="emphasized" />
       </span>
       <span className={styles.tileTitle}>{title}</span>
       <span className={styles.tileMeta}>
@@ -68,7 +68,7 @@ interface LoopGlyphProps {
 export function LoopGlyph({ signal, change, icon = "status-learning" }: LoopGlyphProps) {
   return (
     <div className={styles.loop}>
-      <Icon name={icon} size="sm" className={styles.loopIcon} />
+      <Icon name={icon} size="compact" className={styles.loopIcon} />
       <span className={styles.loopSignal}>{signal}</span>
       <span className={styles.loopArrow} aria-hidden="true">→</span>
       <span className={styles.loopChange}>{change}</span>

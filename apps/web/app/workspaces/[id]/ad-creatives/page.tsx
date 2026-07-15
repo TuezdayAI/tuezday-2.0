@@ -257,7 +257,7 @@ export default function AdCreativesPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="status-generating" size="sm" />
+              <Icon name="status-generating" size="compact" />
               Generate a variant set
             </span>
           }
@@ -331,7 +331,7 @@ export default function AdCreativesPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="ad" size="sm" />
+              <Icon name="ad" size="compact" />
               Variant sets{" "}
               {sets.length > 0 && <CountBadge count={sets.length} label="creative variant sets" />}
             </span>

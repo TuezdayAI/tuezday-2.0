@@ -572,7 +572,7 @@ export default function WorkspaceBrainPage() {
             <h2 className={heroStyles.traceTitle}>How context resolves</h2>
             <Link href={`/workspaces/${id}/resolver`} className={heroStyles.traceLink}>
               Open context inspector
-              <Icon name="chevron-right" size="sm" />
+              <Icon name="chevron-right" size="compact" />
             </Link>
           </div>
           <FlowStrip

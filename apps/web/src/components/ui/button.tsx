@@ -12,37 +12,15 @@ import styles from "./button.module.css";
 export type ButtonVariant = "primary" | "secondary" | "tertiary" | "danger";
 export type ButtonSize = "compact" | "standard" | "large";
 
-type LegacyButtonVariant = "ghost";
-type LegacyButtonSize = "sm" | "md";
-type ButtonVariantInput = ButtonVariant | LegacyButtonVariant;
-type ButtonSizeInput = ButtonSize | LegacyButtonSize;
-
-const LEGACY_VARIANTS: Record<LegacyButtonVariant, ButtonVariant> = {
-  ghost: "tertiary",
-};
-
-const LEGACY_SIZES: Record<LegacyButtonSize, ButtonSize> = {
-  sm: "compact",
-  md: "standard",
-};
-
-function normalizeVariant(variant: ButtonVariantInput): ButtonVariant {
-  return variant === "ghost" ? LEGACY_VARIANTS[variant] : variant;
-}
-
-function normalizeSize(size: ButtonSizeInput): ButtonSize {
-  return size === "sm" || size === "md" ? LEGACY_SIZES[size] : size;
-}
-
 function buttonClasses(
-  variant: ButtonVariantInput,
-  size: ButtonSizeInput,
+  variant: ButtonVariant,
+  size: ButtonSize,
   className?: string,
 ): string {
   return [
     styles.button,
-    styles[normalizeVariant(variant)],
-    styles[normalizeSize(size)],
+    styles[variant],
+    styles[size],
     className,
   ]
     .filter(Boolean)
@@ -64,7 +42,7 @@ function ActionContent({ children, leadingIcon, loading = false }: ActionContent
       </span>
       {loading && (
         <span className={styles.loadingIndicator} aria-hidden="true">
-          <Icon name="status-generating" size="sm" />
+          <Icon name="status-generating" size="compact" />
         </span>
       )}
     </>
@@ -72,8 +50,8 @@ function ActionContent({ children, leadingIcon, loading = false }: ActionContent
 }
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: ButtonVariantInput;
-  size?: ButtonSizeInput;
+  variant?: ButtonVariant;
+  size?: ButtonSize;
   loading?: boolean;
   leadingIcon?: ReactNode;
   children: ReactNode;
@@ -107,8 +85,8 @@ export function Button({
 type NextLinkProps = ComponentPropsWithoutRef<typeof Link>;
 
 interface ButtonLinkProps extends Omit<NextLinkProps, "className" | "children"> {
-  variant?: ButtonVariantInput;
-  size?: ButtonSizeInput;
+  variant?: ButtonVariant;
+  size?: ButtonSize;
   loading?: boolean;
   leadingIcon?: ReactNode;
   className?: string;

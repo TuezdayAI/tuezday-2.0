@@ -74,7 +74,7 @@ function EntryCard({
       onClick={() => onSelect(entry)}
     >
       <div className={styles.entryHead}>
-        <Icon name={entryIcon(entry)} size="sm" />
+        <Icon name={entryIcon(entry)} size="compact" />
         <time>
           {new Date(entry.at).toLocaleTimeString(undefined, {
             hour: "2-digit",
@@ -125,7 +125,7 @@ function DetailPanel({
         <div className={styles.panelHead}>
           <h3 className={styles.panelTitle}>{entry.title}</h3>
           <IconButton label="Close details" onClick={onClose}>
-            <Icon name="close" size="sm" />
+            <Icon name="close" size="compact" />
           </IconButton>
         </div>
         <div>
@@ -179,7 +179,7 @@ function DetailPanel({
           )}
           {entry.url && (
             <a href={entry.url} target="_blank" rel="noreferrer">
-              View post <Icon name="external" size="sm" />
+              View post <Icon name="external" size="compact" />
             </a>
           )}
           {entry.draftId && (
@@ -377,7 +377,7 @@ export default function CalendarPage() {
 
       {pendingScoped.length > 0 && (
         <div className={styles.reviewRail}>
-          <Icon name="review" size="sm" />
+          <Icon name="review" size="compact" />
           <span>
             {pendingScoped.length} generated draft{pendingScoped.length === 1 ? "" : "s"} awaiting
             review{hasScopeFilter ? " in this scope" : ""} — approve them to fill open slots.
@@ -402,7 +402,7 @@ export default function CalendarPage() {
               disabled={!anchor}
               onClick={() => anchor && setAnchor(shiftAnchor(view, anchor, -1))}
             >
-              <Icon name="chevron-left" size="sm" />
+              <Icon name="chevron-left" size="compact" />
             </IconButton>
             <Button
               type="button"
@@ -417,7 +417,7 @@ export default function CalendarPage() {
               disabled={!anchor}
               onClick={() => anchor && setAnchor(shiftAnchor(view, anchor, 1))}
             >
-              <Icon name="chevron-right" size="sm" />
+              <Icon name="chevron-right" size="compact" />
             </IconButton>
           </span>
           <strong className={styles.rangeLabel}>{rangeLabel}</strong>
@@ -479,18 +479,18 @@ export default function CalendarPage() {
 
           <span className={styles.counts}>
             <span className={styles.count}>
-              <Icon name="calendar" size="sm" /> {counts.scheduled} scheduled
+              <Icon name="calendar" size="compact" /> {counts.scheduled} scheduled
             </span>
             <span className={styles.count}>
-              <Icon name="status-approved" size="sm" /> {counts.published} published
+              <Icon name="status-approved" size="compact" /> {counts.published} published
             </span>
             {counts.failed > 0 && (
               <span className={styles.count}>
-                <Icon name="warning" size="sm" /> {counts.failed} failed
+                <Icon name="warning" size="compact" /> {counts.failed} failed
               </span>
             )}
             <span className={styles.count}>
-              <Icon name="add" size="sm" /> {counts.open} open
+              <Icon name="add" size="compact" /> {counts.open} open
             </span>
           </span>
         </div>
@@ -498,7 +498,7 @@ export default function CalendarPage() {
         {anchor && visible.length === 0 && !error ? (
           hasScopeFilter ? (
             <EmptyState
-              icon={<Icon name="calendar" size="lg" />}
+              icon={<Icon name="calendar" size="emphasized" />}
               title="Nothing matches these filters"
               description="No planned, scheduled, or published work matches the current campaign and channel scope in this period."
               primaryAction={
@@ -509,7 +509,7 @@ export default function CalendarPage() {
             />
           ) : (
             <EmptyState
-              icon={<Icon name="calendar" size="lg" />}
+              icon={<Icon name="calendar" size="emphasized" />}
               title={`Nothing on the calendar this ${view}`}
               description={
                 <>

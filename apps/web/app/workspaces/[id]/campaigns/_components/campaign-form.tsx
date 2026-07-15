@@ -127,7 +127,7 @@ export function CampaignForm({
       <CardHeader
         title={
           <span className={styles.formTitle}>
-            <Icon name="campaigns" size="sm" />
+            <Icon name="campaigns" size="compact" />
             {campaign ? "Edit campaign" : "New campaign"}
             <span>Step {step} of 3</span>
           </span>

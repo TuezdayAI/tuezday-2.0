@@ -360,7 +360,7 @@ export default function ListsPage() {
 
       <TopBarActions>
         <Button variant="primary" size="compact" onClick={() => startEdit()}>
-          <Icon name="add" size="sm" /> New audience
+          <Icon name="add" size="compact" /> New audience
         </Button>
       </TopBarActions>
 
@@ -369,7 +369,7 @@ export default function ListsPage() {
           <CardHeader
             title={
               <span className={styles.cardTitle}>
-                <Icon name="audience" size="sm" /> {editingId ? "Edit audience" : "New audience"}
+                <Icon name="audience" size="compact" /> {editingId ? "Edit audience" : "New audience"}
               </span>
             }
           />
@@ -447,7 +447,7 @@ export default function ListsPage() {
               ))}
             </ul>
           }
-          icon={<Icon name="audience" size="lg" />}
+          icon={<Icon name="audience" size="emphasized" />}
           title="Group your audience once, reuse it everywhere"
           description={
             <>
@@ -457,7 +457,7 @@ export default function ListsPage() {
           }
           primaryAction={
             <Button variant="primary" size="compact" onClick={() => startEdit()}>
-              <Icon name="add" size="sm" /> New audience
+              <Icon name="add" size="compact" /> New audience
             </Button>
           }
         />

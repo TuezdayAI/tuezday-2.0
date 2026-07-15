@@ -125,7 +125,7 @@ export default function EvidencePage() {
     <>
       <TopBarActions>
         <Button variant="secondary" size="compact" onClick={() => setShowAdd((v) => !v)}>
-          <Icon name="add" size="sm" />
+          <Icon name="add" size="compact" />
           Add evidence
         </Button>
       </TopBarActions>
@@ -147,7 +147,7 @@ export default function EvidencePage() {
           <CardHeader
             title={
               <span className={styles.head}>
-                <Icon name="add" size="sm" className={styles.headIcon} />
+                <Icon name="add" size="compact" className={styles.headIcon} />
                 Add evidence
               </span>
             }
@@ -196,7 +196,7 @@ export default function EvidencePage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="status-review" size="sm" className={styles.headIconReview} />
+              <Icon name="status-review" size="compact" className={styles.headIconReview} />
               Ingest candidates <CountBadge count={candidates.length} label="pending candidates" />
             </span>
           }
@@ -214,7 +214,7 @@ export default function EvidencePage() {
               <li key={c.id} className="section-card">
                 <div className="section-head">
                   <span className={styles.kindMark} title={originLabel(c.kind)}>
-                    <Icon name={kindIcon(c.kind)} size="sm" />
+                    <Icon name={kindIcon(c.kind)} size="compact" />
                   </span>
                   <span className="layer-badge">
                     {c.kind === "signal" ? "From signal" : "From published"}
@@ -246,7 +246,7 @@ export default function EvidencePage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="doc-history" size="sm" className={styles.headIcon} />
+              <Icon name="doc-history" size="compact" className={styles.headIcon} />
               Corpus <CountBadge count={view.documents.length} label="documents in the corpus" />
             </span>
           }
@@ -257,7 +257,7 @@ export default function EvidencePage() {
             something to cite.</>}
             primaryAction={
               <Button variant="secondary" size="compact" onClick={() => setShowAdd(true)}>
-                <Icon name="add" size="sm" />
+                <Icon name="add" size="compact" />
                 Add evidence
               </Button>
             }
@@ -265,21 +265,21 @@ export default function EvidencePage() {
               <div className={styles.previewList}>
                 <div className={styles.previewCard}>
                   <span className={styles.kindMark}>
-                    <Icon name="blog" size="sm" />
+                    <Icon name="blog" size="compact" />
                   </span>
                   <span className={styles.previewTitle}>Website copy — homepage & pricing</span>
                   <span className={styles.previewMeta}>4,200 chars</span>
                 </div>
                 <div className={styles.previewCard}>
                   <span className={styles.kindMark}>
-                    <Icon name="post" size="sm" />
+                    <Icon name="post" size="compact" />
                   </span>
                   <span className={styles.previewTitle}>June launch post</span>
                   <span className={styles.previewMeta}>1,100 chars</span>
                 </div>
                 <div className={styles.previewCard}>
                   <span className={styles.kindMark}>
-                    <Icon name="blog" size="sm" />
+                    <Icon name="blog" size="compact" />
                   </span>
                   <span className={styles.previewTitle}>Customer call notes — onboarding pains</span>
                   <span className={styles.previewMeta}>2,700 chars</span>
@@ -293,7 +293,7 @@ export default function EvidencePage() {
               <li key={doc.id} className="section-card">
                 <div className="section-head">
                   <span className={styles.kindMark} title={originLabel(doc.kind)}>
-                    <Icon name={kindIcon(doc.kind)} size="sm" />
+                    <Icon name={kindIcon(doc.kind)} size="compact" />
                   </span>
                   <Badge
                     tone={

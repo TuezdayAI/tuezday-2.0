@@ -330,7 +330,7 @@ export default function SandboxPage() {
           <CardHeader
             title={
               <span className={styles.head}>
-                <Icon name="module-settings" size="sm" />
+                <Icon name="module-settings" size="compact" />
                 Generation quality
               </span>
             }
@@ -384,7 +384,7 @@ export default function SandboxPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="bundle" size="sm" />
+              <Icon name="bundle" size="compact" />
               1 · Choose the task
             </span>
           }
@@ -504,7 +504,7 @@ export default function SandboxPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="status-generating" size="sm" />
+              <Icon name="status-generating" size="compact" />
               2 · Generate
             </span>
           }
@@ -591,7 +591,7 @@ export default function SandboxPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="status-learning" size="sm" />
+              <Icon name="status-learning" size="compact" />
               Training signal log{" "}
               {log.length > 0 && <CountBadge count={log.length} label="logged generations" />}
             </span>

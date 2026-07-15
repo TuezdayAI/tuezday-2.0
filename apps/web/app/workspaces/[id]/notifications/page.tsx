@@ -129,7 +129,7 @@ export default function NotificationsPage() {
       <div className={styles.column}>
         <section>
           <div className={styles.sectionHead}>
-            <Icon name="add" size="sm" className={styles.sectionIcon} />
+            <Icon name="add" size="compact" className={styles.sectionIcon} />
             <h2>Add a channel</h2>
           </div>
           <form onSubmit={addChannel} className={styles.addForm}>
@@ -162,7 +162,7 @@ export default function NotificationsPage() {
 
         <section>
           <div className={styles.sectionHead}>
-            <Icon name="notification" size="sm" className={styles.sectionIcon} />
+            <Icon name="notification" size="compact" className={styles.sectionIcon} />
             <h2>Configured channels</h2>
             {channels.length > 0 && (
               <CountBadge count={enabledCount} max={channels.length} label="channels enabled" />
@@ -170,7 +170,7 @@ export default function NotificationsPage() {
           </div>
           {channels.length === 0 ? (
             <EmptyState
-              icon={<Icon name="notification" size="lg" />}
+              icon={<Icon name="notification" size="emphasized" />}
               title="Nothing to catch up on"
               description="No channels yet — add your email or Telegram above and Tuezday will ping you the moment a draft needs review. Until then, the approval queue has you covered."
             />
@@ -179,7 +179,7 @@ export default function NotificationsPage() {
               {channels.map((c) => (
                 <li key={c.id} className={styles.channelRow}>
                   <span className={styles.channelIcon}>
-                    <Icon name={c.type === "email" ? "email" : "notification"} size="sm" />
+                    <Icon name={c.type === "email" ? "email" : "notification"} size="compact" />
                   </span>
                   <span className={styles.channelType}>
                     {c.type === "email" ? "Email" : "Telegram"}
@@ -197,10 +197,10 @@ export default function NotificationsPage() {
                       />
                       Enabled
                     </label>
-                    <Button variant="secondary" size="sm" onClick={() => sendTest(c.id)}>
+                    <Button variant="secondary" size="compact" onClick={() => sendTest(c.id)}>
                       Send test
                     </Button>
-                    <Button variant="danger" size="sm" onClick={() => deleteChannel(c.id)}>
+                    <Button variant="danger" size="compact" onClick={() => deleteChannel(c.id)}>
                       Delete
                     </Button>
                   </span>

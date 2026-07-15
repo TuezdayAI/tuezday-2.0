@@ -87,17 +87,17 @@ export function CampaignOverview({
         </div>
         <div className={styles.attentionList}>
           {!activePlan && (
-            <div><Icon name="warning" size="sm" /><span><strong>Campaign plan is not initialized.</strong> Preserve the current campaign fields and create revision 1.</span></div>
+            <div><Icon name="warning" size="compact" /><span><strong>Campaign plan is not initialized.</strong> Preserve the current campaign fields and create revision 1.</span></div>
           )}
           {planWorkspace.issues.map((issue) => (
             <div key={`${issue.path}-${issue.code}`}>
-              <Icon name="warning" size="sm" />
+              <Icon name="warning" size="compact" />
               <span><strong>Channel setup required.</strong> {issue.message}</span>
             </div>
           ))}
           {reviewCount > 0 && (
             <div>
-              <Icon name="status-review" size="sm" />
+              <Icon name="status-review" size="compact" />
               <span><strong>{reviewCount} item{reviewCount === 1 ? "" : "s"} awaiting review.</strong> Decide what is ready before scheduling.</span>
             </div>
           )}
@@ -129,7 +129,7 @@ export function CampaignOverview({
       <section className={styles.panel}>
         <div className={styles.panelHeader}>
           <div><p className={styles.panelKicker}>Channels</p><h2>{activePlan?.lanes.length ?? 0} configured</h2></div>
-          <Link href={`?tab=channels`} className={styles.panelLink}>Manage channels <Icon name="chevron-right" size="sm" /></Link>
+          <Link href={`?tab=channels`} className={styles.panelLink}>Manage channels <Icon name="chevron-right" size="compact" /></Link>
         </div>
         {activePlan?.lanes.length ? (
           <div className={styles.laneList}>

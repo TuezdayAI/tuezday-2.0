@@ -188,7 +188,7 @@ export function InboxQueue({
     <>
       <TopBarActions>
         <Button variant="primary" size="compact" onClick={runNow} disabled={running}>
-          <Icon name="regenerate" size="sm" />
+          <Icon name="regenerate" size="compact" />
           {running ? "Running…" : "Run inbox now"}
         </Button>
       </TopBarActions>
@@ -231,7 +231,7 @@ export function InboxQueue({
           primaryAction={
             items.length === 0 ? (
               <Button variant="secondary" size="compact" onClick={runNow} disabled={running}>
-                <Icon name="regenerate" size="sm" />
+                <Icon name="regenerate" size="compact" />
                 {running ? "Running…" : "Run inbox now"}
               </Button>
             ) : undefined
@@ -241,7 +241,7 @@ export function InboxQueue({
               <div className={styles.previewList}>
                 <div className={styles.previewCard}>
                   <span className={styles.previewAuthor}>
-                    <BrandIcon name="linkedin" size="sm" /> Maya R. · comment
+                    <BrandIcon name="linkedin" size="compact" /> Maya R. · comment
                   </span>
                   <p className={styles.previewBody}>
                     This is exactly the workflow gap we hit last quarter — how does it handle approvals?
@@ -249,7 +249,7 @@ export function InboxQueue({
                 </div>
                 <div className={styles.previewCard}>
                   <span className={styles.previewAuthor}>
-                    <BrandIcon name="x" size="sm" /> @growthlee · DM
+                    <BrandIcon name="x" size="compact" /> @growthlee · DM
                   </span>
                   <p className={styles.previewBody}>
                     Saw your launch post. Curious what the pricing looks like for small teams.
@@ -257,7 +257,7 @@ export function InboxQueue({
                 </div>
                 <div className={styles.previewCard}>
                   <span className={styles.previewAuthor}>
-                    <BrandIcon name="reddit" size="sm" /> u/saasfounder · comment
+                    <BrandIcon name="reddit" size="compact" /> u/saasfounder · comment
                   </span>
                   <p className={styles.previewBody}>
                     Been burned by tools like this before — what makes the brain thing different?
@@ -284,9 +284,9 @@ export function InboxQueue({
                 <div className="section-head">
                   <span className={styles.itemMark} title={item.providerKey}>
                     {brand ? (
-                      <BrandIcon name={brand} size="sm" />
+                      <BrandIcon name={brand} size="compact" />
                     ) : (
-                      <Icon name="email" size="sm" />
+                      <Icon name="email" size="compact" />
                     )}
                   </span>
                   <WorkflowStatusBadge status={inboxWorkflowStatus(item.status)} />

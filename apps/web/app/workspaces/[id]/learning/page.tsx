@@ -211,7 +211,7 @@ export default function LearningPage() {
     <>
       <TopBarActions>
         <Button variant="primary" size="compact" disabled={synthesizing} onClick={synthesize}>
-          <Icon name="status-generating" size="sm" />
+          <Icon name="status-generating" size="compact" />
           {synthesizing ? "Synthesizing…" : "Synthesize learnings"}
         </Button>
       </TopBarActions>
@@ -225,7 +225,7 @@ export default function LearningPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="status-learning" size="sm" className={styles.headIcon} />
+              <Icon name="status-learning" size="compact" className={styles.headIcon} />
               Signal so far
             </span>
           }
@@ -245,7 +245,7 @@ export default function LearningPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="doc-now" size="sm" className={styles.headIconNow} />
+              <Icon name="doc-now" size="compact" className={styles.headIconNow} />
               Proposed now updates{" "}
               {proposed.length > 0 && <CountBadge count={proposed.length} label="proposed now updates awaiting review" />}
             </span>
@@ -257,7 +257,7 @@ export default function LearningPage() {
             one weekly.</>}
             primaryAction={
               <Button variant="secondary" size="compact" disabled={synthesizing} onClick={synthesize}>
-                <Icon name="status-generating" size="sm" />
+                <Icon name="status-generating" size="compact" />
                 Synthesize now
               </Button>
             }
@@ -310,7 +310,7 @@ export default function LearningPage() {
                       disabled={busy}
                       onClick={() => decide(s.id, "accept")}
                     >
-                      <Icon name="status-approved" size="sm" />
+                      <Icon name="status-approved" size="compact" />
                       Accept into now
                     </Button>
                     <Button
@@ -319,7 +319,7 @@ export default function LearningPage() {
                       disabled={busy}
                       onClick={() => decide(s.id, "dismiss")}
                     >
-                      <Icon name="status-rejected" size="sm" />
+                      <Icon name="status-rejected" size="compact" />
                       Dismiss
                     </Button>
                   </div>
@@ -335,7 +335,7 @@ export default function LearningPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="status-live" size="sm" className={styles.headIconLive} />
+              <Icon name="status-live" size="compact" className={styles.headIconLive} />
               Record engagement metrics
             </span>
           }
@@ -422,7 +422,7 @@ export default function LearningPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="status-learning" size="sm" className={styles.headIcon} />
+              <Icon name="status-learning" size="compact" className={styles.headIcon} />
               Training examples <CountBadge count={examples.length} label="training examples" />
             </span>
           }

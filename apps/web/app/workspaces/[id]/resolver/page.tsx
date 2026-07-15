@@ -432,7 +432,7 @@ export default function ResolverPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="user" size="sm" />
+              <Icon name="user" size="compact" />
               Personas{" "}
               {personas.length > 0 && <CountBadge count={personas.length} label="personas" />}
             </span>
@@ -551,7 +551,7 @@ export default function ResolverPage() {
         {personas.length > 0 && (
           <div style={{ borderTop: "1px solid var(--border)", marginTop: 18, paddingTop: 16 }}>
             <h2 className={styles.head}>
-              <Icon name="connect" size="sm" />
+              <Icon name="connect" size="compact" />
               Social account routing
             </h2>
             <p className="subtitle">
@@ -694,7 +694,7 @@ export default function ResolverPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="bundle" size="sm" />
+              <Icon name="bundle" size="compact" />
               Resolve
             </span>
           }
@@ -812,7 +812,7 @@ export default function ResolverPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="doc-icp" size="sm" />
+              <Icon name="doc-icp" size="compact" />
               Task × doc context matrix
             </span>
           }

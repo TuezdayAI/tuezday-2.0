@@ -270,7 +270,7 @@ export default function CrmPage() {
       <TopBarActions>
         {crmConnections.length > 0 && (
           <Button variant="primary" size="compact" disabled={busy || !activeConnectionId} onClick={sync}>
-            <Icon name="regenerate" size="sm" /> {busy ? "Working…" : "Sync contacts"}
+            <Icon name="regenerate" size="compact" /> {busy ? "Working…" : "Sync contacts"}
           </Button>
         )}
       </TopBarActions>
@@ -279,7 +279,7 @@ export default function CrmPage() {
         <CardHeader
           title={
             <span className={styles.cardTitle}>
-              <Icon name="regenerate" size="sm" /> Sync
+              <Icon name="regenerate" size="compact" /> Sync
             </span>
           }
         />
@@ -416,14 +416,14 @@ export default function CrmPage() {
         <CardHeader
           title={
             <span className={styles.cardTitle}>
-              <Icon name="user" size="sm" /> CRM contacts
+              <Icon name="user" size="compact" /> CRM contacts
               <CountBadge count={contacts.length} label="contacts" />
             </span>
           }
         />
         {contacts.length === 0 ? (
           <EmptyState
-            icon={<Icon name="user" size="lg" />}
+            icon={<Icon name="user" size="emphasized" />}
             description={<>Nothing synced yet. Run a sync above.</>}
           />
         ) : (
@@ -477,7 +477,7 @@ export default function CrmPage() {
           <CardHeader
             title={
               <span className={styles.cardTitle}>
-                <Icon name="reject" size="sm" /> Discarded
+                <Icon name="reject" size="compact" /> Discarded
                 <CountBadge count={discarded.length} label="discarded contacts" />
               </span>
             }
@@ -513,13 +513,13 @@ export default function CrmPage() {
         <CardHeader
           title={
             <span className={styles.cardTitle}>
-              <Icon name="external" size="sm" /> Leads → CRM
+              <Icon name="external" size="compact" /> Leads → CRM
             </span>
           }
         />
         {leadsList.length === 0 ? (
           <EmptyState
-            icon={<Icon name="external" size="lg" />}
+            icon={<Icon name="external" size="emphasized" />}
             description={<>No leads yet. Import a contact above or add leads on the{" "}
             <Link href={`/workspaces/${id}/outbound`}>outbound page</Link>.</>} />
         ) : (
@@ -553,13 +553,13 @@ export default function CrmPage() {
         <CardHeader
           title={
             <span className={styles.cardTitle}>
-              <Icon name="email" size="sm" /> Approved outbound drafts → CRM notes
+              <Icon name="email" size="compact" /> Approved outbound drafts → CRM notes
             </span>
           }
         />
         {approvedDrafts.length === 0 ? (
           <EmptyState
-            icon={<Icon name="email" size="lg" />}
+            icon={<Icon name="email" size="emphasized" />}
             description={<>No approved outbound drafts yet. Draft on the{" "}
             <Link href={`/workspaces/${id}/outbound`}>outbound page</Link>, approve in the{" "}
             <Link href={`/workspaces/${id}/review`}>queue</Link>, then log them here.</>} />

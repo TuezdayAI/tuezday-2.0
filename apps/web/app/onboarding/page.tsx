@@ -226,8 +226,8 @@ function OnboardingWizard() {
         <div className="ob-skip">
           <Button
             type="button"
-            variant="ghost"
-            size="sm"
+            variant="tertiary"
+            size="compact"
             disabled={busy || skipping}
             onClick={skipSetup}
           >
@@ -290,7 +290,7 @@ function OnboardingWizard() {
             maxLength={100}
           />
           <div className="ob-actions">
-            <Button type="button" variant="ghost" size="sm" onClick={() => setStep("name")}>
+            <Button type="button" variant="tertiary" size="compact" onClick={() => setStep("name")}>
               Back
             </Button>
             <Button

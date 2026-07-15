@@ -346,7 +346,7 @@ export default function LaunchesPage() {
 
       <TopBarActions>
         <Button variant="primary" size="compact" onClick={() => setShowForm(!showForm)}>
-          <Icon name="add" size="sm" /> New launch
+          <Icon name="add" size="compact" /> New launch
         </Button>
       </TopBarActions>
 
@@ -357,7 +357,7 @@ export default function LaunchesPage() {
           <CardHeader
             title={
               <span className={styles.cardTitle}>
-                <Icon name="add" size="sm" /> New launch
+                <Icon name="add" size="compact" /> New launch
               </span>
             }
           />
@@ -483,7 +483,7 @@ export default function LaunchesPage() {
         <CardHeader
           title={
             <span className={styles.cardTitle}>
-              <Icon name="campaigns" size="sm" /> Launches
+              <Icon name="campaigns" size="compact" /> Launches
               <CountBadge count={launches.length} label="launches" />
             </span>
           }
@@ -503,7 +503,7 @@ export default function LaunchesPage() {
                 ))}
               </ul>
             }
-            icon={<Icon name="campaigns" size="lg" />}
+            icon={<Icon name="campaigns" size="emphasized" />}
             title="Point a segment at every channel at once"
             description={
               <>
@@ -514,7 +514,7 @@ export default function LaunchesPage() {
             }
             primaryAction={
               <Button variant="primary" size="compact" onClick={() => setShowForm(true)}>
-                <Icon name="add" size="sm" /> New launch
+                <Icon name="add" size="compact" /> New launch
               </Button>
             }
           />
@@ -628,7 +628,7 @@ function LaunchDetailView({
             <CardHeader
               title={
                 <span className={styles.cardTitle}>
-                  <Icon name={channel === "email" ? "email" : "post"} size="sm" />{" "}
+                  <Icon name={channel === "email" ? "email" : "post"} size="compact" />{" "}
                   {CHANNEL_LABELS[channel]}
                 </span>
               }
@@ -935,7 +935,7 @@ function SequenceSection({
       <CardHeader
         title={
           <span className={styles.cardTitle}>
-            <Icon name="calendar" size="sm" /> Follow-up sequence
+            <Icon name="calendar" size="compact" /> Follow-up sequence
           </span>
         }
         actions={

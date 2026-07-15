@@ -81,7 +81,7 @@ export default function WorkspaceInsightsPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="brain" size="sm" />
+              <Icon name="brain" size="compact" />
               Brain Completeness
             </span>
           }
@@ -128,7 +128,7 @@ export default function WorkspaceInsightsPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="status-learning" size="sm" />
+              <Icon name="status-learning" size="compact" />
               Metrics by Channel
             </span>
           }
@@ -196,7 +196,7 @@ export default function WorkspaceInsightsPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="campaigns" size="sm" />
+              <Icon name="campaigns" size="compact" />
               Campaigns Summary
             </span>
           }

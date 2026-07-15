@@ -48,7 +48,7 @@ export function PreviewCard({
     <article className={styles.card} data-kind={kind}>
       <header className={styles.chrome} data-tone-kind={kind}>
         <span className={styles.kind}>
-          <Icon name={KIND_ICON[kind]} size="sm" />
+          <Icon name={KIND_ICON[kind]} size="compact" />
           {KIND_LABEL[kind]}
         </span>
         {scheduledAt && <time className={styles.time}>{scheduledAt}</time>}
@@ -65,7 +65,7 @@ export function PreviewCard({
             <div className={styles.socialTop}>
               <span className={styles.avatar} aria-hidden="true" />
               <span className={styles.handle}>{title}</span>
-              {platform && <BrandIcon name={platform} size="sm" className={styles.platform} />}
+              {platform && <BrandIcon name={platform} size="compact" className={styles.platform} />}
             </div>
             {mediaUrl ? (
               <img className={styles.media} src={mediaUrl} alt="" />
@@ -93,7 +93,7 @@ export function PreviewCard({
             {mediaUrl && <img className={styles.media} src={mediaUrl} alt="" />}
             <div className={styles.adMeta}>
               <span className={styles.adHeadline}>{title}</span>
-              {platform && <BrandIcon name={platform} size="sm" className={styles.platform} />}
+              {platform && <BrandIcon name={platform} size="compact" className={styles.platform} />}
             </div>
             {!mediaUrl && <p className={styles.copyClamp}>{body}</p>}
           </div>

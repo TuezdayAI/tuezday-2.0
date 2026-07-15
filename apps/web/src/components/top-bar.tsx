@@ -4,12 +4,11 @@
 // health + user far right. Pages fill actions via <TopBarActions>.
 import { useEffect, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import Link from "next/link";
 import { useParams, usePathname } from "next/navigation";
 import { WORKSPACE_NAV, navEntryForPath } from "@tuezday/contracts";
 import { Icon, type IconName } from "./ui/icon";
 import { CountBadge } from "./ui/badge";
-import buttonStyles from "./ui/button.module.css";
+import { ButtonLink } from "./ui/button";
 import styles from "./top-bar.module.css";
 
 const ACTIONS_SLOT_ID = "tz-topbar-actions";
@@ -30,17 +29,19 @@ export function TopBar({ workspaceName, reviewCount, userLabel }: TopBarProps) {
   return (
     <header className={styles.bar} data-tone={entry?.tone ?? "system"}>
       <div className={styles.title}>
-        {entry?.icon && <Icon name={entry.icon as IconName} size="md" className={styles.titleIcon} />}
+        {entry?.icon && <Icon name={entry.icon as IconName} size="standard" className={styles.titleIcon} />}
         {entry?.parentLabel && <span className={styles.crumb}>{entry.parentLabel} /</span>}
         <h1 className={styles.heading}>{entry?.label ?? workspaceName ?? "Workspace"}</h1>
       </div>
-      <Link
+      <ButtonLink
         href={`/workspaces/${id}/content`}
-        className={`${buttonStyles.button} ${buttonStyles.primary} ${buttonStyles.sm} ${styles.create}`}
+        variant="primary"
+        size="compact"
+        className={styles.create}
       >
-        <Icon name="add" size="sm" />
+        <Icon name="add" size="compact" />
         Create New
-      </Link>
+      </ButtonLink>
       <div id={ACTIONS_SLOT_ID} className={styles.actions} />
       <div className={styles.meta}>
         {reviewCount > 0 && <CountBadge count={reviewCount} label="drafts waiting for review" />}

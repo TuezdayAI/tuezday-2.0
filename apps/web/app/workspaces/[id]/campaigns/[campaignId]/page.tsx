@@ -221,7 +221,7 @@ export default function CampaignWorkspacePage() {
   if (error && !detail) {
     return (
       <EmptyState
-        icon={<Icon name="warning" size="lg" />}
+        icon={<Icon name="warning" size="emphasized" />}
         title="Campaign unavailable"
         description={error}
         primaryAction={
@@ -241,13 +241,13 @@ export default function CampaignWorkspacePage() {
     <>
       <TopBarActions>
         <Link className={styles.reviewAction} href={`/workspaces/${id}/review?tab=approvals&campaign=${campaignId}`}>
-          <Icon name="review" size="sm" /> Open Review
+          <Icon name="review" size="compact" /> Open Review
         </Link>
       </TopBarActions>
 
       <header className={styles.campaignHeader}>
         <Link className={styles.breadcrumb} href={`/workspaces/${id}/campaigns`}>
-          <Icon name="chevron-right" size="sm" /> Campaigns
+          <Icon name="chevron-right" size="compact" /> Campaigns
         </Link>
         <div className={styles.headerMain}>
           <div>
@@ -281,7 +281,7 @@ export default function CampaignWorkspacePage() {
 
       {connectionWarning && (
         <div className={styles.inlineWarning} role="status">
-          <Icon name="campaign-risk" size="sm" />
+          <Icon name="campaign-risk" size="compact" />
           <span>Publishing connections could not be loaded. Campaign context remains available.</span>
           <Link href={`/workspaces/${id}/connectors`}>Open Integrations</Link>
         </div>

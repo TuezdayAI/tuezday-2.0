@@ -70,7 +70,7 @@ export function WorkflowStatusBadge({
     .join(" ");
   return (
     <span className={classes} data-workflow-status={status} {...rest}>
-      <Icon name={view.icon} size="sm" />
+      <Icon name={view.icon} size="compact" />
       <span>{label ?? view.label}</span>
     </span>
   );

@@ -379,7 +379,7 @@ export default function ContentPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="add" size="sm" />
+              <Icon name="add" size="compact" />
               New signal
             </span>
           }
@@ -423,7 +423,7 @@ export default function ContentPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="discover" size="sm" />
+              <Icon name="discover" size="compact" />
               Signal inbox{" "}
               {signalsList.length > 0 && (
                 <CountBadge count={signalsList.length} label="signals in the inbox" />
@@ -686,7 +686,7 @@ export default function ContentPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="status-live" size="sm" />
+              <Icon name="status-live" size="compact" />
               Published{" "}
               {publications.length > 0 && (
                 <CountBadge count={publications.length} label="publication receipts" />

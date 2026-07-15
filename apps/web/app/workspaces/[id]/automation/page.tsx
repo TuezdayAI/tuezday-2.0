@@ -33,8 +33,8 @@ export default function AutomationPage() {
   return (
     <>
       <TopBarActions>
-        <Button variant="primary" size="sm" onClick={runNow} disabled={running}>
-          <Icon name="status-generating" size="sm" /> {running ? "Running…" : "Run automation now"}
+        <Button variant="primary" size="compact" onClick={runNow} disabled={running}>
+          <Icon name="status-generating" size="compact" /> {running ? "Running…" : "Run automation now"}
         </Button>
       </TopBarActions>
 
@@ -56,11 +56,11 @@ export default function AutomationPage() {
       {lastRun && (
         <Card>
           <h2 className={styles.head}>
-            <Icon name="info" size="sm" /> Last run
+            <Icon name="info" size="compact" /> Last run
           </h2>
           {lastRun.length === 0 ? (
             <EmptyState
-              icon={<Icon name="status-generating" size="lg" />}
+              icon={<Icon name="status-generating" size="emphasized" />}
               title="No automated campaigns yet"
               description={
                 <>

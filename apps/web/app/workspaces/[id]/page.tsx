@@ -136,25 +136,25 @@ export default function WorkspaceHomePage() {
       {/* Slim icon+count strip — passive muted-ink counts, each deep-linking. */}
       <nav className={styles.statStrip} aria-label="Workspace counts">
         <Link className={styles.stat} href={`/workspaces/${id}/review`}>
-          <Icon name="review" size="sm" />
+          <Icon name="review" size="compact" />
           Needs review
           <CountBadge count={pendingReview} label="drafts waiting for review" />
         </Link>
         <span className={styles.statSep} aria-hidden="true">·</span>
         <Link className={styles.stat} href={`/workspaces/${id}/discovery`}>
-          <Icon name="discover" size="sm" />
+          <Icon name="discover" size="compact" />
           Signals
           <CountBadge count={newSignals} label="new market signals" />
         </Link>
         <span className={styles.statSep} aria-hidden="true">·</span>
         <Link className={styles.stat} href={`/workspaces/${id}/learning`}>
-          <Icon name="status-learning" size="sm" />
+          <Icon name="status-learning" size="compact" />
           Brain updates
           <CountBadge count={proposedUpdates} label="proposed brain updates" />
         </Link>
         <span className={styles.statSep} aria-hidden="true">·</span>
         <Link className={styles.stat} href={`/workspaces/${id}/campaigns`}>
-          <Icon name="status-live" size="sm" />
+          <Icon name="status-live" size="compact" />
           Live
           <CountBadge count={activeCampaigns} label="campaigns live" />
         </Link>
@@ -168,7 +168,7 @@ export default function WorkspaceHomePage() {
         </div>
         {queueState === "all_clear" ? (
           <p className={styles.allClear}>
-            <Icon name="status-approved" size="sm" />
+            <Icon name="status-approved" size="compact" />
             All clear — nothing is waiting on you.
             {generatingCount > 0 && (
               <span className={styles.generating}>
@@ -184,7 +184,7 @@ export default function WorkspaceHomePage() {
                 <article key={priority.id} className={styles.priorityCard}>
                   <div className={styles.priorityHead}>
                     <span className={styles.priorityKind}>
-                      <Icon name={view.icon} size="sm" />
+                      <Icon name={view.icon} size="compact" />
                       {index === 0 && <span className={styles.nextTag}>Next up</span>}
                       {view.label}
                     </span>
@@ -240,7 +240,7 @@ export default function WorkspaceHomePage() {
                   data-next={(isNext && !done) || undefined}
                 >
                   <span className={styles.stepIcon}>
-                    <Icon name={done ? "status-approved" : meta.icon} size="sm" />
+                    <Icon name={done ? "status-approved" : meta.icon} size="compact" />
                   </span>
                   <span className={styles.stepLabel}>{meta.label}</span>
                 </Link>

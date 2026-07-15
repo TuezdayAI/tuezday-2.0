@@ -18,6 +18,7 @@ import { initAnalytics, identify } from "@/src/analytics";
 import { UpgradeModal } from "@/components/upgrade-modal";
 import { Icon, type IconName } from "@/src/components/ui/icon";
 import { CountBadge, GuideDot } from "@/src/components/ui/badge";
+import { Button } from "@/src/components/ui/button";
 import { TopBar } from "@/src/components/top-bar";
 import { Toaster } from "@/src/components/ui/toast";
 
@@ -199,7 +200,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
                   className={`ws-nav-item ws-nav-parent ${groupActive ? "active" : ""}`}
                   href={`${base}${item.path}`}
                 >
-                  {item.icon && <Icon name={item.icon as IconName} size="md" className="ws-nav-icon" />}
+                  {item.icon && <Icon name={item.icon as IconName} size="standard" className="ws-nav-icon" />}
                   <span className="ws-nav-copy">
                     <span className="ws-nav-label">{item.label}</span>
                     {item.summary && <span className="ws-nav-summary">{item.summary}</span>}
@@ -218,7 +219,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
                         href={`${base}${child.path}`}
                         data-tone={child.tone ?? item.tone ?? "system"}
                       >
-                        {child.icon && <Icon name={child.icon as IconName} size="sm" className="ws-nav-icon" />}
+                        {child.icon && <Icon name={child.icon as IconName} size="compact" className="ws-nav-icon" />}
                         <span>{child.label}</span>
                         {dotAction && childrenVisible && child.path === dotAction.module && (
                           <GuideDot reason={dotAction.reason} />
@@ -247,9 +248,9 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
           {userLabel && (
             <div className="ws-user">
               <span>{userLabel}</span>
-              <button type="button" className="link-button" onClick={logout}>
+              <Button type="button" variant="tertiary" size="compact" onClick={logout}>
                 Log out
-              </button>
+              </Button>
             </div>
           )}
         </div>

@@ -377,20 +377,20 @@ export function ConversationalEditor({
         </div>
         <div className={styles.queueNav}>
           <IconButton label="Previous in queue" disabled={!previousId} onClick={() => previousId && onNavigate(previousId)}>
-            <Icon name="chevron-left" size="sm" />
+            <Icon name="chevron-left" size="compact" />
           </IconButton>
           <IconButton label="Next in queue" disabled={!nextId} onClick={() => nextId && onNavigate(nextId)}>
-            <Icon name="chevron-right" size="sm" />
+            <Icon name="chevron-right" size="compact" />
           </IconButton>
           <IconButton label="Close editor" onClick={onClose}>
-            <Icon name="close" size="sm" />
+            <Icon name="close" size="compact" />
           </IconButton>
         </div>
       </header>
 
       {context.staleness.stale && (
         <div className={styles.stale} role="alert">
-          <Icon name="warning" size="sm" />
+          <Icon name="warning" size="compact" />
           <span>{stalenessExplanation(context.staleness)}</span>
         </div>
       )}
@@ -404,7 +404,7 @@ export function ConversationalEditor({
               <span className={styles.eyebrow}>Guidance</span>
               <h3>Why Tuezday made this</h3>
             </div>
-            <Icon name="brain" size="sm" />
+            <Icon name="brain" size="compact" />
           </div>
 
           {draft.review ? (
@@ -477,7 +477,7 @@ export function ConversationalEditor({
               <div className={styles.composerFoot}>
                 <small>{instruction.length}/2,000</small>
                 <Button type="submit" variant="primary" size="compact" disabled={busyAction !== null || !instruction.trim()}>
-                  <Icon name="regenerate" size="sm" />
+                  <Icon name="regenerate" size="compact" />
                   {busyAction === "revise" ? "Revising…" : retryLatest ? "Try again on latest" : context.turns.some((turn) => turn.status === "failed") ? "Retry revision" : "Revise draft"}
                 </Button>
               </div>
@@ -548,7 +548,7 @@ export function ConversationalEditor({
           <dl className={styles.facts}>
             <div><dt>Campaign</dt><dd>{context.campaign ? <Link href={`/workspaces/${workspaceId}/campaigns/${context.campaign.id}`}>{context.campaign.name}</Link> : "No campaign"}</dd></div>
             <div><dt>Persona</dt><dd>{context.persona?.name ?? "Organization voice"}</dd></div>
-            <div><dt>Destination</dt><dd>{context.destination ? <><span className={styles.destination}>{PLATFORM[draft.channel] && <BrandIcon name={PLATFORM[draft.channel]!} size="sm" />}{context.destination.label}</span><small>{context.destination.status}{context.destination.error ? ` · ${context.destination.error}` : ""}</small></> : "Not connected"}</dd></div>
+            <div><dt>Destination</dt><dd>{context.destination ? <><span className={styles.destination}>{PLATFORM[draft.channel] && <BrandIcon name={PLATFORM[draft.channel]!} size="compact" />}{context.destination.label}</span><small>{context.destination.status}{context.destination.error ? ` · ${context.destination.error}` : ""}</small></> : "Not connected"}</dd></div>
           </dl>
 
           <div className={styles.policyBox}>
@@ -684,7 +684,7 @@ export function ConversationalEditor({
             <Button variant="secondary" size="compact" onClick={downloadCurrent}>Download .md</Button>
             {draft.state === "approved" && draft.taskType !== "instagram_carousel" && (
               <Button variant="secondary" size="compact" disabled={busyAction !== null} onClick={() => void generateCarousel()}>
-                <Icon name="carousel" size="sm" />
+                <Icon name="carousel" size="compact" />
                 {busyAction === "carousel" ? "Rendering…" : "Generate carousel"}
               </Button>
             )}
@@ -694,7 +694,7 @@ export function ConversationalEditor({
           {legalEdit && (
             <div className={styles.directEdit}>
               <Button variant="tertiary" size="compact" onClick={() => setEditing((value) => !value)}>
-                <Icon name="edit" size="sm" /> {editing ? "Cancel focused edit" : "Focused direct edit"}
+                <Icon name="edit" size="compact" /> {editing ? "Cancel focused edit" : "Focused direct edit"}
               </Button>
               {editing && (
                 <div>
@@ -713,9 +713,9 @@ export function ConversationalEditor({
           <span>Recorded separately from any external action.</span>
         </div>
         <div className={styles.decisionActions}>
-          {legalApprove && <Button variant="primary" disabled={busyAction !== null} onClick={() => void draftAction("approve")}><Icon name="approve" size="sm" /> Approve content</Button>}
-          {legalReject && <Button variant="danger" disabled={busyAction !== null} onClick={() => void draftAction("reject")}><Icon name="reject" size="sm" /> Reject</Button>}
-          {legalResubmit && <Button variant="secondary" disabled={busyAction !== null} onClick={() => void draftAction("resubmit")}><Icon name="regenerate" size="sm" /> Resubmit</Button>}
+          {legalApprove && <Button variant="primary" disabled={busyAction !== null} onClick={() => void draftAction("approve")}><Icon name="approve" size="compact" /> Approve content</Button>}
+          {legalReject && <Button variant="danger" disabled={busyAction !== null} onClick={() => void draftAction("reject")}><Icon name="reject" size="compact" /> Reject</Button>}
+          {legalResubmit && <Button variant="secondary" disabled={busyAction !== null} onClick={() => void draftAction("resubmit")}><Icon name="regenerate" size="compact" /> Resubmit</Button>}
           {!legalApprove && !legalReject && !legalResubmit && <WorkflowStatusBadge status={draftWorkflowStatus(draft.state)} />}
         </div>
       </footer>

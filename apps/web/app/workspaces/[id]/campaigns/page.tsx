@@ -176,10 +176,10 @@ export default function CampaignsPage() {
     <>
       <TopBarActions>
         <Button variant="primary" size="compact" onClick={() => setEditing("new")}>
-          <Icon name="add" size="sm" /> New campaign
+          <Icon name="add" size="compact" /> New campaign
         </Button>
         <Button variant="tertiary" size="compact" onClick={() => setSettingsOpen(true)}>
-          <Icon name="module-settings" size="sm" /> Settings
+          <Icon name="module-settings" size="compact" /> Settings
         </Button>
       </TopBarActions>
 
@@ -217,7 +217,7 @@ export default function CampaignsPage() {
           {(["all", "active", "archived"] as CampaignFilter[]).map((value) => (
             <Button
               key={value}
-              variant={filter === value ? "secondary" : "ghost"}
+              variant={filter === value ? "secondary" : "tertiary"}
               size="compact"
               aria-pressed={filter === value}
               onClick={() => setFilter(value)}
@@ -233,12 +233,12 @@ export default function CampaignsPage() {
 
       {campaignsList.length === 0 && !editing ? (
         <EmptyState
-          icon={<Icon name="campaigns" size="lg" />}
+          icon={<Icon name="campaigns" size="emphasized" />}
           title="No campaigns yet"
           description="Create a campaign to connect an objective, audiences, work, channels, review, and results."
           primaryAction={
             <Button variant="primary" onClick={() => setEditing("new")}>
-              <Icon name="add" size="sm" /> New campaign
+              <Icon name="add" size="compact" /> New campaign
             </Button>
           }
         />

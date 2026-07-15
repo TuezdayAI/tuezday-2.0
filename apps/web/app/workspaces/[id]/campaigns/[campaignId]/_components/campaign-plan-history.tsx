@@ -57,7 +57,7 @@ export function CampaignPlanHistory({
             disabled={Boolean(draft)}
             title={draft ? "Activate or resolve the existing draft first." : undefined}
           >
-            <Icon name="add" size="sm" /> New revision
+            <Icon name="add" size="compact" /> New revision
           </Button>
         )}
       </div>
@@ -83,7 +83,7 @@ export function CampaignPlanHistory({
 
       {activationIssues.length > 0 && (
         <div className={styles.activationIssues} role="alert">
-          <div><Icon name="warning" size="sm" /><strong>This revision cannot be activated yet.</strong></div>
+          <div><Icon name="warning" size="compact" /><strong>This revision cannot be activated yet.</strong></div>
           <ul>
             {activationIssues.map((issue) => <li key={`${issue.path}-${issue.code}`}>{issue.message}</li>)}
           </ul>

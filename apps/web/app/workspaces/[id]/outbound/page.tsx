@@ -336,7 +336,7 @@ export default function OutboundPage() {
             size="compact"
             onClick={() => void apiDownload(`/workspaces/${id}/outbound/export.csv`, "outbound.csv")}
           >
-            <Icon name="external" size="sm" /> Export approved CSV ({approvedCount})
+            <Icon name="external" size="compact" /> Export approved CSV ({approvedCount})
           </Button>
         )}
       </TopBarActions>
@@ -346,13 +346,13 @@ export default function OutboundPage() {
         <CardHeader
           title={
             <span className={styles.cardTitle}>
-              <Icon name="audience" size="sm" /> Leads
+              <Icon name="audience" size="compact" /> Leads
               <CountBadge count={leadsList.length} label="leads" />
             </span>
           }
           actions={
             <Button variant="secondary" size="compact" onClick={() => setShowAddForm(!showAddForm)}>
-              <Icon name="add" size="sm" /> Add one lead
+              <Icon name="add" size="compact" /> Add one lead
             </Button>
           }
         />
@@ -562,7 +562,7 @@ export default function OutboundPage() {
         <CardHeader
           title={
             <span className={styles.cardTitle}>
-              <Icon name="email" size="sm" /> Draft outbound emails
+              <Icon name="email" size="compact" /> Draft outbound emails
             </span>
           }
         />

@@ -475,7 +475,7 @@ export default function ConnectorsPage() {
           >
             {connectLabel}
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => setConnectingKey(null)}>
+          <Button variant="secondary" size="compact" onClick={() => setConnectingKey(null)}>
             Cancel
           </Button>
         </div>
@@ -487,7 +487,7 @@ export default function ConnectorsPage() {
         {provider.authMode !== "oauth" && (
           <Button
             variant={providerConnections.length > 0 ? "secondary" : "primary"}
-            size="sm"
+            size="compact"
             disabled={busy || !view?.fabric.healthy}
             onClick={() => setConnectingKey(provider.key)}
           >
@@ -497,7 +497,7 @@ export default function ConnectorsPage() {
         {provider.authMode === "oauth" && provider.oauthConfigured && (
           <Button
             variant={providerConnections.length > 0 ? "secondary" : "primary"}
-            size="sm"
+            size="compact"
             disabled={busy || !view?.fabric.healthy}
             onClick={() => connectOAuth(provider)}
           >
@@ -506,7 +506,7 @@ export default function ConnectorsPage() {
         )}
         {needsOAuthApp && OAUTH_APP_HINTS[provider.key] && (
           <details>
-            <summary className="link-button" style={{ cursor: "pointer" }}>
+            <summary style={{ cursor: "pointer" }}>
               Setup
             </summary>
             <p className={styles.hint}>{OAUTH_APP_HINTS[provider.key]}</p>
@@ -529,9 +529,9 @@ export default function ConnectorsPage() {
         <div className={styles.cardHead}>
           <span className={styles.mark}>
             {brand ? (
-              <BrandIcon name={brand} size="md" brandColor />
+              <BrandIcon name={brand} size="standard" brandColor />
             ) : (
-              <Icon name="connect" size="md" />
+              <Icon name="connect" size="standard" />
             )}
           </span>
           <span className={styles.cardName}>{provider.label}</span>
@@ -601,7 +601,7 @@ export default function ConnectorsPage() {
                   <div className="rating-row" style={{ marginTop: 6 }}>
                     <Button
                       variant="secondary"
-                      size="sm"
+                      size="compact"
                       disabled={busy}
                       onClick={() => testConnection(connection)}
                     >
@@ -609,7 +609,7 @@ export default function ConnectorsPage() {
                     </Button>
                     <Button
                       variant="danger"
-                      size="sm"
+                      size="compact"
                       disabled={busy}
                       onClick={() => disconnect(connection)}
                     >
@@ -620,10 +620,7 @@ export default function ConnectorsPage() {
                 {connection.status === "connected" &&
                   provider.categories?.includes("social") && (
                     <details className="outline-preview" style={{ marginTop: 6 }}>
-                      <summary
-                        className="link-button"
-                        style={{ cursor: "pointer", listStyle: "none" }}
-                      >
+                      <summary style={{ cursor: "pointer", listStyle: "none" }}>
                         Content profile
                         {connection.contentProfile.topics.length > 0 &&
                           ` — covers ${connection.contentProfile.topics.join(", ")}`}
@@ -985,16 +982,16 @@ export default function ConnectorsPage() {
                   <div className="rating-row" style={{ marginTop: 8 }}>
                     <Button
                       variant="secondary"
-                      size="sm"
+                      size="compact"
                       disabled={busy}
                       onClick={() => pingWebhook(w.id)}
                     >
                       Ping
                     </Button>
-                    <Button variant="secondary" size="sm" onClick={() => toggleWebhook(w)}>
+                    <Button variant="secondary" size="compact" onClick={() => toggleWebhook(w)}>
                       {w.enabled ? "Disable" : "Enable"}
                     </Button>
-                    <Button variant="danger" size="sm" onClick={() => removeWebhook(w)}>
+                    <Button variant="danger" size="compact" onClick={() => removeWebhook(w)}>
                       Delete
                     </Button>
                   </div>

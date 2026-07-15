@@ -54,7 +54,7 @@ export function AutomationGuardrails({ workspaceId, framed = false }: Automation
   function section(icon: IconName, title: string, children: ReactNode) {
     const head = (
       <h2 className={styles.head}>
-        <Icon name={icon} size="sm" /> {title}
+        <Icon name={icon} size="compact" /> {title}
       </h2>
     );
     return framed ? (

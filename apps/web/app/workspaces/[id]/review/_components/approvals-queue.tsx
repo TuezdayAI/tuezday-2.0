@@ -376,10 +376,10 @@ export function ApprovalsQueue({
           return (
             <section key={group.key} className={styles.group}>
               <header className={styles.groupHead}>
-                <h2 className={styles.groupTitle}><Icon name={group.kind === "campaign" ? "campaigns" : "calendar"} size="sm" />{group.title}</h2>
+                <h2 className={styles.groupTitle}><Icon name={group.kind === "campaign" ? "campaigns" : "calendar"} size="compact" />{group.title}</h2>
                 {group.range && <span className={styles.groupRange}>{group.range}</span>}
                 <CountBadge count={group.drafts.length} label="drafts in this group" />
-                {approvable.length > 0 && <Button variant="secondary" size="compact" className={styles.approveAll} disabled={busy} onClick={() => void approveAll(group)}><Icon name="approve" size="sm" /> Approve all ({approvable.length})</Button>}
+                {approvable.length > 0 && <Button variant="secondary" size="compact" className={styles.approveAll} disabled={busy} onClick={() => void approveAll(group)}><Icon name="approve" size="compact" /> Approve all ({approvable.length})</Button>}
               </header>
               <div className={styles.gallery}>
                 {group.drafts.map((draft) => {
@@ -396,7 +396,7 @@ export function ApprovalsQueue({
                       platform={draft.channel === "ads" ? undefined : SOCIAL_PLATFORM[draft.channel]}
                       mediaUrl={draft.media?.[0]?.url}
                       onOpen={() => navigateToDraft(draft.id)}
-                      actions={editable ? <><Button id={`approve-${draft.id}`} variant="primary" size="compact" disabled={busy} onClick={() => void action(draft, "approve")}><Icon name="approve" size="sm" /> Approve</Button><Button variant="secondary" size="compact" onClick={() => navigateToDraft(draft.id)}><Icon name="edit" size="sm" /> Open editor</Button><Button variant="danger" size="compact" disabled={busy} onClick={() => void action(draft, "reject")}><Icon name="reject" size="sm" /> Reject</Button></> : <Button variant="tertiary" size="compact" onClick={() => navigateToDraft(draft.id)}>Open editor</Button>}
+                      actions={editable ? <><Button id={`approve-${draft.id}`} variant="primary" size="compact" disabled={busy} onClick={() => void action(draft, "approve")}><Icon name="approve" size="compact" /> Approve</Button><Button variant="secondary" size="compact" onClick={() => navigateToDraft(draft.id)}><Icon name="edit" size="compact" /> Open editor</Button><Button variant="danger" size="compact" disabled={busy} onClick={() => void action(draft, "reject")}><Icon name="reject" size="compact" /> Reject</Button></> : <Button variant="tertiary" size="compact" onClick={() => navigateToDraft(draft.id)}>Open editor</Button>}
                     />
                   );
                 })}

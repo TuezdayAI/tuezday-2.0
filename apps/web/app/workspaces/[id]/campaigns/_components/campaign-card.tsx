@@ -131,7 +131,7 @@ export function CampaignCard({
 
       <div className={styles.cardFooter}>
         <Link className={styles.openCampaign} href={campaignHref}>
-          Open campaign <Icon name="chevron-right" size="sm" />
+          Open campaign <Icon name="chevron-right" size="compact" />
         </Link>
         <div className={styles.cardActions}>
           <Button variant="tertiary" size="compact" onClick={() => onExport(campaign)}>Export</Button>
