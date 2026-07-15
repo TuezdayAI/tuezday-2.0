@@ -58,3 +58,43 @@ npm run build -w apps/web
 ```
 
 Playwright traces, videos, and screenshots are run artifacts, not committed baselines.
+
+## Delivered API and persistence record
+
+- Meta mutation routes: `POST /workspaces/:id/ads/launches/:launchId/budget-change` and
+  `POST /workspaces/:id/ads/launches/:launchId/targeting-change`, backed by revalidated
+  `MetaAdsAdapter` reads and writes.
+- Batch routes: create a fixed preview at `POST /workspaces/:id/external-action-batches`, read it at
+  `GET /workspaces/:id/external-action-batches/:batchId`, and confirm/resume it at
+  `POST /workspaces/:id/external-action-batches/:batchId/authorize`.
+- Sender routes: `GET|PUT /workspaces/:id/email-sender`, plus `/verify` and `/refresh` actions.
+- Recipient safety: `GET|PUT /workspaces/:id/email-permissions/:normalizedEmail`,
+  `GET|PUT /workspaces/:id/email-safety`, and signed public `GET|POST /u/:token` unsubscribe.
+- Delivery ingestion: `POST /webhooks/resend` verifies the untouched raw request body before storing
+  an event or projecting delivery/suppression state.
+- Native send origins: Launch channel dispatch, approved Audience drafts, and approved PR pitch drafts
+  all enter the external-action coordinator and the `ResendOutboundEmailProvider` adapter.
+- Migration 0046 adds `external_action_batches` and `external_action_batch_items`.
+- Migration 0047 adds `workspace_email_senders`, `email_recipient_permissions`,
+  `email_suppressions`, `email_deliveries`, and `email_delivery_events`.
+
+## Fresh final evidence — 2026-07-16
+
+- `npm test`: 162 files and 1,520 tests passed.
+- `npm run typecheck`: all seven workspaces passed.
+- `npm run build -w apps/web`: optimized Next.js production build passed.
+- `npm run test:desktop`: 10 Chromium scenarios passed at the four supported widths and the
+  representative authorization, policy, sender, Meta mutation, and delivery surfaces.
+- Fresh migration: 48 migrations applied; all seven 0046/0047 tables existed and were empty.
+- Populated pre-0046 reconstruction: rows in `leads`, `media_contacts`, `connections`,
+  `external_actions`, `launches`, and `ad_launches` were identical after upgrade; all new tables were
+  empty; the permission default was `unknown`; the sender default was `not_configured` with its kill
+  switch enabled; SQLite foreign-key checks passed.
+
+## Explicit deferrals
+
+- Google Ads mutation execution and Meta targeting broader than country/age.
+- SMTP or additional native outbound providers beyond Resend.
+- Mobile visual QA; desktop widths below 1024px are outside this acceptance.
+- Batch content approval; the delivered batch flow authorizes external actions only.
+- Distributed queue infrastructure; bounded and resumable single-process ledgers are retained.
