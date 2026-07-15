@@ -216,9 +216,11 @@ export function createExternalActionRuntime({
       return submission(action);
     }
 
-    action = transitionExternalAction(db, workspaceId, action.id, "dispatching", {
-      dispatchedAt: Date.now(),
-    });
+    if (action.status !== "dispatching") {
+      action = transitionExternalAction(db, workspaceId, action.id, "dispatching", {
+        dispatchedAt: Date.now(),
+      });
+    }
     try {
       const receipt = await adapter.execute(action, payload);
       action = transitionExternalAction(
@@ -229,9 +231,9 @@ export function createExternalActionRuntime({
         { execution: receipt, completedAt: Date.now() },
       );
     } catch {
-      action = transitionExternalAction(db, workspaceId, action.id, "failed", {
-        completedAt: Date.now(),
-      });
+      // A thrown adapter error has an unknown outcome. Keep the action dispatching
+      // so the durable adapter can recover or retry with the same idempotency key.
+      action = getExternalAction(db, workspaceId, action.id)!;
     }
     return submission(action);
   }

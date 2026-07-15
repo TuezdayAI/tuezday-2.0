@@ -137,7 +137,7 @@ export async function buildApp({
   backfillExternalActionPolicies(db);
   const externalActionRuntime = createExternalActionRuntime({
     db,
-    adapters: createExternalActionAdapters(db, connectors, fetcher),
+    adapters: createExternalActionAdapters(db, connectors, fetcher, outboundEmail),
     analytics,
   });
 

@@ -5,6 +5,7 @@ import {
   adLaunches,
   campaigns,
   drafts,
+  emailDeliveries,
   externalActions,
   launchMessages,
   launches,
@@ -48,6 +49,7 @@ export function listExecutionResults(
     ...launchResults(db, workspaceId, campaignOf),
     ...adLaunchResults(db, workspaceId, campaignOf),
     ...adMutationResults(db, workspaceId, campaignOf),
+    ...emailDeliveryResults(db, workspaceId, campaignOf),
   ];
 
   const scoped = options.campaignId
@@ -55,6 +57,44 @@ export function listExecutionResults(
     : results;
   const limit = Math.min(Math.max(options.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
   return scoped.sort((left, right) => right.at - left.at).slice(0, limit);
+}
+
+function emailDeliveryResults(
+  db: Db,
+  workspaceId: string,
+  campaignOf: CampaignOf,
+): ExecutionResult[] {
+  const rows = db
+    .select({ delivery: emailDeliveries, action: externalActions })
+    .from(emailDeliveries)
+    .innerJoin(externalActions, eq(emailDeliveries.externalActionId, externalActions.id))
+    .where(eq(emailDeliveries.workspaceId, workspaceId))
+    .all();
+  return rows.map(({ delivery, action }) => {
+    const running = delivery.status === "queued" || delivery.status === "accepted";
+    const completed = delivery.status === "delivered";
+    return {
+      kind: "email_delivery" as const,
+      id: delivery.id,
+      title: delivery.subject,
+      channel: "email",
+      ...campaignOf(action.campaignId),
+      status: running ? ("running" as const) : completed ? ("completed" as const) : ("failed" as const),
+      at: delivery.completedAt ?? delivery.acceptedAt ?? delivery.createdAt,
+      url: null,
+      error: running || completed ? null : (delivery.lastError ?? delivery.status),
+      platformStatus: delivery.status,
+      destinations: {
+        total: 1,
+        succeeded: completed ? 1 : 0,
+        failed: running || completed ? 0 : 1,
+        skipped: 0,
+        pending: running ? 1 : 0,
+      },
+      draftId: action.draftId,
+      externalActionIds: [action.id],
+    };
+  });
 }
 
 function adMutationResults(

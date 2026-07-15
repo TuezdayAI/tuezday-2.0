@@ -9,6 +9,7 @@ import {
   adLaunches,
   connections,
   externalActions,
+  emailDeliveries,
   launchMessages,
   launches,
   publications,
@@ -185,6 +186,34 @@ describe("unified execution results", () => {
       .where(eq(externalActions.id, id))
       .run();
     return id;
+  }
+
+  function seedEmailDelivery(status: "accepted" | "delivered" | "bounced"): { id: string; actionId: string } {
+    const actionId = seedActionRow("send");
+    const id = randomUUID();
+    db.insert(emailDeliveries).values({
+      id,
+      workspaceId,
+      externalActionId: actionId,
+      origin: "outbound_draft",
+      originId: randomUUID(),
+      normalizedRecipient: "lead@buyer.com",
+      senderAddress: "hello@example.com",
+      replyTo: null,
+      subject: "A useful introduction",
+      text: "Hello from Acme.",
+      html: null,
+      idempotencyKey: `send/${actionId}`,
+      provider: "resend",
+      providerMessageId: `email_${id}`,
+      status,
+      acceptedAt: T0,
+      completedAt: status === "accepted" ? null : T0 + HOUR,
+      lastError: status === "bounced" ? "Recipient bounced" : null,
+      createdAt: T0,
+      updatedAt: status === "accepted" ? T0 : T0 + HOUR,
+    }).run();
+    return { id, actionId };
   }
 
   function seedPublication(over: {
@@ -463,6 +492,26 @@ describe("unified execution results", () => {
       actionKind: "budget_change",
       status: "completed",
       externalActionIds: [budgetAction],
+    });
+  });
+
+  it("projects governed email delivery progress and terminal outcomes", async () => {
+    const accepted = seedEmailDelivery("accepted");
+    seedEmailDelivery("delivered");
+    seedEmailDelivery("bounced");
+
+    const results = (await fetchResults()).filter((result) => result.kind === "email_delivery");
+    expect(results.map((result) => result.status).sort()).toEqual([
+      "completed",
+      "failed",
+      "running",
+    ]);
+    expect(results.find((result) => result.id === accepted.id)).toMatchObject({
+      kind: "email_delivery",
+      title: "A useful introduction",
+      channel: "email",
+      status: "running",
+      externalActionIds: [accepted.actionId],
     });
   });
 

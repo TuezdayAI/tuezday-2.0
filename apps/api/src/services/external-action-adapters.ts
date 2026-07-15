@@ -20,6 +20,7 @@ import {
 } from "@tuezday/contracts";
 import { adsExecutionAdapterFor, type AdsExecutionAdapter } from "../connectors/ads";
 import type { ConnectorFabric } from "../connectors/fabric";
+import type { OutboundEmailProvider } from "../outbound-email/provider";
 import { socialAdapterFor, type PublishMedia } from "../connectors/social";
 import type { Db } from "../db";
 import {
@@ -71,6 +72,7 @@ import {
   getPublicationByExternalAction,
 } from "./publications";
 import { getWorkspace } from "./workspaces";
+import { emailActionAdapter, isEmailActionPayload } from "./external-action-email";
 
 type Fetcher = typeof fetch;
 
@@ -849,7 +851,7 @@ function sendGuardBlocker(
   return null;
 }
 
-export function sendActionAdapter(
+function socialSendActionAdapter(
   db: Db,
   fabric: ConnectorFabric,
   fetcher: Fetcher,
@@ -1027,6 +1029,28 @@ export function sendActionAdapter(
         maybeCompleteLaunch(db, action.workspaceId, payload.launchId);
       }
       return receipt;
+    },
+  };
+}
+
+export function sendActionAdapter(
+  db: Db,
+  fabric: ConnectorFabric,
+  fetcher: Fetcher,
+  outboundEmail?: OutboundEmailProvider,
+): ExternalActionAdapter {
+  const social = socialSendActionAdapter(db, fabric, fetcher);
+  const email = emailActionAdapter(db, outboundEmail);
+  const adapterFor = (payload: unknown) => isEmailActionPayload(payload) ? email : social;
+  return {
+    revalidate(action, payload) {
+      return adapterFor(payload).revalidate(action, payload);
+    },
+    guard(action, payload) {
+      return adapterFor(payload).guard(action, payload);
+    },
+    execute(action, payload) {
+      return adapterFor(payload).execute(action, payload);
     },
   };
 }
@@ -1735,11 +1759,12 @@ export function createExternalActionAdapters(
   db: Db,
   fabric: ConnectorFabric,
   fetcher: Fetcher,
+  outboundEmail?: OutboundEmailProvider,
 ): ExternalActionAdapterRegistry {
   return {
     publish: publishActionAdapter(db, fabric, fetcher),
     reply: replyActionAdapter(db, fabric, fetcher),
-    send: sendActionAdapter(db, fabric, fetcher),
+    send: sendActionAdapter(db, fabric, fetcher, outboundEmail),
     paid_launch: paidLaunchActionAdapter(db, fabric, fetcher),
     budget_change: budgetChangeActionAdapter(db, fabric, fetcher),
     targeting_change: targetingChangeActionAdapter(db, fabric, fetcher),

@@ -389,6 +389,7 @@ export function listRunnableExternalActions(db: Db, workspaceId: string): Extern
     .filter(
       (action) =>
         action.status === "authorized" ||
+        action.status === "dispatching" ||
         (action.status === "scheduled" && (action.requestedFor ?? 0) <= Date.now()),
     );
 }
