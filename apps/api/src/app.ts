@@ -45,6 +45,7 @@ import { registerExternalActionRoutes } from "./routes/external-actions";
 import { registerExternalActionBatchRoutes } from "./routes/external-action-batches";
 import { registerExternalActionPolicyRoutes } from "./routes/external-action-policies";
 import { registerEmailSenderRoutes } from "./routes/email-senders";
+import { registerEmailRecipientSafetyRoutes } from "./routes/email-recipient-safety";
 import { registerDesignSystemRoutes } from "./routes/design-systems";
 import { registerGuidanceRoutes } from "./routes/guidance";
 import { registerGenerationSettingsRoutes } from "./routes/generation-settings";
@@ -125,7 +126,9 @@ export async function buildApp({
   assetStorage = new S3AssetStorage(),
   render = renderSlide,
 }: BuildAppOptions): Promise<TuezdayApp> {
-  const app = Fastify({ logger: false });
+  // Signed public tokens can carry a normalized email address (up to 320
+  // characters) plus an HMAC. Keep a hard router bound above that envelope.
+  const app = Fastify({ logger: false, routerOptions: { maxParamLength: 1_024 } });
   backfillExternalActionPolicies(db);
   const externalActionRuntime = createExternalActionRuntime({
     db,
@@ -206,6 +209,7 @@ export async function buildApp({
   registerCadenceRoutes(app, db, externalActionRuntime);
   registerMailRoutes(app, db, mailer);
   registerEmailSenderRoutes(app, db, outboundEmail);
+  registerEmailRecipientSafetyRoutes(app, db);
   registerAutomationRoutes(app, db, llm, evidence);
   registerInboxRoutes(app, db, llm, evidence, connectors, externalActionRuntime);
   registerInsightsRoutes(app, db);

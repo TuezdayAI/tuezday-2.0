@@ -35,7 +35,10 @@ const PUBLIC_ROUTES = new Set([
   "POST /auth/google/callback",
   "GET /health",
   "POST /webhooks/stripe",
+  "POST /webhooks/resend",
   "GET /a/:token",
+  "GET /u/:token",
+  "POST /u/:token",
   "POST /telegram/webhook",
 ]);
 function bearerToken(authorization: string | undefined): string | null {
@@ -56,6 +59,12 @@ export function registerAuthGuard(app: FastifyInstance, db: Db, workerToken?: st
     if (request.method === "OPTIONS") return;
     const route = request.routeOptions.url ?? request.url;
     if (route.startsWith("/api/v1/")) return;
+    if (
+      (request.method === "GET" || request.method === "POST") &&
+      request.url.startsWith("/u/")
+    ) {
+      return;
+    }
     if (PUBLIC_ROUTES.has(`${request.method} ${route}`)) return;
 
     const token = bearerToken(request.headers.authorization);

@@ -1605,7 +1605,7 @@ export const EMAIL_DELIVERY_ORIGINS = [
 ] as const;
 export type EmailDeliveryOrigin = (typeof EMAIL_DELIVERY_ORIGINS)[number];
 
-const normalizedEmailAddressSchema = z
+export const normalizedEmailAddressSchema = z
   .string()
   .trim()
   .toLowerCase()
@@ -1693,6 +1693,17 @@ export const updateEmailPermissionInputSchema = z
   })
   .strict();
 export type UpdateEmailPermissionInput = z.infer<typeof updateEmailPermissionInputSchema>;
+
+export const emailSafetySettingsSchema = z
+  .object({
+    killSwitch: z.boolean(),
+    dailyCap: z.number().int().min(1).max(100_000),
+  })
+  .strict();
+export type EmailSafetySettings = z.infer<typeof emailSafetySettingsSchema>;
+
+export const updateEmailSafetyInputSchema = emailSafetySettingsSchema;
+export type UpdateEmailSafetyInput = z.infer<typeof updateEmailSafetyInputSchema>;
 
 export const emailSuppressionSchema = z
   .object({

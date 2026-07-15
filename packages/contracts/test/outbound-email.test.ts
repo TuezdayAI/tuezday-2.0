@@ -10,9 +10,11 @@ import {
   emailDeliverySchema,
   emailDnsRecordSchema,
   emailRecipientPermissionSchema,
+  emailSafetySettingsSchema,
   emailSenderSchema,
   emailSuppressionSchema,
   updateEmailPermissionInputSchema,
+  updateEmailSafetyInputSchema,
   updateEmailSenderInputSchema,
 } from "../src/index";
 
@@ -169,6 +171,21 @@ describe("governed outbound email contracts", () => {
       status: "suppressed",
     });
     expect(updateEmailPermissionInputSchema.safeParse({ status: "unknown" }).success).toBe(false);
+  });
+
+  it("validates complete workspace email safety settings", () => {
+    expect(emailSafetySettingsSchema.parse({ killSwitch: true, dailyCap: 250 })).toEqual({
+      killSwitch: true,
+      dailyCap: 250,
+    });
+    expect(updateEmailSafetyInputSchema.parse({ killSwitch: false, dailyCap: 500 })).toEqual({
+      killSwitch: false,
+      dailyCap: 500,
+    });
+    expect(updateEmailSafetyInputSchema.safeParse({ killSwitch: false, dailyCap: 0 }).success).toBe(
+      false,
+    );
+    expect(updateEmailSafetyInputSchema.safeParse({ dailyCap: 100 }).success).toBe(false);
   });
 
   it("parses delivery snapshots and normalizes every email address", () => {
