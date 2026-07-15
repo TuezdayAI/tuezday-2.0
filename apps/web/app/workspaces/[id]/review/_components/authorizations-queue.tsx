@@ -31,7 +31,7 @@ import {
 } from "@/lib/external-actions";
 import { campaignFilterName, reviewHref } from "@/lib/review-workspace";
 import { EmptyState } from "@/src/components/empty-state";
-import { Button } from "@/src/components/ui/button";
+import { Button, ButtonLink } from "@/src/components/ui/button";
 import { CountBadge, WorkflowStatusBadge } from "@/src/components/ui/badge";
 import { Tabs } from "@/src/components/ui/tabs";
 import styles from "./authorizations-queue.module.css";
@@ -643,7 +643,7 @@ export function AuthorizationsQueue({
                 <div className={styles.decisionRow}>
                   <Button
                     variant="primary"
-                    size="sm"
+                    size="compact"
                     disabled={busy}
                     onClick={() => decide(selected.id, "authorize")}
                   >
@@ -657,8 +657,8 @@ export function AuthorizationsQueue({
                     aria-label="Denial reason"
                   />
                   <Button
-                    variant="ghost"
-                    size="sm"
+                    variant="danger"
+                    size="compact"
                     disabled={busy}
                     onClick={() => decide(selected.id, "deny")}
                   >
@@ -669,12 +669,16 @@ export function AuthorizationsQueue({
 
               {(selected.status === "stale" || selected.status === "blocked") && (
                 <div className={styles.decisionRow}>
-                  <Link className="link-button" href={actionRecoveryHref(selected)}>
+                  <ButtonLink
+                    variant="secondary"
+                    size="standard"
+                    href={actionRecoveryHref(selected)}
+                  >
                     Open owning surface
-                  </Link>
+                  </ButtonLink>
                   <Button
                     variant="secondary"
-                    size="sm"
+                    size="compact"
                     disabled={busy}
                     onClick={() => repropose(selected.id)}
                   >

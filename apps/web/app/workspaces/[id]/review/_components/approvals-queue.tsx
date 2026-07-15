@@ -361,14 +361,14 @@ export function ApprovalsQueue({
             {channels.map((channel) => <option key={channel} value={channel}>{channel}</option>)}
           </select>
         </label>
-        {hasScopeFilter && <Button variant="ghost" size="sm" onClick={() => changeFilter({ campaign: "all", channel: "all" })}>Clear filters</Button>}
+        {hasScopeFilter && <Button variant="tertiary" size="compact" onClick={() => changeFilter({ campaign: "all", channel: "all" })}>Clear filters</Button>}
       </div>
 
       {error && <p className="error">{error}</p>}
       {visible.length === 0 ? (
         <EmptyState
           description={drafts.length === 0 ? "The queue is empty. Generate content and send it to Review." : hasScopeFilter ? "Nothing matches these filters." : "Nothing in this state."}
-          primaryAction={hasScopeFilter ? <Button variant="secondary" size="sm" onClick={() => changeFilter({ campaign: "all", channel: "all" })}>Clear filters</Button> : undefined}
+          primaryAction={hasScopeFilter ? <Button variant="secondary" size="compact" onClick={() => changeFilter({ campaign: "all", channel: "all" })}>Clear filters</Button> : undefined}
         />
       ) : (
         groups.map((group) => {
@@ -379,7 +379,7 @@ export function ApprovalsQueue({
                 <h2 className={styles.groupTitle}><Icon name={group.kind === "campaign" ? "campaigns" : "calendar"} size="sm" />{group.title}</h2>
                 {group.range && <span className={styles.groupRange}>{group.range}</span>}
                 <CountBadge count={group.drafts.length} label="drafts in this group" />
-                {approvable.length > 0 && <Button variant="secondary" size="sm" className={styles.approveAll} disabled={busy} onClick={() => void approveAll(group)}><Icon name="approve" size="sm" /> Approve all ({approvable.length})</Button>}
+                {approvable.length > 0 && <Button variant="secondary" size="compact" className={styles.approveAll} disabled={busy} onClick={() => void approveAll(group)}><Icon name="approve" size="sm" /> Approve all ({approvable.length})</Button>}
               </header>
               <div className={styles.gallery}>
                 {group.drafts.map((draft) => {
@@ -396,7 +396,7 @@ export function ApprovalsQueue({
                       platform={draft.channel === "ads" ? undefined : SOCIAL_PLATFORM[draft.channel]}
                       mediaUrl={draft.media?.[0]?.url}
                       onOpen={() => navigateToDraft(draft.id)}
-                      actions={editable ? <><Button id={`approve-${draft.id}`} variant="primary" size="sm" disabled={busy} onClick={() => void action(draft, "approve")}><Icon name="approve" size="sm" /> Approve</Button><Button variant="secondary" size="sm" onClick={() => navigateToDraft(draft.id)}><Icon name="edit" size="sm" /> Open editor</Button><Button variant="danger" size="sm" disabled={busy} onClick={() => void action(draft, "reject")}><Icon name="reject" size="sm" /> Reject</Button></> : <Button variant="ghost" size="sm" onClick={() => navigateToDraft(draft.id)}>Open editor</Button>}
+                      actions={editable ? <><Button id={`approve-${draft.id}`} variant="primary" size="compact" disabled={busy} onClick={() => void action(draft, "approve")}><Icon name="approve" size="sm" /> Approve</Button><Button variant="secondary" size="compact" onClick={() => navigateToDraft(draft.id)}><Icon name="edit" size="sm" /> Open editor</Button><Button variant="danger" size="compact" disabled={busy} onClick={() => void action(draft, "reject")}><Icon name="reject" size="sm" /> Reject</Button></> : <Button variant="tertiary" size="compact" onClick={() => navigateToDraft(draft.id)}>Open editor</Button>}
                     />
                   );
                 })}

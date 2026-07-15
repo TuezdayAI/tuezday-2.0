@@ -3,7 +3,7 @@
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
 import { TopBarActions } from "@/src/components/top-bar";
-import { Button } from "@/src/components/ui/button";
+import { Button, ButtonLink } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
 import { Badge, CountBadge } from "@/src/components/ui/badge";
 import { Icon } from "@/src/components/ui/icon";
@@ -387,7 +387,7 @@ export default function PrPage() {
             <Button
               type="button"
               variant="secondary"
-              size="sm"
+              size="compact"
               onClick={() => void apiDownload(`/workspaces/${id}/pr/export.csv`, "pr-pitches.csv")}
             >
               ↓ Export approved CSV ({approvedPitches.length})
@@ -400,7 +400,7 @@ export default function PrPage() {
         <CardHeader
           title={`Media contacts (${contacts.length})`}
           actions={
-            <Button variant="secondary" size="sm" onClick={() => setShowAddForm(!showAddForm)}>
+            <Button variant="secondary" size="compact" onClick={() => setShowAddForm(!showAddForm)}>
               + Add one contact
             </Button>
           }
@@ -516,7 +516,7 @@ export default function PrPage() {
                         {contact.beat && ` · ${contact.beat}`}
                       </span>
                     </span>
-                    <Button variant="ghost" size="sm" onClick={() => removeContact(contact)}>
+                    <Button variant="danger" size="compact" onClick={() => removeContact(contact)}>
                       delete
                     </Button>
                   </div>
@@ -533,13 +533,21 @@ export default function PrPage() {
                           </Badge>{" "}
                           <span className="meta">{d.content.slice(0, 70)}…</span>{" "}
                           {d.state === "approved" && (
-                            <a className="link-button" href={mailtoHref(contact.email, d.content)}>
+                            <ButtonLink
+                              variant="secondary"
+                              size="compact"
+                              href={mailtoHref(contact.email, d.content)}
+                            >
                               Open in email client
-                            </a>
+                            </ButtonLink>
                           )}{" "}
-                          <Link className="link-button" href={`/workspaces/${id}/review`}>
+                          <ButtonLink
+                            variant="tertiary"
+                            size="compact"
+                            href={`/workspaces/${id}/review`}
+                          >
                             open in queue
-                          </Link>
+                          </ButtonLink>
                           </div>
                           {d.state === "approved" && (
                             <PrEmailControls
@@ -653,7 +661,7 @@ export default function PrPage() {
         <CardHeader
           title="Press kit"
           actions={
-            <Button variant="secondary" size="sm" disabled={kitBusy} onClick={generatePressKit}>
+            <Button variant="secondary" size="compact" disabled={kitBusy} onClick={generatePressKit}>
               {kitBusy ? "Generating…" : "Generate from brain"}
             </Button>
           }
@@ -674,9 +682,13 @@ export default function PrPage() {
                     <Badge tone={STATE_BADGE_TONES[d.state]}>{STATE_LABELS[d.state]}</Badge>
                   </span>
                   <span className="meta">{new Date(d.createdAt).toLocaleString()}</span>
-                  <Link className="link-button" href={`/workspaces/${id}/review`}>
+                  <ButtonLink
+                    variant="tertiary"
+                    size="compact"
+                    href={`/workspaces/${id}/review`}
+                  >
                     open in queue
-                  </Link>
+                  </ButtonLink>
                 </div>
                 <pre className="output-text">{d.content}</pre>
               </li>

@@ -168,12 +168,12 @@ function DetailPanel({
         {entry.error && <p className={styles.panelError}>{entry.error}</p>}
         <div className={styles.panelActions}>
           {entry.status === "failed" && publicationId && (
-            <Button size="sm" disabled={busy} onClick={() => onRetry(publicationId)}>
+            <Button size="compact" disabled={busy} onClick={() => onRetry(publicationId)}>
               Retry now
             </Button>
           )}
           {entry.status === "scheduled" && publicationId && (
-            <Button variant="danger" size="sm" disabled={busy} onClick={() => onCancel(publicationId)}>
+            <Button variant="danger" size="compact" disabled={busy} onClick={() => onCancel(publicationId)}>
               Cancel
             </Button>
           )}
@@ -407,7 +407,7 @@ export default function CalendarPage() {
             <Button
               type="button"
               variant="secondary"
-              size="sm"
+              size="compact"
               onClick={() => setAnchor(new Date())}
             >
               Today
@@ -432,8 +432,8 @@ export default function CalendarPage() {
           />
           <Button
             type="button"
-            variant="ghost"
-            size="sm"
+            variant="tertiary"
+            size="compact"
             onClick={() => setParam("density", density === "comfortable" ? "compact" : null)}
           >
             {density === "comfortable" ? "Compact" : "Comfortable"}
@@ -472,7 +472,7 @@ export default function CalendarPage() {
             </select>
           </label>
           {hasScopeFilter && (
-            <Button variant="ghost" size="sm" onClick={clearScopeFilters}>
+            <Button variant="tertiary" size="compact" onClick={clearScopeFilters}>
               Clear filters
             </Button>
           )}

@@ -3,7 +3,7 @@
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
 import { TopBarActions } from "@/src/components/top-bar";
-import { Button } from "@/src/components/ui/button";
+import { Button, ButtonLink } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
 import { Badge, CountBadge } from "@/src/components/ui/badge";
 import { Icon } from "@/src/components/ui/icon";
@@ -333,7 +333,7 @@ export default function OutboundPage() {
           <Button
             type="button"
             variant="secondary"
-            size="sm"
+            size="compact"
             onClick={() => void apiDownload(`/workspaces/${id}/outbound/export.csv`, "outbound.csv")}
           >
             <Icon name="external" size="sm" /> Export approved CSV ({approvedCount})
@@ -351,7 +351,7 @@ export default function OutboundPage() {
             </span>
           }
           actions={
-            <Button variant="secondary" size="sm" onClick={() => setShowAddForm(!showAddForm)}>
+            <Button variant="secondary" size="compact" onClick={() => setShowAddForm(!showAddForm)}>
               <Icon name="add" size="sm" /> Add one lead
             </Button>
           }
@@ -461,7 +461,7 @@ export default function OutboundPage() {
             primaryAction={
               <Button
                 variant="primary"
-                size="sm"
+                size="compact"
                 onClick={() => router.push(`/workspaces/${id}/connectors`)}
               >
                 Open Integrations
@@ -494,10 +494,10 @@ export default function OutboundPage() {
                       )}
                       {lead.xHandle && <span className="meta"> · X @{lead.xHandle}</span>}
                     </span>
-                    <Button variant="ghost" size="sm" onClick={() => editHandle(lead)}>
+                    <Button variant="tertiary" size="compact" onClick={() => editHandle(lead)}>
                       {lead.xHandle ? "edit X handle" : "+ X handle"}
                     </Button>
-                    <Button variant="ghost" size="sm" onClick={() => removeLead(lead)}>
+                    <Button variant="danger" size="compact" onClick={() => removeLead(lead)}>
                       delete
                     </Button>
                   </div>
@@ -520,9 +520,13 @@ export default function OutboundPage() {
                               statusTone={STATE_TONES[d.state]}
                               onOpen={() => router.push(`/workspaces/${id}/review`)}
                               actions={
-                                <Link className="link-button" href={`/workspaces/${id}/review`}>
+                                <ButtonLink
+                                  variant="tertiary"
+                                  size="compact"
+                                  href={`/workspaces/${id}/review`}
+                                >
                                   open in queue
-                                </Link>
+                                </ButtonLink>
                               }
                             />
                             {d.state === "approved" && (

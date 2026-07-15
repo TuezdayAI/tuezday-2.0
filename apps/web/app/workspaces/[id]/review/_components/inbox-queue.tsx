@@ -3,7 +3,7 @@
 import { TopBarActions } from "@/src/components/top-bar";
 import { EmptyState } from "@/src/components/empty-state";
 import { ShowMoreButton, useShowMore } from "@/src/components/show-more";
-import { Button } from "@/src/components/ui/button";
+import { Button, ButtonLink } from "@/src/components/ui/button";
 import { Badge, CountBadge, WorkflowStatusBadge } from "@/src/components/ui/badge";
 import { BrandIcon, Icon } from "@/src/components/ui/icon";
 import type { BrandName } from "@/src/components/ui/brand-icons";
@@ -187,7 +187,7 @@ export function InboxQueue({
   return (
     <>
       <TopBarActions>
-        <Button variant="primary" size="sm" onClick={runNow} disabled={running}>
+        <Button variant="primary" size="compact" onClick={runNow} disabled={running}>
           <Icon name="regenerate" size="sm" />
           {running ? "Running…" : "Run inbox now"}
         </Button>
@@ -230,7 +230,7 @@ export function InboxQueue({
             : "Nothing in this state."}</>}
           primaryAction={
             items.length === 0 ? (
-              <Button variant="secondary" size="sm" onClick={runNow} disabled={running}>
+              <Button variant="secondary" size="compact" onClick={runNow} disabled={running}>
                 <Icon name="regenerate" size="sm" />
                 {running ? "Running…" : "Run inbox now"}
               </Button>
@@ -345,9 +345,9 @@ export function InboxQueue({
                     />{" "}
                     {submissionNote(replyAction)}{" "}
                     {actionHref && (
-                      <Link className="link-button" href={actionHref}>
+                      <ButtonLink variant="tertiary" size="compact" href={actionHref}>
                         view authorization
-                      </Link>
+                      </ButtonLink>
                     )}
                   </p>
                 )}
@@ -356,7 +356,7 @@ export function InboxQueue({
                   {!draft && !replyPosted && item.status !== "dismissed" && (
                     <Button
                       variant="secondary"
-                      size="sm"
+                      size="compact"
                       disabled={busyId === item.id}
                       onClick={() => draftReply(item.id)}
                     >
@@ -367,7 +367,7 @@ export function InboxQueue({
                     <>
                       <Button
                         variant="secondary"
-                        size="sm"
+                        size="compact"
                         className="rating-accepted"
                         disabled={busyId === item.id}
                         onClick={() => approveAndPost(item)}
@@ -378,9 +378,13 @@ export function InboxQueue({
                             ? "Post reply"
                             : "Approve & post reply"}
                       </Button>
-                      <Link className="link-button" href={reviewHref(id, { tab: "approvals" })}>
+                      <ButtonLink
+                        variant="tertiary"
+                        size="compact"
+                        href={reviewHref(id, { tab: "approvals" })}
+                      >
                         review on Approvals
-                      </Link>
+                      </ButtonLink>
                     </>
                   )}
                   {replyPosted && (
@@ -406,8 +410,8 @@ export function InboxQueue({
                     <>
                       {item.status === "unread" && (
                         <Button
-                          variant="ghost"
-                          size="sm"
+                          variant="tertiary"
+                          size="compact"
                           disabled={busyId === item.id}
                           onClick={() => setStatus(item.id, "read")}
                         >
@@ -415,8 +419,8 @@ export function InboxQueue({
                         </Button>
                       )}
                       <Button
-                        variant="ghost"
-                        size="sm"
+                        variant="tertiary"
+                        size="compact"
                         disabled={busyId === item.id}
                         onClick={() => setStatus(item.id, "dismissed")}
                       >

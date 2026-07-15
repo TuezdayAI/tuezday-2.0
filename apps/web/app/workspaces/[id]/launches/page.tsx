@@ -3,7 +3,7 @@
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
 import { TopBarActions } from "@/src/components/top-bar";
-import { Button } from "@/src/components/ui/button";
+import { Button, ButtonLink } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
 import { Badge, CountBadge, WorkflowStatusBadge } from "@/src/components/ui/badge";
 import { Icon } from "@/src/components/ui/icon";
@@ -345,7 +345,7 @@ export default function LaunchesPage() {
             broadcast post each for LinkedIn and Instagram. Every message clears Review first.</>} />
 
       <TopBarActions>
-        <Button variant="primary" size="sm" onClick={() => setShowForm(!showForm)}>
+        <Button variant="primary" size="compact" onClick={() => setShowForm(!showForm)}>
           <Icon name="add" size="sm" /> New launch
         </Button>
       </TopBarActions>
@@ -471,7 +471,7 @@ export default function LaunchesPage() {
               >
                 {saving ? "Creating…" : "Create launch"}
               </Button>
-              <Button type="button" variant="secondary" size="sm" onClick={() => setShowForm(false)}>
+              <Button type="button" variant="secondary" size="compact" onClick={() => setShowForm(false)}>
                 Cancel
               </Button>
             </div>
@@ -513,7 +513,7 @@ export default function LaunchesPage() {
               </>
             }
             primaryAction={
-              <Button variant="primary" size="sm" onClick={() => setShowForm(true)}>
+              <Button variant="primary" size="compact" onClick={() => setShowForm(true)}>
                 <Icon name="add" size="sm" /> New launch
               </Button>
             }
@@ -523,7 +523,7 @@ export default function LaunchesPage() {
             {launches.map((launch) => (
               <li key={launch.id} className="section-card">
                 <div className="section-head">
-                  <Button variant="ghost" size="sm" onClick={() => openDetail(launch.id)}>
+                  <Button variant="tertiary" size="compact" onClick={() => openDetail(launch.id)}>
                     <span className="section-title">{launch.name}</span>
                   </Button>
                   <span className={`layer-badge state-${launch.status}`}>{launch.status}</span>
@@ -535,7 +535,7 @@ export default function LaunchesPage() {
                       Generate
                     </Button>
                   )}
-                  <Button variant="ghost" size="sm" onClick={() => remove(launch)}>
+                  <Button variant="danger" size="compact" onClick={() => remove(launch)}>
                     delete
                   </Button>
                 </div>
@@ -724,25 +724,32 @@ function MessageRow({
             )}
             <span className={`layer-badge state-${message.status}`}>{message.status}</span>
             {message.draftId && message.draftState !== "approved" && message.status !== "sent" && (
-              <Button variant="ghost" size="sm" onClick={() => onApprove(message.draftId!)}>
+              <Button variant="tertiary" size="compact" onClick={() => onApprove(message.draftId!)}>
                 approve
               </Button>
             )}
             {message.externalUrl && (
-              <a className="link-button" href={message.externalUrl} target="_blank" rel="noreferrer">
+              <ButtonLink
+                variant="tertiary"
+                size="compact"
+                href={message.externalUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
                 view
-              </a>
+              </ButtonLink>
             )}
             {message.externalActionId && (
-              <Link
-                className="link-button"
+              <ButtonLink
+                variant="tertiary"
+                size="compact"
                 href={reviewHref(workspaceId, {
                   tab: "authorizations",
                   action: message.externalActionId,
                 })}
               >
                 action record
-              </Link>
+              </ButtonLink>
             )}
           </>
         )}
@@ -933,10 +940,10 @@ function SequenceSection({
         }
         actions={
           <div style={{ display: "flex", gap: 8 }}>
-            <Button variant="secondary" size="sm" disabled={busy} onClick={start}>
+            <Button variant="secondary" size="compact" disabled={busy} onClick={start}>
               Start
             </Button>
-            <Button variant="secondary" size="sm" disabled={busy} onClick={runNow}>
+            <Button variant="secondary" size="compact" disabled={busy} onClick={runNow}>
               Run now
             </Button>
           </div>
@@ -963,7 +970,7 @@ function SequenceSection({
           <input type="checkbox" checked={stopOnReply} onChange={(e) => setStopOnReply(e.target.checked)} />
           Stop on reply (X DMs)
         </label>
-        <Button variant="secondary" size="sm" disabled={busy} onClick={saveConfig}>
+        <Button variant="secondary" size="compact" disabled={busy} onClick={saveConfig}>
           Save settings
         </Button>
       </div>
@@ -1000,11 +1007,11 @@ function SequenceSection({
             ))}
           </ol>
           <div style={{ display: "flex", gap: 8 }}>
-            <Button variant="ghost" size="sm" onClick={() => addStep(channel)}>
+            <Button variant="tertiary" size="compact" onClick={() => addStep(channel)}>
               + add step
             </Button>
             {(edit[channel]?.length ?? 0) > 1 && (
-              <Button variant="ghost" size="sm" onClick={() => removeStep(channel)}>
+              <Button variant="tertiary" size="compact" onClick={() => removeStep(channel)}>
                 remove last
               </Button>
             )}
@@ -1049,10 +1056,10 @@ function SequenceSection({
             />
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <Button variant="secondary" size="sm" disabled={busy || !stopEmails.trim()} onClick={stopEmailList}>
+            <Button variant="secondary" size="compact" disabled={busy || !stopEmails.trim()} onClick={stopEmailList}>
               Stop pasted recipients
             </Button>
-            <Button variant="danger" size="sm" disabled={busy} onClick={stopWhole}>
+            <Button variant="danger" size="compact" disabled={busy} onClick={stopWhole}>
               Stop whole launch
             </Button>
           </div>

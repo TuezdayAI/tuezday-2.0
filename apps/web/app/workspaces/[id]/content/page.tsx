@@ -2,7 +2,7 @@
 
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
-import { Button } from "@/src/components/ui/button";
+import { Button, ButtonLink } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
 import { Badge, CountBadge } from "@/src/components/ui/badge";
 import { Icon } from "@/src/components/ui/icon";
@@ -480,23 +480,27 @@ export default function ContentPage() {
                           {STATE_LABELS[d.state]}
                         </Badge>{" "}
                         <span className="meta">{d.channel} response</span>{" "}
-                        <Link className="link-button" href={`/workspaces/${id}/review`}>
+                        <ButtonLink
+                          variant="tertiary"
+                          size="compact"
+                          href={`/workspaces/${id}/review`}
+                        >
                           open in queue
-                        </Link>
+                        </ButtonLink>
                         {d.state === "approved" && (
                           <>
                             {" "}
-                            <Button variant="ghost" size="sm" onClick={() => copyDraft(d.id)}>
+                            <Button variant="tertiary" size="compact" onClick={() => copyDraft(d.id)}>
                               {copied === d.id ? "copied!" : "copy"}
                             </Button>{" "}
                             <Button
-                              variant="ghost"
-                              size="sm"
+                              variant="tertiary"
+                              size="compact"
                               onClick={() => downloadDraft(d.id, d.channel)}
                             >
                               download .md
                             </Button>{" "}
-                            <Button variant="ghost" size="sm" onClick={() => openPublish(d.id)}>
+                            <Button variant="tertiary" size="compact" onClick={() => openPublish(d.id)}>
                               publish…
                             </Button>
                             {publications
@@ -588,7 +592,7 @@ export default function ContentPage() {
                             )}
                             <Button
                               variant="secondary"
-                              size="sm"
+                              size="compact"
                               onClick={() => setPublishingFor(null)}
                             >
                               Cancel
@@ -651,7 +655,7 @@ export default function ContentPage() {
                     </Button>
                     <Button
                       variant="secondary"
-                      size="sm"
+                      size="compact"
                       onClick={() => setDraftingFor(null)}
                     >
                       Cancel
@@ -661,7 +665,7 @@ export default function ContentPage() {
                   <div className="rating-row" style={{ marginTop: 10 }}>
                     <Button
                       variant="secondary"
-                      size="sm"
+                      size="compact"
                       onClick={() => {
                         setDraftingFor(s.id);
                         setDraftPersonaId(s.suggestedPersonaId ?? "");
@@ -736,7 +740,7 @@ export default function ContentPage() {
                       {p.status === "failed" && (
                         <Button
                           variant="secondary"
-                          size="sm"
+                          size="compact"
                           disabled={publishing}
                           onClick={() => retryPublication(p.id)}
                         >
@@ -744,7 +748,7 @@ export default function ContentPage() {
                         </Button>
                       )}
                       {p.status === "scheduled" && (
-                        <Button variant="danger" size="sm" onClick={() => cancelPublication(p.id)}>
+                        <Button variant="danger" size="compact" onClick={() => cancelPublication(p.id)}>
                           Cancel
                         </Button>
                       )}

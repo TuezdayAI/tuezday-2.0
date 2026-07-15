@@ -476,7 +476,7 @@ export function ConversationalEditor({
               />
               <div className={styles.composerFoot}>
                 <small>{instruction.length}/2,000</small>
-                <Button type="submit" variant="primary" size="sm" disabled={busyAction !== null || !instruction.trim()}>
+                <Button type="submit" variant="primary" size="compact" disabled={busyAction !== null || !instruction.trim()}>
                   <Icon name="regenerate" size="sm" />
                   {busyAction === "revise" ? "Revising…" : retryLatest ? "Try again on latest" : context.turns.some((turn) => turn.status === "failed") ? "Retry revision" : "Revise draft"}
                 </Button>
@@ -606,7 +606,7 @@ export function ConversationalEditor({
                 <small>Leave the time empty to go out immediately once authorized.</small>
                 <Button
                   variant="primary"
-                  size="sm"
+                  size="compact"
                   disabled={
                     busyAction !== null ||
                     !pub.connectionId ||
@@ -680,26 +680,26 @@ export function ConversationalEditor({
           )}
 
           <div className={styles.tools}>
-            <Button variant="secondary" size="sm" onClick={() => void copyCurrent()}>Copy</Button>
-            <Button variant="secondary" size="sm" onClick={downloadCurrent}>Download .md</Button>
+            <Button variant="secondary" size="compact" onClick={() => void copyCurrent()}>Copy</Button>
+            <Button variant="secondary" size="compact" onClick={downloadCurrent}>Download .md</Button>
             {draft.state === "approved" && draft.taskType !== "instagram_carousel" && (
-              <Button variant="secondary" size="sm" disabled={busyAction !== null} onClick={() => void generateCarousel()}>
+              <Button variant="secondary" size="compact" disabled={busyAction !== null} onClick={() => void generateCarousel()}>
                 <Icon name="carousel" size="sm" />
                 {busyAction === "carousel" ? "Rendering…" : "Generate carousel"}
               </Button>
             )}
-            <Button variant="ghost" size="sm" disabled={busyAction !== null} onClick={() => void rerunReview()}>{draft.review ? "Re-run review" : "Run review"}</Button>
+            <Button variant="tertiary" size="compact" disabled={busyAction !== null} onClick={() => void rerunReview()}>{draft.review ? "Re-run review" : "Run review"}</Button>
           </div>
 
           {legalEdit && (
             <div className={styles.directEdit}>
-              <Button variant="ghost" size="sm" onClick={() => setEditing((value) => !value)}>
+              <Button variant="tertiary" size="compact" onClick={() => setEditing((value) => !value)}>
                 <Icon name="edit" size="sm" /> {editing ? "Cancel focused edit" : "Focused direct edit"}
               </Button>
               {editing && (
                 <div>
                   <textarea value={editContent} onChange={(event) => setEditContent(event.target.value)} rows={7} />
-                  <Button variant="primary" size="sm" disabled={busyAction !== null || !editContent.trim()} onClick={() => void draftAction("edit", { content: editContent })}>Save edit</Button>
+                  <Button variant="primary" size="compact" disabled={busyAction !== null || !editContent.trim()} onClick={() => void draftAction("edit", { content: editContent })}>Save edit</Button>
                 </div>
               )}
             </div>
