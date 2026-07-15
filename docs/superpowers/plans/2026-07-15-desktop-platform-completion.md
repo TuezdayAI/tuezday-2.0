@@ -285,7 +285,7 @@ git commit -m "feat(web): add tightening policy editor"
 - Persona editor mounts inside the expanded/editing persona card, keyed by persona ID.
 - Connection editor mounts in the selected connection detail/setup region, keyed by connection ID.
 
-- [ ] **Step 1: Write failing shell contracts**
+- [x] **Step 1: Write failing shell contracts**
 
 ```ts
 expect(resolver).toContain('scope="persona"');
@@ -295,23 +295,23 @@ expect(connectors).toContain("scopeId={connection.id}");
 expect(connectors).toContain("Action permission");
 ```
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 Run: `npm exec --prefix apps/web vitest -- run lib/persona-connection-policy-shell.test.ts`  
 Expected: FAIL because neither owning surface mounts the editor.
 
-- [ ] **Step 3: Mount each editor without changing ownership**
+- [x] **Step 3: Mount each editor without changing ownership**
 
 Persona rules stay under Resolver's persona management, not Automation. Connection rules stay beside the live account identity and connection health, not in a workspace-wide list. Lazy-mount only the expanded entity so the page does not fetch six policies per collapsed row.
 
-- [ ] **Step 4: Run focused tests and typecheck**
+- [x] **Step 4: Run focused tests and typecheck**
 
 Run: `npm exec --prefix apps/web vitest -- run lib/persona-connection-policy-shell.test.ts lib/persona-social-routing.test.ts`  
 Expected: PASS.  
 Run: `npm run typecheck`  
 Expected: exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/web/app/workspaces/[id]/resolver/page.tsx apps/web/app/workspaces/[id]/connectors/page.tsx apps/web/app/workspaces/[id]/connectors/connectors.module.css apps/web/lib/persona-connection-policy-shell.test.ts

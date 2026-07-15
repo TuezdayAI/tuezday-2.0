@@ -37,6 +37,7 @@ import {
 } from "@tuezday/contracts";
 import type { ContextSection, ResolvedContext } from "@tuezday/brain";
 import { SectionBadges } from "@/components/why-this-output";
+import { ScopedActionPolicy } from "@/src/components/scoped-action-policy";
 import {
   connectionLabel,
   defaultTargetForChannel,
@@ -455,22 +456,34 @@ export default function ResolverPage() {
         ) : (
           <ul className="persona-list">
             {personas.map((p) => (
-              <li key={p.id} className="persona-card">
-                <div>
-                  <span className="name">{p.name}</span>
-                  {p.description && <span className="meta"> — {p.description}</span>}
-                  {p.topics.length > 0 && (
-                    <span className="meta"> · covers {p.topics.join(", ")}</span>
-                  )}
+              <li key={p.id} className={`persona-card ${styles.personaPolicyCard}`}>
+                <div className={styles.personaSummary}>
+                  <div>
+                    <span className="name">{p.name}</span>
+                    {p.description && <span className="meta"> — {p.description}</span>}
+                    {p.topics.length > 0 && (
+                      <span className="meta"> · covers {p.topics.join(", ")}</span>
+                    )}
+                  </div>
+                  <div className="persona-actions">
+                    <Button variant="secondary" size="sm" onClick={() => startEdit(p)}>
+                      Edit
+                    </Button>
+                    <Button variant="danger" size="sm" onClick={() => removePersona(p)}>
+                      Delete
+                    </Button>
+                  </div>
                 </div>
-                <div className="persona-actions">
-                  <Button variant="secondary" size="sm" onClick={() => startEdit(p)}>
-                    Edit
-                  </Button>
-                  <Button variant="danger" size="sm" onClick={() => removePersona(p)}>
-                    Delete
-                  </Button>
-                </div>
+                {showPersonaForm && editingId === p.id && (
+                  <div className={styles.personaPolicyEditor}>
+                    <ScopedActionPolicy
+                      workspaceId={id}
+                      scope="persona"
+                      scopeId={p.id}
+                      title={`Action permission for ${p.name}`}
+                    />
+                  </div>
+                )}
               </li>
             ))}
           </ul>
