@@ -10,6 +10,7 @@
   "scripts": {
     "dev": "concurrently -n api,web -c blue,magenta \"npm run dev -w apps/api\" \"npm run dev -w apps/web\"",
     "test": "vitest run",
+    "test:desktop": "playwright test --config=playwright.config.ts",
     "test:watch": "vitest",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "build": "npm run build --workspaces --if-present",
@@ -21,6 +22,7 @@
     "nango:down": "docker compose -f infra/nango/compose.yaml down"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "concurrently": "^9.1.0",
     "simple-icons": "^16.25.0",
     "typescript": "^5.7.0",

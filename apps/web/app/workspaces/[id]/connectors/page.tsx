@@ -671,15 +671,16 @@ export default function ConnectorsPage() {
                   <details
                     className={styles.policyDetails}
                     open={policyConnectionId === connection.id}
-                    onToggle={(event) =>
+                    onToggle={(event) => {
+                      const isOpen = event.currentTarget.open;
                       setPolicyConnectionId((current) =>
-                        event.currentTarget.open
+                        isOpen
                           ? connection.id
                           : current === connection.id
                             ? null
                             : current,
-                      )
-                    }
+                      );
+                    }}
                   >
                     <summary>Action permission</summary>
                     {policyConnectionId === connection.id && (
