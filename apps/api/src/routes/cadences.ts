@@ -4,7 +4,6 @@ import {
   updatePostingCadenceInputSchema,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
-import type { ConnectorFabric } from "../connectors/fabric";
 import { buildCalendar } from "../services/calendar";
 import { getCampaign } from "../services/campaigns";
 import { getConnection, providerByKey } from "../services/connections";
@@ -20,10 +19,10 @@ import {
   updateCadence,
 } from "../services/cadences";
 import { getPersona } from "../services/personas";
+import type { ExternalActionRuntime } from "../services/external-action-coordinator";
 import { resolvePersonaSocialConnection } from "../services/persona-social-accounts";
 import { getWorkspace } from "../services/workspaces";
 
-type Fetcher = typeof fetch;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_CALENDAR_DAYS = 92;
 
@@ -72,8 +71,7 @@ function validateRefs(
 export function registerCadenceRoutes(
   app: FastifyInstance,
   db: Db,
-  fabric: ConnectorFabric,
-  fetcher: Fetcher,
+  runtime: ExternalActionRuntime,
 ): void {
   app.post<{ Params: { id: string } }>("/workspaces/:id/cadences", async (request, reply) => {
     if (!workspaceOr404(db, request.params.id, reply)) return reply;
@@ -169,7 +167,7 @@ export function registerCadenceRoutes(
       if (!workspaceOr404(db, request.params.id, reply)) return reply;
       const cadence = getCadence(db, request.params.id, request.params.cadenceId);
       if (!cadence) return reply.status(404).send({ error: "cadence_not_found" });
-      const { filled } = await fillCadence(db, fabric, fetcher, request.params.id, cadence, Date.now());
+      const { filled } = await fillCadence(db, runtime, request.params.id, cadence, Date.now());
       const detail = getCadenceDetail(db, request.params.id, cadence, Date.now());
       return { filled, cadence: detail };
     },
@@ -178,7 +176,7 @@ export function registerCadenceRoutes(
   // Worker entry point: fill every active cadence in this workspace.
   app.post<{ Params: { id: string } }>("/workspaces/:id/cadences/run", async (request, reply) => {
     if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    const results = await fillActiveCadences(db, fabric, fetcher, request.params.id, Date.now());
+    const results = await fillActiveCadences(db, runtime, request.params.id, Date.now());
     return { results };
   });
 

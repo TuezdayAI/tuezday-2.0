@@ -38,6 +38,7 @@ import {
 import { assertWithinLimit, getUsage } from "./entitlements";
 import { retrieveEvidence } from "./evidence";
 import { listExecutionResults } from "./executions";
+import { listExternalActionsForDraft } from "./external-actions";
 import { resolveChannelGuidance } from "./guidance";
 import { getPersona, toResolvePersona } from "./personas";
 import {
@@ -260,6 +261,7 @@ export function getDraftEditorContext(
     campaignId: draft.campaignId ?? undefined,
     limit: 200,
   }).filter((execution) => execution.draftId === draft.id);
+  const actions = listExternalActionsForDraft(db, workspaceId, draft.id);
   const evidenceCitations = contextSections.flatMap(
     (section) => section.evidence?.chunks ?? [],
   );
@@ -283,6 +285,7 @@ export function getDraftEditorContext(
     destination,
     publications,
     executions,
+    actions,
   });
 }
 

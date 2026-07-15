@@ -89,6 +89,7 @@ function editorContextFixture() {
     destination: null,
     publications: [],
     executions: [],
+    actions: [],
   } as const;
 }
 
@@ -141,5 +142,6 @@ describe("conversational editor contracts", () => {
     expect(parsed.draft.id).toBe(draftId);
     expect(parsed.contextSections[1]?.included).toBe(false);
     expect(parsed.turns[0]?.resultContent).toBe("Short copy");
+    expect(parsed.actions).toEqual([]);
   });
 });

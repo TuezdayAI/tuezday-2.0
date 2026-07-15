@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { CalendarEntry } from "@tuezday/contracts";
 import {
   calendarDensity,
+  calendarEntryKey,
+  calendarRecoveryLabel,
   calendarHref,
   calendarView,
   entryCampaigns,
@@ -95,6 +97,59 @@ describe("calendar workspace view model", () => {
     expect(entryWorkflowStatus(entry({ status: "published" }))).toBe("completed");
     expect(entryWorkflowStatus(entry({ status: "failed" }))).toBe("failed");
     expect(entryWorkflowStatus(entry({ kind: "slot", status: "open" }))).toBeNull();
+  });
+
+  it("maps external action calendar states to the canonical vocabulary", () => {
+    expect(
+      entryWorkflowStatus(entry({ kind: "external_action", status: "authorization_required" })),
+    ).toBe("authorization_required");
+    expect(entryWorkflowStatus(entry({ kind: "external_action", status: "authorized" }))).toBe(
+      "authorized",
+    );
+    expect(entryWorkflowStatus(entry({ kind: "external_action", status: "blocked" }))).toBe(
+      "policy_blocked",
+    );
+    expect(entryWorkflowStatus(entry({ kind: "external_action", status: "stale" }))).toBe(
+      "stale",
+    );
+  });
+
+  it("gives external actions honest recovery labels", () => {
+    expect(
+      calendarRecoveryLabel(entry({ kind: "external_action", status: "authorization_required" })),
+    ).toBe("Open authorization");
+    expect(calendarRecoveryLabel(entry({ kind: "external_action", status: "authorized" }))).toBe(
+      "View authorization",
+    );
+    expect(calendarRecoveryLabel(entry({ kind: "external_action", status: "blocked" }))).toBe(
+      "Resolve policy blocker",
+    );
+    expect(calendarRecoveryLabel(entry({ kind: "external_action", status: "stale" }))).toBe(
+      "Review stale action",
+    );
+    expect(calendarRecoveryLabel(entry({ kind: "publication" }))).toBeNull();
+  });
+
+  it("uses distinct stable UI keys for action and publication projections", () => {
+    const action = entry({
+      kind: "external_action",
+      externalActionId: "22222222-2222-4222-8222-222222222222",
+      publicationId: null,
+      cadenceId: "33333333-3333-4333-8333-333333333333",
+    });
+    const publication = entry({
+      kind: "publication",
+      externalActionId: "22222222-2222-4222-8222-222222222222",
+      publicationId: "44444444-4444-4444-8444-444444444444",
+      cadenceId: "33333333-3333-4333-8333-333333333333",
+    });
+    expect(calendarEntryKey(action)).toBe(
+      "external_action:22222222-2222-4222-8222-222222222222",
+    );
+    expect(calendarEntryKey(publication)).toBe(
+      "publication:44444444-4444-4444-8444-444444444444",
+    );
+    expect(calendarEntryKey(action)).not.toBe(calendarEntryKey(publication));
   });
 
   it("filters by campaign and channel", () => {

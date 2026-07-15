@@ -14,11 +14,17 @@ import styles from "./inbox-queue.module.css";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import type {
+  ExternalActionSubmission,
   InboxItemStatus,
   InboxItemWithContext,
   InboxRunResult,
 } from "@tuezday/contracts";
 import { API_URL, apiFetch } from "@/lib/api";
+import {
+  actionAuthorizationHref,
+  externalActionWorkflowStatus,
+  submissionNote,
+} from "@/lib/external-actions";
 import { draftWorkflowStatus, inboxWorkflowStatus, reviewHref } from "@/lib/review-workspace";
 
 const STATUS_LABELS: Record<InboxItemStatus, string> = {
@@ -54,6 +60,8 @@ export function InboxQueue({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [lastRun, setLastRun] = useState<InboxRunResult | null>(null);
+  // The governed reply action returned by the last post attempt, per item.
+  const [replyActions, setReplyActions] = useState<Record<string, ExternalActionSubmission>>({});
 
   const load = useCallback(async () => {
     try {
@@ -144,7 +152,15 @@ export function InboxQueue({
         method: "POST",
       });
       const body = await posted.json().catch(() => null);
-      if (!posted.ok) throw new Error(body?.message ?? `Post returned ${posted.status}`);
+      if (!posted.ok && !body?.action) {
+        throw new Error(body?.message ?? `Post returned ${posted.status}`);
+      }
+      // 202/201 both return the durable action; a stale 409 carries it too.
+      const submission: ExternalActionSubmission =
+        body.execution !== undefined
+          ? (body as ExternalActionSubmission)
+          : { action: body.action, execution: body.action.execution ?? null };
+      setReplyActions((previous) => ({ ...previous, [item.id]: submission }));
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to post the reply");
@@ -257,6 +273,12 @@ export function InboxQueue({
             const draft = item.replyDraft;
             const replyPosted = Boolean(item.postedReplyExternalId);
             const brand = PROVIDER_BRAND[item.providerKey];
+            const replyAction = replyActions[item.id] ?? null;
+            const actionHref = replyAction
+              ? actionAuthorizationHref(replyAction.action)
+              : item.externalActionId
+                ? reviewHref(id, { tab: "authorizations", action: item.externalActionId })
+                : null;
             return (
               <li key={item.id} className="section-card">
                 <div className="section-head">
@@ -316,6 +338,20 @@ export function InboxQueue({
                   </div>
                 )}
 
+                {replyAction && replyAction.action.status !== "succeeded" && (
+                  <p className="section-reason">
+                    <WorkflowStatusBadge
+                      status={externalActionWorkflowStatus(replyAction.action)}
+                    />{" "}
+                    {submissionNote(replyAction)}{" "}
+                    {actionHref && (
+                      <Link className="link-button" href={actionHref}>
+                        view authorization
+                      </Link>
+                    )}
+                  </p>
+                )}
+
                 <div className="rating-row" style={{ marginTop: 10 }}>
                   {!draft && !replyPosted && item.status !== "dismissed" && (
                     <Button
@@ -356,6 +392,12 @@ export function InboxQueue({
                           <a href={item.postedReplyUrl} target="_blank" rel="noreferrer">
                             view reply
                           </a>
+                        </>
+                      )}
+                      {actionHref && (
+                        <>
+                          {" · "}
+                          <Link href={actionHref}>action record</Link>
                         </>
                       )}
                     </span>

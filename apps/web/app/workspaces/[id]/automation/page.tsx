@@ -6,6 +6,7 @@ import { Card } from "@/src/components/ui/card";
 import { Icon } from "@/src/components/ui/icon";
 import { TopBarActions } from "@/src/components/top-bar";
 import { AutomationGuardrails } from "./guardrails";
+import { ActionPolicy } from "./action-policy";
 import styles from "./automation.module.css";
 
 import { useState } from "react";
@@ -49,6 +50,8 @@ export default function AutomationPage() {
       </div>
 
       <AutomationGuardrails workspaceId={id} framed />
+
+      <ActionPolicy workspaceId={id} />
 
       {lastRun && (
         <Card>

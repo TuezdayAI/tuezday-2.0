@@ -25,6 +25,7 @@ import {
   type Channel,
   type Connection,
   type ConnectorProvider,
+  type ExternalActionSubmission,
   type Persona,
   type Publication,
   type PublicationMetric,
@@ -308,8 +309,15 @@ export default function ContentPage() {
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.message ?? `API returned ${res.status}`);
-      if (body.status === "failed") {
-        throw new Error(body.lastError ?? "The platform refused the post.");
+      const submission = body as ExternalActionSubmission;
+      if (submission.action.status === "failed") {
+        throw new Error(submission.execution?.error ?? "The platform refused the post.");
+      }
+      if (submission.action.status === "authorization_required") {
+        setPublishingFor(null);
+        setError("Publication authorization requested. Review it in the authorization queue.");
+        await load();
+        return;
       }
       setPublishingFor(null);
       await load();

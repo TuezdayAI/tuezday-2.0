@@ -9,14 +9,18 @@ import {
   generateReplyForItem,
   getInboxItem,
   listInbox,
-  postReplyForItem,
   runInbox,
   setInboxStatus,
 } from "../services/inbox";
+import {
+  ExternalActionPreparationError,
+  deriveReplyIdempotencyKey,
+  prepareReplyAction,
+} from "../services/external-action-adapters";
+import type { ExternalActionRuntime } from "../services/external-action-coordinator";
 import { getDraft } from "../services/drafts";
 import { getWorkspace } from "../services/workspaces";
-
-type Fetcher = typeof fetch;
+import { externalActionError } from "./external-actions";
 
 function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
   const workspace = getWorkspace(db, id);
@@ -34,7 +38,7 @@ export function registerInboxRoutes(
   llm: LlmGateway,
   evidence: EvidenceStore,
   connectors: ConnectorFabric,
-  fetcher: Fetcher,
+  runtime: ExternalActionRuntime,
 ): void {
   app.get<{ Params: { id: string }; Querystring: { status?: string } }>(
     "/workspaces/:id/inbox",
@@ -75,6 +79,8 @@ export function registerInboxRoutes(
     },
   );
 
+  // Proposes a `reply` external action for the approved reply draft; the action
+  // policy decides whether it posts immediately or waits in Review.
   app.post<{ Params: { id: string; itemId: string } }>(
     "/workspaces/:id/inbox/:itemId/post-reply",
     async (request, reply) => {
@@ -93,17 +99,29 @@ export function registerInboxRoutes(
         return reply.status(409).send({ error: "reply_not_approved" });
       }
       try {
-        return await postReplyForItem(db, connectors, fetcher, workspace, item, draft.content);
-      } catch (err) {
+        const command = prepareReplyAction(db, request.params.id, item.id, {
+          idempotencyKey: deriveReplyIdempotencyKey(item.id, draft),
+          automated: false,
+        });
+        const submission = await runtime.propose(command, actorOf(request));
         return reply
-          .status(502)
-          .send({ error: "reply_failed", message: err instanceof Error ? err.message : String(err) });
+          .status(submission.action.status === "authorization_required" ? 202 : 201)
+          .send(submission);
+      } catch (error) {
+        if (error instanceof ExternalActionPreparationError) {
+          return reply.status(error.statusCode).send({
+            error: error.code,
+            message: error.message,
+            ...(error.details as object | undefined),
+          });
+        }
+        return externalActionError(error, reply);
       }
     },
   );
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/inbox/run", async (request, reply) => {
     if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return runInbox(db, llm, evidence, connectors, fetcher, request.params.id);
+    return runInbox(db, llm, evidence, connectors, runtime, request.params.id);
   });
 }

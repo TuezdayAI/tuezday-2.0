@@ -57,8 +57,18 @@
 .facts dd { display: grid; gap: 3px; margin: 0; font-size: 13px; }
 .facts a, .activityRow { color: inherit; }
 .facts small { color: var(--muted); }
-.policyBox, .authorizationBox { padding: 12px; border-radius: var(--radius); }
-.policyBox { border: 1px solid var(--border); background: var(--surface); }
+.policyBox, .authorizationBox, .publishBox { padding: 12px; border-radius: var(--radius); }
+.policyBox, .publishBox { border: 1px solid var(--border); background: var(--surface); }
+.publishBox { margin: 14px; display: grid; gap: 8px; }
+.publishBox h4 { margin: 0; }
+.publishBox small { color: var(--muted); font-size: 11px; }
+.publishFields { display: grid; gap: 8px; }
+.publishFields label { display: grid; gap: 3px; color: var(--muted); font-size: 11.5px; font-weight: 600; }
+.publishFields input, .publishFields select { padding: 7px 9px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg); color: var(--text); font-size: 13px; }
+.submissionStatus { display: grid; gap: 5px; border-top: 1px solid var(--border); padding-top: 9px; }
+.submissionStatus p { margin: 0 !important; }
+.submissionStatus a { font-size: 12px; font-weight: 650; }
+.actionList { display: grid; gap: 8px; margin-top: 9px; }
 .authorizationBox { border: 1px solid var(--status-attention); background: var(--status-attention-wash); }
 .policyBox p, .authorizationBox p { margin: 7px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .authorizationBox span { display: block; margin-top: 8px; font-size: 11px; font-weight: 700; }

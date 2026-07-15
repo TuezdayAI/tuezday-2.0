@@ -9,6 +9,7 @@ import { calendarHref } from "@/lib/calendar-workspace";
 import { formatLaneSchedule, laneStatus } from "@/lib/campaign-control-plane";
 import { Badge, WorkflowStatusBadge } from "@/src/components/ui/badge";
 import { Icon } from "@/src/components/ui/icon";
+import { CampaignActionPolicy } from "./campaign-action-policy";
 import styles from "../campaign-workspace.module.css";
 
 interface AdTotals {
@@ -167,6 +168,8 @@ export function CampaignOverview({
           <Link href={`/workspaces/${workspaceId}/insights?campaign=${campaign.id}`}>Insights</Link>
         </nav>
       </section>
+
+      <CampaignActionPolicy workspaceId={workspaceId} campaignId={campaign.id} />
     </div>
   );
 }

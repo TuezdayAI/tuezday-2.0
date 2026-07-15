@@ -1,13 +1,12 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import {
-  SOCIAL_POST_CONSTRAINTS,
-  validateSocialPost,
   type Channel,
   type Connection,
   type CreateLaunchInput,
-  type SocialPostConstraints,
   type DispatchChannelInput,
+  type ExternalActionActor,
+  type ExternalActionSubmission,
   type GenerateLaunchInput,
   type Launch,
   type LaunchChannel,
@@ -29,16 +28,21 @@ import {
   type LaunchMessageRow,
   type LaunchRow,
 } from "../db/schema";
-import type { ConnectorFabric } from "../connectors/fabric";
-import { socialAdapterFor, type PublishMedia } from "../connectors/social";
 import type { EvidenceStore } from "../evidence/store";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { getAudienceDetail, loadPeople } from "./audiences";
 import { getBrain } from "./brain";
 import { composeResolveCampaign, getCampaign } from "./campaigns";
+import {
+  ExternalActionPreparationError,
+  deriveSendIdempotencyKey,
+  prepareSendAction,
+} from "./external-action-adapters";
+import type { ExternalActionRuntime } from "./external-action-coordinator";
+import { getExternalAction } from "./external-actions";
 import { resolveChannelGuidance } from "./guidance";
 import { selectiveContextInputs } from "./resolve-input";
-import { listConnections, providerByKey } from "./connections";
+import { listConnections } from "./connections";
 import type { DraftActor } from "./drafts";
 import { submitDraft } from "./drafts";
 import { retrieveEvidence } from "./evidence";
@@ -47,11 +51,8 @@ import type { OutboundExporter, OutboundExport } from "../outbound/exporter";
 import { getPersona, toResolvePersona } from "./personas";
 import { resolveDraftAccount } from "./resolve-account";
 import { resolvePersonaSocialConnection } from "./persona-social-accounts";
-import { createPublication } from "./publications";
 import { hasSequence, listSequenceRecipients, listSequenceSteps } from "./launch-sequences";
 import { getWorkspace } from "./workspaces";
-
-type Fetcher = typeof fetch;
 
 /** Channel → connector provider key. email has no connector (CSV export). */
 export const LAUNCH_CHANNEL_PROVIDER: Record<LaunchChannel, string | null> = {
@@ -111,6 +112,7 @@ function rowToMessage(row: LaunchMessageRow, draft: DraftRow | null): LaunchMess
     recipientEmail: row.recipientEmail,
     recipientHandle: row.recipientHandle,
     draftId: row.draftId,
+    externalActionId: row.externalActionId,
     status: row.status as LaunchMessageStatus,
     skipReason: row.skipReason,
     externalId: row.externalId,
@@ -499,16 +501,8 @@ function resolveLaunchConnection(
   };
 }
 
-export interface DispatchMessageResult {
-  messageId: string;
-  recipient: string;
-  status: LaunchMessageStatus;
-  url?: string | null;
-  error?: string | null;
-}
-
 export type DispatchResult =
-  | { ok: true; results: DispatchMessageResult[] }
+  | { ok: true; submissions: ExternalActionSubmission[] }
   | {
       ok: false;
       error:
@@ -570,17 +564,19 @@ export function exportLaunchEmail(
 }
 
 // ---------------------------------------------------------------------------
-// Social dispatch (LinkedIn / Instagram broadcast, X DMs)
+// Social dispatch (LinkedIn / Instagram broadcast, X DMs) — proposes one
+// durable `send` external action per eligible message; the action policy
+// decides whether each executes immediately or waits for authorization.
 // ---------------------------------------------------------------------------
 
 export async function dispatchChannel(
   db: Db,
-  fabric: ConnectorFabric,
-  fetcher: Fetcher,
+  runtime: ExternalActionRuntime,
   workspaceId: string,
   launchId: string,
   channel: LaunchChannel,
   input: DispatchChannelInput,
+  actor: ExternalActionActor,
 ): Promise<DispatchResult> {
   const launchRow = getLaunchRow(db, workspaceId, launchId);
   if (!launchRow) return { ok: false, error: "launch_not_found" };
@@ -598,115 +594,66 @@ export async function dispatchChannel(
   if (!conn.ok) return { ok: false, error: conn.error };
   const connection = conn.connection;
 
+  const media = input.media?.map((m) => ({ url: m.url, type: m.type })) ?? null;
   const rows = db
     .select()
     .from(launchMessages)
     .where(and(eq(launchMessages.launchId, launchId), eq(launchMessages.channel, channel)))
     .all();
 
-  const results: DispatchMessageResult[] = [];
-  const now = Date.now();
+  // A message is dispatchable while its human-approved content has not gone
+  // out: pending or failed, never skipped. Already-sent messages report their
+  // governing action instead of being re-proposed.
+  const eligible = rows.filter(
+    (row) =>
+      row.status !== "skipped" &&
+      (channel === "linkedin" || channel === "instagram" ? row.kind === "broadcast" : true) &&
+      isApproved(db, row.draftId),
+  );
 
-  if (channel === "linkedin" || channel === "instagram") {
-    const row = rows.find((r) => r.kind === "broadcast");
-    if (!row) return { ok: true, results };
-    const draft = draftRow(db, row.draftId);
-    if (draft?.state !== "approved") {
-      results.push({ messageId: row.id, recipient: "Broadcast post", status: row.status as LaunchMessageStatus, error: "Draft is not approved yet." });
-      return { ok: true, results };
-    }
-    const media: PublishMedia[] | undefined = input.media?.map((m) => ({ url: m.url, type: m.type }));
-    const constraints = SOCIAL_POST_CONSTRAINTS[
-      providerKey as keyof typeof SOCIAL_POST_CONSTRAINTS
-    ] as SocialPostConstraints | undefined;
-    if (constraints?.requiresMedia && (!media || media.length === 0)) {
-      return { ok: false, error: "media_required" };
-    }
-    const validation = validateSocialPost(providerKey, {
-      target: "feed",
-      title: launchRow.name,
-      body: draft.content,
-    });
-    if (!validation.ok) {
-      return { ok: false, error: "validation_failed", message: validation.violations.map((v) => v.message).join(" ") };
-    }
-    const publication = await createPublication(
-      db,
-      fabric,
-      fetcher,
-      workspaceId,
-      draft.id,
-      connection,
-      { connectionId: connection.id, target: "feed", title: launchRow.name },
-      media,
-    );
-    if (publication.status === "published") {
-      db.update(launchMessages)
-        .set({
-          status: "sent",
-          sentAt: now,
-          publicationId: publication.id,
-          externalId: publication.externalId,
-          externalUrl: publication.externalUrl,
-          lastError: null,
-          updatedAt: now,
-        })
-        .where(eq(launchMessages.id, row.id))
-        .run();
-      results.push({ messageId: row.id, recipient: "Broadcast post", status: "sent", url: publication.externalUrl });
-    } else {
-      db.update(launchMessages)
-        .set({ status: "failed", publicationId: publication.id, lastError: publication.lastError, updatedAt: now })
-        .where(eq(launchMessages.id, row.id))
-        .run();
-      results.push({ messageId: row.id, recipient: "Broadcast post", status: "failed", error: publication.lastError });
-    }
-    maybeComplete(db, workspaceId, launchId);
-    return { ok: true, results };
-  }
-
-  // channel === "x": per-recipient DM
-  const provider = providerByKey(providerKey)!;
-  const adapter = socialAdapterFor(fabric, provider, connection);
-  for (const row of rows) {
-    if (row.status === "skipped") continue;
-    const draft = draftRow(db, row.draftId);
-    if (draft?.state !== "approved") {
-      results.push({ messageId: row.id, recipient: row.recipientName, status: row.status as LaunchMessageStatus, error: "Draft is not approved yet." });
+  const submissions: ExternalActionSubmission[] = [];
+  for (const row of eligible) {
+    if (row.status === "sent") {
+      const existing = row.externalActionId
+        ? getExternalAction(db, workspaceId, row.externalActionId)
+        : undefined;
+      if (existing) submissions.push({ action: existing, execution: existing.execution });
       continue;
     }
-    try {
-      if (!adapter?.sendDm) throw new Error("The X connection is not available — reconnect it on the Integrations page.");
-      const res = await adapter.sendDm({ recipientHandle: row.recipientHandle ?? "", body: draft.content });
-      db.update(launchMessages)
-        .set({
-          status: "sent",
-          sentAt: now,
-          externalId: res.externalId,
-          externalUrl: res.url || null,
-          lastError: null,
+    const draft = draftRow(db, row.draftId)!;
+    const idempotencyKey = input.idempotencyKey
+      ? `${input.idempotencyKey}:${row.id}`
+      : deriveSendIdempotencyKey(row.id, {
           connectionId: connection.id,
-          updatedAt: now,
-        })
-        .where(eq(launchMessages.id, row.id))
-        .run();
-      results.push({ messageId: row.id, recipient: row.recipientName, status: "sent" });
+          draftId: draft.id,
+          content: draft.content,
+        });
+    try {
+      const command = prepareSendAction(db, workspaceId, launchId, row.id, {
+        idempotencyKey,
+        connectionId: connection.id,
+        media,
+        automated: false,
+      });
+      submissions.push(await runtime.propose(command, actor));
     } catch (err) {
-      const message = (err instanceof Error ? err.message : String(err)).slice(0, 500);
-      db.update(launchMessages)
-        .set({ status: "failed", lastError: message, updatedAt: now })
-        .where(eq(launchMessages.id, row.id))
-        .run();
-      results.push({ messageId: row.id, recipient: row.recipientName, status: "failed", error: message });
+      if (err instanceof ExternalActionPreparationError) {
+        if (err.code === "media_required") return { ok: false, error: "media_required" };
+        if (err.code === "validation_failed") {
+          return { ok: false, error: "validation_failed", message: err.message };
+        }
+        continue; // a message that became ineligible mid-dispatch is skipped
+      }
+      throw err;
     }
   }
-  maybeComplete(db, workspaceId, launchId);
-  return { ok: true, results };
+  return { ok: true, submissions };
 }
 
 /** Flip a launch to completed once no message is still pending. Coarse — the
- * per-message status is the real detail. */
-function maybeComplete(db: Db, workspaceId: string, launchId: string): void {
+ * per-message status is the real detail. Also called by the send adapter. */
+export function maybeCompleteLaunch(db: Db, workspaceId: string, launchId: string): void {
+  if (!getLaunchRow(db, workspaceId, launchId)) return;
   const pending = db
     .select()
     .from(launchMessages)

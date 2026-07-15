@@ -14,6 +14,8 @@ import {
   publications,
 } from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
+import { canonicalActionFingerprint } from "../src/services/external-action-fingerprint";
+import { insertExternalAction } from "../src/services/external-actions";
 import { buildAuthedApp, createTestDb } from "./helpers";
 
 const fakeLlm: LlmGateway = {
@@ -291,6 +293,53 @@ describe("draft editor context API", () => {
     expect(context.executions).toEqual([
       expect.objectContaining({ kind: "publication", draftId, status: "completed" }),
     ]);
+  });
+
+  it("lists external actions scoped to this draft only", async () => {
+    const seedAction = (targetDraftId: string) => {
+      const id = randomUUID();
+      insertExternalAction(db, {
+        id,
+        workspaceId,
+        kind: "publish",
+        subject: {
+          kind: "draft",
+          id: targetDraftId,
+          title: "Launch post",
+          summary: "Body.",
+          channel: "linkedin",
+          destination: "LinkedIn · feed",
+        },
+        context: {
+          campaignId: null,
+          campaignName: null,
+          personaId: null,
+          personaName: null,
+          connectionId: null,
+          connectionName: null,
+          laneRevisionId: null,
+          laneName: null,
+        },
+        payload: {},
+        requestedFor: null,
+        idempotencyKey: `seed:${id}`,
+        fingerprint: canonicalActionFingerprint({ id }),
+        policy: { effective: "human_required", contributingRules: [] },
+        actor: { userId: null, label: "system" },
+        supersedesActionId: null,
+        draftId: targetDraftId,
+      });
+      return id;
+    };
+    const mine = seedAction(draftId);
+    seedAction(siblingId); // scoped out — belongs to the sibling draft
+
+    const response = await app.inject({
+      method: "GET",
+      url: `/workspaces/${workspaceId}/drafts/${draftId}/editor`,
+    });
+    const context = draftEditorContextSchema.parse(response.json());
+    expect(context.actions?.map((action) => action.id)).toEqual([mine]);
   });
 
   it("returns 404 when the draft is outside the requested workspace", async () => {

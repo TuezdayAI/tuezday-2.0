@@ -3,11 +3,18 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useSearchParams } from "next/navigation";
-import type { ApprovalState, Channel, Draft, InboxItem } from "@tuezday/contracts";
+import type {
+  ApprovalState,
+  Channel,
+  Draft,
+  ExternalAction,
+  InboxItem,
+} from "@tuezday/contracts";
 import { apiFetch } from "@/lib/api";
 import { reviewHref, reviewTab, type ReviewTab } from "@/lib/review-workspace";
 import { CountBadge } from "@/src/components/ui/badge";
 import { ApprovalsQueue } from "./_components/approvals-queue";
+import { AuthorizationsQueue } from "./_components/authorizations-queue";
 import { InboxQueue } from "./_components/inbox-queue";
 import styles from "./review.module.css";
 
@@ -21,17 +28,25 @@ export default function ReviewWorkspacePage() {
   // loads, so the active tab never double-fetches.
   const [pendingCount, setPendingCount] = useState<number | null>(null);
   const [unreadCount, setUnreadCount] = useState<number | null>(null);
+  const [authorizationCount, setAuthorizationCount] = useState<number | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      const [draftsRes, inboxRes] = await Promise.all([
+      const [draftsRes, inboxRes, actionsRes] = await Promise.all([
         apiFetch(`/workspaces/${id}/drafts?state=pending_review`).catch(() => null),
         apiFetch(`/workspaces/${id}/inbox?status=unread`).catch(() => null),
+        apiFetch(
+          `/workspaces/${id}/external-actions?status=authorization_required&limit=200`,
+        ).catch(() => null),
       ]);
       if (cancelled) return;
       if (draftsRes?.ok) setPendingCount(((await draftsRes.json()) as Draft[]).length);
       if (inboxRes?.ok) setUnreadCount(((await inboxRes.json()) as InboxItem[]).length);
+      if (actionsRes?.ok) {
+        const body = (await actionsRes.json()) as { actions: ExternalAction[] };
+        setAuthorizationCount(body.actions.length);
+      }
     })();
     return () => {
       cancelled = true;
@@ -40,6 +55,7 @@ export default function ReviewWorkspacePage() {
 
   const reportPending = useCallback((n: number) => setPendingCount(n), []);
   const reportUnread = useCallback((n: number) => setUnreadCount(n), []);
+  const reportAuthorizations = useCallback((n: number) => setAuthorizationCount(n), []);
 
   const tabs: Array<{
     key: ReviewTab;
@@ -67,6 +83,19 @@ export default function ReviewWorkspacePage() {
       label: "Inbox",
       count: unreadCount,
       countLabel: "unread inbox items",
+    },
+    {
+      key: "authorizations",
+      href: reviewHref(id, {
+        tab: "authorizations",
+        campaign: searchParams.get("campaign") ?? undefined,
+        kind: searchParams.get("kind") ?? undefined,
+        status: searchParams.get("status") ?? undefined,
+        action: searchParams.get("action") ?? undefined,
+      }),
+      label: "Authorizations",
+      count: authorizationCount,
+      countLabel: "actions waiting for authorization",
     },
   ];
 
@@ -101,6 +130,9 @@ export default function ReviewWorkspacePage() {
         <ApprovalsQueue workspaceId={id} onPendingCount={reportPending} />
       )}
       {activeTab === "inbox" && <InboxQueue workspaceId={id} onUnreadCount={reportUnread} />}
+      {activeTab === "authorizations" && (
+        <AuthorizationsQueue workspaceId={id} onQueueCount={reportAuthorizations} />
+      )}
     </>
   );
 }

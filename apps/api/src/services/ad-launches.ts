@@ -129,6 +129,7 @@ export function createLaunch(
     adAccountId: input.adAccountId,
     campaignId,
     creativeDraftId: input.creativeDraftId,
+    externalActionId: null,
     name: input.name,
     objective: input.objective,
     pageId: input.pageId,

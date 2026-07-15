@@ -7,6 +7,7 @@ import { apiFetch } from "@/lib/api";
 import {
   EXECUTION_KIND_LABELS,
   destinationSummary,
+  executionAuthorizationLink,
   executionTargetHref,
   executionWorkflowStatus,
 } from "@/lib/execution-results";
@@ -83,7 +84,9 @@ export function CampaignResults({ workspaceId, campaignId }: CampaignResultsProp
         </div>
       </div>
       <ul className={styles.resultsList}>
-        {results.map((result) => (
+        {results.map((result) => {
+          const actionLink = executionAuthorizationLink(workspaceId, result);
+          return (
           <li key={`${result.kind}:${result.id}`} className={styles.resultRow}>
             <div className={styles.resultMain}>
               <div className={styles.resultMeta}>
@@ -117,9 +120,15 @@ export function CampaignResults({ workspaceId, campaignId }: CampaignResultsProp
               <Link href={executionTargetHref(workspaceId, result)} className={styles.panelLink}>
                 Open {EXECUTION_KIND_LABELS[result.kind].toLowerCase()}
               </Link>
+              {actionLink && (
+                <Link href={actionLink.href} className={styles.panelLink}>
+                  {actionLink.label}
+                </Link>
+              )}
             </div>
           </li>
-        ))}
+          );
+        })}
       </ul>
     </section>
   );

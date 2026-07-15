@@ -961,38 +961,161 @@ export const adCampaignMetrics = sqliteTable(
 
 export type AdCampaignMetricRow = typeof adCampaignMetrics.$inferSelect;
 
+// Workspace and scoped governance rules for every external side effect. The
+// vocabulary and precedence live in @tuezday/contracts; these rows preserve
+// the founder's explicit policy choices and their provenance.
+export const externalActionPolicyRules = sqliteTable(
+  "external_action_policy_rules",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull(),
+    scopeId: text("scope_id").notNull(),
+    actionKind: text("action_kind").notNull(),
+    rule: text("rule").notNull(),
+    createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("external_action_policy_scope_kind").on(
+      t.workspaceId,
+      t.scope,
+      t.scopeId,
+      t.actionKind,
+    ),
+    index("external_action_policy_workspace_scope").on(t.workspaceId, t.scope, t.scopeId),
+  ],
+);
+
+export type ExternalActionPolicyRuleRow = typeof externalActionPolicyRules.$inferSelect;
+
+// Durable authorization envelope. It separates permission to take an external
+// action from approval of the content that action may carry.
+export const externalActions = sqliteTable(
+  "external_actions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    status: text("status").notNull(),
+    subjectKind: text("subject_kind").notNull(),
+    subjectId: text("subject_id").notNull(),
+    draftId: text("draft_id").references(() => drafts.id, { onDelete: "set null" }),
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+    personaId: text("persona_id").references(() => personas.id, { onDelete: "set null" }),
+    connectionId: text("connection_id").references(() => connections.id, { onDelete: "set null" }),
+    laneRevisionId: text("lane_revision_id").references(() => campaignLaneRevisions.id, {
+      onDelete: "set null",
+    }),
+    payloadJson: text("payload_json").notNull(),
+    subjectSnapshotJson: text("subject_snapshot_json").notNull(),
+    requestedFor: integer("requested_for"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    fingerprint: text("fingerprint").notNull(),
+    policySnapshotJson: text("policy_snapshot_json").notNull(),
+    blockerCode: text("blocker_code"),
+    blockerDetail: text("blocker_detail"),
+    blockerRetryable: integer("blocker_retryable", { mode: "boolean" }),
+    // Plain ids avoid a SQLite self-reference table rebuild while preserving
+    // immutable supersession lineage.
+    supersedesActionId: text("supersedes_action_id"),
+    supersededByActionId: text("superseded_by_action_id"),
+    executionKind: text("execution_kind"),
+    executionId: text("execution_id"),
+    executionReceiptJson: text("execution_receipt_json"),
+    proposedByUserId: text("proposed_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    proposedByLabel: text("proposed_by_label").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    authorizedAt: integer("authorized_at"),
+    dispatchedAt: integer("dispatched_at"),
+    completedAt: integer("completed_at"),
+  },
+  (t) => [
+    uniqueIndex("external_actions_workspace_idempotency").on(t.workspaceId, t.idempotencyKey),
+    index("external_actions_workspace_status").on(t.workspaceId, t.status),
+    index("external_actions_workspace_subject").on(t.workspaceId, t.subjectKind, t.subjectId),
+    index("external_actions_campaign").on(t.campaignId),
+  ],
+);
+
+export type ExternalActionRow = typeof externalActions.$inferSelect;
+
+// Append-only founder/operator decisions. Deleting an authorization envelope
+// removes its now-unreachable audit rows, while ordinary state changes retain
+// every decision forever.
+export const externalActionDecisions = sqliteTable(
+  "external_action_decisions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    actionId: text("action_id")
+      .notNull()
+      .references(() => externalActions.id, { onDelete: "cascade" }),
+    decision: text("decision").notNull(),
+    reason: text("reason"),
+    actorUserId: text("actor_user_id").references(() => users.id, { onDelete: "set null" }),
+    actorLabel: text("actor_label").notNull(),
+    subjectFingerprint: text("subject_fingerprint").notNull(),
+    policySnapshotJson: text("policy_snapshot_json").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("external_action_decisions_action").on(t.actionId, t.createdAt),
+    index("external_action_decisions_workspace").on(t.workspaceId, t.createdAt),
+  ],
+);
+
+export type ExternalActionDecisionRow = typeof externalActionDecisions.$inferSelect;
+
 // Social publishing receipts (Sprint 17) — one row per publish attempt (now
 // or scheduled); the post lives on the platform, Tuezday keeps status + URL.
-export const publications = sqliteTable("publications", {
-  id: text("id").primaryKey(),
-  workspaceId: text("workspace_id")
-    .notNull()
-    .references(() => workspaces.id, { onDelete: "cascade" }),
-  draftId: text("draft_id")
-    .notNull()
-    .references(() => drafts.id, { onDelete: "cascade" }),
-  connectionId: text("connection_id")
-    .notNull()
-    .references(() => connections.id, { onDelete: "cascade" }),
-  providerKey: text("provider_key").notNull(),
-  target: text("target").notNull(),
-  title: text("title").notNull(),
-  // Attached media for platforms that need it (Instagram). JSON array of
-  // { url, type } or null. Posted alongside the draft body/caption.
-  mediaJson: text("media_json"),
-  // The posting cadence that auto-slotted this receipt (Sprint 27); null for a
-  // manual one-off publish. Set null when the cadence is deleted.
-  cadenceId: text("cadence_id").references(() => postingCadences.id, { onDelete: "set null" }),
-  status: text("status").notNull().default("scheduled"),
-  // The requested publish time; "post now" stamps the request time.
-  scheduledFor: integer("scheduled_for").notNull(),
-  publishedAt: integer("published_at"),
-  externalId: text("external_id"),
-  externalUrl: text("external_url"),
-  lastError: text("last_error"),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-});
+export const publications = sqliteTable(
+  "publications",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    draftId: text("draft_id")
+      .notNull()
+      .references(() => drafts.id, { onDelete: "cascade" }),
+    externalActionId: text("external_action_id").references(() => externalActions.id, {
+      onDelete: "set null",
+    }),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => connections.id, { onDelete: "cascade" }),
+    providerKey: text("provider_key").notNull(),
+    target: text("target").notNull(),
+    title: text("title").notNull(),
+    // Attached media for platforms that need it (Instagram). JSON array of
+    // { url, type } or null. Posted alongside the draft body/caption.
+    mediaJson: text("media_json"),
+    // The posting cadence that auto-slotted this receipt (Sprint 27); null for a
+    // manual one-off publish. Set null when the cadence is deleted.
+    cadenceId: text("cadence_id").references(() => postingCadences.id, { onDelete: "set null" }),
+    status: text("status").notNull().default("scheduled"),
+    // The requested publish time; "post now" stamps the request time.
+    scheduledFor: integer("scheduled_for").notNull(),
+    publishedAt: integer("published_at"),
+    externalId: text("external_id"),
+    externalUrl: text("external_url"),
+    lastError: text("last_error"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("publications_external_action").on(t.externalActionId)],
+);
 
 export type PublicationRow = typeof publications.$inferSelect;
 
@@ -1041,6 +1164,9 @@ export const adLaunches = sqliteTable("ad_launches", {
   creativeDraftId: text("creative_draft_id")
     .notNull()
     .references(() => drafts.id, { onDelete: "cascade" }),
+  externalActionId: text("external_action_id").references(() => externalActions.id, {
+    onDelete: "set null",
+  }),
   name: text("name").notNull(),
   objective: text("objective").notNull(),
   pageId: text("page_id").notNull(),
@@ -1068,7 +1194,10 @@ export const adLaunches = sqliteTable("ad_launches", {
   lastError: text("last_error"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
-});
+}, (t) => [
+  index("ad_launches_external_action").on(t.externalActionId),
+],
+);
 
 export type AdLaunchRow = typeof adLaunches.$inferSelect;
 
@@ -1289,6 +1418,9 @@ export const launchMessages = sqliteTable("launch_messages", {
   recipientEmail: text("recipient_email").notNull().default(""),
   recipientHandle: text("recipient_handle"),
   draftId: text("draft_id").references(() => drafts.id, { onDelete: "set null" }),
+  externalActionId: text("external_action_id").references(() => externalActions.id, {
+    onDelete: "set null",
+  }),
   status: text("status").notNull().default("pending"),
   skipReason: text("skip_reason"),
   externalId: text("external_id"),
@@ -1305,7 +1437,10 @@ export const launchMessages = sqliteTable("launch_messages", {
   connectionId: text("connection_id").references(() => connections.id, { onDelete: "set null" }),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
-});
+}, (t) => [
+  index("launch_messages_external_action").on(t.externalActionId),
+],
+);
 
 export type LaunchMessageRow = typeof launchMessages.$inferSelect;
 
@@ -1339,13 +1474,19 @@ export const inboxItems = sqliteTable(
     status: text("status").notNull().default("unread"),
     // The gated reply draft, once generated.
     replyDraftId: text("reply_draft_id").references(() => drafts.id, { onDelete: "set null" }),
+    externalActionId: text("external_action_id").references(() => externalActions.id, {
+      onDelete: "set null",
+    }),
     postedReplyExternalId: text("posted_reply_external_id"),
     postedReplyUrl: text("posted_reply_url"),
     externalCreatedAt: integer("external_created_at").notNull(),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (table) => [uniqueIndex("inbox_items_connection_external").on(table.connectionId, table.externalId)],
+  (table) => [
+    uniqueIndex("inbox_items_connection_external").on(table.connectionId, table.externalId),
+    index("inbox_items_external_action").on(table.externalActionId),
+  ],
 );
 
 export type InboxItemRow = typeof inboxItems.$inferSelect;

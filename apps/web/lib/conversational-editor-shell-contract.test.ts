@@ -30,6 +30,21 @@ describe("conversational editor shell contract", () => {
     expect(source).toContain("Generate carousel");
   });
 
+  it("proposes publications with a retained request key and links to authorization", () => {
+    const source = fs.readFileSync(sourcePath, "utf8");
+    expect(source).toContain("Prepare publication");
+    expect(source).toContain("publishEligibility");
+    expect(source).toContain("publishActionPayload");
+    expect(source).toContain("idempotencyKey");
+    expect(source).toMatch(/drafts\/\$\{draftId\}\/publish/);
+    expect(source).toContain("externalActionWorkflowStatus");
+    expect(source).toContain("policyExplanation");
+    expect(source).toContain("Open authorization");
+    // The deferred-slice note is gone; the editor never authorizes in place.
+    expect(source).not.toContain("next Stage 3 slice");
+    expect(source).not.toMatch(/external-actions\/[^"]*\/(authorize|deny)/);
+  });
+
   it("uses optimistic concurrency and preserves recoverable revision input", () => {
     const source = fs.readFileSync(sourcePath, "utf8");
     expect(source).toContain("expectedDraftUpdatedAt");

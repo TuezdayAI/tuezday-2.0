@@ -6,26 +6,23 @@
 // replacing the old four large stat cards.
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import {
   SETUP_CHECKLIST_ITEMS,
   type Campaign,
-  type Channel,
-  type Draft,
   type NextAction,
   type NextActionState,
   type NowSynthesis,
+  type PriorityQueue,
   type SetupChecklistItem,
   type Workspace,
 } from "@tuezday/contracts";
 import { API_URL, apiFetch } from "@/lib/api";
-import { previewKindFor } from "@/lib/preview-kind";
+import { priorityQueueState, priorityView } from "@/lib/priorities";
 import { EmptyState } from "@/src/components/empty-state";
 import { PageHeader } from "@/src/components/page-header";
-import { PreviewCard } from "@/src/components/ui/preview-card";
 import { Icon, type IconName } from "@/src/components/ui/icon";
-import type { BrandName } from "@/src/components/ui/brand-icons";
-import { CountBadge } from "@/src/components/ui/badge";
+import { CountBadge, WorkflowStatusBadge } from "@/src/components/ui/badge";
 import { LoopGlyph } from "@/src/components/ui/diagram-kit";
 import buttonStyles from "@/src/components/ui/button.module.css";
 import styles from "./home-hero.module.css";
@@ -39,20 +36,13 @@ interface NextActionPayload {
 
 interface HomeData {
   workspace: Workspace;
-  drafts: Draft[];
+  priorities: PriorityQueue;
   newSignals: number;
   syntheses: NowSynthesis[];
   campaigns: Campaign[];
   /** Null while the next-action endpoint isn't available — degrade gracefully. */
   next: NextActionPayload | null;
 }
-
-/** Channels with a real platform mark on the preview frame (spec §4 carve-out). */
-const CHANNEL_BRAND: Partial<Record<Channel, BrandName>> = {
-  linkedin: "linkedin",
-  x: "x",
-  instagram: "instagram",
-};
 
 /** Icon + deep link per checklist step (spec §5.4.2); order comes from contracts. */
 const CHECKLIST_META: Record<SetupChecklistItem, { icon: IconName; label: string; path: string }> = {
@@ -69,33 +59,25 @@ function truncate(text: string, max: number): string {
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
 }
 
-/** Email/blog framings read title + body; lead line becomes the subject/title. */
-function splitLead(content: string): { title: string; body: string } {
-  const [first = "", ...rest] = content.split(/\r?\n/);
-  const body = rest.join("\n").trim();
-  return { title: truncate(first, 80), body: body || content };
-}
-
 export default function WorkspaceHomePage() {
   const { id } = useParams<{ id: string }>();
-  const router = useRouter();
   const [data, setData] = useState<HomeData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [ws, drafts, signals, syntheses, campaigns, next] = await Promise.all([
+      const [ws, priorities, signals, syntheses, campaigns, next] = await Promise.all([
         apiFetch(`/workspaces/${id}`),
-        apiFetch(`/workspaces/${id}/drafts`),
+        apiFetch(`/workspaces/${id}/priorities`),
         apiFetch(`/workspaces/${id}/discovery/items?status=new`),
         apiFetch(`/workspaces/${id}/learning/syntheses`),
         apiFetch(`/workspaces/${id}/campaigns`),
         apiFetch(`/workspaces/${id}/next-action`),
       ]);
-      if (!ws.ok) throw new Error("not found");
+      if (!ws.ok || !priorities.ok) throw new Error("not found");
       setData({
         workspace: await ws.json(),
-        drafts: drafts.ok ? await drafts.json() : [],
+        priorities: await priorities.json(),
         newSignals: signals.ok ? ((await signals.json()) as unknown[]).length : 0,
         syntheses: syntheses.ok ? await syntheses.json() : [],
         campaigns: campaigns.ok ? await campaigns.json() : [],
@@ -122,19 +104,15 @@ export default function WorkspaceHomePage() {
 
   if (!data) return <EmptyState description="Loading..." />;
 
-  const { workspace, drafts, newSignals, syntheses, campaigns, next } = data;
-  const pendingReview = drafts.filter((d) => d.state === "pending_review").length;
+  const { workspace, priorities, newSignals, syntheses, campaigns, next } = data;
+  const pendingReview = priorities.items.filter((item) => item.kind === "content_review").length;
   const proposedUpdates = syntheses.filter((s) => s.status === "proposed").length;
   const activeCampaigns = campaigns.filter((c) => c.status === "active").length;
 
-  // Zone 1 — the work queue: oldest-waiting first, mirroring the review queue.
-  const queue = drafts
-    .filter((d) => d.state === "pending_review")
-    .sort((a, b) => a.createdAt - b.createdAt)
-    .slice(0, 8);
-  // Pending drafts are priority 1 in the next-action engine, so the top card
-  // mirrors the next action whenever the engine agrees (or isn't loaded yet).
-  const topMirrorsNextAction = queue.length > 0 && (!next || next.nextAction.kind === "review");
+  // The API owns urgency and deterministic ordering across authorization,
+  // blockers, failures, stale actions, and content review.
+  const queue = priorities.items.slice(0, 8);
+  const queueState = priorityQueueState(priorities);
   const generatingCount = next?.state.generatingCount ?? 0;
 
   // Zone 3 — recent learning-loop entries (dismissed ones taught us nothing).
@@ -142,9 +120,6 @@ export default function WorkspaceHomePage() {
     .filter((s) => s.status !== "dismissed")
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, 3);
-
-  const campaignName = (draft: Draft): string | null =>
-    draft.campaignId ? (campaigns.find((c) => c.id === draft.campaignId)?.name ?? null) : null;
 
   return (
     <>
@@ -192,16 +167,9 @@ export default function WorkspaceHomePage() {
       <section className={styles.zone}>
         <div className={styles.zoneHead}>
           <h2 className={styles.zoneTitle}>Needs you now</h2>
-          {next && queue.length > 0 && next.nextAction.kind === "review" && (
-            <span className={styles.zoneMeta}>{next.nextAction.reason}</span>
-          )}
-          {queue.length > 0 && (
-            <Link className={`link-button ${styles.zoneLink}`} href={`/workspaces/${id}/review`}>
-              Open Review →
-            </Link>
-          )}
+          {queue.length > 0 && <span className={styles.zoneMeta}>Ranked by urgency and due time</span>}
         </div>
-        {queue.length === 0 ? (
+        {queueState === "all_clear" ? (
           <p className={styles.allClear}>
             <Icon name="status-approved" size="sm" />
             All clear — nothing is waiting on you.
@@ -212,42 +180,41 @@ export default function WorkspaceHomePage() {
             )}
           </p>
         ) : (
-          <div className={styles.queue}>
-            {queue.map((draft, i) => {
-              const kind = previewKindFor(draft.channel);
-              const campaign = campaignName(draft);
-              const framedTitle =
-                kind === "email" || kind === "blog"
-                  ? splitLead(draft.content).title
-                  : (campaign ?? workspace.name);
-              const framedBody =
-                kind === "email" || kind === "blog"
-                  ? splitLead(draft.content).body
-                  : draft.content;
+          <div className={styles.priorityGrid}>
+            {queue.map((priority, index) => {
+              const view = priorityView(priority);
               return (
-                <div key={draft.id} className={styles.queueItem}>
-                  <PreviewCard
-                    kind={kind}
-                    title={framedTitle}
-                    body={framedBody}
-                    scheduledAt={new Date(draft.createdAt).toLocaleDateString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                    })}
-                    workflowStatus="review_required"
-                    platform={CHANNEL_BRAND[draft.channel]}
-                    onOpen={() => router.push(`/workspaces/${id}/review`)}
-                  />
-                  <span className={styles.caption}>
-                    {i === 0 && topMirrorsNextAction && (
-                      <span className={styles.nextTag}>Next up</span>
-                    )}
-                    <span className={styles.captionText}>
-                      {draft.taskType.replace(/_/g, " ")}
-                      {campaign ? ` · ${campaign}` : ""}
+                <article key={priority.id} className={styles.priorityCard}>
+                  <div className={styles.priorityHead}>
+                    <span className={styles.priorityKind}>
+                      <Icon name={view.icon} size="sm" />
+                      {index === 0 && <span className={styles.nextTag}>Next up</span>}
+                      {view.label}
                     </span>
-                  </span>
-                </div>
+                    <WorkflowStatusBadge status={view.status} />
+                  </div>
+                  <h3>{priority.title}</h3>
+                  <p className={styles.priorityReason}>{priority.reason}</p>
+                  <p className={styles.priorityConsequence}>{priority.consequence}</p>
+                  <div className={styles.priorityContext}>
+                    {priority.campaignId && (
+                      <Link href={`/workspaces/${id}/campaigns/${priority.campaignId}`}>
+                        {priority.campaignName ?? "Open campaign"}
+                      </Link>
+                    )}
+                    {priority.dueAt && (
+                      <time dateTime={new Date(priority.dueAt).toISOString()}>
+                        Due {new Date(priority.dueAt).toLocaleString()}
+                      </time>
+                    )}
+                  </div>
+                  <Link
+                    href={priority.href}
+                    className={`${buttonStyles.button} ${buttonStyles.secondary} ${buttonStyles.sm}`}
+                  >
+                    {view.cta}
+                  </Link>
+                </article>
               );
             })}
           </div>

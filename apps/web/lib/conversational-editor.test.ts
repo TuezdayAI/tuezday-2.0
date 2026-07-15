@@ -6,6 +6,9 @@ import {
   editorVersionContent,
   editorVersionOptions,
   groupEditorSections,
+  initialPublishFields,
+  publishActionPayload,
+  publishEligibility,
   stalenessExplanation,
 } from "./conversational-editor";
 
@@ -114,6 +117,64 @@ describe("conversational editor view model", () => {
     expect(automationExplanation("human_in_the_loop")).toContain("your approval");
     expect(automationExplanation("manual")).toContain("you stay in control");
     expect(stalenessExplanation({ ...context().staleness, stale: true })).toContain("changed");
+  });
+
+  it("gates publication proposal on approved content and a connected destination", () => {
+    const value = context();
+    expect(publishEligibility(value).eligible).toBe(false);
+    expect(publishEligibility(value).reason).toContain("Approve");
+
+    const approved = { ...value, draft: { ...value.draft, state: "approved" as const } };
+    expect(publishEligibility(approved).eligible).toBe(false);
+    expect(publishEligibility(approved).reason).toContain("Connect");
+
+    const destination = {
+      providerKey: "linkedin",
+      label: "Acme LinkedIn",
+      status: "connected" as const,
+      error: null,
+    };
+    expect(
+      publishEligibility({
+        ...approved,
+        destination: { ...destination, status: "error" as const, error: "expired" },
+      }).eligible,
+    ).toBe(false);
+    expect(publishEligibility({ ...approved, destination }).eligible).toBe(true);
+    expect(publishEligibility({ ...approved, destination }).reason).toBeNull();
+  });
+
+  it("prefills the publication target and title from the draft", () => {
+    const value = context();
+    const fields = initialPublishFields({
+      ...value,
+      draft: { ...value.draft, content: "# Launch note\nBody copy" },
+    });
+    expect(fields.title).toBe("Launch note");
+    expect(fields.target).toBe("feed");
+  });
+
+  it("builds immediate and future publish payloads with a retained request key", () => {
+    const immediate = publishActionPayload({
+      connectionId: "66666666-6666-4666-8666-666666666666",
+      target: "r/startups",
+      title: " Launch note ",
+      scheduledForLocal: "",
+      idempotencyKey: "key-1",
+    });
+    expect(immediate.target).toBe("startups");
+    expect(immediate.title).toBe("Launch note");
+    expect(immediate.scheduledFor).toBeUndefined();
+    expect(immediate.idempotencyKey).toBe("key-1");
+
+    const future = publishActionPayload({
+      connectionId: "66666666-6666-4666-8666-666666666666",
+      target: "feed",
+      title: "Launch note",
+      scheduledForLocal: "2099-01-02T09:30",
+      idempotencyKey: "key-1",
+    });
+    expect(future.scheduledFor).toBe(new Date("2099-01-02T09:30").getTime());
   });
 
   it("routes execution recovery to its owning surface", () => {

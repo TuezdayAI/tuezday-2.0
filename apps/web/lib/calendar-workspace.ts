@@ -91,13 +91,45 @@ export function shiftAnchor(view: CalendarViewMode, anchor: Date, delta: -1 | 1)
 // no workflow status; the page renders them as distinct slot chips.
 const ENTRY_WORKFLOW_STATUS: Record<CalendarEntryStatus, WorkflowStatus | null> = {
   open: null,
+  authorization_required: "authorization_required",
+  authorized: "authorized",
   scheduled: "scheduled",
   published: "completed",
   failed: "failed",
+  blocked: "policy_blocked",
+  stale: "stale",
 };
 
 export function entryWorkflowStatus(entry: CalendarEntry): WorkflowStatus | null {
   return ENTRY_WORKFLOW_STATUS[entry.status];
+}
+
+/** Stable React/selection key that cannot collide when an action and its later
+ * publication share a cadence slot and timestamp. */
+export function calendarEntryKey(entry: CalendarEntry): string {
+  if (entry.kind === "external_action" && entry.externalActionId) {
+    return `external_action:${entry.externalActionId}`;
+  }
+  if (entry.kind === "publication" && entry.publicationId) {
+    return `publication:${entry.publicationId}`;
+  }
+  return `${entry.kind}:${entry.cadenceId ?? entry.at}:${entry.at}`;
+}
+
+export function calendarRecoveryLabel(entry: CalendarEntry): string | null {
+  if (entry.kind !== "external_action") return null;
+  switch (entry.status) {
+    case "authorization_required":
+      return "Open authorization";
+    case "authorized":
+      return "View authorization";
+    case "blocked":
+      return "Resolve policy blocker";
+    case "stale":
+      return "Review stale action";
+    default:
+      return "View action";
+  }
 }
 
 export interface CalendarFilters {

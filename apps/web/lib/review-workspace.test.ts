@@ -37,6 +37,7 @@ describe("review workspace view model", () => {
   it("parses the tab param with a safe default", () => {
     expect(reviewTab("inbox")).toBe("inbox");
     expect(reviewTab("approvals")).toBe("approvals");
+    expect(reviewTab("authorizations")).toBe("authorizations");
     expect(reviewTab("nonsense")).toBe("approvals");
     expect(reviewTab(null)).toBe("approvals");
   });
@@ -55,6 +56,23 @@ describe("review workspace view model", () => {
       draft: "d1",
     })).toBe(
       "/workspaces/w1/review?tab=approvals&campaign=c1&state=pending_review&channel=linkedin&draft=d1",
+    );
+  });
+
+  it("builds authorization queue links preserving filters and selection", () => {
+    expect(reviewHref("ws", { tab: "authorizations", campaign: "c", action: "a" })).toBe(
+      "/workspaces/ws/review?tab=authorizations&campaign=c&action=a",
+    );
+    expect(
+      reviewHref("w1", {
+        tab: "authorizations",
+        campaign: "c1",
+        kind: "publish",
+        status: "authorization_required",
+        action: "a1",
+      }),
+    ).toBe(
+      "/workspaces/w1/review?tab=authorizations&campaign=c1&kind=publish&status=authorization_required&action=a1",
     );
   });
 

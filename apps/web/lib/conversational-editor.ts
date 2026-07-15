@@ -5,6 +5,7 @@ import type {
   EditorStaleness,
   ExecutionResult,
   Publication,
+  PublishDraftInput,
 } from "@tuezday/contracts";
 import { executionTargetHref } from "./execution-results";
 
@@ -67,6 +68,70 @@ export function stalenessExplanation(staleness: EditorStaleness): string {
   return staleness.stale
     ? "The campaign plan changed after this version was made. Revise again to apply the latest plan."
     : staleness.reason;
+}
+
+export interface PublishEligibility {
+  eligible: boolean;
+  reason: string | null;
+}
+
+/** A publication may only be proposed from approved content aimed at a
+ * connected destination — everything else names the missing prerequisite. */
+export function publishEligibility(context: DraftEditorContext): PublishEligibility {
+  if (context.draft.state !== "approved") {
+    return {
+      eligible: false,
+      reason: "Approve the content first — publication is proposed from approved content only.",
+    };
+  }
+  if (!context.destination) {
+    return {
+      eligible: false,
+      reason: `Connect a ${context.draft.channel} destination on Integrations before proposing a publication.`,
+    };
+  }
+  if (context.destination.status !== "connected") {
+    return {
+      eligible: false,
+      reason: `The ${context.destination.label} connection is ${context.destination.status}${
+        context.destination.error ? ` (${context.destination.error})` : ""
+      }. Reconnect it before proposing a publication.`,
+    };
+  }
+  return { eligible: true, reason: null };
+}
+
+export function initialPublishFields(context: DraftEditorContext): {
+  target: string;
+  title: string;
+} {
+  const firstLine = (context.draft.content.split("\n")[0] ?? "").replace(/^#+\s*/, "").trim();
+  return {
+    title: (firstLine || context.draft.taskType.replaceAll("_", " ")).slice(0, 300),
+    target: "feed",
+  };
+}
+
+/** Build the publish proposal body. The idempotency key is retained across
+ * retries of the identical request so a network blip never double-proposes. */
+export function publishActionPayload(input: {
+  connectionId: string;
+  target: string;
+  title: string;
+  /** datetime-local value; empty string means immediately once authorized. */
+  scheduledForLocal: string;
+  idempotencyKey: string;
+}): PublishDraftInput {
+  const scheduledFor = input.scheduledForLocal
+    ? new Date(input.scheduledForLocal).getTime()
+    : undefined;
+  return {
+    connectionId: input.connectionId,
+    target: input.target.trim().replace(/^r\//, ""),
+    title: input.title.trim(),
+    ...(scheduledFor ? { scheduledFor } : {}),
+    idempotencyKey: input.idempotencyKey,
+  };
 }
 
 export function editorRecoveryHref(

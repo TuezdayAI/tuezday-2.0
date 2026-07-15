@@ -5,7 +5,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   canTransition,
   type ApprovalAction,
+  type Connection,
   type DraftEditorContext,
+  type ExternalActionSubmission,
   type WorkflowStatus,
 } from "@tuezday/contracts";
 import { apiFetch } from "@/lib/api";
@@ -15,9 +17,21 @@ import {
   editorVersionContent,
   editorVersionOptions,
   groupEditorSections,
+  initialPublishFields,
+  publishActionPayload,
+  publishEligibility,
   stalenessExplanation,
   type EditorVersionId,
 } from "@/lib/conversational-editor";
+import {
+  actionAuthorizationHref,
+  actionKindLabel,
+  actionTimingLabel,
+  externalActionWorkflowStatus,
+  policyExplanation,
+  submissionNote,
+} from "@/lib/external-actions";
+import { connectionLabel, providerForPersonaSocialChannel } from "@/lib/persona-social-routing";
 import { draftWorkflowStatus } from "@/lib/review-workspace";
 import { executionWorkflowStatus } from "@/lib/execution-results";
 import { previewKindFor } from "@/lib/preview-kind";
@@ -39,7 +53,7 @@ interface ConversationalEditorProps {
   onChanged(): Promise<void> | void;
 }
 
-type BusyAction = "revise" | "edit" | "approve" | "reject" | "resubmit" | "review" | "carousel" | null;
+type BusyAction = "revise" | "edit" | "approve" | "reject" | "resubmit" | "review" | "carousel" | "publish" | null;
 
 const PLATFORM: Partial<Record<DraftEditorContext["draft"]["channel"], BrandName>> = {
   linkedin: "linkedin",
@@ -98,6 +112,12 @@ export function ConversationalEditor({
   const [retryLatest, setRetryLatest] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editContent, setEditContent] = useState("");
+  const [connections, setConnections] = useState<Connection[]>([]);
+  const [pub, setPub] = useState({ connectionId: "", target: "", title: "", scheduledFor: "" });
+  // Retained across retries of the identical request; regenerated when the
+  // request itself changes, so edits propose a fresh action.
+  const [publishKey, setPublishKey] = useState(() => crypto.randomUUID());
+  const [submission, setSubmission] = useState<ExternalActionSubmission | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
 
   const load = useCallback(async () => {
@@ -115,11 +135,29 @@ export function ConversationalEditor({
     setInstruction("");
     setRetryLatest(false);
     setEditing(false);
+    setSubmission(null);
     setError(null);
     void load()
-      .then((next) => {
+      .then(async (next) => {
         if (cancelled) return;
         setEditContent(next.draft.content);
+        const fields = initialPublishFields(next);
+        const provider = providerForPersonaSocialChannel(next.draft.channel);
+        let connected: Connection[] = [];
+        if (provider) {
+          const res = await apiFetch(`/workspaces/${workspaceId}/connectors`).catch(() => null);
+          if (res?.ok) {
+            const view = (await res.json()) as { connections: Connection[] };
+            connected = view.connections.filter(
+              (connection) =>
+                connection.providerKey === provider && connection.status === "connected",
+            );
+          }
+        }
+        if (cancelled) return;
+        setConnections(connected);
+        setPub({ ...fields, connectionId: connected[0]?.id ?? "", scheduledFor: "" });
+        setPublishKey(crypto.randomUUID());
         requestAnimationFrame(() => headingRef.current?.focus());
       })
       .catch((loadError) => {
@@ -128,7 +166,7 @@ export function ConversationalEditor({
     return () => {
       cancelled = true;
     };
-  }, [load]);
+  }, [load, workspaceId]);
 
   async function submitRevision() {
     if (!context || !instruction.trim()) return;
@@ -240,6 +278,53 @@ export function ConversationalEditor({
     }
   }
 
+  /** Edit a publication field: the request changed, so the retry key rotates. */
+  function setPubField(patch: Partial<typeof pub>) {
+    setPub((previous) => ({ ...previous, ...patch }));
+    setPublishKey(crypto.randomUUID());
+  }
+
+  async function proposePublication() {
+    if (!context || !pub.connectionId || !pub.target.trim() || !pub.title.trim()) return;
+    setBusyAction("publish");
+    setError(null);
+    try {
+      const response = await apiFetch(`/workspaces/${workspaceId}/drafts/${draftId}/publish`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          publishActionPayload({
+            connectionId: pub.connectionId,
+            target: pub.target,
+            title: pub.title,
+            scheduledForLocal: pub.scheduledFor,
+            idempotencyKey: publishKey,
+          }),
+        ),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok && !body?.action) {
+        throw new Error(body?.message ?? `Publication proposal failed (${response.status}).`);
+      }
+      // A stale 409 carries the durable action without an execution envelope.
+      const next: ExternalActionSubmission =
+        body.execution !== undefined
+          ? (body as ExternalActionSubmission)
+          : { action: body.action, execution: body.action.execution ?? null };
+      setSubmission(next);
+      setAnnouncement(submissionNote(next));
+      toast(next.action.status === "authorization_required" ? "Authorization requested" : "Publication proposed");
+      await load();
+      await onChanged();
+    } catch (publishError) {
+      setError(
+        publishError instanceof Error ? publishError.message : "Publication proposal failed.",
+      );
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
   async function copyCurrent() {
     if (!context) return;
     await navigator.clipboard.writeText(context.draft.content);
@@ -279,6 +364,8 @@ export function ConversationalEditor({
   const legalReject = canTransition(draft.state, "reject");
   const legalResubmit = canTransition(draft.state, "resubmit");
   const mode = context.campaign?.automationMode ?? "manual";
+  const eligibility = publishEligibility(context);
+  const actions = context.actions ?? [];
 
   return (
     <div className={styles.editor}>
@@ -469,10 +556,103 @@ export function ConversationalEditor({
             <p>{automationExplanation(mode)}</p>
           </div>
 
+          <div className={styles.publishBox}>
+            <h4>Prepare publication</h4>
+            {eligibility.eligible ? (
+              <>
+                <p>
+                  Proposes an external publish action from this approved content. Authorizing it is
+                  a separate decision on Review.
+                </p>
+                <div className={styles.publishFields}>
+                  <label>
+                    Destination
+                    <select
+                      value={pub.connectionId}
+                      onChange={(event) => setPubField({ connectionId: event.target.value })}
+                    >
+                      {connections.map((connection) => (
+                        <option key={connection.id} value={connection.id}>
+                          {connectionLabel(connection)}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Target
+                    <input
+                      value={pub.target}
+                      onChange={(event) => setPubField({ target: event.target.value })}
+                      placeholder="feed"
+                    />
+                  </label>
+                  <label>
+                    Title
+                    <input
+                      value={pub.title}
+                      onChange={(event) => setPubField({ title: event.target.value })}
+                      maxLength={300}
+                    />
+                  </label>
+                  <label>
+                    Time
+                    <input
+                      type="datetime-local"
+                      value={pub.scheduledFor}
+                      onChange={(event) => setPubField({ scheduledFor: event.target.value })}
+                    />
+                  </label>
+                </div>
+                <small>Leave the time empty to go out immediately once authorized.</small>
+                <Button
+                  variant="primary"
+                  size="sm"
+                  disabled={
+                    busyAction !== null ||
+                    !pub.connectionId ||
+                    !pub.target.trim() ||
+                    !pub.title.trim()
+                  }
+                  onClick={() => void proposePublication()}
+                >
+                  {busyAction === "publish" ? "Proposing…" : "Propose publication"}
+                </Button>
+              </>
+            ) : (
+              <p>{eligibility.reason}</p>
+            )}
+            {submission && (
+              <div className={styles.submissionStatus}>
+                <WorkflowStatusBadge status={externalActionWorkflowStatus(submission.action)} />
+                <p>{submissionNote(submission)}</p>
+                <p>{policyExplanation(submission.action)}</p>
+                <Link href={actionAuthorizationHref(submission.action)}>Open authorization</Link>
+              </div>
+            )}
+          </div>
+
           <div className={styles.authorizationBox}>
             <h4>External action authorization</h4>
             <p>Content approval does not authorize posting, spending, sending, or changing a live destination. Those decisions stay separate and auditable.</p>
-            <span>Authorization queue foundation is the next Stage 3 slice.</span>
+            {actions.length === 0 ? (
+              <span>No external actions proposed from this draft yet.</span>
+            ) : (
+              <div className={styles.actionList}>
+                {actions.map((action) => (
+                  <Link
+                    key={action.id}
+                    href={actionAuthorizationHref(action)}
+                    className={styles.activityRow}
+                  >
+                    <span>
+                      <strong>{actionKindLabel(action.kind)} · {action.subject.destination ?? action.subject.channel ?? "destination"}</strong>
+                      <small>{actionTimingLabel(action)}</small>
+                    </span>
+                    <WorkflowStatusBadge status={externalActionWorkflowStatus(action)} />
+                  </Link>
+                ))}
+              </div>
+            )}
           </div>
 
           {context.publications.length > 0 && (

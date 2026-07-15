@@ -163,6 +163,18 @@ describe("Meta ad image (Sprint 41 Part 5)", () => {
         payload: { name: "Launch", objective: "Win" },
       })
     ).json().id;
+    // Launch wiring here exercises the provider chain, so the paid-launch
+    // action runs autonomously; the authorization queue is covered in
+    // external-action-paid-launch.test.ts.
+    await app.inject({
+      method: "PUT",
+      url: `/workspaces/${workspaceId}/external-action-policies`,
+      payload: {
+        scope: "campaign",
+        scopeId: campaignId,
+        rules: [{ actionKind: "paid_launch", rule: "autonomous" }],
+      },
+    });
     const connection = (
       await app.inject({
         method: "POST",
@@ -224,7 +236,8 @@ describe("Meta ad image (Sprint 41 Part 5)", () => {
         method: "POST",
         url: `/workspaces/${workspaceId}/ads/launches/${launch.id}/${action}`,
       });
-      expect(res.statusCode, `${action} failed: ${res.body}`).toBe(200);
+      // launch proposes an autonomous external action → 201 with a submission.
+      expect(res.statusCode, `${action} failed: ${res.body}`).toBe(action === "launch" ? 201 : 200);
     }
     return app
       .inject({ method: "GET", url: `/workspaces/${workspaceId}/ads/launches/${launch.id}` })

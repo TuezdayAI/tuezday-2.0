@@ -82,6 +82,81 @@
   scroll-snap-align: start;
 }
 
+.priorityGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 12px;
+}
+
+.priorityCard {
+  display: grid;
+  align-content: start;
+  gap: 9px;
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  box-shadow: var(--shadow-low);
+}
+
+.priorityCard h3,
+.priorityCard p {
+  margin: 0;
+}
+
+.priorityCard h3 {
+  font-family: var(--font-display);
+  font-size: 16px;
+  line-height: 1.25;
+}
+
+.priorityHead,
+.priorityKind,
+.priorityContext {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.priorityHead {
+  justify-content: space-between;
+}
+
+.priorityKind {
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.priorityReason {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.priorityConsequence {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.priorityContext {
+  min-height: 18px;
+  color: var(--muted-2);
+  font-size: 11.5px;
+}
+
+.priorityContext time {
+  margin-left: auto;
+}
+
+.priorityCard > a:last-child {
+  justify-self: start;
+}
+
 .caption {
   display: flex;
   align-items: center;
