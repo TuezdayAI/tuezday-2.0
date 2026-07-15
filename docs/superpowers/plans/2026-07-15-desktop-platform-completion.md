@@ -133,7 +133,7 @@ git commit -m "feat(web): establish desktop action primitives"
 - Adds typed names `authorize`, `batch`, `budget`, `targeting`, `send`, `signal`, `connection-lost`, and `campaign-risk`.
 - Keeps `BrandIcon` on the same size vocabulary and preserves generated brand paths.
 
-- [ ] **Step 1: Write failing registry and optical-size tests**
+- [x] **Step 1: Write failing registry and optical-size tests**
 
 ```ts
 expect(REQUIRED).toEqual(expect.arrayContaining([
@@ -146,23 +146,23 @@ expect(source).toContain('emphasized: "20px"');
 expect(source).toContain("strokeWidth={1.8}");
 ```
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 Run: `npm exec --prefix apps/web vitest -- run lib/icon-registry.test.ts`  
 Expected: FAIL on missing names and the old token-based size map.
 
-- [ ] **Step 3: Implement the refined registry**
+- [x] **Step 3: Implement the refined registry**
 
 Use Lucide `BadgeCheck`, `ListChecks`, `WalletCards`, `SlidersHorizontal`, `Send`, `Radar`, `Unplug`, and `ShieldAlert` respectively. Preserve existing registry keys and accept legacy size aliases until Tasks 32–35 migrate every caller. Keep the compatibility mapper private to `icon.tsx`; new code may use only the three semantic sizes.
 
-- [ ] **Step 4: Run focused tests and typecheck**
+- [x] **Step 4: Run focused tests and typecheck**
 
 Run: `npm exec --prefix apps/web vitest -- run lib/icon-registry.test.ts lib/workflow-status.test.ts`  
 Expected: PASS.  
 Run: `npm run typecheck`  
 Expected: exit 0 without broad caller churn because legacy aliases remain temporarily accepted.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/web/src/components/ui/icon.tsx apps/web/lib/icon-registry.test.ts apps/web/lib/workflow-status.ts

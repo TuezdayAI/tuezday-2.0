@@ -28,5 +28,7 @@ describe("workflowStatusView", () => {
       family: "informational",
       icon: "info",
     });
+    expect(workflowStatusView("authorization_required").icon).toBe("authorize");
+    expect(workflowStatusView("connection_lost").icon).toBe("connection-lost");
   });
 });
