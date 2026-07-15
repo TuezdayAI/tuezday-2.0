@@ -11,7 +11,7 @@ import { composePrPitchInstruction, resolveContext, type BrainContents } from "@
 import { and, eq, isNotNull } from "drizzle-orm";
 import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
-import { drafts } from "../db/schema";
+import { drafts, emailDeliveries } from "../db/schema";
 import type { EvidenceStore } from "../evidence/store";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { getBrain } from "../services/brain";
@@ -29,11 +29,15 @@ import {
   getMediaContact,
   importMediaContactsCsv,
   listMediaContacts,
+  preparePrDraftEmailAction,
+  PrDraftEmailError,
 } from "../services/media-contacts";
+import type { ExternalActionRuntime } from "../services/external-action-coordinator";
 import { getPersona, toResolvePersona } from "../services/personas";
 import { runPreReview, setGenerationReview } from "../services/review";
 import { getSignal } from "../services/signals";
 import { getWorkspace } from "../services/workspaces";
+import { externalActionError } from "./external-actions";
 
 function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
   const workspace = getWorkspace(db, id);
@@ -48,6 +52,7 @@ export function registerPrRoutes(
   db: Db,
   llm: LlmGateway,
   evidence: EvidenceStore,
+  runtime: ExternalActionRuntime,
 ): void {
   app.post<{ Params: { id: string } }>("/workspaces/:id/media-contacts", async (request, reply) => {
     if (!workspaceOr404(db, request.params.id, reply)) return reply;
@@ -238,6 +243,27 @@ export function registerPrRoutes(
     return { results };
   });
 
+  app.post<{ Params: { id: string; draftId: string } }>(
+    "/workspaces/:id/pr/drafts/:draftId/send",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      try {
+        return await runtime.propose(
+          preparePrDraftEmailAction(db, request.params.id, request.params.draftId),
+          actorOf(request),
+        );
+      } catch (error) {
+        if (error instanceof PrDraftEmailError) {
+          return reply.status(error.code === "draft_not_found" ? 404 : 409).send({
+            error: error.code,
+            message: error.message,
+          });
+        }
+        return externalActionError(error, reply);
+      }
+    },
+  );
+
   app.post<{ Params: { id: string } }>("/workspaces/:id/pr/press-kit", async (request, reply) => {
     const workspace = workspaceOr404(db, request.params.id, reply);
     if (!workspace) return reply;
@@ -360,6 +386,18 @@ export function registerPrRoutes(
       const contactById = new Map(
         listMediaContacts(db, request.params.id).map((c) => [c.id, c]),
       );
+      const nativeDeliveryDraftIds = new Set(
+        db.select({ originId: emailDeliveries.originId })
+          .from(emailDeliveries)
+          .where(
+            and(
+              eq(emailDeliveries.workspaceId, request.params.id),
+              eq(emailDeliveries.origin, "pr_draft"),
+            ),
+          )
+          .all()
+          .map((delivery) => delivery.originId),
+      );
       const rows = db
         .select()
         .from(drafts)
@@ -374,6 +412,7 @@ export function registerPrRoutes(
 
       const lines = ["name,email,type,outlet,beat,content"];
       for (const row of rows) {
+        if (nativeDeliveryDraftIds.has(row.id)) continue;
         const contact = contactById.get(row.mediaContactId!);
         if (!contact) continue;
         lines.push(

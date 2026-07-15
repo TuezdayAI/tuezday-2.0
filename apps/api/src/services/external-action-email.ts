@@ -108,7 +108,8 @@ function emailIntent(
   }
 
   const draft = db.select().from(drafts).where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId))).get();
-  if (!draft || draft.state !== "approved" || draft.channel !== "email") {
+  const expectedDraftChannel = origin === "pr_draft" ? "pr" : "email";
+  if (!draft || draft.state !== "approved" || draft.channel !== expectedDraftChannel) {
     throw new Error("An approved email draft is required.");
   }
   const sender = db.select().from(workspaceEmailSenders).where(eq(workspaceEmailSenders.workspaceId, workspaceId)).get();
