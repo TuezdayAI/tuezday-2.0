@@ -45,6 +45,9 @@ describe("execution results view model", () => {
     expect(executionWorkflowStatus(result({ kind: "ad_mutation", status: "running" }))).toBe(
       "launching",
     );
+    expect(executionWorkflowStatus(result({ kind: "email_delivery", status: "running" }))).toBe(
+      "sending",
+    );
   });
 
   it("summarizes destinations listing successes and failures separately", () => {
@@ -75,6 +78,9 @@ describe("execution results view model", () => {
         result({ kind: "ad_mutation", actionKind: "budget_change" }),
       ),
     ).toBe("/workspaces/ws1/ad-launches");
+    expect(executionTargetHref("ws1", result({ kind: "email_delivery" }))).toBe(
+      "/workspaces/ws1/review?tab=authorizations",
+    );
   });
 
   it("links zero, one, or many governing actions without inventing legacy data", () => {
@@ -110,6 +116,7 @@ describe("execution results view model", () => {
     expect(EXECUTION_KIND_LABELS.launch).toBe("Targeted send");
     expect(EXECUTION_KIND_LABELS.ad_launch).toBe("Ad launch");
     expect(EXECUTION_KIND_LABELS.ad_mutation).toBe("Ad change");
+    expect(EXECUTION_KIND_LABELS.email_delivery).toBe("Email");
   });
 
   it("adds the results tab to the campaign workspace", () => {

@@ -10,6 +10,7 @@ export const EXECUTION_KIND_LABELS: Record<ExecutionResultKind, string> = {
   launch: "Targeted send",
   ad_launch: "Ad launch",
   ad_mutation: "Ad change",
+  email_delivery: "Email",
 };
 
 /** In-flight canonical state per kind; terminal result states map 1:1. */
@@ -18,6 +19,7 @@ const RUNNING_STATUS: Record<ExecutionResultKind, WorkflowStatus> = {
   launch: "sending",
   ad_launch: "launching",
   ad_mutation: "launching",
+  email_delivery: "sending",
 };
 
 export function executionWorkflowStatus(result: ExecutionResult): WorkflowStatus {
@@ -45,6 +47,8 @@ export function executionTargetHref(workspaceId: string, result: ExecutionResult
     case "ad_launch":
     case "ad_mutation":
       return `/workspaces/${workspaceId}/ad-launches`;
+    case "email_delivery":
+      return reviewHref(workspaceId, { tab: "authorizations" });
   }
 }
 

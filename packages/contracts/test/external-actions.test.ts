@@ -327,6 +327,7 @@ describe("external action governance contracts", () => {
       "launch_message",
       "ad_launch",
       "ad_mutation",
+      "email_delivery",
     ]);
     expect(PRIORITY_ITEM_KINDS).toEqual([
       "execution_failure",

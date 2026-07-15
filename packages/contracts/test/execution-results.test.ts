@@ -29,6 +29,7 @@ describe("unified execution result contracts", () => {
       "launch",
       "ad_launch",
       "ad_mutation",
+      "email_delivery",
     ]);
     expect(EXECUTION_RESULT_STATUSES).toEqual([
       "running",
@@ -60,6 +61,17 @@ describe("unified execution result contracts", () => {
       destinations: { total: 6, succeeded: 3, failed: 2, skipped: 1, pending: 0 },
     };
     expect(executionResultSchema.parse(launch).destinations.failed).toBe(2);
+  });
+
+  it("accepts a governed email delivery result", () => {
+    expect(
+      executionResultSchema.parse({
+        ...base,
+        kind: "email_delivery",
+        channel: "email",
+        status: "running",
+      }).kind,
+    ).toBe("email_delivery");
   });
 
   it("binds ad-mutation results to budget or targeting action kinds", () => {

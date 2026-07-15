@@ -1085,6 +1085,7 @@ export const EXTERNAL_ACTION_EXECUTION_KINDS = [
   "launch_message",
   "ad_launch",
   "ad_mutation",
+  "email_delivery",
 ] as const;
 export type ExternalActionExecutionKind = (typeof EXTERNAL_ACTION_EXECUTION_KINDS)[number];
 
@@ -1570,6 +1571,196 @@ export const authorizationBatchDetailSchema = z
     }
   });
 export type AuthorizationBatchDetail = z.infer<typeof authorizationBatchDetailSchema>;
+
+// ---------------------------------------------------------------------------
+// Governed native email — verified sender identity, explicit recipient safety,
+// durable delivery snapshots, and immutable provider event projections.
+// ---------------------------------------------------------------------------
+
+export const EMAIL_SENDER_STATUSES = [
+  "not_configured",
+  "pending",
+  "verified",
+  "failed",
+] as const;
+export type EmailSenderStatus = (typeof EMAIL_SENDER_STATUSES)[number];
+
+export const EMAIL_PERMISSION_STATUSES = ["unknown", "allowed", "suppressed"] as const;
+export type EmailPermissionStatus = (typeof EMAIL_PERMISSION_STATUSES)[number];
+
+export const EMAIL_DELIVERY_STATUSES = [
+  "queued",
+  "accepted",
+  "delivered",
+  "bounced",
+  "complained",
+  "failed",
+] as const;
+export type EmailDeliveryStatus = (typeof EMAIL_DELIVERY_STATUSES)[number];
+
+export const EMAIL_DELIVERY_ORIGINS = [
+  "launch_message",
+  "outbound_draft",
+  "pr_draft",
+] as const;
+export type EmailDeliveryOrigin = (typeof EMAIL_DELIVERY_ORIGINS)[number];
+
+const normalizedEmailAddressSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .max(320)
+  .email("A valid email address is required");
+
+const emailSenderDomainSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(1)
+  .max(253)
+  .regex(
+    /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/,
+    "A valid sender domain is required",
+  );
+
+const emailSenderLocalPartSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(
+    /^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*$/,
+    "Use a domain-free email local part",
+  );
+
+export const emailDnsRecordSchema = z
+  .object({
+    name: z.string().trim().min(1).max(253),
+    type: z.string().trim().min(1).max(16),
+    value: z.string().trim().min(1).max(4_096),
+    priority: z.number().int().min(0).max(65_535).nullable(),
+    status: z.string().trim().min(1).max(100),
+  })
+  .strict();
+export type EmailDnsRecord = z.infer<typeof emailDnsRecordSchema>;
+
+export const emailSenderSchema = z
+  .object({
+    workspaceId: z.string().uuid(),
+    domain: emailSenderDomainSchema,
+    fromLocalPart: emailSenderLocalPartSchema,
+    fromName: z.string().trim().min(1).max(200),
+    fromAddress: normalizedEmailAddressSchema,
+    replyTo: normalizedEmailAddressSchema.nullable(),
+    status: z.enum(EMAIL_SENDER_STATUSES),
+    provider: z.literal("resend"),
+    providerDomainId: z.string().trim().min(1).max(300).nullable(),
+    dnsRecords: z.array(emailDnsRecordSchema).max(20),
+    killSwitch: z.boolean(),
+    dailyCap: z.number().int().min(1).max(100_000),
+    lastCheckedAt: z.number().int().nullable(),
+    lastError: z.string().max(1_000).nullable(),
+    createdAt: z.number().int(),
+    updatedAt: z.number().int(),
+  })
+  .strict();
+export type EmailSender = z.infer<typeof emailSenderSchema>;
+
+export const updateEmailSenderInputSchema = z
+  .object({
+    domain: emailSenderDomainSchema,
+    fromLocalPart: emailSenderLocalPartSchema,
+    fromName: z.string().trim().min(1).max(200),
+    replyTo: normalizedEmailAddressSchema.nullable(),
+  })
+  .strict();
+export type UpdateEmailSenderInput = z.infer<typeof updateEmailSenderInputSchema>;
+
+export const emailRecipientPermissionSchema = z
+  .object({
+    workspaceId: z.string().uuid(),
+    normalizedEmail: normalizedEmailAddressSchema,
+    status: z.enum(EMAIL_PERMISSION_STATUSES),
+    createdAt: z.number().int(),
+    updatedAt: z.number().int(),
+  })
+  .strict();
+export type EmailRecipientPermission = z.infer<typeof emailRecipientPermissionSchema>;
+
+export const updateEmailPermissionInputSchema = z
+  .object({
+    status: z.enum(["allowed", "suppressed"]),
+  })
+  .strict();
+export type UpdateEmailPermissionInput = z.infer<typeof updateEmailPermissionInputSchema>;
+
+export const emailSuppressionSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    normalizedEmail: normalizedEmailAddressSchema,
+    reason: z.string().trim().min(1).max(200),
+    createdAt: z.number().int(),
+  })
+  .strict();
+export type EmailSuppression = z.infer<typeof emailSuppressionSchema>;
+
+export const emailDeliverySchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    externalActionId: z.string().uuid(),
+    origin: z.enum(EMAIL_DELIVERY_ORIGINS),
+    originId: z.string().uuid(),
+    normalizedRecipient: normalizedEmailAddressSchema,
+    senderAddress: normalizedEmailAddressSchema,
+    replyTo: normalizedEmailAddressSchema.nullable(),
+    subject: z.string().min(1).max(998),
+    text: z.string().min(1).max(2_000_000),
+    html: z.string().max(5_000_000).nullable(),
+    idempotencyKey: z.string().trim().min(1).max(256),
+    provider: z.literal("resend"),
+    providerMessageId: z.string().trim().min(1).max(300).nullable(),
+    status: z.enum(EMAIL_DELIVERY_STATUSES),
+    acceptedAt: z.number().int().nullable(),
+    completedAt: z.number().int().nullable(),
+    lastError: z.string().max(1_000).nullable(),
+    createdAt: z.number().int(),
+    updatedAt: z.number().int(),
+  })
+  .strict();
+export type EmailDelivery = z.infer<typeof emailDeliverySchema>;
+
+export const emailDeliveryEventSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    deliveryId: z.string().uuid(),
+    provider: z.literal("resend"),
+    providerEventId: z.string().trim().min(1).max(300),
+    eventType: z.string().trim().min(1).max(200),
+    payload: z.record(z.string(), z.unknown()),
+    occurredAt: z.number().int(),
+    createdAt: z.number().int(),
+  })
+  .strict();
+export type EmailDeliveryEvent = z.infer<typeof emailDeliveryEventSchema>;
+
+const EMAIL_DELIVERY_TRANSITIONS: Record<EmailDeliveryStatus, ReadonlySet<EmailDeliveryStatus>> = {
+  queued: new Set(["accepted", "failed"]),
+  accepted: new Set(["delivered", "bounced", "complained", "failed"]),
+  delivered: new Set(),
+  bounced: new Set(),
+  complained: new Set(),
+  failed: new Set(),
+};
+
+export function canTransitionEmailDelivery(
+  from: EmailDeliveryStatus,
+  to: EmailDeliveryStatus,
+): boolean {
+  return EMAIL_DELIVERY_TRANSITIONS[from].has(to);
+}
 
 export const externalActionListFiltersSchema = z.object({
   status: z.enum(EXTERNAL_ACTION_STATUSES).optional(),
@@ -4826,6 +5017,7 @@ export const EXECUTION_RESULT_KINDS = [
   "launch",
   "ad_launch",
   "ad_mutation",
+  "email_delivery",
 ] as const;
 export type ExecutionResultKind = (typeof EXECUTION_RESULT_KINDS)[number];
 

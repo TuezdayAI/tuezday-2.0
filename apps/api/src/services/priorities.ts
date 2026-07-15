@@ -74,6 +74,7 @@ const EXECUTION_OWNER_PATH: Record<ExecutionResult["kind"], string> = {
   launch: "launches",
   ad_launch: "ad-launches",
   ad_mutation: "ad-launches",
+  email_delivery: "review?tab=authorizations",
 };
 
 function executionItem(workspaceId: string, result: ExecutionResult): PriorityItem {
