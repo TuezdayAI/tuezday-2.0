@@ -1,4 +1,5 @@
 import type {
+  EmailDeliveryStatus,
   ExecutionResult,
   ExecutionResultKind,
   WorkflowStatus,
@@ -24,6 +25,29 @@ const RUNNING_STATUS: Record<ExecutionResultKind, WorkflowStatus> = {
 
 export function executionWorkflowStatus(result: ExecutionResult): WorkflowStatus {
   return result.status === "running" ? RUNNING_STATUS[result.kind] : result.status;
+}
+
+export function emailDeliveryWorkflowStatus(status: EmailDeliveryStatus): WorkflowStatus {
+  if (status === "queued" || status === "accepted") return "sending";
+  if (status === "delivered") return "completed";
+  return "failed";
+}
+
+export function emailDeliveryCopy(status: EmailDeliveryStatus): string {
+  switch (status) {
+    case "queued":
+      return "This email is queued for secure delivery through Resend.";
+    case "accepted":
+      return "This email was accepted by Resend. Inbox delivery is not confirmed yet.";
+    case "delivered":
+      return "Resend confirmed delivery to the recipient's mail server.";
+    case "bounced":
+      return "This email bounced. Check the recipient address before trying again.";
+    case "complained":
+      return "The recipient filed a spam complaint. Further email is suppressed.";
+    case "failed":
+      return "Delivery failed before Resend could confirm delivery.";
+  }
 }
 
 /** "3 sent · 2 failed · 1 skipped" — successes and failures listed separately. */

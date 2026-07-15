@@ -3,6 +3,8 @@ import type { ExecutionResult } from "@tuezday/contracts";
 import {
   EXECUTION_KIND_LABELS,
   destinationSummary,
+  emailDeliveryCopy,
+  emailDeliveryWorkflowStatus,
   executionAuthorizationLink,
   executionTargetHref,
   executionWorkflowStatus,
@@ -48,6 +50,14 @@ describe("execution results view model", () => {
     expect(executionWorkflowStatus(result({ kind: "email_delivery", status: "running" }))).toBe(
       "sending",
     );
+  });
+
+  it("keeps provider acceptance separate from terminal email delivery", () => {
+    expect(emailDeliveryWorkflowStatus("accepted")).toBe("sending");
+    expect(emailDeliveryWorkflowStatus("delivered")).toBe("completed");
+    expect(emailDeliveryWorkflowStatus("complained")).toBe("failed");
+    expect(emailDeliveryCopy("accepted")).toContain("accepted by Resend");
+    expect(emailDeliveryCopy("accepted")).not.toContain("delivered");
   });
 
   it("summarizes destinations listing successes and failures separately", () => {
