@@ -1096,6 +1096,7 @@ export const PRIORITY_ITEM_KINDS = [
   "authorization",
   "content_review",
   "signal_triage",
+  "learning_review",
 ] as const;
 export type PriorityItemKind = (typeof PRIORITY_ITEM_KINDS)[number];
 

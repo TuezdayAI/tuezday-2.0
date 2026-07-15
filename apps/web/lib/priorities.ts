@@ -35,6 +35,11 @@ const PRIORITY_META: Record<
     icon: "signal",
     cta: "Review signal",
   },
+  learning_review: {
+    label: "Learning review",
+    icon: "status-learning",
+    cta: "Review learning",
+  },
 };
 
 /** Presentation metadata for one server-ranked priority. The API remains the

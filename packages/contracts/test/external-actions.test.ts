@@ -336,6 +336,7 @@ describe("external action governance contracts", () => {
       "authorization",
       "content_review",
       "signal_triage",
+      "learning_review",
     ]);
   });
 

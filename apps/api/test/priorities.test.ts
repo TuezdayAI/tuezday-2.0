@@ -9,7 +9,7 @@ import {
 } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
 import type { Db } from "../src/db";
-import { connections, publications } from "../src/db/schema";
+import { connections, nowSyntheses, publications } from "../src/db/schema";
 import { applyDraftAction, submitDraft } from "../src/services/drafts";
 import { canonicalActionFingerprint } from "../src/services/external-action-fingerprint";
 import {
@@ -401,5 +401,58 @@ describe("workspace priorities projection", () => {
     expect(items.some((item) => item.id === freshUnmatchedSignal.id)).toBe(false);
     expect(items.some((item) => item.id === pausedSignal.id)).toBe(true);
     expect(items.find((item) => item.id === pausedSignal.id)?.campaignId).toBeNull();
+  });
+
+  it("prioritizes only proposed learning syntheses", async () => {
+    const proposedId = randomUUID();
+    const acceptedId = randomUUID();
+    const dismissedId = randomUUID();
+    db.insert(nowSyntheses)
+      .values([
+        {
+          id: proposedId,
+          workspaceId,
+          proposal:
+            "Shorten launch openings and lead with the customer problem before introducing the product.",
+          rationale: "Accepted posts consistently used shorter, problem-led openings.",
+          basedOnJson: "{}",
+          status: "proposed",
+          createdAt: T0 - HOUR,
+          decidedAt: null,
+        },
+        {
+          id: acceptedId,
+          workspaceId,
+          proposal: "Already accepted learning.",
+          rationale: "Accepted.",
+          basedOnJson: "{}",
+          status: "accepted",
+          createdAt: T0 - 2 * HOUR,
+          decidedAt: T0,
+        },
+        {
+          id: dismissedId,
+          workspaceId,
+          proposal: "Already dismissed learning.",
+          rationale: "Dismissed.",
+          basedOnJson: "{}",
+          status: "dismissed",
+          createdAt: T0 - 3 * HOUR,
+          decidedAt: T0,
+        },
+      ])
+      .run();
+
+    const items = await fetchPriorities();
+    expect(items).toContainEqual(
+      expect.objectContaining({
+        id: proposedId,
+        kind: "learning_review",
+        status: "review_required",
+        href: `/workspaces/${workspaceId}/learning?synthesis=${proposedId}`,
+        reason: "Accepted posts consistently used shorter, problem-led openings.",
+      }),
+    );
+    expect(items.some((item) => item.id === acceptedId || item.id === dismissedId)).toBe(false);
   });
 });

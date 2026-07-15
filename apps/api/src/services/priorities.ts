@@ -10,6 +10,7 @@ import { campaigns, drafts, externalActions } from "../db/schema";
 import { deriveTitle } from "./cadences";
 import { listExecutionResults } from "./executions";
 import { rowToExternalAction } from "./external-actions";
+import { listSyntheses } from "./learning";
 import { listSignals, type SignalWithDrafts } from "./signals";
 
 const DEFAULT_LIMIT = 25;
@@ -219,6 +220,25 @@ export function listWorkspacePriorities(
       now,
     );
     if (candidate) items.push(candidate);
+  }
+
+  for (const synthesis of listSyntheses(db, workspaceId)) {
+    if (synthesis.status !== "proposed") continue;
+    items.push({
+      id: synthesis.id,
+      kind: "learning_review",
+      status: "review_required",
+      title: synthesis.proposal.trim().slice(0, 80) || "Review proposed learning",
+      reason:
+        synthesis.rationale.trim() ||
+        "This proposal was synthesized from recent decisions and performance.",
+      consequence: "The Brain will not change until you accept or dismiss this proposal.",
+      href: `/workspaces/${workspaceId}/learning?synthesis=${synthesis.id}`,
+      campaignId: null,
+      campaignName: null,
+      dueAt: null,
+      createdAt: synthesis.createdAt,
+    });
   }
 
   items.sort((left, right) => {
