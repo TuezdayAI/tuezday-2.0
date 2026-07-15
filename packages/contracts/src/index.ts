@@ -1253,6 +1253,324 @@ export const externalActionSubmissionSchema = z.object({
 });
 export type ExternalActionSubmission = z.infer<typeof externalActionSubmissionSchema>;
 
+export const AUTHORIZATION_BATCH_MODES = ["selected", "campaign"] as const;
+export type AuthorizationBatchMode = (typeof AUTHORIZATION_BATCH_MODES)[number];
+
+export const AUTHORIZATION_BATCH_STATUSES = [
+  "preview",
+  "running",
+  "completed",
+  "partially_completed",
+  "failed",
+] as const;
+export type AuthorizationBatchStatus = (typeof AUTHORIZATION_BATCH_STATUSES)[number];
+
+export const AUTHORIZATION_BATCH_ITEM_STATUSES = [
+  "pending",
+  "succeeded",
+  "scheduled",
+  "failed",
+  "blocked",
+  "stale",
+  "skipped",
+] as const;
+export type AuthorizationBatchItemStatus =
+  (typeof AUTHORIZATION_BATCH_ITEM_STATUSES)[number];
+
+const selectedAuthorizationBatchSchema = z
+  .object({
+    mode: z.literal("selected"),
+    actionIds: z.array(z.string().uuid()).min(1).max(25),
+  })
+  .strict();
+
+const campaignAuthorizationBatchSchema = z
+  .object({
+    mode: z.literal("campaign"),
+    campaignId: z.string().uuid(),
+    kinds: z
+      .array(z.enum(EXTERNAL_ACTION_KINDS))
+      .min(1)
+      .max(EXTERNAL_ACTION_KINDS.length)
+      .nullable()
+      .default(null),
+  })
+  .strict();
+
+export const authorizationBatchSelectionSchema = z
+  .discriminatedUnion("mode", [selectedAuthorizationBatchSchema, campaignAuthorizationBatchSchema])
+  .superRefine((value, ctx) => {
+    const values = value.mode === "selected" ? value.actionIds : (value.kinds ?? []);
+    if (new Set(values).size !== values.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [value.mode === "selected" ? "actionIds" : "kinds"],
+        message: "Batch selections cannot contain duplicates.",
+      });
+    }
+  });
+export type AuthorizationBatchSelection = z.infer<typeof authorizationBatchSelectionSchema>;
+
+export const createAuthorizationBatchInputSchema = z
+  .object({
+    requestId: z.string().uuid(),
+    selection: authorizationBatchSelectionSchema,
+  })
+  .strict();
+export type CreateAuthorizationBatchInput = z.infer<
+  typeof createAuthorizationBatchInputSchema
+>;
+
+const TERMINAL_AUTHORIZATION_BATCH_STATUSES: ReadonlySet<AuthorizationBatchStatus> = new Set([
+  "completed",
+  "partially_completed",
+  "failed",
+]);
+
+const TERMINAL_AUTHORIZATION_BATCH_ITEM_STATUSES: ReadonlySet<AuthorizationBatchItemStatus> =
+  new Set(["succeeded", "scheduled", "failed", "blocked", "stale", "skipped"]);
+
+export const authorizationBatchSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    requestId: z.string().uuid(),
+    selection: authorizationBatchSelectionSchema,
+    status: z.enum(AUTHORIZATION_BATCH_STATUSES),
+    continuationCount: z.number().int().nonnegative(),
+    includedCount: z.number().int().min(0).max(100),
+    excludedCount: z.number().int().nonnegative(),
+    createdBy: externalActionActorSchema,
+    createdAt: z.number().int(),
+    confirmedAt: z.number().int().nullable(),
+    completedAt: z.number().int().nullable(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.selection.mode === "selected" && value.continuationCount !== 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["continuationCount"],
+        message: "Selected batches cannot have continuation items.",
+      });
+    }
+    if (value.status === "preview" && (value.confirmedAt !== null || value.completedAt !== null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "Preview batches cannot be confirmed or completed.",
+      });
+    }
+    if (value.status === "running" && (value.confirmedAt === null || value.completedAt !== null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "Running batches require confirmation and cannot be completed.",
+      });
+    }
+    if (
+      TERMINAL_AUTHORIZATION_BATCH_STATUSES.has(value.status) &&
+      (value.confirmedAt === null || value.completedAt === null)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "Terminal batches require confirmation and completion timestamps.",
+      });
+    }
+    if (value.confirmedAt !== null && value.confirmedAt < value.createdAt) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["confirmedAt"],
+        message: "Confirmation cannot predate batch creation.",
+      });
+    }
+    if (
+      value.completedAt !== null &&
+      value.completedAt < (value.confirmedAt ?? value.createdAt)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["completedAt"],
+        message: "Completion cannot predate confirmation.",
+      });
+    }
+  });
+export type AuthorizationBatch = z.infer<typeof authorizationBatchSchema>;
+
+export const authorizationBatchItemSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    batchId: z.string().uuid(),
+    actionId: z.string().uuid(),
+    actionFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    actionUpdatedAt: z.number().int(),
+    kind: z.enum(EXTERNAL_ACTION_KINDS),
+    campaignId: z.string().uuid().nullable(),
+    impact: z.string().trim().min(1).max(1_000),
+    eligible: z.boolean(),
+    exclusionReason: z.string().trim().min(1).max(500).nullable(),
+    status: z.enum(AUTHORIZATION_BATCH_ITEM_STATUSES),
+    error: z.string().max(1_000).nullable(),
+    submission: externalActionSubmissionSchema.nullable(),
+    processedAt: z.number().int().nullable(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.eligible === (value.exclusionReason !== null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["exclusionReason"],
+        message: "Only excluded items require an exclusion reason.",
+      });
+    }
+    if (value.eligible === (value.status === "skipped")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "Only excluded items may be skipped.",
+      });
+    }
+    if (
+      value.status === "pending" &&
+      (value.submission !== null || value.error !== null || value.processedAt !== null)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "Pending items cannot carry an outcome.",
+      });
+    }
+    if (
+      value.eligible &&
+      TERMINAL_AUTHORIZATION_BATCH_ITEM_STATUSES.has(value.status) &&
+      value.processedAt === null
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["processedAt"],
+        message: "Processed eligible items require a timestamp.",
+      });
+    }
+    if ((value.status === "succeeded" || value.status === "scheduled") && !value.submission) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["submission"],
+        message: `${value.status} items require an action submission.`,
+      });
+    }
+    if (
+      value.eligible &&
+      value.status !== "pending" &&
+      !value.submission &&
+      value.error === null
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["error"],
+        message: "Processed items require a submission or durable error.",
+      });
+    }
+    if (
+      !value.eligible &&
+      (value.submission !== null || value.error !== null || value.processedAt !== null)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "Preview-excluded items cannot carry execution outcomes.",
+      });
+    }
+    if (value.submission) {
+      const action = value.submission.action;
+      if (
+        action.id !== value.actionId ||
+        action.fingerprint !== value.actionFingerprint ||
+        action.kind !== value.kind ||
+        action.context.campaignId !== value.campaignId
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["submission"],
+          message: "The submission must belong to the snapshotted action.",
+        });
+      }
+      const expectedStatus =
+        value.status === "succeeded"
+          ? "succeeded"
+          : value.status === "scheduled"
+            ? "scheduled"
+            : value.status === "failed"
+              ? "failed"
+              : value.status === "blocked"
+                ? "blocked"
+                : value.status === "stale"
+                  ? "stale"
+                  : null;
+      if (expectedStatus !== null && action.status !== expectedStatus) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["submission", "action", "status"],
+          message: "The submission status must match the stored item outcome.",
+        });
+      }
+    }
+  });
+export type AuthorizationBatchItem = z.infer<typeof authorizationBatchItemSchema>;
+
+export const authorizationBatchDetailSchema = z
+  .object({
+    batch: authorizationBatchSchema,
+    items: z.array(authorizationBatchItemSchema),
+  })
+  .superRefine((value, ctx) => {
+    const included = value.items.filter((item) => item.eligible);
+    const excluded = value.items.filter((item) => !item.eligible);
+    if (
+      included.length !== value.batch.includedCount ||
+      excluded.length !== value.batch.excludedCount
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["items"],
+        message: "Batch item counts must match the immutable preview.",
+      });
+    }
+    for (const [index, item] of value.items.entries()) {
+      if (item.batchId !== value.batch.id || item.workspaceId !== value.batch.workspaceId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["items", index],
+          message: "Batch items must belong to the same batch and workspace.",
+        });
+      }
+    }
+    if (
+      TERMINAL_AUTHORIZATION_BATCH_STATUSES.has(value.batch.status) &&
+      included.some((item) => !TERMINAL_AUTHORIZATION_BATCH_ITEM_STATUSES.has(item.status))
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["items"],
+        message: "Terminal batches cannot contain pending included items.",
+      });
+    }
+    if (
+      value.batch.status === "preview" &&
+      value.items.some(
+        (item) =>
+          (item.eligible && item.status !== "pending") ||
+          (!item.eligible && item.status !== "skipped"),
+      )
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["items"],
+        message: "Preview items must be pending or preview-excluded.",
+      });
+    }
+  });
+export type AuthorizationBatchDetail = z.infer<typeof authorizationBatchDetailSchema>;
+
 export const externalActionListFiltersSchema = z.object({
   status: z.enum(EXTERNAL_ACTION_STATUSES).optional(),
   kind: z.enum(EXTERNAL_ACTION_KINDS).optional(),
