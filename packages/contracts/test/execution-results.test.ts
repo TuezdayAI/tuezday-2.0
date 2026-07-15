@@ -24,7 +24,12 @@ const base = {
 
 describe("unified execution result contracts", () => {
   it("defines the registry's result kinds and states verbatim", () => {
-    expect(EXECUTION_RESULT_KINDS).toEqual(["publication", "launch", "ad_launch"]);
+    expect(EXECUTION_RESULT_KINDS).toEqual([
+      "publication",
+      "launch",
+      "ad_launch",
+      "ad_mutation",
+    ]);
     expect(EXECUTION_RESULT_STATUSES).toEqual([
       "running",
       "completed",
@@ -55,6 +60,26 @@ describe("unified execution result contracts", () => {
       destinations: { total: 6, succeeded: 3, failed: 2, skipped: 1, pending: 0 },
     };
     expect(executionResultSchema.parse(launch).destinations.failed).toBe(2);
+  });
+
+  it("binds ad-mutation results to budget or targeting action kinds", () => {
+    expect(
+      executionResultSchema.parse({
+        ...base,
+        kind: "ad_mutation",
+        actionKind: "budget_change",
+      }).actionKind,
+    ).toBe("budget_change");
+    expect(
+      executionResultSchema.safeParse({
+        ...base,
+        kind: "ad_mutation",
+        actionKind: "publish",
+      }).success,
+    ).toBe(false);
+    expect(
+      executionResultSchema.safeParse({ ...base, actionKind: "targeting_change" }).success,
+    ).toBe(false);
   });
 
   it("rejects statuses outside the canonical result vocabulary", () => {

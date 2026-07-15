@@ -10,11 +10,15 @@ import {
   PRIORITY_ITEM_KINDS,
   canTransitionExternalAction,
   calendarEntrySchema,
+  budgetChangeIntentSchema,
   externalActionDetailSchema,
   externalActionPolicyViewSchema,
   externalActionPolicyRuleSchema,
   externalActionSubmissionSchema,
   priorityQueueSchema,
+  proposeBudgetChangeInputSchema,
+  proposeTargetingChangeInputSchema,
+  targetingChangeIntentSchema,
   upsertExternalActionPoliciesInputSchema,
 } from "../src/index";
 
@@ -101,6 +105,7 @@ describe("external action governance contracts", () => {
       "inbox_reply",
       "launch_message",
       "ad_launch",
+      "ad_mutation",
     ]);
     expect(PRIORITY_ITEM_KINDS).toEqual([
       "execution_failure",
@@ -109,6 +114,46 @@ describe("external action governance contracts", () => {
       "authorization",
       "content_review",
     ]);
+  });
+
+  it("owns normalized Meta budget and targeting mutation intents", () => {
+    expect(
+      proposeBudgetChangeInputSchema.parse({
+        dailyBudgetCents: 12_500,
+        idempotencyKey: "55555555-5555-4555-8555-555555555555",
+      }).dailyBudgetCents,
+    ).toBe(12_500);
+    expect(
+      proposeTargetingChangeInputSchema.safeParse({
+        countries: ["US", "US"],
+        ageMin: 45,
+        ageMax: 21,
+        idempotencyKey: "55555555-5555-4555-8555-555555555555",
+      }).success,
+    ).toBe(false);
+
+    const common = {
+      launchId: "66666666-6666-4666-8666-666666666666",
+      adAccountId: "77777777-7777-4777-8777-777777777777",
+      externalAccountId: "act_1",
+      externalAdSetId: "set_1",
+      providerUpdatedAt: null,
+    };
+    expect(
+      targetingChangeIntentSchema.parse({
+        ...common,
+        before: { countries: ["US"], ageMin: 18, ageMax: 65 },
+        after: { countries: ["us", "DE", "US"], ageMin: 25, ageMax: 54 },
+      }).after.countries,
+    ).toEqual(["DE", "US"]);
+    expect(
+      budgetChangeIntentSchema.safeParse({
+        ...common,
+        currency: "USD",
+        beforeDailyBudgetCents: 5_000,
+        afterDailyBudgetCents: 5_000,
+      }).success,
+    ).toBe(false);
   });
 
   it("adds stale without weakening terminal action transitions", () => {

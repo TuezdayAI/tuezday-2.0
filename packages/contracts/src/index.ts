@@ -1084,6 +1084,7 @@ export const EXTERNAL_ACTION_EXECUTION_KINDS = [
   "inbox_reply",
   "launch_message",
   "ad_launch",
+  "ad_mutation",
 ] as const;
 export type ExternalActionExecutionKind = (typeof EXTERNAL_ACTION_EXECUTION_KINDS)[number];
 
@@ -3412,6 +3413,105 @@ const countryCodeSchema = z
   .toUpperCase()
   .regex(/^[A-Z]{2}$/, "Use 2-letter country codes (e.g. US, DE)");
 
+const normalizedCountryCodesSchema = z
+  .array(countryCodeSchema)
+  .min(1, "Target at least one country")
+  .max(25)
+  .transform((values) => Array.from(new Set(values)).sort());
+
+const dailyBudgetCentsSchema = z
+  .number()
+  .int()
+  .min(100, "Daily budget must be at least 100 cents")
+  .max(100_000_000);
+
+const targetingFieldsSchema = z.object({
+  countries: normalizedCountryCodesSchema,
+  ageMin: z.number().int().min(18).max(65),
+  ageMax: z.number().int().min(18).max(65),
+});
+
+function refineTargetingAgeRange(
+  value: { ageMin: number; ageMax: number },
+  ctx: z.RefinementCtx,
+): void {
+  if (value.ageMin > value.ageMax) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["ageMax"],
+      message: "Maximum age must be at least the minimum age",
+    });
+  }
+}
+
+const targetingSnapshotSchema = targetingFieldsSchema.superRefine(refineTargetingAgeRange);
+
+export const metaAdSetStateSchema = targetingFieldsSchema
+  .extend({
+    externalAdSetId: z.string().trim().min(1),
+    dailyBudgetCents: dailyBudgetCentsSchema,
+    updatedAt: z.number().int().nonnegative().nullable(),
+  })
+  .superRefine(refineTargetingAgeRange);
+export type MetaAdSetState = z.infer<typeof metaAdSetStateSchema>;
+
+const adMutationIdentitySchema = z.object({
+  launchId: z.string().uuid(),
+  adAccountId: z.string().uuid(),
+  externalAccountId: z.string().trim().min(1),
+  externalAdSetId: z.string().trim().min(1),
+  providerUpdatedAt: z.number().int().nonnegative().nullable(),
+});
+
+export const budgetChangeIntentSchema = adMutationIdentitySchema
+  .extend({
+    currency: z.string().trim().toUpperCase().regex(/^[A-Z]{3}$/),
+    beforeDailyBudgetCents: dailyBudgetCentsSchema,
+    afterDailyBudgetCents: dailyBudgetCentsSchema,
+  })
+  .superRefine((value, ctx) => {
+    if (value.beforeDailyBudgetCents === value.afterDailyBudgetCents) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["afterDailyBudgetCents"],
+        message: "The requested budget must differ from the provider budget",
+      });
+    }
+  });
+export type BudgetChangeIntent = z.infer<typeof budgetChangeIntentSchema>;
+
+export const targetingChangeIntentSchema = adMutationIdentitySchema
+  .extend({
+    before: targetingSnapshotSchema,
+    after: targetingSnapshotSchema,
+  })
+  .superRefine((value, ctx) => {
+    const unchanged =
+      value.before.ageMin === value.after.ageMin &&
+      value.before.ageMax === value.after.ageMax &&
+      value.before.countries.length === value.after.countries.length &&
+      value.before.countries.every((country, index) => country === value.after.countries[index]);
+    if (unchanged) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["after"],
+        message: "The requested targeting must differ from the provider targeting",
+      });
+    }
+  });
+export type TargetingChangeIntent = z.infer<typeof targetingChangeIntentSchema>;
+
+export const proposeBudgetChangeInputSchema = z.object({
+  dailyBudgetCents: dailyBudgetCentsSchema,
+  idempotencyKey: z.string().uuid(),
+});
+export type ProposeBudgetChangeInput = z.infer<typeof proposeBudgetChangeInputSchema>;
+
+export const proposeTargetingChangeInputSchema = targetingFieldsSchema
+  .extend({ idempotencyKey: z.string().uuid() })
+  .superRefine(refineTargetingAgeRange);
+export type ProposeTargetingChangeInput = z.infer<typeof proposeTargetingChangeInputSchema>;
+
 const adLaunchFieldsSchema = z.object({
   adAccountId: z.string().uuid(),
   creativeDraftId: z.string().uuid(),
@@ -3424,11 +3524,7 @@ const adLaunchFieldsSchema = z.object({
     .url("A valid destination URL is required")
     .regex(/^https:\/\//, "Use an https destination URL"),
   // Meta's minimum daily budget is on the order of $1/day.
-  dailyBudgetCents: z
-    .number()
-    .int()
-    .min(100, "Daily budget must be at least 100 cents")
-    .max(100_000_000),
+  dailyBudgetCents: dailyBudgetCentsSchema,
   startAt: z.number().int().positive().optional(),
   endAt: z.number().int().positive().optional(),
   countries: z.array(countryCodeSchema).min(1, "Target at least one country").max(25),
@@ -4406,7 +4502,12 @@ export type PriorityQueue = z.infer<typeof priorityQueueSchema>;
 // this vocabulary once their API foundation exists.
 // ---------------------------------------------------------------------------
 
-export const EXECUTION_RESULT_KINDS = ["publication", "launch", "ad_launch"] as const;
+export const EXECUTION_RESULT_KINDS = [
+  "publication",
+  "launch",
+  "ad_launch",
+  "ad_mutation",
+] as const;
 export type ExecutionResultKind = (typeof EXECUTION_RESULT_KINDS)[number];
 
 export const EXECUTION_RESULT_STATUSES = [
@@ -4426,26 +4527,49 @@ const executionDestinationsSchema = z.object({
 });
 export type ExecutionDestinations = z.infer<typeof executionDestinationsSchema>;
 
-export const executionResultSchema = z.object({
-  kind: z.enum(EXECUTION_RESULT_KINDS),
-  /** Id of the underlying publication / launch / ad launch row. */
-  id: z.string().uuid(),
-  title: z.string(),
-  channel: z.string().nullable(),
-  campaignId: z.string().uuid().nullable(),
-  campaignName: z.string().nullable(),
-  status: z.enum(EXECUTION_RESULT_STATUSES),
-  /** When the execution happened (or last progressed, for running launches). */
-  at: z.number().int(),
-  url: z.string().nullable(),
-  error: z.string().nullable(),
-  /** Raw platform effective_status — ad launches only; null elsewhere. */
-  platformStatus: z.string().nullable(),
-  destinations: executionDestinationsSchema,
-  draftId: z.string().uuid().nullable(),
-  /** Empty for legacy results; launch rollups may carry several message actions. */
-  externalActionIds: z.array(z.string().uuid()).optional(),
-});
+export const executionResultSchema = z
+  .object({
+    kind: z.enum(EXECUTION_RESULT_KINDS),
+    /** Id of the underlying publication / launch / ad launch row. */
+    id: z.string().uuid(),
+    title: z.string(),
+    channel: z.string().nullable(),
+    campaignId: z.string().uuid().nullable(),
+    campaignName: z.string().nullable(),
+    status: z.enum(EXECUTION_RESULT_STATUSES),
+    /** When the execution happened (or last progressed, for running launches). */
+    at: z.number().int(),
+    url: z.string().nullable(),
+    error: z.string().nullable(),
+    /** Raw platform effective_status — ad launches only; null elsewhere. */
+    platformStatus: z.string().nullable(),
+    destinations: executionDestinationsSchema,
+    draftId: z.string().uuid().nullable(),
+    /** Governed mutation kind; absent/null for legacy execution projections. */
+    actionKind: z.enum(EXTERNAL_ACTION_KINDS).nullable().optional(),
+    /** Empty for legacy results; launch rollups may carry several message actions. */
+    externalActionIds: z.array(z.string().uuid()).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      value.kind === "ad_mutation" &&
+      value.actionKind !== "budget_change" &&
+      value.actionKind !== "targeting_change"
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["actionKind"],
+        message: "Ad mutation results require a budget or targeting action kind",
+      });
+    }
+    if (value.kind !== "ad_mutation" && value.actionKind != null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["actionKind"],
+        message: "Legacy execution results cannot carry an action kind",
+      });
+    }
+  });
 export type ExecutionResult = z.infer<typeof executionResultSchema>;
 
 // ---------------------------------------------------------------------------

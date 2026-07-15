@@ -374,7 +374,7 @@ git commit -m "feat(web): edit campaign lane action policy"
 - Adds `ad_mutation` to `EXTERNAL_ACTION_EXECUTION_KINDS` and `EXECUTION_RESULT_KINDS`.
 - Extends `executionResultSchema` with optional `actionKind: ExternalActionKind | null`; it is `budget_change|targeting_change` for `ad_mutation` results and null for legacy kinds.
 
-- [ ] **Step 1: Write failing schema/refinement tests**
+- [x] **Step 1: Write failing schema/refinement tests**
 
 ```ts
 expect(EXTERNAL_ACTION_EXECUTION_KINDS).toContain("ad_mutation");
@@ -389,23 +389,23 @@ expect(proposeTargetingChangeInputSchema.safeParse({
 expect(targetingChangeIntentSchema.parse(fixture).after.countries).toEqual(["DE", "US"]);
 ```
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 Run: `npm test -w packages/contracts -- external-actions.test.ts execution-results.test.ts`  
 Expected: FAIL on missing exports and vocabularies.
 
-- [ ] **Step 3: Implement canonical schemas**
+- [x] **Step 3: Implement canonical schemas**
 
 Reuse the existing two-letter country refinement and 18–65 age bounds. Transform country arrays with `Array.from(new Set(values)).sort()`. Refine budget intents so before/after differ and targeting intents so at least one country/age value differs. `providerUpdatedAt` remains nullable because Meta may omit it.
 
-- [ ] **Step 4: Run focused tests and typecheck**
+- [x] **Step 4: Run focused tests and typecheck**
 
 Run: `npm test -w packages/contracts -- external-actions.test.ts execution-results.test.ts`  
 Expected: PASS.  
 Run: `npm run typecheck`  
 Expected: exit 0 after exhaustive result-kind maps add `ad_mutation`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/contracts/src/index.ts packages/contracts/test/external-actions.test.ts packages/contracts/test/execution-results.test.ts apps/api/src/services/executions.ts apps/web/lib/execution-results.ts
