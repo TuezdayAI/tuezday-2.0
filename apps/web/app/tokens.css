@@ -55,6 +55,14 @@
   --status-info-ink: var(--ink-2);
   --status-info-wash: var(--bg-sunk);
 
+  --button-primary: var(--ink);
+  --button-primary-hover: color-mix(in oklch, var(--ink) 88%, white);
+  --button-primary-ink: var(--surface);
+  --button-danger: var(--status-blocked);
+  --control-compact: 36px;
+  --control-standard: 40px;
+  --control-large: 44px;
+
   /* Compatibility aliases while existing routes migrate to semantic names. */
   --panel: var(--surface);
   --panel-2: var(--bg-sunk);

@@ -61,7 +61,7 @@ Each numbered session is deliberately smaller than a sprint. Stop at any release
 - `Button` and `ButtonLink` accept `loading?: boolean`, `leadingIcon?: ReactNode`, and preserve label width while loading.
 - `IconButton` requires `label`, supports `size?: "compact" | "standard"`, and renders a tooltip through `title` when none is supplied.
 
-- [ ] **Step 1: Write the failing desktop button contract test**
+- [x] **Step 1: Write the failing desktop button contract test**
 
 ```ts
 it("defines the approved desktop hierarchy and sizes", () => {
@@ -75,12 +75,12 @@ it("defines the approved desktop hierarchy and sizes", () => {
 });
 ```
 
-- [ ] **Step 2: Run the test and confirm RED**
+- [x] **Step 2: Run the test and confirm RED**
 
 Run: `npm exec --prefix apps/web vitest -- run lib/button-system.test.ts`  
 Expected: FAIL because the current component exposes `ghost`, `sm|md`, 32px icon buttons, and no `ButtonLink`.
 
-- [ ] **Step 3: Add action tokens and implement the primitives**
+- [x] **Step 3: Add action tokens and implement the primitives**
 
 Add these semantic tokens:
 
@@ -107,14 +107,14 @@ const content = (
 
 `ButtonLink` uses `next/link`, shares the exact class builder, and never accepts `disabled`; callers omit the link or use `aria-disabled` with prevented navigation. Tertiary is an unfilled command, not an underlined link. Danger is outline by default; add `data-confirmed-danger` for the filled final-confirmation state.
 
-- [ ] **Step 4: Run focused tests and typecheck**
+- [x] **Step 4: Run focused tests and typecheck**
 
 Run: `npm exec --prefix apps/web vitest -- run lib/button-system.test.ts lib/design-tokens.test.ts`  
 Expected: PASS.  
 Run: `npm run typecheck`  
 Expected: exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/web/src/components/ui/button.tsx apps/web/src/components/ui/button.module.css apps/web/app/tokens.css apps/web/lib/button-system.test.ts
@@ -1872,7 +1872,7 @@ git commit -m "test(web): verify desktop platform completion"
 **Files:**
 - Modify: `docs/ui-ux/capability-registry.md`
 - Modify: `docs/ui-ux/desktop-platform-completion-acceptance.md`
-- Create: `docs/superpowers/progress/2026-07-15-desktop-platform-completion.md`
+- Modify: `docs/superpowers/progress/2026-07-15-desktop-platform-completion.md`
 
 **Interfaces:**
 - Records delivered contracts, migrations 0046/0047, provider adapters, routes, surfaces, visual evidence, test counts, and explicit deferrals.
