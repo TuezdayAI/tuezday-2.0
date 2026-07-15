@@ -21,6 +21,7 @@
     "fastify-raw-body": "^5.0.0",
     "playwright": "^1.61.1",
     "stripe": "^22.3.0",
+    "svix": "^1.97.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
