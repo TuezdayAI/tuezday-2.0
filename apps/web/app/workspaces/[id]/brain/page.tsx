@@ -536,7 +536,7 @@ export default function WorkspaceBrainPage() {
             <Button
             type="button"
             variant="secondary"
-            size="sm"
+            size="compact"
             onClick={() => void apiDownload(`/workspaces/${id}/brain/export`, "gtm-brain.md")}
           >
             Export brain (.md)
@@ -643,9 +643,9 @@ export default function WorkspaceBrainPage() {
             {designError && <p className="error">{designError}</p>}
 
             <div className="editor-actions">
-              <button onClick={() => void saveDesign()} disabled={designSaving || !designDirty}>
+              <Button variant="primary" size="standard" onClick={() => void saveDesign()} disabled={designSaving || !designDirty}>
                 {designSaving ? "Saving…" : designDirty ? "Save" : "Saved"}
-              </button>
+              </Button>
               {designDirty && <span className="unsaved">Unsaved changes</span>}
             </div>
 
@@ -681,10 +681,10 @@ export default function WorkspaceBrainPage() {
           )}
 
           <div className="editor-actions">
-            <button onClick={() => save(draft)} disabled={saving || !dirty}>
+            <Button variant="primary" size="standard" onClick={() => save(draft)} disabled={saving || !dirty}>
               {saving ? "Saving…" : dirty ? "Save" : "Saved"}
-            </button>
-            <Button variant="secondary" size="sm" onClick={toggleHistory}>
+            </Button>
+            <Button variant="secondary" size="compact" onClick={toggleHistory}>
               {showHistory ? "Hide history" : "History"}
             </Button>
             {dirty && <span className="unsaved">Unsaved changes</span>}
@@ -692,7 +692,7 @@ export default function WorkspaceBrainPage() {
 
           {outline && (
             <details className="outline-preview">
-              <summary className="link-button" style={{ cursor: "pointer", listStyle: "none" }}>
+              <summary style={{ cursor: "pointer", listStyle: "none" }}>
                 Outline — the map outline-mode tasks see ({outline.sections.length}{" "}
                 {outline.sections.length === 1 ? "section" : "sections"})
                 {dirty ? " · from last save" : ""}
@@ -743,7 +743,7 @@ export default function WorkspaceBrainPage() {
                   <pre>{previewVersion.content || "(empty)"}</pre>
                   <Button
                     variant="secondary"
-                    size="sm"
+                    size="compact"
                     disabled={saving}
                     onClick={() => save(previewVersion.content)}
                   >
@@ -794,22 +794,24 @@ export default function WorkspaceBrainPage() {
                     {row.content.length > 180 ? `${row.content.slice(0, 180)}…` : row.content}
                   </p>
                   <div className="editor-actions">
-                    <button
+                    <Button
                       type="button"
-                      className="button-secondary"
+                      variant="secondary"
+                      size="compact"
                       disabled={dovBusy}
                       onClick={() => editDesignOverlay(row)}
                     >
                       Edit
-                    </button>
-                    <button
+                    </Button>
+                    <Button
                       type="button"
-                      className="button-secondary danger"
+                      variant="danger"
+                      size="compact"
                       disabled={dovBusy}
                       onClick={() => void removeDesignOverlay(row)}
                     >
                       Delete
-                    </button>
+                    </Button>
                   </div>
                 </li>
               ))}
@@ -862,17 +864,18 @@ export default function WorkspaceBrainPage() {
               maxLength={DESIGN_CONTENT_MAX_CHARS}
             />
             <div className="editor-actions">
-              <button type="submit" disabled={dovBusy || dovContent.trim().length === 0}>
+              <Button type="submit" variant="primary" size="standard" disabled={dovBusy || dovContent.trim().length === 0}>
                 {dovBusy ? "Saving…" : "Save overlay"}
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
-                className="button-secondary"
+                variant="secondary"
+                size="standard"
                 disabled={dovBusy}
                 onClick={() => void previewDesignResolve()}
               >
                 Preview resolution
-              </button>
+              </Button>
             </div>
           </form>
 
@@ -931,13 +934,13 @@ export default function WorkspaceBrainPage() {
                     rows={4}
                   />
                   <div className="editor-actions">
-                    <button onClick={() => void saveGuidance(g.channel)} disabled={busy || !dirty}>
+                    <Button variant="primary" size="standard" onClick={() => void saveGuidance(g.channel)} disabled={busy || !dirty}>
                       {busy ? "Saving…" : dirty ? "Save" : "Saved"}
-                    </button>
+                    </Button>
                     {g.source === "workspace" && (
                       <Button
                         variant="secondary"
-                        size="sm"
+                        size="compact"
                         onClick={() => void resetGuidance(g.channel)}
                         disabled={busy}
                       >
@@ -990,7 +993,7 @@ export default function WorkspaceBrainPage() {
                   <Button
                     type="button"
                     variant="secondary"
-                    size="sm"
+                    size="compact"
                     disabled={scopedBusy}
                     onClick={() => editScoped(row)}
                   >
@@ -999,7 +1002,7 @@ export default function WorkspaceBrainPage() {
                   <Button
                     type="button"
                     variant="danger"
-                    size="sm"
+                    size="compact"
                     disabled={scopedBusy}
                     onClick={() => void deleteScoped(row)}
                   >
@@ -1060,8 +1063,10 @@ export default function WorkspaceBrainPage() {
             maxLength={GUIDANCE_CONTENT_MAX_CHARS}
           />
           <div className="editor-actions">
-            <button
+            <Button
               type="submit"
+              variant="primary"
+              size="standard"
               disabled={
                 scopedBusy ||
                 scopedContent.trim().length === 0 ||
@@ -1069,7 +1074,7 @@ export default function WorkspaceBrainPage() {
               }
             >
               {scopedBusy ? "Saving…" : "Save scoped guidance"}
-            </button>
+            </Button>
             {!scopedPersonaId && !scopedCampaignId && (
               <span className="meta">Pick a persona and/or campaign — unscoped text lives above.</span>
             )}

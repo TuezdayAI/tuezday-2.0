@@ -438,7 +438,7 @@ export default function ResolverPage() {
             </span>
           }
           actions={
-            <Button variant="secondary" size="sm" onClick={() => startEdit()}>
+            <Button variant="secondary" size="compact" onClick={() => startEdit()}>
               + New persona
             </Button>
           }
@@ -448,7 +448,7 @@ export default function ResolverPage() {
             title="No personas yet"
             description="Create one (e.g. “CEO voice”, “Company page”) to see the same brain resolve differently per voice."
             primaryAction={
-              <Button variant="secondary" size="sm" onClick={() => startEdit()}>
+              <Button variant="secondary" size="compact" onClick={() => startEdit()}>
                 + New persona
               </Button>
             }
@@ -466,10 +466,10 @@ export default function ResolverPage() {
                     )}
                   </div>
                   <div className="persona-actions">
-                    <Button variant="secondary" size="sm" onClick={() => startEdit(p)}>
+                    <Button variant="secondary" size="compact" onClick={() => startEdit(p)}>
                       Edit
                     </Button>
-                    <Button variant="danger" size="sm" onClick={() => removePersona(p)}>
+                    <Button variant="danger" size="compact" onClick={() => removePersona(p)}>
                       Delete
                     </Button>
                   </div>
@@ -538,7 +538,7 @@ export default function ResolverPage() {
               </Button>
               <Button
                 variant="secondary"
-                size="sm"
+                size="compact"
                 type="button"
                 onClick={() => setShowPersonaForm(false)}
               >
@@ -599,8 +599,8 @@ export default function ResolverPage() {
                                 )}{" "}
                                 {!assignment.isPrimary && (
                                   <Button
-                                    variant="ghost"
-                                    size="sm"
+                                    variant="tertiary"
+                                    size="compact"
                                     type="button"
                                     disabled={assignmentBusy === persona.id}
                                     onClick={() => void makePrimary(persona.id, assignment)}
@@ -609,8 +609,8 @@ export default function ResolverPage() {
                                   </Button>
                                 )}{" "}
                                 <Button
-                                  variant="ghost"
-                                  size="sm"
+                                  variant="tertiary"
+                                  size="compact"
                                   type="button"
                                   disabled={assignmentBusy === persona.id}
                                   onClick={() => void removeAssignment(persona.id, assignment.id)}
@@ -866,8 +866,8 @@ export default function ResolverPage() {
                               <>
                                 <span className="guidance-source source-workspace">override</span>
                                 <Button
-                                  variant="ghost"
-                                  size="sm"
+                                  variant="tertiary"
+                                  size="compact"
                                   type="button"
                                   disabled={busy}
                                   onClick={() => void resetMatrixCell(t, d)}

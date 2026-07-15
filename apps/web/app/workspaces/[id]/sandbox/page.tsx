@@ -2,7 +2,7 @@
 
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
-import { Button } from "@/src/components/ui/button";
+import { Button, ButtonLink } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
 import { CountBadge } from "@/src/components/ui/badge";
 import { Icon } from "@/src/components/ui/icon";
@@ -295,11 +295,11 @@ export default function SandboxPage() {
   function queueButton(generationId: string) {
     const draftId = submittedByGeneration[generationId];
     return draftId ? (
-      <Link className="link-button" href={`/workspaces/${id}/review`}>
+      <ButtonLink variant="tertiary" size="compact" href={`/workspaces/${id}/review`}>
         in Review →
-      </Link>
+      </ButtonLink>
     ) : (
-      <Button variant="secondary" size="sm" onClick={() => sendToQueue(generationId)}>
+      <Button variant="secondary" size="compact" onClick={() => sendToQueue(generationId)}>
         Send to Review
       </Button>
     );
@@ -320,7 +320,7 @@ export default function SandboxPage() {
     <>
       <PageHeader title="Playground" subtitle={<>Try a one-off generation: see exactly what Tuezday will use, generate, then rate the
             result. Your ratings teach it what good looks like.</>} actions={<>
-            <Button variant="secondary" size="sm" onClick={() => setShowSettings((s) => !s)}>
+            <Button variant="secondary" size="compact" onClick={() => setShowSettings((s) => !s)}>
             {showSettings ? "Hide quality settings" : "Quality settings"}
           </Button>
           </>} />
@@ -452,7 +452,7 @@ export default function SandboxPage() {
             />
             Use evidence
           </label>
-          <Button variant="secondary" size="sm" onClick={previewContext}>
+          <Button variant="secondary" size="compact" onClick={previewContext}>
             Preview context
           </Button>
         </div>
@@ -464,8 +464,8 @@ export default function SandboxPage() {
               sections · ~{preview.includedTokens} tokens of {preview.tokenBudget}
               {preview.overBudget && <span className="error"> — over budget</span>}{" "}
               <Button
-                variant="ghost"
-                size="sm"
+                variant="tertiary"
+                size="compact"
                 onClick={() => setShowPreviewDetail(!showPreviewDetail)}
               >
                 {showPreviewDetail ? "hide" : "show"} sections
@@ -517,7 +517,7 @@ export default function SandboxPage() {
           <div style={{ marginBottom: 14 }}>
             <Button
               variant="secondary"
-              size="sm"
+              size="compact"
               onClick={suggestAngles}
               disabled={anglesLoading || !preview || previewStale}
             >
@@ -530,7 +530,7 @@ export default function SandboxPage() {
                     <span>{a}</span>
                     <Button
                       variant="secondary"
-                      size="sm"
+                      size="compact"
                       disabled={generating}
                       onClick={() => {
                         setChosenAngle(a);
@@ -573,7 +573,7 @@ export default function SandboxPage() {
                 <Button
                   key={r}
                   variant={latest.rating === r ? "primary" : "secondary"}
-                  size="sm"
+                  size="compact"
                   className={`rating-${r}`}
                   onClick={() => rate(latest.id, r)}
                 >
@@ -645,7 +645,7 @@ export default function SandboxPage() {
                 {expandedLog[g.id] && (
                   <>
                     <details className="trace-details" style={{ marginTop: 12, marginBottom: 12 }}>
-                      <summary className="link-button" style={{ cursor: 'pointer', listStyle: 'none' }}>
+                      <summary style={{ cursor: 'pointer', listStyle: 'none' }}>
                         How did Tuezday write this?
                       </summary>
                       <div className="trace-content" style={{ marginTop: 8 }}>
@@ -664,7 +664,7 @@ export default function SandboxPage() {
                         <Button
                           key={r}
                           variant={g.rating === r ? "primary" : "secondary"}
-                          size="sm"
+                          size="compact"
                           className={`rating-${r}`}
                           onClick={() => rate(g.id, r)}
                         >

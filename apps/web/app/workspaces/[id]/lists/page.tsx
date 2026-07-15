@@ -83,7 +83,7 @@ function RuleGroupEditor({
           <option value="or">ANY of (OR)</option>
         </Select>
         {onRemove && (
-          <Button type="button" variant="ghost" size="sm" onClick={onRemove}>
+          <Button type="button" variant="tertiary" size="compact" onClick={onRemove}>
             remove group
           </Button>
         )}
@@ -109,11 +109,11 @@ function RuleGroupEditor({
       )}
 
       <div className="editor-actions" style={{ marginTop: 8 }}>
-        <Button type="button" variant="secondary" size="sm" onClick={() => onChange({ ...group, rules: [...group.rules, emptyCondition()] })}>
+        <Button type="button" variant="secondary" size="compact" onClick={() => onChange({ ...group, rules: [...group.rules, emptyCondition()] })}>
           + condition
         </Button>
         {depth < 4 && (
-          <Button type="button" variant="secondary" size="sm" onClick={() => onChange({ ...group, rules: [...group.rules, emptyGroup()] })}>
+          <Button type="button" variant="secondary" size="compact" onClick={() => onChange({ ...group, rules: [...group.rules, emptyGroup()] })}>
             + nested group
           </Button>
         )}
@@ -165,7 +165,7 @@ function ConditionEditor({
             onChange={(e) => onChange({ ...condition, value: e.target.value })}
           />
         ))}
-      <Button type="button" variant="ghost" size="sm" onClick={onRemove}>
+      <Button type="button" variant="tertiary" size="compact" onClick={onRemove}>
         remove
       </Button>
     </div>
@@ -359,7 +359,7 @@ export default function ListsPage() {
             rule-based segments — then attach them to a campaign as its target.</>} />
 
       <TopBarActions>
-        <Button variant="primary" size="sm" onClick={() => startEdit()}>
+        <Button variant="primary" size="compact" onClick={() => startEdit()}>
           <Icon name="add" size="sm" /> New audience
         </Button>
       </TopBarActions>
@@ -422,7 +422,7 @@ export default function ListsPage() {
               <Button type="submit" variant="primary" disabled={saving || form.name.trim().length === 0}>
                 {editingId ? "Update" : "Create"}
               </Button>
-              <Button type="button" variant="secondary" size="sm" onClick={() => setShowForm(false)}>
+              <Button type="button" variant="secondary" size="compact" onClick={() => setShowForm(false)}>
                 Cancel
               </Button>
             </div>
@@ -456,7 +456,7 @@ export default function ListsPage() {
             </>
           }
           primaryAction={
-            <Button variant="primary" size="sm" onClick={() => startEdit()}>
+            <Button variant="primary" size="compact" onClick={() => startEdit()}>
               <Icon name="add" size="sm" /> New audience
             </Button>
           }
@@ -511,10 +511,10 @@ export default function ListsPage() {
                 )}
 
                 <div className="rating-row" style={{ marginTop: 8 }}>
-                  <Button variant="secondary" size="sm" onClick={() => startEdit(a)}>
+                  <Button variant="secondary" size="compact" onClick={() => startEdit(a)}>
                     Edit
                   </Button>
-                  <Button variant="secondary" size="sm" onClick={() => remove(a)}>
+                  <Button variant="secondary" size="compact" onClick={() => remove(a)}>
                     Delete
                   </Button>
                 </div>
@@ -564,9 +564,9 @@ function MemberManager({
                 {m.company ? ` · ${m.company}` : ""}
               </span>{" "}
               {isStatic && (
-                <button type="button" className="link-button" onClick={() => onRemove(m)}>
+                <Button type="button" variant="tertiary" size="compact" onClick={() => onRemove(m)}>
                   remove
-                </button>
+                </Button>
               )}
             </li>
           ))}
@@ -601,7 +601,7 @@ function MemberManager({
               <Button
                 type="button"
                 variant="secondary"
-                size="sm"
+                size="compact"
                 disabled={picked.length === 0}
                 onClick={() => {
                   onAdd(picked.map((k) => ({ type: k.split(":")[0]!, id: k.split(":")[1]! })));

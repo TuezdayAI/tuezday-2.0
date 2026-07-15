@@ -124,7 +124,7 @@ export default function EvidencePage() {
   return (
     <>
       <TopBarActions>
-        <Button variant="secondary" size="sm" onClick={() => setShowAdd((v) => !v)}>
+        <Button variant="secondary" size="compact" onClick={() => setShowAdd((v) => !v)}>
           <Icon name="add" size="sm" />
           Add evidence
         </Button>
@@ -232,7 +232,7 @@ export default function EvidencePage() {
                   <Button variant="primary" onClick={() => acceptCandidate(c)} disabled={!view.store.healthy}>
                     Accept into corpus
                   </Button>
-                  <Button variant="secondary" size="sm" onClick={() => dismissCandidate(c)}>
+                  <Button variant="secondary" size="compact" onClick={() => dismissCandidate(c)}>
                     Dismiss
                   </Button>
                 </div>
@@ -256,7 +256,7 @@ export default function EvidencePage() {
             description={<>No evidence yet. Paste your website copy and a few past posts to give the brain
             something to cite.</>}
             primaryAction={
-              <Button variant="secondary" size="sm" onClick={() => setShowAdd(true)}>
+              <Button variant="secondary" size="compact" onClick={() => setShowAdd(true)}>
                 <Icon name="add" size="sm" />
                 Add evidence
               </Button>
@@ -315,7 +315,7 @@ export default function EvidencePage() {
                 </div>
                 {doc.error && <p className="error-inline">{doc.error}</p>}
                 <div className="rating-row" style={{ marginTop: 8 }}>
-                  <Button variant="danger" size="sm" onClick={() => remove(doc)}>
+                  <Button variant="danger" size="compact" onClick={() => remove(doc)}>
                     Delete
                   </Button>
                 </div>

@@ -269,7 +269,7 @@ export default function CrmPage() {
 
       <TopBarActions>
         {crmConnections.length > 0 && (
-          <Button variant="primary" size="sm" disabled={busy || !activeConnectionId} onClick={sync}>
+          <Button variant="primary" size="compact" disabled={busy || !activeConnectionId} onClick={sync}>
             <Icon name="regenerate" size="sm" /> {busy ? "Working…" : "Sync contacts"}
           </Button>
         )}
@@ -330,7 +330,7 @@ export default function CrmPage() {
               </Button>
               <Button
                 variant="secondary"
-                size="sm"
+                size="compact"
                 type="button"
                 onClick={() => setFilterOpen((o) => !o)}
               >
@@ -379,7 +379,7 @@ export default function CrmPage() {
                 </label>
                 <Button
                   variant="secondary"
-                  size="sm"
+                  size="compact"
                   disabled={busy}
                   onClick={saveFilter}
                   style={{ alignSelf: "flex-end" }}
@@ -389,7 +389,7 @@ export default function CrmPage() {
                 {(filterViewId || filterSince) && (
                   <Button
                     variant="secondary"
-                    size="sm"
+                    size="compact"
                     disabled={busy}
                     onClick={() => {
                       setFilterViewId("");
@@ -447,7 +447,7 @@ export default function CrmPage() {
                     ) : (
                       <Button
                         variant="secondary"
-                        size="sm"
+                        size="compact"
                         disabled={busy || !contact.email}
                         title={contact.email ? "" : "This contact has no email address"}
                         onClick={() => importLead(contact)}
@@ -457,7 +457,7 @@ export default function CrmPage() {
                     )}
                     <Button
                       variant="secondary"
-                      size="sm"
+                      size="compact"
                       disabled={busy}
                       title="Removes it from Tuezday only; a re-sync won't bring it back. Nothing is deleted in your CRM."
                       onClick={() => discardContact(contact)}
@@ -496,7 +496,7 @@ export default function CrmPage() {
                   </span>
                   <Button
                     variant="secondary"
-                    size="sm"
+                    size="compact"
                     disabled={busy}
                     onClick={() => restoreContact(contact)}
                   >
@@ -535,7 +535,7 @@ export default function CrmPage() {
                   ) : (
                     <Button
                       variant="secondary"
-                      size="sm"
+                      size="compact"
                       disabled={busy || crmConnections.length === 0}
                       onClick={() => pushLead(lead)}
                     >
@@ -582,7 +582,7 @@ export default function CrmPage() {
                     ) : (
                       <Button
                         variant="secondary"
-                        size="sm"
+                        size="compact"
                         disabled={busy || !linked}
                         title={linked ? "" : "Link this lead to a CRM contact first (push or import)"}
                         onClick={() => logDraft(draft)}

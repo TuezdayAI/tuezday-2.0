@@ -424,18 +424,18 @@ export function CadenceManager({ workspaceId, framed = false }: CadenceManagerPr
                   </span>
                 </span>
                 <span className="page-actions">
-                  <Button type="button" variant="secondary" size="sm" onClick={() => fill(c)}>
+                  <Button type="button" variant="secondary" size="compact" onClick={() => fill(c)}>
                     Fill now
                   </Button>
                   <Button
                     type="button"
                     variant="secondary"
-                    size="sm"
+                    size="compact"
                     onClick={() => toggleStatus(c)}
                   >
                     {c.status === "active" ? "Pause" : "Resume"}
                   </Button>
-                  <Button type="button" variant="secondary" size="sm" onClick={() => remove(c)}>
+                  <Button type="button" variant="secondary" size="compact" onClick={() => remove(c)}>
                     Delete
                   </Button>
                 </span>

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Button } from "./ui/button";
 
 /**
  * Caps how many rows a long list renders (scroll-perf: unbounded lists are
@@ -22,9 +23,9 @@ export function ShowMoreButton(props: { hasMore: boolean; remaining: number; onC
   const step = props.step ?? 50;
   return (
     <div className="editor-actions" style={{ marginTop: 12 }}>
-      <button type="button" className="button-secondary" onClick={props.onClick}>
+      <Button type="button" variant="secondary" size="standard" onClick={props.onClick}>
         Show {Math.min(props.remaining, step)} more ({props.remaining} hidden)
-      </button>
+      </Button>
     </div>
   );
 }
