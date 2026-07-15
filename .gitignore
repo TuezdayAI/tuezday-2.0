@@ -14,6 +14,7 @@ coverage/
 
 # Local editor/agent state
 .claude/
+.superpowers/
 .worktrees/
 
 # Local SQLite backup snapshots
