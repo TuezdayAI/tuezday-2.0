@@ -1,4 +1,9 @@
-import type { AdLaunchObjective } from "@tuezday/contracts";
+import {
+  metaAdSetStateSchema,
+  type AdLaunchObjective,
+  type MetaAdSetState,
+  type TargetingChangeIntent,
+} from "@tuezday/contracts";
 import { ConnectorFabricError, type ConnectorFabric } from "../fabric";
 import type { AdAccountRecord, AdDailyMetricRecord, AdsAdapter, AdsExecutionAdapter } from "./index";
 
@@ -47,6 +52,17 @@ interface RawInsightRow {
   actions?: Array<{ action_type?: string; value?: string }>;
 }
 
+interface RawAdSetState {
+  id?: string;
+  daily_budget?: string | number;
+  targeting?: {
+    geo_locations?: { countries?: unknown };
+    age_min?: string | number;
+    age_max?: string | number;
+  };
+  updated_time?: string;
+}
+
 function int(value: string | undefined): number {
   const n = Number(value ?? 0);
   return Number.isFinite(n) ? Math.round(n) : 0;
@@ -82,7 +98,7 @@ export class MetaAdsAdapter implements AdsAdapter, AdsExecutionAdapter {
     private readonly fetcher: typeof fetch = fetch,
   ) {}
 
-  private async request<T>(path: string): Promise<GraphPage<T>> {
+  private async get<T>(path: string): Promise<T> {
     const result = await this.fabric.proxyJson(
       "GET",
       path,
@@ -96,10 +112,17 @@ export class MetaAdsAdapter implements AdsAdapter, AdsExecutionAdapter {
         `Meta Ads returned ${result.status} for GET ${path.split("?")[0]}${detail ? `: ${detail}` : ""}`,
       );
     }
-    return (result.json ?? {}) as GraphPage<T>;
+    return (result.json ?? {}) as T;
   }
 
-  private async post(path: string, body: Record<string, unknown>): Promise<{ id?: string }> {
+  private async request<T>(path: string): Promise<GraphPage<T>> {
+    return this.get<GraphPage<T>>(path);
+  }
+
+  private async post<T = Record<string, unknown>>(
+    path: string,
+    body: Record<string, unknown>,
+  ): Promise<T> {
     const result = await this.fabric.proxyJson(
       "POST",
       path,
@@ -113,11 +136,11 @@ export class MetaAdsAdapter implements AdsAdapter, AdsExecutionAdapter {
         `Meta Ads returned ${result.status} for POST ${path.split("?")[0]}${detail ? `: ${detail}` : ""}`,
       );
     }
-    return (result.json ?? {}) as { id?: string };
+    return (result.json ?? {}) as T;
   }
 
   private async createObject(path: string, body: Record<string, unknown>): Promise<{ externalId: string }> {
-    const json = await this.post(path, body);
+    const json = await this.post<{ id?: string }>(path, body);
     if (!json.id) {
       throw new ConnectorFabricError(`Meta Ads did not return an id for POST ${path.split("?")[0]}.`);
     }
@@ -180,6 +203,62 @@ export class MetaAdsAdapter implements AdsAdapter, AdsExecutionAdapter {
   }
 
   // --- Execution (Sprint 20) ---
+
+  async getAdSetState(
+    _externalAccountId: string,
+    externalAdSetId: string,
+  ): Promise<MetaAdSetState> {
+    const raw = await this.get<RawAdSetState>(
+      `/${GRAPH_VERSION}/${encodeURIComponent(externalAdSetId)}?fields=daily_budget,targeting,updated_time`,
+    );
+    const dailyBudgetCents = Number(raw.daily_budget);
+    const countries = raw.targeting?.geo_locations?.countries;
+    const ageMin = Number(raw.targeting?.age_min);
+    const ageMax = Number(raw.targeting?.age_max);
+    const parsedUpdatedAt = raw.updated_time ? Date.parse(raw.updated_time) : Number.NaN;
+    const parsed = metaAdSetStateSchema.safeParse({
+      externalAdSetId,
+      dailyBudgetCents,
+      countries,
+      ageMin,
+      ageMax,
+      updatedAt: Number.isFinite(parsedUpdatedAt) ? parsedUpdatedAt : null,
+    });
+    if (!parsed.success) {
+      throw new ConnectorFabricError(
+        `Meta Ads returned malformed state for ad set ${externalAdSetId}: ${parsed.error.issues
+          .map((issue) => issue.message)
+          .join("; ")}`,
+      );
+    }
+    return parsed.data;
+  }
+
+  async updateDailyBudget(
+    externalAccountId: string,
+    externalAdSetId: string,
+    dailyBudgetCents: number,
+  ): Promise<MetaAdSetState> {
+    await this.post(`/${GRAPH_VERSION}/${encodeURIComponent(externalAdSetId)}`, {
+      daily_budget: dailyBudgetCents,
+    });
+    return this.getAdSetState(externalAccountId, externalAdSetId);
+  }
+
+  async updateTargeting(
+    externalAccountId: string,
+    externalAdSetId: string,
+    targeting: TargetingChangeIntent["after"],
+  ): Promise<MetaAdSetState> {
+    await this.post(`/${GRAPH_VERSION}/${encodeURIComponent(externalAdSetId)}`, {
+      targeting: {
+        geo_locations: { countries: targeting.countries },
+        age_min: targeting.ageMin,
+        age_max: targeting.ageMax,
+      },
+    });
+    return this.getAdSetState(externalAccountId, externalAdSetId);
+  }
 
   async createCampaign(
     externalAccountId: string,
@@ -252,9 +331,9 @@ export class MetaAdsAdapter implements AdsAdapter, AdsExecutionAdapter {
       bytes = new Uint8Array(await res.arrayBuffer());
     }
 
-    const json = (await this.post(`/${GRAPH_VERSION}/${externalAccountId}/adimages`, {
+    const json = await this.post<{ images?: Record<string, { hash?: string }> }>(`/${GRAPH_VERSION}/${externalAccountId}/adimages`, {
       bytes: Buffer.from(bytes).toString("base64"),
-    })) as { images?: Record<string, { hash?: string }> };
+    });
     const hash = Object.values(json.images ?? {})[0]?.hash;
     if (!hash) {
       throw new ConnectorFabricError("Meta Ads did not return an image hash for the adimages upload.");

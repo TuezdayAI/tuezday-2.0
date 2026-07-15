@@ -424,7 +424,7 @@ git commit -m "feat(contracts): define Meta action mutations"
 - `MetaAdsAdapter.getAdSetState()` reads `daily_budget,targeting,updated_time` for one ad set.
 - Update methods return a fresh `MetaAdSetState` read after the provider accepts the mutation.
 
-- [ ] **Step 1: Write failing Meta proxy tests**
+- [x] **Step 1: Write failing Meta proxy tests**
 
 ```ts
 expect(await adapter.getAdSetState("act_1", "set_1")).toEqual({
@@ -441,23 +441,23 @@ expect(targetPost.body).toEqual({
 });
 ```
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 Run: `npm exec vitest -- run ads-execution.test.ts`
 Expected: FAIL because the interface and methods do not exist.
 
-- [ ] **Step 3: Implement Graph reads and writes**
+- [x] **Step 3: Implement Graph reads and writes**
 
 Use the existing pinned `GRAPH_VERSION` and Nango proxy. Parse `daily_budget` as integer minor units, normalize `targeting.geo_locations.countries`, and parse `updated_time` to epoch milliseconds or null. Reject missing/malformed budget or targeting with `ConnectorFabricError`; never substitute Tuezday's local value for a missing provider field.
 
-- [ ] **Step 4: Run focused tests and typecheck**
+- [x] **Step 4: Run focused tests and typecheck**
 
 Run: `npm exec vitest -- run ads-execution.test.ts ads.test.ts`
 Expected: PASS.  
 Run: `npm run typecheck`  
 Expected: exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/connectors/ads/index.ts apps/api/src/connectors/ads/meta.ts apps/api/test/ads-execution.test.ts
