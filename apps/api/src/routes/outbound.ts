@@ -11,7 +11,7 @@ import { resolveContext, type BrainContents } from "@tuezday/brain";
 import { and, eq, isNotNull } from "drizzle-orm";
 import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
-import { drafts } from "../db/schema";
+import { drafts, emailDeliveries } from "../db/schema";
 import type { EvidenceStore } from "../evidence/store";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { getBrain } from "../services/brain";
@@ -29,11 +29,15 @@ import {
   getLead,
   importLeadsCsv,
   listLeads,
+  OutboundDraftEmailError,
+  prepareOutboundDraftEmailAction,
   updateLead,
 } from "../services/leads";
+import type { ExternalActionRuntime } from "../services/external-action-coordinator";
 import { getPersona, toResolvePersona } from "../services/personas";
 import { runPreReview, setGenerationReview } from "../services/review";
 import { getWorkspace } from "../services/workspaces";
+import { externalActionError } from "./external-actions";
 
 function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
   const workspace = getWorkspace(db, id);
@@ -48,6 +52,7 @@ export function registerOutboundRoutes(
   db: Db,
   llm: LlmGateway,
   evidence: EvidenceStore,
+  runtime: ExternalActionRuntime,
 ): void {
   app.post<{ Params: { id: string } }>("/workspaces/:id/leads", async (request, reply) => {
     if (!workspaceOr404(db, request.params.id, reply)) return reply;
@@ -234,6 +239,27 @@ export function registerOutboundRoutes(
     return { results };
   });
 
+  app.post<{ Params: { id: string; draftId: string } }>(
+    "/workspaces/:id/outbound/drafts/:draftId/send",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      try {
+        const command = prepareOutboundDraftEmailAction(
+          db,
+          request.params.id,
+          request.params.draftId,
+        );
+        return await runtime.propose(command, actorOf(request));
+      } catch (error) {
+        if (error instanceof OutboundDraftEmailError) {
+          const status = error.code === "draft_not_found" ? 404 : 409;
+          return reply.status(status).send({ error: error.code, message: error.message });
+        }
+        return externalActionError(error, reply);
+      }
+    },
+  );
+
   app.get<{ Params: { id: string }; Querystring: { state?: string } }>(
     "/workspaces/:id/outbound/export.csv",
     async (request, reply) => {
@@ -243,6 +269,18 @@ export function registerOutboundRoutes(
         return reply.status(400).send({ error: "invalid_state" });
       }
       const leadById = new Map(listLeads(db, request.params.id).map((l) => [l.id, l]));
+      const nativeDeliveryDraftIds = new Set(
+        db.select({ originId: emailDeliveries.originId })
+          .from(emailDeliveries)
+          .where(
+            and(
+              eq(emailDeliveries.workspaceId, request.params.id),
+              eq(emailDeliveries.origin, "outbound_draft"),
+            ),
+          )
+          .all()
+          .map((delivery) => delivery.originId),
+      );
       const rows = db
         .select()
         .from(drafts)
@@ -257,6 +295,7 @@ export function registerOutboundRoutes(
 
       const lines = ["name,email,company,role,channel,content"];
       for (const row of rows) {
+        if (nativeDeliveryDraftIds.has(row.id)) continue;
         const lead = leadById.get(row.leadId!);
         if (!lead) continue;
         lines.push(

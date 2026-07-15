@@ -9,6 +9,10 @@ import { Badge, CountBadge } from "@/src/components/ui/badge";
 import { Icon } from "@/src/components/ui/icon";
 import { PreviewCard } from "@/src/components/ui/preview-card";
 import { Input, Textarea, Select } from "@/src/components/ui/input";
+import {
+  EmailPermissionControl,
+  EmailSendStatus,
+} from "@/src/components/email-send-status";
 import styles from "./outbound.module.css";
 
 import { API_URL, apiDownload, apiFetch } from "@/lib/api";
@@ -16,7 +20,16 @@ import { API_URL, apiDownload, apiFetch } from "@/lib/api";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import type { ApprovalState, Campaign, Draft, Lead, Persona, Workspace } from "@tuezday/contracts";
+import type {
+  ApprovalState,
+  Campaign,
+  Draft,
+  EmailPermissionStatus,
+  ExternalActionSubmission,
+  Lead,
+  Persona,
+  Workspace,
+} from "@tuezday/contracts";
 
 const STATE_LABELS: Record<ApprovalState, string> = {
   draft: "draft",
@@ -97,6 +110,12 @@ export default function OutboundPage() {
   const [drafting, setDrafting] = useState(false);
   const [draftSummary, setDraftSummary] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [selectedDrafts, setSelectedDrafts] = useState<Record<string, boolean>>({});
+  const [sendingDrafts, setSendingDrafts] = useState<Record<string, boolean>>({});
+  const [sendSubmissions, setSendSubmissions] = useState<
+    Record<string, ExternalActionSubmission>
+  >({});
+  const [sendSummary, setSendSummary] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -222,8 +241,66 @@ export default function OutboundPage() {
     return drafts.filter((d) => d.leadId === leadId);
   }
 
+  async function proposeDraftSend(draftId: string): Promise<ExternalActionSubmission> {
+    setSendingDrafts((current) => ({ ...current, [draftId]: true }));
+    try {
+      const response = await apiFetch(`/workspaces/${id}/outbound/drafts/${draftId}/send`, {
+        method: "POST",
+      });
+      const body = (await response.json().catch(() => null)) as
+        | ExternalActionSubmission
+        | { message?: string; error?: string }
+        | null;
+      if (!body || !("action" in body)) {
+        throw new Error(body?.message ?? body?.error ?? "Native email send could not be proposed.");
+      }
+      setSendSubmissions((current) => ({ ...current, [draftId]: body }));
+      return body;
+    } finally {
+      setSendingDrafts((current) => ({ ...current, [draftId]: false }));
+    }
+  }
+
+  async function sendOneDraft(draftId: string) {
+    setError(null);
+    try {
+      await proposeDraftSend(draftId);
+    } catch (sendError) {
+      setError(sendError instanceof Error ? sendError.message : "Native email send failed.");
+    }
+  }
+
+  async function sendSelectedDrafts() {
+    const draftIds = Object.keys(selectedDrafts).filter((draftId) => selectedDrafts[draftId]);
+    setSendSummary(null);
+    setError(null);
+    const results = await Promise.all(
+      draftIds.map(async (draftId) => {
+        try {
+          await proposeDraftSend(draftId);
+          return { draftId, ok: true };
+        } catch (sendError) {
+          return {
+            draftId,
+            ok: false,
+            error: sendError instanceof Error ? sendError.message : "Native email send failed.",
+          };
+        }
+      }),
+    );
+    const sent = results.filter((result) => result.ok).length;
+    const failed = results.length - sent;
+    setSendSummary(
+      `${sent} send action${sent === 1 ? "" : "s"} proposed${
+        failed ? ` · ${failed} failed and can be retried individually` : ""
+      }.`,
+    );
+    setSelectedDrafts({});
+  }
+
   const selectedCount = Object.values(selected).filter(Boolean).length;
   const approvedCount = drafts.filter((d) => d.state === "approved").length;
+  const selectedDraftCount = Object.values(selectedDrafts).filter(Boolean).length;
 
   if (error && !workspace) {
     return (
@@ -238,10 +315,20 @@ export default function OutboundPage() {
 
   return (
     <>
-      <PageHeader title="Audience" subtitle={<>Your leads and contacts, with outreach drafted in your voice per person. Drafts go
-            through Review; sending stays in your sender of choice.</>} />
+      <PageHeader title="Audience" subtitle={<>Your leads and contacts, with outreach drafted in your voice per person. Drafts clear
+            Review before governed native email sending.</>} />
 
       <TopBarActions>
+        {selectedDraftCount > 0 && (
+          <Button
+            type="button"
+            variant="primary"
+            size="standard"
+            onClick={() => void sendSelectedDrafts()}
+          >
+            Send selected from Tuezday ({selectedDraftCount})
+          </Button>
+        )}
         {approvedCount > 0 && (
           <Button
             type="button"
@@ -253,6 +340,7 @@ export default function OutboundPage() {
           </Button>
         )}
       </TopBarActions>
+      {sendSummary && <p className={styles.sendSummary} aria-live="polite">{sendSummary}</p>}
 
       <Card>
         <CardHeader
@@ -419,24 +507,42 @@ export default function OutboundPage() {
                       {chain.map((d) => {
                         const { title, body } = splitEmail(d.content);
                         return (
-                          <PreviewCard
-                            key={d.id}
-                            kind="email"
-                            title={title}
-                            body={body}
-                            scheduledAt={new Date(d.createdAt).toLocaleDateString(undefined, {
-                              month: "short",
-                              day: "numeric",
-                            })}
-                            status={STATE_LABELS[d.state]}
-                            statusTone={STATE_TONES[d.state]}
-                            onOpen={() => router.push(`/workspaces/${id}/review`)}
-                            actions={
-                              <Link className="link-button" href={`/workspaces/${id}/review`}>
-                                open in queue
-                              </Link>
-                            }
-                          />
+                          <div className={styles.draftCard} key={d.id}>
+                            <PreviewCard
+                              kind="email"
+                              title={title}
+                              body={body}
+                              scheduledAt={new Date(d.createdAt).toLocaleDateString(undefined, {
+                                month: "short",
+                                day: "numeric",
+                              })}
+                              status={STATE_LABELS[d.state]}
+                              statusTone={STATE_TONES[d.state]}
+                              onOpen={() => router.push(`/workspaces/${id}/review`)}
+                              actions={
+                                <Link className="link-button" href={`/workspaces/${id}/review`}>
+                                  open in queue
+                                </Link>
+                              }
+                            />
+                            {d.state === "approved" && (
+                              <OutboundEmailControls
+                                workspaceId={id}
+                                lead={lead}
+                                draft={d}
+                                selected={Boolean(selectedDrafts[d.id])}
+                                sending={Boolean(sendingDrafts[d.id])}
+                                submission={sendSubmissions[d.id]}
+                                onSelected={(checked) =>
+                                  setSelectedDrafts((current) => ({
+                                    ...current,
+                                    [d.id]: checked,
+                                  }))
+                                }
+                                onSend={() => void sendOneDraft(d.id)}
+                              />
+                            )}
+                          </div>
                         );
                       })}
                     </div>
@@ -498,5 +604,79 @@ export default function OutboundPage() {
         {draftSummary && <p className="bundle-summary">{draftSummary}</p>}
       </Card>
     </>
+  );
+}
+
+function OutboundEmailControls({
+  workspaceId,
+  lead,
+  draft,
+  selected,
+  sending,
+  submission,
+  onSelected,
+  onSend,
+}: {
+  workspaceId: string;
+  lead: Lead;
+  draft: Draft;
+  selected: boolean;
+  sending: boolean;
+  submission?: ExternalActionSubmission;
+  onSelected: (checked: boolean) => void;
+  onSend: () => void;
+}) {
+  const [permission, setPermission] = useState<EmailPermissionStatus>("unknown");
+
+  useEffect(() => {
+    let current = true;
+    void apiFetch(
+      `/workspaces/${workspaceId}/email-permissions/${encodeURIComponent(lead.email)}`,
+    )
+      .then(async (response) => {
+        if (!response.ok) return;
+        const body = (await response.json()) as { status: EmailPermissionStatus };
+        if (current) setPermission(body.status);
+      })
+      .catch(() => undefined);
+    return () => {
+      current = false;
+    };
+  }, [lead.email, workspaceId]);
+
+  return (
+    <div className={styles.sendControls}>
+      <EmailPermissionControl
+        workspaceId={workspaceId}
+        email={lead.email}
+        status={permission}
+        onChange={(next) => {
+          setPermission(next);
+          if (next !== "allowed") onSelected(false);
+        }}
+      />
+      <div className={styles.sendActions}>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={selected}
+            disabled={permission !== "allowed" || sending}
+            onChange={(event) => onSelected(event.target.checked)}
+          />
+          Select this approved draft
+        </label>
+        <Button
+          variant="primary"
+          size="standard"
+          loading={sending}
+          disabled={permission !== "allowed"}
+          onClick={onSend}
+        >
+          Send from Tuezday
+        </Button>
+      </div>
+      {submission && <EmailSendStatus submission={submission} delivery={null} />}
+      <span className={styles.draftId}>Draft {draft.id}</span>
+    </div>
   );
 }

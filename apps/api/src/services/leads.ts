@@ -7,8 +7,52 @@ import {
   type UpdateLeadInput,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
-import { leads, type LeadRow } from "../db/schema";
+import { drafts, leads, type LeadRow } from "../db/schema";
 import { removeLeadFromAudiences } from "./audiences";
+import {
+  deriveEmailSendIdempotencyKey,
+  prepareEmailAction,
+} from "./external-action-email";
+import type { ExternalActionCommand } from "./external-action-coordinator";
+
+export class OutboundDraftEmailError extends Error {
+  constructor(
+    readonly code: "draft_not_found" | "draft_not_approved" | "draft_not_email" | "lead_not_found",
+    message: string,
+  ) {
+    super(message);
+    this.name = "OutboundDraftEmailError";
+  }
+}
+
+export function prepareOutboundDraftEmailAction(
+  db: Db,
+  workspaceId: string,
+  draftId: string,
+): ExternalActionCommand {
+  const draft = db.select().from(drafts).where(
+    and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)),
+  ).get();
+  if (!draft) throw new OutboundDraftEmailError("draft_not_found", "Outbound draft not found.");
+  if (draft.state !== "approved") {
+    throw new OutboundDraftEmailError("draft_not_approved", "Approve this draft before sending it.");
+  }
+  if (draft.channel !== "email" || draft.taskType !== "outbound_email") {
+    throw new OutboundDraftEmailError("draft_not_email", "This draft is not an outbound email.");
+  }
+  if (!draft.leadId || !getLead(db, workspaceId, draft.leadId)) {
+    throw new OutboundDraftEmailError("lead_not_found", "This draft is not linked to a current lead.");
+  }
+  return prepareEmailAction(db, workspaceId, {
+    origin: "outbound_draft",
+    originId: draft.id,
+    idempotencyKey: deriveEmailSendIdempotencyKey(draft.id, {
+      draftId: draft.id,
+      content: draft.content,
+      stepNumber: null,
+    }),
+  });
+}
 
 export function createLead(db: Db, workspaceId: string, input: CreateLeadInput): Lead {
   const row: LeadRow = {

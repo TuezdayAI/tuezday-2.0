@@ -1,8 +1,16 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { leadSchema } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
+import type { Db } from "../src/db";
+import { emailRecipientPermissions, workspaceEmailSenders } from "../src/db/schema";
 import { GatewayError, type LlmGateway } from "../src/llm/gateway";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import type {
+  OutboundEmailDomain,
+  OutboundEmailMessage,
+  OutboundEmailProvider,
+} from "../src/outbound-email/provider";
+import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 function fakeGateway(): LlmGateway {
   return {
@@ -27,12 +35,27 @@ Ben Cho,ben@volt.dev,Volt,Founder,Met at SaaStr
 Bad Row,not-an-email,Nope,,
 Asha Patel,ASHA@acme.io,Acme Robotics,,duplicate by email`;
 
+class FakeOutboundEmailProvider implements OutboundEmailProvider {
+  send = vi.fn(async (_message: OutboundEmailMessage) => ({
+    provider: "resend" as const,
+    messageId: `email_${randomUUID()}`,
+    acceptedAt: Date.now(),
+  }));
+  async createDomain(): Promise<OutboundEmailDomain> { throw new Error("unused"); }
+  async verifyDomain(): Promise<void> { throw new Error("unused"); }
+  async getDomain(): Promise<OutboundEmailDomain> { throw new Error("unused"); }
+}
+
 describe("outbound API", () => {
   let app: TuezdayApp;
+  let db: Db;
   let workspaceId: string;
+  let emailProvider: FakeOutboundEmailProvider;
 
   beforeEach(async () => {
-    app = await buildAuthedApp({ db: createTestDb(), llm: fakeGateway() });
+    db = createTestDb();
+    emailProvider = new FakeOutboundEmailProvider();
+    app = await buildAuthedApp({ db, llm: fakeGateway(), outboundEmail: emailProvider });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Out" } })
     ).json().id;
@@ -55,6 +78,53 @@ describe("outbound API", () => {
         payload: { name: "Asha Patel", email: "asha@acme.io", company: "Acme Robotics", role: "Head of Growth", notes: "Hates AI slop", ...payload },
       })
     ).json();
+  }
+
+  function configureNativeEmail(email: string, allow = true): void {
+    const now = Date.now();
+    db.insert(workspaceEmailSenders).values({
+      workspaceId,
+      domain: "example.com",
+      fromLocalPart: "hello",
+      fromName: "Out",
+      fromAddress: "hello@example.com",
+      replyTo: null,
+      status: "verified",
+      provider: "resend",
+      providerDomainId: "domain_123",
+      dnsRecordsJson: "[]",
+      killSwitch: false,
+      dailyCap: 100,
+      lastCheckedAt: now,
+      lastError: null,
+      createdAt: now,
+      updatedAt: now,
+    }).onConflictDoNothing().run();
+    if (!allow) return;
+    db.insert(emailRecipientPermissions).values({
+      id: randomUUID(),
+      workspaceId,
+      normalizedEmail: email,
+      status: "allowed",
+      createdAt: now,
+      updatedAt: now,
+    }).run();
+  }
+
+  async function approvedDraftForLead(leadId: string): Promise<{ id: string; content: string }> {
+    await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/outbound/draft`,
+      payload: { leadIds: [leadId] },
+    });
+    const draft = (
+      await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/drafts` })
+    ).json()[0];
+    await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/drafts/${draft.id}/approve`,
+    });
+    return draft;
   }
 
   describe("leads", () => {
@@ -210,6 +280,66 @@ describe("outbound API", () => {
       ).json();
       expect(drafts[0].personaId).toBe(persona.id);
       expect(drafts[0].campaignId).toBe(campaign.id);
+    });
+  });
+
+  describe("native sending", () => {
+    it("sends one approved lead draft through one idempotent governed action", async () => {
+      const lead = await createLead();
+      const draft = await approvedDraftForLead(lead.id);
+      configureNativeEmail(lead.email);
+      await putActionPolicy(app, workspaceId, "workspace", workspaceId, { send: "autonomous" });
+
+      const send = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/outbound/drafts/${draft.id}/send`,
+        payload: {},
+      });
+      expect(send.statusCode).toBe(200);
+      expect(send.json().action.subject).toMatchObject({
+        kind: "draft",
+        id: draft.id,
+        destination: "asha@acme.io",
+      });
+      expect(send.json().execution.status).toBe("accepted");
+      expect(emailProvider.send).toHaveBeenCalledTimes(1);
+      expect(emailProvider.send.mock.calls[0]?.[0]).toMatchObject({
+        subject: "For Asha Patel",
+        text: "Personalized email body.",
+      });
+
+      const duplicate = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/outbound/drafts/${draft.id}/send`,
+        payload: {},
+      });
+      expect(duplicate.json().action.id).toBe(send.json().action.id);
+      expect(emailProvider.send).toHaveBeenCalledTimes(1);
+
+      const recovery = await app.inject({
+        method: "GET",
+        url: `/workspaces/${workspaceId}/outbound/export.csv`,
+      });
+      expect(recovery.body).not.toContain("asha@acme.io");
+    });
+
+    it("rejects a draft that is not approved", async () => {
+      const lead = await createLead();
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/outbound/draft`,
+        payload: { leadIds: [lead.id] },
+      });
+      const draft = (
+        await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/drafts` })
+      ).json()[0];
+      const send = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/outbound/drafts/${draft.id}/send`,
+        payload: {},
+      });
+      expect(send.statusCode).toBe(409);
+      expect(emailProvider.send).not.toHaveBeenCalled();
     });
   });
 

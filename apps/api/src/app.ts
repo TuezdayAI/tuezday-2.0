@@ -196,7 +196,7 @@ export async function buildApp({
   registerAudienceRoutes(app, db);
   registerEvidenceRoutes(app, db, evidence);
   registerLearningRoutes(app, db, llm, fetcher);
-  registerOutboundRoutes(app, db, llm, evidence);
+  registerOutboundRoutes(app, db, llm, evidence, externalActionRuntime);
   registerLaunchRoutes(app, db, llm, evidence, exporter, externalActionRuntime);
   registerConnectorRoutes(app, db, connectors, fetcher, analytics);
   registerCrmRoutes(app, db, connectors, fetcher);

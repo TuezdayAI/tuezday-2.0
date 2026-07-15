@@ -55,7 +55,8 @@ function parseEmailContent(content: string): { subject: string; text: string } {
   const lines = content.split(/\r?\n/);
   const subjectIndex = lines.findIndex((line) => line.trim().length > 0);
   if (subjectIndex < 0) throw new Error("Email content is empty.");
-  const subject = lines[subjectIndex]!.trim();
+  const subjectLine = lines[subjectIndex]!.trim();
+  const subject = subjectLine.replace(/^Subject:\s*/i, "").trim() || subjectLine;
   const text = lines.slice(subjectIndex + 1).join("\n").trim() || subject;
   return { subject, text };
 }
