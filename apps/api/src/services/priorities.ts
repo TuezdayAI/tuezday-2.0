@@ -10,9 +10,11 @@ import { campaigns, drafts, externalActions } from "../db/schema";
 import { deriveTitle } from "./cadences";
 import { listExecutionResults } from "./executions";
 import { rowToExternalAction } from "./external-actions";
+import { listSignals, type SignalWithDrafts } from "./signals";
 
 const DEFAULT_LIMIT = 25;
 const MAX_LIMIT = 100;
+const SIGNAL_TRIAGE_AFTER_MS = 24 * 60 * 60 * 1000;
 
 /** Action states a human has to resolve, in the priority vocabulary. */
 const ACTION_ATTENTION_STATUSES = ["failed", "blocked", "stale", "authorization_required"] as const;
@@ -93,6 +95,38 @@ function executionItem(workspaceId: string, result: ExecutionResult): PriorityIt
   };
 }
 
+/**
+ * Produce the Home priority for one signal after its matches have been limited
+ * to active campaigns. Keeping this step pure makes the 24-hour threshold and
+ * response-draft deduplication deterministic and independently testable.
+ */
+export function signalPriorityCandidate(
+  signal: SignalWithDrafts,
+  now: number,
+): PriorityItem | null {
+  if (signal.drafts.length > 0) return null;
+
+  const campaignMatch = signal.matches.find((match) => match.campaignId !== null);
+  const overdueAt = signal.createdAt + SIGNAL_TRIAGE_AFTER_MS;
+  if (!campaignMatch && now < overdueAt) return null;
+
+  return {
+    id: signal.id,
+    kind: "signal_triage",
+    status: "review_required",
+    title: deriveTitle(signal.content),
+    reason: campaignMatch
+      ? `${campaignMatch.campaignName ?? "The matched campaign"} needs a response decision for this ${campaignMatch.score}% match${campaignMatch.reason ? `: ${campaignMatch.reason}` : "."}`
+      : "No active campaign decision has been made for this signal after 24 hours.",
+    consequence: "A response draft will not be created until you review and route this signal.",
+    href: `/workspaces/${signal.workspaceId}/discovery?signal=${signal.id}`,
+    campaignId: campaignMatch?.campaignId ?? null,
+    campaignName: campaignMatch?.campaignName ?? null,
+    dueAt: campaignMatch ? null : overdueAt,
+    createdAt: signal.createdAt,
+  };
+}
+
 /** Ranking tiers: overdue failures/blocks/stale, overdue authorizations, other
  * failures/blocks/stale, authorizations, then content review. */
 function tier(item: PriorityItem, now: number): number {
@@ -144,13 +178,14 @@ export function listWorkspacePriorities(
     items.push(executionItem(workspaceId, result));
   }
 
-  const campaignNames = new Map(
-    db
-      .select({ id: campaigns.id, name: campaigns.name })
-      .from(campaigns)
-      .where(eq(campaigns.workspaceId, workspaceId))
-      .all()
-      .map((row) => [row.id, row.name] as const),
+  const campaignRows = db
+    .select({ id: campaigns.id, name: campaigns.name, status: campaigns.status })
+    .from(campaigns)
+    .where(eq(campaigns.workspaceId, workspaceId))
+    .all();
+  const campaignNames = new Map(campaignRows.map((row) => [row.id, row.name] as const));
+  const activeCampaignIds = new Set(
+    campaignRows.filter((row) => row.status === "active").map((row) => row.id),
   );
   const pending = db
     .select()
@@ -171,6 +206,19 @@ export function listWorkspacePriorities(
       dueAt: null,
       createdAt: draft.createdAt,
     });
+  }
+
+  for (const signal of listSignals(db, workspaceId)) {
+    const candidate = signalPriorityCandidate(
+      {
+        ...signal,
+        matches: signal.matches.filter(
+          (match) => match.campaignId !== null && activeCampaignIds.has(match.campaignId),
+        ),
+      },
+      now,
+    );
+    if (candidate) items.push(candidate);
   }
 
   items.sort((left, right) => {

@@ -16,6 +16,8 @@ import {
   insertExternalAction,
   transitionExternalAction,
 } from "../src/services/external-actions";
+import { insertSignalMatch } from "../src/services/matching";
+import { createSignal } from "../src/services/signals";
 import type { LlmGateway } from "../src/llm/gateway";
 import { buildAuthedApp, createTestDb } from "./helpers";
 
@@ -301,5 +303,103 @@ describe("workspace priorities projection", () => {
 
     const reviewItem = items.find((item) => item.id === draftId)!;
     expect(reviewItem.href).toBe(`/workspaces/${workspaceId}/review?tab=approvals&draft=${draftId}`);
+  });
+
+  it("prioritizes active-campaign and overdue unmatched signals without duplicating drafted signals", async () => {
+    const activeCampaignId = (
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns`,
+        payload: { name: "Active launch", status: "active" },
+      })
+    ).json().id;
+    const pausedCampaignId = (
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns`,
+        payload: { name: "Paused launch", status: "paused" },
+      })
+    ).json().id;
+
+    const matchedSignal = createSignal(db, workspaceId, {
+      content: "A buyer is actively comparing launch platforms.",
+      source: "other",
+    });
+    insertSignalMatch(db, workspaceId, matchedSignal.id, {
+      personaId: null,
+      campaignId: activeCampaignId,
+      score: 92,
+      reason: "Direct fit for the active launch.",
+    });
+
+    const draftedSignal = createSignal(db, workspaceId, {
+      content: "A second buyer asked for a comparison.",
+      source: "other",
+    });
+    insertSignalMatch(db, workspaceId, draftedSignal.id, {
+      personaId: null,
+      campaignId: activeCampaignId,
+      score: 88,
+      reason: "Also fits the active launch.",
+    });
+    submitDraft(
+      db,
+      {
+        workspaceId,
+        sourceGenerationId: randomUUID(),
+        sourceSignalId: draftedSignal.id,
+        campaignId: activeCampaignId,
+        personaId: null,
+        taskType: "linkedin_post",
+        channel: "linkedin",
+        content: "Response draft.",
+      },
+      { userId: null, label: "test" },
+    );
+
+    vi.setSystemTime(new Date(T0 - 25 * HOUR));
+    const overdueSignal = createSignal(db, workspaceId, {
+      content: "An unmatched signal has waited for a campaign decision.",
+      source: "other",
+    });
+    const pausedSignal = createSignal(db, workspaceId, {
+      content: "This only belongs to a paused campaign.",
+      source: "other",
+    });
+    insertSignalMatch(db, workspaceId, pausedSignal.id, {
+      personaId: null,
+      campaignId: pausedCampaignId,
+      score: 99,
+      reason: "The campaign is paused.",
+    });
+    vi.setSystemTime(new Date(T0));
+    const freshUnmatchedSignal = createSignal(db, workspaceId, {
+      content: "A fresh unmatched signal remains informational.",
+      source: "other",
+    });
+
+    const items = await fetchPriorities();
+    expect(items).toContainEqual(
+      expect.objectContaining({
+        id: matchedSignal.id,
+        kind: "signal_triage",
+        status: "review_required",
+        href: `/workspaces/${workspaceId}/discovery?signal=${matchedSignal.id}`,
+        campaignId: activeCampaignId,
+        campaignName: "Active launch",
+      }),
+    );
+    expect(items).toContainEqual(
+      expect.objectContaining({
+        id: overdueSignal.id,
+        kind: "signal_triage",
+        campaignId: null,
+        dueAt: overdueSignal.createdAt + 24 * HOUR,
+      }),
+    );
+    expect(items.some((item) => item.id === draftedSignal.id)).toBe(false);
+    expect(items.some((item) => item.id === freshUnmatchedSignal.id)).toBe(false);
+    expect(items.some((item) => item.id === pausedSignal.id)).toBe(true);
+    expect(items.find((item) => item.id === pausedSignal.id)?.campaignId).toBeNull();
   });
 });

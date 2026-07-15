@@ -30,6 +30,11 @@ const PRIORITY_META: Record<
     icon: "review",
     cta: "Review content",
   },
+  signal_triage: {
+    label: "Signal needs review",
+    icon: "signal",
+    cta: "Review signal",
+  },
 };
 
 /** Presentation metadata for one server-ranked priority. The API remains the

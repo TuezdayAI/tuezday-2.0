@@ -47,6 +47,11 @@ describe("Home priority view model", () => {
       icon: "review",
       cta: "Review content",
     });
+    expect(priorityView(item({ kind: "signal_triage", status: "review_required" }))).toMatchObject({
+      label: "Signal needs review",
+      icon: "signal",
+      cta: "Review signal",
+    });
   });
 
   it("preserves the server-ranked recovery href and canonical status", () => {
