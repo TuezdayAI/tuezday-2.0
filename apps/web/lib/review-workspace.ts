@@ -1,10 +1,16 @@
 import type {
   ApprovalState,
+  Campaign,
   Channel,
   Draft,
   InboxItemStatus,
   WorkflowStatus,
 } from "@tuezday/contracts";
+
+/** Prefer a human campaign name, with its stable ID as the safe fallback. */
+export function campaignFilterName(campaigns: Campaign[], campaignId: string): string {
+  return campaigns.find((campaign) => campaign.id === campaignId)?.name ?? campaignId;
+}
 
 export const REVIEW_TABS = ["approvals", "inbox", "authorizations"] as const;
 export type ReviewTab = (typeof REVIEW_TABS)[number];

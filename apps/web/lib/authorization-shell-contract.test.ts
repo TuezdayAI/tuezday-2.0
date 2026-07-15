@@ -52,6 +52,14 @@ describe("authorization queue shell contract", () => {
     expect(queueSource).not.toContain("Approve selected content");
   });
 
+  it("previews bounded campaign authorizations from the active campaign filter", () => {
+    expect(queueSource).toContain("Preview campaign authorizations");
+    expect(queueSource).toContain("campaignBatchSelection");
+    expect(queueSource).toContain("continuationCount");
+    expect(queueSource).toContain("Actions created after this preview are not included");
+    expect(queueSource).toMatch(/external-action-batches\/\$\{batchDetail\.batch\.id\}\/authorize/);
+  });
+
   it("uses the canonical ready, attention, and blocked result tokens", () => {
     expect(queueStyles).toContain("--status-ready-ink");
     expect(queueStyles).toContain("--status-attention-ink");

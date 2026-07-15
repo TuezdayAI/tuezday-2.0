@@ -1,12 +1,32 @@
 import { describe, expect, it } from "vitest";
 import type { AuthorizationBatchDetail, ExternalAction } from "@tuezday/contracts";
-import { authorizationBatchSummary, selectedAuthorizationIds } from "./authorization-batch";
+import {
+  authorizationBatchSummary,
+  campaignBatchSelection,
+  selectedAuthorizationIds,
+} from "./authorization-batch";
 
 function action(id: string, status: ExternalAction["status"] = "authorization_required") {
   return { id, status } as ExternalAction;
 }
 
 describe("authorization batch view model", () => {
+  it("builds a campaign preview selection with an optional non-empty kind subset", () => {
+    expect(
+      campaignBatchSelection("5bb87ab1-9d54-4f20-a91d-0dc30f917b31", ["publish", "send"]),
+    ).toEqual({
+      mode: "campaign",
+      campaignId: "5bb87ab1-9d54-4f20-a91d-0dc30f917b31",
+      kinds: ["publish", "send"],
+    });
+    expect(campaignBatchSelection("5bb87ab1-9d54-4f20-a91d-0dc30f917b31", null)).toEqual({
+      mode: "campaign",
+      campaignId: "5bb87ab1-9d54-4f20-a91d-0dc30f917b31",
+      kinds: null,
+    });
+    expect(() => campaignBatchSelection("campaign", [])).toThrow(/at least one action kind/i);
+  });
+
   it("returns only explicitly selected authorization-required actions in queue order", () => {
     const actions = [action("a"), action("blocked", "blocked"), action("b"), action("c")];
     expect(selectedAuthorizationIds(actions, new Set(["b", "blocked", "a"]))).toEqual([

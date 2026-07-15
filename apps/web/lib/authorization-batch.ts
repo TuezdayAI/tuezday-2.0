@@ -1,6 +1,29 @@
-import type { AuthorizationBatchDetail, ExternalAction } from "@tuezday/contracts";
+import type {
+  AuthorizationBatchDetail,
+  AuthorizationBatchSelection,
+  ExternalAction,
+  ExternalActionKind,
+} from "@tuezday/contracts";
 
 export const SELECTED_AUTHORIZATION_LIMIT = 25;
+
+/** Build the bounded campaign preview request. `null` deliberately means all kinds. */
+export function campaignBatchSelection(
+  campaignId: string,
+  kinds: ExternalActionKind[] | null,
+): AuthorizationBatchSelection {
+  if (kinds?.length === 0) {
+    throw new Error("Select at least one action kind, or include all action kinds.");
+  }
+  if (kinds && new Set(kinds).size !== kinds.length) {
+    throw new Error("Campaign action kinds cannot contain duplicates.");
+  }
+  return {
+    mode: "campaign",
+    campaignId,
+    kinds: kinds ? [...kinds] : null,
+  };
+}
 
 /** Return the explicit, still-authorizable selection in the queue's stable order. */
 export function selectedAuthorizationIds(

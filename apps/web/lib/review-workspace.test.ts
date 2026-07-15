@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { Draft } from "@tuezday/contracts";
+import type { Campaign, Draft } from "@tuezday/contracts";
 import {
+  campaignFilterName,
   draftChannels,
   draftWorkflowStatus,
   filterDrafts,
@@ -34,6 +35,15 @@ function draft(overrides: Partial<Draft>): Draft {
 }
 
 describe("review workspace view model", () => {
+  it("names the active campaign filter for an exact batch confirmation", () => {
+    const campaigns = [
+      { id: "campaign-1", name: "Founder's launch" },
+      { id: "campaign-2", name: "Customer stories" },
+    ] as Campaign[];
+    expect(campaignFilterName(campaigns, "campaign-2")).toBe("Customer stories");
+    expect(campaignFilterName(campaigns, "missing-campaign")).toBe("missing-campaign");
+  });
+
   it("parses the tab param with a safe default", () => {
     expect(reviewTab("inbox")).toBe("inbox");
     expect(reviewTab("approvals")).toBe("approvals");

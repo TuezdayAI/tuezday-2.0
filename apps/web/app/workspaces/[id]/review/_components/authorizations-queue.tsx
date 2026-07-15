@@ -3,18 +3,22 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import type {
-  AuthorizationBatchDetail,
-  AuthorizationBatchItem,
-  ExternalAction,
-  ExternalActionDetail,
-  ExternalActionKind,
-  ExternalActionStatus,
+import {
+  EXTERNAL_ACTION_KINDS,
+  type AuthorizationBatchDetail,
+  type AuthorizationBatchSelection,
+  type AuthorizationBatchItem,
+  type Campaign,
+  type ExternalAction,
+  type ExternalActionDetail,
+  type ExternalActionKind,
+  type ExternalActionStatus,
 } from "@tuezday/contracts";
 import { API_URL, apiFetch } from "@/lib/api";
 import {
   SELECTED_AUTHORIZATION_LIMIT,
   authorizationBatchSummary,
+  campaignBatchSelection,
   selectedAuthorizationIds,
 } from "@/lib/authorization-batch";
 import {
@@ -25,7 +29,7 @@ import {
   impactSummary,
   policyExplanation,
 } from "@/lib/external-actions";
-import { reviewHref } from "@/lib/review-workspace";
+import { campaignFilterName, reviewHref } from "@/lib/review-workspace";
 import { EmptyState } from "@/src/components/empty-state";
 import { Button } from "@/src/components/ui/button";
 import { CountBadge, WorkflowStatusBadge } from "@/src/components/ui/badge";
@@ -73,6 +77,7 @@ export function AuthorizationsQueue({
       : "authorization_required";
 
   const [actions, setActions] = useState<ExternalAction[]>([]);
+  const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [detail, setDetail] = useState<ExternalActionDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loaded, setLoaded] = useState(false);
@@ -86,6 +91,10 @@ export function AuthorizationsQueue({
   );
   const [previewBusy, setPreviewBusy] = useState(false);
   const [confirmBusy, setConfirmBusy] = useState(false);
+  const [campaignKindMode, setCampaignKindMode] = useState<"all" | "selected">("all");
+  const [campaignKinds, setCampaignKinds] = useState<Set<ExternalActionKind>>(
+    () => new Set(EXTERNAL_ACTION_KINDS),
+  );
 
   const load = useCallback(async () => {
     try {
@@ -121,12 +130,21 @@ export function AuthorizationsQueue({
     else setDetail(null);
   }, [id, selectedId]);
 
+  const loadCampaigns = useCallback(async () => {
+    if (!campaign) return;
+    const res = await apiFetch(`/workspaces/${id}/campaigns`).catch(() => null);
+    if (res?.ok) setCampaigns((await res.json()) as Campaign[]);
+  }, [id, campaign]);
+
   useEffect(() => {
     void load();
   }, [load]);
   useEffect(() => {
     void loadDetail();
   }, [loadDetail]);
+  useEffect(() => {
+    void loadCampaigns();
+  }, [loadCampaigns]);
   useEffect(() => {
     const visible = new Set(
       actions
@@ -234,38 +252,71 @@ export function AuthorizationsQueue({
     });
   }
 
-  async function previewSelectedAuthorizations(actionIds: string[]) {
-    if (actionIds.length === 0) return;
+  function toggleCampaignKind(actionKind: ExternalActionKind) {
+    setCampaignKinds((current) => {
+      const next = new Set(current);
+      if (next.has(actionKind)) {
+        if (next.size === 1) {
+          setAnnouncement("Choose at least one action kind for a campaign preview.");
+          return current;
+        }
+        next.delete(actionKind);
+      } else {
+        next.add(actionKind);
+      }
+      return next;
+    });
+  }
+
+  async function previewAuthorizationBatch(
+    batchSelection: AuthorizationBatchSelection,
+    sourceActions: ExternalAction[],
+  ) {
     setPreviewBusy(true);
     setAnnouncement("");
-    setBatchActions(
-      new Map(
-        actions
-          .filter((action) => actionIds.includes(action.id))
-          .map((action) => [action.id, action]),
-      ),
-    );
+    setBatchActions(new Map(sourceActions.map((action) => [action.id, action])));
     try {
       const res = await apiFetch(`/workspaces/${id}/external-action-batches`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           requestId: crypto.randomUUID(),
-          selection: { mode: "selected", actionIds },
+          selection: batchSelection,
         }),
       });
       const body = (await res.json().catch(() => null)) as AuthorizationBatchDetail | null;
       if (!res.ok || !body) throw new Error(`API returned ${res.status}`);
       setBatchDetail(body);
       const summary = authorizationBatchSummary(body);
-      setAnnouncement(
-        `Preview ready: ${summary.included} included, ${summary.excluded} excluded.`,
-      );
+      setAnnouncement(`Preview ready: ${summary.included} included, ${summary.excluded} excluded.`);
     } catch (err) {
       setAnnouncement(err instanceof Error ? err.message : "The batch preview failed.");
     } finally {
       setPreviewBusy(false);
     }
+  }
+
+  async function previewSelectedAuthorizations(actionIds: string[]) {
+    if (actionIds.length === 0) return;
+    await previewAuthorizationBatch(
+      { mode: "selected", actionIds },
+      actions.filter((action) => actionIds.includes(action.id)),
+    );
+  }
+
+  async function previewCampaignAuthorizations() {
+    if (!campaign) return;
+    const kinds =
+      campaignKindMode === "all"
+        ? null
+        : EXTERNAL_ACTION_KINDS.filter((actionKind) => campaignKinds.has(actionKind));
+    await previewAuthorizationBatch(
+      campaignBatchSelection(campaign, kinds),
+      actions.filter(
+        (action) =>
+          action.context.campaignId === campaign && (!kinds || kinds.includes(action.kind)),
+      ),
+    );
   }
 
   async function authorizeIncludedActions() {
@@ -314,12 +365,55 @@ export function AuthorizationsQueue({
   const selected = detail?.action ?? null;
   const selectedIds = selectedAuthorizationIds(actions, selection);
   const batchSummary = batchDetail ? authorizationBatchSummary(batchDetail) : null;
+  const activeCampaignName = campaign ? campaignFilterName(campaigns, campaign) : null;
+  const batchCampaignName =
+    batchDetail?.batch.selection.mode === "campaign"
+      ? campaignFilterName(campaigns, batchDetail.batch.selection.campaignId)
+      : null;
+  const batchGroups = batchDetail
+    ? EXTERNAL_ACTION_KINDS.map((actionKind) => {
+        const items = batchDetail.items.filter((item) => item.kind === actionKind);
+        const included = items.filter((item) => item.eligible);
+        const exclusions = Array.from(
+          items
+            .filter((item) => !item.eligible)
+            .reduce((groups, item) => {
+              const reason = item.exclusionReason ?? "Not eligible";
+              groups.set(reason, [...(groups.get(reason) ?? []), item]);
+              return groups;
+            }, new Map<string, AuthorizationBatchItem[]>()),
+          ([reason, excludedItems]) => ({ reason, items: excludedItems }),
+        );
+        return { actionKind, included, exclusions, count: items.length };
+      }).filter((group) => group.count > 0)
+    : [];
 
   function actionForItem(item: AuthorizationBatchItem): ExternalAction | undefined {
     return (
       item.submission?.action ??
       batchActions.get(item.actionId) ??
       actions.find((action) => action.id === item.actionId)
+    );
+  }
+
+  function batchItemCard(item: AuthorizationBatchItem) {
+    const sourceAction = actionForItem(item);
+    const needsRecovery =
+      item.status === "failed" || item.status === "blocked" || item.status === "stale";
+    return (
+      <li key={item.id} className={styles.batchItem}>
+        <div className={styles.batchItemHead}>
+          <strong>{item.eligible ? item.status : "excluded"}</strong>
+        </div>
+        <p>{item.impact}</p>
+        <p className="meta">
+          Timing: {sourceAction ? actionTimingLabel(sourceAction) : "fixed in preview"}
+        </p>
+        {item.error && <p className="error">{item.error}</p>}
+        {needsRecovery && sourceAction && (
+          <Link href={actionRecoveryHref(sourceAction)}>Open owning surface</Link>
+        )}
+      </li>
     );
   }
 
@@ -343,6 +437,65 @@ export function AuthorizationsQueue({
       <p aria-live="polite" role="status" className={announcement ? styles.announcement : styles.announcementEmpty}>
         {announcement}
       </p>
+
+      {campaign && (
+        <section className={styles.campaignBatchPanel} aria-label="Campaign authorization preview">
+          <div className={styles.campaignBatchIntro}>
+            <div>
+              <p className={styles.eyebrow}>Campaign-wide authorization</p>
+              <h2>{activeCampaignName}</h2>
+              <p>
+                Snapshot up to 100 actions that currently need authorization. You will review the
+                fixed list before anything is sent or launched.
+              </p>
+            </div>
+            <Button
+              variant="primary"
+              size="standard"
+              loading={previewBusy}
+              onClick={previewCampaignAuthorizations}
+            >
+              Preview campaign authorizations
+            </Button>
+          </div>
+
+          <fieldset className={styles.kindScope}>
+            <legend>Action kinds</legend>
+            <label>
+              <input
+                type="radio"
+                name="campaign-authorization-kinds"
+                checked={campaignKindMode === "all"}
+                onChange={() => setCampaignKindMode("all")}
+              />
+              All action kinds
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="campaign-authorization-kinds"
+                checked={campaignKindMode === "selected"}
+                onChange={() => setCampaignKindMode("selected")}
+              />
+              Choose action kinds
+            </label>
+            {campaignKindMode === "selected" && (
+              <div className={styles.kindGrid}>
+                {EXTERNAL_ACTION_KINDS.map((actionKind) => (
+                  <label key={actionKind}>
+                    <input
+                      type="checkbox"
+                      checked={campaignKinds.has(actionKind)}
+                      onChange={() => toggleCampaignKind(actionKind)}
+                    />
+                    {actionKindLabel(actionKind)}
+                  </label>
+                ))}
+              </div>
+            )}
+          </fieldset>
+        </section>
+      )}
 
       {actions.some((action) => action.status === "authorization_required") && (
         <div className={styles.batchToolbar} aria-label="Selected authorizations">
@@ -564,7 +717,11 @@ export function AuthorizationsQueue({
             <header className={styles.batchModalHeader}>
               <div>
                 <p className={styles.eyebrow}>Immutable preview</p>
-                <h2>Review selected authorizations</h2>
+                <h2>
+                  {batchCampaignName
+                    ? `Review ${batchCampaignName} authorizations`
+                    : "Review selected authorizations"}
+                </h2>
               </div>
               <Button
                 variant="tertiary"
@@ -603,40 +760,54 @@ export function AuthorizationsQueue({
                 completed external effects are not rolled back if another item fails.
               </p>
 
-              <ul className={styles.batchItems}>
-                {batchDetail.items.map((item) => {
-                  const sourceAction = actionForItem(item);
-                  const needsRecovery =
-                    item.status === "failed" ||
-                    item.status === "blocked" ||
-                    item.status === "stale";
-                  return (
-                    <li key={item.id} className={styles.batchItem}>
-                      <div className={styles.batchItemHead}>
-                        <span className="layer-badge">{actionKindLabel(item.kind)}</span>
-                        <strong>{item.eligible ? item.status : "excluded"}</strong>
+              {batchDetail.batch.selection.mode === "campaign" && (
+                <aside className={styles.campaignSnapshotNotice}>
+                  <strong>Bounded snapshot</strong>
+                  <span>
+                    Up to 100 actions are included per preview.{" "}
+                    {batchDetail.batch.continuationCount} additional actions remain for another
+                    preview.
+                  </span>
+                  <span>Actions created after this preview are not included.</span>
+                </aside>
+              )}
+
+              <div className={styles.batchGroups}>
+                {batchGroups.map((group) => (
+                  <section key={group.actionKind} className={styles.batchKindGroup}>
+                    <header>
+                      <h3>{actionKindLabel(group.actionKind)}</h3>
+                      <span>
+                        {group.included.length} included ·{" "}
+                        {group.exclusions.reduce((count, entry) => count + entry.items.length, 0)}{" "}
+                        excluded
+                      </span>
+                    </header>
+
+                    {group.included.length > 0 && (
+                      <div className={styles.batchOutcomeGroup}>
+                        <h4>Included</h4>
+                        <ul className={styles.batchItems}>{group.included.map(batchItemCard)}</ul>
                       </div>
-                      <p>{item.impact}</p>
-                      <p className="meta">
-                        Timing: {sourceAction ? actionTimingLabel(sourceAction) : "fixed in preview"}
-                      </p>
-                      {!item.eligible && (
-                        <p className={styles.exclusion}>Excluded: {item.exclusionReason}</p>
-                      )}
-                      {item.error && <p className="error">{item.error}</p>}
-                      {needsRecovery && sourceAction && (
-                        <Link href={actionRecoveryHref(sourceAction)}>Open owning surface</Link>
-                      )}
-                    </li>
-                  );
-                })}
-              </ul>
+                    )}
+
+                    {group.exclusions.map((exclusion) => (
+                      <div key={exclusion.reason} className={styles.batchOutcomeGroup}>
+                        <h4 className={styles.exclusion}>Excluded · {exclusion.reason}</h4>
+                        <ul className={styles.batchItems}>{exclusion.items.map(batchItemCard)}</ul>
+                      </div>
+                    ))}
+                  </section>
+                ))}
+              </div>
             </div>
 
             <footer className={styles.batchModalFooter}>
               <span className="meta">
                 {batchDetail.batch.status === "preview"
-                  ? `${batchSummary.included} actions will be authorized.`
+                  ? batchCampaignName
+                    ? `Confirm exactly ${batchSummary.included} actions for ${batchCampaignName}.`
+                    : `${batchSummary.included} actions will be authorized.`
                   : "Stored outcomes are safe to revisit."}
               </span>
               {batchDetail.batch.status === "preview" && (
@@ -647,7 +818,9 @@ export function AuthorizationsQueue({
                   disabled={batchSummary.included === 0}
                   onClick={authorizeIncludedActions}
                 >
-                  Authorize included actions
+                  {batchCampaignName
+                    ? `Authorize ${batchSummary.included} for ${batchCampaignName}`
+                    : "Authorize included actions"}
                 </Button>
               )}
             </footer>
