@@ -2,6 +2,8 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import {
   AD_LAUNCH_ACTIONS,
   createAdLaunchInputSchema,
+  proposeBudgetChangeInputSchema,
+  proposeTargetingChangeInputSchema,
   updateAdLaunchInputSchema,
   updateAdSettingsInputSchema,
   type AdLaunchAction,
@@ -36,6 +38,8 @@ import { getDraft } from "../services/drafts";
 import {
   ExternalActionPreparationError,
   preparePaidLaunchAction,
+  prepareBudgetChangeAction,
+  prepareTargetingChangeAction,
 } from "../services/external-action-adapters";
 import type { ExternalActionRuntime } from "../services/external-action-coordinator";
 import { getWorkspace } from "../services/workspaces";
@@ -211,6 +215,36 @@ export function registerAdLaunchRoutes(
     },
   );
 
+  app.get<{ Params: { id: string; launchId: string } }>(
+    "/workspaces/:id/ads/launches/:launchId/provider-state",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const launch = getLaunch(db, request.params.id, request.params.launchId);
+      if (!launch) return reply.status(404).send({ error: "launch_not_found" });
+      if (launch.status !== "launched" || !launch.externalAdSetId) {
+        return reply.status(409).send({
+          error: "launch_not_eligible",
+          message: "Meta state is available only after the ad set has launched.",
+        });
+      }
+      const resolved = executionAdapterOrError(request.params.id, launch.adAccountId);
+      if (!resolved.ok) {
+        return reply.status(resolved.status).send({ error: resolved.error, message: resolved.message });
+      }
+      try {
+        return await resolved.adapter.getAdSetState(
+          resolved.externalAccountId,
+          launch.externalAdSetId,
+        );
+      } catch (error) {
+        if (error instanceof ConnectorFabricError) {
+          return reply.status(502).send({ error: "provider_read_failed", message: error.message });
+        }
+        throw error;
+      }
+    },
+  );
+
   app.patch<{ Params: { id: string; launchId: string } }>(
     "/workspaces/:id/ads/launches/:launchId",
     async (request, reply) => {
@@ -297,6 +331,72 @@ export function registerAdLaunchRoutes(
             message: error.message,
             ...(error.details as object | undefined),
           });
+        }
+        return externalActionError(error, reply);
+      }
+    },
+  );
+
+  app.post<{ Params: { id: string; launchId: string } }>(
+    "/workspaces/:id/ads/launches/:launchId/budget-change",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const parsed = proposeBudgetChangeInputSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return invalidInput(reply, parsed.error.issues.map((issue) => issue.message).join("; "));
+      }
+      try {
+        const command = await prepareBudgetChangeAction(
+          db,
+          fabric,
+          fetcher,
+          request.params.id,
+          request.params.launchId,
+          parsed.data,
+        );
+        const submission = await runtime.propose(command, actorOf(request));
+        return reply
+          .status(submission.action.status === "authorization_required" ? 202 : 201)
+          .send(submission);
+      } catch (error) {
+        if (error instanceof ExternalActionPreparationError) {
+          return reply.status(error.statusCode).send({ error: error.code, message: error.message });
+        }
+        if (error instanceof ConnectorFabricError) {
+          return reply.status(502).send({ error: "provider_read_failed", message: error.message });
+        }
+        return externalActionError(error, reply);
+      }
+    },
+  );
+
+  app.post<{ Params: { id: string; launchId: string } }>(
+    "/workspaces/:id/ads/launches/:launchId/targeting-change",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const parsed = proposeTargetingChangeInputSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return invalidInput(reply, parsed.error.issues.map((issue) => issue.message).join("; "));
+      }
+      try {
+        const command = await prepareTargetingChangeAction(
+          db,
+          fabric,
+          fetcher,
+          request.params.id,
+          request.params.launchId,
+          parsed.data,
+        );
+        const submission = await runtime.propose(command, actorOf(request));
+        return reply
+          .status(submission.action.status === "authorization_required" ? 202 : 201)
+          .send(submission);
+      } catch (error) {
+        if (error instanceof ExternalActionPreparationError) {
+          return reply.status(error.statusCode).send({ error: error.code, message: error.message });
+        }
+        if (error instanceof ConnectorFabricError) {
+          return reply.status(502).send({ error: "provider_read_failed", message: error.message });
         }
         return externalActionError(error, reply);
       }

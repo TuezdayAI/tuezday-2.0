@@ -30,6 +30,7 @@ import {
   type Workspace,
 } from "@tuezday/contracts";
 import { connectionLabel } from "@/lib/persona-social-routing";
+import { ScopedActionPolicy } from "@/src/components/scoped-action-policy";
 
 /** The API decorates OAuth providers with whether their app creds are set. */
 type ProviderView = ConnectorProvider & { oauthConfigured?: boolean };
@@ -133,6 +134,7 @@ export default function ConnectorsPage() {
     Record<string, { topics: string; guidance: string }>
   >({});
   const [profileBusy, setProfileBusy] = useState<string | null>(null);
+  const [policyConnectionId, setPolicyConnectionId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -605,6 +607,36 @@ export default function ConnectorsPage() {
                       </div>
                     </details>
                   )}
+                {connection.status !== "disconnected" && (
+                  <details
+                    className={styles.policyDetails}
+                    open={policyConnectionId === connection.id}
+                    onToggle={(event) =>
+                      setPolicyConnectionId((current) =>
+                        event.currentTarget.open
+                          ? connection.id
+                          : current === connection.id
+                            ? null
+                            : current,
+                      )
+                    }
+                  >
+                    <summary>Action permission</summary>
+                    {policyConnectionId === connection.id && (
+                      <div className={styles.policyEditor}>
+                        <ScopedActionPolicy
+                          workspaceId={id}
+                          scope="connection"
+                          scopeId={connection.id}
+                          title={`Action permission for ${connectionLabel(
+                            connection,
+                            provider.label,
+                          )}`}
+                        />
+                      </div>
+                    )}
+                  </details>
+                )}
               </div>
             ))}
           </div>

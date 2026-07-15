@@ -8,7 +8,7 @@ import type { AuthorTemplateInput, DesignProvider } from "../src/design/provider
 import type { RenderInput } from "../src/design/render";
 import { StorageError, type AssetStorage } from "../src/design/storage";
 import type { LlmGateway } from "../src/llm/gateway";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 // ---------------------------------------------------------------------------
 // Fakes (mirrors the ads-execution harness, plus the Sprint 41 design fakes)
@@ -166,14 +166,8 @@ describe("Meta ad image (Sprint 41 Part 5)", () => {
     // Launch wiring here exercises the provider chain, so the paid-launch
     // action runs autonomously; the authorization queue is covered in
     // external-action-paid-launch.test.ts.
-    await app.inject({
-      method: "PUT",
-      url: `/workspaces/${workspaceId}/external-action-policies`,
-      payload: {
-        scope: "campaign",
-        scopeId: campaignId,
-        rules: [{ actionKind: "paid_launch", rule: "autonomous" }],
-      },
+    await putActionPolicy(app, workspaceId, "campaign", campaignId, {
+      paid_launch: "autonomous",
     });
     const connection = (
       await app.inject({

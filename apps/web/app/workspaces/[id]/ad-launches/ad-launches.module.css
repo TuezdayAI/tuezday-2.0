@@ -24,3 +24,123 @@
   color: var(--accent-deep);
   font-weight: 650;
 }
+
+.mutationPanel {
+  margin-top: 16px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-sunk);
+}
+
+.mutationHeading,
+.badgeRow,
+.mutationActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mutationHeading {
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+
+.mutationHeading h4,
+.mutationHeading p,
+.diffGrid p,
+.mutationOutcome p {
+  margin: 0;
+}
+
+.mutationHeading h4 {
+  font-size: 16px;
+}
+
+.mutationHeading p,
+.guardrailNote,
+.mutationActions span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.formGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(150px, 1fr));
+  gap: 14px;
+  align-items: end;
+}
+
+.formGrid label,
+.readValue {
+  display: grid;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.readValue {
+  align-self: stretch;
+  align-content: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+}
+
+.readValue strong {
+  color: var(--text);
+  font-size: 15px;
+}
+
+.diffSummary {
+  margin: 12px 0 0;
+  color: var(--text);
+  font-weight: 650;
+}
+
+.diffGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.diffGrid p {
+  display: grid;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  font-size: 13px;
+}
+
+.diffGrid span {
+  color: var(--muted);
+}
+
+.guardrailNote {
+  margin: 16px 0;
+}
+
+.mutationOutcome {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  font-size: 13px;
+}
+
+.receipt {
+  font-family: var(--font-mono);
+  color: var(--muted);
+}
+
+.mutationActions {
+  flex-wrap: wrap;
+  margin-top: 16px;
+}

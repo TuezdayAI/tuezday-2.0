@@ -1084,6 +1084,7 @@ export const EXTERNAL_ACTION_EXECUTION_KINDS = [
   "inbox_reply",
   "launch_message",
   "ad_launch",
+  "ad_mutation",
 ] as const;
 export type ExternalActionExecutionKind = (typeof EXTERNAL_ACTION_EXECUTION_KINDS)[number];
 
@@ -1252,6 +1253,324 @@ export const externalActionSubmissionSchema = z.object({
 });
 export type ExternalActionSubmission = z.infer<typeof externalActionSubmissionSchema>;
 
+export const AUTHORIZATION_BATCH_MODES = ["selected", "campaign"] as const;
+export type AuthorizationBatchMode = (typeof AUTHORIZATION_BATCH_MODES)[number];
+
+export const AUTHORIZATION_BATCH_STATUSES = [
+  "preview",
+  "running",
+  "completed",
+  "partially_completed",
+  "failed",
+] as const;
+export type AuthorizationBatchStatus = (typeof AUTHORIZATION_BATCH_STATUSES)[number];
+
+export const AUTHORIZATION_BATCH_ITEM_STATUSES = [
+  "pending",
+  "succeeded",
+  "scheduled",
+  "failed",
+  "blocked",
+  "stale",
+  "skipped",
+] as const;
+export type AuthorizationBatchItemStatus =
+  (typeof AUTHORIZATION_BATCH_ITEM_STATUSES)[number];
+
+const selectedAuthorizationBatchSchema = z
+  .object({
+    mode: z.literal("selected"),
+    actionIds: z.array(z.string().uuid()).min(1).max(25),
+  })
+  .strict();
+
+const campaignAuthorizationBatchSchema = z
+  .object({
+    mode: z.literal("campaign"),
+    campaignId: z.string().uuid(),
+    kinds: z
+      .array(z.enum(EXTERNAL_ACTION_KINDS))
+      .min(1)
+      .max(EXTERNAL_ACTION_KINDS.length)
+      .nullable()
+      .default(null),
+  })
+  .strict();
+
+export const authorizationBatchSelectionSchema = z
+  .discriminatedUnion("mode", [selectedAuthorizationBatchSchema, campaignAuthorizationBatchSchema])
+  .superRefine((value, ctx) => {
+    const values = value.mode === "selected" ? value.actionIds : (value.kinds ?? []);
+    if (new Set(values).size !== values.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [value.mode === "selected" ? "actionIds" : "kinds"],
+        message: "Batch selections cannot contain duplicates.",
+      });
+    }
+  });
+export type AuthorizationBatchSelection = z.infer<typeof authorizationBatchSelectionSchema>;
+
+export const createAuthorizationBatchInputSchema = z
+  .object({
+    requestId: z.string().uuid(),
+    selection: authorizationBatchSelectionSchema,
+  })
+  .strict();
+export type CreateAuthorizationBatchInput = z.infer<
+  typeof createAuthorizationBatchInputSchema
+>;
+
+const TERMINAL_AUTHORIZATION_BATCH_STATUSES: ReadonlySet<AuthorizationBatchStatus> = new Set([
+  "completed",
+  "partially_completed",
+  "failed",
+]);
+
+const TERMINAL_AUTHORIZATION_BATCH_ITEM_STATUSES: ReadonlySet<AuthorizationBatchItemStatus> =
+  new Set(["succeeded", "scheduled", "failed", "blocked", "stale", "skipped"]);
+
+export const authorizationBatchSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    requestId: z.string().uuid(),
+    selection: authorizationBatchSelectionSchema,
+    status: z.enum(AUTHORIZATION_BATCH_STATUSES),
+    continuationCount: z.number().int().nonnegative(),
+    includedCount: z.number().int().min(0).max(100),
+    excludedCount: z.number().int().nonnegative(),
+    createdBy: externalActionActorSchema,
+    createdAt: z.number().int(),
+    confirmedAt: z.number().int().nullable(),
+    completedAt: z.number().int().nullable(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.selection.mode === "selected" && value.continuationCount !== 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["continuationCount"],
+        message: "Selected batches cannot have continuation items.",
+      });
+    }
+    if (value.status === "preview" && (value.confirmedAt !== null || value.completedAt !== null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "Preview batches cannot be confirmed or completed.",
+      });
+    }
+    if (value.status === "running" && (value.confirmedAt === null || value.completedAt !== null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "Running batches require confirmation and cannot be completed.",
+      });
+    }
+    if (
+      TERMINAL_AUTHORIZATION_BATCH_STATUSES.has(value.status) &&
+      (value.confirmedAt === null || value.completedAt === null)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "Terminal batches require confirmation and completion timestamps.",
+      });
+    }
+    if (value.confirmedAt !== null && value.confirmedAt < value.createdAt) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["confirmedAt"],
+        message: "Confirmation cannot predate batch creation.",
+      });
+    }
+    if (
+      value.completedAt !== null &&
+      value.completedAt < (value.confirmedAt ?? value.createdAt)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["completedAt"],
+        message: "Completion cannot predate confirmation.",
+      });
+    }
+  });
+export type AuthorizationBatch = z.infer<typeof authorizationBatchSchema>;
+
+export const authorizationBatchItemSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    batchId: z.string().uuid(),
+    actionId: z.string().uuid(),
+    actionFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    actionUpdatedAt: z.number().int(),
+    kind: z.enum(EXTERNAL_ACTION_KINDS),
+    campaignId: z.string().uuid().nullable(),
+    impact: z.string().trim().min(1).max(1_000),
+    eligible: z.boolean(),
+    exclusionReason: z.string().trim().min(1).max(500).nullable(),
+    status: z.enum(AUTHORIZATION_BATCH_ITEM_STATUSES),
+    error: z.string().max(1_000).nullable(),
+    submission: externalActionSubmissionSchema.nullable(),
+    processedAt: z.number().int().nullable(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.eligible === (value.exclusionReason !== null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["exclusionReason"],
+        message: "Only excluded items require an exclusion reason.",
+      });
+    }
+    if (value.eligible === (value.status === "skipped")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "Only excluded items may be skipped.",
+      });
+    }
+    if (
+      value.status === "pending" &&
+      (value.submission !== null || value.error !== null || value.processedAt !== null)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "Pending items cannot carry an outcome.",
+      });
+    }
+    if (
+      value.eligible &&
+      TERMINAL_AUTHORIZATION_BATCH_ITEM_STATUSES.has(value.status) &&
+      value.processedAt === null
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["processedAt"],
+        message: "Processed eligible items require a timestamp.",
+      });
+    }
+    if ((value.status === "succeeded" || value.status === "scheduled") && !value.submission) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["submission"],
+        message: `${value.status} items require an action submission.`,
+      });
+    }
+    if (
+      value.eligible &&
+      value.status !== "pending" &&
+      !value.submission &&
+      value.error === null
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["error"],
+        message: "Processed items require a submission or durable error.",
+      });
+    }
+    if (
+      !value.eligible &&
+      (value.submission !== null || value.error !== null || value.processedAt !== null)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "Preview-excluded items cannot carry execution outcomes.",
+      });
+    }
+    if (value.submission) {
+      const action = value.submission.action;
+      if (
+        action.id !== value.actionId ||
+        action.fingerprint !== value.actionFingerprint ||
+        action.kind !== value.kind ||
+        action.context.campaignId !== value.campaignId
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["submission"],
+          message: "The submission must belong to the snapshotted action.",
+        });
+      }
+      const expectedStatus =
+        value.status === "succeeded"
+          ? "succeeded"
+          : value.status === "scheduled"
+            ? "scheduled"
+            : value.status === "failed"
+              ? "failed"
+              : value.status === "blocked"
+                ? "blocked"
+                : value.status === "stale"
+                  ? "stale"
+                  : null;
+      if (expectedStatus !== null && action.status !== expectedStatus) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["submission", "action", "status"],
+          message: "The submission status must match the stored item outcome.",
+        });
+      }
+    }
+  });
+export type AuthorizationBatchItem = z.infer<typeof authorizationBatchItemSchema>;
+
+export const authorizationBatchDetailSchema = z
+  .object({
+    batch: authorizationBatchSchema,
+    items: z.array(authorizationBatchItemSchema),
+  })
+  .superRefine((value, ctx) => {
+    const included = value.items.filter((item) => item.eligible);
+    const excluded = value.items.filter((item) => !item.eligible);
+    if (
+      included.length !== value.batch.includedCount ||
+      excluded.length !== value.batch.excludedCount
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["items"],
+        message: "Batch item counts must match the immutable preview.",
+      });
+    }
+    for (const [index, item] of value.items.entries()) {
+      if (item.batchId !== value.batch.id || item.workspaceId !== value.batch.workspaceId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["items", index],
+          message: "Batch items must belong to the same batch and workspace.",
+        });
+      }
+    }
+    if (
+      TERMINAL_AUTHORIZATION_BATCH_STATUSES.has(value.batch.status) &&
+      included.some((item) => !TERMINAL_AUTHORIZATION_BATCH_ITEM_STATUSES.has(item.status))
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["items"],
+        message: "Terminal batches cannot contain pending included items.",
+      });
+    }
+    if (
+      value.batch.status === "preview" &&
+      value.items.some(
+        (item) =>
+          (item.eligible && item.status !== "pending") ||
+          (!item.eligible && item.status !== "skipped"),
+      )
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["items"],
+        message: "Preview items must be pending or preview-excluded.",
+      });
+    }
+  });
+export type AuthorizationBatchDetail = z.infer<typeof authorizationBatchDetailSchema>;
+
 export const externalActionListFiltersSchema = z.object({
   status: z.enum(EXTERNAL_ACTION_STATUSES).optional(),
   kind: z.enum(EXTERNAL_ACTION_KINDS).optional(),
@@ -1278,7 +1597,8 @@ export const upsertExternalActionPoliciesInputSchema = z
   .object({
     scope: z.enum(EXTERNAL_ACTION_POLICY_SCOPES),
     scopeId: z.string().uuid(),
-    rules: z.array(externalActionPolicyWriteSchema).min(1).max(EXTERNAL_ACTION_KINDS.length),
+    expectedUpdatedAt: z.number().int().nullable(),
+    rules: z.array(externalActionPolicyWriteSchema).length(EXTERNAL_ACTION_KINDS.length),
   })
   .superRefine((value, ctx) => {
     if (value.scope === "workspace" && value.rules.some((rule) => rule.rule === "inherit")) {
@@ -1300,6 +1620,21 @@ export const upsertExternalActionPoliciesInputSchema = z
 export type UpsertExternalActionPoliciesInput = z.infer<
   typeof upsertExternalActionPoliciesInputSchema
 >;
+
+export const externalActionPolicyViewSchema = z.object({
+  scope: z.enum(EXTERNAL_ACTION_POLICY_SCOPES),
+  scopeId: z.string().uuid(),
+  scopeLabel: z.string().trim().min(1),
+  rules: z.array(externalActionPolicyRuleSchema),
+  effective: z.array(
+    z.object({
+      actionKind: z.enum(EXTERNAL_ACTION_KINDS),
+      policy: effectiveExternalActionPolicySchema,
+    }),
+  ),
+  updatedAt: z.number().int().nullable(),
+});
+export type ExternalActionPolicyView = z.infer<typeof externalActionPolicyViewSchema>;
 
 const DELIVERABLE_TRANSITIONS: Record<
   DeliverableProductionStatus,
@@ -3396,6 +3731,106 @@ const countryCodeSchema = z
   .toUpperCase()
   .regex(/^[A-Z]{2}$/, "Use 2-letter country codes (e.g. US, DE)");
 
+const normalizedCountryCodesSchema = z
+  .array(countryCodeSchema)
+  .min(1, "Target at least one country")
+  .max(25)
+  .transform((values) => Array.from(new Set(values)).sort());
+
+const dailyBudgetCentsSchema = z
+  .number()
+  .int()
+  .min(100, "Daily budget must be at least 100 cents")
+  .max(100_000_000);
+
+const targetingFieldsSchema = z.object({
+  countries: normalizedCountryCodesSchema,
+  ageMin: z.number().int().min(18).max(65),
+  ageMax: z.number().int().min(18).max(65),
+});
+
+function refineTargetingAgeRange(
+  value: { ageMin: number; ageMax: number },
+  ctx: z.RefinementCtx,
+): void {
+  if (value.ageMin > value.ageMax) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["ageMax"],
+      message: "Maximum age must be at least the minimum age",
+    });
+  }
+}
+
+const targetingSnapshotSchema = targetingFieldsSchema.superRefine(refineTargetingAgeRange);
+
+export const metaAdSetStateSchema = targetingFieldsSchema
+  .extend({
+    externalAdSetId: z.string().trim().min(1),
+    dailyBudgetCents: dailyBudgetCentsSchema,
+    updatedAt: z.number().int().nonnegative().nullable(),
+  })
+  .superRefine(refineTargetingAgeRange);
+export type MetaAdSetState = z.infer<typeof metaAdSetStateSchema>;
+
+const adMutationIdentitySchema = z.object({
+  launchId: z.string().uuid(),
+  adAccountId: z.string().uuid(),
+  externalAccountId: z.string().trim().min(1),
+  externalAdSetId: z.string().trim().min(1),
+  providerUpdatedAt: z.number().int().nonnegative().nullable(),
+});
+
+export const budgetChangeIntentSchema = adMutationIdentitySchema
+  .extend({
+    currency: z.string().trim().toUpperCase().regex(/^[A-Z]{3}$/),
+    beforeDailyBudgetCents: dailyBudgetCentsSchema,
+    afterDailyBudgetCents: dailyBudgetCentsSchema,
+  })
+  .superRefine((value, ctx) => {
+    if (value.beforeDailyBudgetCents === value.afterDailyBudgetCents) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["afterDailyBudgetCents"],
+        message: "The requested budget must differ from the provider budget",
+      });
+    }
+  });
+export type BudgetChangeIntent = z.infer<typeof budgetChangeIntentSchema>;
+
+export const targetingChangeIntentSchema = adMutationIdentitySchema
+  .extend({
+    before: targetingSnapshotSchema,
+    after: targetingSnapshotSchema,
+  })
+  .superRefine((value, ctx) => {
+    const unchanged =
+      value.before.ageMin === value.after.ageMin &&
+      value.before.ageMax === value.after.ageMax &&
+      value.before.countries.length === value.after.countries.length &&
+      value.before.countries.every((country, index) => country === value.after.countries[index]);
+    if (unchanged) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["after"],
+        message: "The requested targeting must differ from the provider targeting",
+      });
+    }
+  });
+export type TargetingChangeIntent = z.infer<typeof targetingChangeIntentSchema>;
+
+export const proposeBudgetChangeInputSchema = z.object({
+  dailyBudgetCents: dailyBudgetCentsSchema,
+  idempotencyKey: z.string().uuid(),
+});
+export type ProposeBudgetChangeInput = z.infer<typeof proposeBudgetChangeInputSchema>;
+
+export const proposeTargetingChangeInputSchema = targetingFieldsSchema
+  .extend({ idempotencyKey: z.string().uuid() })
+  .strict("Only countries and age range can be changed")
+  .superRefine(refineTargetingAgeRange);
+export type ProposeTargetingChangeInput = z.infer<typeof proposeTargetingChangeInputSchema>;
+
 const adLaunchFieldsSchema = z.object({
   adAccountId: z.string().uuid(),
   creativeDraftId: z.string().uuid(),
@@ -3408,11 +3843,7 @@ const adLaunchFieldsSchema = z.object({
     .url("A valid destination URL is required")
     .regex(/^https:\/\//, "Use an https destination URL"),
   // Meta's minimum daily budget is on the order of $1/day.
-  dailyBudgetCents: z
-    .number()
-    .int()
-    .min(100, "Daily budget must be at least 100 cents")
-    .max(100_000_000),
+  dailyBudgetCents: dailyBudgetCentsSchema,
   startAt: z.number().int().positive().optional(),
   endAt: z.number().int().positive().optional(),
   countries: z.array(countryCodeSchema).min(1, "Target at least one country").max(25),
@@ -4390,7 +4821,12 @@ export type PriorityQueue = z.infer<typeof priorityQueueSchema>;
 // this vocabulary once their API foundation exists.
 // ---------------------------------------------------------------------------
 
-export const EXECUTION_RESULT_KINDS = ["publication", "launch", "ad_launch"] as const;
+export const EXECUTION_RESULT_KINDS = [
+  "publication",
+  "launch",
+  "ad_launch",
+  "ad_mutation",
+] as const;
 export type ExecutionResultKind = (typeof EXECUTION_RESULT_KINDS)[number];
 
 export const EXECUTION_RESULT_STATUSES = [
@@ -4410,26 +4846,49 @@ const executionDestinationsSchema = z.object({
 });
 export type ExecutionDestinations = z.infer<typeof executionDestinationsSchema>;
 
-export const executionResultSchema = z.object({
-  kind: z.enum(EXECUTION_RESULT_KINDS),
-  /** Id of the underlying publication / launch / ad launch row. */
-  id: z.string().uuid(),
-  title: z.string(),
-  channel: z.string().nullable(),
-  campaignId: z.string().uuid().nullable(),
-  campaignName: z.string().nullable(),
-  status: z.enum(EXECUTION_RESULT_STATUSES),
-  /** When the execution happened (or last progressed, for running launches). */
-  at: z.number().int(),
-  url: z.string().nullable(),
-  error: z.string().nullable(),
-  /** Raw platform effective_status — ad launches only; null elsewhere. */
-  platformStatus: z.string().nullable(),
-  destinations: executionDestinationsSchema,
-  draftId: z.string().uuid().nullable(),
-  /** Empty for legacy results; launch rollups may carry several message actions. */
-  externalActionIds: z.array(z.string().uuid()).optional(),
-});
+export const executionResultSchema = z
+  .object({
+    kind: z.enum(EXECUTION_RESULT_KINDS),
+    /** Id of the underlying publication / launch / ad launch row. */
+    id: z.string().uuid(),
+    title: z.string(),
+    channel: z.string().nullable(),
+    campaignId: z.string().uuid().nullable(),
+    campaignName: z.string().nullable(),
+    status: z.enum(EXECUTION_RESULT_STATUSES),
+    /** When the execution happened (or last progressed, for running launches). */
+    at: z.number().int(),
+    url: z.string().nullable(),
+    error: z.string().nullable(),
+    /** Raw platform effective_status — ad launches only; null elsewhere. */
+    platformStatus: z.string().nullable(),
+    destinations: executionDestinationsSchema,
+    draftId: z.string().uuid().nullable(),
+    /** Governed mutation kind; absent/null for legacy execution projections. */
+    actionKind: z.enum(EXTERNAL_ACTION_KINDS).nullable().optional(),
+    /** Empty for legacy results; launch rollups may carry several message actions. */
+    externalActionIds: z.array(z.string().uuid()).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      value.kind === "ad_mutation" &&
+      value.actionKind !== "budget_change" &&
+      value.actionKind !== "targeting_change"
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["actionKind"],
+        message: "Ad mutation results require a budget or targeting action kind",
+      });
+    }
+    if (value.kind !== "ad_mutation" && value.actionKind != null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["actionKind"],
+        message: "Legacy execution results cannot carry an action kind",
+      });
+    }
+  });
 export type ExecutionResult = z.infer<typeof executionResultSchema>;
 
 // ---------------------------------------------------------------------------

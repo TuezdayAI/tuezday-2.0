@@ -1,4 +1,10 @@
-import type { AdLaunchObjective, Connection, ConnectorProvider } from "@tuezday/contracts";
+import type {
+  AdLaunchObjective,
+  Connection,
+  ConnectorProvider,
+  MetaAdSetState,
+  TargetingChangeIntent,
+} from "@tuezday/contracts";
 import type { ConnectorFabric } from "../fabric";
 import { MetaAdsAdapter } from "./meta";
 
@@ -41,6 +47,20 @@ export interface AdsAdapter {
  * resumes from where it stopped instead of duplicating platform objects.
  */
 export interface AdsExecutionAdapter {
+  getAdSetState(
+    externalAccountId: string,
+    externalAdSetId: string,
+  ): Promise<MetaAdSetState>;
+  updateDailyBudget(
+    externalAccountId: string,
+    externalAdSetId: string,
+    dailyBudgetCents: number,
+  ): Promise<MetaAdSetState>;
+  updateTargeting(
+    externalAccountId: string,
+    externalAdSetId: string,
+    targeting: TargetingChangeIntent["after"],
+  ): Promise<MetaAdSetState>;
   /** Create the campaign shell PAUSED — a partial chain must never spend. */
   createCampaign(
     externalAccountId: string,

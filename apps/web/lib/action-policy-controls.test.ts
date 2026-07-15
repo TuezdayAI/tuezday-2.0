@@ -46,12 +46,13 @@ describe("action policy controls source contract", () => {
     expect(workspaceControl).toContain("rules: EXTERNAL_ACTION_KINDS.map");
   });
 
-  it("lets a campaign inherit by deleting its stored override", () => {
+  it("lets a campaign inherit through one complete optimistic replacement", () => {
     expect(campaignControl).toContain('"inherit"');
     expect(campaignControl).toContain('scope: "campaign"');
     expect(campaignControl).toContain('method: "PUT"');
-    expect(campaignControl).toContain('method: "DELETE"');
-    expect(campaignControl).toMatch(/external-action-policies\/\$\{/);
+    expect(campaignControl).toContain("expectedUpdatedAt: view.updatedAt");
+    expect(campaignControl).toContain("rules: EXTERNAL_ACTION_KINDS.map");
+    expect(campaignControl).not.toContain('method: "DELETE"');
   });
 
   it("shows effective badges and read-only contributing constraints", () => {

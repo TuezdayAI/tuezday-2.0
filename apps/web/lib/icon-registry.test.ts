@@ -1,7 +1,13 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { ICON_REGISTRY, ICON_NAMES } from "../src/components/ui/icon";
 import { BRAND_ICONS } from "../src/components/ui/brand-icons";
 import { WORKSPACE_NAV } from "@tuezday/contracts";
+
+const iconSource = readFileSync(
+  new URL("../src/components/ui/icon.tsx", import.meta.url),
+  "utf8",
+);
 
 // The spec §4 vocabulary — nav, content types, status, brain docs, actions.
 const REQUIRED: string[] = [
@@ -16,6 +22,8 @@ const REQUIRED: string[] = [
   "doc-soul", "doc-icp", "doc-voice", "doc-history", "doc-now",
   // actions
   "approve", "reject", "edit", "regenerate", "connect", "module-settings",
+  "authorize", "batch", "budget", "targeting", "send",
+  "signal", "connection-lost", "campaign-risk",
   // common UI
   "calendar", "search", "add", "close", "chevron-right", "chevron-down", "external", "user", "notification", "warning", "info",
 ];
@@ -29,6 +37,13 @@ describe("icon registry", () => {
 
   it("ICON_NAMES matches the registry keys exactly", () => {
     expect(ICON_NAMES.slice().sort()).toEqual(Object.keys(ICON_REGISTRY).sort());
+  });
+
+  it("uses the approved semantic optical sizes and stroke", () => {
+    expect(iconSource).toContain('compact: "16px"');
+    expect(iconSource).toContain('standard: "18px"');
+    expect(iconSource).toContain('emphasized: "20px"');
+    expect(iconSource).toContain("strokeWidth={1.8}");
   });
 
   it("bundles the seven brand marks", () => {

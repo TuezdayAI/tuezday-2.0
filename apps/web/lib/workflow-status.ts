@@ -13,7 +13,12 @@ const FAMILY_ICON: Record<WorkflowStatusFamily, IconName> = {
   informational: "info",
 };
 
+const STATUS_ICON: Partial<Record<WorkflowStatus, IconName>> = {
+  authorization_required: "authorize",
+  connection_lost: "connection-lost",
+};
+
 export function workflowStatusView(status: WorkflowStatus) {
   const meta = WORKFLOW_STATUS_META[status];
-  return { ...meta, icon: FAMILY_ICON[meta.family] };
+  return { ...meta, icon: STATUS_ICON[status] ?? FAMILY_ICON[meta.family] };
 }

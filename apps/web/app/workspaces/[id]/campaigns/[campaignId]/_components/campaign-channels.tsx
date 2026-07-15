@@ -15,6 +15,7 @@ import { editablePlan, formatLaneSchedule, laneStatus } from "@/lib/campaign-con
 import { WorkflowStatusBadge } from "@/src/components/ui/badge";
 import { Button } from "@/src/components/ui/button";
 import { Icon } from "@/src/components/ui/icon";
+import { ScopedActionPolicy } from "@/src/components/scoped-action-policy";
 import { CampaignLaneForm } from "./campaign-lane-form";
 import styles from "../campaign-workspace.module.css";
 
@@ -45,6 +46,8 @@ export function CampaignChannels({
   const active = revisions.find(({ plan }) => plan.id === currentPlanRevisionId) ?? null;
   const selected = draft ?? active;
   const [editing, setEditing] = useState<CampaignLaneRevisionView | "new" | null>(null);
+  const [policyLaneId, setPolicyLaneId] = useState<string | null>(null);
+  const policyLanes = active?.lanes ?? [];
   const personaNames = new Map(personas.map((persona) => [persona.id, persona.name]));
   const audienceNames = new Map(audiences.map((audience) => [audience.id, audience.name]));
   const connectionsById = new Map(connections.map((connection) => [connection.id, connection]));
@@ -143,6 +146,55 @@ export function CampaignChannels({
             );
           })}
         </div>
+      )}
+
+      {policyLanes.length > 0 && (
+        <section className={styles.lanePolicies} aria-labelledby="active-lane-permissions">
+          <div className={styles.lanePoliciesHeading}>
+            <div>
+              <p className={styles.panelKicker}>Active lane safety</p>
+              <h3 id="active-lane-permissions">Action permission for active lanes</h3>
+            </div>
+            <p>
+              The active plan is immutable; action permission is stored separately and can only
+              tighten workspace and campaign permission. Inactive and draft revision policy stays
+              read-only.
+            </p>
+          </div>
+          <div className={styles.lanePolicyList}>
+            {policyLanes.map((lane) => (
+              <details
+                key={lane.id}
+                className={styles.lanePolicyDetail}
+                open={policyLaneId === lane.id}
+                onToggle={(event) =>
+                  setPolicyLaneId((current) =>
+                    event.currentTarget.open
+                      ? lane.id
+                      : current === lane.id
+                        ? null
+                        : current,
+                  )
+                }
+              >
+                <summary>
+                  <span>{lane.name}</span>
+                  <span>{lane.channel} · {lane.format}</span>
+                </summary>
+                {policyLaneId === lane.id && (
+                  <div className={styles.lanePolicyEditor}>
+                    <ScopedActionPolicy
+                      workspaceId={workspaceId}
+                      scope="lane"
+                      scopeId={lane.id}
+                      title={`Action permission for this lane — ${lane.name}`}
+                    />
+                  </div>
+                )}
+              </details>
+            ))}
+          </div>
+        </section>
       )}
     </section>
   );

@@ -133,6 +133,16 @@
 .emptyChannels { display: grid; justify-items: center; padding: 36px 18px; border: 1px dashed var(--border-strong); border-radius: var(--radius-lg); color: var(--muted); text-align: center; }
 .emptyChannels h3 { margin: 10px 0 4px; color: var(--text); font-family: var(--font-display); }
 .emptyChannels p { max-width: 520px; margin: 0; font-size: 12px; line-height: 1.5; }
+.lanePolicies { display: grid; gap: 12px; margin-top: 6px; padding-top: 18px; border-top: 1px solid var(--line-soft); }
+.lanePoliciesHeading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.lanePoliciesHeading h3 { margin: 4px 0 0; font-family: var(--font-display); font-size: 19px; }
+.lanePoliciesHeading > p { max-width: 540px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; text-align: right; }
+.lanePolicyList { display: grid; gap: 8px; }
+.lanePolicyDetail { border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); }
+.lanePolicyDetail > summary { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 44px; padding: 0 14px; cursor: pointer; }
+.lanePolicyDetail > summary span:first-child { font-size: 13px; font-weight: 650; }
+.lanePolicyDetail > summary span:last-child { color: var(--muted-2); font-family: var(--font-mono); font-size: 10px; text-transform: uppercase; }
+.lanePolicyEditor { padding: 0 12px 12px; }
 
 .laneForm { display: grid; gap: 16px; padding: 18px; }
 .laneForm label { display: grid; gap: 6px; color: var(--muted); font-size: 11px; font-weight: 650; }
@@ -165,7 +175,8 @@
   .resultMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .resultMetrics div:nth-child(3) { border-left: 0; border-top: 1px solid var(--line-soft); }
   .resultMetrics div:nth-child(4) { border-top: 1px solid var(--line-soft); }
-  .sectionHeading, .editorHeading, .revisionHeader { align-items: flex-start; flex-direction: column; }
+  .sectionHeading, .editorHeading, .revisionHeader, .lanePoliciesHeading { align-items: flex-start; flex-direction: column; }
+  .lanePoliciesHeading > p { text-align: left; }
   .formColumns, .formColumnsThree { grid-template-columns: 1fr; }
   .revisionFacts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .revisionFacts div:nth-child(3) { border-left: 0; border-top: 1px solid var(--line-soft); }

@@ -21,7 +21,7 @@ import { InstagramAdapter } from "../src/connectors/social/instagram";
 import { LinkedInAdapter } from "../src/connectors/social/linkedin";
 import { XAdapter } from "../src/connectors/social/x";
 import type { LlmGateway } from "../src/llm/gateway";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 const fakeLlm: LlmGateway = {
   async generate() {
@@ -287,14 +287,8 @@ describe("targeted launch API", () => {
     // These are legacy direct-dispatch scenarios: sends run autonomously so the
     // per-message provider behaviour stays observable. The authorization queue
     // itself is covered in external-action-messaging.test.ts.
-    await app.inject({
-      method: "PUT",
-      url: `/workspaces/${workspaceId}/external-action-policies`,
-      payload: {
-        scope: "workspace",
-        scopeId: workspaceId,
-        rules: [{ actionKind: "send", rule: "autonomous" }],
-      },
+    await putActionPolicy(app, workspaceId, "workspace", workspaceId, {
+      send: "autonomous",
     });
   });
 

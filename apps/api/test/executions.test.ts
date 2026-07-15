@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { eq } from "drizzle-orm";
 import { executionResultSchema, type ExecutionResult } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
 import type { Db } from "../src/db";
@@ -7,6 +8,7 @@ import {
   adAccounts,
   adLaunches,
   connections,
+  externalActions,
   launchMessages,
   launches,
   publications,
@@ -119,6 +121,69 @@ describe("unified execution results", () => {
       supersedesActionId: null,
       draftId: null,
     });
+    return id;
+  }
+
+  function seedMutationAction(over: {
+    kind: "budget_change" | "targeting_change";
+    status: "succeeded" | "failed" | "stale";
+    at: number;
+    error?: string | null;
+    withReceipt?: boolean;
+  }): string {
+    const launchId = randomUUID();
+    const id = randomUUID();
+    insertExternalAction(db, {
+      id,
+      workspaceId,
+      kind: over.kind,
+      subject: {
+        kind: "ad_launch",
+        id: launchId,
+        title: over.kind === "budget_change" ? "Change budget · Launch" : "Change targeting · Launch",
+        summary: "Exact Meta mutation",
+        channel: "ads",
+        destination: "Main account · set_1",
+      },
+      context: {
+        campaignId,
+        campaignName: "Summer Launch",
+        personaId: null,
+        personaName: null,
+        connectionId: null,
+        connectionName: "Main account",
+        laneRevisionId: null,
+        laneName: null,
+      },
+      payload: {},
+      requestedFor: null,
+      idempotencyKey: `mutation:${id}`,
+      fingerprint: canonicalActionFingerprint({ id }),
+      policy: { effective: "human_required", contributingRules: [] },
+      actor: { userId: null, label: "test" },
+      supersedesActionId: null,
+      draftId: null,
+    });
+    db.update(externalActions)
+      .set({
+        status: over.status,
+        executionKind: over.withReceipt === false ? null : "ad_mutation",
+        executionId: over.withReceipt === false ? null : launchId,
+        executionReceiptJson:
+          over.withReceipt === false
+            ? null
+            : JSON.stringify({
+                kind: "ad_mutation",
+                id: launchId,
+                status: over.status === "succeeded" ? `${over.kind === "budget_change" ? "budget" : "targeting"}_updated` : "failed",
+                url: null,
+                error: over.error ?? null,
+              }),
+        completedAt: over.at,
+        updatedAt: over.at,
+      })
+      .where(eq(externalActions.id, id))
+      .run();
     return id;
   }
 
@@ -363,6 +428,42 @@ describe("unified execution results", () => {
     expect(results[1]?.kind).toBe("ad_launch");
     expect(results[1]?.platformStatus).toBe("ACTIVE");
     expect(results[0]?.error).toBe("(#100) Invalid page id");
+  });
+
+  it("projects only terminal Meta mutation actions with provider receipts", async () => {
+    const budgetAction = seedMutationAction({
+      kind: "budget_change",
+      status: "succeeded",
+      at: T0 + HOUR,
+    });
+    const targetingAction = seedMutationAction({
+      kind: "targeting_change",
+      status: "failed",
+      at: T0 + 2 * HOUR,
+      error: "Meta rejected targeting",
+    });
+    seedMutationAction({
+      kind: "budget_change",
+      status: "stale",
+      at: T0 + 3 * HOUR,
+      withReceipt: false,
+    });
+
+    const results = await fetchResults();
+    expect(results).toHaveLength(2);
+    expect(results[0]).toMatchObject({
+      kind: "ad_mutation",
+      actionKind: "targeting_change",
+      status: "failed",
+      error: "Meta rejected targeting",
+      externalActionIds: [targetingAction],
+    });
+    expect(results[1]).toMatchObject({
+      kind: "ad_mutation",
+      actionKind: "budget_change",
+      status: "completed",
+      externalActionIds: [budgetAction],
+    });
   });
 
   it("filters by campaign and honors the limit", async () => {

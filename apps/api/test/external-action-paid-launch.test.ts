@@ -6,7 +6,7 @@ import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric"
 import type { Db } from "../src/db";
 import { adLaunches, drafts, externalActions } from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 /** Fake gateway producing a parseable Meta ad creative (mirrors ads-execution). */
 const fakeLlm: LlmGateway = {
@@ -203,14 +203,8 @@ describe("external-action paid launch boundary", () => {
   async function setAutonomous() {
     // The launch carries its creative's campaign, whose explicit rule replaces
     // the workspace baseline — so autonomy is granted at the campaign scope.
-    const res = await app.inject({
-      method: "PUT",
-      url: `/workspaces/${workspaceId}/external-action-policies`,
-      payload: {
-        scope: "campaign",
-        scopeId: campaignId,
-        rules: [{ actionKind: "paid_launch", rule: "autonomous" }],
-      },
+    const res = await putActionPolicy(app, workspaceId, "campaign", campaignId, {
+      paid_launch: "autonomous",
     });
     expect(res.statusCode).toBe(200);
   }

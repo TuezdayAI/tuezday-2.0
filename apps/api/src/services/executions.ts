@@ -1,7 +1,15 @@
 import { and, eq, inArray, ne } from "drizzle-orm";
 import type { ExecutionResult, ExecutionResultStatus } from "@tuezday/contracts";
 import type { Db } from "../db";
-import { adLaunches, campaigns, drafts, launchMessages, launches, publications } from "../db/schema";
+import {
+  adLaunches,
+  campaigns,
+  drafts,
+  externalActions,
+  launchMessages,
+  launches,
+  publications,
+} from "../db/schema";
 
 export interface ExecutionListOptions {
   campaignId?: string;
@@ -39,6 +47,7 @@ export function listExecutionResults(
     ...publicationResults(db, workspaceId, campaignOf),
     ...launchResults(db, workspaceId, campaignOf),
     ...adLaunchResults(db, workspaceId, campaignOf),
+    ...adMutationResults(db, workspaceId, campaignOf),
   ];
 
   const scoped = options.campaignId
@@ -46,6 +55,64 @@ export function listExecutionResults(
     : results;
   const limit = Math.min(Math.max(options.limit ?? DEFAULT_LIMIT, 1), MAX_LIMIT);
   return scoped.sort((left, right) => right.at - left.at).slice(0, limit);
+}
+
+function adMutationResults(
+  db: Db,
+  workspaceId: string,
+  campaignOf: CampaignOf,
+): ExecutionResult[] {
+  const rows = db
+    .select()
+    .from(externalActions)
+    .where(
+      and(
+        eq(externalActions.workspaceId, workspaceId),
+        inArray(externalActions.kind, ["budget_change", "targeting_change"]),
+        inArray(externalActions.status, ["succeeded", "failed"]),
+        eq(externalActions.executionKind, "ad_mutation"),
+      ),
+    )
+    .all();
+  const results: ExecutionResult[] = [];
+  for (const row of rows) {
+    if (
+      !row.executionReceiptJson ||
+      (row.kind !== "budget_change" && row.kind !== "targeting_change")
+    ) {
+      continue;
+    }
+    const snapshot = JSON.parse(row.subjectSnapshotJson) as {
+      subject?: { title?: string };
+    };
+    const receipt = JSON.parse(row.executionReceiptJson) as {
+      error?: string | null;
+    };
+    const succeeded = row.status === "succeeded";
+    results.push({
+      kind: "ad_mutation",
+      id: row.id,
+      title: snapshot.subject?.title ?? (row.kind === "budget_change" ? "Budget change" : "Targeting change"),
+      channel: "ads",
+      ...campaignOf(row.campaignId),
+      status: succeeded ? "completed" : "failed",
+      at: row.completedAt ?? row.updatedAt,
+      url: null,
+      error: succeeded ? null : (receipt.error ?? row.blockerDetail),
+      platformStatus: null,
+      destinations: {
+        total: 1,
+        succeeded: succeeded ? 1 : 0,
+        failed: succeeded ? 0 : 1,
+        skipped: 0,
+        pending: 0,
+      },
+      draftId: null,
+      actionKind: row.kind,
+      externalActionIds: [row.id],
+    });
+  }
+  return results;
 }
 
 type CampaignOf = (campaignId: string | null | undefined) => {

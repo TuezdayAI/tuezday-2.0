@@ -42,6 +42,9 @@ describe("execution results view model", () => {
     expect(executionWorkflowStatus(result({ kind: "ad_launch", status: "running" }))).toBe(
       "launching",
     );
+    expect(executionWorkflowStatus(result({ kind: "ad_mutation", status: "running" }))).toBe(
+      "launching",
+    );
   });
 
   it("summarizes destinations listing successes and failures separately", () => {
@@ -66,6 +69,12 @@ describe("execution results view model", () => {
     expect(executionTargetHref("ws1", result({ kind: "ad_launch" }))).toBe(
       "/workspaces/ws1/ad-launches",
     );
+    expect(
+      executionTargetHref(
+        "ws1",
+        result({ kind: "ad_mutation", actionKind: "budget_change" }),
+      ),
+    ).toBe("/workspaces/ws1/ad-launches");
   });
 
   it("links zero, one, or many governing actions without inventing legacy data", () => {
@@ -100,6 +109,7 @@ describe("execution results view model", () => {
     expect(EXECUTION_KIND_LABELS.publication).toBe("Post");
     expect(EXECUTION_KIND_LABELS.launch).toBe("Targeted send");
     expect(EXECUTION_KIND_LABELS.ad_launch).toBe("Ad launch");
+    expect(EXECUTION_KIND_LABELS.ad_mutation).toBe("Ad change");
   });
 
   it("adds the results tab to the campaign workspace", () => {

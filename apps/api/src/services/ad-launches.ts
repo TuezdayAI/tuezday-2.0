@@ -183,6 +183,23 @@ export function updateLaunch(
   return getLaunch(db, launch.workspaceId, launch.id)!;
 }
 
+/** Persist a provider-confirmed targeting mutation on the local launch projection. */
+export function persistLaunchTargeting(
+  db: Db,
+  launchId: string,
+  targeting: { countries: string[]; ageMin: number; ageMax: number },
+): void {
+  db.update(adLaunches)
+    .set({
+      countriesJson: JSON.stringify(targeting.countries),
+      ageMin: targeting.ageMin,
+      ageMax: targeting.ageMax,
+      updatedAt: Date.now(),
+    })
+    .where(eq(adLaunches.id, launchId))
+    .run();
+}
+
 export function deleteLaunch(db: Db, launchId: string): void {
   db.delete(adLaunches).where(eq(adLaunches.id, launchId)).run();
 }

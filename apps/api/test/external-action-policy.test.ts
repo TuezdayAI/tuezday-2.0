@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { EXTERNAL_ACTION_KINDS, type ExternalActionKind } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
 import type { Db } from "../src/db";
 import {
@@ -15,16 +16,48 @@ import {
   ExternalActionPolicyInputError,
   ExternalActionPolicyScopeNotFoundError,
   deleteExternalActionPolicy,
+  listExternalActionPolicies,
   resolveExternalActionPolicy,
   upsertExternalActionPolicies,
 } from "../src/services/external-action-policy";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 describe("external action policy", () => {
   let app: TuezdayApp;
   let db: Db;
   let workspaceId: string;
   let campaignId: string;
+
+  function completeRules(
+    overrides: Partial<Record<ExternalActionKind, "inherit" | "autonomous" | "human_required">> = {},
+  ) {
+    return EXTERNAL_ACTION_KINDS.map((actionKind) => ({
+      actionKind,
+      rule: overrides[actionKind] ?? "inherit",
+    }));
+  }
+
+  function replacePolicy(
+    scope: "workspace" | "campaign" | "persona" | "connection" | "lane",
+    scopeId: string,
+    overrides: Partial<Record<ExternalActionKind, "inherit" | "autonomous" | "human_required">>,
+  ) {
+    const current = listExternalActionPolicies(db, workspaceId, scope, scopeId);
+    const defaults = scope === "workspace"
+      ? Object.fromEntries(EXTERNAL_ACTION_KINDS.map((kind) => [kind, "human_required"]))
+      : {};
+    return upsertExternalActionPolicies(
+      db,
+      workspaceId,
+      {
+        scope,
+        scopeId,
+        expectedUpdatedAt: current.updatedAt,
+        rules: completeRules({ ...defaults, ...overrides }),
+      },
+      null,
+    );
+  }
 
   beforeEach(async () => {
     db = createTestDb();
@@ -60,16 +93,7 @@ describe("external action policy", () => {
       contributingRules: [{ scope: "workspace", scopeId: workspaceId }],
     });
 
-    upsertExternalActionPolicies(
-      db,
-      workspaceId,
-      {
-        scope: "campaign",
-        scopeId: campaignId,
-        rules: [{ actionKind: "publish", rule: "autonomous" }],
-      },
-      null,
-    );
+    replacePolicy("campaign", campaignId, { publish: "autonomous" });
 
     expect(
       resolveExternalActionPolicy(db, {
@@ -139,26 +163,8 @@ describe("external action policy", () => {
       })
       .run();
 
-    upsertExternalActionPolicies(
-      db,
-      workspaceId,
-      {
-        scope: "campaign",
-        scopeId: campaignId,
-        rules: [{ actionKind: "publish", rule: "autonomous" }],
-      },
-      null,
-    );
-    upsertExternalActionPolicies(
-      db,
-      workspaceId,
-      {
-        scope: "lane",
-        scopeId: laneRevisionId,
-        rules: [{ actionKind: "publish", rule: "human_required" }],
-      },
-      null,
-    );
+    replacePolicy("campaign", campaignId, { publish: "autonomous" });
+    replacePolicy("lane", laneRevisionId, { publish: "human_required" });
 
     const resolved = resolveExternalActionPolicy(db, {
       workspaceId,
@@ -202,7 +208,8 @@ describe("external action policy", () => {
         {
           scope: "persona",
           scopeId: protectedPersonaId,
-          rules: [{ actionKind: "publish", rule: "human_required" }],
+          expectedUpdatedAt: null,
+          rules: completeRules({ publish: "human_required" }),
         },
         null,
       ),
@@ -219,7 +226,8 @@ describe("external action policy", () => {
         {
           scope: "persona",
           scopeId: localPersonaId,
-          rules: [{ actionKind: "publish", rule: "autonomous" }],
+          expectedUpdatedAt: null,
+          rules: completeRules({ publish: "autonomous" }),
         },
         null,
       ),
@@ -235,16 +243,10 @@ describe("external action policy", () => {
     expect(initial.json().rules).toHaveLength(6);
     expect(initial.json().effective).toHaveLength(6);
 
-    const updated = await app.inject({
-      method: "PUT",
-      url: `/workspaces/${workspaceId}/external-action-policies`,
-      payload: {
-        scope: "campaign",
-        scopeId: campaignId,
-        rules: [{ actionKind: "publish", rule: "autonomous" }],
-      },
+    const updated = await putActionPolicy(app, workspaceId, "campaign", campaignId, {
+      publish: "autonomous",
     });
-    expect(updated.statusCode).toBe(200);
+    expect(updated.statusCode, updated.body).toBe(200);
     const publish = updated.json().effective.find((item: { actionKind: string }) => item.actionKind === "publish");
     expect(publish.policy.effective).toBe("autonomous");
 
@@ -257,6 +259,64 @@ describe("external action policy", () => {
     expect(deleteExternalActionPolicy(db, workspaceId, ruleId)).toBe(false);
   });
 
+  it("atomically replaces a complete campaign scope and deletes inherited rows", async () => {
+    const updated = await putActionPolicy(app, workspaceId, "campaign", campaignId, {
+      publish: "autonomous",
+    });
+
+    expect(updated.statusCode, updated.body).toBe(200);
+    expect(updated.json().rules).toHaveLength(1);
+    expect(updated.json().rules[0]).toMatchObject({
+      actionKind: "publish",
+      rule: "autonomous",
+    });
+    expect(updated.json().updatedAt).toEqual(expect.any(Number));
+  });
+
+  it("rejects a stale complete scope write without changing current rules", async () => {
+    const initial = await app.inject({
+      method: "GET",
+      url: `/workspaces/${workspaceId}/external-action-policies?scope=campaign&scopeId=${campaignId}`,
+    });
+    const initialUpdatedAt = initial.json().updatedAt as number;
+    const first = await app.inject({
+      method: "PUT",
+      url: `/workspaces/${workspaceId}/external-action-policies`,
+      payload: {
+        scope: "campaign",
+        scopeId: campaignId,
+        expectedUpdatedAt: initialUpdatedAt,
+        rules: completeRules({ publish: "autonomous" }),
+      },
+    });
+    expect(first.statusCode, first.body).toBe(200);
+
+    const stale = await app.inject({
+      method: "PUT",
+      url: `/workspaces/${workspaceId}/external-action-policies`,
+      payload: {
+        scope: "campaign",
+        scopeId: campaignId,
+        expectedUpdatedAt: initialUpdatedAt,
+        rules: completeRules({ publish: "human_required" }),
+      },
+    });
+
+    expect(stale.statusCode).toBe(409);
+    expect(stale.json()).toMatchObject({
+      error: "policy_conflict",
+      current: {
+        updatedAt: first.json().updatedAt,
+        rules: [{ actionKind: "publish", rule: "autonomous" }],
+      },
+    });
+    const after = await app.inject({
+      method: "GET",
+      url: `/workspaces/${workspaceId}/external-action-policies?scope=campaign&scopeId=${campaignId}`,
+    });
+    expect(after.json().rules).toEqual(first.json().rules);
+  });
+
   it("returns 404 for inaccessible scopes and 400 for malformed batches", async () => {
     const missing = await app.inject({
       method: "PUT",
@@ -264,7 +324,8 @@ describe("external action policy", () => {
       payload: {
         scope: "campaign",
         scopeId: randomUUID(),
-        rules: [{ actionKind: "publish", rule: "autonomous" }],
+        expectedUpdatedAt: null,
+        rules: completeRules({ publish: "autonomous" }),
       },
     });
     expect(missing.statusCode).toBe(404);
@@ -275,10 +336,12 @@ describe("external action policy", () => {
       payload: {
         scope: "campaign",
         scopeId: campaignId,
-        rules: [
-          { actionKind: "publish", rule: "autonomous" },
-          { actionKind: "publish", rule: "human_required" },
-        ],
+        expectedUpdatedAt: null,
+        rules: completeRules({ publish: "autonomous" }).map((rule, index) =>
+          index === EXTERNAL_ACTION_KINDS.length - 1
+            ? { actionKind: "publish", rule: "human_required" }
+            : rule,
+        ),
       },
     });
     expect(duplicateBatch.statusCode).toBe(400);
