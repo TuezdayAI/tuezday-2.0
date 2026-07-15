@@ -327,34 +327,34 @@ git commit -m "feat(web): edit persona and connection action policy"
 
 **Interfaces:**
 - Consumes `ScopedActionPolicy` from Task 4.
-- Uses the active `CampaignLaneRevision.id` as `scopeId`; immutable inactive revisions remain read-only.
+- Uses the active `CampaignLaneRevision.id` (`lane.id` in `CampaignLaneRevisionView`) as `scopeId`; immutable inactive revisions remain read-only.
 
-- [ ] **Step 1: Write the failing lane ownership test**
+- [x] **Step 1: Write the failing lane ownership test**
 
 ```ts
 expect(source).toContain('scope="lane"');
-expect(source).toContain("scopeId={lane.revision.id}");
+expect(source).toContain("scopeId={lane.id}");
 expect(source).toContain("active plan is immutable");
 expect(source).toContain("Action permission for this lane");
 ```
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 Run: `npm exec --prefix apps/web vitest -- run lib/lane-policy-shell.test.ts`  
 Expected: FAIL because Campaign Channels has no policy control.
 
-- [ ] **Step 3: Add active-revision editors**
+- [x] **Step 3: Add active-revision editors**
 
 Mount one editor in each active lane's expanded detail. The copy states that lane policy can only tighten workspace/campaign permission. Render inactive revision contributions read-only; do not let a policy write mutate a plan revision.
 
-- [ ] **Step 4: Run focused tests and typecheck**
+- [x] **Step 4: Run focused tests and typecheck**
 
 Run: `npm exec --prefix apps/web vitest -- run lib/lane-policy-shell.test.ts lib/campaign-workspace-contract.test.ts`  
 Expected: PASS.  
 Run: `npm run typecheck`  
 Expected: exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/web/app/workspaces/[id]/campaigns/[campaignId]/_components/campaign-channels.tsx apps/web/app/workspaces/[id]/campaigns/[campaignId]/campaign-workspace.module.css apps/web/lib/lane-policy-shell.test.ts
