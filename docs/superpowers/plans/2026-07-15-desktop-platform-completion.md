@@ -238,7 +238,7 @@ git commit -m "feat(policy): guard scoped action policy writes"
 - Produces pure helpers `tighteningPolicyDraft(view)`, `tighteningPolicyDirty(view,draft)`, and `policyConflictCopy()`.
 - Renders exactly `inherit|human_required`; it never presents `autonomous` at a tightening scope.
 
-- [ ] **Step 1: Write failing view-model and shell tests**
+- [x] **Step 1: Write failing view-model and shell tests**
 
 ```ts
 expect(tighteningPolicyDraft(view).publish).toBe("inherit");
@@ -249,23 +249,23 @@ expect(shell).not.toContain('<option value="autonomous">');
 expect(shell).toContain("expectedUpdatedAt");
 ```
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 Run: `npm exec --prefix apps/web vitest -- run lib/scoped-action-policy.test.ts`  
 Expected: FAIL because the component/helpers do not exist.
 
-- [ ] **Step 3: Implement self-fetching conflict-safe editor**
+- [x] **Step 3: Implement self-fetching conflict-safe editor**
 
 Load the policy view with `scope`/`scopeId`, render all `EXTERNAL_ACTION_KINDS`, show `WorkflowStatusBadge` plus every non-inherit contribution, and PUT one full six-kind array with `expectedUpdatedAt`. On 409, retain the attempted draft, show the server's current rules side-by-side, and expose **Reload current policy**. Announce save/conflict/error via a polite live region.
 
-- [ ] **Step 4: Run focused tests and typecheck**
+- [x] **Step 4: Run focused tests and typecheck**
 
 Run: `npm exec --prefix apps/web vitest -- run lib/scoped-action-policy.test.ts lib/external-actions.test.ts`  
 Expected: PASS.  
 Run: `npm run typecheck`  
 Expected: exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/web/src/components/scoped-action-policy.tsx apps/web/src/components/scoped-action-policy.module.css apps/web/lib/scoped-action-policy.test.ts apps/web/lib/external-actions.ts

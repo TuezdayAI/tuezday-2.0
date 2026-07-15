@@ -1,12 +1,44 @@
-import type {
-  ExternalAction,
-  ExternalActionEffectivePolicy,
-  ExternalActionKind,
-  ExternalActionStatus,
-  ExternalActionSubmission,
-  WorkflowStatus,
+import {
+  EXTERNAL_ACTION_KINDS,
+  type ExternalAction,
+  type ExternalActionEffectivePolicy,
+  type ExternalActionKind,
+  type ExternalActionStatus,
+  type ExternalActionSubmission,
+  type ExternalActionPolicyView,
+  type ExternalActionPolicyRule,
+  type WorkflowStatus,
 } from "@tuezday/contracts";
 import { reviewHref } from "./review-workspace";
+
+export type TighteningPolicyRule = Extract<
+  ExternalActionPolicyRule,
+  "inherit" | "human_required"
+>;
+export type TighteningPolicyDraft = Record<ExternalActionKind, TighteningPolicyRule>;
+
+export function tighteningPolicyDraft(view: ExternalActionPolicyView): TighteningPolicyDraft {
+  const draft = {} as TighteningPolicyDraft;
+  for (const actionKind of EXTERNAL_ACTION_KINDS) {
+    const stored = view.rules.find((rule) => rule.actionKind === actionKind)?.rule;
+    draft[actionKind] = stored === "human_required" ? "human_required" : "inherit";
+  }
+  return draft;
+}
+
+export function tighteningPolicyDirty(
+  view: ExternalActionPolicyView,
+  draft: TighteningPolicyDraft,
+): boolean {
+  const stored = tighteningPolicyDraft(view);
+  return (Object.keys(stored) as ExternalActionKind[]).some(
+    (actionKind) => stored[actionKind] !== draft[actionKind],
+  );
+}
+
+export function policyConflictCopy(): string {
+  return "This action policy changed in another editor. Compare your attempted settings with the current saved policy, then reload before saving again.";
+}
 
 /** In-flight wording depends on what is being dispatched. */
 const DISPATCHING_STATUS: Record<ExternalActionKind, WorkflowStatus> = {
