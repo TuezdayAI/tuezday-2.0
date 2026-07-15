@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, lt } from "drizzle-orm";
 import type {
   ExecutionResult,
   ExternalAction,
@@ -12,6 +12,7 @@ import {
   campaignLaneRevisions,
   campaignLanes,
   campaigns,
+  connections,
   crmSyncSettings,
   discoverySources,
   drafts,
@@ -144,6 +145,132 @@ export function signalPriorityCandidate(
 export interface ConnectionImpact {
   campaignIds: string[];
   dependencies: string[];
+}
+
+const CAMPAIGN_FAILURE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/** Derive one strongest operational risk for every active campaign. */
+export function deriveCampaignRisks(
+  db: Db,
+  workspaceId: string,
+  now: number,
+  executionResults: ExecutionResult[] = listExecutionResults(db, workspaceId, { limit: 200 }),
+): PriorityItem[] {
+  const activeCampaigns = db
+    .select()
+    .from(campaigns)
+    .where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.status, "active")))
+    .all();
+  const risks: PriorityItem[] = [];
+
+  for (const campaign of activeCampaigns) {
+    const lanes = campaign.currentPlanRevisionId
+      ? db
+          .select({
+            name: campaignLaneRevisions.name,
+            status: campaignLaneRevisions.status,
+            connectionId: campaignLaneRevisions.publishingConnectionId,
+            connectionStatus: connections.status,
+          })
+          .from(campaignLaneRevisions)
+          .leftJoin(connections, eq(campaignLaneRevisions.publishingConnectionId, connections.id))
+          .where(
+            and(
+              eq(campaignLaneRevisions.workspaceId, workspaceId),
+              eq(campaignLaneRevisions.planRevisionId, campaign.currentPlanRevisionId),
+            ),
+          )
+          .all()
+      : [];
+    const activeLanes = lanes.filter((lane) => lane.status === "active");
+    const blockedLane = activeLanes.find(
+      (lane) => lane.connectionId !== null && lane.connectionStatus !== "connected",
+    );
+    const recentFailures = executionResults.filter(
+      (result) =>
+        result.campaignId === campaign.id &&
+        (result.status === "failed" || result.status === "partially_failed") &&
+        result.at >= now - CAMPAIGN_FAILURE_WINDOW_MS &&
+        result.at <= now,
+    );
+    const overduePublications = db
+      .select({ dueAt: publications.scheduledFor })
+      .from(publications)
+      .innerJoin(drafts, eq(publications.draftId, drafts.id))
+      .where(
+        and(
+          eq(publications.workspaceId, workspaceId),
+          eq(publications.status, "scheduled"),
+          eq(drafts.campaignId, campaign.id),
+          lt(publications.scheduledFor, now),
+        ),
+      )
+      .all();
+    const overdueActions = db
+      .select({ dueAt: externalActions.requestedFor })
+      .from(externalActions)
+      .where(
+        and(
+          eq(externalActions.workspaceId, workspaceId),
+          eq(externalActions.campaignId, campaign.id),
+          eq(externalActions.status, "scheduled"),
+          lt(externalActions.requestedFor, now),
+        ),
+      )
+      .all();
+    const overdueDueAt = [...overduePublications, ...overdueActions]
+      .map((row) => row.dueAt)
+      .filter((value): value is number => value !== null)
+      .sort((left, right) => left - right)[0];
+
+    let detail:
+      | Pick<PriorityItem, "status" | "reason" | "consequence" | "dueAt">
+      | undefined;
+    if (blockedLane) {
+      detail = {
+        status: "connection_lost",
+        reason: `Active lane “${blockedLane.name}” cannot deliver because its publishing connection is unavailable.`,
+        consequence: "The campaign cannot complete all planned delivery until the lane is repaired.",
+        dueAt: null,
+      };
+    } else if (recentFailures.length >= 3) {
+      detail = {
+        status: "failed",
+        reason: `${recentFailures.length} failed deliveries in 7 days need investigation.`,
+        consequence: "Repeated delivery failures are interrupting this campaign's execution.",
+        dueAt: null,
+      };
+    } else if (overdueDueAt !== undefined) {
+      const overdueHours = Math.max(1, Math.floor((now - overdueDueAt) / (60 * 60 * 1000)));
+      detail = {
+        status: "stale",
+        reason: `Scheduled campaign work is ${overdueHours} hour${overdueHours === 1 ? "" : "s"} overdue.`,
+        consequence: "The scheduled work has not reached its destination and needs recovery.",
+        dueAt: overdueDueAt,
+      };
+    } else if (activeLanes.length === 0) {
+      detail = {
+        status: "setup_required",
+        reason: "No active campaign lane is capable of delivery.",
+        consequence: "This campaign cannot produce or deliver work until an active lane is configured.",
+        dueAt: null,
+      };
+    }
+    if (!detail) continue;
+
+    risks.push({
+      id: campaign.id,
+      kind: "campaign_risk",
+      title: `${campaign.name} is at risk`,
+      href: `/workspaces/${workspaceId}/campaigns/${campaign.id}`,
+      campaignId: campaign.id,
+      campaignName: campaign.name,
+      createdAt: campaign.updatedAt,
+      ...detail,
+    });
+  }
+
+  return risks;
 }
 
 /** Identify only durable, currently-live work that depends on a connection. */
@@ -292,8 +419,8 @@ export function connectionImpact(
   };
 }
 
-/** Ranking tiers: overdue failures/blocks/stale, overdue authorizations, other
- * failures/blocks/stale, authorizations, then content review. */
+/** Ranking tiers: exact execution/action recovery first, then stopping risks,
+ * ordinary content review, and finally unmatched signal triage. */
 function tier(item: PriorityItem, now: number): number {
   const overdue = item.dueAt !== null && item.dueAt <= now;
   const failureLike =
@@ -304,7 +431,16 @@ function tier(item: PriorityItem, now: number): number {
   if (item.kind === "authorization" && overdue) return 1;
   if (failureLike) return 2;
   if (item.kind === "authorization") return 3;
-  return 4;
+  if (
+    item.kind === "connection_health" ||
+    item.kind === "campaign_risk" ||
+    item.kind === "learning_review" ||
+    (item.kind === "signal_triage" && item.campaignId !== null)
+  ) {
+    return 4;
+  }
+  if (item.kind === "content_review") return 5;
+  return 6;
 }
 
 /**
@@ -337,7 +473,8 @@ export function listWorkspacePriorities(
   const failedActionIds = new Set(
     actions.filter((action) => action.status === "failed").map((action) => action.id),
   );
-  for (const result of listExecutionResults(db, workspaceId, { limit: 200 })) {
+  const executionResults = listExecutionResults(db, workspaceId, { limit: 200 });
+  for (const result of executionResults) {
     if (result.status !== "failed" && result.status !== "partially_failed") continue;
     if ((result.externalActionIds ?? []).some((id) => failedActionIds.has(id))) continue;
     items.push(executionItem(workspaceId, result));
@@ -429,6 +566,8 @@ export function listWorkspacePriorities(
       createdAt: connection.updatedAt,
     });
   }
+
+  items.push(...deriveCampaignRisks(db, workspaceId, now, executionResults));
 
   items.sort((left, right) => {
     const byTier = tier(left, now) - tier(right, now);

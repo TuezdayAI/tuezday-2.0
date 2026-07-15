@@ -45,6 +45,11 @@ const PRIORITY_META: Record<
     icon: "connection-lost",
     cta: "Reconnect",
   },
+  campaign_risk: {
+    label: "Campaign risk",
+    icon: "campaign-risk",
+    cta: "Review campaign",
+  },
 };
 
 /** Presentation metadata for one server-ranked priority. The API remains the

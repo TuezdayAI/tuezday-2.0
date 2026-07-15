@@ -338,6 +338,7 @@ describe("external action governance contracts", () => {
       "signal_triage",
       "learning_review",
       "connection_health",
+      "campaign_risk",
     ]);
   });
 

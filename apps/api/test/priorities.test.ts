@@ -140,7 +140,10 @@ describe("workspace priorities projection", () => {
     ).id;
   }
 
-  function seedFailedPublication(externalActionId: string | null): string {
+  function seedFailedPublication(
+    externalActionId: string | null,
+    campaignId: string | null = null,
+  ): string {
     const connectionId = randomUUID();
     db.insert(connections)
       .values({
@@ -157,7 +160,7 @@ describe("workspace priorities projection", () => {
       {
         workspaceId,
         sourceGenerationId: randomUUID(),
-        campaignId: null,
+        campaignId,
         personaId: null,
         taskType: "linkedin_post",
         channel: "linkedin",
@@ -519,6 +522,7 @@ describe("workspace priorities projection", () => {
     const brokenConnectionId = seedConnection("error");
     const unusedBrokenConnectionId = seedConnection("disconnected");
     const actionBlockedConnectionId = seedConnection("error");
+    const pendingReviewId = seedPendingDraft();
     seedScheduledPublication(brokenConnectionId, "primary");
     seedScheduledPublication(actionBlockedConnectionId, "deduped");
     seedAction({
@@ -545,5 +549,48 @@ describe("workspace priorities projection", () => {
     );
     expect(items.some((item) => item.id === unusedBrokenConnectionId)).toBe(false);
     expect(items.filter((item) => item.id === actionBlockedConnectionId)).toHaveLength(0);
+    expect(items.findIndex((item) => item.id === brokenConnectionId)).toBeLessThan(
+      items.findIndex((item) => item.id === pendingReviewId),
+    );
+  });
+
+  it("emits one strongest explainable risk per active campaign", async () => {
+    const campaignId = (
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns`,
+        payload: { name: "Failure-prone launch", status: "active" },
+      })
+    ).json().id;
+    const pausedCampaignId = (
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns`,
+        payload: { name: "Paused launch", status: "paused" },
+      })
+    ).json().id;
+    seedFailedPublication(null, campaignId);
+    seedFailedPublication(null, campaignId);
+    seedFailedPublication(null, campaignId);
+    seedFailedPublication(null, pausedCampaignId);
+    seedFailedPublication(null, pausedCampaignId);
+    seedFailedPublication(null, pausedCampaignId);
+
+    const items = await fetchPriorities();
+    const repeatedFailures = items.find(
+      (item) => item.kind === "campaign_risk" && item.campaignId === campaignId,
+    );
+    expect(repeatedFailures).toMatchObject({
+      id: campaignId,
+      kind: "campaign_risk",
+      status: "failed",
+      campaignId,
+      campaignName: "Failure-prone launch",
+      href: `/workspaces/${workspaceId}/campaigns/${campaignId}`,
+    });
+    expect(repeatedFailures?.reason).toContain("3 failed deliveries in 7 days");
+    expect(
+      items.some((item) => item.kind === "campaign_risk" && item.campaignId === pausedCampaignId),
+    ).toBe(false);
   });
 });

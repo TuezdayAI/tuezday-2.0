@@ -23,8 +23,8 @@ import { EmptyState } from "@/src/components/empty-state";
 import { PageHeader } from "@/src/components/page-header";
 import { Icon, type IconName } from "@/src/components/ui/icon";
 import { CountBadge, WorkflowStatusBadge } from "@/src/components/ui/badge";
+import { ButtonLink } from "@/src/components/ui/button";
 import { LoopGlyph } from "@/src/components/ui/diagram-kit";
-import buttonStyles from "@/src/components/ui/button.module.css";
 import styles from "./home-hero.module.css";
 
 /** GET /workspaces/:id/next-action — shared next-action contract (spec §5.1). */
@@ -127,12 +127,9 @@ export default function WorkspaceHomePage() {
         title="Command Center"
         subtitle={`The GTM loop for ${workspace.name}: review work, act on signals, update the Brain, and keep campaigns moving.`}
         actions={
-          <Link
-            className={`${buttonStyles.button} ${buttonStyles.secondary} ${buttonStyles.sm}`}
-            href={`/workspaces/${id}/content`}
-          >
+          <ButtonLink variant="secondary" size="standard" href={`/workspaces/${id}/content`}>
             Create draft
-          </Link>
+          </ButtonLink>
         }
       />
 
@@ -208,12 +205,9 @@ export default function WorkspaceHomePage() {
                       </time>
                     )}
                   </div>
-                  <Link
-                    href={priority.href}
-                    className={`${buttonStyles.button} ${buttonStyles.secondary} ${buttonStyles.sm}`}
-                  >
+                  <ButtonLink variant="secondary" size="standard" href={priority.href}>
                     {view.cta}
-                  </Link>
+                  </ButtonLink>
                 </article>
               );
             })}
@@ -261,9 +255,14 @@ export default function WorkspaceHomePage() {
         <section className={styles.zone}>
           <div className={styles.zoneHead}>
             <h2 className={styles.zoneTitle}>What the brain learned</h2>
-            <Link className={`link-button ${styles.zoneLink}`} href={`/workspaces/${id}/learning`}>
+            <ButtonLink
+              variant="tertiary"
+              size="compact"
+              className={styles.zoneLink}
+              href={`/workspaces/${id}/learning`}
+            >
               Open Learning →
-            </Link>
+            </ButtonLink>
           </div>
           <div className={styles.learned}>
             {learned.map((s) => (
