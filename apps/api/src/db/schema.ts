@@ -1048,6 +1048,68 @@ export const externalActions = sqliteTable(
 
 export type ExternalActionRow = typeof externalActions.$inferSelect;
 
+// Durable, idempotent preview header for a bounded batch authorization. The
+// exact selection stays frozen while status/timestamps advance on confirm.
+export const externalActionBatches = sqliteTable(
+  "external_action_batches",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    requestId: text("request_id").notNull(),
+    selectionJson: text("selection_json").notNull(),
+    status: text("status").notNull(),
+    continuationCount: integer("continuation_count").notNull().default(0),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdByLabel: text("created_by_label").notNull(),
+    createdAt: integer("created_at").notNull(),
+    confirmedAt: integer("confirmed_at"),
+    completedAt: integer("completed_at"),
+  },
+  (t) => [
+    uniqueIndex("external_action_batches_workspace_request").on(
+      t.workspaceId,
+      t.requestId,
+    ),
+    index("external_action_batches_workspace_status").on(t.workspaceId, t.status),
+  ],
+);
+
+export type ExternalActionBatchRow = typeof externalActionBatches.$inferSelect;
+
+// One immutable action snapshot plus its mutable authorization outcome. Batch
+// deletion removes the snapshot; direct action deletion is restricted so the
+// authorization audit can never point at a vanished action.
+export const externalActionBatchItems = sqliteTable(
+  "external_action_batch_items",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    batchId: text("batch_id")
+      .notNull()
+      .references(() => externalActionBatches.id, { onDelete: "cascade" }),
+    actionId: text("action_id")
+      .notNull()
+      .references(() => externalActions.id, { onDelete: "restrict" }),
+    snapshotJson: text("snapshot_json").notNull(),
+    status: text("status").notNull(),
+    submissionJson: text("submission_json"),
+    error: text("error"),
+    processedAt: integer("processed_at"),
+  },
+  (t) => [
+    uniqueIndex("external_action_batch_items_batch_action").on(t.batchId, t.actionId),
+    index("external_action_batch_items_workspace_batch").on(t.workspaceId, t.batchId),
+  ],
+);
+
+export type ExternalActionBatchItemRow = typeof externalActionBatchItems.$inferSelect;
+
 // Append-only founder/operator decisions. Deleting an authorization envelope
 // removes its now-unreachable audit rows, while ordinary state changes retain
 // every decision forever.
