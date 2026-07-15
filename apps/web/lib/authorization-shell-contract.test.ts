@@ -5,6 +5,13 @@ const queueSource = readFileSync(
   new URL("../app/workspaces/[id]/review/_components/authorizations-queue.tsx", import.meta.url),
   "utf8",
 );
+const queueStyles = readFileSync(
+  new URL(
+    "../app/workspaces/[id]/review/_components/authorizations-queue.module.css",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const reviewPage = readFileSync(
   new URL("../app/workspaces/[id]/review/page.tsx", import.meta.url),
   "utf8",
@@ -32,6 +39,25 @@ describe("authorization queue shell contract", () => {
     expect(queueSource).toContain("/repropose");
     expect(queueSource).toContain("busy");
     expect(queueSource).toContain('aria-live="polite"');
+  });
+
+  it("previews only explicit selected authorizations before one batch confirmation", () => {
+    expect(queueSource).toContain("selectedAuthorizationIds");
+    expect(queueSource).toContain('type="checkbox"');
+    expect(queueSource).toContain("Preview ");
+    expect(queueSource).toContain("authorizations");
+    expect(queueSource).toContain("external-action-batches");
+    expect(queueSource).toContain("Authorize included actions");
+    expect(queueSource).toContain("partially_completed");
+    expect(queueSource).not.toContain("Approve selected content");
+  });
+
+  it("uses the canonical ready, attention, and blocked result tokens", () => {
+    expect(queueStyles).toContain("--status-ready-ink");
+    expect(queueStyles).toContain("--status-attention-ink");
+    expect(queueStyles).toContain("--status-blocked-ink");
+    expect(queueStyles).not.toContain("--status-success");
+    expect(queueStyles).not.toContain("--status-warning");
   });
 
   it("labels the policy, guardrail, and decision regions", () => {

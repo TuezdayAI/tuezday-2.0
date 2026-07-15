@@ -4,12 +4,19 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type {
+  AuthorizationBatchDetail,
+  AuthorizationBatchItem,
   ExternalAction,
   ExternalActionDetail,
   ExternalActionKind,
   ExternalActionStatus,
 } from "@tuezday/contracts";
 import { API_URL, apiFetch } from "@/lib/api";
+import {
+  SELECTED_AUTHORIZATION_LIMIT,
+  authorizationBatchSummary,
+  selectedAuthorizationIds,
+} from "@/lib/authorization-batch";
 import {
   actionKindLabel,
   actionRecoveryHref,
@@ -72,6 +79,13 @@ export function AuthorizationsQueue({
   const [busy, setBusy] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   const [denyReason, setDenyReason] = useState("");
+  const [selection, setSelection] = useState<Set<string>>(() => new Set());
+  const [batchDetail, setBatchDetail] = useState<AuthorizationBatchDetail | null>(null);
+  const [batchActions, setBatchActions] = useState<Map<string, ExternalAction>>(
+    () => new Map(),
+  );
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [confirmBusy, setConfirmBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -113,6 +127,25 @@ export function AuthorizationsQueue({
   useEffect(() => {
     void loadDetail();
   }, [loadDetail]);
+  useEffect(() => {
+    const visible = new Set(
+      actions
+        .filter((action) => action.status === "authorization_required")
+        .map((action) => action.id),
+    );
+    setSelection((current) => {
+      const next = new Set([...current].filter((actionId) => visible.has(actionId)));
+      return next.size === current.size ? current : next;
+    });
+  }, [actions]);
+  useEffect(() => {
+    if (!batchDetail) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !confirmBusy) setBatchDetail(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [batchDetail, confirmBusy]);
 
   function hrefFor(opts: { status?: StatusFilter; action?: string }): string {
     return reviewHref(id, {
@@ -186,6 +219,89 @@ export function AuthorizationsQueue({
     }
   }
 
+  function toggleSelection(actionId: string) {
+    setSelection((current) => {
+      const next = new Set(current);
+      if (next.has(actionId)) {
+        next.delete(actionId);
+      } else if (next.size >= SELECTED_AUTHORIZATION_LIMIT) {
+        setAnnouncement(`Select no more than ${SELECTED_AUTHORIZATION_LIMIT} authorizations.`);
+        return current;
+      } else {
+        next.add(actionId);
+      }
+      return next;
+    });
+  }
+
+  async function previewSelectedAuthorizations(actionIds: string[]) {
+    if (actionIds.length === 0) return;
+    setPreviewBusy(true);
+    setAnnouncement("");
+    setBatchActions(
+      new Map(
+        actions
+          .filter((action) => actionIds.includes(action.id))
+          .map((action) => [action.id, action]),
+      ),
+    );
+    try {
+      const res = await apiFetch(`/workspaces/${id}/external-action-batches`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          requestId: crypto.randomUUID(),
+          selection: { mode: "selected", actionIds },
+        }),
+      });
+      const body = (await res.json().catch(() => null)) as AuthorizationBatchDetail | null;
+      if (!res.ok || !body) throw new Error(`API returned ${res.status}`);
+      setBatchDetail(body);
+      const summary = authorizationBatchSummary(body);
+      setAnnouncement(
+        `Preview ready: ${summary.included} included, ${summary.excluded} excluded.`,
+      );
+    } catch (err) {
+      setAnnouncement(err instanceof Error ? err.message : "The batch preview failed.");
+    } finally {
+      setPreviewBusy(false);
+    }
+  }
+
+  async function authorizeIncludedActions() {
+    if (!batchDetail || confirmBusy) return;
+    setConfirmBusy(true);
+    setAnnouncement(
+      `Authorizing ${batchDetail.batch.includedCount} included actions one at a time…`,
+    );
+    try {
+      const res = await apiFetch(
+        `/workspaces/${id}/external-action-batches/${batchDetail.batch.id}/authorize`,
+        { method: "POST" },
+      );
+      const body = (await res.json().catch(() => null)) as AuthorizationBatchDetail | null;
+      if (!res.ok || !body) throw new Error(`API returned ${res.status}`);
+      setBatchDetail(body);
+      const summary = authorizationBatchSummary(body);
+      const completed = summary.succeeded + summary.scheduled;
+      const needsAttention = summary.failed + summary.blocked + summary.stale;
+      if (body.batch.status === "partially_completed") {
+        setAnnouncement(
+          `Partially completed: ${completed} completed or scheduled; ${needsAttention} need attention.`,
+        );
+      } else if (body.batch.status === "completed") {
+        setAnnouncement(`${completed} included actions completed or were scheduled.`);
+      } else {
+        setAnnouncement(`Batch failed: ${needsAttention} actions need attention.`);
+      }
+      await Promise.all([load(), loadDetail()]);
+    } catch (err) {
+      setAnnouncement(err instanceof Error ? err.message : "Batch authorization failed.");
+    } finally {
+      setConfirmBusy(false);
+    }
+  }
+
   if (error && !loaded) {
     return (
       <>
@@ -196,6 +312,16 @@ export function AuthorizationsQueue({
   }
 
   const selected = detail?.action ?? null;
+  const selectedIds = selectedAuthorizationIds(actions, selection);
+  const batchSummary = batchDetail ? authorizationBatchSummary(batchDetail) : null;
+
+  function actionForItem(item: AuthorizationBatchItem): ExternalAction | undefined {
+    return (
+      item.submission?.action ??
+      batchActions.get(item.actionId) ??
+      actions.find((action) => action.id === item.actionId)
+    );
+  }
 
   return (
     <>
@@ -218,6 +344,24 @@ export function AuthorizationsQueue({
         {announcement}
       </p>
 
+      {actions.some((action) => action.status === "authorization_required") && (
+        <div className={styles.batchToolbar} aria-label="Selected authorizations">
+          <p>
+            <strong>{selectedIds.length}</strong> of {SELECTED_AUTHORIZATION_LIMIT} selected
+          </p>
+          <Button
+            variant="primary"
+            size="standard"
+            disabled={selectedIds.length === 0}
+            loading={previewBusy}
+            onClick={() => previewSelectedAuthorizations(selectedIds)}
+          >
+            Preview {selectedIds.length}{" "}
+            {selectedIds.length === 1 ? "authorization" : "authorizations"}
+          </Button>
+        </div>
+      )}
+
       {actions.length === 0 ? (
         <EmptyState
           description={
@@ -236,6 +380,17 @@ export function AuthorizationsQueue({
                 className={`section-card ${selected?.id === action.id ? styles.selectedCard : ""}`}
               >
                 <div className="section-head">
+                  {action.status === "authorization_required" && (
+                    <label className={styles.selectionControl}>
+                      <input
+                        type="checkbox"
+                        checked={selection.has(action.id)}
+                        onChange={() => toggleSelection(action.id)}
+                        aria-label={`Select ${action.subject.title} for batch authorization`}
+                      />
+                      <span>Select</span>
+                    </label>
+                  )}
                   <WorkflowStatusBadge status={externalActionWorkflowStatus(action)} />
                   <span className="section-title">
                     <Link href={hrefFor({ action: action.id })}>{action.subject.title}</Link>
@@ -391,6 +546,113 @@ export function AuthorizationsQueue({
         <p className="meta">
           <CountBadge count={actions.length} label="actions in this view" /> in this view
         </p>
+      )}
+
+      {batchDetail && batchSummary && (
+        <div
+          className={styles.batchOverlay}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !confirmBusy) setBatchDetail(null);
+          }}
+        >
+          <section
+            className={styles.batchModal}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Authorization batch preview"
+          >
+            <header className={styles.batchModalHeader}>
+              <div>
+                <p className={styles.eyebrow}>Immutable preview</p>
+                <h2>Review selected authorizations</h2>
+              </div>
+              <Button
+                variant="tertiary"
+                size="compact"
+                disabled={confirmBusy}
+                onClick={() => setBatchDetail(null)}
+              >
+                Close
+              </Button>
+            </header>
+
+            <div className={styles.batchModalBody}>
+              <div
+                className={`${styles.batchSummary} ${
+                  batchDetail.batch.status === "partially_completed"
+                    ? styles.batchPartial
+                    : batchDetail.batch.status === "completed"
+                      ? styles.batchComplete
+                      : batchDetail.batch.status === "failed"
+                        ? styles.batchFailed
+                        : ""
+                }`}
+              >
+                <strong>{batchSummary.included} included</strong>
+                <span>{batchSummary.excluded} excluded</span>
+                {batchDetail.batch.status !== "preview" && (
+                  <span>
+                    {batchSummary.succeeded} succeeded · {batchSummary.scheduled} scheduled ·{" "}
+                    {batchSummary.failed + batchSummary.blocked + batchSummary.stale} need attention
+                  </span>
+                )}
+              </div>
+
+              <p className="meta">
+                This preview is fixed. Confirmation processes each included action independently;
+                completed external effects are not rolled back if another item fails.
+              </p>
+
+              <ul className={styles.batchItems}>
+                {batchDetail.items.map((item) => {
+                  const sourceAction = actionForItem(item);
+                  const needsRecovery =
+                    item.status === "failed" ||
+                    item.status === "blocked" ||
+                    item.status === "stale";
+                  return (
+                    <li key={item.id} className={styles.batchItem}>
+                      <div className={styles.batchItemHead}>
+                        <span className="layer-badge">{actionKindLabel(item.kind)}</span>
+                        <strong>{item.eligible ? item.status : "excluded"}</strong>
+                      </div>
+                      <p>{item.impact}</p>
+                      <p className="meta">
+                        Timing: {sourceAction ? actionTimingLabel(sourceAction) : "fixed in preview"}
+                      </p>
+                      {!item.eligible && (
+                        <p className={styles.exclusion}>Excluded: {item.exclusionReason}</p>
+                      )}
+                      {item.error && <p className="error">{item.error}</p>}
+                      {needsRecovery && sourceAction && (
+                        <Link href={actionRecoveryHref(sourceAction)}>Open owning surface</Link>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+
+            <footer className={styles.batchModalFooter}>
+              <span className="meta">
+                {batchDetail.batch.status === "preview"
+                  ? `${batchSummary.included} actions will be authorized.`
+                  : "Stored outcomes are safe to revisit."}
+              </span>
+              {batchDetail.batch.status === "preview" && (
+                <Button
+                  variant="primary"
+                  size="standard"
+                  loading={confirmBusy}
+                  disabled={batchSummary.included === 0}
+                  onClick={authorizeIncludedActions}
+                >
+                  Authorize included actions
+                </Button>
+              )}
+            </footer>
+          </section>
+        </div>
       )}
     </>
   );
