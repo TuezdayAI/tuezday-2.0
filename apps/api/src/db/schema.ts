@@ -1,4 +1,5 @@
-import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+import { check, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 // Keep this schema Postgres-portable: text ids, integer epoch-ms timestamps,
 // no SQLite-only column tricks. The Postgres swap is planned for Sprint 8.
@@ -1138,6 +1139,162 @@ export const externalActionDecisions = sqliteTable(
 );
 
 export type ExternalActionDecisionRow = typeof externalActionDecisions.$inferSelect;
+
+// One verified sender identity and its workspace-owned safety settings. The
+// platform provider credential stays in the environment; only public domain
+// identifiers and DNS challenge projections are persisted here.
+export const workspaceEmailSenders = sqliteTable("workspace_email_senders", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  domain: text("domain").notNull(),
+  fromLocalPart: text("from_local_part").notNull(),
+  fromName: text("from_name").notNull(),
+  fromAddress: text("from_address").notNull(),
+  replyTo: text("reply_to"),
+  status: text("status").notNull().default("not_configured"),
+  provider: text("provider").notNull().default("resend"),
+  providerDomainId: text("provider_domain_id"),
+  dnsRecordsJson: text("dns_records_json").notNull().default("[]"),
+  // Existing and newly configured workspaces start safely disabled.
+  killSwitch: integer("kill_switch", { mode: "boolean" }).notNull().default(true),
+  dailyCap: integer("daily_cap").notNull().default(100),
+  lastCheckedAt: integer("last_checked_at"),
+  lastError: text("last_error"),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type WorkspaceEmailSenderRow = typeof workspaceEmailSenders.$inferSelect;
+
+// Explicit technical send permission for one normalized recipient. Unknown is
+// a blocking state and remains distinct from a durable suppression.
+export const emailRecipientPermissions = sqliteTable(
+  "email_recipient_permissions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    normalizedEmail: text("normalized_email").notNull(),
+    status: text("status").notNull().default("unknown"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("email_recipient_permissions_workspace_email").on(
+      t.workspaceId,
+      t.normalizedEmail,
+    ),
+    index("email_recipient_permissions_workspace_status").on(t.workspaceId, t.status),
+  ],
+);
+
+export type EmailRecipientPermissionRow = typeof emailRecipientPermissions.$inferSelect;
+
+// Deliverability and founder suppressions are durable guardrails. A recipient
+// can have only one active suppression per workspace, regardless of source.
+export const emailSuppressions = sqliteTable(
+  "email_suppressions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    normalizedEmail: text("normalized_email").notNull(),
+    reason: text("reason").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("email_suppressions_workspace_email").on(t.workspaceId, t.normalizedEmail),
+    index("email_suppressions_workspace_created").on(t.workspaceId, t.createdAt),
+  ],
+);
+
+export type EmailSuppressionRow = typeof emailSuppressions.$inferSelect;
+
+// Durable message snapshot created before the provider call. Mutable columns
+// record delivery progress; recipient, sender, subject, and body remain the
+// exact action-authorized payload for audit and retry recovery.
+export const emailDeliveries = sqliteTable(
+  "email_deliveries",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    externalActionId: text("external_action_id")
+      .notNull()
+      .references(() => externalActions.id, { onDelete: "cascade" }),
+    origin: text("origin").notNull(),
+    originId: text("origin_id").notNull(),
+    normalizedRecipient: text("normalized_recipient").notNull(),
+    senderAddress: text("sender_address").notNull(),
+    replyTo: text("reply_to"),
+    subject: text("subject").notNull(),
+    text: text("text").notNull(),
+    html: text("html"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    provider: text("provider").notNull().default("resend"),
+    providerMessageId: text("provider_message_id"),
+    status: text("status").notNull().default("queued"),
+    acceptedAt: integer("accepted_at"),
+    completedAt: integer("completed_at"),
+    lastError: text("last_error"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("email_deliveries_workspace_idempotency").on(
+      t.workspaceId,
+      t.idempotencyKey,
+    ),
+    uniqueIndex("email_deliveries_provider_message").on(t.provider, t.providerMessageId),
+    index("email_deliveries_workspace_status_accepted").on(
+      t.workspaceId,
+      t.status,
+      t.acceptedAt,
+    ),
+    index("email_deliveries_workspace_origin").on(t.workspaceId, t.origin, t.originId),
+  ],
+);
+
+export type EmailDeliveryRow = typeof emailDeliveries.$inferSelect;
+
+const MAX_EMAIL_DELIVERY_EVENT_PAYLOAD_CHARS = 1_000_000;
+
+// Append-only verified provider events. The raw bounded JSON supports audit
+// and replay without persisting webhook secrets or mutable projections.
+export const emailDeliveryEvents = sqliteTable(
+  "email_delivery_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    deliveryId: text("delivery_id")
+      .notNull()
+      .references(() => emailDeliveries.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull().default("resend"),
+    providerEventId: text("provider_event_id").notNull(),
+    eventType: text("event_type").notNull(),
+    payloadJson: text("payload_json").notNull(),
+    occurredAt: integer("occurred_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("email_delivery_events_provider_event").on(t.provider, t.providerEventId),
+    index("email_delivery_events_delivery_created").on(t.deliveryId, t.createdAt),
+    check(
+      "email_delivery_events_payload_bounded",
+      sql`length(${t.payloadJson}) <= ${sql.raw(
+        String(MAX_EMAIL_DELIVERY_EVENT_PAYLOAD_CHARS),
+      )}`,
+    ),
+  ],
+);
+
+export type EmailDeliveryEventRow = typeof emailDeliveryEvents.$inferSelect;
 
 // Social publishing receipts (Sprint 17) — one row per publish attempt (now
 // or scheduled); the post lives on the platform, Tuezday keeps status + URL.
