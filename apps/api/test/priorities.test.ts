@@ -57,6 +57,7 @@ describe("workspace priorities projection", () => {
     requestedFor?: number | null;
     campaignId?: string | null;
     campaignName?: string | null;
+    connectionId?: string | null;
     blockerCode?: string;
     error?: string;
   }
@@ -80,7 +81,7 @@ describe("workspace priorities projection", () => {
         campaignName: over.campaignName ?? null,
         personaId: null,
         personaName: null,
-        connectionId: null,
+        connectionId: over.connectionId ?? null,
         connectionName: null,
         laneRevisionId: null,
         laneName: null,
@@ -454,5 +455,95 @@ describe("workspace priorities projection", () => {
       }),
     );
     expect(items.some((item) => item.id === acceptedId || item.id === dismissedId)).toBe(false);
+  });
+
+  it("prioritizes only broken connections with live impact and dedupes exact action blockers", async () => {
+    const campaignId = (
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns`,
+        payload: { name: "Connected launch", status: "active" },
+      })
+    ).json().id;
+
+    function seedConnection(status: "connected" | "error" | "disconnected"): string {
+      const id = randomUUID();
+      db.insert(connections)
+        .values({
+          id,
+          workspaceId,
+          providerKey: "linkedin",
+          nangoConnectionId: `nango-${id}`,
+          displayName: status === "error" ? "Launch account" : "Unused account",
+          status,
+          lastError: status === "error" ? "OAuth token expired" : null,
+          createdAt: T0 - HOUR,
+          updatedAt: T0 - HOUR,
+        })
+        .run();
+      return id;
+    }
+
+    function seedScheduledPublication(connectionId: string, suffix: string): void {
+      const draft = submitDraft(
+        db,
+        {
+          workspaceId,
+          sourceGenerationId: randomUUID(),
+          campaignId,
+          personaId: null,
+          taskType: "linkedin_post",
+          channel: "linkedin",
+          content: `Scheduled body ${suffix}.`,
+        },
+        { userId: null, label: "test" },
+      );
+      applyDraftAction(db, draft, "approve", { userId: null, label: "test" });
+      db.insert(publications)
+        .values({
+          id: randomUUID(),
+          workspaceId,
+          draftId: draft.id,
+          connectionId,
+          providerKey: "linkedin",
+          target: "feed",
+          title: `Scheduled ${suffix}`,
+          status: "scheduled",
+          scheduledFor: T0 + HOUR,
+          createdAt: T0 - HOUR,
+          updatedAt: T0 - HOUR,
+        })
+        .run();
+    }
+
+    const brokenConnectionId = seedConnection("error");
+    const unusedBrokenConnectionId = seedConnection("disconnected");
+    const actionBlockedConnectionId = seedConnection("error");
+    seedScheduledPublication(brokenConnectionId, "primary");
+    seedScheduledPublication(actionBlockedConnectionId, "deduped");
+    seedAction({
+      status: "blocked",
+      title: "Blocked scheduled post",
+      campaignId,
+      campaignName: "Connected launch",
+      connectionId: actionBlockedConnectionId,
+    });
+
+    const items = await fetchPriorities();
+    expect(items).toContainEqual(
+      expect.objectContaining({
+        id: brokenConnectionId,
+        kind: "connection_health",
+        status: "connection_lost",
+        campaignId,
+        campaignName: "Connected launch",
+        href: `/workspaces/${workspaceId}/connectors?connection=${brokenConnectionId}`,
+      }),
+    );
+    expect(items.find((item) => item.id === brokenConnectionId)?.reason).toContain(
+      "scheduled publication",
+    );
+    expect(items.some((item) => item.id === unusedBrokenConnectionId)).toBe(false);
+    expect(items.filter((item) => item.id === actionBlockedConnectionId)).toHaveLength(0);
   });
 });

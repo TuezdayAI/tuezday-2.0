@@ -40,6 +40,11 @@ const PRIORITY_META: Record<
     icon: "status-learning",
     cta: "Review learning",
   },
+  connection_health: {
+    label: "Connection lost",
+    icon: "connection-lost",
+    cta: "Reconnect",
+  },
 };
 
 /** Presentation metadata for one server-ranked priority. The API remains the

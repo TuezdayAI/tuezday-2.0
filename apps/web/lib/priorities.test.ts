@@ -57,6 +57,11 @@ describe("Home priority view model", () => {
       icon: "status-learning",
       cta: "Review learning",
     });
+    expect(priorityView(item({ kind: "connection_health", status: "connection_lost" }))).toMatchObject({
+      label: "Connection lost",
+      icon: "connection-lost",
+      cta: "Reconnect",
+    });
   });
 
   it("preserves the server-ranked recovery href and canonical status", () => {

@@ -6,8 +6,21 @@ import type {
   PriorityQueue,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
-import { campaigns, drafts, externalActions } from "../db/schema";
+import {
+  adAccounts,
+  adLaunches,
+  campaignLaneRevisions,
+  campaignLanes,
+  campaigns,
+  crmSyncSettings,
+  discoverySources,
+  drafts,
+  externalActions,
+  personaSocialAccounts,
+  publications,
+} from "../db/schema";
 import { deriveTitle } from "./cadences";
+import { listConnections } from "./connections";
 import { listExecutionResults } from "./executions";
 import { rowToExternalAction } from "./external-actions";
 import { listSyntheses } from "./learning";
@@ -128,6 +141,157 @@ export function signalPriorityCandidate(
   };
 }
 
+export interface ConnectionImpact {
+  campaignIds: string[];
+  dependencies: string[];
+}
+
+/** Identify only durable, currently-live work that depends on a connection. */
+export function connectionImpact(
+  db: Db,
+  workspaceId: string,
+  connectionId: string,
+): ConnectionImpact {
+  const campaignIds = new Set<string>();
+  const dependencies = new Set<string>();
+  const activeCampaignIds = new Set(
+    db
+      .select({ id: campaigns.id })
+      .from(campaigns)
+      .where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.status, "active")))
+      .all()
+      .map((row) => row.id),
+  );
+
+  const liveLaneRows = db
+    .select({ campaignId: campaignLanes.campaignId })
+    .from(campaignLaneRevisions)
+    .innerJoin(campaignLanes, eq(campaignLaneRevisions.laneId, campaignLanes.id))
+    .innerJoin(campaigns, eq(campaignLanes.campaignId, campaigns.id))
+    .where(
+      and(
+        eq(campaignLaneRevisions.workspaceId, workspaceId),
+        eq(campaignLaneRevisions.publishingConnectionId, connectionId),
+        eq(campaignLaneRevisions.status, "active"),
+        eq(campaignLanes.status, "active"),
+        eq(campaigns.status, "active"),
+        eq(campaigns.currentPlanRevisionId, campaignLaneRevisions.planRevisionId),
+      ),
+    )
+    .all();
+  if (liveLaneRows.length > 0) dependencies.add("active campaign lane");
+  for (const row of liveLaneRows) campaignIds.add(row.campaignId);
+
+  const publicationRows = db
+    .select({ campaignId: drafts.campaignId })
+    .from(publications)
+    .innerJoin(drafts, eq(publications.draftId, drafts.id))
+    .where(
+      and(
+        eq(publications.workspaceId, workspaceId),
+        eq(publications.connectionId, connectionId),
+        eq(publications.status, "scheduled"),
+      ),
+    )
+    .all();
+  if (publicationRows.length > 0) dependencies.add("scheduled publication");
+  for (const row of publicationRows) {
+    if (row.campaignId && activeCampaignIds.has(row.campaignId)) campaignIds.add(row.campaignId);
+  }
+
+  const scheduledActionRows = db
+    .select({ campaignId: externalActions.campaignId })
+    .from(externalActions)
+    .where(
+      and(
+        eq(externalActions.workspaceId, workspaceId),
+        eq(externalActions.connectionId, connectionId),
+        eq(externalActions.status, "scheduled"),
+      ),
+    )
+    .all();
+  if (scheduledActionRows.length > 0) dependencies.add("scheduled external action");
+  for (const row of scheduledActionRows) {
+    if (row.campaignId && activeCampaignIds.has(row.campaignId)) campaignIds.add(row.campaignId);
+  }
+
+  if (
+    db
+      .select({ id: personaSocialAccounts.id })
+      .from(personaSocialAccounts)
+      .where(
+        and(
+          eq(personaSocialAccounts.workspaceId, workspaceId),
+          eq(personaSocialAccounts.connectionId, connectionId),
+        ),
+      )
+      .get()
+  ) {
+    dependencies.add("persona sender configuration");
+  }
+
+  if (
+    db
+      .select({ id: discoverySources.id })
+      .from(discoverySources)
+      .where(
+        and(
+          eq(discoverySources.workspaceId, workspaceId),
+          eq(discoverySources.connectionId, connectionId),
+          eq(discoverySources.enabled, true),
+        ),
+      )
+      .get()
+  ) {
+    dependencies.add("enabled discovery source");
+  }
+
+  if (
+    db
+      .select({ connectionId: crmSyncSettings.connectionId })
+      .from(crmSyncSettings)
+      .where(
+        and(
+          eq(crmSyncSettings.workspaceId, workspaceId),
+          eq(crmSyncSettings.connectionId, connectionId),
+        ),
+      )
+      .get()
+  ) {
+    dependencies.add("CRM sync");
+  }
+
+  const accountRows = db
+    .select({ id: adAccounts.id })
+    .from(adAccounts)
+    .where(
+      and(eq(adAccounts.workspaceId, workspaceId), eq(adAccounts.connectionId, connectionId)),
+    )
+    .all();
+  if (accountRows.length > 0) dependencies.add("ad account");
+  if (accountRows.length > 0) {
+    const adCampaignRows = db
+      .select({ campaignId: adLaunches.campaignId })
+      .from(adLaunches)
+      .innerJoin(adAccounts, eq(adLaunches.adAccountId, adAccounts.id))
+      .where(
+        and(
+          eq(adLaunches.workspaceId, workspaceId),
+          eq(adAccounts.connectionId, connectionId),
+        ),
+      )
+      .all();
+    for (const row of adCampaignRows) {
+      if (row.campaignId && activeCampaignIds.has(row.campaignId)) campaignIds.add(row.campaignId);
+    }
+  }
+
+  return {
+    campaignIds: [...campaignIds].sort(),
+    dependencies: [...dependencies],
+  };
+}
+
 /** Ranking tiers: overdue failures/blocks/stale, overdue authorizations, other
  * failures/blocks/stale, authorizations, then content review. */
 function tier(item: PriorityItem, now: number): number {
@@ -238,6 +402,31 @@ export function listWorkspacePriorities(
       campaignName: null,
       dueAt: null,
       createdAt: synthesis.createdAt,
+    });
+  }
+
+  const actionConnectionIds = new Set(
+    actions
+      .map((action) => action.context.connectionId)
+      .filter((id): id is string => id !== null),
+  );
+  for (const connection of listConnections(db, workspaceId)) {
+    if (connection.status === "connected" || actionConnectionIds.has(connection.id)) continue;
+    const impact = connectionImpact(db, workspaceId, connection.id);
+    if (impact.dependencies.length === 0) continue;
+    const campaignId = impact.campaignIds[0] ?? null;
+    items.push({
+      id: connection.id,
+      kind: "connection_health",
+      status: "connection_lost",
+      title: `${connection.displayName} needs reconnection`,
+      reason: `${connection.displayName} is ${connection.status} and blocks: ${impact.dependencies.join(", ")}.`,
+      consequence: "Dependent campaign work and syncs cannot continue until you reconnect it.",
+      href: `/workspaces/${workspaceId}/connectors?connection=${connection.id}`,
+      campaignId,
+      campaignName: campaignId ? (campaignNames.get(campaignId) ?? null) : null,
+      dueAt: null,
+      createdAt: connection.updatedAt,
     });
   }
 
