@@ -341,8 +341,8 @@ describe("external action lifecycle", () => {
     const unsupported = await runtime.propose(
       {
         ...command(workspaceId),
-        kind: "budget_change",
-        idempotencyKey: "budget:unsupported",
+        kind: "targeting_change",
+        idempotencyKey: "targeting:unsupported",
       },
       ACTOR,
     );

@@ -4,11 +4,14 @@ import {
   LAUNCH_CHANNELS,
   LAUNCH_MESSAGE_KINDS,
   SOCIAL_POST_CONSTRAINTS,
+  budgetChangeIntentSchema,
   publishDraftInputSchema,
   validateSocialPost,
   type ExternalAction,
   type ExternalActionBlocker,
   type ExternalActionExecutionRef,
+  type BudgetChangeIntent,
+  type ProposeBudgetChangeInput,
   type PublishDraftInput,
   type SocialPostConstraints,
 } from "@tuezday/contracts";
@@ -1281,6 +1284,218 @@ export function paidLaunchActionAdapter(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Budget change actions (launched Meta ad sets)
+// ---------------------------------------------------------------------------
+
+function asBudgetChangePayload(payload: unknown): BudgetChangeIntent {
+  return budgetChangeIntentSchema.parse(payload);
+}
+
+async function budgetChangeIntent(
+  db: Db,
+  fabric: ConnectorFabric,
+  fetcher: Fetcher,
+  workspaceId: string,
+  launchId: string,
+  afterDailyBudgetCents: number,
+  allowNoop: boolean,
+): Promise<ExternalActionIntent> {
+  const launch = getAdLaunch(db, workspaceId, launchId);
+  if (!launch) {
+    throw new ExternalActionPreparationError("launch_not_found", "Launch not found.", 404);
+  }
+  if (launch.status !== "launched" || !launch.externalAdSetId) {
+    throw new ExternalActionPreparationError(
+      "launch_not_eligible",
+      "Budget can change only after the Meta ad set has launched.",
+      409,
+    );
+  }
+  const account = getAdAccount(db, workspaceId, launch.adAccountId);
+  if (!account) {
+    throw new ExternalActionPreparationError("account_not_found", "No such ad account.", 404);
+  }
+  const resolved = resolveAdsExecution(db, fabric, fetcher, workspaceId, launch.adAccountId);
+  if (!resolved) {
+    throw new ExternalActionPreparationError(
+      "account_not_launchable",
+      "Reconnect the Meta ad account before changing its budget.",
+      409,
+    );
+  }
+  const provider = await resolved.adapter.getAdSetState(
+    resolved.externalAccountId,
+    launch.externalAdSetId,
+  );
+  if (!allowNoop && provider.dailyBudgetCents === afterDailyBudgetCents) {
+    throw new ExternalActionPreparationError(
+      "budget_unchanged",
+      "Choose a budget different from the current Meta budget.",
+      400,
+    );
+  }
+  const rawPayload = {
+    launchId: launch.id,
+    adAccountId: account.id,
+    externalAccountId: account.externalId,
+    externalAdSetId: launch.externalAdSetId,
+    currency: account.currency,
+    beforeDailyBudgetCents: provider.dailyBudgetCents,
+    afterDailyBudgetCents,
+    providerUpdatedAt: provider.updatedAt,
+  };
+  const payload = allowNoop ? rawPayload : budgetChangeIntentSchema.parse(rawPayload);
+  const campaign = launch.campaignId ? getCampaign(db, workspaceId, launch.campaignId) : undefined;
+  return {
+    subject: {
+      kind: "ad_launch",
+      id: launch.id,
+      title: `Change budget · ${launch.name}`,
+      summary: `${account.currency} ${provider.dailyBudgetCents} → ${afterDailyBudgetCents} cents/day`,
+      channel: "ads",
+      destination: `${account.name} · ${launch.externalAdSetId}`,
+    },
+    context: {
+      campaignId: campaign?.id ?? null,
+      campaignName: campaign?.name ?? null,
+      personaId: null,
+      personaName: null,
+      connectionId: account.connectionId,
+      connectionName: account.name,
+      laneRevisionId: null,
+      laneName: null,
+    },
+    payload,
+    requestedFor: null,
+  };
+}
+
+export async function prepareBudgetChangeAction(
+  db: Db,
+  fabric: ConnectorFabric,
+  fetcher: Fetcher,
+  workspaceId: string,
+  launchId: string,
+  input: ProposeBudgetChangeInput,
+): Promise<ExternalActionCommand> {
+  return {
+    workspaceId,
+    kind: "budget_change",
+    idempotencyKey: input.idempotencyKey,
+    ...(await budgetChangeIntent(
+      db,
+      fabric,
+      fetcher,
+      workspaceId,
+      launchId,
+      input.dailyBudgetCents,
+      false,
+    )),
+  };
+}
+
+export function budgetChangeActionAdapter(
+  db: Db,
+  fabric: ConnectorFabric,
+  fetcher: Fetcher,
+): ExternalActionAdapter {
+  return {
+    async revalidate(action, rawPayload) {
+      const payload = asBudgetChangePayload(rawPayload);
+      return budgetChangeIntent(
+        db,
+        fabric,
+        fetcher,
+        action.workspaceId,
+        payload.launchId,
+        payload.afterDailyBudgetCents,
+        true,
+      );
+    },
+
+    async guard(action, rawPayload): Promise<ExternalActionBlocker | null> {
+      const payload = asBudgetChangePayload(rawPayload);
+      const launch = getAdLaunch(db, action.workspaceId, payload.launchId);
+      if (!launch || launch.status !== "launched" || !launch.externalAdSetId) {
+        return {
+          code: "launch_not_eligible",
+          message: "The launched Meta ad set is no longer available.",
+          retryable: false,
+        };
+      }
+      if (!resolveAdsExecution(db, fabric, fetcher, action.workspaceId, payload.adAccountId)) {
+        return {
+          code: "connection_unhealthy",
+          message: "Reconnect the Meta ad account before changing its budget.",
+          retryable: true,
+        };
+      }
+      const guardrails = checkSpendGuardrails(db, {
+        ...launch,
+        dailyBudgetCents: payload.afterDailyBudgetCents,
+      });
+      if (!guardrails.ok) {
+        return {
+          code: guardrails.error === "kill_switch_on" ? "kill_switch" : guardrails.error,
+          message: guardrails.message,
+          retryable: true,
+        };
+      }
+      return null;
+    },
+
+    async execute(action, rawPayload): Promise<ExternalActionExecutionRef> {
+      const payload = asBudgetChangePayload(rawPayload);
+      const resolved = resolveAdsExecution(
+        db,
+        fabric,
+        fetcher,
+        action.workspaceId,
+        payload.adAccountId,
+      );
+      if (!resolved) {
+        return {
+          kind: "ad_mutation",
+          id: payload.launchId,
+          status: "failed",
+          url: null,
+          error: "The Meta ad account is not connected.",
+        };
+      }
+      try {
+        const updated = await resolved.adapter.updateDailyBudget(
+          resolved.externalAccountId,
+          payload.externalAdSetId,
+          payload.afterDailyBudgetCents,
+        );
+        if (updated.dailyBudgetCents !== payload.afterDailyBudgetCents) {
+          throw new Error("Meta did not confirm the requested daily budget.");
+        }
+        db.update(adLaunches)
+          .set({ dailyBudgetCents: updated.dailyBudgetCents, updatedAt: Date.now() })
+          .where(eq(adLaunches.id, payload.launchId))
+          .run();
+        return {
+          kind: "ad_mutation",
+          id: payload.launchId,
+          status: "budget_updated",
+          url: null,
+          error: null,
+        };
+      } catch (error) {
+        return {
+          kind: "ad_mutation",
+          id: payload.launchId,
+          status: "failed",
+          url: null,
+          error: (error instanceof Error ? error.message : String(error)).slice(0, 500),
+        };
+      }
+    },
+  };
+}
+
 export function createExternalActionAdapters(
   db: Db,
   fabric: ConnectorFabric,
@@ -1291,5 +1506,6 @@ export function createExternalActionAdapters(
     reply: replyActionAdapter(db, fabric, fetcher),
     send: sendActionAdapter(db, fabric, fetcher),
     paid_launch: paidLaunchActionAdapter(db, fabric, fetcher),
+    budget_change: budgetChangeActionAdapter(db, fabric, fetcher),
   };
 }

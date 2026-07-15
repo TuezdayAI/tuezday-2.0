@@ -143,7 +143,7 @@ function submission(action: ExternalAction): ExternalActionSubmission {
 }
 
 function unavailableAdapterBlocker(kind: ExternalActionKind): ExternalActionBlocker {
-  const unsupportedAdsMutation = kind === "budget_change" || kind === "targeting_change";
+  const unsupportedAdsMutation = kind === "targeting_change";
   return {
     code: unsupportedAdsMutation ? "unsupported_until_ads_wave" : "adapter_unavailable",
     message: unsupportedAdsMutation

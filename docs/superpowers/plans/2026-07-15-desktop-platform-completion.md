@@ -475,10 +475,10 @@ git commit -m "feat(api): mutate Meta ad set settings"
 **Interfaces:**
 - Produces async `prepareBudgetChangeAction(db,fabric,fetcher,workspaceId,launchId,input)`.
 - Registers `budgetChangeActionAdapter()` under `budget_change` in `createExternalActionAdapters()`.
-- Adds `POST /workspaces/:id/ad-launches/:launchId/budget-change` returning `ExternalActionSubmission`.
+- Adds `POST /workspaces/:id/ads/launches/:launchId/budget-change` returning `ExternalActionSubmission`.
 - Success receipt: `{ kind:"ad_mutation", id:launchId, status:"budget_updated", url:null, error:null }`.
 
-- [ ] **Step 1: Write failing proposal, stale, guardrail, idempotency, and success tests**
+- [x] **Step 1: Write failing proposal, stale, guardrail, idempotency, and success tests**
 
 ```ts
 expect(proposed.action.kind).toBe("budget_change");
@@ -493,23 +493,23 @@ expect(meta.updateDailyBudget).toHaveBeenCalledTimes(1);
 expect(getLaunch(db, WS, launchId)?.dailyBudgetCents).toBe(7500);
 ```
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 Run: `npm exec vitest -- run external-action-budget-change.test.ts`
 Expected: FAIL because unsupported kinds are still blocked in the coordinator and no adapter/route exists.
 
-- [ ] **Step 3: Implement the complete budget vertical**
+- [x] **Step 3: Implement the complete budget vertical**
 
 Eligibility requires `status === "launched"`, non-null `externalAdSetId`, connected Meta account, and a real provider state read. Build the fingerprint from normalized provider before-state, requested after-state, launch/account/connection context, and effective policy. Revalidation repeats the provider read. Guard the requested total by replacing the launch's current committed budget in the daily-cap calculation rather than double-counting it. Execute exactly once, persist the returned budget locally only after success, and remove `budget_change` from the coordinator's unsupported-kind branch.
 
-- [ ] **Step 4: Run focused tests and typecheck**
+- [x] **Step 4: Run focused tests and typecheck**
 
 Run: `npm exec vitest -- run external-action-budget-change.test.ts external-actions.test.ts external-action-paid-launch.test.ts ads-execution.test.ts`
 Expected: PASS.  
 Run: `npm run typecheck`  
 Expected: exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/services/external-action-adapters.ts apps/api/src/services/ad-launches.ts apps/api/src/routes/ad-launches.ts apps/api/test/external-action-budget-change.test.ts
@@ -527,7 +527,7 @@ git commit -m "feat(api): authorize Meta budget changes"
 **Interfaces:**
 - Produces async `prepareTargetingChangeAction(db,fabric,fetcher,workspaceId,launchId,input)`.
 - Registers `targetingChangeActionAdapter()` under `targeting_change`.
-- Adds `POST /workspaces/:id/ad-launches/:launchId/targeting-change` returning `ExternalActionSubmission`.
+- Adds `POST /workspaces/:id/ads/launches/:launchId/targeting-change` returning `ExternalActionSubmission`.
 - Success receipt uses `status:"targeting_updated"`.
 
 - [ ] **Step 1: Write failing normalization, staleness, validation, and success tests**
