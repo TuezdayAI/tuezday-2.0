@@ -40,6 +40,7 @@ import { registerDraftRoutes } from "./routes/drafts";
 import { registerEvidenceRoutes } from "./routes/evidence";
 import { registerExecutionRoutes } from "./routes/executions";
 import { registerExternalActionRoutes } from "./routes/external-actions";
+import { registerExternalActionBatchRoutes } from "./routes/external-action-batches";
 import { registerExternalActionPolicyRoutes } from "./routes/external-action-policies";
 import { registerDesignSystemRoutes } from "./routes/design-systems";
 import { registerGuidanceRoutes } from "./routes/guidance";
@@ -193,6 +194,7 @@ export async function buildApp({
   registerPublicationRoutes(app, db, connectors, fetcher, analytics, externalActionRuntime);
   registerExecutionRoutes(app, db);
   registerExternalActionRoutes(app, db, externalActionRuntime);
+  registerExternalActionBatchRoutes(app, db, externalActionRuntime);
   registerExternalActionPolicyRoutes(app, db);
   registerPriorityRoutes(app, db);
   registerCadenceRoutes(app, db, externalActionRuntime);
