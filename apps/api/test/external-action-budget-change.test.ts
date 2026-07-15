@@ -195,6 +195,25 @@ describe("governed Meta budget changes", () => {
       payload: {},
     });
 
+  it("reads the current provider ad-set state for mutation forms", async () => {
+    state.dailyBudgetCents = 625;
+    state.countries = ["DE", "US"];
+    state.ageMin = 25;
+    state.ageMax = 54;
+    const response = await app.inject({
+      method: "GET",
+      url: `/workspaces/${workspaceId}/ads/launches/${launchId}/provider-state`,
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      externalAdSetId: "set_1",
+      dailyBudgetCents: 625,
+      countries: ["DE", "US"],
+      ageMin: 25,
+      ageMax: 54,
+    });
+  });
+
   it("proposes an exact provider snapshot, deduplicates, and updates once after authorization", async () => {
     const proposed = await propose(750);
     expect(proposed.statusCode).toBe(202);

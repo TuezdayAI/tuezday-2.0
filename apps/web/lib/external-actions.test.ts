@@ -4,10 +4,13 @@ import {
   actionKindLabel,
   actionRecoveryHref,
   actionTimingLabel,
+  budgetChangeDiff,
+  externalActionHref,
   externalActionWorkflowStatus,
   filterActions,
   impactSummary,
   policyExplanation,
+  targetingChangeDiff,
 } from "./external-actions";
 
 function action(overrides: Partial<ExternalAction> = {}): ExternalAction {
@@ -161,6 +164,44 @@ describe("external action view model", () => {
         }),
       ),
     ).toBe("/workspaces/w1/ad-launches");
+  });
+
+  it("routes mutation authorization to Review and stale recovery to a fresh provider form", () => {
+    const mutation = action({
+      kind: "budget_change",
+      subject: { ...action().subject, kind: "ad_launch", id: "l1" },
+    });
+    expect(externalActionHref(mutation)).toContain("tab=authorizations");
+    expect(externalActionHref({ ...mutation, status: "stale" })).toBe(
+      "/workspaces/w1/ad-launches?launch=l1&mutation=budget",
+    );
+    expect(
+      externalActionHref({ ...mutation, kind: "targeting_change", status: "failed" }),
+    ).toBe("/workspaces/w1/ad-launches?launch=l1&mutation=targeting");
+  });
+
+  it("calculates exact budget and targeting diffs", () => {
+    expect(budgetChangeDiff(500, 750)).toEqual({
+      deltaCents: 250,
+      absoluteDeltaCents: 250,
+      percentDelta: 50,
+    });
+    expect(budgetChangeDiff(800, 600)).toEqual({
+      deltaCents: -200,
+      absoluteDeltaCents: 200,
+      percentDelta: -25,
+    });
+    expect(
+      targetingChangeDiff(
+        { countries: ["US", "GB"], ageMin: 18, ageMax: 65 },
+        { countries: ["DE", "US"], ageMin: 25, ageMax: 54 },
+      ),
+    ).toEqual({
+      countriesAdded: ["DE"],
+      countriesRemoved: ["GB"],
+      beforeAge: { min: 18, max: 65 },
+      afterAge: { min: 25, max: 54 },
+    });
   });
 
   it("filters by status, kind, and campaign together", () => {

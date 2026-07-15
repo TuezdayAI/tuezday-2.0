@@ -215,6 +215,36 @@ export function registerAdLaunchRoutes(
     },
   );
 
+  app.get<{ Params: { id: string; launchId: string } }>(
+    "/workspaces/:id/ads/launches/:launchId/provider-state",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const launch = getLaunch(db, request.params.id, request.params.launchId);
+      if (!launch) return reply.status(404).send({ error: "launch_not_found" });
+      if (launch.status !== "launched" || !launch.externalAdSetId) {
+        return reply.status(409).send({
+          error: "launch_not_eligible",
+          message: "Meta state is available only after the ad set has launched.",
+        });
+      }
+      const resolved = executionAdapterOrError(request.params.id, launch.adAccountId);
+      if (!resolved.ok) {
+        return reply.status(resolved.status).send({ error: resolved.error, message: resolved.message });
+      }
+      try {
+        return await resolved.adapter.getAdSetState(
+          resolved.externalAccountId,
+          launch.externalAdSetId,
+        );
+      } catch (error) {
+        if (error instanceof ConnectorFabricError) {
+          return reply.status(502).send({ error: "provider_read_failed", message: error.message });
+        }
+        throw error;
+      }
+    },
+  );
+
   app.patch<{ Params: { id: string; launchId: string } }>(
     "/workspaces/:id/ads/launches/:launchId",
     async (request, reply) => {

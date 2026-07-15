@@ -148,6 +148,58 @@ export function actionAuthorizationHref(action: ExternalAction): string {
   return reviewHref(action.workspaceId, { tab: "authorizations", action: action.id });
 }
 
+const MUTATION_RECOVERY_STATUSES: ReadonlySet<ExternalActionStatus> = new Set([
+  "blocked",
+  "stale",
+  "failed",
+]);
+
+/** Mutation actions recover on their owning launched-row form; every other
+ * state opens the durable action detail in Review. */
+export function externalActionHref(action: ExternalAction): string {
+  if (
+    MUTATION_RECOVERY_STATUSES.has(action.status) &&
+    action.subject.kind === "ad_launch" &&
+    (action.kind === "budget_change" || action.kind === "targeting_change")
+  ) {
+    const mutation = action.kind === "budget_change" ? "budget" : "targeting";
+    return `/workspaces/${action.workspaceId}/ad-launches?launch=${action.subject.id}&mutation=${mutation}`;
+  }
+  return actionAuthorizationHref(action);
+}
+
+export interface BudgetChangeDiff {
+  deltaCents: number;
+  absoluteDeltaCents: number;
+  percentDelta: number | null;
+}
+
+export function budgetChangeDiff(beforeCents: number, afterCents: number): BudgetChangeDiff {
+  const deltaCents = afterCents - beforeCents;
+  return {
+    deltaCents,
+    absoluteDeltaCents: Math.abs(deltaCents),
+    percentDelta: beforeCents === 0 ? null : (deltaCents / beforeCents) * 100,
+  };
+}
+
+interface TargetingSnapshot {
+  countries: string[];
+  ageMin: number;
+  ageMax: number;
+}
+
+export function targetingChangeDiff(before: TargetingSnapshot, after: TargetingSnapshot) {
+  const beforeCountries = new Set(before.countries);
+  const afterCountries = new Set(after.countries);
+  return {
+    countriesAdded: after.countries.filter((country) => !beforeCountries.has(country)).sort(),
+    countriesRemoved: before.countries.filter((country) => !afterCountries.has(country)).sort(),
+    beforeAge: { min: before.ageMin, max: before.ageMax },
+    afterAge: { min: after.ageMin, max: after.ageMax },
+  };
+}
+
 /** One plain sentence an owning surface can show after proposing an action. */
 export function submissionNote(submission: ExternalActionSubmission): string {
   const { action, execution } = submission;
