@@ -72,7 +72,7 @@ export default function WorkspaceInsightsPage() {
   return (
     <>
       <PageHeader title="Workspace Insights" subtitle={<>Aggregate metrics and brain completeness across your workspace.</>} actions={<>
-            <Button variant="secondary" size="sm" onClick={() => apiDownload(`/workspaces/${id}/insights?format=csv`, `workspace-insights-${id}.csv`)}>
+            <Button variant="secondary" size="compact" onClick={() => apiDownload(`/workspaces/${id}/insights?format=csv`, `workspace-insights-${id}.csv`)}>
             Export CSV
           </Button>
           </>} />

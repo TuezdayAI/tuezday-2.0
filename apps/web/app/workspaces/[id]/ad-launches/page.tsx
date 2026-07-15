@@ -427,7 +427,7 @@ export default function AdLaunchesPage() {
   }
 
   async function remove(launch: LaunchView) {
-    if (!window.confirm("Delete this launch?")) return;
+    if (!window.confirm(`Delete ad launch "${launch.name}"?`)) return;
     await run(async () => {
       await call("DELETE", `/ads/launches/${launch.id}`);
       await load();
@@ -502,12 +502,12 @@ export default function AdLaunchesPage() {
               style={{ width: 120 }}
             />
           </label>
-          <Button variant="secondary" size="sm" disabled={busy} onClick={saveCap}>
+          <Button variant="secondary" size="compact" disabled={busy} onClick={saveCap}>
             Save cap
           </Button>
           <Button
             variant={settings.killSwitch ? "primary" : "danger"}
-            size="sm"
+            size="compact"
             disabled={busy}
             onClick={toggleKillSwitch}
           >
@@ -748,8 +748,8 @@ export default function AdLaunchesPage() {
                           Submit for approval
                         </Button>
                         <Button
-                          variant="secondary"
-                          size="sm"
+                          variant="danger"
+                          size="compact"
                           disabled={busy}
                           onClick={() => remove(launch)}
                         >
@@ -764,7 +764,7 @@ export default function AdLaunchesPage() {
                         </Button>
                         <Button
                           variant="secondary"
-                          size="sm"
+                          size="compact"
                           disabled={busy}
                           onClick={() => act(launch, "reject")}
                         >
@@ -772,7 +772,7 @@ export default function AdLaunchesPage() {
                         </Button>
                         <Button
                           variant="secondary"
-                          size="sm"
+                          size="compact"
                           disabled={busy}
                           onClick={() => act(launch, "revise")}
                         >
@@ -797,7 +797,7 @@ export default function AdLaunchesPage() {
                         </Button>
                         <Button
                           variant="secondary"
-                          size="sm"
+                          size="compact"
                           disabled={busy}
                           onClick={() => act(launch, "revise")}
                         >
@@ -814,7 +814,7 @@ export default function AdLaunchesPage() {
                       (spending ? (
                         <Button
                           variant="secondary"
-                          size="sm"
+                          size="compact"
                           disabled={busy}
                           onClick={() => act(launch, "pause")}
                         >
@@ -845,7 +845,7 @@ export default function AdLaunchesPage() {
                         </Button>
                       </>
                     )}
-                    <Button variant="ghost" size="sm" onClick={() => toggleDetail(launch.id)}>
+                    <Button variant="tertiary" size="compact" onClick={() => toggleDetail(launch.id)}>
                       {d ? "Hide log" : "Decision log"}
                     </Button>
                   </div>

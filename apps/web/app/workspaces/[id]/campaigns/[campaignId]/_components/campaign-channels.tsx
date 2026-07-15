@@ -138,7 +138,7 @@ export function CampaignChannels({
                 </dl>
                 <p className={styles.scheduleSummary}>{formatLaneSchedule(lane)}</p>
                 {draft && (
-                  <Button variant="ghost" size="sm" onClick={() => setEditing(lane)}>
+                  <Button variant="tertiary" size="compact" onClick={() => setEditing(lane)}>
                     <Icon name="edit" size="sm" /> Edit configuration
                   </Button>
                 )}

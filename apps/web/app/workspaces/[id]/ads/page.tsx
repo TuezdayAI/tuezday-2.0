@@ -424,7 +424,7 @@ export default function AdsPage() {
                   {account.connectionId && (
                     <Button
                       variant="secondary"
-                      size="sm"
+                      size="compact"
                       disabled={busy || account.connectionStatus !== "connected"}
                       onClick={() => syncAccount(account)}
                     >

@@ -175,10 +175,10 @@ export default function CampaignsPage() {
   return (
     <>
       <TopBarActions>
-        <Button variant="primary" size="sm" onClick={() => setEditing("new")}>
+        <Button variant="primary" size="compact" onClick={() => setEditing("new")}>
           <Icon name="add" size="sm" /> New campaign
         </Button>
-        <Button variant="ghost" size="sm" onClick={() => setSettingsOpen(true)}>
+        <Button variant="tertiary" size="compact" onClick={() => setSettingsOpen(true)}>
           <Icon name="module-settings" size="sm" /> Settings
         </Button>
       </TopBarActions>
@@ -218,7 +218,7 @@ export default function CampaignsPage() {
             <Button
               key={value}
               variant={filter === value ? "secondary" : "ghost"}
-              size="sm"
+              size="compact"
               aria-pressed={filter === value}
               onClick={() => setFilter(value)}
             >

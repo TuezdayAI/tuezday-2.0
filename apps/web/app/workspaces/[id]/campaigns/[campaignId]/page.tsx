@@ -281,7 +281,7 @@ export default function CampaignWorkspacePage() {
 
       {connectionWarning && (
         <div className={styles.inlineWarning} role="status">
-          <Icon name="warning" size="sm" />
+          <Icon name="campaign-risk" size="sm" />
           <span>Publishing connections could not be loaded. Campaign context remains available.</span>
           <Link href={`/workspaces/${id}/connectors`}>Open Integrations</Link>
         </div>

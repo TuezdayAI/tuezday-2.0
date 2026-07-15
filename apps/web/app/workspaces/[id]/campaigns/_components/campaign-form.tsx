@@ -247,7 +247,7 @@ export function CampaignForm({
 
         <div className={styles.formActions}>
           {step > 1 && (
-            <Button type="button" size="sm" onClick={() => setStep(step - 1)}>Back</Button>
+            <Button type="button" size="compact" onClick={() => setStep(step - 1)}>Back</Button>
           )}
           {step < 3 ? (
             <Button
@@ -263,7 +263,7 @@ export function CampaignForm({
               {saving ? "Saving…" : campaign ? "Update campaign" : "Create campaign"}
             </Button>
           )}
-          <Button type="button" variant="ghost" size="sm" onClick={onCancel}>Cancel</Button>
+          <Button type="button" variant="tertiary" size="compact" onClick={onCancel}>Cancel</Button>
         </div>
       </form>
     </Card>

@@ -105,7 +105,7 @@ export function CampaignResults({ workspaceId, campaignId }: CampaignResultsProp
             <div className={styles.resultActions}>
               {result.kind === "publication" && result.status === "failed" && (
                 <Button
-                  size="sm"
+                  size="compact"
                   onClick={() => void retryPublication(result.id)}
                   disabled={busyId === result.id}
                 >

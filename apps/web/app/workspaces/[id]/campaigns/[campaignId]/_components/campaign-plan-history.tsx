@@ -105,7 +105,7 @@ export function CampaignPlanHistory({
                   <h3>{plan.objective || "Untitled campaign objective"}</h3>
                 </div>
                 {plan.status === "draft" && (
-                  <Button variant="primary" size="sm" disabled={busy} onClick={() => void onActivate(plan.id)}>
+                  <Button variant="primary" size="compact" disabled={busy} onClick={() => void onActivate(plan.id)}>
                     {busy ? "Activating…" : "Activate revision"}
                   </Button>
                 )}

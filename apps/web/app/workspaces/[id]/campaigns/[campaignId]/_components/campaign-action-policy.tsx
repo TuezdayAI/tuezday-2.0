@@ -164,7 +164,7 @@ export function CampaignActionPolicy({ workspaceId, campaignId }: CampaignAction
         })}
       </div>
       <div className={styles.policySave}>
-        <Button variant="primary" size="sm" onClick={save} disabled={saving || !dirty}>
+        <Button variant="primary" size="compact" onClick={save} disabled={saving || !dirty}>
           {saving ? "Saving…" : "Save permissions"}
         </Button>
       </div>

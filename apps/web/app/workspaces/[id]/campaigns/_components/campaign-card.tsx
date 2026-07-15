@@ -134,11 +134,11 @@ export function CampaignCard({
           Open campaign <Icon name="chevron-right" size="sm" />
         </Link>
         <div className={styles.cardActions}>
-          <Button variant="ghost" size="sm" onClick={() => onExport(campaign)}>Export</Button>
-          <Button variant="ghost" size="sm" onClick={() => onEdit(campaign)}>Edit</Button>
+          <Button variant="tertiary" size="compact" onClick={() => onExport(campaign)}>Export</Button>
+          <Button variant="tertiary" size="compact" onClick={() => onEdit(campaign)}>Edit</Button>
           <Button
-            variant="ghost"
-            size="sm"
+            variant={campaign.status === "archived" ? "tertiary" : "danger"}
+            size="compact"
             disabled={busy}
             onClick={() =>
               void onSetStatus(campaign, campaign.status === "archived" ? "active" : "archived")

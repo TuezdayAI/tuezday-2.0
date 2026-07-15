@@ -359,7 +359,7 @@ export default function AdCreativesPage() {
                 </Select>
                 <Button
                   variant="secondary"
-                  size="sm"
+                  size="compact"
                   type="button"
                   onClick={() =>
                     void apiDownload(
@@ -491,7 +491,7 @@ export default function AdCreativesPage() {
                                             {spec.maxCount > 1 && values.length > spec.minCount && (
                                               <Button
                                                 variant="secondary"
-                                                size="sm"
+                                                size="compact"
                                                 title={`Remove this ${spec.label.toLowerCase()}`}
                                                 onClick={() =>
                                                   setEditFields((fields) =>
@@ -508,8 +508,8 @@ export default function AdCreativesPage() {
                                     })}
                                     {spec.maxCount > 1 && values.length < spec.maxCount && (
                                       <Button
-                                        variant="ghost"
-                                        size="sm"
+                                        variant="tertiary"
+                                        size="compact"
                                         onClick={() =>
                                           setEditFields((fields) => [
                                             ...fields,
@@ -529,7 +529,7 @@ export default function AdCreativesPage() {
                                 </Button>
                                 <Button
                                   variant="secondary"
-                                  size="sm"
+                                  size="compact"
                                   onClick={() => setEditingId(null)}
                                 >
                                   Cancel
@@ -583,7 +583,7 @@ export default function AdCreativesPage() {
                               <div className="rating-row">
                                 <Button
                                   variant="secondary"
-                                  size="sm"
+                                  size="compact"
                                   onClick={() => copyDraft(draft)}
                                 >
                                   {copiedId === draft.id ? "✓ Copied" : "⧉ Copy"}
@@ -591,7 +591,7 @@ export default function AdCreativesPage() {
                                 {draft.state === "approved" && draft.taskType === "meta_ad_creative" && (
                                   <Button
                                     variant="secondary"
-                                    size="sm"
+                                    size="compact"
                                     disabled={busy}
                                     title="Render this approved copy as a branded 1080x1080 ad image"
                                     onClick={() => generateAdImage(draft.id)}
@@ -603,7 +603,7 @@ export default function AdCreativesPage() {
                                   <>
                                     <Button
                                       variant="secondary"
-                                      size="sm"
+                                      size="compact"
                                       className="rating-accepted"
                                       disabled={busy || draft.violations.length > 0}
                                       onClick={() => draftAction(draft.id, "approve")}
@@ -612,7 +612,7 @@ export default function AdCreativesPage() {
                                     </Button>
                                     <Button
                                       variant="secondary"
-                                      size="sm"
+                                      size="compact"
                                       disabled={busy}
                                       onClick={() => startEdit(set, draft)}
                                     >
@@ -620,7 +620,7 @@ export default function AdCreativesPage() {
                                     </Button>
                                     <Button
                                       variant="secondary"
-                                      size="sm"
+                                      size="compact"
                                       className="rating-rejected"
                                       disabled={busy}
                                       onClick={() => draftAction(draft.id, "reject")}
@@ -630,7 +630,7 @@ export default function AdCreativesPage() {
                                     {draft.state === "edited" && (
                                       <Button
                                         variant="secondary"
-                                        size="sm"
+                                        size="compact"
                                         disabled={busy}
                                         onClick={() => draftAction(draft.id, "resubmit")}
                                       >

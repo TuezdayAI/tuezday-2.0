@@ -230,7 +230,7 @@ export function CampaignLaneForm({
       {error && <p className="error" role="alert">{error}</p>}
       <div className={styles.formActions}>
         <Button variant="primary" type="submit" disabled={busy}>{busy ? "Saving…" : "Save channel"}</Button>
-        <Button variant="ghost" type="button" onClick={onCancel}>Cancel</Button>
+        <Button variant="tertiary" type="button" onClick={onCancel}>Cancel</Button>
       </div>
     </form>
   );
