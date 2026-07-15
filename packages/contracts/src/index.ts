@@ -1278,7 +1278,8 @@ export const upsertExternalActionPoliciesInputSchema = z
   .object({
     scope: z.enum(EXTERNAL_ACTION_POLICY_SCOPES),
     scopeId: z.string().uuid(),
-    rules: z.array(externalActionPolicyWriteSchema).min(1).max(EXTERNAL_ACTION_KINDS.length),
+    expectedUpdatedAt: z.number().int().nullable(),
+    rules: z.array(externalActionPolicyWriteSchema).length(EXTERNAL_ACTION_KINDS.length),
   })
   .superRefine((value, ctx) => {
     if (value.scope === "workspace" && value.rules.some((rule) => rule.rule === "inherit")) {
@@ -1300,6 +1301,21 @@ export const upsertExternalActionPoliciesInputSchema = z
 export type UpsertExternalActionPoliciesInput = z.infer<
   typeof upsertExternalActionPoliciesInputSchema
 >;
+
+export const externalActionPolicyViewSchema = z.object({
+  scope: z.enum(EXTERNAL_ACTION_POLICY_SCOPES),
+  scopeId: z.string().uuid(),
+  scopeLabel: z.string().trim().min(1),
+  rules: z.array(externalActionPolicyRuleSchema),
+  effective: z.array(
+    z.object({
+      actionKind: z.enum(EXTERNAL_ACTION_KINDS),
+      policy: effectiveExternalActionPolicySchema,
+    }),
+  ),
+  updatedAt: z.number().int().nullable(),
+});
+export type ExternalActionPolicyView = z.infer<typeof externalActionPolicyViewSchema>;
 
 const DELIVERABLE_TRANSITIONS: Record<
   DeliverableProductionStatus,

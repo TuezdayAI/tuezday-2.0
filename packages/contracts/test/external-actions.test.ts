@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   EXTERNAL_ACTION_DECISIONS,
   EXTERNAL_ACTION_EXECUTION_KINDS,
+  EXTERNAL_ACTION_KINDS,
   EXTERNAL_ACTION_POLICY_RULES,
   EXTERNAL_ACTION_POLICY_SCOPES,
   EXTERNAL_ACTION_STATUSES,
@@ -10,6 +11,7 @@ import {
   canTransitionExternalAction,
   calendarEntrySchema,
   externalActionDetailSchema,
+  externalActionPolicyViewSchema,
   externalActionPolicyRuleSchema,
   externalActionSubmissionSchema,
   priorityQueueSchema,
@@ -195,9 +197,53 @@ describe("external action governance contracts", () => {
       upsertExternalActionPoliciesInputSchema.safeParse({
         scope: "workspace",
         scopeId: workspaceId,
-        rules: [{ actionKind: "publish", rule: "inherit" }],
+        expectedUpdatedAt: null,
+        rules: EXTERNAL_ACTION_KINDS.map((actionKind) => ({
+          actionKind,
+          rule: actionKind === "publish" ? "inherit" : "human_required",
+        })),
       }).success,
     ).toBe(false);
+  });
+
+  it("requires a complete optimistic scope snapshot for policy writes", () => {
+    const rules = EXTERNAL_ACTION_KINDS.map((actionKind) => ({
+      actionKind,
+      rule: "inherit" as const,
+    }));
+    expect(
+      upsertExternalActionPoliciesInputSchema.safeParse({
+        scope: "campaign",
+        scopeId: campaignId,
+        expectedUpdatedAt: null,
+        rules,
+      }).success,
+    ).toBe(true);
+    expect(
+      upsertExternalActionPoliciesInputSchema.safeParse({
+        scope: "campaign",
+        scopeId: campaignId,
+        rules,
+      }).success,
+    ).toBe(false);
+    expect(
+      upsertExternalActionPoliciesInputSchema.safeParse({
+        scope: "campaign",
+        scopeId: campaignId,
+        expectedUpdatedAt: null,
+        rules: rules.slice(0, -1),
+      }).success,
+    ).toBe(false);
+    expect(
+      externalActionPolicyViewSchema.parse({
+        scope: "campaign",
+        scopeId: campaignId,
+        scopeLabel: "Launch week",
+        rules: [],
+        effective: [],
+        updatedAt: null,
+      }).updatedAt,
+    ).toBeNull();
   });
 
   it("parses the unified priority queue", () => {

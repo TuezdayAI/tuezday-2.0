@@ -10,7 +10,7 @@ import type { RenderInput } from "../src/design/render";
 import type { AssetStorage } from "../src/design/storage";
 import type { LlmGateway } from "../src/llm/gateway";
 import { splitIntoSlides } from "../src/services/carousels";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 // ---------------------------------------------------------------------------
 // Fakes
@@ -436,14 +436,8 @@ describe("carousel pipeline (Sprint 41 Part 4)", () => {
         method: "POST",
         url: `/workspaces/${workspaceId}/drafts/${carousel.id}/approve`,
       });
-      await app.inject({
-        method: "PUT",
-        url: `/workspaces/${workspaceId}/external-action-policies`,
-        payload: {
-          scope: "workspace",
-          scopeId: workspaceId,
-          rules: [{ actionKind: "publish", rule: "autonomous" }],
-        },
+      await putActionPolicy(app, workspaceId, "workspace", workspaceId, {
+        publish: "autonomous",
       });
 
       const publish = await app.inject({

@@ -13,7 +13,7 @@ import type { Db } from "../src/db";
 import type { LlmGateway } from "../src/llm/gateway";
 import { applyDraftAction, listDecisions, listDrafts, submitDraft } from "../src/services/drafts";
 import { insertSignalMatch } from "../src/services/matching";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 const fakeLlm: LlmGateway = {
   async generate() {
@@ -146,15 +146,7 @@ describe("social automation", () => {
   }
 
   async function setPublishPolicy(campaignId: string, rule: "autonomous" | "human_required") {
-    return app.inject({
-      method: "PUT",
-      url: `/workspaces/${workspaceId}/external-action-policies`,
-      payload: {
-        scope: "campaign",
-        scopeId: campaignId,
-        rules: [{ actionKind: "publish", rule }],
-      },
-    });
+    return putActionPolicy(app, workspaceId, "campaign", campaignId, { publish: rule });
   }
 
   async function createSignal(content = "Competitor X launched a feature"): Promise<string> {

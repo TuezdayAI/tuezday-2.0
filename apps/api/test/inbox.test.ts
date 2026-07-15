@@ -16,7 +16,7 @@ import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric"
 import type { Db } from "../src/db";
 import type { LlmGateway } from "../src/llm/gateway";
 import { applyDraftAction, listDecisions, submitDraft } from "../src/services/drafts";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 const fakeLlm: LlmGateway = {
   async generate() {
@@ -136,17 +136,9 @@ describe("engagement & reply inbox", () => {
     // Legacy direct-flow scenarios: publish + reply run autonomously so the
     // provider behaviour stays observable. The reply authorization queue is
     // covered in external-action-messaging.test.ts.
-    await app.inject({
-      method: "PUT",
-      url: `/workspaces/${workspaceId}/external-action-policies`,
-      payload: {
-        scope: "workspace",
-        scopeId: workspaceId,
-        rules: [
-          { actionKind: "publish", rule: "autonomous" },
-          { actionKind: "reply", rule: "autonomous" },
-        ],
-      },
+    await putActionPolicy(app, workspaceId, "workspace", workspaceId, {
+      publish: "autonomous",
+      reply: "autonomous",
     });
   });
 
@@ -184,17 +176,9 @@ describe("engagement & reply inbox", () => {
         payload: { automationMode },
       });
     }
-    await app.inject({
-      method: "PUT",
-      url: `/workspaces/${workspaceId}/external-action-policies`,
-      payload: {
-        scope: "campaign",
-        scopeId: id,
-        rules: [
-          { actionKind: "publish", rule: "autonomous" },
-          { actionKind: "reply", rule: "autonomous" },
-        ],
-      },
+    await putActionPolicy(app, workspaceId, "campaign", id, {
+      publish: "autonomous",
+      reply: "autonomous",
     });
     return id;
   }

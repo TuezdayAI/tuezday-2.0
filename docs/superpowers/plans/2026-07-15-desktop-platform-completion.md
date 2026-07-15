@@ -184,7 +184,7 @@ git commit -m "feat(web): refine the product icon vocabulary"
 - Produces `ExternalActionPolicyConflictError`, mapped to HTTP 409 `{ error: "policy_conflict", current }`.
 - A single PUT is a full six-kind replacement for the scope; non-workspace `inherit` deletes stored rows transactionally.
 
-- [ ] **Step 1: Write failing contract and API conflict tests**
+- [x] **Step 1: Write failing contract and API conflict tests**
 
 ```ts
 expect(upsertExternalActionPoliciesInputSchema.parse({
@@ -199,26 +199,26 @@ expect(conflict.json()).toMatchObject({ error: "policy_conflict" });
 expect(after.rules).toEqual(before.rules);
 ```
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 Run: `npm test -w packages/contracts -- external-actions.test.ts`  
 Expected: FAIL on missing `expectedUpdatedAt`/view schema.  
-Run: `npm test -w apps/api -- external-action-policy.test.ts`  
+Run: `npm exec vitest -- run external-action-policy.test.ts`
 Expected: FAIL because stale writes currently overwrite and inherit rows are stored.
 
-- [ ] **Step 3: Implement atomic replacement and conflict handling**
+- [x] **Step 3: Implement atomic replacement and conflict handling**
 
 `listExternalActionPolicies()` returns the maximum stored `updatedAt`, or `null` when the scope has no rows. In `db.transaction()`, compare it to `expectedUpdatedAt`, delete non-workspace rows whose requested rule is `inherit`, and upsert concrete rows with one shared timestamp. Preserve the existing validator that rejects `autonomous` for persona/connection/lane.
 
-- [ ] **Step 4: Run focused tests and typecheck**
+- [x] **Step 4: Run focused tests and typecheck**
 
 Run: `npm test -w packages/contracts -- external-actions.test.ts`  
-Run: `npm test -w apps/api -- external-action-policy.test.ts`  
+Run: `npm exec vitest -- run external-action-policy.test.ts`
 Expected: PASS.  
 Run: `npm run typecheck`  
 Expected: exit 0 after current workspace/campaign clients send `expectedUpdatedAt` and complete six-kind arrays.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add packages/contracts/src/index.ts packages/contracts/test/external-actions.test.ts apps/api/src/services/external-action-policy.ts apps/api/src/routes/external-action-policies.ts apps/api/test/external-action-policy.test.ts apps/web/app/workspaces/[id]/automation/action-policy.tsx apps/web/app/workspaces/[id]/campaigns/[campaignId]/_components/campaign-action-policy.tsx
@@ -443,7 +443,7 @@ expect(targetPost.body).toEqual({
 
 - [ ] **Step 2: Run and confirm RED**
 
-Run: `npm test -w apps/api -- ads-execution.test.ts`  
+Run: `npm exec vitest -- run ads-execution.test.ts`
 Expected: FAIL because the interface and methods do not exist.
 
 - [ ] **Step 3: Implement Graph reads and writes**
@@ -452,7 +452,7 @@ Use the existing pinned `GRAPH_VERSION` and Nango proxy. Parse `daily_budget` as
 
 - [ ] **Step 4: Run focused tests and typecheck**
 
-Run: `npm test -w apps/api -- ads-execution.test.ts ads.test.ts`  
+Run: `npm exec vitest -- run ads-execution.test.ts ads.test.ts`
 Expected: PASS.  
 Run: `npm run typecheck`  
 Expected: exit 0.
@@ -495,7 +495,7 @@ expect(getLaunch(db, WS, launchId)?.dailyBudgetCents).toBe(7500);
 
 - [ ] **Step 2: Run and confirm RED**
 
-Run: `npm test -w apps/api -- external-action-budget-change.test.ts`  
+Run: `npm exec vitest -- run external-action-budget-change.test.ts`
 Expected: FAIL because unsupported kinds are still blocked in the coordinator and no adapter/route exists.
 
 - [ ] **Step 3: Implement the complete budget vertical**
@@ -504,7 +504,7 @@ Eligibility requires `status === "launched"`, non-null `externalAdSetId`, connec
 
 - [ ] **Step 4: Run focused tests and typecheck**
 
-Run: `npm test -w apps/api -- external-action-budget-change.test.ts external-actions.test.ts external-action-paid-launch.test.ts ads-execution.test.ts`  
+Run: `npm exec vitest -- run external-action-budget-change.test.ts external-actions.test.ts external-action-paid-launch.test.ts ads-execution.test.ts`
 Expected: PASS.  
 Run: `npm run typecheck`  
 Expected: exit 0.
@@ -546,7 +546,7 @@ expect(getLaunch(db, WS, launchId)).toMatchObject({
 
 - [ ] **Step 2: Run and confirm RED**
 
-Run: `npm test -w apps/api -- external-action-targeting-change.test.ts`  
+Run: `npm exec vitest -- run external-action-targeting-change.test.ts`
 Expected: FAIL because targeting remains unsupported.
 
 - [ ] **Step 3: Implement the targeting vertical**
@@ -555,7 +555,7 @@ Reuse Task 9 eligibility and account resolution. Reject no-op changes and dimens
 
 - [ ] **Step 4: Run focused tests and typecheck**
 
-Run: `npm test -w apps/api -- external-action-targeting-change.test.ts external-action-budget-change.test.ts external-actions.test.ts ads-execution.test.ts`  
+Run: `npm exec vitest -- run external-action-targeting-change.test.ts external-action-budget-change.test.ts external-actions.test.ts ads-execution.test.ts`
 Expected: PASS.  
 Run: `npm run typecheck`  
 Expected: exit 0.
@@ -598,7 +598,7 @@ expect(executionOwnerHref(WS, results[0])).toContain("ad-launches");
 - [ ] **Step 2: Run and confirm RED**
 
 Run: `npm exec --prefix apps/web vitest -- run lib/ad-mutation-shell.test.ts lib/execution-results.test.ts`  
-Run: `npm test -w apps/api -- executions.test.ts`  
+Run: `npm exec vitest -- run executions.test.ts`
 Expected: FAIL on missing controls/result kind.
 
 - [ ] **Step 3: Implement exact diffs and recovery**
@@ -608,7 +608,7 @@ Fetch current provider state through a read endpoint added to `ad-launches.ts`; 
 - [ ] **Step 4: Run focused tests and typecheck**
 
 Run: `npm exec --prefix apps/web vitest -- run lib/ad-mutation-shell.test.ts lib/execution-results.test.ts lib/external-actions.test.ts`  
-Run: `npm test -w apps/api -- executions.test.ts external-action-budget-change.test.ts external-action-targeting-change.test.ts`  
+Run: `npm exec vitest -- run executions.test.ts external-action-budget-change.test.ts external-action-targeting-change.test.ts`
 Expected: PASS.  
 Run: `npm run typecheck`  
 Expected: exit 0.
@@ -687,7 +687,7 @@ Test unique request IDs, unique membership, workspace indexes, immutable snapsho
 
 - [ ] **Step 2: Run and confirm RED**
 
-Run: `npm test -w apps/api -- external-action-batch-persistence.test.ts`  
+Run: `npm exec vitest -- run external-action-batch-persistence.test.ts`
 Expected: FAIL because the tables do not exist.
 
 - [ ] **Step 3: Add schema and generate migration**
@@ -699,7 +699,7 @@ Expected: `0046_*.sql` with exactly two new tables and their indexes; no unrelat
 
 - [ ] **Step 4: Run focused tests and typecheck**
 
-Run: `npm test -w apps/api -- external-action-batch-persistence.test.ts external-action-persistence.test.ts`  
+Run: `npm exec vitest -- run external-action-batch-persistence.test.ts external-action-persistence.test.ts`
 Expected: PASS.  
 Run: `npm run typecheck`  
 Expected: exit 0.
@@ -737,7 +737,7 @@ expect(retry.items).toEqual(result.items);
 
 - [ ] **Step 2: Run and confirm RED**
 
-Run: `npm test -w apps/api -- external-action-batches.test.ts`  
+Run: `npm exec vitest -- run external-action-batches.test.ts`
 Expected: FAIL because service/routes are missing.
 
 - [ ] **Step 3: Implement bounded snapshots and resumable execution**
@@ -746,7 +746,7 @@ Selected mode preserves caller order after deduplication. Campaign mode orders b
 
 - [ ] **Step 4: Run focused tests and typecheck**
 
-Run: `npm test -w apps/api -- external-action-batches.test.ts external-actions.test.ts external-action-batch-persistence.test.ts`  
+Run: `npm exec vitest -- run external-action-batches.test.ts external-actions.test.ts external-action-batch-persistence.test.ts`
 Expected: PASS.  
 Run: `npm run typecheck`  
 Expected: exit 0.
@@ -925,7 +925,7 @@ Test workspace cascades, normalized-email uniqueness, action/delivery link, immu
 
 - [ ] **Step 2: Run and confirm RED**
 
-Run: `npm test -w apps/api -- outbound-email-persistence.test.ts`  
+Run: `npm exec vitest -- run outbound-email-persistence.test.ts`
 Expected: FAIL because the tables do not exist.
 
 - [ ] **Step 3: Add tables and generate migration**
@@ -937,7 +937,7 @@ Expected: `0047_*.sql` creates exactly five tables and indexes with no unrelated
 
 - [ ] **Step 4: Run focused tests and typecheck**
 
-Run: `npm test -w apps/api -- outbound-email-persistence.test.ts external-action-persistence.test.ts`  
+Run: `npm exec vitest -- run outbound-email-persistence.test.ts external-action-persistence.test.ts`
 Expected: PASS.  
 Run: `npm run typecheck`  
 Expected: exit 0.
@@ -977,7 +977,7 @@ expect(result.messageId).toBe("email_123");
 
 - [ ] **Step 2: Run and confirm RED**
 
-Run: `npm test -w apps/api -- outbound-email-provider.test.ts`  
+Run: `npm exec vitest -- run outbound-email-provider.test.ts`
 Expected: FAIL because the provider seam is absent.
 
 - [ ] **Step 3: Implement strict Resend mapping**
@@ -986,7 +986,7 @@ Use `POST /domains`, `POST /domains/:id/verify`, `GET /domains/:id`, and `POST /
 
 - [ ] **Step 4: Run focused tests and typecheck**
 
-Run: `npm test -w apps/api -- outbound-email-provider.test.ts mail.test.ts`  
+Run: `npm exec vitest -- run outbound-email-provider.test.ts mail.test.ts`
 Expected: PASS; the transactional mailer remains unchanged.  
 Run: `npm run typecheck`  
 Expected: exit 0.
@@ -1028,7 +1028,7 @@ expect(shell).toContain("Check verification");
 
 - [ ] **Step 2: Run and confirm RED**
 
-Run: `npm test -w apps/api -- email-senders.test.ts`  
+Run: `npm exec vitest -- run email-senders.test.ts`
 Run: `npm exec --prefix apps/web vitest -- run lib/email-sender-shell.test.ts`  
 Expected: FAIL because routes/service/UI are missing.
 
@@ -1038,7 +1038,7 @@ PUT creates/replaces provider domain only when the domain changes; name/local-pa
 
 - [ ] **Step 4: Run focused tests and typecheck**
 
-Run: `npm test -w apps/api -- email-senders.test.ts outbound-email-provider.test.ts`  
+Run: `npm exec vitest -- run email-senders.test.ts outbound-email-provider.test.ts`
 Run: `npm exec --prefix apps/web vitest -- run lib/email-sender-shell.test.ts`  
 Expected: PASS.  
 Run: `npm run typecheck`  
@@ -1082,7 +1082,7 @@ expect(tampered.statusCode).toBe(400);
 
 - [ ] **Step 2: Run and confirm RED**
 
-Run: `npm test -w apps/api -- email-recipient-safety.test.ts`  
+Run: `npm exec vitest -- run email-recipient-safety.test.ts`
 Expected: FAIL because permission/suppression services and signed routes are absent.
 
 - [ ] **Step 3: Implement deterministic safety gates**
@@ -1092,7 +1092,7 @@ Use a dedicated `EMAIL_UNSUBSCRIBE_SECRET` HMAC token containing workspace ID an
 - [ ] **Step 4: Run focused tests and typecheck**
 
 Run: `npm test -w packages/contracts -- outbound-email.test.ts`  
-Run: `npm test -w apps/api -- email-recipient-safety.test.ts auth.test.ts`  
+Run: `npm exec vitest -- run email-recipient-safety.test.ts auth.test.ts`
 Expected: PASS and existing authentication behavior unchanged.  
 Run: `npm run typecheck`  
 Expected: exit 0.
@@ -1134,7 +1134,7 @@ expect(suppression.reason).toBe("bounce");
 
 - [ ] **Step 2: Run and confirm RED**
 
-Run: `npm test -w apps/api -- resend-webhooks.test.ts`  
+Run: `npm exec vitest -- run resend-webhooks.test.ts`
 Expected: FAIL because webhook verification/projection is absent.
 
 - [ ] **Step 3: Implement raw-body verification and event mapping**
@@ -1143,7 +1143,7 @@ Request verification must happen before `JSON.parse`. Handle `email.sent|deliver
 
 - [ ] **Step 4: Run focused tests and typecheck**
 
-Run: `npm test -w apps/api -- resend-webhooks.test.ts outbound-email-persistence.test.ts auth.test.ts`  
+Run: `npm exec vitest -- run resend-webhooks.test.ts outbound-email-persistence.test.ts auth.test.ts`
 Expected: PASS.  
 Run: `npm run typecheck`  
 Expected: exit 0.
@@ -1186,7 +1186,7 @@ expect(results[0]).toMatchObject({ kind:"email_delivery", status:"running" });
 
 - [ ] **Step 2: Run and confirm RED**
 
-Run: `npm test -w apps/api -- external-action-email.test.ts executions.test.ts`  
+Run: `npm exec vitest -- run external-action-email.test.ts executions.test.ts`
 Expected: FAIL because governed email execution does not exist.
 
 - [ ] **Step 3: Implement durable delivery-before-send semantics**
@@ -1195,7 +1195,7 @@ Revalidate exact current origin content/recipient/sender and policy. Guard throu
 
 - [ ] **Step 4: Run focused tests and typecheck**
 
-Run: `npm test -w apps/api -- external-action-email.test.ts executions.test.ts external-action-messaging.test.ts resend-webhooks.test.ts`  
+Run: `npm exec vitest -- run external-action-email.test.ts executions.test.ts external-action-messaging.test.ts resend-webhooks.test.ts`
 Expected: PASS and social sends unchanged.  
 Run: `npm run typecheck`  
 Expected: exit 0.
@@ -1284,7 +1284,7 @@ expect(exportCsv.statusCode).toBe(200);
 
 - [ ] **Step 2: Run and confirm RED**
 
-Run: `npm test -w apps/api -- launch-sequences.test.ts launches.test.ts external-action-email.test.ts`  
+Run: `npm exec vitest -- run launch-sequences.test.ts launches.test.ts external-action-email.test.ts`
 Expected: FAIL because email dispatch still uses export/current shortcuts.
 
 - [ ] **Step 3: Route every launch email through the coordinator**
@@ -1293,7 +1293,7 @@ Build subject/body from the approved launch-message draft, require recipient per
 
 - [ ] **Step 4: Run focused tests and typecheck**
 
-Run: `npm test -w apps/api -- launch-sequences.test.ts launches.test.ts external-action-email.test.ts external-action-messaging.test.ts`  
+Run: `npm exec vitest -- run launch-sequences.test.ts launches.test.ts external-action-email.test.ts external-action-messaging.test.ts`
 Run: `npm exec --prefix apps/web vitest -- run lib/action-origin-shell-contract.test.ts lib/email-send-status.test.ts`  
 Expected: PASS.  
 Run: `npm run typecheck`  
@@ -1333,7 +1333,7 @@ expect(shell).toContain("EmailSendStatus");
 
 - [ ] **Step 2: Run and confirm RED**
 
-Run: `npm test -w apps/api -- outbound.test.ts external-action-email.test.ts`  
+Run: `npm exec vitest -- run outbound.test.ts external-action-email.test.ts`
 Run: `npm exec --prefix apps/web vitest -- run lib/outbound-email-shell.test.ts`  
 Expected: FAIL because Outbound has no governed send route/UI.
 
@@ -1343,7 +1343,7 @@ Parse subject from the first non-empty line and body from the remainder, matchin
 
 - [ ] **Step 4: Run focused tests and typecheck**
 
-Run: `npm test -w apps/api -- outbound.test.ts external-action-email.test.ts`  
+Run: `npm exec vitest -- run outbound.test.ts external-action-email.test.ts`
 Run: `npm exec --prefix apps/web vitest -- run lib/outbound-email-shell.test.ts lib/email-send-status.test.ts`  
 Expected: PASS.  
 Run: `npm run typecheck`  
@@ -1382,7 +1382,7 @@ expect(shell).toContain("EmailSendStatus");
 
 - [ ] **Step 2: Run and confirm RED**
 
-Run: `npm test -w apps/api -- pr.test.ts external-action-email.test.ts`  
+Run: `npm exec vitest -- run pr.test.ts external-action-email.test.ts`
 Run: `npm exec --prefix apps/web vitest -- run lib/pr-email-shell.test.ts`  
 Expected: FAIL because PR only exposes mailto/export behavior.
 
@@ -1392,7 +1392,7 @@ Require an approved PR-channel draft linked to the exact media contact. Reuse th
 
 - [ ] **Step 4: Run focused tests and typecheck**
 
-Run: `npm test -w apps/api -- pr.test.ts external-action-email.test.ts`  
+Run: `npm exec vitest -- run pr.test.ts external-action-email.test.ts`
 Run: `npm exec --prefix apps/web vitest -- run lib/pr-email-shell.test.ts lib/email-send-status.test.ts`  
 Expected: PASS.  
 Run: `npm run typecheck`  
@@ -1437,7 +1437,7 @@ expect(priorityView(signalItem)).toMatchObject({ icon: "signal", cta: "Review si
 - [ ] **Step 2: Run and confirm RED**
 
 Run: `npm test -w packages/contracts -- external-actions.test.ts`  
-Run: `npm test -w apps/api -- priorities.test.ts`  
+Run: `npm exec vitest -- run priorities.test.ts`
 Run: `npm exec --prefix apps/web vitest -- run lib/priorities.test.ts`  
 Expected: FAIL because the kind and source projection do not exist.
 
@@ -1487,7 +1487,7 @@ expect(priorityView(learningItem).cta).toBe("Review learning");
 
 - [ ] **Step 2: Run and confirm RED**
 
-Run: `npm test -w apps/api -- priorities.test.ts learning.test.ts`  
+Run: `npm exec vitest -- run priorities.test.ts learning.test.ts`
 Run: `npm exec --prefix apps/web vitest -- run lib/priorities.test.ts`  
 Expected: FAIL because proposed syntheses are absent from Home.
 
@@ -1539,7 +1539,7 @@ expect(items.filter((item) => item.id === blockedAction.context.connectionId)).t
 
 - [ ] **Step 2: Run and confirm RED**
 
-Run: `npm test -w apps/api -- priorities.test.ts`  
+Run: `npm exec vitest -- run priorities.test.ts`
 Run: `npm exec --prefix apps/web vitest -- run lib/priorities.test.ts`  
 Expected: FAIL because connection health is not projected.
 
@@ -1594,7 +1594,7 @@ expect(home).toContain("WorkflowStatusBadge");
 
 - [ ] **Step 2: Run and confirm RED**
 
-Run: `npm test -w apps/api -- priorities.test.ts`  
+Run: `npm exec vitest -- run priorities.test.ts`
 Run: `npm exec --prefix apps/web vitest -- run lib/priorities.test.ts lib/home-priority-shell.test.ts`  
 Expected: FAIL on missing campaign risk and final tier behavior.
 
@@ -1604,7 +1604,7 @@ Emit one card per active campaign for the highest-severity evidence: a blocked a
 
 - [ ] **Step 4: Run focused and regression tests**
 
-Run: `npm test -w apps/api -- priorities.test.ts executions.test.ts campaigns.test.ts`  
+Run: `npm exec vitest -- run priorities.test.ts executions.test.ts campaigns.test.ts`
 Run: `npm exec --prefix apps/web vitest -- run lib/priorities.test.ts lib/home-priority-shell.test.ts`  
 Expected: PASS.  
 Run: `npm run typecheck`  

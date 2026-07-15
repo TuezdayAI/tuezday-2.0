@@ -9,7 +9,7 @@ import {
 import { RedditAdapter } from "../src/connectors/social/reddit";
 import { NangoFabric } from "../src/connectors/nango";
 import type { LlmGateway } from "../src/llm/gateway";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 const fakeLlm: LlmGateway = {
   async generate() {
@@ -396,14 +396,8 @@ describe("social publishing API", () => {
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Publisher" } })
     ).json().id;
-    const policy = await app.inject({
-      method: "PUT",
-      url: `/workspaces/${workspaceId}/external-action-policies`,
-      payload: {
-        scope: "workspace",
-        scopeId: workspaceId,
-        rules: [{ actionKind: "publish", rule: "autonomous" }],
-      },
+    const policy = await putActionPolicy(app, workspaceId, "workspace", workspaceId, {
+      publish: "autonomous",
     });
     expect(policy.statusCode).toBe(200);
   });

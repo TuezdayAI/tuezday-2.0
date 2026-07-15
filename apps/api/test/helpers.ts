@@ -1,4 +1,10 @@
 import type { InjectOptions } from "fastify";
+import {
+  EXTERNAL_ACTION_KINDS,
+  type ExternalActionKind,
+  type ExternalActionPolicyRule,
+  type ExternalActionPolicyScope,
+} from "@tuezday/contracts";
 import { buildApp, type BuildAppOptions, type TuezdayApp } from "../src/app";
 import { createDb, type Db } from "../src/db";
 
@@ -60,4 +66,34 @@ export async function buildAuthedApp(options: BuildAppOptions): Promise<TuezdayA
   const app = await buildApp(options);
   const user = await registerUser(app);
   return asUser(app, user.token);
+}
+
+/** Write one complete optimistic action-policy scope through the public API. */
+export async function putActionPolicy(
+  app: TuezdayApp,
+  workspaceId: string,
+  scope: ExternalActionPolicyScope,
+  scopeId: string,
+  overrides: Partial<Record<ExternalActionKind, ExternalActionPolicyRule>>,
+) {
+  const current = await app.inject({
+    method: "GET",
+    url: `/workspaces/${workspaceId}/external-action-policies?scope=${scope}&scopeId=${scopeId}`,
+  });
+  if (current.statusCode !== 200) return current;
+  const expectedUpdatedAt = (current.json() as { updatedAt: number | null }).updatedAt;
+  const fallback: ExternalActionPolicyRule = scope === "workspace" ? "human_required" : "inherit";
+  return app.inject({
+    method: "PUT",
+    url: `/workspaces/${workspaceId}/external-action-policies`,
+    payload: {
+      scope,
+      scopeId,
+      expectedUpdatedAt,
+      rules: EXTERNAL_ACTION_KINDS.map((actionKind) => ({
+        actionKind,
+        rule: overrides[actionKind] ?? fallback,
+      })),
+    },
+  });
 }

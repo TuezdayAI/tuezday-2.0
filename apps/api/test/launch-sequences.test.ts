@@ -10,7 +10,7 @@ import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric"
 import { inboxItems, socialAutomationSettings } from "../src/db/schema";
 import type { Db } from "../src/db";
 import type { LlmGateway } from "../src/llm/gateway";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 const fakeLlm: LlmGateway = {
   async generate() {
@@ -137,14 +137,8 @@ describe("multi-step sequences", () => {
     // Legacy engine scenarios: sends run autonomously so kill-switch/stop-on-
     // reply behaviour stays observable. The send authorization queue is covered
     // in external-action-messaging.test.ts.
-    await app.inject({
-      method: "PUT",
-      url: `/workspaces/${workspaceId}/external-action-policies`,
-      payload: {
-        scope: "workspace",
-        scopeId: workspaceId,
-        rules: [{ actionKind: "send", rule: "autonomous" }],
-      },
+    await putActionPolicy(app, workspaceId, "workspace", workspaceId, {
+      send: "autonomous",
     });
   });
 

@@ -3,7 +3,7 @@ import { adLaunchTransitionTo, createAdLaunchInputSchema } from "@tuezday/contra
 import type { TuezdayApp } from "../src/app";
 import { type ConnectorFabric, type ProxyJsonResult } from "../src/connectors/fabric";
 import type { LlmGateway } from "../src/llm/gateway";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 /** Fake gateway producing valid ad-creative formats (mirrors ad-creatives.test.ts). */
 function fakeGateway(): LlmGateway {
@@ -266,14 +266,8 @@ describe("ads execution API (Sprint 20)", () => {
     // Legacy direct-launch scenarios: paid launches run autonomously so the
     // provider chain stays observable. The authorization queue itself is
     // covered in external-action-paid-launch.test.ts.
-    await app.inject({
-      method: "PUT",
-      url: `/workspaces/${workspaceId}/external-action-policies`,
-      payload: {
-        scope: "campaign",
-        scopeId: campaignId,
-        rules: [{ actionKind: "paid_launch", rule: "autonomous" }],
-      },
+    await putActionPolicy(app, workspaceId, "campaign", campaignId, {
+      paid_launch: "autonomous",
     });
 
     const connection = (

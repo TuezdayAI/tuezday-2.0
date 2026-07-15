@@ -6,6 +6,7 @@ import {
 } from "@tuezday/contracts";
 import type { Db } from "../db";
 import {
+  ExternalActionPolicyConflictError,
   ExternalActionPolicyInputError,
   ExternalActionPolicyScopeNotFoundError,
   deleteExternalActionPolicy,
@@ -33,6 +34,9 @@ function invalid(reply: FastifyReply, issues: { message: string }[]) {
 }
 
 function policyError(error: unknown, reply: FastifyReply) {
+  if (error instanceof ExternalActionPolicyConflictError) {
+    return reply.status(409).send({ error: "policy_conflict", current: error.current });
+  }
   if (error instanceof ExternalActionPolicyScopeNotFoundError) {
     return reply.status(404).send({ error: "not_found" });
   }

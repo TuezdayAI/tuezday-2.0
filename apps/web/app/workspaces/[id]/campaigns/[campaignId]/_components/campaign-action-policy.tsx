@@ -11,7 +11,7 @@ import {
   type ExternalActionKind,
   type ExternalActionPolicyContribution,
   type ExternalActionPolicyRule,
-  type ExternalActionPolicyRuleRecord,
+  type ExternalActionPolicyView,
   type EffectiveExternalActionPolicy,
 } from "@tuezday/contracts";
 import { apiFetch } from "@/lib/api";
@@ -25,17 +25,9 @@ import { Button } from "@/src/components/ui/button";
 import { Select } from "@/src/components/ui/input";
 import styles from "../campaign-workspace.module.css";
 
-interface CampaignPolicyView {
-  rules: ExternalActionPolicyRuleRecord[];
-  effective: Array<{
-    actionKind: ExternalActionKind;
-    policy: EffectiveExternalActionPolicy;
-  }>;
-}
-
 type PolicyDraft = Record<ExternalActionKind, ExternalActionPolicyRule>;
 
-function draftFrom(view: CampaignPolicyView): PolicyDraft {
+function draftFrom(view: ExternalActionPolicyView): PolicyDraft {
   const draft = {} as PolicyDraft;
   for (const kind of EXTERNAL_ACTION_KINDS) {
     draft[kind] = view.rules.find((rule) => rule.actionKind === kind)?.rule ?? "inherit";
@@ -59,7 +51,7 @@ interface CampaignActionPolicyProps {
 }
 
 export function CampaignActionPolicy({ workspaceId, campaignId }: CampaignActionPolicyProps) {
-  const [view, setView] = useState<CampaignPolicyView | null>(null);
+  const [view, setView] = useState<ExternalActionPolicyView | null>(null);
   const [draft, setDraft] = useState<PolicyDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [announcement, setAnnouncement] = useState<string | null>(null);
@@ -69,7 +61,7 @@ export function CampaignActionPolicy({ workspaceId, campaignId }: CampaignAction
       `/workspaces/${workspaceId}/external-action-policies?scope=campaign&scopeId=${campaignId}`,
     );
     if (!res.ok) return;
-    const body = (await res.json()) as CampaignPolicyView;
+    const body = (await res.json()) as ExternalActionPolicyView;
     setView(body);
     setDraft(draftFrom(body));
   }, [workspaceId, campaignId]);
@@ -83,39 +75,31 @@ export function CampaignActionPolicy({ workspaceId, campaignId }: CampaignAction
     setSaving(true);
     setAnnouncement(null);
     try {
-      // One bounded batch: a single PUT for every pinned kind, plus a delete
-      // per kind returned to inherit (dropping the row restores the default).
-      const pinned = EXTERNAL_ACTION_KINDS.filter((kind) => draft[kind] !== "inherit");
-      if (pinned.length > 0) {
-        const res = await apiFetch(`/workspaces/${workspaceId}/external-action-policies`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            scope: "campaign",
-            scopeId: campaignId,
-            rules: pinned.map((actionKind) => ({ actionKind, rule: draft[actionKind] })),
-          }),
-        });
-        if (!res.ok) {
-          const body = (await res.json().catch(() => null)) as { message?: string } | null;
-          setAnnouncement(body?.message ?? "Could not save campaign action permissions.");
-          return;
-        }
+      const res = await apiFetch(`/workspaces/${workspaceId}/external-action-policies`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scope: "campaign",
+          scopeId: campaignId,
+          expectedUpdatedAt: view.updatedAt,
+          rules: EXTERNAL_ACTION_KINDS.map((actionKind) => ({
+            actionKind,
+            rule: draft[actionKind],
+          })),
+        }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          message?: string;
+          current?: ExternalActionPolicyView;
+        } | null;
+        if (res.status === 409 && body?.current) setView(body.current);
+        setAnnouncement(body?.message ?? "Could not save campaign action permissions.");
+        return;
       }
-      const inheritRuleIds = view.rules
-        .filter((rule) => draft[rule.actionKind] === "inherit")
-        .map((rule) => rule.id);
-      for (const ruleId of inheritRuleIds) {
-        const res = await apiFetch(
-          `/workspaces/${workspaceId}/external-action-policies/${ruleId}`,
-          { method: "DELETE" },
-        );
-        if (!res.ok && res.status !== 404) {
-          setAnnouncement("Could not reset a permission to the workspace default.");
-          return;
-        }
-      }
-      await load();
+      const body = (await res.json()) as ExternalActionPolicyView;
+      setView(body);
+      setDraft(draftFrom(body));
       setAnnouncement("Campaign action permissions saved.");
     } finally {
       setSaving(false);

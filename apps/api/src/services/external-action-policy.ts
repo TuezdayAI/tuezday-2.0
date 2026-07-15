@@ -9,6 +9,7 @@ import {
   type ExternalActionPolicyRule,
   type ExternalActionPolicyRuleRecord,
   type ExternalActionPolicyScope,
+  type ExternalActionPolicyView,
   type UpsertExternalActionPoliciesInput,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
@@ -38,6 +39,13 @@ export class ExternalActionPolicyInputError extends Error {
   }
 }
 
+export class ExternalActionPolicyConflictError extends Error {
+  constructor(readonly current: ExternalActionPolicyView) {
+    super("Action policy changed after this editor loaded.");
+    this.name = "ExternalActionPolicyConflictError";
+  }
+}
+
 export interface ExternalActionPolicyContext {
   workspaceId: string;
   actionKind: ExternalActionKind;
@@ -45,17 +53,6 @@ export interface ExternalActionPolicyContext {
   personaId: string | null;
   connectionId: string | null;
   laneRevisionId: string | null;
-}
-
-export interface ExternalActionPolicyView {
-  scope: ExternalActionPolicyScope;
-  scopeId: string;
-  scopeLabel: string;
-  rules: ExternalActionPolicyRuleRecord[];
-  effective: Array<{
-    actionKind: ExternalActionKind;
-    policy: EffectiveExternalActionPolicy;
-  }>;
 }
 
 interface ScopeRecord {
@@ -272,7 +269,11 @@ export function listExternalActionPolicies(
     actionKind,
     policy: resolveExternalActionPolicy(db, { workspaceId, actionKind, ...record.context }),
   }));
-  return { scope, scopeId, scopeLabel: record.label, rules, effective };
+  const updatedAt = rules.reduce<number | null>(
+    (latest, rule) => (latest === null || rule.updatedAt > latest ? rule.updatedAt : latest),
+    null,
+  );
+  return { scope, scopeId, scopeLabel: record.label, rules, effective, updatedAt };
 }
 
 export function upsertExternalActionPolicies(
@@ -298,9 +299,18 @@ export function upsertExternalActionPolicies(
     );
   }
 
-  const now = Date.now();
-  for (const write of parsed.data.rules) {
-    const existing = db
+  const current = listExternalActionPolicies(
+    db,
+    workspaceId,
+    parsed.data.scope,
+    parsed.data.scopeId,
+  );
+  if (current.updatedAt !== parsed.data.expectedUpdatedAt) {
+    throw new ExternalActionPolicyConflictError(current);
+  }
+
+  db.transaction((tx) => {
+    const existingRows = tx
       .select()
       .from(externalActionPolicyRules)
       .where(
@@ -308,31 +318,51 @@ export function upsertExternalActionPolicies(
           eq(externalActionPolicyRules.workspaceId, workspaceId),
           eq(externalActionPolicyRules.scope, parsed.data.scope),
           eq(externalActionPolicyRules.scopeId, parsed.data.scopeId),
-          eq(externalActionPolicyRules.actionKind, write.actionKind),
         ),
       )
-      .get();
-    if (existing) {
-      db.update(externalActionPolicyRules)
-        .set({ rule: write.rule, updatedAt: now })
-        .where(eq(externalActionPolicyRules.id, existing.id))
-        .run();
-    } else {
-      db.insert(externalActionPolicyRules)
-        .values({
-          id: randomUUID(),
-          workspaceId,
-          scope: parsed.data.scope,
-          scopeId: parsed.data.scopeId,
-          actionKind: write.actionKind,
-          rule: write.rule,
-          createdBy: actorUserId,
-          createdAt: now,
-          updatedAt: now,
-        })
-        .run();
+      .all();
+    const transactionUpdatedAt = existingRows.reduce<number | null>(
+      (latest, row) => (latest === null || row.updatedAt > latest ? row.updatedAt : latest),
+      null,
+    );
+    if (transactionUpdatedAt !== parsed.data.expectedUpdatedAt) {
+      throw new ExternalActionPolicyConflictError(current);
     }
-  }
+
+    const now = Math.max(Date.now(), (transactionUpdatedAt ?? 0) + 1);
+    const existingByKind = new Map(existingRows.map((row) => [row.actionKind, row]));
+    for (const write of parsed.data.rules) {
+      const existing = existingByKind.get(write.actionKind);
+      if (parsed.data.scope !== "workspace" && write.rule === "inherit") {
+        if (existing) {
+          tx.delete(externalActionPolicyRules)
+            .where(eq(externalActionPolicyRules.id, existing.id))
+            .run();
+        }
+        continue;
+      }
+      if (existing) {
+        tx.update(externalActionPolicyRules)
+          .set({ rule: write.rule, updatedAt: now })
+          .where(eq(externalActionPolicyRules.id, existing.id))
+          .run();
+      } else {
+        tx.insert(externalActionPolicyRules)
+          .values({
+            id: randomUUID(),
+            workspaceId,
+            scope: parsed.data.scope,
+            scopeId: parsed.data.scopeId,
+            actionKind: write.actionKind,
+            rule: write.rule,
+            createdBy: actorUserId,
+            createdAt: now,
+            updatedAt: now,
+          })
+          .run();
+      }
+    }
+  });
   return listExternalActionPolicies(db, workspaceId, parsed.data.scope, parsed.data.scopeId);
 }
 

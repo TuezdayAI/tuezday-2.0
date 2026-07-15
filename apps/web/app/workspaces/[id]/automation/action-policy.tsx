@@ -11,7 +11,7 @@ import {
   EXTERNAL_ACTION_KINDS,
   type ExternalActionEffectivePolicy,
   type ExternalActionKind,
-  type ExternalActionPolicyRuleRecord,
+  type ExternalActionPolicyView,
 } from "@tuezday/contracts";
 import { API_URL, apiFetch } from "@/lib/api";
 import { actionKindLabel, effectivePolicyWorkflowStatus } from "@/lib/external-actions";
@@ -23,17 +23,9 @@ import { Icon } from "@/src/components/ui/icon";
 import { Select } from "@/src/components/ui/input";
 import styles from "./automation.module.css";
 
-interface WorkspacePolicyView {
-  rules: ExternalActionPolicyRuleRecord[];
-  effective: Array<{
-    actionKind: ExternalActionKind;
-    policy: { effective: ExternalActionEffectivePolicy };
-  }>;
-}
-
 type PolicyDraft = Record<ExternalActionKind, ExternalActionEffectivePolicy>;
 
-function draftFrom(view: WorkspacePolicyView): PolicyDraft {
+function draftFrom(view: ExternalActionPolicyView): PolicyDraft {
   const draft = {} as PolicyDraft;
   for (const kind of EXTERNAL_ACTION_KINDS) {
     // Workspace rules are always concrete (the contract forbids inherit at
@@ -45,7 +37,7 @@ function draftFrom(view: WorkspacePolicyView): PolicyDraft {
 }
 
 export function ActionPolicy({ workspaceId }: { workspaceId: string }) {
-  const [view, setView] = useState<WorkspacePolicyView | null>(null);
+  const [view, setView] = useState<ExternalActionPolicyView | null>(null);
   const [draft, setDraft] = useState<PolicyDraft | null>(null);
   const [saving, setSaving] = useState(false);
   const [announcement, setAnnouncement] = useState<string | null>(null);
@@ -57,7 +49,7 @@ export function ActionPolicy({ workspaceId }: { workspaceId: string }) {
         `/workspaces/${workspaceId}/external-action-policies?scope=workspace&scopeId=${workspaceId}`,
       );
       if (!res.ok) throw new Error("not found");
-      const body = (await res.json()) as WorkspacePolicyView;
+      const body = (await res.json()) as ExternalActionPolicyView;
       setView(body);
       setDraft(draftFrom(body));
       setError(null);
@@ -81,6 +73,7 @@ export function ActionPolicy({ workspaceId }: { workspaceId: string }) {
         body: JSON.stringify({
           scope: "workspace",
           scopeId: workspaceId,
+          expectedUpdatedAt: view?.updatedAt ?? null,
           rules: EXTERNAL_ACTION_KINDS.map((actionKind) => ({
             actionKind,
             rule: draft[actionKind],
@@ -88,11 +81,15 @@ export function ActionPolicy({ workspaceId }: { workspaceId: string }) {
         }),
       });
       if (!res.ok) {
-        const body = (await res.json().catch(() => null)) as { message?: string } | null;
+        const body = (await res.json().catch(() => null)) as {
+          message?: string;
+          current?: ExternalActionPolicyView;
+        } | null;
+        if (res.status === 409 && body?.current) setView(body.current);
         setAnnouncement(body?.message ?? "Could not save action permissions.");
         return;
       }
-      const body = (await res.json()) as WorkspacePolicyView;
+      const body = (await res.json()) as ExternalActionPolicyView;
       setView(body);
       setDraft(draftFrom(body));
       setAnnouncement("Action permissions saved.");

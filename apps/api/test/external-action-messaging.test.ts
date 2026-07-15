@@ -1,13 +1,17 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { externalActionSubmissionSchema } from "@tuezday/contracts";
+import {
+  externalActionSubmissionSchema,
+  type ExternalActionKind,
+  type ExternalActionPolicyRule,
+} from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
 import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric";
 import type { Db } from "../src/db";
 import { drafts, externalActions, inboxItems, launchMessages, publications } from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 const fakeLlm: LlmGateway = {
   async generate() {
@@ -145,13 +149,15 @@ describe("external-action messaging boundary", () => {
   async function setPolicy(
     scope: "workspace" | "campaign",
     scopeId: string,
-    rules: Array<{ actionKind: string; rule: string }>,
+    rules: Array<{ actionKind: ExternalActionKind; rule: ExternalActionPolicyRule }>,
   ) {
-    const res = await app.inject({
-      method: "PUT",
-      url: `/workspaces/${workspaceId}/external-action-policies`,
-      payload: { scope, scopeId, rules },
-    });
+    const res = await putActionPolicy(
+      app,
+      workspaceId,
+      scope,
+      scopeId,
+      Object.fromEntries(rules.map((rule) => [rule.actionKind, rule.rule])),
+    );
     expect(res.statusCode).toBe(200);
   }
 

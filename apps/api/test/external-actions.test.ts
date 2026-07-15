@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type {
+import {
+  EXTERNAL_ACTION_KINDS,
+  type ExternalActionKind,
   ExternalActionBlocker,
   ExternalActionExecutionRef,
 } from "@tuezday/contracts";
@@ -18,10 +20,35 @@ import {
 } from "../src/services/external-action-coordinator";
 import { getExternalAction, getExternalActionDetail } from "../src/services/external-actions";
 import { ensureWorkspaceActionPolicies } from "../src/services/external-action-backfill";
-import { upsertExternalActionPolicies } from "../src/services/external-action-policy";
+import {
+  listExternalActionPolicies,
+  upsertExternalActionPolicies,
+} from "../src/services/external-action-policy";
 import { createTestDb } from "./helpers";
 
 const ACTOR = { userId: null, label: "Founder" };
+
+function setWorkspacePolicies(
+  db: Db,
+  workspaceId: string,
+  overrides: Partial<Record<ExternalActionKind, "autonomous" | "human_required">>,
+) {
+  const current = listExternalActionPolicies(db, workspaceId, "workspace", workspaceId);
+  return upsertExternalActionPolicies(
+    db,
+    workspaceId,
+    {
+      scope: "workspace",
+      scopeId: workspaceId,
+      expectedUpdatedAt: current.updatedAt,
+      rules: EXTERNAL_ACTION_KINDS.map((actionKind) => ({
+        actionKind,
+        rule: overrides[actionKind] ?? "human_required",
+      })),
+    },
+    null,
+  );
+}
 
 function execution(error: string | null = null): ExternalActionExecutionRef {
   return {
@@ -139,16 +166,7 @@ describe("external action lifecycle", () => {
   });
 
   it("dispatches autonomous work once and preserves its execution receipt", async () => {
-    upsertExternalActionPolicies(
-      db,
-      workspaceId,
-      {
-        scope: "workspace",
-        scopeId: workspaceId,
-        rules: [{ actionKind: "publish", rule: "autonomous" }],
-      },
-      null,
-    );
+    setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
     const input = command(workspaceId);
     const fake = fakeAdapter(input);
     const runtime = createExternalActionRuntime({ db, adapters: { publish: fake.adapter } });
@@ -254,16 +272,7 @@ describe("external action lifecycle", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-07-14T10:00:00Z"));
     try {
-      upsertExternalActionPolicies(
-        db,
-        workspaceId,
-        {
-          scope: "workspace",
-          scopeId: workspaceId,
-          rules: [{ actionKind: "publish", rule: "autonomous" }],
-        },
-        null,
-      );
+      setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
       const dueAt = Date.now() + 60_000;
       const input = command(workspaceId, { requestedFor: dueAt });
       const fake = fakeAdapter(input);
@@ -282,16 +291,7 @@ describe("external action lifecycle", () => {
   });
 
   it("persists guardrail blockers and failed adapter receipts", async () => {
-    upsertExternalActionPolicies(
-      db,
-      workspaceId,
-      {
-        scope: "workspace",
-        scopeId: workspaceId,
-        rules: [{ actionKind: "publish", rule: "autonomous" }],
-      },
-      null,
-    );
+    setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
     const blockedInput = command(workspaceId);
     const blockedFake = fakeAdapter(blockedInput);
     blockedFake.setBlocker({ code: "connection_unhealthy", message: "Reconnect it.", retryable: true });

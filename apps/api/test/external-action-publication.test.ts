@@ -13,7 +13,7 @@ import {
 import { getExternalActionPayload } from "../src/services/external-actions";
 import { resolveExternalActionPolicy } from "../src/services/external-action-policy";
 import { fingerprintExternalActionIntent } from "../src/services/external-action-coordinator";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 function publicationFabric(posts: Array<Record<string, string>>, fail: { value: boolean }): ConnectorFabric {
   return {
@@ -227,14 +227,8 @@ describe("external-action publication boundary", () => {
   });
 
   it("dispatches autonomous policy exactly once with a linked receipt", async () => {
-    const policy = await app.inject({
-      method: "PUT",
-      url: `/workspaces/${workspaceId}/external-action-policies`,
-      payload: {
-        scope: "workspace",
-        scopeId: workspaceId,
-        rules: [{ actionKind: "publish", rule: "autonomous" }],
-      },
+    const policy = await putActionPolicy(app, workspaceId, "workspace", workspaceId, {
+      publish: "autonomous",
     });
     expect(policy.statusCode).toBe(200);
 
@@ -287,14 +281,8 @@ describe("external-action publication boundary", () => {
   });
 
   it("returns provider failure as a durable failed action and linked receipt", async () => {
-    await app.inject({
-      method: "PUT",
-      url: `/workspaces/${workspaceId}/external-action-policies`,
-      payload: {
-        scope: "workspace",
-        scopeId: workspaceId,
-        rules: [{ actionKind: "publish", rule: "autonomous" }],
-      },
+    await putActionPolicy(app, workspaceId, "workspace", workspaceId, {
+      publish: "autonomous",
     });
     fail.value = true;
     const result = await publish();
