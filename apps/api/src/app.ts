@@ -19,6 +19,8 @@ import type { EvidenceStore } from "./evidence/store";
 import { createLlmGatewayFromEnv } from "./llm";
 import type { LlmGateway } from "./llm/gateway";
 import { CsvOutboundExporter, type OutboundExporter } from "./outbound/exporter";
+import { createOutboundEmailProviderFromEnv } from "./outbound-email/resend";
+import type { OutboundEmailProvider } from "./outbound-email/provider";
 import { createDefaultMailer, type Mailer } from "./mail/mailer";
 import { registerAdCreativeRoutes } from "./routes/ad-creatives";
 import { registerAdImageRoutes } from "./routes/ad-images";
@@ -42,6 +44,7 @@ import { registerExecutionRoutes } from "./routes/executions";
 import { registerExternalActionRoutes } from "./routes/external-actions";
 import { registerExternalActionBatchRoutes } from "./routes/external-action-batches";
 import { registerExternalActionPolicyRoutes } from "./routes/external-action-policies";
+import { registerEmailSenderRoutes } from "./routes/email-senders";
 import { registerDesignSystemRoutes } from "./routes/design-systems";
 import { registerGuidanceRoutes } from "./routes/guidance";
 import { registerGenerationSettingsRoutes } from "./routes/generation-settings";
@@ -89,6 +92,8 @@ export interface BuildAppOptions {
   exporter?: OutboundExporter;
   /** Transactional mailer (Sprint 27); defaults to Resend, else a console logger. */
   mailer?: Mailer;
+  /** Governed outbound-email provider; uses the platform Resend key when configured. */
+  outboundEmail?: OutboundEmailProvider;
   /**
    * Shared secret that authenticates the worker as the `system` actor with
    * access to every workspace. Defaults to TUEZDAY_WORKER_TOKEN.
@@ -113,6 +118,7 @@ export async function buildApp({
   intent = new NullIntentProvider(),
   exporter = new CsvOutboundExporter(),
   mailer = createDefaultMailer(fetcher),
+  outboundEmail = createOutboundEmailProviderFromEnv(fetcher),
   workerToken = process.env.TUEZDAY_WORKER_TOKEN,
   analytics = createAnalyticsSink(),
   design = new OpenDesignProvider(),
@@ -199,6 +205,7 @@ export async function buildApp({
   registerPriorityRoutes(app, db);
   registerCadenceRoutes(app, db, externalActionRuntime);
   registerMailRoutes(app, db, mailer);
+  registerEmailSenderRoutes(app, db, outboundEmail);
   registerAutomationRoutes(app, db, llm, evidence);
   registerInboxRoutes(app, db, llm, evidence, connectors, externalActionRuntime);
   registerInsightsRoutes(app, db);
