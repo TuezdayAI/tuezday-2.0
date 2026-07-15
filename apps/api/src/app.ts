@@ -21,6 +21,7 @@ import type { LlmGateway } from "./llm/gateway";
 import { CsvOutboundExporter, type OutboundExporter } from "./outbound/exporter";
 import { createOutboundEmailProviderFromEnv } from "./outbound-email/resend";
 import type { OutboundEmailProvider } from "./outbound-email/provider";
+import { createResendWebhookVerifierFromEnv, type ResendWebhookVerifier } from "./outbound-email/webhook";
 import { createDefaultMailer, type Mailer } from "./mail/mailer";
 import { registerAdCreativeRoutes } from "./routes/ad-creatives";
 import { registerAdImageRoutes } from "./routes/ad-images";
@@ -46,6 +47,7 @@ import { registerExternalActionBatchRoutes } from "./routes/external-action-batc
 import { registerExternalActionPolicyRoutes } from "./routes/external-action-policies";
 import { registerEmailSenderRoutes } from "./routes/email-senders";
 import { registerEmailRecipientSafetyRoutes } from "./routes/email-recipient-safety";
+import { registerResendWebhookRoute } from "./routes/resend-webhooks";
 import { registerDesignSystemRoutes } from "./routes/design-systems";
 import { registerGuidanceRoutes } from "./routes/guidance";
 import { registerGenerationSettingsRoutes } from "./routes/generation-settings";
@@ -95,6 +97,8 @@ export interface BuildAppOptions {
   mailer?: Mailer;
   /** Governed outbound-email provider; uses the platform Resend key when configured. */
   outboundEmail?: OutboundEmailProvider;
+  /** Signature verifier for public Resend delivery webhooks. */
+  resendWebhookVerifier?: ResendWebhookVerifier;
   /**
    * Shared secret that authenticates the worker as the `system` actor with
    * access to every workspace. Defaults to TUEZDAY_WORKER_TOKEN.
@@ -120,6 +124,7 @@ export async function buildApp({
   exporter = new CsvOutboundExporter(),
   mailer = createDefaultMailer(fetcher),
   outboundEmail = createOutboundEmailProviderFromEnv(fetcher),
+  resendWebhookVerifier = createResendWebhookVerifierFromEnv(),
   workerToken = process.env.TUEZDAY_WORKER_TOKEN,
   analytics = createAnalyticsSink(),
   design = new OpenDesignProvider(),
@@ -210,6 +215,7 @@ export async function buildApp({
   registerMailRoutes(app, db, mailer);
   registerEmailSenderRoutes(app, db, outboundEmail);
   registerEmailRecipientSafetyRoutes(app, db);
+  registerResendWebhookRoute(app, db, resendWebhookVerifier);
   registerAutomationRoutes(app, db, llm, evidence);
   registerInboxRoutes(app, db, llm, evidence, connectors, externalActionRuntime);
   registerInsightsRoutes(app, db);
