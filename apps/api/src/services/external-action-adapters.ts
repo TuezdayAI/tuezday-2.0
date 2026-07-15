@@ -6,12 +6,15 @@ import {
   SOCIAL_POST_CONSTRAINTS,
   budgetChangeIntentSchema,
   publishDraftInputSchema,
+  targetingChangeIntentSchema,
   validateSocialPost,
+  type TargetingChangeIntent,
   type ExternalAction,
   type ExternalActionBlocker,
   type ExternalActionExecutionRef,
   type BudgetChangeIntent,
   type ProposeBudgetChangeInput,
+  type ProposeTargetingChangeInput,
   type PublishDraftInput,
   type SocialPostConstraints,
 } from "@tuezday/contracts";
@@ -32,6 +35,7 @@ import {
   checkSpendGuardrails,
   creativeFieldsFrom,
   getLaunch as getAdLaunch,
+  persistLaunchTargeting,
   performLaunch,
 } from "./ad-launches";
 import { getAdAccount } from "./ads";
@@ -1496,6 +1500,237 @@ export function budgetChangeActionAdapter(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Targeting change actions (launched Meta ad sets)
+// ---------------------------------------------------------------------------
+
+function asTargetingChangePayload(payload: unknown): TargetingChangeIntent {
+  return targetingChangeIntentSchema.parse(payload);
+}
+
+function sameTargeting(
+  left: { countries: string[]; ageMin: number; ageMax: number },
+  right: { countries: string[]; ageMin: number; ageMax: number },
+): boolean {
+  return (
+    left.ageMin === right.ageMin &&
+    left.ageMax === right.ageMax &&
+    left.countries.length === right.countries.length &&
+    left.countries.every((country, index) => country === right.countries[index])
+  );
+}
+
+async function targetingChangeIntent(
+  db: Db,
+  fabric: ConnectorFabric,
+  fetcher: Fetcher,
+  workspaceId: string,
+  launchId: string,
+  after: TargetingChangeIntent["after"],
+  allowNoop: boolean,
+): Promise<ExternalActionIntent> {
+  const launch = getAdLaunch(db, workspaceId, launchId);
+  if (!launch) {
+    throw new ExternalActionPreparationError("launch_not_found", "Launch not found.", 404);
+  }
+  if (launch.status !== "launched" || !launch.externalAdSetId) {
+    throw new ExternalActionPreparationError(
+      "launch_not_eligible",
+      "Targeting can change only after the Meta ad set has launched.",
+      409,
+    );
+  }
+  const account = getAdAccount(db, workspaceId, launch.adAccountId);
+  if (!account) {
+    throw new ExternalActionPreparationError("account_not_found", "No such ad account.", 404);
+  }
+  const resolved = resolveAdsExecution(db, fabric, fetcher, workspaceId, launch.adAccountId);
+  if (!resolved) {
+    throw new ExternalActionPreparationError(
+      "account_not_launchable",
+      "Reconnect the Meta ad account before changing its targeting.",
+      409,
+    );
+  }
+  const provider = await resolved.adapter.getAdSetState(
+    resolved.externalAccountId,
+    launch.externalAdSetId,
+  );
+  const before = {
+    countries: provider.countries,
+    ageMin: provider.ageMin,
+    ageMax: provider.ageMax,
+  };
+  if (!allowNoop && sameTargeting(before, after)) {
+    throw new ExternalActionPreparationError(
+      "targeting_unchanged",
+      "Choose targeting different from the current Meta targeting.",
+      400,
+    );
+  }
+  const rawPayload = {
+    launchId: launch.id,
+    adAccountId: account.id,
+    externalAccountId: account.externalId,
+    externalAdSetId: launch.externalAdSetId,
+    before,
+    after,
+    providerUpdatedAt: provider.updatedAt,
+  };
+  const payload = allowNoop ? rawPayload : targetingChangeIntentSchema.parse(rawPayload);
+  const campaign = launch.campaignId ? getCampaign(db, workspaceId, launch.campaignId) : undefined;
+  return {
+    subject: {
+      kind: "ad_launch",
+      id: launch.id,
+      title: `Change targeting · ${launch.name}`,
+      summary: `${before.countries.join(", ")} · ages ${before.ageMin}–${before.ageMax} → ${after.countries.join(", ")} · ages ${after.ageMin}–${after.ageMax}`,
+      channel: "ads",
+      destination: `${account.name} · ${launch.externalAdSetId}`,
+    },
+    context: {
+      campaignId: campaign?.id ?? null,
+      campaignName: campaign?.name ?? null,
+      personaId: null,
+      personaName: null,
+      connectionId: account.connectionId,
+      connectionName: account.name,
+      laneRevisionId: null,
+      laneName: null,
+    },
+    payload,
+    requestedFor: null,
+  };
+}
+
+export async function prepareTargetingChangeAction(
+  db: Db,
+  fabric: ConnectorFabric,
+  fetcher: Fetcher,
+  workspaceId: string,
+  launchId: string,
+  input: ProposeTargetingChangeInput,
+): Promise<ExternalActionCommand> {
+  return {
+    workspaceId,
+    kind: "targeting_change",
+    idempotencyKey: input.idempotencyKey,
+    ...(await targetingChangeIntent(
+      db,
+      fabric,
+      fetcher,
+      workspaceId,
+      launchId,
+      {
+        countries: input.countries,
+        ageMin: input.ageMin,
+        ageMax: input.ageMax,
+      },
+      false,
+    )),
+  };
+}
+
+export function targetingChangeActionAdapter(
+  db: Db,
+  fabric: ConnectorFabric,
+  fetcher: Fetcher,
+): ExternalActionAdapter {
+  return {
+    async revalidate(action, rawPayload) {
+      const payload = asTargetingChangePayload(rawPayload);
+      return targetingChangeIntent(
+        db,
+        fabric,
+        fetcher,
+        action.workspaceId,
+        payload.launchId,
+        payload.after,
+        true,
+      );
+    },
+
+    async guard(action, rawPayload): Promise<ExternalActionBlocker | null> {
+      const payload = asTargetingChangePayload(rawPayload);
+      const launch = getAdLaunch(db, action.workspaceId, payload.launchId);
+      if (!launch || launch.status !== "launched" || !launch.externalAdSetId) {
+        return {
+          code: "launch_not_eligible",
+          message: "The launched Meta ad set is no longer available.",
+          retryable: false,
+        };
+      }
+      if (!resolveAdsExecution(db, fabric, fetcher, action.workspaceId, payload.adAccountId)) {
+        return {
+          code: "connection_unhealthy",
+          message: "Reconnect the Meta ad account before changing its targeting.",
+          retryable: true,
+        };
+      }
+      const guardrails = checkSpendGuardrails(db, launch);
+      if (!guardrails.ok) {
+        return {
+          code: guardrails.error === "kill_switch_on" ? "kill_switch" : guardrails.error,
+          message: guardrails.message,
+          retryable: true,
+        };
+      }
+      return null;
+    },
+
+    async execute(action, rawPayload): Promise<ExternalActionExecutionRef> {
+      const payload = asTargetingChangePayload(rawPayload);
+      const resolved = resolveAdsExecution(
+        db,
+        fabric,
+        fetcher,
+        action.workspaceId,
+        payload.adAccountId,
+      );
+      if (!resolved) {
+        return {
+          kind: "ad_mutation",
+          id: payload.launchId,
+          status: "failed",
+          url: null,
+          error: "The Meta ad account is not connected.",
+        };
+      }
+      try {
+        const updated = await resolved.adapter.updateTargeting(
+          resolved.externalAccountId,
+          payload.externalAdSetId,
+          payload.after,
+        );
+        const confirmed = {
+          countries: updated.countries,
+          ageMin: updated.ageMin,
+          ageMax: updated.ageMax,
+        };
+        if (!sameTargeting(confirmed, payload.after)) {
+          throw new Error("Meta did not confirm the requested targeting.");
+        }
+        persistLaunchTargeting(db, payload.launchId, confirmed);
+        return {
+          kind: "ad_mutation",
+          id: payload.launchId,
+          status: "targeting_updated",
+          url: null,
+          error: null,
+        };
+      } catch (error) {
+        return {
+          kind: "ad_mutation",
+          id: payload.launchId,
+          status: "failed",
+          url: null,
+          error: (error instanceof Error ? error.message : String(error)).slice(0, 500),
+        };
+      }
+    },
+  };
+}
+
 export function createExternalActionAdapters(
   db: Db,
   fabric: ConnectorFabric,
@@ -1507,5 +1742,6 @@ export function createExternalActionAdapters(
     send: sendActionAdapter(db, fabric, fetcher),
     paid_launch: paidLaunchActionAdapter(db, fabric, fetcher),
     budget_change: budgetChangeActionAdapter(db, fabric, fetcher),
+    targeting_change: targetingChangeActionAdapter(db, fabric, fetcher),
   };
 }

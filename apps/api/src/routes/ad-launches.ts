@@ -3,6 +3,7 @@ import {
   AD_LAUNCH_ACTIONS,
   createAdLaunchInputSchema,
   proposeBudgetChangeInputSchema,
+  proposeTargetingChangeInputSchema,
   updateAdLaunchInputSchema,
   updateAdSettingsInputSchema,
   type AdLaunchAction,
@@ -38,6 +39,7 @@ import {
   ExternalActionPreparationError,
   preparePaidLaunchAction,
   prepareBudgetChangeAction,
+  prepareTargetingChangeAction,
 } from "../services/external-action-adapters";
 import type { ExternalActionRuntime } from "../services/external-action-coordinator";
 import { getWorkspace } from "../services/workspaces";
@@ -315,6 +317,39 @@ export function registerAdLaunchRoutes(
       }
       try {
         const command = await prepareBudgetChangeAction(
+          db,
+          fabric,
+          fetcher,
+          request.params.id,
+          request.params.launchId,
+          parsed.data,
+        );
+        const submission = await runtime.propose(command, actorOf(request));
+        return reply
+          .status(submission.action.status === "authorization_required" ? 202 : 201)
+          .send(submission);
+      } catch (error) {
+        if (error instanceof ExternalActionPreparationError) {
+          return reply.status(error.statusCode).send({ error: error.code, message: error.message });
+        }
+        if (error instanceof ConnectorFabricError) {
+          return reply.status(502).send({ error: "provider_read_failed", message: error.message });
+        }
+        return externalActionError(error, reply);
+      }
+    },
+  );
+
+  app.post<{ Params: { id: string; launchId: string } }>(
+    "/workspaces/:id/ads/launches/:launchId/targeting-change",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const parsed = proposeTargetingChangeInputSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return invalidInput(reply, parsed.error.issues.map((issue) => issue.message).join("; "));
+      }
+      try {
+        const command = await prepareTargetingChangeAction(
           db,
           fabric,
           fetcher,

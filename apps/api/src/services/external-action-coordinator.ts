@@ -143,12 +143,9 @@ function submission(action: ExternalAction): ExternalActionSubmission {
 }
 
 function unavailableAdapterBlocker(kind: ExternalActionKind): ExternalActionBlocker {
-  const unsupportedAdsMutation = kind === "targeting_change";
   return {
-    code: unsupportedAdsMutation ? "unsupported_until_ads_wave" : "adapter_unavailable",
-    message: unsupportedAdsMutation
-      ? "Budget and targeting mutations are not executable until the ads governance wave."
-      : "This external action adapter is not available in the current stage.",
+    code: "adapter_unavailable",
+    message: `The ${kind.replaceAll("_", " ")} adapter is not available in the current stage.`,
     retryable: false,
   };
 }

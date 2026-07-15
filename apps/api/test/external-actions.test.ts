@@ -347,6 +347,6 @@ describe("external action lifecycle", () => {
       ACTOR,
     );
     expect(unsupported.action.status).toBe("blocked");
-    expect(unsupported.action.blocker?.code).toBe("unsupported_until_ads_wave");
+    expect(unsupported.action.blocker?.code).toBe("adapter_unavailable");
   });
 });

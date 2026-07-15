@@ -3509,6 +3509,7 @@ export type ProposeBudgetChangeInput = z.infer<typeof proposeBudgetChangeInputSc
 
 export const proposeTargetingChangeInputSchema = targetingFieldsSchema
   .extend({ idempotencyKey: z.string().uuid() })
+  .strict("Only countries and age range can be changed")
   .superRefine(refineTargetingAgeRange);
 export type ProposeTargetingChangeInput = z.infer<typeof proposeTargetingChangeInputSchema>;
 

@@ -530,7 +530,7 @@ git commit -m "feat(api): authorize Meta budget changes"
 - Adds `POST /workspaces/:id/ads/launches/:launchId/targeting-change` returning `ExternalActionSubmission`.
 - Success receipt uses `status:"targeting_updated"`.
 
-- [ ] **Step 1: Write failing normalization, staleness, validation, and success tests**
+- [x] **Step 1: Write failing normalization, staleness, validation, and success tests**
 
 ```ts
 expect(JSON.parse(row.payloadJson).after).toEqual({
@@ -544,23 +544,23 @@ expect(getLaunch(db, WS, launchId)).toMatchObject({
 });
 ```
 
-- [ ] **Step 2: Run and confirm RED**
+- [x] **Step 2: Run and confirm RED**
 
 Run: `npm exec vitest -- run external-action-targeting-change.test.ts`
 Expected: FAIL because targeting remains unsupported.
 
-- [ ] **Step 3: Implement the targeting vertical**
+- [x] **Step 3: Implement the targeting vertical**
 
 Reuse Task 9 eligibility and account resolution. Reject no-op changes and dimensions outside countries/age. Fingerprint sorted country codes and both age bounds. After the provider returns, require its normalized state to equal the requested state; a mismatched provider response is a failed action and does not update local projection. Remove `targeting_change` from the coordinator's unsupported branch only when this adapter is registered.
 
-- [ ] **Step 4: Run focused tests and typecheck**
+- [x] **Step 4: Run focused tests and typecheck**
 
 Run: `npm exec vitest -- run external-action-targeting-change.test.ts external-action-budget-change.test.ts external-actions.test.ts ads-execution.test.ts`
 Expected: PASS.  
 Run: `npm run typecheck`  
 Expected: exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add apps/api/src/services/external-action-adapters.ts apps/api/src/services/ad-launches.ts apps/api/src/routes/ad-launches.ts apps/api/test/external-action-targeting-change.test.ts
