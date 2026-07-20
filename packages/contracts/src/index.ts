@@ -2979,6 +2979,24 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
       "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement,business_management",
   },
   {
+    // Sprint 47: the outreach mailbox. OAuth popup via Nango like the social
+    // trio; creds are GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET in the root .env
+    // (a GCP OAuth app with the Gmail scopes; "Testing" mode works for the
+    // founder's own account, app verification needed for customers).
+    // gmail.send = outreach sends from the founder's real mailbox;
+    // gmail.readonly = polling inbound replies to Tuezday-sent threads only
+    // (the privacy invariant — unrelated mail is never ingested).
+    key: "gmail",
+    label: "Gmail",
+    nangoProvider: "google-mail",
+    authMode: "oauth",
+    categories: ["outbound"],
+    baseUrl: "https://gmail.googleapis.com",
+    testPath: "/gmail/v1/users/me/profile",
+    oauthScopes:
+      "https://www.googleapis.com/auth/gmail.send,https://www.googleapis.com/auth/gmail.readonly",
+  },
+  {
     // Proxy any API without auth (your own services, public APIs). Keyed
     // custom APIs arrive when a generic API-key template is wired up.
     key: "custom",
@@ -4161,9 +4179,29 @@ export type AutomationRunResult = z.infer<typeof automationRunResultSchema>;
 // Engagement & reply inbox (Sprint 29)
 // ---------------------------------------------------------------------------
 
-/** A comment on one of our posts, or a reply to one of our outbound DMs. */
-export const INBOX_ITEM_KINDS = ["comment", "dm"] as const;
+/**
+ * A comment on one of our posts, a reply to one of our outbound DMs, or an
+ * inbound email reply to an outreach email sent from a connected mailbox
+ * (Sprint 47).
+ */
+export const INBOX_ITEM_KINDS = ["comment", "dm", "email"] as const;
 export type InboxItemKind = (typeof INBOX_ITEM_KINDS)[number];
+
+/**
+ * Best-effort LLM classification of an inbound email reply (Sprint 47).
+ * Labels only — reply-driven actions (stop chain, suppress, retry) are
+ * Sprint 49. `null` on the item means unclassified (LLM unavailable/failed);
+ * classification assists, never gates.
+ */
+export const EMAIL_REPLY_LABELS = [
+  "positive",
+  "not_interested",
+  "out_of_office",
+  "unsubscribe_request",
+  "bounce",
+  "other",
+] as const;
+export type EmailReplyLabel = (typeof EMAIL_REPLY_LABELS)[number];
 
 export const INBOX_ITEM_STATUSES = ["unread", "read", "replied", "dismissed"] as const;
 export type InboxItemStatus = (typeof INBOX_ITEM_STATUSES)[number];
@@ -4194,6 +4232,11 @@ export const inboxItemSchema = z.object({
   postedReplyUrl: z.string().nullable(),
   /** Governing reply action; absent/null until a reply proposal exists. */
   externalActionId: z.string().uuid().nullable().optional(),
+  /** The sent outreach email this replies to (kind "email" only — Sprint 47). */
+  emailDeliveryId: z.string().uuid().nullable().optional(),
+  /** LLM classification of an email reply; null = unclassified. */
+  replyLabel: z.enum(EMAIL_REPLY_LABELS).nullable().optional(),
+  replyLabeledAt: z.number().int().nullable().optional(),
   externalCreatedAt: z.number().int(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
@@ -4212,6 +4255,15 @@ export const inboxItemWithContextSchema = inboxItemSchema.extend({
       url: z.string().nullable(),
     })
     .nullable(),
+  /** The outreach email a kind:"email" item replies to (Sprint 47). */
+  sentEmail: z
+    .object({
+      deliveryId: z.string().uuid(),
+      subject: z.string(),
+      sentAt: z.number().int().nullable(),
+    })
+    .nullable()
+    .optional(),
 });
 export type InboxItemWithContext = z.infer<typeof inboxItemWithContextSchema>;
 
@@ -5802,3 +5854,105 @@ export const AD_IMAGE_SLIDE_SHAPE = "ad-1080x1080" as const;
 /** The only Open Design skills Tuezday will ever request (umbrella Decision 9). */
 export const DESIGN_SKILL_ALLOWLIST = ["social-carousel"] as const;
 export type DesignSkillId = (typeof DESIGN_SKILL_ALLOWLIST)[number];
+
+// ---------------------------------------------------------------------------
+// Outreach mailboxes (Sprint 47)
+// ---------------------------------------------------------------------------
+
+/**
+ * A connected sending/receiving mailbox — the outreach send identity AND the
+ * reply source, in one object. Modeled as a pool from day one (founder
+ * decision 05): a workspace can hold many mailboxes even while early
+ * sequences use a single one. Distinct from `workspaceEmailSenders` (the
+ * Resend DNS-domain identity for transactional/broadcast email) — the two
+ * send paths coexist.
+ */
+export const MAILBOX_PROVIDERS = ["gmail"] as const;
+export type MailboxProvider = (typeof MAILBOX_PROVIDERS)[number];
+
+export const MAILBOX_STATUSES = ["connected", "error", "disconnected"] as const;
+export type MailboxStatus = (typeof MAILBOX_STATUSES)[number];
+
+/** Founder decision: per-mailbox daily cap is customizable, default 50. */
+export const MAILBOX_DEFAULT_DAILY_CAP = 50;
+export const MAILBOX_MAX_DAILY_CAP = 500;
+
+/**
+ * When the mailbox may send, enforced by the Sprint 48 sequence scheduler
+ * (stored from Sprint 47 so settings survive). Empty object = always.
+ */
+export const mailboxSendingWindowSchema = z
+  .object({
+    /** 0 = Sunday … 6 = Saturday. Empty/absent = every day. */
+    days: z.array(z.number().int().min(0).max(6)).max(7).optional(),
+    /** Local hour bounds, half-open [startHour, endHour). */
+    startHour: z.number().int().min(0).max(23).optional(),
+    endHour: z.number().int().min(1).max(24).optional(),
+    /** IANA timezone, e.g. "Asia/Kolkata". Absent = workspace default. */
+    timezone: z.string().max(64).optional(),
+  })
+  .strict();
+export type MailboxSendingWindow = z.infer<typeof mailboxSendingWindowSchema>;
+
+export const mailboxSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  /** The gmail connector row this mailbox rides (tokens live in Nango). */
+  connectionId: z.string().uuid(),
+  provider: z.enum(MAILBOX_PROVIDERS),
+  /** The mailbox address, filled from the provider profile at connect time. */
+  address: z.string().email(),
+  displayName: z.string(),
+  replyTo: z.string().email().nullable(),
+  signature: z.string(),
+  dailyCap: z.number().int().min(1).max(MAILBOX_MAX_DAILY_CAP),
+  sendingWindow: mailboxSendingWindowSchema,
+  defaultPersonaId: z.string().uuid().nullable(),
+  status: z.enum(MAILBOX_STATUSES),
+  lastPolledAt: z.number().int().nullable(),
+  lastError: z.string().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type Mailbox = z.infer<typeof mailboxSchema>;
+
+/** A mailbox as the UI needs it: the row plus today's send usage. */
+export const mailboxWithUsageSchema = mailboxSchema.extend({
+  /** Accepted sends since UTC midnight, counted from email deliveries. */
+  sentToday: z.number().int(),
+});
+export type MailboxWithUsage = z.infer<typeof mailboxWithUsageSchema>;
+
+/** Create = point at a connected gmail connector; the address comes from the provider profile. */
+export const createMailboxInputSchema = z.object({
+  connectionId: z.string().uuid(),
+});
+export type CreateMailboxInput = z.infer<typeof createMailboxInputSchema>;
+
+export const updateMailboxInputSchema = z
+  .object({
+    displayName: z.string().max(200).optional(),
+    replyTo: z.string().email().nullable().optional(),
+    signature: z.string().max(2000).optional(),
+    dailyCap: z.number().int().min(1).max(MAILBOX_MAX_DAILY_CAP).optional(),
+    sendingWindow: mailboxSendingWindowSchema.optional(),
+    defaultPersonaId: z.string().uuid().nullable().optional(),
+  })
+  .strict();
+export type UpdateMailboxInput = z.infer<typeof updateMailboxInputSchema>;
+
+/** Send an approved, lead-linked outbound email draft from a mailbox (Sprint 47 send surface). */
+export const sendDraftFromMailboxInputSchema = z.object({
+  mailboxId: z.string().uuid(),
+});
+export type SendDraftFromMailboxInput = z.infer<typeof sendDraftFromMailboxInputSchema>;
+
+/** What one mailbox-inbox poll run did. */
+export const mailboxInboxRunResultSchema = z.object({
+  mailboxesPolled: z.number().int(),
+  messagesSeen: z.number().int(),
+  newItems: z.number().int(),
+  labeled: z.number().int(),
+  ranAt: z.number().int(),
+});
+export type MailboxInboxRunResult = z.infer<typeof mailboxInboxRunResultSchema>;

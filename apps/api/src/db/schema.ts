@@ -1237,6 +1237,11 @@ export const emailDeliveries = sqliteTable(
     idempotencyKey: text("idempotency_key").notNull(),
     provider: text("provider").notNull().default("resend"),
     providerMessageId: text("provider_message_id"),
+    // Gmail thread id (Sprint 47) — the inbound-reply matching key. Null on
+    // Resend deliveries, which have no reply loop.
+    providerThreadId: text("provider_thread_id"),
+    // Which connected mailbox sent this (Sprint 47). Null = the Resend path.
+    mailboxId: text("mailbox_id").references(() => mailboxes.id, { onDelete: "set null" }),
     status: text("status").notNull().default("queued"),
     acceptedAt: integer("accepted_at"),
     completedAt: integer("completed_at"),
@@ -1295,6 +1300,48 @@ export const emailDeliveryEvents = sqliteTable(
 );
 
 export type EmailDeliveryEventRow = typeof emailDeliveryEvents.$inferSelect;
+
+// A connected outreach mailbox (Sprint 47): the send identity AND the reply
+// source. Rides a `gmail` connector row (tokens live in Nango, never here).
+// Modeled as a pool per workspace from day one; distinct from
+// workspaceEmailSenders (the Resend DNS-domain transactional identity).
+export const mailboxes = sqliteTable(
+  "mailboxes",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => connections.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull().default("gmail"),
+    // Filled from the provider profile at connect time, never hand-typed.
+    address: text("address").notNull(),
+    displayName: text("display_name").notNull().default(""),
+    replyTo: text("reply_to"),
+    signature: text("signature").notNull().default(""),
+    // Founder decision: customizable, default 50 (MAILBOX_DEFAULT_DAILY_CAP).
+    dailyCap: integer("daily_cap").notNull().default(50),
+    // MailboxSendingWindow JSON; stored now, enforced by the Sprint 48 scheduler.
+    sendingWindowJson: text("sending_window_json").notNull().default("{}"),
+    defaultPersonaId: text("default_persona_id").references(() => personas.id, {
+      onDelete: "set null",
+    }),
+    status: text("status").notNull().default("connected"),
+    // Inbound poll cursor anchor for the mailbox-inbox tick.
+    lastPolledAt: integer("last_polled_at"),
+    lastError: text("last_error"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("mailboxes_workspace_address").on(t.workspaceId, t.address),
+    index("mailboxes_workspace_status").on(t.workspaceId, t.status),
+  ],
+);
+
+export type MailboxRow = typeof mailboxes.$inferSelect;
 
 // Social publishing receipts (Sprint 17) — one row per publish attempt (now
 // or scheduled); the post lives on the platform, Tuezday keeps status + URL.
@@ -1698,6 +1745,14 @@ export const inboxItems = sqliteTable(
     }),
     postedReplyExternalId: text("posted_reply_external_id"),
     postedReplyUrl: text("posted_reply_url"),
+    // The sent outreach email this replies to (kind "email" — Sprint 47); the
+    // email analog of publicationId (comment) / launchMessageId (dm).
+    emailDeliveryId: text("email_delivery_id").references(() => emailDeliveries.id, {
+      onDelete: "set null",
+    }),
+    // EmailReplyLabel from the best-effort LLM classifier; null = unclassified.
+    replyLabel: text("reply_label"),
+    replyLabeledAt: integer("reply_labeled_at"),
     externalCreatedAt: integer("external_created_at").notNull(),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),

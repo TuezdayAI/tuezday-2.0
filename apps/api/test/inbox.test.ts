@@ -257,7 +257,7 @@ describe("engagement & reply inbox", () => {
 
   describe("contracts", () => {
     it("defines the inbox + metric vocabulary and parses the schemas", () => {
-      expect(INBOX_ITEM_KINDS).toEqual(["comment", "dm"]);
+      expect(INBOX_ITEM_KINDS).toEqual(["comment", "dm", "email"]);
       expect(INBOX_ITEM_STATUSES).toEqual(["unread", "read", "replied", "dismissed"]);
       expect(METRIC_WINDOWS).toEqual(["24h", "7d"]);
       expect(TASK_TYPES).toContain("engagement_reply");
