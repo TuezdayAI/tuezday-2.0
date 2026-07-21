@@ -14,10 +14,17 @@ import {
   prepareEmailAction,
 } from "./external-action-email";
 import type { ExternalActionCommand } from "./external-action-coordinator";
+import { getMailbox } from "./mailboxes";
 
 export class OutboundDraftEmailError extends Error {
   constructor(
-    readonly code: "draft_not_found" | "draft_not_approved" | "draft_not_email" | "lead_not_found",
+    readonly code:
+      | "draft_not_found"
+      | "draft_not_approved"
+      | "draft_not_email"
+      | "lead_not_found"
+      | "mailbox_not_found"
+      | "mailbox_not_connected",
     message: string,
   ) {
     super(message);
@@ -29,6 +36,7 @@ export function prepareOutboundDraftEmailAction(
   db: Db,
   workspaceId: string,
   draftId: string,
+  mailboxId?: string,
 ): ExternalActionCommand {
   const draft = db.select().from(drafts).where(
     and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)),
@@ -43,6 +51,18 @@ export function prepareOutboundDraftEmailAction(
   if (!draft.leadId || !getLead(db, workspaceId, draft.leadId)) {
     throw new OutboundDraftEmailError("lead_not_found", "This draft is not linked to a current lead.");
   }
+  if (mailboxId !== undefined) {
+    const mailbox = getMailbox(db, workspaceId, mailboxId);
+    if (!mailbox) {
+      throw new OutboundDraftEmailError("mailbox_not_found", "Mailbox not found.");
+    }
+    if (mailbox.status !== "connected") {
+      throw new OutboundDraftEmailError(
+        "mailbox_not_connected",
+        "Reconnect the Gmail mailbox before sending from it.",
+      );
+    }
+  }
   return prepareEmailAction(db, workspaceId, {
     origin: "outbound_draft",
     originId: draft.id,
@@ -51,6 +71,7 @@ export function prepareOutboundDraftEmailAction(
       content: draft.content,
       stepNumber: null,
     }),
+    ...(mailboxId !== undefined ? { mailboxId } : {}),
   });
 }
 

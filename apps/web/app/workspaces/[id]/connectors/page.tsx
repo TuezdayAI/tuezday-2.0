@@ -32,6 +32,7 @@ import {
 } from "@tuezday/contracts";
 import { connectionLabel } from "@/lib/persona-social-routing";
 import { ScopedActionPolicy } from "@/src/components/scoped-action-policy";
+import { MailboxesPanel } from "./mailboxes-panel";
 
 /** The API decorates OAuth providers with whether their app creds are set. */
 type ProviderView = ConnectorProvider & { oauthConfigured?: boolean };
@@ -44,6 +45,7 @@ const PROVIDER_BRAND: Record<string, BrandName> = {
   instagram: "instagram",
   meta_ads: "meta",
   freshsales: "freshsales",
+  gmail: "google",
 };
 
 /** One-line GTM value promise per provider (spec §5.7.2) — outcome, not feature. */
@@ -58,6 +60,7 @@ const PROVIDER_PROMISE: Record<string, string> = {
   hubspot: "Pull contacts in as leads; approved emails flow back as notes",
   smartlead: "Send approved sequences from your own warmed sender",
   instantly: "Send approved sequences from your own warmed sender",
+  gmail: "Send outreach from your real mailbox; replies land back in the inbox",
   slack: "Get review pings where the team already lives",
   custom: "Proxy any API through the connector service",
 };
@@ -96,6 +99,15 @@ const OAUTH_APP_HINTS: Record<string, React.ReactNode> = {
       needs an Instagram Business/Creator account on a Facebook Page) and callback uri{" "}
       <code>http://localhost:3050/oauth/callback</code>, then set INSTAGRAM_CLIENT_ID and
       INSTAGRAM_CLIENT_SECRET (the Facebook app id/secret) in the root .env and restart the API.
+    </>
+  ),
+  gmail: (
+    <>
+      Create a Google Cloud OAuth app (console.cloud.google.com) with the Gmail API enabled, the{" "}
+      <code>gmail.send</code> and <code>gmail.readonly</code> scopes, and redirect uri{" "}
+      <code>http://localhost:3050/oauth/callback</code> (“Testing” publishing status works for your
+      own account), then set GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET in the root .env and restart
+      the API.
     </>
   ),
 };
@@ -899,6 +911,11 @@ export default function ConnectorsPage() {
           )}
         </Card>
       </section>
+
+      <MailboxesPanel
+        workspaceId={id}
+        gmailConnections={view.connections.filter((c) => c.providerKey === "gmail")}
+      />
 
       {groups.map((group) => (
         <section key={group.category} className={styles.group}>

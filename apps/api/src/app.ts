@@ -20,6 +20,7 @@ import { createLlmGatewayFromEnv } from "./llm";
 import type { LlmGateway } from "./llm/gateway";
 import { CsvOutboundExporter, type OutboundExporter } from "./outbound/exporter";
 import { createOutboundEmailProviderFromEnv } from "./outbound-email/resend";
+import { FabricGmailProvider, type GmailMailboxProvider } from "./outbound-email/gmail";
 import type { OutboundEmailProvider } from "./outbound-email/provider";
 import { createResendWebhookVerifierFromEnv, type ResendWebhookVerifier } from "./outbound-email/webhook";
 import { createDefaultMailer, type Mailer } from "./mail/mailer";
@@ -55,6 +56,7 @@ import { registerInboxRoutes } from "./routes/inbox";
 import { registerLaunchRoutes } from "./routes/launches";
 import { registerLearningRoutes } from "./routes/learning";
 import { registerMailRoutes } from "./routes/mail";
+import { registerMailboxRoutes } from "./routes/mailboxes";
 import { registerNextActionRoutes } from "./routes/next-action";
 import { registerOutboundRoutes } from "./routes/outbound";
 import { registerPrRoutes } from "./routes/pr";
@@ -97,6 +99,8 @@ export interface BuildAppOptions {
   mailer?: Mailer;
   /** Governed outbound-email provider; uses the platform Resend key when configured. */
   outboundEmail?: OutboundEmailProvider;
+  /** Gmail mailbox provider (Sprint 47); defaults to the fabric-backed client. */
+  gmail?: GmailMailboxProvider;
   /** Signature verifier for public Resend delivery webhooks. */
   resendWebhookVerifier?: ResendWebhookVerifier;
   /**
@@ -124,6 +128,7 @@ export async function buildApp({
   exporter = new CsvOutboundExporter(),
   mailer = createDefaultMailer(fetcher),
   outboundEmail = createOutboundEmailProviderFromEnv(fetcher),
+  gmail = new FabricGmailProvider(connectors),
   resendWebhookVerifier = createResendWebhookVerifierFromEnv(),
   workerToken = process.env.TUEZDAY_WORKER_TOKEN,
   analytics = createAnalyticsSink(),
@@ -137,7 +142,7 @@ export async function buildApp({
   backfillExternalActionPolicies(db);
   const externalActionRuntime = createExternalActionRuntime({
     db,
-    adapters: createExternalActionAdapters(db, connectors, fetcher, outboundEmail),
+    adapters: createExternalActionAdapters(db, connectors, fetcher, outboundEmail, gmail),
     analytics,
   });
 
@@ -214,6 +219,7 @@ export async function buildApp({
   registerCadenceRoutes(app, db, externalActionRuntime);
   registerMailRoutes(app, db, mailer);
   registerEmailSenderRoutes(app, db, outboundEmail);
+  registerMailboxRoutes(app, db, llm, gmail);
   registerEmailRecipientSafetyRoutes(app, db);
   registerResendWebhookRoute(app, db, resendWebhookVerifier);
   registerAutomationRoutes(app, db, llm, evidence);

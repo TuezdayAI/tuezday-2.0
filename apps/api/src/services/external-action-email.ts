@@ -19,12 +19,16 @@ import {
   workspaceEmailSenders,
 } from "../db/schema";
 import type { OutboundEmailProvider } from "../outbound-email/provider";
+import type { GmailMailboxProvider } from "../outbound-email/gmail";
+import { createUnsubscribeToken } from "../outbound-email/unsubscribe";
 import type {
   ExternalActionAdapter,
   ExternalActionCommand,
   ExternalActionIntent,
 } from "./external-action-coordinator";
 import { checkEmailRecipientSafety } from "./email-recipient-safety";
+import { getConnection } from "./connections";
+import { getMailbox, mailboxDailySendCount } from "./mailboxes";
 
 export const emailActionPayloadSchema = z.object({
   channel: z.literal("email"),
@@ -38,6 +42,8 @@ export const emailActionPayloadSchema = z.object({
   subject: z.string().min(1),
   text: z.string().min(1),
   html: z.string().nullable(),
+  /** Present = send from this connected Gmail mailbox instead of Resend (Sprint 47). */
+  mailboxId: z.string().uuid().optional(),
 });
 export type EmailActionPayload = z.infer<typeof emailActionPayloadSchema>;
 
@@ -66,6 +72,7 @@ function emailIntent(
   workspaceId: string,
   origin: EmailActionPayload["origin"],
   originId: string,
+  mailboxId?: string,
 ): ExternalActionIntent {
   let draftId: string;
   let recipient: string;
@@ -112,22 +119,46 @@ function emailIntent(
   if (!draft || draft.state !== "approved" || draft.channel !== expectedDraftChannel) {
     throw new Error("An approved email draft is required.");
   }
-  const sender = db.select().from(workspaceEmailSenders).where(eq(workspaceEmailSenders.workspaceId, workspaceId)).get();
   const content = parseEmailContent(draft.content);
   const campaign = campaignId ? db.select().from(campaigns).where(eq(campaigns.id, campaignId)).get() : undefined;
   const persona = personaId ? db.select().from(personas).where(eq(personas.id, personaId)).get() : undefined;
+
+  // Sender identity: a connected Gmail mailbox (Sprint 47) or the workspace's
+  // verified Resend sender — the two send paths coexist.
+  let from: string;
+  let senderAddress: string;
+  let replyTo: string | null;
+  let connectionId: string | null = null;
+  let connectionName: string;
+  if (mailboxId) {
+    const mailbox = getMailbox(db, workspaceId, mailboxId);
+    if (!mailbox) throw new Error("Mailbox not found.");
+    from = mailbox.displayName ? `${mailbox.displayName} <${mailbox.address}>` : mailbox.address;
+    senderAddress = mailbox.address;
+    replyTo = mailbox.replyTo;
+    connectionId = mailbox.connectionId;
+    connectionName = `Gmail mailbox ${mailbox.address}`;
+  } else {
+    const sender = db.select().from(workspaceEmailSenders).where(eq(workspaceEmailSenders.workspaceId, workspaceId)).get();
+    from = sender ? `${sender.fromName} <${sender.fromAddress}>` : "Unconfigured sender <missing@example.invalid>";
+    senderAddress = sender?.fromAddress ?? "missing@example.invalid";
+    replyTo = sender?.replyTo ?? null;
+    connectionName = "Verified email sender";
+  }
+
   const payload: EmailActionPayload = {
     channel: "email",
     origin,
     originId,
     draftId,
     to: recipient.toLowerCase(),
-    from: sender ? `${sender.fromName} <${sender.fromAddress}>` : "Unconfigured sender <missing@example.invalid>",
-    senderAddress: sender?.fromAddress ?? "missing@example.invalid",
-    replyTo: sender?.replyTo ?? null,
+    from,
+    senderAddress,
+    replyTo,
     subject: content.subject,
     text: content.text,
     html: null,
+    ...(mailboxId ? { mailboxId } : {}),
   };
   return {
     subject: {
@@ -143,8 +174,8 @@ function emailIntent(
       campaignName: campaign?.name ?? null,
       personaId: persona?.id ?? null,
       personaName: persona?.name ?? null,
-      connectionId: null,
-      connectionName: "Verified email sender",
+      connectionId,
+      connectionName,
       laneRevisionId: null,
       laneName: null,
     },
@@ -157,13 +188,18 @@ function emailIntent(
 export function prepareEmailAction(
   db: Db,
   workspaceId: string,
-  input: { origin: EmailActionPayload["origin"]; originId: string; idempotencyKey: string },
+  input: {
+    origin: EmailActionPayload["origin"];
+    originId: string;
+    idempotencyKey: string;
+    mailboxId?: string;
+  },
 ): ExternalActionCommand {
   return {
     workspaceId,
     kind: "send",
     idempotencyKey: input.idempotencyKey,
-    ...emailIntent(db, workspaceId, input.origin, input.originId),
+    ...emailIntent(db, workspaceId, input.origin, input.originId, input.mailboxId),
   };
 }
 
@@ -174,6 +210,61 @@ function blocker(db: Db, action: ExternalAction, payload: EmailActionPayload): E
   }
   const safety = checkEmailRecipientSafety(db, action.workspaceId, payload.to);
   return safety.ok ? null : { code: safety.code, message: safety.message, retryable: safety.code !== "suppressed" };
+}
+
+/** Gmail-path guard: recipient safety (unchanged) + mailbox health + per-mailbox cap. */
+function gmailBlocker(
+  db: Db,
+  action: ExternalAction,
+  payload: EmailActionPayload,
+): ExternalActionBlocker | null {
+  const mailbox = getMailbox(db, action.workspaceId, payload.mailboxId!);
+  if (!mailbox || mailbox.status !== "connected") {
+    return {
+      code: "mailbox_unavailable",
+      message: "Reconnect the Gmail mailbox before sending from it.",
+      retryable: true,
+    };
+  }
+  const safety = checkEmailRecipientSafety(db, action.workspaceId, payload.to);
+  if (!safety.ok) {
+    return { code: safety.code, message: safety.message, retryable: safety.code !== "suppressed" };
+  }
+  const sentToday = mailboxDailySendCount(db, action.workspaceId, mailbox.id);
+  if (sentToday >= mailbox.dailyCap) {
+    return {
+      code: "mailbox_cap_reached",
+      message: `The ${mailbox.address} mailbox reached its daily cap of ${mailbox.dailyCap}.`,
+      retryable: true,
+    };
+  }
+  if (!process.env.EMAIL_UNSUBSCRIBE_SECRET?.trim()) {
+    return {
+      code: "unsubscribe_unconfigured",
+      message: "Set EMAIL_UNSUBSCRIBE_SECRET — every mailbox send carries an unsubscribe link.",
+      retryable: true,
+    };
+  }
+  return null;
+}
+
+/**
+ * The body a Gmail send actually carries: the approved draft text, the
+ * mailbox signature, and the unsubscribe footer (founder decision: from
+ * send #1). The delivery row keeps the exact action-authorized text; the
+ * footer is deterministic, so retries recompose the identical body.
+ */
+export function composeGmailBody(
+  workspaceId: string,
+  payload: Pick<EmailActionPayload, "to" | "text">,
+  signature: string,
+): string {
+  const token = createUnsubscribeToken(workspaceId, payload.to);
+  const base = (process.env.APP_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
+  const parts = [payload.text];
+  if (signature.trim()) parts.push(signature.trim());
+  parts.push(`--\nDon't want these emails? Unsubscribe: ${base}/u/${token}`);
+  return parts.join("\n\n");
 }
 
 function receipt(delivery: { id: string; status: string; lastError: string | null }): ExternalActionExecutionRef {
@@ -234,13 +325,25 @@ function markLaunchMessageAccepted(
 export function emailActionAdapter(
   db: Db,
   provider: OutboundEmailProvider | undefined,
+  gmail?: GmailMailboxProvider,
 ): ExternalActionAdapter {
   return {
     async revalidate(action, rawPayload) {
       const payload = emailActionPayloadSchema.parse(rawPayload);
-      return emailIntent(db, action.workspaceId, payload.origin, payload.originId);
+      return emailIntent(db, action.workspaceId, payload.origin, payload.originId, payload.mailboxId);
     },
     async guard(action, rawPayload) {
+      const payload = emailActionPayloadSchema.parse(rawPayload);
+      if (payload.mailboxId) {
+        if (!gmail) {
+          return {
+            code: "gmail_unavailable",
+            message: "Gmail sending is not configured on this deployment.",
+            retryable: false,
+          };
+        }
+        return gmailBlocker(db, action, payload);
+      }
       if (!provider) {
         return {
           code: "outbound_email_unavailable",
@@ -248,11 +351,15 @@ export function emailActionAdapter(
           retryable: false,
         };
       }
-      return blocker(db, action, emailActionPayloadSchema.parse(rawPayload));
+      return blocker(db, action, payload);
     },
     async execute(action, rawPayload) {
       const payload = emailActionPayloadSchema.parse(rawPayload);
-      if (!provider) throw new Error("Native email is not configured on this deployment.");
+      if (payload.mailboxId) {
+        if (!gmail) throw new Error("Gmail sending is not configured on this deployment.");
+      } else if (!provider) {
+        throw new Error("Native email is not configured on this deployment.");
+      }
       let delivery = db.select().from(emailDeliveries).where(eq(emailDeliveries.externalActionId, action.id)).get();
       if (delivery?.providerMessageId) {
         if (delivery.status === "queued") {
@@ -285,8 +392,10 @@ export function emailActionAdapter(
           text: payload.text,
           html: payload.html,
           idempotencyKey: `send/${action.id}`,
-          provider: "resend",
+          provider: payload.mailboxId ? "gmail" : "resend",
           providerMessageId: null,
+          providerThreadId: null,
+          mailboxId: payload.mailboxId ?? null,
           status: "queued",
           acceptedAt: null,
           completedAt: null,
@@ -299,7 +408,34 @@ export function emailActionAdapter(
           db.update(launchMessages).set({ externalActionId: action.id, updatedAt: now }).where(eq(launchMessages.id, payload.originId)).run();
         }
       }
-      const accepted = await provider.send({
+      if (payload.mailboxId) {
+        // Gmail path (Sprint 47): send from the connected mailbox with the
+        // signature + unsubscribe footer, keep the thread id for reply matching.
+        const mailbox = getMailbox(db, action.workspaceId, payload.mailboxId);
+        if (!mailbox) throw new Error("Mailbox not found.");
+        const connection = getConnection(db, action.workspaceId, mailbox.connectionId);
+        if (!connection) throw new Error("The mailbox's Gmail connection no longer exists.");
+        const sent = await gmail!.sendEmail(connection.nangoConnectionId, {
+          from: mailbox.address,
+          fromName: mailbox.displayName,
+          to: payload.to,
+          subject: payload.subject,
+          text: composeGmailBody(action.workspaceId, payload, mailbox.signature),
+          replyTo: mailbox.replyTo,
+        });
+        const acceptedAt = Date.now();
+        db.update(emailDeliveries).set({
+          providerMessageId: sent.messageId,
+          providerThreadId: sent.threadId,
+          status: "accepted",
+          acceptedAt,
+          lastError: null,
+          updatedAt: acceptedAt,
+        }).where(eq(emailDeliveries.id, delivery.id)).run();
+        markLaunchMessageAccepted(db, action.workspaceId, payload, action.id, acceptedAt);
+        return receipt(db.select().from(emailDeliveries).where(eq(emailDeliveries.id, delivery.id)).get()!);
+      }
+      const accepted = await provider!.send({
         from: payload.from,
         replyTo: payload.replyTo,
         to: payload.to,

@@ -122,6 +122,8 @@ const OAUTH_ENV: Record<string, { id: string; secret: string }> = {
   linkedin: { id: "LINKEDIN_CLIENT_ID", secret: "LINKEDIN_CLIENT_SECRET" },
   twitter: { id: "TWITTER_CLIENT_ID", secret: "TWITTER_CLIENT_SECRET" },
   instagram: { id: "INSTAGRAM_CLIENT_ID", secret: "INSTAGRAM_CLIENT_SECRET" }, // Facebook app id/secret
+  // Sprint 47 outreach mailbox: a GCP OAuth app with the Gmail scopes.
+  gmail: { id: "GMAIL_CLIENT_ID", secret: "GMAIL_CLIENT_SECRET" },
 };
 
 export function oauthAppCredentials(

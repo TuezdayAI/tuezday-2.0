@@ -4,6 +4,7 @@ import {
   createLeadInputSchema,
   importLeadsInputSchema,
   outboundDraftRequestSchema,
+  sendDraftFromMailboxInputSchema,
   updateLeadInputSchema,
   type ApprovalState,
 } from "@tuezday/contracts";
@@ -243,16 +244,30 @@ export function registerOutboundRoutes(
     "/workspaces/:id/outbound/drafts/:draftId/send",
     async (request, reply) => {
       if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      // Body is optional: an absent mailboxId sends via the Resend path
+      // (unchanged); a present one sends from that connected Gmail mailbox
+      // (Sprint 47) and must be a valid id.
+      let mailboxId: string | undefined;
+      const body = request.body as { mailboxId?: unknown } | null | undefined;
+      if (body != null && body.mailboxId !== undefined) {
+        const parsed = sendDraftFromMailboxInputSchema.safeParse(body);
+        if (!parsed.success) {
+          return reply.status(400).send({ error: "invalid_input", issues: parsed.error.issues });
+        }
+        mailboxId = parsed.data.mailboxId;
+      }
       try {
         const command = prepareOutboundDraftEmailAction(
           db,
           request.params.id,
           request.params.draftId,
+          mailboxId,
         );
         return await runtime.propose(command, actorOf(request));
       } catch (error) {
         if (error instanceof OutboundDraftEmailError) {
-          const status = error.code === "draft_not_found" ? 404 : 409;
+          const status =
+            error.code === "draft_not_found" || error.code === "mailbox_not_found" ? 404 : 409;
           return reply.status(status).send({ error: error.code, message: error.message });
         }
         return externalActionError(error, reply);
