@@ -14,6 +14,7 @@ import {
   emailSuppressions,
   workspaceEmailSenders,
 } from "../db/schema";
+import { listConnectedMailboxes } from "./mailboxes";
 
 export type EmailRecipientSafetyResult =
   | { ok: true; normalizedEmail: string }
@@ -157,7 +158,14 @@ export function getEmailSafetySettings(db: Db, workspaceId: string): EmailSafety
     .from(workspaceEmailSenders)
     .where(eq(workspaceEmailSenders.workspaceId, workspaceId))
     .get();
-  return row ?? { killSwitch: true, dailyCap: 100 };
+  if (row) return row;
+  // No Resend sender row: a Gmail-only workspace (Sprint 48) is still email-
+  // enabled if it has a connected mailbox — connecting one is the explicit
+  // opt-in. With neither, the kill switch stays on (the prior default).
+  return {
+    killSwitch: listConnectedMailboxes(db, workspaceId).length === 0,
+    dailyCap: 100,
+  };
 }
 
 export function updateEmailSafetySettings(

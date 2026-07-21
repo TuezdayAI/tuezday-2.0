@@ -31,6 +31,32 @@ const EMPTY_CAPABILITIES: WorkspaceCapabilities = {
   generationCount: 0,
 };
 
+/**
+ * Sprint 48: the Outreach surface lives inside the Audience group, alongside
+ * Sequences (S30 launches). The canonical nav lives in @tuezday/contracts;
+ * we augment a local copy here rather than edit the shared contract.
+ */
+const WORKSPACE_NAV_WITH_OUTREACH: NavItem[] = WORKSPACE_NAV.map((item) =>
+  item.path === "/outbound" && item.children
+    ? {
+        ...item,
+        children: item.children.some((child) => child.path === "/outreach")
+          ? item.children
+          : [
+              ...item.children.slice(0, 3),
+              {
+                label: "Outreach",
+                path: "/outreach",
+                summary: "Always-on email sequences",
+                tone: "voice",
+                icon: "email",
+              },
+              ...item.children.slice(3),
+            ],
+      }
+    : item,
+);
+
 /** GET /workspaces/:id/next-action response (spec §5.1). */
 interface NextActionView {
   state: NextActionState;
@@ -139,7 +165,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
 
   const base = `/workspaces/${id}`;
   const caps = capabilities ?? EMPTY_CAPABILITIES;
-  const navItems = visibleNavItems(WORKSPACE_NAV, caps);
+  const navItems = visibleNavItems(WORKSPACE_NAV_WITH_OUTREACH, caps);
   const isActive = (path: string) =>
     path === "" ? pathname === base : pathname.startsWith(`${base}${path}`);
   const isGroupActive = (item: NavItem) =>
