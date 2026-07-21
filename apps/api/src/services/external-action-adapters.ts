@@ -21,6 +21,7 @@ import {
 import { adsExecutionAdapterFor, type AdsExecutionAdapter } from "../connectors/ads";
 import type { ConnectorFabric } from "../connectors/fabric";
 import type { OutboundEmailProvider } from "../outbound-email/provider";
+import type { GmailMailboxProvider } from "../outbound-email/gmail";
 import { socialAdapterFor, type PublishMedia } from "../connectors/social";
 import type { Db } from "../db";
 import {
@@ -1038,9 +1039,10 @@ export function sendActionAdapter(
   fabric: ConnectorFabric,
   fetcher: Fetcher,
   outboundEmail?: OutboundEmailProvider,
+  gmail?: GmailMailboxProvider,
 ): ExternalActionAdapter {
   const social = socialSendActionAdapter(db, fabric, fetcher);
-  const email = emailActionAdapter(db, outboundEmail);
+  const email = emailActionAdapter(db, outboundEmail, gmail);
   const adapterFor = (payload: unknown) => isEmailActionPayload(payload) ? email : social;
   return {
     revalidate(action, payload) {
@@ -1760,11 +1762,12 @@ export function createExternalActionAdapters(
   fabric: ConnectorFabric,
   fetcher: Fetcher,
   outboundEmail?: OutboundEmailProvider,
+  gmail?: GmailMailboxProvider,
 ): ExternalActionAdapterRegistry {
   return {
     publish: publishActionAdapter(db, fabric, fetcher),
     reply: replyActionAdapter(db, fabric, fetcher),
-    send: sendActionAdapter(db, fabric, fetcher, outboundEmail),
+    send: sendActionAdapter(db, fabric, fetcher, outboundEmail, gmail),
     paid_launch: paidLaunchActionAdapter(db, fabric, fetcher),
     budget_change: budgetChangeActionAdapter(db, fabric, fetcher),
     targeting_change: targetingChangeActionAdapter(db, fabric, fetcher),

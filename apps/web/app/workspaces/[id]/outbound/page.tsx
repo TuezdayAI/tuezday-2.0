@@ -27,6 +27,7 @@ import type {
   EmailPermissionStatus,
   ExternalActionSubmission,
   Lead,
+  MailboxWithUsage,
   Persona,
   Workspace,
 } from "@tuezday/contracts";
@@ -96,6 +97,8 @@ export default function OutboundPage() {
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [drafts, setDrafts] = useState<Draft[]>([]);
+  // Sprint 47: connected outreach mailboxes — the Gmail send path.
+  const [mailboxes, setMailboxes] = useState<MailboxWithUsage[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const [csv, setCsv] = useState("");
@@ -132,6 +135,17 @@ export default function OutboundPage() {
       setPersonas(await pRes.json());
       setCampaigns(((await cRes.json()) as Campaign[]).filter((c) => c.status === "active"));
       setDrafts(((await dRes.json()) as Draft[]).filter((d) => d.leadId));
+      // Mailboxes are optional — the workspace may not have Gmail connected yet.
+      try {
+        const mRes = await apiFetch(`/workspaces/${id}/mailboxes`);
+        setMailboxes(
+          mRes.ok
+            ? ((await mRes.json()) as MailboxWithUsage[]).filter((m) => m.status === "connected")
+            : [],
+        );
+      } catch {
+        setMailboxes([]);
+      }
       setError(null);
     } catch {
       setError(`Could not load this workspace from ${API_URL}. Is "npm run dev" running?`);
@@ -241,11 +255,20 @@ export default function OutboundPage() {
     return drafts.filter((d) => d.leadId === leadId);
   }
 
-  async function proposeDraftSend(draftId: string): Promise<ExternalActionSubmission> {
+  async function proposeDraftSend(
+    draftId: string,
+    mailboxId?: string,
+  ): Promise<ExternalActionSubmission> {
     setSendingDrafts((current) => ({ ...current, [draftId]: true }));
     try {
       const response = await apiFetch(`/workspaces/${id}/outbound/drafts/${draftId}/send`, {
         method: "POST",
+        ...(mailboxId
+          ? {
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ mailboxId }),
+            }
+          : {}),
       });
       const body = (await response.json().catch(() => null)) as
         | ExternalActionSubmission
@@ -261,10 +284,11 @@ export default function OutboundPage() {
     }
   }
 
-  async function sendOneDraft(draftId: string) {
+  async function sendOneDraft(draftId: string, mailboxId?: string) {
     setError(null);
     try {
-      await proposeDraftSend(draftId);
+      await proposeDraftSend(draftId, mailboxId);
+      if (mailboxId) await load();
     } catch (sendError) {
       setError(sendError instanceof Error ? sendError.message : "Native email send failed.");
     }
@@ -534,6 +558,7 @@ export default function OutboundPage() {
                                 workspaceId={id}
                                 lead={lead}
                                 draft={d}
+                                mailboxes={mailboxes}
                                 selected={Boolean(selectedDrafts[d.id])}
                                 sending={Boolean(sendingDrafts[d.id])}
                                 submission={sendSubmissions[d.id]}
@@ -544,6 +569,9 @@ export default function OutboundPage() {
                                   }))
                                 }
                                 onSend={() => void sendOneDraft(d.id)}
+                                onSendFromMailbox={(mailboxId) =>
+                                  void sendOneDraft(d.id, mailboxId)
+                                }
                               />
                             )}
                           </div>
@@ -615,22 +643,30 @@ function OutboundEmailControls({
   workspaceId,
   lead,
   draft,
+  mailboxes,
   selected,
   sending,
   submission,
   onSelected,
   onSend,
+  onSendFromMailbox,
 }: {
   workspaceId: string;
   lead: Lead;
   draft: Draft;
+  /** Connected outreach mailboxes (Sprint 47) — the Gmail send path. */
+  mailboxes: MailboxWithUsage[];
   selected: boolean;
   sending: boolean;
   submission?: ExternalActionSubmission;
   onSelected: (checked: boolean) => void;
   onSend: () => void;
+  onSendFromMailbox: (mailboxId: string) => void;
 }) {
   const [permission, setPermission] = useState<EmailPermissionStatus>("unknown");
+  const [mailboxId, setMailboxId] = useState(mailboxes[0]?.id ?? "");
+  const chosenMailbox =
+    mailboxes.find((m) => m.id === (mailboxId || mailboxes[0]?.id)) ?? mailboxes[0];
 
   useEffect(() => {
     let current = true;
@@ -669,8 +705,42 @@ function OutboundEmailControls({
           />
           Select this approved draft
         </label>
+        {chosenMailbox && (
+          <>
+            {mailboxes.length > 1 && (
+              <Select
+                value={mailboxId || chosenMailbox.id}
+                onChange={(event) => setMailboxId(event.target.value)}
+                aria-label="Mailbox to send from"
+              >
+                {mailboxes.map((mailbox) => (
+                  <option key={mailbox.id} value={mailbox.id}>
+                    {mailbox.address} ({mailbox.sentToday}/{mailbox.dailyCap} today)
+                  </option>
+                ))}
+              </Select>
+            )}
+            <Button
+              variant="primary"
+              size="standard"
+              loading={sending}
+              disabled={
+                permission !== "allowed" || chosenMailbox.sentToday >= chosenMailbox.dailyCap
+              }
+              onClick={() => onSendFromMailbox(chosenMailbox.id)}
+            >
+              {mailboxes.length > 1 ? "Send from mailbox" : `Send from ${chosenMailbox.address}`}
+            </Button>
+            {chosenMailbox.sentToday >= chosenMailbox.dailyCap && (
+              <span className="meta">
+                Daily cap reached ({chosenMailbox.sentToday}/{chosenMailbox.dailyCap}) — resumes
+                tomorrow.
+              </span>
+            )}
+          </>
+        )}
         <Button
-          variant="primary"
+          variant={chosenMailbox ? "secondary" : "primary"}
           size="standard"
           loading={sending}
           disabled={permission !== "allowed"}

@@ -4,6 +4,7 @@ import {
   METRIC_WINDOWS,
   type Channel,
   type Draft,
+  type EmailReplyLabel,
   type InboxItem,
   type InboxItemKind,
   type InboxItemStatus,
@@ -16,6 +17,7 @@ import {
 import type { Db } from "../db";
 import {
   drafts,
+  emailDeliveries,
   inboxItems,
   launchMessages,
   publicationMetrics,
@@ -61,6 +63,7 @@ function rowToInboxItem(row: InboxItemRow): InboxItem {
     kind: row.kind as InboxItemKind,
     channel: row.channel as Channel,
     status: row.status as InboxItemStatus,
+    replyLabel: row.replyLabel as EmailReplyLabel | null,
   };
 }
 
@@ -111,7 +114,7 @@ function knownPostedReplyIds(db: Db, workspaceId: string): Set<string> {
   return new Set(rows.map((r) => r.id).filter((id): id is string => !!id));
 }
 
-function inboxItemExists(db: Db, connectionId: string, externalId: string): boolean {
+export function inboxItemExists(db: Db, connectionId: string, externalId: string): boolean {
   return (
     db
       .select({ id: inboxItems.id })
@@ -121,7 +124,7 @@ function inboxItemExists(db: Db, connectionId: string, externalId: string): bool
   );
 }
 
-interface NewInboxItem {
+export interface NewInboxItem {
   workspaceId: string;
   connectionId: string;
   providerKey: string;
@@ -131,6 +134,8 @@ interface NewInboxItem {
   parentExternalId: string | null;
   publicationId: string | null;
   launchMessageId: string | null;
+  /** The sent outreach email this replies to (kind "email" — Sprint 47). */
+  emailDeliveryId?: string | null;
   authorHandle: string;
   authorName: string;
   content: string;
@@ -139,7 +144,7 @@ interface NewInboxItem {
 }
 
 /** Insert an inbound item if we haven't seen it before. Returns true when new. */
-function insertInboxItem(db: Db, fields: NewInboxItem): boolean {
+export function insertInboxItem(db: Db, fields: NewInboxItem): boolean {
   if (inboxItemExists(db, fields.connectionId, fields.externalId)) return false;
   const now = Date.now();
   db.insert(inboxItems)
@@ -215,7 +220,17 @@ function newestDmCreatedAt(db: Db, connectionId: string, handle: string): number
   return row?.createdAt ?? 0;
 }
 
-/** The original draft behind an inbox item (the post/DM it replies to). */
+/** The sent email delivery behind a kind:"email" inbox item (Sprint 47). */
+function deliveryBehindItem(db: Db, item: InboxItem) {
+  if (!item.emailDeliveryId) return undefined;
+  return db
+    .select()
+    .from(emailDeliveries)
+    .where(eq(emailDeliveries.id, item.emailDeliveryId))
+    .get();
+}
+
+/** The original draft behind an inbox item (the post/DM/email it replies to). */
 function draftBehindItem(db: Db, item: InboxItem) {
   if (item.publicationId) {
     const pub = db.select().from(publications).where(eq(publications.id, item.publicationId)).get();
@@ -228,6 +243,23 @@ function draftBehindItem(db: Db, item: InboxItem) {
       .where(eq(launchMessages.id, item.launchMessageId))
       .get();
     if (lm?.draftId) return db.select().from(drafts).where(eq(drafts.id, lm.draftId)).get();
+  }
+  if (item.emailDeliveryId) {
+    const delivery = deliveryBehindItem(db, item);
+    if (delivery) {
+      // launch_message deliveries point at the message; drafts are the origin
+      // for outbound_draft/pr_draft sends (the Sprint 47 send surface).
+      if (delivery.origin === "launch_message") {
+        const lm = db
+          .select()
+          .from(launchMessages)
+          .where(eq(launchMessages.id, delivery.originId))
+          .get();
+        if (lm?.draftId) return db.select().from(drafts).where(eq(drafts.id, lm.draftId)).get();
+      } else {
+        return db.select().from(drafts).where(eq(drafts.id, delivery.originId)).get();
+      }
+    }
   }
   return undefined;
 }
@@ -242,6 +274,11 @@ export function replyContext(db: Db, workspaceId: string, item: InboxItem) {
   if (item.publicationId) {
     const pub = db.select().from(publications).where(eq(publications.id, item.publicationId)).get();
     if (pub) post = { title: pub.title, content: draft?.content ?? "" };
+  } else if (item.emailDeliveryId) {
+    // The exact sent email (subject + authorized body) is the conversation anchor.
+    const delivery = deliveryBehindItem(db, item);
+    if (delivery) post = { title: delivery.subject, content: delivery.text };
+    else if (draft) post = { title: "", content: draft.content };
   } else if (draft) {
     post = { title: "", content: draft.content };
   }
@@ -663,7 +700,14 @@ export function listInbox(
       const pub = db.select().from(publications).where(eq(publications.id, item.publicationId)).get();
       if (pub) post = { publicationId: pub.id, title: pub.title, url: pub.externalUrl };
     }
-    return { ...item, replyDraft, post };
+    let sentEmail: InboxItemWithContext["sentEmail"] = null;
+    if (item.emailDeliveryId) {
+      const delivery = deliveryBehindItem(db, item);
+      if (delivery) {
+        sentEmail = { deliveryId: delivery.id, subject: delivery.subject, sentAt: delivery.acceptedAt };
+      }
+    }
+    return { ...item, replyDraft, post, sentEmail };
   });
 }
 

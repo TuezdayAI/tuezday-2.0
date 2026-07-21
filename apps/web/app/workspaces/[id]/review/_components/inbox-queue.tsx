@@ -14,6 +14,7 @@ import styles from "./inbox-queue.module.css";
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import type {
+  EmailReplyLabel,
   ExternalActionSubmission,
   InboxItemStatus,
   InboxItemWithContext,
@@ -35,6 +36,28 @@ const STATUS_LABELS: Record<InboxItemStatus, string> = {
 };
 
 type Filter = InboxItemStatus | "all";
+
+/**
+ * Email reply classification chip (Sprint 47) — label + existing badge tone.
+ * Labels only this sprint; acting on them is Sprint 49.
+ */
+const REPLY_LABEL_VIEW: Record<
+  EmailReplyLabel,
+  { label: string; tone: "approved" | "rejected" | "edited" | "neutral" }
+> = {
+  positive: { label: "positive", tone: "approved" },
+  not_interested: { label: "not interested", tone: "rejected" },
+  out_of_office: { label: "out of office", tone: "neutral" },
+  unsubscribe_request: { label: "unsubscribe request", tone: "edited" },
+  bounce: { label: "bounce", tone: "rejected" },
+  other: { label: "other", tone: "neutral" },
+};
+
+const KIND_LABELS: Record<InboxItemWithContext["kind"], string> = {
+  comment: "comment",
+  dm: "DM",
+  email: "email reply",
+};
 
 /** Providers with a brand mark (spec §4 carve-out); others fall back to email. */
 const PROVIDER_BRAND: Partial<Record<string, BrandName>> = {
@@ -194,9 +217,10 @@ export function InboxQueue({
       </TopBarActions>
 
       <p className="subtitle">
-        Comments on your published posts and replies to your DMs, in one place. Draft a reply in
-        your voice, approve it on the <Link href={reviewHref(id, { tab: "approvals" })}>Approvals tab</Link>,
-        and it posts back to the platform.
+        Comments on your published posts, replies to your DMs, and replies to your outreach
+        emails, in one place. Draft a reply in your voice, approve it on the{" "}
+        <Link href={reviewHref(id, { tab: "approvals" })}>Approvals tab</Link>, and it posts back
+        to the platform.
       </p>
 
       {lastRun && (
@@ -293,8 +317,16 @@ export function InboxQueue({
                   <span className="section-title">
                     {item.authorName || item.authorHandle || "someone"}
                     <span className="layer-badge" style={{ marginLeft: 8 }}>
-                      {item.providerKey} · {item.kind === "dm" ? "DM" : "comment"}
+                      {item.providerKey} · {KIND_LABELS[item.kind]}
                     </span>
+                    {item.replyLabel && (
+                      <Badge
+                        tone={REPLY_LABEL_VIEW[item.replyLabel].tone}
+                        style={{ marginLeft: 8 }}
+                      >
+                        {REPLY_LABEL_VIEW[item.replyLabel].label}
+                      </Badge>
+                    )}
                   </span>
                   <span className="section-tokens">
                     {new Date(item.externalCreatedAt).toLocaleString()}
@@ -315,6 +347,15 @@ export function InboxQueue({
                         <strong>{item.post.title}</strong>
                       )}
                     </>
+                  ) : item.sentEmail ? (
+                    <>
+                      Re: <strong>{item.sentEmail.subject}</strong>
+                      {item.sentEmail.sentAt != null && (
+                        <> · sent {new Date(item.sentEmail.sentAt).toLocaleString()}</>
+                      )}
+                    </>
+                  ) : item.kind === "email" ? (
+                    "Reply to an outreach email"
                   ) : (
                     "Reply to an outbound DM"
                   )}

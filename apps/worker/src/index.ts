@@ -18,6 +18,7 @@ const PUBLISH_INTERVAL_MIN = Number(process.env.PUBLISH_INTERVAL_MIN ?? 1);
 const CADENCE_FILL_INTERVAL_MIN = Number(process.env.CADENCE_FILL_INTERVAL_MIN ?? 5);
 const AUTOMATION_INTERVAL_MIN = Number(process.env.AUTOMATION_INTERVAL_MIN ?? 5);
 const INBOX_INTERVAL_MIN = Number(process.env.INBOX_INTERVAL_MIN ?? 5);
+const MAILBOX_INBOX_INTERVAL_MIN = Number(process.env.MAILBOX_INBOX_INTERVAL_MIN ?? 5);
 const SEQUENCE_INTERVAL_MIN = Number(process.env.SEQUENCE_INTERVAL_MIN ?? 5);
 const EVIDENCE_SWEEP_MIN = Number(process.env.EVIDENCE_SWEEP_MIN ?? 30);
 
@@ -274,6 +275,12 @@ interface InboxRunResponse {
   repliesPosted: number;
 }
 
+interface MailboxInboxRunResponse {
+  mailboxesPolled: number;
+  newItems: number;
+  labeled: number;
+}
+
 /** Poll inbound comments/DMs, refresh engagement metrics, then auto-generate +
  * post replies for scheduled_auto campaigns (when the master switch is on). */
 async function runInboxForAllWorkspaces(): Promise<void> {
@@ -339,6 +346,37 @@ async function inboxTick(): Promise<void> {
     await runInboxForAllWorkspaces();
   } catch (err) {
     console.error("[inbox] tick failed —", err instanceof Error ? err.message : err);
+  }
+}
+
+// Poll connected Gmail mailboxes for inbound replies to threads we started
+// (Sprint 47), then classify them. Runs after the social inbox, before
+// sequences, so an email reply detected this cycle can stop a chain later.
+async function runMailboxInboxForAllWorkspaces(): Promise<void> {
+  const res = await api(`/workspaces`);
+  if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
+  const workspaces = (await res.json()) as Workspace[];
+
+  for (const workspace of workspaces) {
+    try {
+      const runRes = await api(`/workspaces/${workspace.id}/mailbox-inbox/run`, { method: "POST" });
+      if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);
+      const { mailboxesPolled, newItems, labeled } = (await runRes.json()) as MailboxInboxRunResponse;
+      if (mailboxesPolled === 0 || (newItems === 0 && labeled === 0)) continue; // quiet
+      console.log(
+        `[mailbox-inbox] ${workspace.name}: ${newItems} new repl(y/ies), ${labeled} labeled`,
+      );
+    } catch (err) {
+      console.error("[mailbox-inbox] ", workspace.name, "failed —", err instanceof Error ? err.message : err);
+    }
+  }
+}
+
+async function mailboxInboxTick(): Promise<void> {
+  try {
+    await runMailboxInboxForAllWorkspaces();
+  } catch (err) {
+    console.error("[mailbox-inbox] tick failed —", err instanceof Error ? err.message : err);
   }
 }
 
@@ -422,6 +460,10 @@ setInterval(() => void publishTick(), PUBLISH_INTERVAL_MIN * 60 * 1000);
 // Inbox runs after publish — replies react to what's already posted.
 void inboxTick();
 setInterval(() => void inboxTick(), INBOX_INTERVAL_MIN * 60 * 1000);
+// Mailbox inbox (email replies) runs alongside the social inbox, before
+// sequences — same reason: a detected reply stops the chain first (Sprint 47).
+void mailboxInboxTick();
+setInterval(() => void mailboxInboxTick(), MAILBOX_INBOX_INTERVAL_MIN * 60 * 1000);
 // Sequences run after inbox — a reply detected this cycle stops the chain
 // before the next follow-up step generates.
 void sequenceTick();
