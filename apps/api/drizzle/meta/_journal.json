@@ -351,6 +351,13 @@
       "when": 1784626462351,
       "tag": "0049_goofy_xorn",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "6",
+      "when": 1784699346568,
+      "tag": "0050_goofy_mother_askani",
+      "breakpoints": true
     }
   ]
 }

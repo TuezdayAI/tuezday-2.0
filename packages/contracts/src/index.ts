@@ -4558,6 +4558,11 @@ export const EVENT_TYPES = [
   "post.published",
   "reply.posted",
   "webhook.ping",
+  // Outreach reply outcomes (Sprint 49).
+  "outreach.reply.positive",
+  "outreach.reply.unsubscribed",
+  "outreach.reply.bounced",
+  "crm.task.created",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
@@ -6121,3 +6126,36 @@ export const outreachRunResultSchema = z.object({
   ranAt: z.number().int(),
 });
 export type OutreachRunResult = z.infer<typeof outreachRunResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Reply-driven actions + compliance (Sprint 49)
+// ---------------------------------------------------------------------------
+
+/** Default pause before retrying a recipient who sent an out-of-office autoreply. */
+export const OUTREACH_OOO_RETRY_HOURS = 72;
+
+/** A workspace's CAN-SPAM postal address — required before outreach can send. */
+export const workspaceComplianceSchema = z.object({
+  workspaceId: z.string().uuid(),
+  postalAddress: z.string(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type WorkspaceCompliance = z.infer<typeof workspaceComplianceSchema>;
+
+export const updateComplianceInputSchema = z
+  .object({ postalAddress: z.string().max(500) })
+  .strict();
+export type UpdateComplianceInput = z.infer<typeof updateComplianceInputSchema>;
+
+/** Paste a batch of emails to block up front (suppression-list import). */
+export const importSuppressionsInputSchema = z.object({
+  emails: z.array(z.string()).min(1).max(1000),
+});
+export type ImportSuppressionsInput = z.infer<typeof importSuppressionsInputSchema>;
+
+export const importSuppressionsResultSchema = z.object({
+  imported: z.number().int(),
+  skipped: z.number().int(),
+});
+export type ImportSuppressionsResult = z.infer<typeof importSuppressionsResultSchema>;

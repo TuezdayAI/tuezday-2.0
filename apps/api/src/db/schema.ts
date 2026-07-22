@@ -1441,6 +1441,9 @@ export const outreachEnrollments = sqliteTable(
     nextDueAt: integer("next_due_at"),
     lastSentAt: integer("last_sent_at"),
     stoppedReason: text("stopped_reason"),
+    // Reply-check cursor (Sprint 49): the lookup uses max(lastSentAt, this) so an
+    // out-of-office pause is idempotent and the chain resumes cleanly.
+    lastReplyHandledAt: integer("last_reply_handled_at"),
     enrolledAt: integer("enrolled_at").notNull(),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
@@ -1489,6 +1492,20 @@ export const outreachMessages = sqliteTable(
 );
 
 export type OutreachMessageRow = typeof outreachMessages.$inferSelect;
+
+// A workspace's CAN-SPAM postal mailing address (Sprint 49), required before an
+// outreach sequence can activate and appended to every send's footer. Its own
+// table because a Gmail-only workspace has no workspaceEmailSenders row.
+export const workspaceCompliance = sqliteTable("workspace_compliance", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  postalAddress: text("postal_address").notNull().default(""),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type WorkspaceComplianceRow = typeof workspaceCompliance.$inferSelect;
 
 // Social publishing receipts (Sprint 17) — one row per publish attempt (now
 // or scheduled); the post lives on the platform, Tuezday keeps status + URL.
