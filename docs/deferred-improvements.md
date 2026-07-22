@@ -203,11 +203,13 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
   task query with in-process BM25 (k1=1.2, b=0.75, shared IDF corpus). Deterministic, dependency-free,
   and fully explainable in the trace — but purely lexical: a query about "pricing" won't pull a section
   that only says "what we charge".
-- **The better version:** Hybrid lexical + vector ranking (RRF) once the gateway grows `embed()` and
+- **The better version:** Hybrid lexical + vector ranking (RRF) now that the gateway has `embed()` and
   the evidence store owns a sqlite-vec index (Sprint 47 / gap-assessment Sprint E) — same seam, zoom
   swaps its scorer.
 - **Trigger to revisit:** Brain docs grow past ~50 sections, or the trace/learning loop shows zoom
-  repeatedly missing topically-relevant sections phrased with different words.
+  repeatedly missing topically-relevant sections phrased with different words. (Sprint 47 built the
+  prerequisites — gateway `embed()` + the sqlite-vec index — so this is now a scorer swap, not
+  infrastructure.)
 - **Origin:** Sprint 43.
 
 ### 23. Outline summaries aren't editable

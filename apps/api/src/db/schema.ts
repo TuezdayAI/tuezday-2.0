@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { blob, check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 // Keep this schema Postgres-portable: text ids, integer epoch-ms timestamps,
 // no SQLite-only column tricks. The Postgres swap is planned for Sprint 8.
@@ -730,6 +730,30 @@ export const evidenceCandidates = sqliteTable(
 );
 
 export type EvidenceCandidateRow = typeof evidenceCandidates.$inferSelect;
+
+// Native evidence store (Sprint 47): chunk text + embeddings live in our own
+// DB. The FTS5/vec0 index tables over these rows are runtime artifacts owned
+// by DbEvidenceStore (virtual tables can't be modeled here), rebuildable via
+// reindex(). embedding is Float32Array bytes (becomes pgvector at the
+// Postgres swap); null when embeddings were unavailable at ingest.
+export const evidenceChunks = sqliteTable(
+  "evidence_chunks",
+  {
+    id: text("id").primaryKey(),
+    collectionId: text("collection_id").notNull(),
+    documentId: text("document_id").notNull(),
+    seq: integer("seq").notNull(),
+    text: text("text").notNull(),
+    embedding: blob("embedding", { mode: "buffer" }),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("evidence_chunks_collection").on(t.collectionId),
+    index("evidence_chunks_document").on(t.documentId),
+  ],
+);
+
+export type EvidenceChunkRow = typeof evidenceChunks.$inferSelect;
 
 export const engagementMetrics = sqliteTable("engagement_metrics", {
   id: text("id").primaryKey(),

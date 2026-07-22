@@ -23,7 +23,8 @@ The planning documents define what gets built and in what order — read the rel
 - `npm test -- <substring>` — run only test files whose path matches (e.g. `npm test -- brain`); add `-t "<name>"` to filter by test name
 - `npm run typecheck` — `tsc --noEmit` across all workspaces (there is no lint step)
 - `npm run db:generate -w apps/api` — generate a Drizzle migration after editing `apps/api/src/db/schema.ts` (commit the generated SQL under `apps/api/drizzle/`)
-- `npm run r2r:up` / `r2r:down`, `npm run nango:up` / `nango:down` — bring the integration backends up/down via Docker Compose (`infra/`). Not needed for tests, which inject fakes.
+- `npm run nango:up` / `nango:down` — bring the Nango connector backend up/down via Docker Compose (`infra/`). Not needed for tests, which inject fakes.
+- `npm run evidence:migrate` — one-time R2R → native evidence-store migration (Sprint 47); `npm run evidence:parity -- <workspace-id>` compares retrieval quality against a still-running R2R.
 - `npm run test:watch` — run Vitest in watch mode (alias: `vitest`)
 
 ## Environment
@@ -53,14 +54,14 @@ Tuezday's moat is the **Central Brain**: five human-readable, editable brain doc
 buildApp({ db, llm?, fetcher?, evidence?, connectors?, workerToken? })
 ```
 
-- Real runtime (`server.ts`) supplies the live `GeminiGateway`, `R2REvidenceStore`, `NangoFabric`, and global `fetch`.
+- Real runtime (`server.ts`) supplies the live `GeminiGateway`, `DbEvidenceStore` (native, shares the gateway for embeddings), `NangoFabric`, and global `fetch`.
 - Tests supply an in-memory db and fake gateways/fabrics. **Every new external dependency must be an injectable option with a real default**, so tests never hit the network.
 - Each route group is `registerXRoutes(app, db, ...deps)`. Routes are thin — they validate with a contracts zod schema, then call a service in `apps/api/src/services/`. Business logic and all DB access live in services, not routes.
 
 Key seams (integrations live behind these interfaces — never let provider code leak into services):
 
 - **LLM** — `llm/gateway.ts` defines `LlmGateway` / `GenerateParams` / `GenerateResult` and `GatewayError`. `gemini.ts` is the only implementation. Services depend on the interface only.
-- **Evidence/RAG** — `evidence/store.ts` (`EvidenceStore`) with `evidence/r2r.ts` as the R2R-backed impl.
+- **Evidence/RAG** — `evidence/store.ts` (`EvidenceStore`) with `evidence/db-store.ts` (`DbEvidenceStore`, native SQLite FTS5 + sqlite-vec) as the impl since Sprint 47 — no external service.
 - **Connectors** — `connectors/fabric.ts` (`ConnectorFabric`) with `connectors/nango.ts`; concrete providers under `connectors/{ads,crm,social}` (Meta ads, Freshsales CRM, Reddit social).
 - **Discovery** — `discovery/adapters.ts` takes an injected `Fetcher` so tests feed fixtures instead of real HTTP.
 - **Mailer** — `mail/mailer.ts` (`Mailer`) with a Resend-backed impl; console fallback in dev/tests.
@@ -116,7 +117,7 @@ Integrate behind service/API boundaries (never fork into core):
 
 | Capability | Primary | Notes |
 |---|---|---|
-| RAG/evidence corpus | R2R | RAGFlow backup; Tuezday owns retrieval policy and citations UI |
+| RAG/evidence corpus | Native since Sprint 47 (SQLite FTS5 + sqlite-vec) | R2R retired; RAGFlow only if heavy PDF parsing becomes core |
 | OAuth/connectors | Nango | Elastic license — deploy as separate service, never mix code into Tuezday |
 | Workflow automation | Activepieces | external automations only, never core generation/approval logic |
 | Data sync | Airbyte | Tuezday owns the metric model |

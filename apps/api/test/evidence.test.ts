@@ -5,6 +5,7 @@ import type { TuezdayApp } from "../src/app";
 import type { Db } from "../src/db";
 import { connections, drafts, evidenceDocuments, publications } from "../src/db/schema";
 import { EvidenceStoreError, type EvidenceStore } from "../src/evidence/store";
+import { DbEvidenceStore, EVIDENCE_EMBEDDING_DIMENSIONS } from "../src/evidence/db-store";
 import type { LlmGateway } from "../src/llm/gateway";
 import { backfillCollections } from "../src/services/evidence";
 import { buildAuthedApp, createTestDb } from "./helpers";
@@ -476,5 +477,88 @@ describe("evidence API", () => {
       state.healthy = false;
       await expect(backfillCollections(db, store)).resolves.toBeUndefined();
     });
+  });
+});
+
+// Sprint 47 wire-through: the whole evidence flow against the REAL native
+// store on an in-memory DB — no fakes between the route and the chunks.
+describe("evidence with the native DbEvidenceStore", () => {
+  let app: TuezdayApp;
+  let workspaceId: string;
+
+  const embedLlm: LlmGateway = {
+    async generate() {
+      return { text: "Generated.", model: "fake", provider: "fake", durationMs: 1 };
+    },
+    async embed({ texts }) {
+      const dims = EVIDENCE_EMBEDDING_DIMENSIONS;
+      const embeddings = texts.map((t) => {
+        const v = new Array<number>(dims).fill(0);
+        for (const word of t.toLowerCase().split(/\W+/).filter(Boolean)) {
+          let h = 0;
+          for (let i = 0; i < word.length; i++) h = (h * 31 + word.charCodeAt(i)) >>> 0;
+          v[h % dims] = (v[h % dims] ?? 0) + 1;
+        }
+        const norm = Math.sqrt(v.reduce((s, x) => s + x * x, 0)) || 1;
+        return v.map((x) => x / norm);
+      });
+      return { embeddings, model: "fake-embed", provider: "fake", dimensions: dims };
+    },
+  };
+
+  beforeEach(async () => {
+    const db = createTestDb();
+    const store = new DbEvidenceStore(db, embedLlm);
+    app = await buildAuthedApp({ db, llm: embedLlm, evidence: store });
+    workspaceId = (
+      await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Native" } })
+    ).json().id;
+    await app.inject({
+      method: "PUT",
+      url: `/workspaces/${workspaceId}/brain/soul`,
+      payload: { content: "We exist to end GTM amnesia." },
+    });
+  });
+
+  afterEach(async () => {
+    await app.close();
+  });
+
+  it("uploads, resolves with citations, and deletes through the real store", async () => {
+    const uploaded = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/evidence`,
+      payload: {
+        title: "Pricing research",
+        content:
+          "GTM teams forget what worked last quarter. The starter plan costs $49 per month and includes one workspace.",
+      },
+    });
+    expect(uploaded.statusCode).toBe(201);
+    const doc = uploaded.json();
+    expect(doc.status).toBe("ready");
+
+    const res = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/resolve`,
+      payload: { taskType: "linkedin_post", channel: "linkedin", useEvidence: true },
+    });
+    expect(res.statusCode).toBe(200);
+    const section = res.json().sections.find((s: { key: string }) => s.key === "evidence");
+    expect(section?.included).toBe(true);
+    expect(section?.content).toContain("$49");
+
+    const del = await app.inject({
+      method: "DELETE",
+      url: `/workspaces/${workspaceId}/evidence/${doc.id}`,
+    });
+    expect(del.statusCode).toBe(204);
+    const after = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/resolve`,
+      payload: { taskType: "linkedin_post", channel: "linkedin", useEvidence: true },
+    });
+    const gone = after.json().sections.find((s: { key: string }) => s.key === "evidence");
+    expect(gone?.included).toBe(false);
   });
 });
