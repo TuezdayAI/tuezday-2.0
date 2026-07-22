@@ -269,7 +269,12 @@ describe("design pipeline (Sprint 41 Part 3)", () => {
 const chromiumAvailable = await (async () => {
   try {
     const { chromium } = await import("playwright");
-    return Boolean(chromium.executablePath());
+    const { existsSync } = await import("node:fs");
+    // executablePath() returns the *expected* path even when the browser was
+    // never downloaded (e.g. CI without `playwright install`), so check the
+    // binary actually exists on disk — otherwise the test runs and dies at launch.
+    const path = chromium.executablePath();
+    return Boolean(path) && existsSync(path);
   } catch {
     return false;
   }
