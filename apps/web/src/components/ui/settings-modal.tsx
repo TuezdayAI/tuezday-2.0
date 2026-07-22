@@ -4,7 +4,7 @@
 // Save → caller fires toast("Settings saved") on success.
 import { useEffect, type ReactNode } from "react";
 import styles from "./settings-modal.module.css";
-import { Button } from "./button";
+import { Button, IconButton } from "./button";
 import { Icon } from "./icon";
 
 interface SettingsSection { id: string; label: string; }
@@ -41,9 +41,9 @@ export function SettingsModal({
       <div className={styles.modal} role="dialog" aria-modal="true" aria-label={title}>
         <header className={styles.head}>
           <h2 className={styles.title}>{title}</h2>
-          <button type="button" className={styles.close} onClick={onClose} aria-label="Close">
-            <Icon name="close" size="sm" />
-          </button>
+          <IconButton label="Close settings" className={styles.close} onClick={onClose}>
+            <Icon name="close" size="compact" />
+          </IconButton>
         </header>
         <div className={styles.body}>
           {sections && sections.length > 1 && (
@@ -63,7 +63,7 @@ export function SettingsModal({
           <div className={styles.content}>{children}</div>
         </div>
         <footer className={styles.foot}>
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button variant="tertiary" onClick={onClose}>Cancel</Button>
           <Button variant="primary" onClick={onSave} disabled={saving}>
             {saving ? "Saving…" : "Save changes"}
           </Button>

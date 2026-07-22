@@ -1,8 +1,16 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mediaContactSchema } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
+import type { Db } from "../src/db";
+import { emailRecipientPermissions, workspaceEmailSenders } from "../src/db/schema";
 import { GatewayError, type LlmGateway } from "../src/llm/gateway";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import type {
+  OutboundEmailDomain,
+  OutboundEmailMessage,
+  OutboundEmailProvider,
+} from "../src/outbound-email/provider";
+import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 function fakeGateway(): LlmGateway {
   return {
@@ -26,12 +34,27 @@ Bad Row,not-an-email,Nope,,,
 Mystery Type,mt@wired.com,Wired,,influencer,
 Riya Sen,RIYA@techcrunch.com,TechCrunch India,,journalist,duplicate by email`;
 
+class FakeOutboundEmailProvider implements OutboundEmailProvider {
+  send = vi.fn(async (_message: OutboundEmailMessage) => ({
+    provider: "resend" as const,
+    messageId: `email_${randomUUID()}`,
+    acceptedAt: Date.now(),
+  }));
+  async createDomain(): Promise<OutboundEmailDomain> { throw new Error("unused"); }
+  async verifyDomain(): Promise<void> { throw new Error("unused"); }
+  async getDomain(): Promise<OutboundEmailDomain> { throw new Error("unused"); }
+}
+
 describe("PR & media outreach API", () => {
   let app: TuezdayApp;
+  let db: Db;
   let workspaceId: string;
+  let emailProvider: FakeOutboundEmailProvider;
 
   beforeEach(async () => {
-    app = await buildAuthedApp({ db: createTestDb(), llm: fakeGateway() });
+    db = createTestDb();
+    emailProvider = new FakeOutboundEmailProvider();
+    app = await buildAuthedApp({ db, llm: fakeGateway(), outboundEmail: emailProvider });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "PR" } })
     ).json().id;
@@ -75,6 +98,36 @@ describe("PR & media outreach API", () => {
         },
       })
     ).json();
+  }
+
+  function configureNativeEmail(email: string): void {
+    const now = Date.now();
+    db.insert(workspaceEmailSenders).values({
+      workspaceId,
+      domain: "example.com",
+      fromLocalPart: "press",
+      fromName: "PR",
+      fromAddress: "press@example.com",
+      replyTo: null,
+      status: "verified",
+      provider: "resend",
+      providerDomainId: "domain_123",
+      dnsRecordsJson: "[]",
+      killSwitch: false,
+      dailyCap: 100,
+      lastCheckedAt: now,
+      lastError: null,
+      createdAt: now,
+      updatedAt: now,
+    }).run();
+    db.insert(emailRecipientPermissions).values({
+      id: randomUUID(),
+      workspaceId,
+      normalizedEmail: email,
+      status: "allowed",
+      createdAt: now,
+      updatedAt: now,
+    }).run();
   }
 
   describe("media contacts", () => {
@@ -356,6 +409,70 @@ describe("PR & media outreach API", () => {
       expect(
         drafts.filter((d: { taskType: string }) => d.taskType === "press_boilerplate"),
       ).toHaveLength(2);
+    });
+  });
+
+  describe("native pitch sending", () => {
+    it("sends an approved pitch with exact media-contact and campaign context", async () => {
+      const contact = await createContact({ email: "journalist@example.com" });
+      const campaign = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/campaigns`,
+          payload: { name: "Launch week" },
+        })
+      ).json();
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/pr/pitch`,
+        payload: {
+          contactIds: [contact.id],
+          pitchType: "announcement",
+          campaignId: campaign.id,
+        },
+      });
+      const draft = (
+        await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/drafts` })
+      ).json()[0];
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/drafts/${draft.id}/approve`,
+      });
+      configureNativeEmail(contact.email);
+      await putActionPolicy(app, workspaceId, "workspace", workspaceId, { send: "autonomous" });
+
+      const send = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/pr/drafts/${draft.id}/send`,
+        payload: {},
+      });
+      expect(send.statusCode).toBe(200);
+      expect(send.json().action.subject.destination).toBe("journalist@example.com");
+      expect(send.json().action.context.campaignId).toBe(campaign.id);
+      expect(send.json().action.status).toBe("authorization_required");
+      expect(emailProvider.send).not.toHaveBeenCalled();
+
+      const authorized = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/external-actions/${send.json().action.id}/authorize`,
+        payload: {},
+      });
+      expect(authorized.json().execution.status).toBe("accepted");
+      expect(emailProvider.send).toHaveBeenCalledTimes(1);
+
+      const duplicate = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/pr/drafts/${draft.id}/send`,
+        payload: {},
+      });
+      expect(duplicate.json().action.id).toBe(send.json().action.id);
+      expect(emailProvider.send).toHaveBeenCalledTimes(1);
+
+      const recovery = await app.inject({
+        method: "GET",
+        url: `/workspaces/${workspaceId}/pr/export.csv`,
+      });
+      expect(recovery.body).not.toContain("journalist@example.com");
     });
   });
 

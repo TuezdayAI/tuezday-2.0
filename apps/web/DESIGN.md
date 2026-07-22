@@ -16,7 +16,7 @@ colors:
   signal: "oklch(0.585 0.175 350)"
 typography:
   display:
-    fontFamily: "Inter, system-ui, -apple-system, Segoe UI, sans-serif"
+    fontFamily: "Archivo, system-ui, -apple-system, Segoe UI, sans-serif"
     fontSize: "2rem"
     fontWeight: 720
     lineHeight: 1.08
@@ -27,7 +27,7 @@ typography:
     fontWeight: 450
     lineHeight: 1.55
   label:
-    fontFamily: "ui-monospace, Cascadia Code, Consolas, monospace"
+    fontFamily: "JetBrains Mono, ui-monospace, SFMono-Regular, monospace"
     fontSize: "0.72rem"
     fontWeight: 650
     lineHeight: 1.2
@@ -62,7 +62,7 @@ components:
 
 ## 1. Overview
 
-**Creative North Star: "The GTM Control Room"**
+**Creative North Star: "The Editorial GTM Control Room"**
 
 The authenticated product should feel like a control room for a founder's GTM system: cool, structured, readable, and clearly alive with signals. It should borrow the brand site's Chromatic Control Panel system, but adapt it for repeated daily work. Marketing surfaces can be more expressive; this product UI should be denser, calmer, and more operational.
 
@@ -104,9 +104,11 @@ The palette is a coded signal system. Cobalt is the main system color; the other
 
 ## 3. Typography
 
-**Display Font:** Inter, system-ui fallback  
-**Body Font:** Inter, system-ui fallback  
-**Label/Mono Font:** ui-monospace, Cascadia Code, Consolas, monospace
+**Display Font:** Archivo, system-ui fallback
+
+**Body Font:** Inter, system-ui fallback
+
+**Label/Mono Font:** JetBrains Mono, ui-monospace fallback
 
 **Character:** Product surfaces use one sans family for trust and speed. Mono labels are allowed for system readouts, compact metadata, and coded context labels.
 

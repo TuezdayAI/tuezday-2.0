@@ -6,6 +6,7 @@ import { Card } from "@/src/components/ui/card";
 import { Icon } from "@/src/components/ui/icon";
 import { TopBarActions } from "@/src/components/top-bar";
 import { AutomationGuardrails } from "./guardrails";
+import { ActionPolicy } from "./action-policy";
 import styles from "./automation.module.css";
 
 import { useState } from "react";
@@ -32,8 +33,8 @@ export default function AutomationPage() {
   return (
     <>
       <TopBarActions>
-        <Button variant="primary" size="sm" onClick={runNow} disabled={running}>
-          <Icon name="status-generating" size="sm" /> {running ? "Running…" : "Run automation now"}
+        <Button variant="primary" size="compact" onClick={runNow} disabled={running}>
+          <Icon name="status-generating" size="compact" /> {running ? "Running…" : "Run automation now"}
         </Button>
       </TopBarActions>
 
@@ -50,14 +51,16 @@ export default function AutomationPage() {
 
       <AutomationGuardrails workspaceId={id} framed />
 
+      <ActionPolicy workspaceId={id} />
+
       {lastRun && (
         <Card>
           <h2 className={styles.head}>
-            <Icon name="info" size="sm" /> Last run
+            <Icon name="info" size="compact" /> Last run
           </h2>
           {lastRun.length === 0 ? (
             <EmptyState
-              icon={<Icon name="status-generating" size="lg" />}
+              icon={<Icon name="status-generating" size="emphasized" />}
               title="No automated campaigns yet"
               description={
                 <>

@@ -69,7 +69,7 @@ export default function BillingPage({ params }: { params: Promise<{ id: string }
     <>
       {data?.plan === "free" && (
         <TopBarActions>
-          <Button variant="primary" size="sm" onClick={handleUpgrade} disabled={upgrading}>
+          <Button variant="primary" size="compact" onClick={handleUpgrade} disabled={upgrading}>
             {upgrading ? "Redirecting…" : "Upgrade to Pro"}
           </Button>
         </TopBarActions>
@@ -86,7 +86,7 @@ export default function BillingPage({ params }: { params: Promise<{ id: string }
 
       <Card>
         <div className={styles.sectionHead}>
-          <Icon name="doc-history" size="sm" className={styles.sectionIcon} />
+          <Icon name="doc-history" size="compact" className={styles.sectionIcon} />
           <h2>Current plan</h2>
         </div>
         {!data ? (
@@ -110,7 +110,7 @@ export default function BillingPage({ params }: { params: Promise<{ id: string }
             </div>
 
             <div className={styles.usageHead}>
-              <Icon name="status-learning" size="sm" className={styles.sectionIcon} />
+              <Icon name="status-learning" size="compact" className={styles.sectionIcon} />
               <h3>Usage</h3>
             </div>
             <MeterRow

@@ -17,10 +17,10 @@ export default function CadencePage() {
       <TopBarActions>
         <Button
           variant="secondary"
-          size="sm"
+          size="compact"
           onClick={() => router.push(`/workspaces/${id}/calendar`)}
         >
-          <Icon name="calendar" size="sm" /> View calendar
+          <Icon name="calendar" size="compact" /> View calendar
         </Button>
       </TopBarActions>
 

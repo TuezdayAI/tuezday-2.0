@@ -139,7 +139,7 @@ export default function TeamPage() {
     <>
       {myRole === "owner" && (
         <TopBarActions>
-          <Button variant="secondary" size="sm" type="button" onClick={focusInvite}>
+          <Button variant="secondary" size="compact" type="button" onClick={focusInvite}>
             Invite teammate
           </Button>
         </TopBarActions>
@@ -159,7 +159,7 @@ export default function TeamPage() {
 
       <Card>
         <div className={styles.sectionHead}>
-          <Icon name="audience" size="sm" className={styles.sectionIcon} />
+          <Icon name="audience" size="compact" className={styles.sectionIcon} />
           <h2>Members</h2>
           {members !== null && <CountBadge count={members.length} label="members" />}
         </div>
@@ -167,7 +167,7 @@ export default function TeamPage() {
           <EmptyState description="Loading…" />
         ) : aloneHere ? (
           <EmptyState
-            icon={<Icon name="audience" size="lg" />}
+            icon={<Icon name="audience" size="emphasized" />}
             title="You're the only one here"
             description="Invite your team — everyone can review and create, and approvals move faster with more eyes."
             primaryAction={
@@ -191,7 +191,7 @@ export default function TeamPage() {
                   {m.userId === myUserId && <Badge tone="neutral">you</Badge>}
                   <Badge tone={m.role === "owner" ? "icp" : "neutral"}>{m.role}</Badge>
                   {myRole === "owner" && m.userId !== myUserId && (
-                    <Button variant="secondary" size="sm" type="button" onClick={() => remove(m)}>
+                    <Button variant="secondary" size="compact" type="button" onClick={() => remove(m)}>
                       Remove
                     </Button>
                   )}
@@ -205,7 +205,7 @@ export default function TeamPage() {
       {myRole === "owner" && (
         <Card>
           <div className={styles.sectionHead}>
-            <Icon name="add" size="sm" className={styles.sectionIcon} />
+            <Icon name="add" size="compact" className={styles.sectionIcon} />
             <h2>Invite a teammate</h2>
             {invites.length > 0 && <CountBadge count={invites.length} label="pending invites" />}
           </div>
@@ -240,13 +240,13 @@ export default function TeamPage() {
                   <span className={styles.rowEnd}>
                     <Button
                       variant="secondary"
-                      size="sm"
+                      size="compact"
                       type="button"
                       onClick={() => copyLink(inv)}
                     >
                       Copy link
                     </Button>
-                    <Button variant="secondary" size="sm" type="button" onClick={() => revoke(inv)}>
+                    <Button variant="secondary" size="compact" type="button" onClick={() => revoke(inv)}>
                       Revoke
                     </Button>
                   </span>
@@ -259,7 +259,7 @@ export default function TeamPage() {
 
       <Card>
         <div className={styles.sectionHead}>
-          <Icon name="email" size="sm" className={styles.sectionIcon} />
+          <Icon name="email" size="compact" className={styles.sectionIcon} />
           <h2>Send a test email</h2>
         </div>
         <p className="subtitle">

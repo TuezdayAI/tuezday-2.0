@@ -503,17 +503,17 @@ export default function DiscoveryPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="discover" size="sm" />
+              <Icon name="signal" size="compact" />
               Sources{" "}
               {sources.length > 0 && <CountBadge count={sources.length} label="discovery sources" />}
             </span>
           }
           actions={
             <>
-              <Button variant="secondary" size="sm" disabled={suggesting} onClick={suggest}>
+              <Button variant="secondary" size="compact" disabled={suggesting} onClick={suggest}>
                 {suggesting ? "Asking the brain…" : "✨ Suggest sources"}
               </Button>
-              <Button variant="secondary" size="sm" onClick={() => setShowForm(!showForm)}>
+              <Button variant="secondary" size="compact" onClick={() => setShowForm(!showForm)}>
                 + Add source
               </Button>
               <Button variant="primary" disabled={running || sources.length === 0} onClick={runNow}>
@@ -736,7 +736,7 @@ export default function DiscoveryPage() {
                     <span className="section-title">{p.name}</span>
                     <Button
                       variant="secondary"
-                      size="sm"
+                      size="compact"
                       disabled={busy}
                       onClick={() => addSource({ type: p.type, name: p.name, config: p.config })}
                     >
@@ -757,7 +757,7 @@ export default function DiscoveryPage() {
             title="No sources yet"
             description="Add a source, or let the brain propose the subreddits, feeds, and accounts your market actually talks in."
             primaryAction={
-              <Button variant="secondary" size="sm" disabled={suggesting} onClick={suggest}>
+              <Button variant="secondary" size="compact" disabled={suggesting} onClick={suggest}>
                 {suggesting ? "Asking the brain…" : "✨ Suggest sources"}
               </Button>
             }
@@ -809,10 +809,10 @@ export default function DiscoveryPage() {
                   </div>
                   {s.lastError && <p className="error-inline">{s.lastError}</p>}
                   <div className="rating-row" style={{ marginTop: 8 }}>
-                    <Button variant="secondary" size="sm" onClick={() => toggleSource(s)}>
+                    <Button variant="secondary" size="compact" onClick={() => toggleSource(s)}>
                       {s.enabled ? "Disable" : "Enable"}
                     </Button>
-                    <Button variant="danger" size="sm" onClick={() => removeSource(s)}>
+                    <Button variant="danger" size="compact" onClick={() => removeSource(s)}>
                       Delete
                     </Button>
                   </div>
@@ -846,7 +846,7 @@ export default function DiscoveryPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="user" size="sm" />
+              <Icon name="user" size="compact" />
               Tracked accounts{" "}
               {tracked.length > 0 && <CountBadge count={tracked.length} label="tracked accounts" />}
             </span>
@@ -854,7 +854,7 @@ export default function DiscoveryPage() {
           actions={
             <Button
               variant="secondary"
-              size="sm"
+              size="compact"
               onClick={() => setShowTrackedForm(!showTrackedForm)}
             >
               + Track account
@@ -937,12 +937,12 @@ export default function DiscoveryPage() {
                 {a.notes && <p className="section-reason">{a.notes}</p>}
                 {a.lastError && <p className="error-inline">{a.lastError}</p>}
                 <div className="rating-row" style={{ marginTop: 8 }}>
-                  <Button variant="secondary" size="sm" onClick={() => toggleTrackedAccount(a)}>
+                  <Button variant="secondary" size="compact" onClick={() => toggleTrackedAccount(a)}>
                     {a.enabled ? "Disable" : "Enable"}
                   </Button>
                   <Button
                     variant="danger"
-                    size="sm"
+                    size="compact"
                     onClick={() => removeTrackedAccount(a)}
                   >
                     Delete
@@ -958,7 +958,7 @@ export default function DiscoveryPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="notification" size="sm" />
+              <Icon name="notification" size="compact" />
               Triage inbox{" "}
               {inbox.length > 0 && <CountBadge count={inbox.length} label="items to triage" />}
             </span>
@@ -1071,7 +1071,7 @@ export default function DiscoveryPage() {
                   <div className="rating-row" style={{ marginTop: 8 }}>
                     <Button
                       variant="secondary"
-                      size="sm"
+                      size="compact"
                       className="rating-accepted"
                       disabled={busy}
                       onClick={() => triage(item.id, "accept")}
@@ -1080,7 +1080,7 @@ export default function DiscoveryPage() {
                     </Button>
                     <Button
                       variant="secondary"
-                      size="sm"
+                      size="compact"
                       disabled={busy}
                       onClick={() => triage(item.id, "skip")}
                     >

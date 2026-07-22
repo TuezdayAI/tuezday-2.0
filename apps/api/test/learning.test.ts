@@ -209,6 +209,17 @@ describe("learning API", () => {
       expect(synthesis.proposal).toContain("memory problem");
       expect(synthesis.rationale.length).toBeGreaterThan(0);
 
+      const priorities = (
+        await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/priorities` })
+      ).json().items;
+      expect(priorities).toContainEqual(
+        expect.objectContaining({
+          id: synthesis.id,
+          kind: "learning_review",
+          href: `/workspaces/${workspaceId}/learning?synthesis=${synthesis.id}`,
+        }),
+      );
+
       const prompt = captured.prompts.find((p) => p.includes("synthesize"))!;
       expect(prompt).toContain("accepted: 1");
       expect(prompt).toContain("Sharper version.");
@@ -230,6 +241,10 @@ describe("learning API", () => {
       });
       expect(res.statusCode).toBe(200);
       expect(res.json().synthesis.status).toBe("accepted");
+      const priorities = (
+        await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/priorities` })
+      ).json().items;
+      expect(priorities.some((item: { id: string }) => item.id === synthesis.id)).toBe(false);
 
       const brain = (
         await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/brain` })

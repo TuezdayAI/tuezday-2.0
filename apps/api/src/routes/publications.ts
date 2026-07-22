@@ -1,22 +1,25 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import type { AnalyticsSink } from "../analytics/sink";
 import { track } from "../analytics/track";
-import { publishDraftInputSchema, validateSocialPost } from "@tuezday/contracts";
+import { publishDraftInputSchema } from "@tuezday/contracts";
+import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
 import type { ConnectorFabric } from "../connectors/fabric";
-import { getConnection, providerByKey } from "../services/connections";
-import { getDraft } from "../services/drafts";
+import {
+  ExternalActionPreparationError,
+  preparePublicationAction,
+} from "../services/external-action-adapters";
+import type { ExternalActionRuntime } from "../services/external-action-coordinator";
+import { canonicalActionFingerprint } from "../services/external-action-fingerprint";
 import {
   attemptPublication,
-  createPublication,
   deletePublication,
-  findLivePublication,
   getPublication,
   listPublications,
   runDuePublications,
 } from "../services/publications";
-import { resolvePersonaSocialConnection } from "../services/persona-social-accounts";
 import { getWorkspace } from "../services/workspaces";
+import { externalActionError } from "./external-actions";
 
 type Fetcher = typeof fetch;
 
@@ -34,20 +37,12 @@ export function registerPublicationRoutes(
   fabric: ConnectorFabric,
   fetcher: Fetcher,
   analytics: AnalyticsSink,
+  runtime: ExternalActionRuntime,
 ): void {
   app.post<{ Params: { id: string; draftId: string } }>(
     "/workspaces/:id/drafts/:draftId/publish",
     async (request, reply) => {
       if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const draft = getDraft(db, request.params.id, request.params.draftId);
-      if (!draft) return reply.status(404).send({ error: "draft_not_found" });
-      if (draft.state !== "approved") {
-        return reply.status(409).send({
-          error: "draft_not_approved",
-          message: "Only approved drafts can be published — run it through Review first.",
-        });
-      }
-
       const parsed = publishDraftInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -56,80 +51,43 @@ export function registerPublicationRoutes(
         });
       }
       const input = parsed.data;
-      if (input.scheduledFor !== undefined && input.scheduledFor <= Date.now()) {
-        return reply.status(400).send({
-          error: "invalid_input",
-          message: "The scheduled time must be in the future.",
-        });
-      }
-
-      const connection = getConnection(db, request.params.id, input.connectionId);
-      if (!connection) return reply.status(404).send({ error: "connection_not_found" });
-      const provider = providerByKey(connection.providerKey);
-      if (
-        connection.status !== "connected" ||
-        !provider ||
-        !provider.categories?.includes("social")
-      ) {
-        return reply.status(400).send({
-          error: "not_social",
-          message: "Pick a connected social account to publish to.",
-        });
-      }
-
-      if (draft.personaId) {
-        const routed = resolvePersonaSocialConnection(db, request.params.id, {
-          personaId: draft.personaId,
-          providerKey: connection.providerKey,
-          channel: provider.key === "twitter" ? "x" : provider.key,
-          explicitConnectionId: connection.id,
-        });
-        if (!routed.ok) {
-          return reply.status(409).send({
-            error: routed.error,
-            message: "This draft's persona is not assigned to the selected social account.",
+      const idempotencyKey =
+        input.idempotencyKey ??
+        `publish:${request.params.draftId}:${canonicalActionFingerprint({
+          connectionId: input.connectionId,
+          target: input.target,
+          scheduledFor: input.scheduledFor ?? null,
+        }).slice(0, 32)}`;
+      try {
+        const command = preparePublicationAction(
+          db,
+          request.params.id,
+          request.params.draftId,
+          input,
+          { idempotencyKey },
+        );
+        const result = await runtime.propose(command, actorOf(request));
+        if (result.execution && request.actor.userId) {
+          track(db, analytics, {
+            event: "publication.started",
+            distinctId: request.actor.userId,
+            workspaceId: request.params.id,
+            properties: { channel: result.action.subject.channel ?? "unknown" },
           });
         }
+        return reply
+          .status(result.action.status === "authorization_required" ? 202 : 201)
+          .send(result);
+      } catch (error) {
+        if (error instanceof ExternalActionPreparationError) {
+          return reply.status(error.statusCode).send({
+            error: error.code,
+            message: error.message,
+            ...(error.details as object | undefined),
+          });
+        }
+        return externalActionError(error, reply);
       }
-
-      const validation = validateSocialPost(provider.key, {
-        target: input.target,
-        title: input.title,
-        body: draft.content,
-      });
-      if (!validation.ok) {
-        return reply.status(400).send({
-          error: "publish_validation",
-          message: validation.violations.map((v) => v.message).join(" "),
-          violations: validation.violations,
-        });
-      }
-
-      if (findLivePublication(db, draft.id, connection.id, input.target)) {
-        return reply.status(409).send({
-          error: "already_published",
-          message: "This draft is already published (or scheduled) to that destination.",
-        });
-      }
-
-      const publication = await createPublication(
-        db,
-        fabric,
-        fetcher,
-        request.params.id,
-        draft.id,
-        connection,
-        input,
-      );
-
-      track(db, analytics, {
-        event: "publication.started",
-        distinctId: request.actor.userId!,
-        workspaceId: request.params.id,
-        properties: { channel: draft.channel },
-      });
-
-      return reply.status(201).send(publication);
     },
   );
 
@@ -174,7 +132,8 @@ export function registerPublicationRoutes(
   // Worker entry point: fire everything due.
   app.post<{ Params: { id: string } }>("/workspaces/:id/publish/run", async (request, reply) => {
     if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    const actions = await runtime.run(request.params.id);
     const results = await runDuePublications(db, fabric, fetcher, request.params.id);
-    return { results };
+    return { actions, results };
   });
 }

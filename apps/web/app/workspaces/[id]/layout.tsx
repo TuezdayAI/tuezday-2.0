@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, usePathname, useRouter } from "next/navigation";
 import {
+  NAV_SECTIONS,
   WORKSPACE_NAV,
   visibleNavItems,
   type NavItem,
@@ -17,6 +18,7 @@ import { initAnalytics, identify } from "@/src/analytics";
 import { UpgradeModal } from "@/components/upgrade-modal";
 import { Icon, type IconName } from "@/src/components/ui/icon";
 import { CountBadge, GuideDot } from "@/src/components/ui/badge";
+import { Button } from "@/src/components/ui/button";
 import { TopBar } from "@/src/components/top-bar";
 import { Toaster } from "@/src/components/ui/toast";
 
@@ -28,6 +30,32 @@ const EMPTY_CAPABILITIES: WorkspaceCapabilities = {
   draftCount: 0,
   generationCount: 0,
 };
+
+/**
+ * Sprint 48: the Outreach surface lives inside the Audience group, alongside
+ * Sequences (S30 launches). The canonical nav lives in @tuezday/contracts;
+ * we augment a local copy here rather than edit the shared contract.
+ */
+const WORKSPACE_NAV_WITH_OUTREACH: NavItem[] = WORKSPACE_NAV.map((item) =>
+  item.path === "/outbound" && item.children
+    ? {
+        ...item,
+        children: item.children.some((child) => child.path === "/outreach")
+          ? item.children
+          : [
+              ...item.children.slice(0, 3),
+              {
+                label: "Outreach",
+                path: "/outreach",
+                summary: "Always-on email sequences",
+                tone: "voice",
+                icon: "email",
+              },
+              ...item.children.slice(3),
+            ],
+      }
+    : item,
+);
 
 /** GET /workspaces/:id/next-action response (spec §5.1). */
 interface NextActionView {
@@ -137,7 +165,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
 
   const base = `/workspaces/${id}`;
   const caps = capabilities ?? EMPTY_CAPABILITIES;
-  const navItems = visibleNavItems(WORKSPACE_NAV, caps);
+  const navItems = visibleNavItems(WORKSPACE_NAV_WITH_OUTREACH, caps);
   const isActive = (path: string) =>
     path === "" ? pathname === base : pathname.startsWith(`${base}${path}`);
   const isGroupActive = (item: NavItem) =>
@@ -171,8 +199,12 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
         </div>
 
         <nav className="ws-nav" aria-label="Workspace navigation">
-          {navItems.map((item) => {
+          {navItems.map((item, itemIndex) => {
             const groupActive = isGroupActive(item);
+            const previousItem = navItems[itemIndex - 1];
+            const startsSection = previousItem?.section !== item.section;
+            const sectionLabel =
+              NAV_SECTIONS.find((section) => section.id === item.section)?.label ?? item.section;
             const childrenVisible = Boolean(item.children && groupActive);
             const dotChildMatch =
               childrenVisible && item.children!.some((child) => child.path === dotAction?.module);
@@ -187,12 +219,14 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
                 key={item.label}
                 className={`ws-nav-group ${groupActive ? "active" : ""}`}
                 data-tone={item.tone ?? "system"}
+                data-section-start={startsSection ? "true" : undefined}
+                data-section-label={startsSection ? sectionLabel : undefined}
               >
                 <Link
                   className={`ws-nav-item ws-nav-parent ${groupActive ? "active" : ""}`}
                   href={`${base}${item.path}`}
                 >
-                  {item.icon && <Icon name={item.icon as IconName} size="md" className="ws-nav-icon" />}
+                  {item.icon && <Icon name={item.icon as IconName} size="standard" className="ws-nav-icon" />}
                   <span className="ws-nav-copy">
                     <span className="ws-nav-label">{item.label}</span>
                     {item.summary && <span className="ws-nav-summary">{item.summary}</span>}
@@ -211,7 +245,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
                         href={`${base}${child.path}`}
                         data-tone={child.tone ?? item.tone ?? "system"}
                       >
-                        {child.icon && <Icon name={child.icon as IconName} size="sm" className="ws-nav-icon" />}
+                        {child.icon && <Icon name={child.icon as IconName} size="compact" className="ws-nav-icon" />}
                         <span>{child.label}</span>
                         {dotAction && childrenVisible && child.path === dotAction.module && (
                           <GuideDot reason={dotAction.reason} />
@@ -240,9 +274,9 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
           {userLabel && (
             <div className="ws-user">
               <span>{userLabel}</span>
-              <button type="button" className="link-button" onClick={logout}>
+              <Button type="button" variant="tertiary" size="compact" onClick={logout}>
                 Log out
-              </button>
+              </Button>
             </div>
           )}
         </div>

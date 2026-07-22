@@ -2,7 +2,7 @@
 
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
-import { Button } from "@/src/components/ui/button";
+import { Button, ButtonLink } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
 import { Badge, CountBadge } from "@/src/components/ui/badge";
 import { Icon } from "@/src/components/ui/icon";
@@ -25,6 +25,7 @@ import {
   type Channel,
   type Connection,
   type ConnectorProvider,
+  type ExternalActionSubmission,
   type Persona,
   type Publication,
   type PublicationMetric,
@@ -308,8 +309,15 @@ export default function ContentPage() {
       });
       const body = await res.json().catch(() => null);
       if (!res.ok) throw new Error(body?.message ?? `API returned ${res.status}`);
-      if (body.status === "failed") {
-        throw new Error(body.lastError ?? "The platform refused the post.");
+      const submission = body as ExternalActionSubmission;
+      if (submission.action.status === "failed") {
+        throw new Error(submission.execution?.error ?? "The platform refused the post.");
+      }
+      if (submission.action.status === "authorization_required") {
+        setPublishingFor(null);
+        setError("Publication authorization requested. Review it in the authorization queue.");
+        await load();
+        return;
       }
       setPublishingFor(null);
       await load();
@@ -371,7 +379,7 @@ export default function ContentPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="add" size="sm" />
+              <Icon name="add" size="compact" />
               New signal
             </span>
           }
@@ -415,7 +423,7 @@ export default function ContentPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="discover" size="sm" />
+              <Icon name="discover" size="compact" />
               Signal inbox{" "}
               {signalsList.length > 0 && (
                 <CountBadge count={signalsList.length} label="signals in the inbox" />
@@ -472,23 +480,27 @@ export default function ContentPage() {
                           {STATE_LABELS[d.state]}
                         </Badge>{" "}
                         <span className="meta">{d.channel} response</span>{" "}
-                        <Link className="link-button" href={`/workspaces/${id}/approvals`}>
+                        <ButtonLink
+                          variant="tertiary"
+                          size="compact"
+                          href={`/workspaces/${id}/review`}
+                        >
                           open in queue
-                        </Link>
+                        </ButtonLink>
                         {d.state === "approved" && (
                           <>
                             {" "}
-                            <Button variant="ghost" size="sm" onClick={() => copyDraft(d.id)}>
+                            <Button variant="tertiary" size="compact" onClick={() => copyDraft(d.id)}>
                               {copied === d.id ? "copied!" : "copy"}
                             </Button>{" "}
                             <Button
-                              variant="ghost"
-                              size="sm"
+                              variant="tertiary"
+                              size="compact"
                               onClick={() => downloadDraft(d.id, d.channel)}
                             >
                               download .md
                             </Button>{" "}
-                            <Button variant="ghost" size="sm" onClick={() => openPublish(d.id)}>
+                            <Button variant="tertiary" size="compact" onClick={() => openPublish(d.id)}>
                               publish…
                             </Button>
                             {publications
@@ -580,7 +592,7 @@ export default function ContentPage() {
                             )}
                             <Button
                               variant="secondary"
-                              size="sm"
+                              size="compact"
                               onClick={() => setPublishingFor(null)}
                             >
                               Cancel
@@ -643,7 +655,7 @@ export default function ContentPage() {
                     </Button>
                     <Button
                       variant="secondary"
-                      size="sm"
+                      size="compact"
                       onClick={() => setDraftingFor(null)}
                     >
                       Cancel
@@ -653,7 +665,7 @@ export default function ContentPage() {
                   <div className="rating-row" style={{ marginTop: 10 }}>
                     <Button
                       variant="secondary"
-                      size="sm"
+                      size="compact"
                       onClick={() => {
                         setDraftingFor(s.id);
                         setDraftPersonaId(s.suggestedPersonaId ?? "");
@@ -674,7 +686,7 @@ export default function ContentPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="status-live" size="sm" />
+              <Icon name="status-live" size="compact" />
               Published{" "}
               {publications.length > 0 && (
                 <CountBadge count={publications.length} label="publication receipts" />
@@ -728,7 +740,7 @@ export default function ContentPage() {
                       {p.status === "failed" && (
                         <Button
                           variant="secondary"
-                          size="sm"
+                          size="compact"
                           disabled={publishing}
                           onClick={() => retryPublication(p.id)}
                         >
@@ -736,7 +748,7 @@ export default function ContentPage() {
                         </Button>
                       )}
                       {p.status === "scheduled" && (
-                        <Button variant="danger" size="sm" onClick={() => cancelPublication(p.id)}>
+                        <Button variant="danger" size="compact" onClick={() => cancelPublication(p.id)}>
                           Cancel
                         </Button>
                       )}

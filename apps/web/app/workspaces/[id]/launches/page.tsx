@@ -3,17 +3,21 @@
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
 import { TopBarActions } from "@/src/components/top-bar";
-import { Button } from "@/src/components/ui/button";
+import { Button, ButtonLink } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
-import { Badge, CountBadge } from "@/src/components/ui/badge";
+import { Badge, CountBadge, WorkflowStatusBadge } from "@/src/components/ui/badge";
 import { Icon } from "@/src/components/ui/icon";
 import { Input, Textarea, Select } from "@/src/components/ui/input";
+import {
+  EmailPermissionControl,
+  EmailSendStatus,
+} from "@/src/components/email-send-status";
 import styles from "./launches.module.css";
 
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import {
   AUTOMATION_MODES,
   LAUNCH_CHANNELS,
@@ -24,6 +28,8 @@ import {
   type Campaign,
   type Connection,
   type ConnectorProvider,
+  type ExternalActionSubmission,
+  type EmailPermissionStatus,
   type Launch,
   type LaunchChannel,
   type LaunchDetail,
@@ -36,7 +42,13 @@ import {
   type Workspace,
 } from "@tuezday/contracts";
 import { API_URL, apiDownload, apiFetch } from "@/lib/api";
+import {
+  actionAuthorizationHref,
+  externalActionWorkflowStatus,
+  submissionNote,
+} from "@/lib/external-actions";
 import { launchChannelReady } from "@/lib/persona-social-routing";
+import { reviewHref } from "@/lib/review-workspace";
 
 const DRAFT_STATE_TONE: Record<ApprovalState, "approved" | "pending" | "edited" | "rejected" | "draft"> = {
   draft: "draft",
@@ -61,7 +73,7 @@ const RECIPIENT_STATUS_LABELS: Record<string, string> = {
 };
 
 const CHANNEL_LABELS: Record<LaunchChannel, string> = {
-  email: "Email (CSV)",
+  email: "Email",
   linkedin: "LinkedIn",
   instagram: "Instagram",
   x: "X (DMs)",
@@ -77,11 +89,12 @@ interface ConnectorsView {
 const SAMPLE_LAUNCHES = [
   { name: "Spring outreach", status: "sent", detail: "Email · X (DMs) · 38 messages" },
   { name: "Fintech VPs — case study", status: "generating", detail: "Email · LinkedIn · 14 messages" },
-  { name: "Beta invite wave 2", status: "draft", detail: "Email (CSV) · 0 messages" },
+  { name: "Beta invite wave 2", status: "draft", detail: "Email · 0 messages" },
 ];
 
 export default function LaunchesPage() {
   const { id } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [launches, setLaunches] = useState<Launch[]>([]);
@@ -109,6 +122,7 @@ export default function LaunchesPage() {
   const [busy, setBusy] = useState(false);
   const [igMedia, setIgMedia] = useState("");
   const [dispatchNote, setDispatchNote] = useState<string | null>(null);
+  const [dispatchSubmissions, setDispatchSubmissions] = useState<ExternalActionSubmission[]>([]);
 
   const load = useCallback(async () => {
     try {
@@ -181,9 +195,19 @@ export default function LaunchesPage() {
     setOpenId(launchId);
     setDetail(null);
     setDispatchNote(null);
+    setDispatchSubmissions([]);
     const res = await apiFetch(`/workspaces/${id}/launches/${launchId}`);
     if (res.ok) setDetail(await res.json());
   }
+
+  // Deep link from execution results: /launches?launch=<id> opens that launch.
+  const requestedLaunchId = searchParams.get("launch");
+  useEffect(() => {
+    if (requestedLaunchId) void openDetail(requestedLaunchId);
+    // Mount-time deep link only: openDetail toggles, so re-running on every
+    // render would flip the panel closed again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestedLaunchId]);
 
   async function refreshDetail(launchId: string) {
     const res = await apiFetch(`/workspaces/${id}/launches/${launchId}`);
@@ -258,6 +282,7 @@ export default function LaunchesPage() {
   async function dispatch(launchId: string, channel: LaunchChannel) {
     setBusy(true);
     setDispatchNote(null);
+    setDispatchSubmissions([]);
     setError(null);
     try {
       const payload: { media?: { url: string; type: "image" | "video" }[] } = {};
@@ -280,10 +305,22 @@ export default function LaunchesPage() {
         },
       );
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.message ?? body?.error ?? `API returned ${res.status}`);
-      const sent = (body.results ?? []).filter((r: { status: string }) => r.status === "sent").length;
-      const failed = (body.results ?? []).filter((r: { status: string }) => r.status === "failed").length;
-      setDispatchNote(`${CHANNEL_LABELS[channel]}: ${sent} sent${failed ? `, ${failed} failed` : ""}.`);
+      if (!res.ok && !body?.action) {
+        throw new Error(body?.message ?? body?.error ?? `API returned ${res.status}`);
+      }
+      // Normal dispatches return a batch. A stale 409 returns the durable
+      // action alone so the owning surface can still explain and recover it.
+      const submissions: ExternalActionSubmission[] = Array.isArray(body?.submissions)
+        ? body.submissions
+        : body?.action
+          ? [{ action: body.action, execution: body.execution ?? body.action.execution ?? null }]
+          : [];
+      setDispatchSubmissions(submissions);
+      setDispatchNote(
+        submissions.length > 0
+          ? `${CHANNEL_LABELS[channel]}: ${submissions.map(submissionNote).join(" ")}`
+          : `${CHANNEL_LABELS[channel]}: no approved messages were ready to dispatch.`,
+      );
       await refreshDetail(launchId);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Dispatch failed");
@@ -308,8 +345,8 @@ export default function LaunchesPage() {
             broadcast post each for LinkedIn and Instagram. Every message clears Review first.</>} />
 
       <TopBarActions>
-        <Button variant="primary" size="sm" onClick={() => setShowForm(!showForm)}>
-          <Icon name="add" size="sm" /> New launch
+        <Button variant="primary" size="compact" onClick={() => setShowForm(!showForm)}>
+          <Icon name="add" size="compact" /> New launch
         </Button>
       </TopBarActions>
 
@@ -320,7 +357,7 @@ export default function LaunchesPage() {
           <CardHeader
             title={
               <span className={styles.cardTitle}>
-                <Icon name="add" size="sm" /> New launch
+                <Icon name="add" size="compact" /> New launch
               </span>
             }
           />
@@ -434,7 +471,7 @@ export default function LaunchesPage() {
               >
                 {saving ? "Creating…" : "Create launch"}
               </Button>
-              <Button type="button" variant="secondary" size="sm" onClick={() => setShowForm(false)}>
+              <Button type="button" variant="secondary" size="compact" onClick={() => setShowForm(false)}>
                 Cancel
               </Button>
             </div>
@@ -446,7 +483,7 @@ export default function LaunchesPage() {
         <CardHeader
           title={
             <span className={styles.cardTitle}>
-              <Icon name="campaigns" size="sm" /> Launches
+              <Icon name="campaigns" size="compact" /> Launches
               <CountBadge count={launches.length} label="launches" />
             </span>
           }
@@ -466,7 +503,7 @@ export default function LaunchesPage() {
                 ))}
               </ul>
             }
-            icon={<Icon name="campaigns" size="lg" />}
+            icon={<Icon name="campaigns" size="emphasized" />}
             title="Point a segment at every channel at once"
             description={
               <>
@@ -476,8 +513,8 @@ export default function LaunchesPage() {
               </>
             }
             primaryAction={
-              <Button variant="primary" size="sm" onClick={() => setShowForm(true)}>
-                <Icon name="add" size="sm" /> New launch
+              <Button variant="primary" size="compact" onClick={() => setShowForm(true)}>
+                <Icon name="add" size="compact" /> New launch
               </Button>
             }
           />
@@ -486,7 +523,7 @@ export default function LaunchesPage() {
             {launches.map((launch) => (
               <li key={launch.id} className="section-card">
                 <div className="section-head">
-                  <Button variant="ghost" size="sm" onClick={() => openDetail(launch.id)}>
+                  <Button variant="tertiary" size="compact" onClick={() => openDetail(launch.id)}>
                     <span className="section-title">{launch.name}</span>
                   </Button>
                   <span className={`layer-badge state-${launch.status}`}>{launch.status}</span>
@@ -498,7 +535,7 @@ export default function LaunchesPage() {
                       Generate
                     </Button>
                   )}
-                  <Button variant="ghost" size="sm" onClick={() => remove(launch)}>
+                  <Button variant="danger" size="compact" onClick={() => remove(launch)}>
                     delete
                   </Button>
                 </div>
@@ -511,6 +548,7 @@ export default function LaunchesPage() {
                     igMedia={igMedia}
                     setIgMedia={setIgMedia}
                     dispatchNote={dispatchNote}
+                    dispatchSubmissions={dispatchSubmissions}
                     channelReady={(channel) => channelReadyForPersona(channel, detail.launch.personaId)}
                     onApprove={(draftId) => approve(draftId, launch.id)}
                     onDispatch={(channel) => dispatch(launch.id, channel)}
@@ -533,6 +571,7 @@ function LaunchDetailView({
   igMedia,
   setIgMedia,
   dispatchNote,
+  dispatchSubmissions,
   channelReady,
   onApprove,
   onDispatch,
@@ -544,6 +583,7 @@ function LaunchDetailView({
   igMedia: string;
   setIgMedia: (v: string) => void;
   dispatchNote: string | null;
+  dispatchSubmissions: ExternalActionSubmission[];
   channelReady: (c: LaunchChannel) => boolean;
   onApprove: (draftId: string) => void;
   onDispatch: (channel: LaunchChannel) => void;
@@ -560,6 +600,17 @@ function LaunchDetailView({
         {recipientCount} recipient(s) · status {launch.status}
       </p>
       {dispatchNote && <p className="bundle-summary">{dispatchNote}</p>}
+      {dispatchSubmissions.length > 0 && (
+        <ul className={styles.actionList}>
+          {dispatchSubmissions.map((submission) => (
+            <li key={submission.action.id}>
+              <WorkflowStatusBadge status={externalActionWorkflowStatus(submission.action)} />
+              <span>{submissionNote(submission)}</span>
+              <Link href={actionAuthorizationHref(submission.action)}>View action</Link>
+            </li>
+          ))}
+        </ul>
+      )}
 
       <SequenceSection
         workspaceId={workspaceId}
@@ -577,25 +628,35 @@ function LaunchDetailView({
             <CardHeader
               title={
                 <span className={styles.cardTitle}>
-                  <Icon name={channel === "email" ? "email" : "post"} size="sm" />{" "}
+                  <Icon name={channel === "email" ? "email" : "post"} size="compact" />{" "}
                   {CHANNEL_LABELS[channel]}
                 </span>
               }
               actions={
                 channel === "email" ? (
-                  <Button
-                    variant="secondary"
-                    size="sm"
-                    disabled={approvedCount("email") === 0}
-                    onClick={() =>
-                      void apiDownload(
-                        `/workspaces/${workspaceId}/launches/${launch.id}/export.csv`,
-                        "tuezday-launch-email.csv",
-                      )
-                    }
-                  >
-                    ↓ Download CSV ({approvedCount("email")})
-                  </Button>
+                  <div className={styles.emailHeaderActions}>
+                    <Button
+                      variant="primary"
+                      size="standard"
+                      disabled={busy || approvedCount("email") === 0}
+                      onClick={() => onDispatch("email")}
+                    >
+                      Send from Tuezday ({approvedCount("email")})
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="standard"
+                      disabled={approvedCount("email") === 0}
+                      onClick={() =>
+                        void apiDownload(
+                          `/workspaces/${workspaceId}/launches/${launch.id}/export.csv`,
+                          "tuezday-launch-email.csv",
+                        )
+                      }
+                    >
+                      Download CSV ({approvedCount("email")})
+                    </Button>
+                  </div>
                 ) : (
                   <Button
                     variant="primary"
@@ -620,7 +681,15 @@ function LaunchDetailView({
 
             <ul className="section-list">
               {rows.map((m) => (
-                <MessageRow key={m.id} message={m} onApprove={onApprove} />
+                <MessageRow
+                  key={m.id}
+                  workspaceId={workspaceId}
+                  message={m}
+                  submission={dispatchSubmissions.find(
+                    (submission) => submission.action.subject.id === m.id,
+                  )}
+                  onApprove={onApprove}
+                />
               ))}
             </ul>
           </Card>
@@ -631,10 +700,14 @@ function LaunchDetailView({
 }
 
 function MessageRow({
+  workspaceId,
   message,
+  submission,
   onApprove,
 }: {
+  workspaceId: string;
   message: LaunchMessage;
+  submission?: ExternalActionSubmission;
   onApprove: (draftId: string) => void;
 }) {
   const recipient = message.kind === "broadcast" ? "Broadcast post" : message.recipientName;
@@ -651,21 +724,88 @@ function MessageRow({
             )}
             <span className={`layer-badge state-${message.status}`}>{message.status}</span>
             {message.draftId && message.draftState !== "approved" && message.status !== "sent" && (
-              <Button variant="ghost" size="sm" onClick={() => onApprove(message.draftId!)}>
+              <Button variant="tertiary" size="compact" onClick={() => onApprove(message.draftId!)}>
                 approve
               </Button>
             )}
             {message.externalUrl && (
-              <a className="link-button" href={message.externalUrl} target="_blank" rel="noreferrer">
+              <ButtonLink
+                variant="tertiary"
+                size="compact"
+                href={message.externalUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
                 view
-              </a>
+              </ButtonLink>
+            )}
+            {message.externalActionId && (
+              <ButtonLink
+                variant="tertiary"
+                size="compact"
+                href={reviewHref(workspaceId, {
+                  tab: "authorizations",
+                  action: message.externalActionId,
+                })}
+              >
+                action record
+              </ButtonLink>
             )}
           </>
         )}
       </div>
       {message.draftContent && <p className="section-reason">{message.draftContent.slice(0, 200)}</p>}
       {message.lastError && <p className="error-inline">{message.lastError}</p>}
+      {message.channel === "email" && (
+        <EmailMessageControls
+          workspaceId={workspaceId}
+          message={message}
+          submission={submission}
+        />
+      )}
     </li>
+  );
+}
+
+function EmailMessageControls({
+  workspaceId,
+  message,
+  submission,
+}: {
+  workspaceId: string;
+  message: LaunchMessage;
+  submission?: ExternalActionSubmission;
+}) {
+  const [permission, setPermission] = useState<EmailPermissionStatus>("unknown");
+
+  useEffect(() => {
+    let current = true;
+    void apiFetch(
+      `/workspaces/${workspaceId}/email-permissions/${encodeURIComponent(
+        message.recipientEmail.toLowerCase(),
+      )}`,
+    )
+      .then(async (response) => {
+        if (!response.ok) return;
+        const body = (await response.json()) as { status: EmailPermissionStatus };
+        if (current) setPermission(body.status);
+      })
+      .catch(() => undefined);
+    return () => {
+      current = false;
+    };
+  }, [message.recipientEmail, workspaceId]);
+
+  return (
+    <div className={styles.emailControls}>
+      <EmailPermissionControl
+        workspaceId={workspaceId}
+        email={message.recipientEmail}
+        status={permission}
+        onChange={setPermission}
+      />
+      {submission && <EmailSendStatus submission={submission} delivery={null} />}
+    </div>
   );
 }
 
@@ -795,15 +935,15 @@ function SequenceSection({
       <CardHeader
         title={
           <span className={styles.cardTitle}>
-            <Icon name="calendar" size="sm" /> Follow-up sequence
+            <Icon name="calendar" size="compact" /> Follow-up sequence
           </span>
         }
         actions={
           <div style={{ display: "flex", gap: 8 }}>
-            <Button variant="secondary" size="sm" disabled={busy} onClick={start}>
+            <Button variant="secondary" size="compact" disabled={busy} onClick={start}>
               Start
             </Button>
-            <Button variant="secondary" size="sm" disabled={busy} onClick={runNow}>
+            <Button variant="secondary" size="compact" disabled={busy} onClick={runNow}>
               Run now
             </Button>
           </div>
@@ -830,7 +970,7 @@ function SequenceSection({
           <input type="checkbox" checked={stopOnReply} onChange={(e) => setStopOnReply(e.target.checked)} />
           Stop on reply (X DMs)
         </label>
-        <Button variant="secondary" size="sm" disabled={busy} onClick={saveConfig}>
+        <Button variant="secondary" size="compact" disabled={busy} onClick={saveConfig}>
           Save settings
         </Button>
       </div>
@@ -867,11 +1007,11 @@ function SequenceSection({
             ))}
           </ol>
           <div style={{ display: "flex", gap: 8 }}>
-            <Button variant="ghost" size="sm" onClick={() => addStep(channel)}>
+            <Button variant="tertiary" size="compact" onClick={() => addStep(channel)}>
               + add step
             </Button>
             {(edit[channel]?.length ?? 0) > 1 && (
-              <Button variant="ghost" size="sm" onClick={() => removeStep(channel)}>
+              <Button variant="tertiary" size="compact" onClick={() => removeStep(channel)}>
                 remove last
               </Button>
             )}
@@ -916,10 +1056,10 @@ function SequenceSection({
             />
           </div>
           <div style={{ display: "flex", gap: 8 }}>
-            <Button variant="secondary" size="sm" disabled={busy || !stopEmails.trim()} onClick={stopEmailList}>
+            <Button variant="secondary" size="compact" disabled={busy || !stopEmails.trim()} onClick={stopEmailList}>
               Stop pasted recipients
             </Button>
-            <Button variant="danger" size="sm" disabled={busy} onClick={stopWhole}>
+            <Button variant="danger" size="compact" disabled={busy} onClick={stopWhole}>
               Stop whole launch
             </Button>
           </div>

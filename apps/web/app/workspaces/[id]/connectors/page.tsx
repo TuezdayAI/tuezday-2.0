@@ -25,11 +25,15 @@ import {
   integrationProgress,
   type Connection,
   type ConnectorProvider,
+  type EmailSender,
   type EventType,
   type WebhookSubscription,
   type Workspace,
 } from "@tuezday/contracts";
 import { connectionLabel } from "@/lib/persona-social-routing";
+import { ScopedActionPolicy } from "@/src/components/scoped-action-policy";
+import { MailboxesPanel } from "./mailboxes-panel";
+import { CompliancePanel } from "./compliance-panel";
 
 /** The API decorates OAuth providers with whether their app creds are set. */
 type ProviderView = ConnectorProvider & { oauthConfigured?: boolean };
@@ -42,6 +46,7 @@ const PROVIDER_BRAND: Record<string, BrandName> = {
   instagram: "instagram",
   meta_ads: "meta",
   freshsales: "freshsales",
+  gmail: "google",
 };
 
 /** One-line GTM value promise per provider (spec §5.7.2) — outcome, not feature. */
@@ -56,6 +61,7 @@ const PROVIDER_PROMISE: Record<string, string> = {
   hubspot: "Pull contacts in as leads; approved emails flow back as notes",
   smartlead: "Send approved sequences from your own warmed sender",
   instantly: "Send approved sequences from your own warmed sender",
+  gmail: "Send outreach from your real mailbox; replies land back in the inbox",
   slack: "Get review pings where the team already lives",
   custom: "Proxy any API through the connector service",
 };
@@ -96,6 +102,15 @@ const OAUTH_APP_HINTS: Record<string, React.ReactNode> = {
       INSTAGRAM_CLIENT_SECRET (the Facebook app id/secret) in the root .env and restart the API.
     </>
   ),
+  gmail: (
+    <>
+      Create a Google Cloud OAuth app (console.cloud.google.com) with the Gmail API enabled, the{" "}
+      <code>gmail.send</code> and <code>gmail.readonly</code> scopes, and redirect uri{" "}
+      <code>http://localhost:3050/oauth/callback</code> (“Testing” publishing status works for your
+      own account), then set GMAIL_CLIENT_ID and GMAIL_CLIENT_SECRET in the root .env and restart
+      the API.
+    </>
+  ),
 };
 
 interface ConnectorsView {
@@ -112,6 +127,12 @@ export default function ConnectorsPage() {
   const [webhooks, setWebhooks] = useState<WebhookSubscription[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [emailSender, setEmailSender] = useState<EmailSender | null>(null);
+  const [emailBusy, setEmailBusy] = useState<"save" | "verify" | "refresh" | null>(null);
+  const [senderDomain, setSenderDomain] = useState("");
+  const [senderLocalPart, setSenderLocalPart] = useState("hello");
+  const [senderName, setSenderName] = useState("");
+  const [senderReplyTo, setSenderReplyTo] = useState("");
 
   // connect form state per provider
   const [connectingKey, setConnectingKey] = useState<string | null>(null);
@@ -133,18 +154,28 @@ export default function ConnectorsPage() {
     Record<string, { topics: string; guidance: string }>
   >({});
   const [profileBusy, setProfileBusy] = useState<string | null>(null);
+  const [policyConnectionId, setPolicyConnectionId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [wsRes, cRes, wRes] = await Promise.all([
+      const [wsRes, cRes, wRes, senderRes] = await Promise.all([
         apiFetch(`/workspaces/${id}`),
         apiFetch(`/workspaces/${id}/connectors`),
         apiFetch(`/workspaces/${id}/webhooks`),
+        apiFetch(`/workspaces/${id}/email-sender`),
       ]);
-      if (!wsRes.ok || !cRes.ok) throw new Error("not found");
+      if (!wsRes.ok || !cRes.ok || !senderRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
       setView(await cRes.json());
       setWebhooks(await wRes.json());
+      const sender = (await senderRes.json()) as EmailSender | null;
+      setEmailSender(sender);
+      if (sender) {
+        setSenderDomain(sender.domain);
+        setSenderLocalPart(sender.fromLocalPart);
+        setSenderName(sender.fromName);
+        setSenderReplyTo(sender.replyTo ?? "");
+      }
       setError(null);
     } catch {
       setError(`Could not load this workspace from ${API_URL}. Is "npm run dev" running?`);
@@ -154,6 +185,53 @@ export default function ConnectorsPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  async function saveEmailSender(event: React.FormEvent) {
+    event.preventDefault();
+    setEmailBusy("save");
+    setError(null);
+    try {
+      const response = await apiFetch(`/workspaces/${id}/email-sender`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          domain: senderDomain,
+          fromLocalPart: senderLocalPart,
+          fromName: senderName,
+          replyTo: senderReplyTo.trim() || null,
+        }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.message ?? `Could not save sender (${response.status})`);
+      }
+      setEmailSender(body as EmailSender);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not save the email sender");
+    } finally {
+      setEmailBusy(null);
+    }
+  }
+
+  async function runEmailSenderAction(action: "verify" | "refresh") {
+    setEmailBusy(action);
+    setError(null);
+    try {
+      const response = await apiFetch(`/workspaces/${id}/email-sender/${action}`, {
+        method: "POST",
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) {
+        throw new Error(body?.message ?? `Could not ${action} sender (${response.status})`);
+      }
+      setEmailSender(body as EmailSender);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : `Could not ${action} the email sender`);
+      await load();
+    } finally {
+      setEmailBusy(null);
+    }
+  }
 
   function connectionsFor(providerKey: string): Connection[] {
     return view?.connections.filter((c) => c.providerKey === providerKey) ?? [];
@@ -410,7 +488,7 @@ export default function ConnectorsPage() {
           >
             {connectLabel}
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => setConnectingKey(null)}>
+          <Button variant="secondary" size="compact" onClick={() => setConnectingKey(null)}>
             Cancel
           </Button>
         </div>
@@ -422,7 +500,7 @@ export default function ConnectorsPage() {
         {provider.authMode !== "oauth" && (
           <Button
             variant={providerConnections.length > 0 ? "secondary" : "primary"}
-            size="sm"
+            size="compact"
             disabled={busy || !view?.fabric.healthy}
             onClick={() => setConnectingKey(provider.key)}
           >
@@ -432,7 +510,7 @@ export default function ConnectorsPage() {
         {provider.authMode === "oauth" && provider.oauthConfigured && (
           <Button
             variant={providerConnections.length > 0 ? "secondary" : "primary"}
-            size="sm"
+            size="compact"
             disabled={busy || !view?.fabric.healthy}
             onClick={() => connectOAuth(provider)}
           >
@@ -441,7 +519,7 @@ export default function ConnectorsPage() {
         )}
         {needsOAuthApp && OAUTH_APP_HINTS[provider.key] && (
           <details>
-            <summary className="link-button" style={{ cursor: "pointer" }}>
+            <summary style={{ cursor: "pointer" }}>
               Setup
             </summary>
             <p className={styles.hint}>{OAUTH_APP_HINTS[provider.key]}</p>
@@ -464,9 +542,9 @@ export default function ConnectorsPage() {
         <div className={styles.cardHead}>
           <span className={styles.mark}>
             {brand ? (
-              <BrandIcon name={brand} size="md" brandColor />
+              <BrandIcon name={brand} size="standard" brandColor />
             ) : (
-              <Icon name="connect" size="md" />
+              <Icon name="connect" size="standard" />
             )}
           </span>
           <span className={styles.cardName}>{provider.label}</span>
@@ -536,7 +614,7 @@ export default function ConnectorsPage() {
                   <div className="rating-row" style={{ marginTop: 6 }}>
                     <Button
                       variant="secondary"
-                      size="sm"
+                      size="compact"
                       disabled={busy}
                       onClick={() => testConnection(connection)}
                     >
@@ -544,7 +622,7 @@ export default function ConnectorsPage() {
                     </Button>
                     <Button
                       variant="danger"
-                      size="sm"
+                      size="compact"
                       disabled={busy}
                       onClick={() => disconnect(connection)}
                     >
@@ -555,10 +633,7 @@ export default function ConnectorsPage() {
                 {connection.status === "connected" &&
                   provider.categories?.includes("social") && (
                     <details className="outline-preview" style={{ marginTop: 6 }}>
-                      <summary
-                        className="link-button"
-                        style={{ cursor: "pointer", listStyle: "none" }}
-                      >
+                      <summary style={{ cursor: "pointer", listStyle: "none" }}>
                         Content profile
                         {connection.contentProfile.topics.length > 0 &&
                           ` — covers ${connection.contentProfile.topics.join(", ")}`}
@@ -605,6 +680,37 @@ export default function ConnectorsPage() {
                       </div>
                     </details>
                   )}
+                {connection.status !== "disconnected" && (
+                  <details
+                    className={styles.policyDetails}
+                    open={policyConnectionId === connection.id}
+                    onToggle={(event) => {
+                      const isOpen = event.currentTarget.open;
+                      setPolicyConnectionId((current) =>
+                        isOpen
+                          ? connection.id
+                          : current === connection.id
+                            ? null
+                            : current,
+                      );
+                    }}
+                  >
+                    <summary>Action permission</summary>
+                    {policyConnectionId === connection.id && (
+                      <div className={styles.policyEditor}>
+                        <ScopedActionPolicy
+                          workspaceId={id}
+                          scope="connection"
+                          scopeId={connection.id}
+                          title={`Action permission for ${connectionLabel(
+                            connection,
+                            provider.label,
+                          )}`}
+                        />
+                      </div>
+                    )}
+                  </details>
+                )}
               </div>
             ))}
           </div>
@@ -655,6 +761,164 @@ export default function ConnectorsPage() {
         </p>
       )}
       {error && workspace && <p className="error">{error}</p>}
+
+      <section className={styles.group}>
+        <div className={styles.groupHead}>
+          <h2 className={styles.groupTitle}>Verified email sender</h2>
+          <span className={styles.groupUnlocks}>
+            Send authorized native email from your own domain
+          </span>
+        </div>
+        <Card className={styles.senderCard}>
+          <div className={styles.senderSummary}>
+            <div>
+              <p className={styles.senderTitle}>
+                {emailSender?.fromAddress ?? "Configure a sender identity"}
+              </p>
+              <p className={styles.hint}>
+                Domain verification uses Tuezday&apos;s managed email infrastructure. Your workspace
+                stores only the public DNS records needed for verification.
+              </p>
+            </div>
+            <Badge
+              tone={
+                emailSender?.status === "verified"
+                  ? "approved"
+                  : emailSender?.status === "failed"
+                    ? "rejected"
+                    : emailSender?.status === "pending"
+                      ? "edited"
+                      : "neutral"
+              }
+            >
+              {emailSender?.status.replaceAll("_", " ") ?? "not configured"}
+            </Badge>
+          </div>
+
+          <form className={styles.senderForm} onSubmit={saveEmailSender}>
+            <label>
+              From name
+              <Input
+                value={senderName}
+                onChange={(event) => setSenderName(event.target.value)}
+                placeholder="Acme"
+                maxLength={200}
+                required
+              />
+            </label>
+            <label>
+              Domain
+              <Input
+                value={senderDomain}
+                onChange={(event) => setSenderDomain(event.target.value)}
+                placeholder="example.com"
+                required
+              />
+            </label>
+            <label>
+              From local part
+              <Input
+                value={senderLocalPart}
+                onChange={(event) => setSenderLocalPart(event.target.value)}
+                placeholder="hello"
+                maxLength={64}
+                required
+              />
+            </label>
+            <label>
+              Reply-to address
+              <Input
+                type="email"
+                value={senderReplyTo}
+                onChange={(event) => setSenderReplyTo(event.target.value)}
+                placeholder="founder@example.com (optional)"
+              />
+            </label>
+            <p className={styles.senderPreview}>
+              Preview: {senderName.trim() || "Sender name"} &lt;
+              {senderLocalPart.trim() || "hello"}@{senderDomain.trim() || "example.com"}&gt;
+            </p>
+            <div className={styles.senderActions}>
+              <Button
+                type="submit"
+                variant="primary"
+                loading={emailBusy === "save"}
+                disabled={!senderName.trim() || !senderDomain.trim() || !senderLocalPart.trim()}
+              >
+                {emailSender ? "Save sender" : "Configure sender"}
+              </Button>
+              {emailSender?.providerDomainId && (
+                <>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    loading={emailBusy === "verify"}
+                    onClick={() => void runEmailSenderAction("verify")}
+                  >
+                    Start verification
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    loading={emailBusy === "refresh"}
+                    onClick={() => void runEmailSenderAction("refresh")}
+                  >
+                    Check verification
+                  </Button>
+                </>
+              )}
+            </div>
+          </form>
+
+          {emailSender?.lastError && (
+            <p className={styles.senderError}>
+              Verification needs attention: {emailSender.lastError}
+            </p>
+          )}
+
+          {emailSender && emailSender.dnsRecords.length > 0 && (
+            <div className={styles.dnsSection}>
+              <div className={styles.dnsHeading}>
+                <h3>DNS records</h3>
+                {emailSender.lastCheckedAt && (
+                  <span className="meta">
+                    Last checked {new Date(emailSender.lastCheckedAt).toLocaleString()}
+                  </span>
+                )}
+              </div>
+              <div className={styles.dnsTableWrap}>
+                <table className={styles.dnsTable}>
+                  <thead>
+                    <tr>
+                      <th>Type</th>
+                      <th>Name</th>
+                      <th>Value</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {emailSender.dnsRecords.map((record) => (
+                      <tr key={`${record.type}:${record.name}:${record.value}`}>
+                        <td>{record.type}</td>
+                        <td><code>{record.name}</code></td>
+                        <td><code>{record.value}</code></td>
+                        <td>{record.status}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </Card>
+      </section>
+
+      <MailboxesPanel
+        workspaceId={id}
+        gmailConnections={view.connections.filter((c) => c.providerKey === "gmail")}
+      />
+
+      <CompliancePanel workspaceId={id} />
 
       {groups.map((group) => (
         <section key={group.category} className={styles.group}>
@@ -739,16 +1003,16 @@ export default function ConnectorsPage() {
                   <div className="rating-row" style={{ marginTop: 8 }}>
                     <Button
                       variant="secondary"
-                      size="sm"
+                      size="compact"
                       disabled={busy}
                       onClick={() => pingWebhook(w.id)}
                     >
                       Ping
                     </Button>
-                    <Button variant="secondary" size="sm" onClick={() => toggleWebhook(w)}>
+                    <Button variant="secondary" size="compact" onClick={() => toggleWebhook(w)}>
                       {w.enabled ? "Disable" : "Enable"}
                     </Button>
-                    <Button variant="danger" size="sm" onClick={() => removeWebhook(w)}>
+                    <Button variant="danger" size="compact" onClick={() => removeWebhook(w)}>
                       Delete
                     </Button>
                   </div>

@@ -1,4 +1,10 @@
-import type { AdLaunchObjective, Connection, ConnectorProvider } from "@tuezday/contracts";
+import type {
+  AdLaunchObjective,
+  Connection,
+  ConnectorProvider,
+  MetaAdSetState,
+  TargetingChangeIntent,
+} from "@tuezday/contracts";
 import type { ConnectorFabric } from "../fabric";
 import { MetaAdsAdapter } from "./meta";
 
@@ -41,6 +47,20 @@ export interface AdsAdapter {
  * resumes from where it stopped instead of duplicating platform objects.
  */
 export interface AdsExecutionAdapter {
+  getAdSetState(
+    externalAccountId: string,
+    externalAdSetId: string,
+  ): Promise<MetaAdSetState>;
+  updateDailyBudget(
+    externalAccountId: string,
+    externalAdSetId: string,
+    dailyBudgetCents: number,
+  ): Promise<MetaAdSetState>;
+  updateTargeting(
+    externalAccountId: string,
+    externalAdSetId: string,
+    targeting: TargetingChangeIntent["after"],
+  ): Promise<MetaAdSetState>;
   /** Create the campaign shell PAUSED — a partial chain must never spend. */
   createCampaign(
     externalAccountId: string,
@@ -60,6 +80,12 @@ export interface AdsExecutionAdapter {
       endAt?: number | null;
     },
   ): Promise<{ externalId: string }>;
+  /** Upload a hosted image to the account's ad images; returns its hash
+   * (Sprint 41 Part 5). The adapter fetches the URL itself. */
+  uploadAdImage(
+    externalAccountId: string,
+    image: { url: string } | { bytes: Uint8Array },
+  ): Promise<{ imageHash: string }>;
   createAdCreative(
     externalAccountId: string,
     input: {
@@ -69,6 +95,8 @@ export interface AdsExecutionAdapter {
       primaryText: string;
       headline: string;
       description: string;
+      /** Meta adimages hash — attaches a static image to the link ad. */
+      imageHash?: string;
     },
   ): Promise<{ externalId: string }>;
   createAd(
@@ -101,13 +129,19 @@ export function adsExecutionAdapterFor(
   fabric: ConnectorFabric,
   provider: ConnectorProvider,
   connection: Connection,
+  // Used by uploadAdImage to download the hosted image; tests inject a fake.
+  fetcher: typeof fetch = fetch,
 ): AdsExecutionAdapter | undefined {
   if (!provider.categories?.includes("ads")) return undefined;
   if (provider.key === "meta_ads") {
-    return new MetaAdsAdapter(fabric, {
-      nangoConnectionId: connection.nangoConnectionId,
-      integrationKey: `tuezday-${provider.key}`,
-    });
+    return new MetaAdsAdapter(
+      fabric,
+      {
+        nangoConnectionId: connection.nangoConnectionId,
+        integrationKey: `tuezday-${provider.key}`,
+      },
+      fetcher,
+    );
   }
   return undefined;
 }

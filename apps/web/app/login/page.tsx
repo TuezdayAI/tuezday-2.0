@@ -84,14 +84,14 @@ function LoginForm() {
             {mode === "login" ? (
               <>
                 New here?{" "}
-                <Button type="button" variant="ghost" size="sm" onClick={() => setMode("register")}>
+                <Button type="button" variant="tertiary" size="compact" onClick={() => setMode("register")}>
                   Create an account
                 </Button>
               </>
             ) : (
               <>
                 Already have an account?{" "}
-                <Button type="button" variant="ghost" size="sm" onClick={() => setMode("login")}>
+                <Button type="button" variant="tertiary" size="compact" onClick={() => setMode("login")}>
                   Log in
                 </Button>
               </>
@@ -134,15 +134,17 @@ function LoginForm() {
             <span>or</span>
           </div>
 
-          <button
+          <Button
             type="button"
+            variant="secondary"
+            size="standard"
             className={styles.googleButton}
             onClick={startGoogleAuth}
             disabled={submitting}
           >
-            <BrandIcon name="google" size="sm" brandColor aria-label="Google" />
+            <BrandIcon name="google" size="compact" brandColor aria-label="Google" />
             Continue with Google
-          </button>
+          </Button>
 
           {error && <p className={`error ${styles.error}`}>{error}</p>}
         </div>

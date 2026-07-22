@@ -161,6 +161,22 @@ describe("campaigns API", () => {
       expect(res.statusCode).toBe(409);
       expect(res.json().error).toBe("campaign_archived");
     });
+
+    it("refuses generation for a paused campaign", async () => {
+      const campaign = await createCampaign();
+      await app.inject({
+        method: "PUT",
+        url: `/workspaces/${workspaceId}/campaigns/${campaign.id}`,
+        payload: { ...CAMPAIGN_PAYLOAD, status: "paused" },
+      });
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/generate`,
+        payload: { taskType: "linkedin_post", channel: "linkedin", campaignId: campaign.id },
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json().error).toBe("campaign_inactive");
+    });
   });
 
   describe("tagging", () => {

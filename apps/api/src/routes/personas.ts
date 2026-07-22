@@ -7,7 +7,7 @@ import {
 import { resolveContext, type BrainContents } from "@tuezday/brain";
 import type { Db } from "../db";
 import { getBrain } from "../services/brain";
-import { composeResolveCampaign, getCampaign } from "../services/campaigns";
+import { campaignExecutionError, composeResolveCampaign, getCampaign } from "../services/campaigns";
 import { selectiveContextInputs } from "../services/resolve-input";
 import { retrieveEvidence } from "../services/evidence";
 import { resolveChannelGuidance } from "../services/guidance";
@@ -186,9 +186,8 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
     if (parsed.data.campaignId) {
       campaign = getCampaign(db, request.params.id, parsed.data.campaignId);
       if (!campaign) return reply.status(404).send({ error: "campaign_not_found" });
-      if (campaign.status === "archived") {
-        return reply.status(409).send({ error: "campaign_archived" });
-      }
+      const campaignError = campaignExecutionError(campaign);
+      if (campaignError) return reply.status(409).send({ error: campaignError });
     }
 
     const evidenceResolution = await retrieveEvidence(

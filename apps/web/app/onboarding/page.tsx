@@ -9,6 +9,7 @@ import {
   type OnboardingStep,
 } from "@tuezday/contracts";
 import { apiFetch, getToken } from "@/lib/api";
+import { buildSetupSkipRequest, isSetupSkipEnabled } from "@/lib/setup-skip";
 import { Button } from "@/src/components/ui/button";
 import { Card } from "@/src/components/ui/card";
 import { Input } from "@/src/components/ui/input";
@@ -29,6 +30,10 @@ const STEP_LABELS: Record<OnboardingStep, string> = {
   draft: "First draft",
 };
 
+const SETUP_SKIP_ENABLED = isSetupSkipEnabled(
+  process.env.NEXT_PUBLIC_ENABLE_SETUP_SKIP,
+);
+
 /** "https://www.hexalog.com/x" → "Hexalog" — a friendly default workspace name. */
 function nameFromHost(url: string): string {
   try {
@@ -48,12 +53,14 @@ function nextStep(step: OnboardingStep): OnboardingCursor {
 function OnboardingWizard() {
   const router = useRouter();
   const params = useSearchParams();
+  const resumeId = params.get("workspace");
   const [step, setStep] = useState<OnboardingStep>("name");
   const [name, setName] = useState("");
   const [website, setWebsite] = useState("");
   const [wsName, setWsName] = useState("");
-  const [workspaceId, setWorkspaceId] = useState<string | null>(null);
+  const [workspaceId, setWorkspaceId] = useState<string | null>(resumeId);
   const [busy, setBusy] = useState(false);
+  const [skipping, setSkipping] = useState(false);
   const [campaignId, setCampaignId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,7 +70,6 @@ function OnboardingWizard() {
 
   // Resume (Sprint 36.5): /onboarding?workspace=<id> jumps to the workspace's
   // stored cursor so a reload never loses progress.
-  const resumeId = params.get("workspace");
   useEffect(() => {
     if (!resumeId) return;
     let active = true;
@@ -170,6 +176,30 @@ function OnboardingWizard() {
     }
   }
 
+  async function skipSetup() {
+    setSkipping(true);
+    setError(null);
+    try {
+      const request = buildSetupSkipRequest(workspaceId);
+      const res = await apiFetch(request.path, {
+        method: request.method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(request.payload),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(body?.message ?? "Could not skip setup");
+      }
+      const targetId = workspaceId ?? body?.id;
+      if (!targetId) throw new Error("Could not skip setup");
+      router.push(`/workspaces/${targetId}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not skip setup");
+    } finally {
+      setSkipping(false);
+    }
+  }
+
   const panelProps = workspaceId
     ? {
         workspaceId,
@@ -191,6 +221,20 @@ function OnboardingWizard() {
           </li>
         ))}
       </ol>
+
+      {SETUP_SKIP_ENABLED && (
+        <div className="ob-skip">
+          <Button
+            type="button"
+            variant="tertiary"
+            size="compact"
+            disabled={busy || skipping}
+            onClick={skipSetup}
+          >
+            {skipping ? "Skipping…" : "Skip setup for now"}
+          </Button>
+        </div>
+      )}
 
       {name.trim() && step !== "name" && (
         <p className="ob-greeting">Nice to meet you, {name.trim()}.</p>
@@ -246,7 +290,7 @@ function OnboardingWizard() {
             maxLength={100}
           />
           <div className="ob-actions">
-            <Button type="button" variant="ghost" size="sm" onClick={() => setStep("name")}>
+            <Button type="button" variant="tertiary" size="compact" onClick={() => setStep("name")}>
               Back
             </Button>
             <Button

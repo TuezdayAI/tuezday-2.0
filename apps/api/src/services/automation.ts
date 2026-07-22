@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, lt, ne } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, lt, ne } from "drizzle-orm";
 import {
   DEFAULT_MATCH_THRESHOLD,
   DEFAULT_PER_CAMPAIGN_DAILY_CAP,
@@ -15,6 +15,7 @@ import {
 import type { Db } from "../db";
 import {
   drafts,
+  externalActions,
   postingCadences,
   publications,
   signals as signalsTable,
@@ -113,9 +114,10 @@ export function countConnectionPublicationsForDay(
   db: Db,
   connectionId: string,
   dayMs: number,
+  excludeActionId?: string,
 ): number {
   const { start, end } = utcDayBounds(dayMs);
-  return db
+  const receipts = db
     .select({ id: publications.id })
     .from(publications)
     .where(
@@ -127,12 +129,38 @@ export function countConnectionPublicationsForDay(
       ),
     )
     .all().length;
+  const pendingActions = db
+    .select({ id: externalActions.id })
+    .from(externalActions)
+    .where(
+      and(
+        eq(externalActions.kind, "publish"),
+        eq(externalActions.connectionId, connectionId),
+        inArray(externalActions.status, [
+          "proposed",
+          "authorization_required",
+          "authorized",
+          "scheduled",
+          "dispatching",
+        ]),
+        excludeActionId ? ne(externalActions.id, excludeActionId) : undefined,
+        gte(externalActions.requestedFor, start),
+        lt(externalActions.requestedFor, end),
+      ),
+    )
+    .all().length;
+  return receipts + pendingActions;
 }
 
 /** Non-failed publications for this campaign (via its cadences) on the slot's UTC day. */
-export function countCampaignPublicationsForDay(db: Db, campaignId: string, dayMs: number): number {
+export function countCampaignPublicationsForDay(
+  db: Db,
+  campaignId: string,
+  dayMs: number,
+  excludeActionId?: string,
+): number {
   const { start, end } = utcDayBounds(dayMs);
-  return db
+  const receipts = db
     .select({ id: publications.id })
     .from(publications)
     .innerJoin(postingCadences, eq(publications.cadenceId, postingCadences.id))
@@ -145,6 +173,27 @@ export function countCampaignPublicationsForDay(db: Db, campaignId: string, dayM
       ),
     )
     .all().length;
+  const pendingActions = db
+    .select({ id: externalActions.id })
+    .from(externalActions)
+    .where(
+      and(
+        eq(externalActions.kind, "publish"),
+        eq(externalActions.campaignId, campaignId),
+        inArray(externalActions.status, [
+          "proposed",
+          "authorization_required",
+          "authorized",
+          "scheduled",
+          "dispatching",
+        ]),
+        excludeActionId ? ne(externalActions.id, excludeActionId) : undefined,
+        gte(externalActions.requestedFor, start),
+        lt(externalActions.requestedFor, end),
+      ),
+    )
+    .all().length;
+  return receipts + pendingActions;
 }
 
 export type PostGuardrailCheck =
@@ -158,7 +207,7 @@ export type PostGuardrailCheck =
 export function checkPostGuardrails(
   db: Db,
   settings: SocialAutomationSettings,
-  args: { campaign: Campaign; connectionId: string; slotMs: number },
+  args: { campaign: Campaign; connectionId: string; slotMs: number; excludeActionId?: string },
 ): PostGuardrailCheck {
   if (settings.killSwitch) {
     return {
@@ -167,7 +216,12 @@ export function checkPostGuardrails(
       message: "The workspace kill switch is on — turn it off in Automation settings to auto-post.",
     };
   }
-  const connCount = countConnectionPublicationsForDay(db, args.connectionId, args.slotMs);
+  const connCount = countConnectionPublicationsForDay(
+    db,
+    args.connectionId,
+    args.slotMs,
+    args.excludeActionId,
+  );
   if (connCount >= settings.perConnectionDailyCap) {
     return {
       ok: false,
@@ -176,7 +230,12 @@ export function checkPostGuardrails(
     };
   }
   const campCap = args.campaign.autoDailyCap ?? settings.perCampaignDailyCap;
-  const campCount = countCampaignPublicationsForDay(db, args.campaign.id, args.slotMs);
+  const campCount = countCampaignPublicationsForDay(
+    db,
+    args.campaign.id,
+    args.slotMs,
+    args.excludeActionId,
+  );
   if (campCount >= campCap) {
     return {
       ok: false,

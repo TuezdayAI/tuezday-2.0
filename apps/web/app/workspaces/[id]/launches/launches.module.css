@@ -9,3 +9,42 @@
 .cardTitle svg {
   color: var(--muted);
 }
+
+.actionList {
+  display: grid;
+  gap: 7px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.actionList li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.actionList a {
+  color: var(--accent-deep);
+  font-weight: 650;
+}
+
+.emailHeaderActions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.emailControls {
+  display: grid;
+  grid-template-columns: minmax(320px, 1fr) minmax(360px, 1fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.emailControls > :only-child {
+  grid-column: 1 / -1;
+}

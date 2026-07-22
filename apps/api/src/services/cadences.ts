@@ -8,9 +8,14 @@ import type {
   PostingCadence,
   UpdatePostingCadenceInput,
 } from "@tuezday/contracts";
+import { canTransitionExternalAction } from "@tuezday/contracts";
 import type { Db } from "../db";
-import { postingCadences, publications, type PostingCadenceRow } from "../db/schema";
-import type { ConnectorFabric } from "../connectors/fabric";
+import {
+  externalActions,
+  postingCadences,
+  publications,
+  type PostingCadenceRow,
+} from "../db/schema";
 import {
   checkPostGuardrails,
   getSocialAutomationSettings,
@@ -18,9 +23,10 @@ import {
 import { getCampaign } from "./campaigns";
 import { getConnection } from "./connections";
 import { listDrafts } from "./drafts";
-import { createPublication, listCadencePublications } from "./publications";
-
-type Fetcher = typeof fetch;
+import { preparePublicationAction } from "./external-action-adapters";
+import type { ExternalActionRuntime } from "./external-action-coordinator";
+import { rowToExternalAction, transitionExternalAction } from "./external-actions";
+import { listCadencePublications } from "./publications";
 
 /** How far ahead a fill looks for open slots. */
 export const CADENCE_HORIZON_DAYS = 14;
@@ -237,6 +243,7 @@ export function deleteCadence(db: Db, workspaceId: string, cadenceId: string): b
     .set({ cadenceId: null })
     .where(eq(publications.cadenceId, cadenceId))
     .run();
+  cancelPendingActionsForCadence(db, workspaceId, cadenceId);
   db.delete(postingCadences)
     .where(and(eq(postingCadences.workspaceId, workspaceId), eq(postingCadences.id, cadenceId)))
     .run();
@@ -248,8 +255,22 @@ export function deleteCadence(db: Db, workspaceId: string, cadenceId: string): b
 // ---------------------------------------------------------------------------
 
 /** Draft ids already attached to a publication for this cadence (any status). */
+function pendingCadenceActions(db: Db, workspaceId: string, cadenceId: string) {
+  return db
+    .select()
+    .from(externalActions)
+    .where(and(eq(externalActions.workspaceId, workspaceId), eq(externalActions.kind, "publish")))
+    .all()
+    .map((row) => ({
+      action: rowToExternalAction(row),
+      payload: JSON.parse(row.payloadJson) as { cadenceId?: string | null; draftId?: string },
+    }))
+    .filter(({ payload }) => payload.cadenceId === cadenceId)
+    .filter(({ action }) => action.status !== "cancelled" && action.status !== "stale");
+}
+
 function slottedDraftIds(db: Db, workspaceId: string, cadenceId: string): Set<string> {
-  return new Set(
+  const ids = new Set(
     db
       .select({ draftId: publications.draftId })
       .from(publications)
@@ -257,11 +278,15 @@ function slottedDraftIds(db: Db, workspaceId: string, cadenceId: string): Set<st
       .all()
       .map((r) => r.draftId),
   );
+  for (const { payload } of pendingCadenceActions(db, workspaceId, cadenceId)) {
+    if (payload.draftId) ids.add(payload.draftId);
+  }
+  return ids;
 }
 
 /** Slot times already occupied by a publication for this cadence (any status). */
 function takenSlots(db: Db, workspaceId: string, cadenceId: string): Set<number> {
-  return new Set(
+  const slots = new Set(
     db
       .select({ at: publications.scheduledFor })
       .from(publications)
@@ -269,6 +294,10 @@ function takenSlots(db: Db, workspaceId: string, cadenceId: string): Set<number>
       .all()
       .map((r) => r.at),
   );
+  for (const { action } of pendingCadenceActions(db, workspaceId, cadenceId)) {
+    if (action.requestedFor !== null) slots.add(action.requestedFor);
+  }
+  return slots;
 }
 
 /** Approved drafts matching the cadence and not yet slotted, oldest-approved first. */
@@ -289,8 +318,7 @@ export interface FillResult {
 /** Pair this cadence's open upcoming slots with queued approved drafts. */
 export async function fillCadence(
   db: Db,
-  fabric: ConnectorFabric,
-  fetcher: Fetcher,
+  runtime: ExternalActionRuntime,
   workspaceId: string,
   cadence: PostingCadence,
   nowMs: number,
@@ -334,22 +362,23 @@ export async function fillCadence(
       if (!check.ok) continue;
     }
     const draft = queue[qi++]!;
-    await createPublication(
+    const command = preparePublicationAction(
       db,
-      fabric,
-      fetcher,
       workspaceId,
       draft.id,
-      connection,
       {
         connectionId: connection.id,
         target: cadence.target,
         title: deriveTitle(draft.content),
         scheduledFor: slot,
       },
-      undefined,
-      cadence.id,
+      {
+        idempotencyKey: `cadence:${cadence.id}:${slot}:${draft.id}`,
+        cadenceId: cadence.id,
+        automated: isAuto,
+      },
     );
+    await runtime.propose(command, { userId: null, label: "system" });
     filled += 1;
   }
   return { filled };
@@ -371,6 +400,16 @@ function cancelScheduledPublicationsForCadence(
       ),
     )
     .run();
+  cancelPendingActionsForCadence(db, workspaceId, cadenceId);
+}
+
+function cancelPendingActionsForCadence(db: Db, workspaceId: string, cadenceId: string): void {
+  for (const { action } of pendingCadenceActions(db, workspaceId, cadenceId)) {
+    if (!canTransitionExternalAction(action.status, "cancelled")) continue;
+    transitionExternalAction(db, workspaceId, action.id, "cancelled", {
+      completedAt: Date.now(),
+    });
+  }
 }
 
 export interface CadenceFillRun {
@@ -381,15 +420,14 @@ export interface CadenceFillRun {
 /** Fill every active cadence (worker entry point). */
 export async function fillActiveCadences(
   db: Db,
-  fabric: ConnectorFabric,
-  fetcher: Fetcher,
+  runtime: ExternalActionRuntime,
   workspaceId: string,
   nowMs: number,
 ): Promise<CadenceFillRun[]> {
   const results: CadenceFillRun[] = [];
   for (const cadence of listCadenceRows(db, workspaceId)) {
     if (cadence.status !== "active") continue;
-    const { filled } = await fillCadence(db, fabric, fetcher, workspaceId, cadence, nowMs);
+    const { filled } = await fillCadence(db, runtime, workspaceId, cadence, nowMs);
     results.push({ cadenceId: cadence.id, filled });
   }
   return results;

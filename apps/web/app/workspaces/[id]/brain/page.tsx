@@ -19,15 +19,20 @@ import type {
   BrainDocVersion,
   BrainDocument,
   Campaign,
+  DesignOverlay,
+  DesignSystem,
   DocOutline,
   GuidanceOverride,
   Persona,
+  ResolvedDesignSystem,
   Workspace,
 } from "@tuezday/contracts";
 import {
   BRAIN_DOC_TOKEN_WARNING,
   CHANNELS,
   CHANNEL_LABELS,
+  DEFAULT_DESIGN_SYSTEM_CONTENT,
+  DESIGN_CONTENT_MAX_CHARS,
   GUIDANCE_CONTENT_MAX_CHARS,
   MATRIX_DOC_TYPES,
   type Channel,
@@ -126,7 +131,7 @@ export default function WorkspaceBrainPage() {
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [brain, setBrain] = useState<BrainView | null>(null);
-  const [selected, setSelected] = useState<BrainDocType>("soul");
+  const [selected, setSelected] = useState<BrainDocType | "design">("soul");
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -155,6 +160,21 @@ export default function WorkspaceBrainPage() {
   const [scopedContent, setScopedContent] = useState("");
   const [scopedBusy, setScopedBusy] = useState(false);
   const [scopedError, setScopedError] = useState<string | null>(null);
+
+  // Design system (Sprint 41 Part 2) — brain-adjacent visual identity: one
+  // extra "Design" tab, its own tables/routes, never part of brain docs.
+  const [designSystem, setDesignSystem] = useState<DesignSystem | null>(null);
+  const [designDraft, setDesignDraft] = useState("");
+  const [designSaving, setDesignSaving] = useState(false);
+  const [designError, setDesignError] = useState<string | null>(null);
+  const [designOverlays, setDesignOverlays] = useState<DesignOverlay[] | null>(null);
+  const [dovChannel, setDovChannel] = useState<Channel>("instagram");
+  const [dovPersonaId, setDovPersonaId] = useState("");
+  const [dovCampaignId, setDovCampaignId] = useState("");
+  const [dovContent, setDovContent] = useState("");
+  const [dovBusy, setDovBusy] = useState(false);
+  const [dovError, setDovError] = useState<string | null>(null);
+  const [designPreview, setDesignPreview] = useState<ResolvedDesignSystem | null>(null);
 
   const selectedDoc = useMemo(
     () => brain?.docs.find((d) => d.docType === selected) ?? null,
@@ -388,6 +408,116 @@ export default function WorkspaceBrainPage() {
     setScopedContent(row.content);
   }
 
+  const loadDesign = useCallback(async () => {
+    const [sysRes, ovRes] = await Promise.all([
+      apiFetch(`/workspaces/${id}/design-system`),
+      apiFetch(`/workspaces/${id}/design-system/overlays`),
+    ]);
+    if (sysRes.ok) {
+      const sys: DesignSystem = await sysRes.json();
+      setDesignSystem(sys);
+      setDesignDraft(sys.content);
+    }
+    if (ovRes.ok) setDesignOverlays(await ovRes.json());
+  }, [id]);
+
+  useEffect(() => {
+    void loadDesign();
+  }, [loadDesign]);
+
+  async function saveDesign() {
+    setDesignSaving(true);
+    setDesignError(null);
+    try {
+      const res = await apiFetch(`/workspaces/${id}/design-system`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ content: designDraft }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message ?? `API returned ${res.status}`);
+      }
+      const sys: DesignSystem = await res.json();
+      setDesignSystem(sys);
+      setDesignDraft(sys.content);
+    } catch (err) {
+      setDesignError(err instanceof Error ? err.message : "Failed to save design system");
+    } finally {
+      setDesignSaving(false);
+    }
+  }
+
+  async function saveDesignOverlay(e: React.FormEvent) {
+    e.preventDefault();
+    setDovBusy(true);
+    setDovError(null);
+    try {
+      const res = await apiFetch(`/workspaces/${id}/design-system/overlays`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          channel: dovChannel,
+          content: dovContent,
+          ...(dovPersonaId ? { personaId: dovPersonaId } : {}),
+          ...(dovCampaignId ? { campaignId: dovCampaignId } : {}),
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.message ?? body?.error ?? `API returned ${res.status}`);
+      }
+      setDovContent("");
+      setDesignPreview(null);
+      await loadDesign();
+    } catch (err) {
+      setDovError(err instanceof Error ? err.message : "Failed to save overlay");
+    } finally {
+      setDovBusy(false);
+    }
+  }
+
+  async function removeDesignOverlay(row: DesignOverlay) {
+    setDovBusy(true);
+    setDovError(null);
+    try {
+      const res = await apiFetch(`/workspaces/${id}/design-system/overlays/${row.id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error(`API returned ${res.status}`);
+      setDesignPreview(null);
+      await loadDesign();
+    } catch (err) {
+      setDovError(err instanceof Error ? err.message : "Failed to delete overlay");
+    } finally {
+      setDovBusy(false);
+    }
+  }
+
+  function editDesignOverlay(row: DesignOverlay) {
+    setDovChannel(row.channel);
+    setDovPersonaId(row.personaId ?? "");
+    setDovCampaignId(row.campaignId ?? "");
+    setDovContent(row.content);
+  }
+
+  async function previewDesignResolve() {
+    setDovError(null);
+    const params = new URLSearchParams({ channel: dovChannel });
+    if (dovPersonaId) params.set("personaId", dovPersonaId);
+    if (dovCampaignId) params.set("campaignId", dovCampaignId);
+    const res = await apiFetch(`/workspaces/${id}/design-system/resolve?${params}`);
+    if (res.ok) setDesignPreview(await res.json());
+    else setDovError(`Resolve failed: API returned ${res.status}`);
+  }
+
+  const designDirty = designSystem !== null && designDraft !== designSystem.content;
+  const designStatus = !designSystem
+    ? "empty"
+    : designSystem.content === DEFAULT_DESIGN_SYSTEM_CONTENT
+      ? "draft"
+      : "complete";
+
   if (error && !brain) {
     return (
       <>
@@ -406,7 +536,7 @@ export default function WorkspaceBrainPage() {
             <Button
             type="button"
             variant="secondary"
-            size="sm"
+            size="compact"
             onClick={() => void apiDownload(`/workspaces/${id}/brain/export`, "gtm-brain.md")}
           >
             Export brain (.md)
@@ -442,7 +572,7 @@ export default function WorkspaceBrainPage() {
             <h2 className={heroStyles.traceTitle}>How context resolves</h2>
             <Link href={`/workspaces/${id}/resolver`} className={heroStyles.traceLink}>
               Open context inspector
-              <Icon name="chevron-right" size="sm" />
+              <Icon name="chevron-right" size="compact" />
             </Link>
           </div>
           <FlowStrip
@@ -483,8 +613,48 @@ export default function WorkspaceBrainPage() {
               </button>
             );
           })}
+          <button
+            className={`doc-nav-item ${selected === "design" ? "active" : ""}`}
+            onClick={() => setSelected("design")}
+          >
+            <span className="doc-title">Design</span>
+            <span className={`doc-status status-${designStatus}`}>
+              {STATUS_LABEL[designStatus]}
+            </span>
+          </button>
         </nav>
 
+        {selected === "design" ? (
+          <section className="doc-editor">
+            <p className="doc-description">
+              Your visual identity — semantic color roles, typography, spacing, logo, and hard
+              rules. Only the design pipeline reads this (when it authors slide and ad templates);
+              it never rides text-generation prompts.
+            </p>
+
+            <textarea
+              value={designDraft}
+              onChange={(e) => setDesignDraft(e.target.value)}
+              placeholder="Write the Design doc in markdown…"
+              rows={18}
+              maxLength={DESIGN_CONTENT_MAX_CHARS}
+            />
+
+            {designError && <p className="error">{designError}</p>}
+
+            <div className="editor-actions">
+              <Button variant="primary" size="standard" onClick={() => void saveDesign()} disabled={designSaving || !designDirty}>
+                {designSaving ? "Saving…" : designDirty ? "Save" : "Saved"}
+              </Button>
+              {designDirty && <span className="unsaved">Unsaved changes</span>}
+            </div>
+
+            <p className="meta">
+              Saving a change re-authors cached slide templates on the next generation (the brand
+              fingerprint changes) — new visuals pick up the new look automatically.
+            </p>
+          </section>
+        ) : (
         <section className="doc-editor">
           <p className="doc-description">{selectedMeta.description}</p>
 
@@ -511,10 +681,10 @@ export default function WorkspaceBrainPage() {
           )}
 
           <div className="editor-actions">
-            <button onClick={() => save(draft)} disabled={saving || !dirty}>
+            <Button variant="primary" size="standard" onClick={() => save(draft)} disabled={saving || !dirty}>
               {saving ? "Saving…" : dirty ? "Save" : "Saved"}
-            </button>
-            <Button variant="secondary" size="sm" onClick={toggleHistory}>
+            </Button>
+            <Button variant="secondary" size="compact" onClick={toggleHistory}>
               {showHistory ? "Hide history" : "History"}
             </Button>
             {dirty && <span className="unsaved">Unsaved changes</span>}
@@ -522,7 +692,7 @@ export default function WorkspaceBrainPage() {
 
           {outline && (
             <details className="outline-preview">
-              <summary className="link-button" style={{ cursor: "pointer", listStyle: "none" }}>
+              <summary style={{ cursor: "pointer", listStyle: "none" }}>
                 Outline — the map outline-mode tasks see ({outline.sections.length}{" "}
                 {outline.sections.length === 1 ? "section" : "sections"})
                 {dirty ? " · from last save" : ""}
@@ -573,7 +743,7 @@ export default function WorkspaceBrainPage() {
                   <pre>{previewVersion.content || "(empty)"}</pre>
                   <Button
                     variant="secondary"
-                    size="sm"
+                    size="compact"
                     disabled={saving}
                     onClick={() => save(previewVersion.content)}
                   >
@@ -584,9 +754,154 @@ export default function WorkspaceBrainPage() {
             </div>
           )}
         </section>
+        )}
       </div>
 
-      <section className="guidance-section">
+      {selected === "design" && (
+        <section className="guidance-section">
+          <h2>Design overlays</h2>
+          <p className="subtitle">
+            Visual variants for a channel, persona, or campaign — appended to the base identity
+            above. The most specific scope wins: persona + campaign, then persona, then campaign,
+            then channel-only.
+          </p>
+
+          {dovError && <p className="error">{dovError}</p>}
+
+          {designOverlays === null ? (
+            <EmptyState description={<>Loading overlays…</>} />
+          ) : designOverlays.length === 0 ? (
+            <EmptyState description={<>No overlays yet. Add one below — e.g. a darker palette that only applies to one campaign&apos;s carousels.</>} />
+          ) : (
+            <ul className="section-list">
+              {designOverlays.map((row) => (
+                <li key={row.id} className="section-card">
+                  <div className="section-head">
+                    <span className="layer-badge layer-channel">{CHANNEL_LABELS[row.channel]}</span>
+                    {row.personaName && (
+                      <span className="layer-badge layer-persona">persona · {row.personaName}</span>
+                    )}
+                    {row.campaignName && (
+                      <span className="layer-badge layer-campaign">
+                        campaign · {row.campaignName}
+                      </span>
+                    )}
+                    <span className="section-tokens">
+                      {new Date(row.updatedAt).toLocaleDateString()}
+                    </span>
+                  </div>
+                  <p className="section-reason">
+                    {row.content.length > 180 ? `${row.content.slice(0, 180)}…` : row.content}
+                  </p>
+                  <div className="editor-actions">
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="compact"
+                      disabled={dovBusy}
+                      onClick={() => editDesignOverlay(row)}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="danger"
+                      size="compact"
+                      disabled={dovBusy}
+                      onClick={() => void removeDesignOverlay(row)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <form className="persona-form" onSubmit={saveDesignOverlay}>
+            <div className="resolve-controls">
+              <label>
+                Channel
+                <select
+                  value={dovChannel}
+                  onChange={(e) => setDovChannel(e.target.value as Channel)}
+                >
+                  {CHANNELS.map((c) => (
+                    <option key={c} value={c}>
+                      {CHANNEL_LABELS[c]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Persona
+                <select value={dovPersonaId} onChange={(e) => setDovPersonaId(e.target.value)}>
+                  <option value="">(any persona)</option>
+                  {personas.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Campaign
+                <select value={dovCampaignId} onChange={(e) => setDovCampaignId(e.target.value)}>
+                  <option value="">(any campaign)</option>
+                  {campaigns.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <textarea
+              value={dovContent}
+              onChange={(e) => setDovContent(e.target.value)}
+              placeholder="Partial DESIGN.md addendum that applies only at this scope — e.g. “primary: #0B3D2E for this campaign”…"
+              rows={4}
+              maxLength={DESIGN_CONTENT_MAX_CHARS}
+            />
+            <div className="editor-actions">
+              <Button type="submit" variant="primary" size="standard" disabled={dovBusy || dovContent.trim().length === 0}>
+                {dovBusy ? "Saving…" : "Save overlay"}
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="standard"
+                disabled={dovBusy}
+                onClick={() => void previewDesignResolve()}
+              >
+                Preview resolution
+              </Button>
+            </div>
+          </form>
+
+          {designPreview && (
+            <div className="section-card">
+              <div className="section-head">
+                <span className="layer-badge layer-channel">
+                  resolves from: {designPreview.trace.source}
+                </span>
+              </div>
+              <p className="section-reason">
+                {designPreview.trace.source === "base"
+                  ? "No overlay matches this scope — the base identity applies as-is."
+                  : "The overlay below is appended to the base identity for this scope."}
+              </p>
+              <pre className="version-preview">
+                {designPreview.content.length > 600
+                  ? `${designPreview.content.slice(0, 600)}…`
+                  : designPreview.content}
+              </pre>
+            </div>
+          )}
+        </section>
+      )}
+
+      <section id="content-preferences" className="guidance-section">
         <h2>Channel guidance</h2>
         <p className="subtitle">
           Per-channel writing guidance the resolver injects into every generation. Override any
@@ -619,13 +934,13 @@ export default function WorkspaceBrainPage() {
                     rows={4}
                   />
                   <div className="editor-actions">
-                    <button onClick={() => void saveGuidance(g.channel)} disabled={busy || !dirty}>
+                    <Button variant="primary" size="standard" onClick={() => void saveGuidance(g.channel)} disabled={busy || !dirty}>
                       {busy ? "Saving…" : dirty ? "Save" : "Saved"}
-                    </button>
+                    </Button>
                     {g.source === "workspace" && (
                       <Button
                         variant="secondary"
-                        size="sm"
+                        size="compact"
                         onClick={() => void resetGuidance(g.channel)}
                         disabled={busy}
                       >
@@ -678,7 +993,7 @@ export default function WorkspaceBrainPage() {
                   <Button
                     type="button"
                     variant="secondary"
-                    size="sm"
+                    size="compact"
                     disabled={scopedBusy}
                     onClick={() => editScoped(row)}
                   >
@@ -687,7 +1002,7 @@ export default function WorkspaceBrainPage() {
                   <Button
                     type="button"
                     variant="danger"
-                    size="sm"
+                    size="compact"
                     disabled={scopedBusy}
                     onClick={() => void deleteScoped(row)}
                   >
@@ -748,8 +1063,10 @@ export default function WorkspaceBrainPage() {
             maxLength={GUIDANCE_CONTENT_MAX_CHARS}
           />
           <div className="editor-actions">
-            <button
+            <Button
               type="submit"
+              variant="primary"
+              size="standard"
               disabled={
                 scopedBusy ||
                 scopedContent.trim().length === 0 ||
@@ -757,7 +1074,7 @@ export default function WorkspaceBrainPage() {
               }
             >
               {scopedBusy ? "Saving…" : "Save scoped guidance"}
-            </button>
+            </Button>
             {!scopedPersonaId && !scopedCampaignId && (
               <span className="meta">Pick a persona and/or campaign — unscoped text lives above.</span>
             )}

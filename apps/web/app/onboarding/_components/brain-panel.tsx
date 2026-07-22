@@ -10,17 +10,13 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import Link from "next/link";
 import type { BrainDocType, BrainDocument } from "@tuezday/contracts";
 import { BRAIN_DOC_META, type BrainScore, type DocStatus } from "@tuezday/brain";
 import { apiFetch } from "@/lib/api";
-import { Button } from "@/src/components/ui/button";
+import { Button, ButtonLink } from "@/src/components/ui/button";
 import { Card } from "@/src/components/ui/card";
-import buttonStyles from "@/src/components/ui/button.module.css";
 import type { WizardPanelProps } from "./types";
 import "./brain-panel.css";
-
-const ghostLinkClass = `${buttonStyles.button} ${buttonStyles.ghost} ${buttonStyles.sm}`;
 
 interface AutoDraftView {
   insufficient: boolean;
@@ -120,7 +116,7 @@ export function BrainPanel({ workspaceId, userName, onContinue, onError }: Wizar
           continue and draft later from the Brain editor.
         </p>
         <div className="ob-actions">
-          <Button type="button" variant="ghost" size="sm" onClick={() => void draft()}>
+          <Button type="button" variant="tertiary" size="compact" onClick={() => void draft()}>
             Retry
           </Button>
           <Button variant="primary" disabled={busy} onClick={handleContinue}>
@@ -144,13 +140,13 @@ export function BrainPanel({ workspaceId, userName, onContinue, onError }: Wizar
           <li>Connect a social account so we can learn from what you already publish.</li>
           <li>Or write the docs yourself in the Brain editor — it&apos;s built for that.</li>
         </ul>
-        <Link className={ghostLinkClass} href={`/workspaces/${workspaceId}`}>
+        <ButtonLink variant="tertiary" size="compact" href={`/workspaces/${workspaceId}`}>
           Back to your workspace
-        </Link>
+        </ButtonLink>
         <div className="ob-actions">
-          <Link className={ghostLinkClass} href={`/workspaces/${workspaceId}/brain`}>
+          <ButtonLink variant="tertiary" size="compact" href={`/workspaces/${workspaceId}/brain`}>
             Open the full Brain editor →
-          </Link>
+          </ButtonLink>
           <Button variant="primary" disabled={busy} onClick={handleContinue}>
             {busy ? "Continuing…" : "Continue"}
           </Button>
@@ -200,12 +196,14 @@ export function BrainPanel({ workspaceId, userName, onContinue, onError }: Wizar
                     Nothing drafted yet — {meta.description}
                   </p>
                 )}
-                <Link
-                  className="link-button ob-brain-edit"
+                <ButtonLink
+                  variant="tertiary"
+                  size="compact"
+                  className="ob-brain-edit"
                   href={`/workspaces/${workspaceId}/brain`}
                 >
                   Edit
-                </Link>
+                </ButtonLink>
               </Card>
             </li>
           );
@@ -213,9 +211,9 @@ export function BrainPanel({ workspaceId, userName, onContinue, onError }: Wizar
       </ol>
 
       <div className="ob-actions">
-        <Link className={ghostLinkClass} href={`/workspaces/${workspaceId}/brain`}>
+        <ButtonLink variant="tertiary" size="compact" href={`/workspaces/${workspaceId}/brain`}>
           Open the full Brain editor →
-        </Link>
+        </ButtonLink>
         <Button variant="primary" disabled={busy} onClick={handleContinue}>
           {busy ? "Continuing…" : "Continue"}
         </Button>

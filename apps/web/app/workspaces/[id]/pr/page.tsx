@@ -3,12 +3,16 @@
 import { PageHeader } from "@/src/components/page-header";
 import { EmptyState } from "@/src/components/empty-state";
 import { TopBarActions } from "@/src/components/top-bar";
-import { Button } from "@/src/components/ui/button";
+import { Button, ButtonLink } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
 import { Badge, CountBadge } from "@/src/components/ui/badge";
 import { Icon } from "@/src/components/ui/icon";
 import { PreviewCard } from "@/src/components/ui/preview-card";
 import { Input, Textarea, Select } from "@/src/components/ui/input";
+import {
+  EmailPermissionControl,
+  EmailSendStatus,
+} from "@/src/components/email-send-status";
 import styles from "./pr.module.css";
 
 
@@ -23,6 +27,8 @@ import {
   type ApprovalState,
   type Campaign,
   type Draft,
+  type EmailPermissionStatus,
+  type ExternalActionSubmission,
   type MediaContact,
   type MediaContactType,
   type Persona,
@@ -142,6 +148,12 @@ export default function PrPage() {
   const [draftSummary, setDraftSummary] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [kitBusy, setKitBusy] = useState(false);
+  const [selectedPitches, setSelectedPitches] = useState<Record<string, boolean>>({});
+  const [sendingPitches, setSendingPitches] = useState<Record<string, boolean>>({});
+  const [sendSubmissions, setSendSubmissions] = useState<
+    Record<string, ExternalActionSubmission>
+  >({});
+  const [sendSummary, setSendSummary] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -289,9 +301,62 @@ export default function PrPage() {
     return drafts.filter((d) => d.mediaContactId === contactId);
   }
 
+  async function proposePitchSend(draftId: string): Promise<ExternalActionSubmission> {
+    setSendingPitches((current) => ({ ...current, [draftId]: true }));
+    try {
+      const response = await apiFetch(`/workspaces/${id}/pr/drafts/${draftId}/send`, {
+        method: "POST",
+      });
+      const body = (await response.json().catch(() => null)) as
+        | ExternalActionSubmission
+        | { message?: string; error?: string }
+        | null;
+      if (!body || !("action" in body)) {
+        throw new Error(body?.message ?? body?.error ?? "Native pitch send could not be proposed.");
+      }
+      setSendSubmissions((current) => ({ ...current, [draftId]: body }));
+      return body;
+    } finally {
+      setSendingPitches((current) => ({ ...current, [draftId]: false }));
+    }
+  }
+
+  async function sendOnePitch(draftId: string) {
+    setError(null);
+    try {
+      await proposePitchSend(draftId);
+    } catch (sendError) {
+      setError(sendError instanceof Error ? sendError.message : "Native pitch send failed.");
+    }
+  }
+
+  async function sendSelectedPitches() {
+    const draftIds = Object.keys(selectedPitches).filter((draftId) => selectedPitches[draftId]);
+    setSendSummary(null);
+    const results = await Promise.all(
+      draftIds.map(async (draftId) => {
+        try {
+          await proposePitchSend(draftId);
+          return true;
+        } catch {
+          return false;
+        }
+      }),
+    );
+    const sent = results.filter(Boolean).length;
+    const failed = results.length - sent;
+    setSendSummary(
+      `${sent} pitch action${sent === 1 ? "" : "s"} proposed${
+        failed ? ` · ${failed} failed and can be retried individually` : ""
+      }.`,
+    );
+    setSelectedPitches({});
+  }
+
   const pressKitDrafts = drafts.filter((d) => d.taskType === "press_boilerplate");
   const selectedCount = Object.values(selected).filter(Boolean).length;
   const approvedPitches = drafts.filter((d) => d.mediaContactId && d.state === "approved");
+  const selectedPitchCount = Object.values(selectedPitches).filter(Boolean).length;
 
   if (error && !workspace) {
     return (
@@ -307,25 +372,35 @@ export default function PrPage() {
   return (
     <>
       <PageHeader title="PR &amp; media" subtitle={<>Your media list, with pitches drafted in your voice per contact — referencing their
-            actual beat, never inventing coverage. Pitches go through Review; sending stays in your
-            email client.</>} actions={<>
+            actual beat, never inventing coverage. Approved pitches can send through governed native email.</>} actions={<>
+            {selectedPitchCount > 0 && (
+              <Button
+                type="button"
+                variant="primary"
+                size="standard"
+                onClick={() => void sendSelectedPitches()}
+              >
+                Send selected pitches from Tuezday ({selectedPitchCount})
+              </Button>
+            )}
             {approvedPitches.length > 0 && (
             <Button
               type="button"
               variant="secondary"
-              size="sm"
+              size="compact"
               onClick={() => void apiDownload(`/workspaces/${id}/pr/export.csv`, "pr-pitches.csv")}
             >
               ↓ Export approved CSV ({approvedPitches.length})
             </Button>
           )}
           </>} />
+      {sendSummary && <p className={styles.sendSummary} aria-live="polite">{sendSummary}</p>}
 
       <Card>
         <CardHeader
           title={`Media contacts (${contacts.length})`}
           actions={
-            <Button variant="secondary" size="sm" onClick={() => setShowAddForm(!showAddForm)}>
+            <Button variant="secondary" size="compact" onClick={() => setShowAddForm(!showAddForm)}>
               + Add one contact
             </Button>
           }
@@ -441,7 +516,7 @@ export default function PrPage() {
                         {contact.beat && ` · ${contact.beat}`}
                       </span>
                     </span>
-                    <Button variant="ghost" size="sm" onClick={() => removeContact(contact)}>
+                    <Button variant="danger" size="compact" onClick={() => removeContact(contact)}>
                       delete
                     </Button>
                   </div>
@@ -451,19 +526,45 @@ export default function PrPage() {
                   {chain.length > 0 && (
                     <ul className="draft-chain">
                       {chain.map((d) => (
-                        <li key={d.id}>
+                        <li key={d.id} className={styles.pitchRow}>
+                          <div>
                           <Badge tone={STATE_BADGE_TONES[d.state]}>
                             {STATE_LABELS[d.state]}
                           </Badge>{" "}
                           <span className="meta">{d.content.slice(0, 70)}…</span>{" "}
                           {d.state === "approved" && (
-                            <a className="link-button" href={mailtoHref(contact.email, d.content)}>
-                              open in email client
-                            </a>
+                            <ButtonLink
+                              variant="secondary"
+                              size="compact"
+                              href={mailtoHref(contact.email, d.content)}
+                            >
+                              Open in email client
+                            </ButtonLink>
                           )}{" "}
-                          <Link className="link-button" href={`/workspaces/${id}/approvals`}>
+                          <ButtonLink
+                            variant="tertiary"
+                            size="compact"
+                            href={`/workspaces/${id}/review`}
+                          >
                             open in queue
-                          </Link>
+                          </ButtonLink>
+                          </div>
+                          {d.state === "approved" && (
+                            <PrEmailControls
+                              workspaceId={id}
+                              contact={contact}
+                              selected={Boolean(selectedPitches[d.id])}
+                              sending={Boolean(sendingPitches[d.id])}
+                              submission={sendSubmissions[d.id]}
+                              onSelected={(checked) =>
+                                setSelectedPitches((current) => ({
+                                  ...current,
+                                  [d.id]: checked,
+                                }))
+                              }
+                              onSend={() => void sendOnePitch(d.id)}
+                            />
+                          )}
                         </li>
                       ))}
                     </ul>
@@ -560,7 +661,7 @@ export default function PrPage() {
         <CardHeader
           title="Press kit"
           actions={
-            <Button variant="secondary" size="sm" disabled={kitBusy} onClick={generatePressKit}>
+            <Button variant="secondary" size="compact" disabled={kitBusy} onClick={generatePressKit}>
               {kitBusy ? "Generating…" : "Generate from brain"}
             </Button>
           }
@@ -581,9 +682,13 @@ export default function PrPage() {
                     <Badge tone={STATE_BADGE_TONES[d.state]}>{STATE_LABELS[d.state]}</Badge>
                   </span>
                   <span className="meta">{new Date(d.createdAt).toLocaleString()}</span>
-                  <Link className="link-button" href={`/workspaces/${id}/approvals`}>
+                  <ButtonLink
+                    variant="tertiary"
+                    size="compact"
+                    href={`/workspaces/${id}/review`}
+                  >
                     open in queue
-                  </Link>
+                  </ButtonLink>
                 </div>
                 <pre className="output-text">{d.content}</pre>
               </li>
@@ -592,5 +697,80 @@ export default function PrPage() {
         )}
       </Card>
     </>
+  );
+}
+
+function PrEmailControls({
+  workspaceId,
+  contact,
+  selected,
+  sending,
+  submission,
+  onSelected,
+  onSend,
+}: {
+  workspaceId: string;
+  contact: MediaContact;
+  selected: boolean;
+  sending: boolean;
+  submission?: ExternalActionSubmission;
+  onSelected: (checked: boolean) => void;
+  onSend: () => void;
+}) {
+  const [permission, setPermission] = useState<EmailPermissionStatus>("unknown");
+
+  useEffect(() => {
+    let current = true;
+    void apiFetch(
+      `/workspaces/${workspaceId}/email-permissions/${encodeURIComponent(contact.email)}`,
+    )
+      .then(async (response) => {
+        if (!response.ok) return;
+        const body = (await response.json()) as { status: EmailPermissionStatus };
+        if (current) setPermission(body.status);
+      })
+      .catch(() => undefined);
+    return () => {
+      current = false;
+    };
+  }, [contact.email, workspaceId]);
+
+  return (
+    <div className={styles.sendControls}>
+      <EmailPermissionControl
+        workspaceId={workspaceId}
+        email={contact.email}
+        status={permission}
+        onChange={(next) => {
+          setPermission(next);
+          if (next !== "allowed") onSelected(false);
+        }}
+      />
+      <div className={styles.sendActions}>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={selected}
+            disabled={permission !== "allowed" || sending}
+            onChange={(event) => onSelected(event.target.checked)}
+          />
+          Select this approved pitch
+        </label>
+        <Button
+          variant="primary"
+          size="standard"
+          loading={sending}
+          disabled={permission !== "allowed"}
+          onClick={onSend}
+        >
+          Send pitch from Tuezday
+        </Button>
+      </div>
+      {submission && (
+        <div className={styles.sendStatus}>
+          <EmailSendStatus submission={submission} delivery={null} />
+        </div>
+      )}
+    </div>
   );
 }

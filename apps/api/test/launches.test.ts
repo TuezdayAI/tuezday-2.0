@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
 import {
@@ -16,18 +17,39 @@ import {
   type ProxyJsonResult,
 } from "../src/connectors/fabric";
 import type { Db } from "../src/db";
-import { launchMessages } from "../src/db/schema";
+import {
+  emailDeliveries,
+  emailRecipientPermissions,
+  launchMessages,
+  workspaceEmailSenders,
+} from "../src/db/schema";
 import { InstagramAdapter } from "../src/connectors/social/instagram";
 import { LinkedInAdapter } from "../src/connectors/social/linkedin";
 import { XAdapter } from "../src/connectors/social/x";
 import type { LlmGateway } from "../src/llm/gateway";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import type {
+  OutboundEmailDomain,
+  OutboundEmailMessage,
+  OutboundEmailProvider,
+} from "../src/outbound-email/provider";
+import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 const fakeLlm: LlmGateway = {
   async generate() {
     return { text: "Generated first-touch message.", model: "fake", provider: "fake", durationMs: 3 };
   },
 };
+
+class FakeOutboundEmailProvider implements OutboundEmailProvider {
+  send = vi.fn(async (_message: OutboundEmailMessage) => ({
+    provider: "resend" as const,
+    messageId: `email_${randomUUID()}`,
+    acceptedAt: Date.now(),
+  }));
+  async createDomain(): Promise<OutboundEmailDomain> { throw new Error("unused"); }
+  async verifyDomain(): Promise<void> { throw new Error("unused"); }
+  async getDomain(): Promise<OutboundEmailDomain> { throw new Error("unused"); }
+}
 
 // ---------------------------------------------------------------------------
 // A fake fabric with in-memory LinkedIn / Instagram / X behind the proxy
@@ -272,6 +294,7 @@ describe("targeted launch API", () => {
   let db: Db;
   let workspaceId: string;
   let state: PlatformState;
+  let emailProvider: FakeOutboundEmailProvider;
 
   beforeEach(async () => {
     for (const k of ["LINKEDIN", "INSTAGRAM", "TWITTER"]) {
@@ -280,10 +303,22 @@ describe("targeted launch API", () => {
     }
     state = platformState();
     db = createTestDb();
-    app = await buildAuthedApp({ db, llm: fakeLlm, connectors: fakeFabric(state) });
+    emailProvider = new FakeOutboundEmailProvider();
+    app = await buildAuthedApp({
+      db,
+      llm: fakeLlm,
+      connectors: fakeFabric(state),
+      outboundEmail: emailProvider,
+    });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Launcher" } })
     ).json().id;
+    // These are legacy direct-dispatch scenarios: sends run autonomously so the
+    // per-message provider behaviour stays observable. The authorization queue
+    // itself is covered in external-action-messaging.test.ts.
+    await putActionPolicy(app, workspaceId, "workspace", workspaceId, {
+      send: "autonomous",
+    });
   });
 
   afterEach(async () => {
@@ -373,6 +408,44 @@ describe("targeted launch API", () => {
       url: `/workspaces/${workspaceId}/drafts/${draftId}/approve`,
     });
     expect(res.statusCode).toBe(200);
+  }
+
+  function configureNativeEmailSender(): void {
+    const now = Date.now();
+    db.insert(workspaceEmailSenders).values({
+      workspaceId,
+      domain: "example.com",
+      fromLocalPart: "hello",
+      fromName: "Launcher",
+      fromAddress: "hello@example.com",
+      replyTo: null,
+      status: "verified",
+      provider: "resend",
+      providerDomainId: "domain_123",
+      dnsRecordsJson: "[]",
+      killSwitch: false,
+      dailyCap: 100,
+      lastCheckedAt: now,
+      lastError: null,
+      createdAt: now,
+      updatedAt: now,
+    }).onConflictDoNothing().run();
+  }
+
+  function allowNativeEmail(email: string): void {
+    configureNativeEmailSender();
+    const now = Date.now();
+    db.insert(emailRecipientPermissions).values({
+      id: randomUUID(),
+      workspaceId,
+      normalizedEmail: email,
+      status: "allowed",
+      createdAt: now,
+      updatedAt: now,
+    }).onConflictDoUpdate({
+      target: [emailRecipientPermissions.workspaceId, emailRecipientPermissions.normalizedEmail],
+      set: { status: "allowed", updatedAt: now },
+    }).run();
   }
 
   function detail(launchId: string) {
@@ -466,7 +539,7 @@ describe("targeted launch API", () => {
     expect(res.statusCode).toBe(409);
   });
 
-  it("exports approved email messages as a CSV and marks them sent", async () => {
+  it("exports approved email messages as a CSV without claiming provider delivery", async () => {
     const { launchId } = await fullLaunch();
     let d = await detail(launchId);
     const emailDrafts = d.messages.filter((m: { channel: string }) => m.channel === "email");
@@ -484,7 +557,101 @@ describe("targeted launch API", () => {
     expect(res.body).toContain("Generated first-touch message.");
 
     d = await detail(launchId);
-    expect(d.messages.filter((m: { channel: string; status: string }) => m.channel === "email" && m.status === "sent")).toHaveLength(3);
+    expect(d.messages.filter((m: { channel: string; status: string }) => m.channel === "email" && m.status === "pending")).toHaveLength(3);
+  });
+
+  it("dispatches an approved launch email through the governed native provider exactly once", async () => {
+    const { launchId } = await fullLaunch();
+    const before = await detail(launchId);
+    const emailMessage = before.messages.find(
+      (message: { channel: string; recipientEmail: string }) =>
+        message.channel === "email" && message.recipientEmail === "alice@acme.com",
+    );
+    await approveDraft(emailMessage.draftId);
+    allowNativeEmail(emailMessage.recipientEmail);
+
+    const manual = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/launches/${launchId}/channels/email/dispatch`,
+      payload: {},
+    });
+    expect(manual.statusCode).toBe(200);
+    const submission = manual.json().submissions[0];
+    expect(submission.action.kind).toBe("send");
+    expect(submission.execution.status).toBe("accepted");
+    expect(emailProvider.send).toHaveBeenCalledTimes(1);
+
+    const after = await detail(launchId);
+    const sent = after.messages.find((message: { id: string }) => message.id === emailMessage.id);
+    expect(sent.status).toBe("sent");
+    expect(sent.externalActionId).toBe(submission.action.id);
+    expect(db.select().from(emailDeliveries).get()).toMatchObject({
+      externalActionId: submission.action.id,
+      status: "accepted",
+    });
+
+    const duplicate = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/launches/${launchId}/channels/email/dispatch`,
+      payload: {},
+    });
+    expect(duplicate.json().submissions[0].action.id).toBe(submission.action.id);
+    expect(emailProvider.send).toHaveBeenCalledTimes(1);
+    const recovery = await app.inject({
+      method: "GET",
+      url: `/workspaces/${workspaceId}/launches/${launchId}/export.csv`,
+    });
+    expect(recovery.statusCode).toBe(200);
+    expect(recovery.body.trim().split("\n")).toHaveLength(1);
+  });
+
+  it("reproposes a blocked manual email after recipient permission is allowed", async () => {
+    const { launchId } = await fullLaunch();
+    const before = await detail(launchId);
+    const emailMessage = before.messages.find(
+      (message: { channel: string; recipientEmail: string }) =>
+        message.channel === "email" && message.recipientEmail === "alice@acme.com",
+    );
+    await approveDraft(emailMessage.draftId);
+    configureNativeEmailSender();
+
+    const blocked = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/launches/${launchId}/channels/email/dispatch`,
+      payload: {},
+    });
+    expect(blocked.json().submissions[0].action).toMatchObject({
+      status: "blocked",
+      blocker: { code: "permission_unknown" },
+    });
+    expect(emailProvider.send).not.toHaveBeenCalled();
+
+    allowNativeEmail(emailMessage.recipientEmail);
+    const retried = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/launches/${launchId}/channels/email/dispatch`,
+      payload: {},
+    });
+    expect(retried.json().submissions[0].action.status).toBe("succeeded");
+    expect(retried.json().submissions[0].action.id).not.toBe(
+      blocked.json().submissions[0].action.id,
+    );
+    expect(emailProvider.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("completes an email-only launch after every native message is accepted", async () => {
+    const launch = await readyLaunch({ channels: ["email"] });
+    const before = await detail(launch.id);
+    const message = before.messages[0];
+    await approveDraft(message.draftId);
+    allowNativeEmail(message.recipientEmail);
+
+    await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/launches/${launch.id}/channels/email/dispatch`,
+      payload: {},
+    });
+    expect((await detail(launch.id)).launch.status).toBe("completed");
   });
 
   it("only exports approved email messages", async () => {
@@ -509,12 +676,14 @@ describe("targeted launch API", () => {
       payload: {},
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json().results[0].status).toBe("sent");
+    expect(res.json().submissions[0].action.status).toBe("succeeded");
+    expect(res.json().submissions[0].execution.status).toBe("sent");
 
     const after = await detail(launchId);
     const sent = after.messages.find((m: { channel: string }) => m.channel === "linkedin");
     expect(sent.status).toBe("sent");
     expect(sent.externalUrl).toContain("urn:li:share");
+    expect(sent.externalActionId).toBe(res.json().submissions[0].action.id);
 
     const pubs = await app
       .inject({ method: "GET", url: `/workspaces/${workspaceId}/publications` })
@@ -562,7 +731,8 @@ describe("targeted launch API", () => {
       payload: { media: [{ url: "https://img/1.jpg", type: "image" }] },
     });
     expect(withMedia.statusCode).toBe(200);
-    expect(withMedia.json().results[0].status).toBe("sent");
+    expect(withMedia.json().submissions[0].action.status).toBe("succeeded");
+    expect(withMedia.json().submissions[0].execution.status).toBe("sent");
   });
 
   it("sends X DMs per recipient, surfacing a refusal without aborting the rest", async () => {
@@ -579,6 +749,10 @@ describe("targeted launch API", () => {
       payload: {},
     });
     expect(res.statusCode).toBe(200);
+    expect(res.json().submissions).toHaveLength(2); // Carol is skipped — no action
+    expect(
+      res.json().submissions.map((s: { action: { status: string } }) => s.action.status).sort(),
+    ).toEqual(["failed", "succeeded"]);
     const after = await detail(launchId);
     const x = after.messages.filter((m: { channel: string }) => m.channel === "x");
     expect(x.find((m: { recipientName: string }) => m.recipientName === "Alice").status).toBe("sent");
@@ -596,14 +770,14 @@ describe("targeted launch API", () => {
   it("does not dispatch messages whose draft is not approved", async () => {
     await connect("linkedin");
     const { launchId } = await fullLaunch();
-    // do not approve the LinkedIn draft
+    // do not approve the LinkedIn draft — no action is proposed for it
     const res = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/launches/${launchId}/channels/linkedin/dispatch`,
       payload: {},
     });
     expect(res.statusCode).toBe(200);
-    expect(res.json().results[0].error).toMatch(/not approved/i);
+    expect(res.json().submissions).toHaveLength(0);
     const after = await detail(launchId);
     expect(after.messages.find((m: { channel: string }) => m.channel === "linkedin").status).toBe("pending");
   });

@@ -9,7 +9,7 @@ import {
 import { RedditAdapter } from "../src/connectors/social/reddit";
 import { NangoFabric } from "../src/connectors/nango";
 import type { LlmGateway } from "../src/llm/gateway";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 const fakeLlm: LlmGateway = {
   async generate() {
@@ -396,6 +396,10 @@ describe("social publishing API", () => {
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Publisher" } })
     ).json().id;
+    const policy = await putActionPolicy(app, workspaceId, "workspace", workspaceId, {
+      publish: "autonomous",
+    });
+    expect(policy.statusCode).toBe(200);
   });
 
   afterEach(async () => {
@@ -581,7 +585,8 @@ describe("social publishing API", () => {
         title: "Generated post",
       });
       expect(res.statusCode).toBe(201);
-      const publication = res.json();
+      expect(res.json().action.status).toBe("succeeded");
+      const [publication] = await listPublications();
       expect(publicationSchema.safeParse(publication).success).toBe(true);
       expect(publication).toMatchObject({
         draftId,
@@ -685,13 +690,14 @@ describe("social publishing API", () => {
       expect(state.reddit.posts).toHaveLength(0);
     });
 
-    it("refuses a duplicate live publication for the same draft+connection+target", async () => {
+    it("makes duplicate retries idempotent for the same draft+connection+target", async () => {
       const connection = await connectReddit();
       const draftId = await approvedDraft();
-      await publish(draftId, { connectionId: connection.id, target: "test", title: "T" });
+      const first = await publish(draftId, { connectionId: connection.id, target: "test", title: "T" });
       const dupe = await publish(draftId, { connectionId: connection.id, target: "test", title: "T" });
-      expect(dupe.statusCode).toBe(409);
-      expect(dupe.json().error).toBe("already_published");
+      expect(dupe.statusCode).toBe(201);
+      expect(dupe.json().action.id).toBe(first.json().action.id);
+      expect(state.reddit.posts).toHaveLength(1);
       // A different subreddit is a different publication.
       const other = await publish(draftId, { connectionId: connection.id, target: "other", title: "T" });
       expect(other.statusCode).toBe(201);
@@ -703,8 +709,9 @@ describe("social publishing API", () => {
       state.reddit.inBandErrors = [["RATELIMIT", "slow down", "ratelimit"]];
       const res = await publish(draftId, { connectionId: connection.id, target: "test", title: "T" });
       expect(res.statusCode).toBe(201);
-      const failed = res.json();
-      expect(failed.status).toBe("failed");
+      expect(res.json().action.status).toBe("failed");
+      expect(res.json().execution.error).toContain("RATELIMIT");
+      const [failed] = await listPublications();
       expect(failed.lastError).toContain("RATELIMIT");
       expect(failed.externalUrl).toBeNull();
 
@@ -720,9 +727,8 @@ describe("social publishing API", () => {
     it("refuses retrying a publication that is not failed", async () => {
       const connection = await connectReddit();
       const draftId = await approvedDraft();
-      const publication = (
-        await publish(draftId, { connectionId: connection.id, target: "test", title: "T" })
-      ).json();
+      await publish(draftId, { connectionId: connection.id, target: "test", title: "T" });
+      const [publication] = await listPublications();
       const retry = await app.inject({
         method: "POST",
         url: `/workspaces/${workspaceId}/publications/${publication.id}/retry`,
@@ -748,7 +754,7 @@ describe("social publishing API", () => {
         scheduledFor: due,
       });
       expect(res.statusCode).toBe(201);
-      expect(res.json()).toMatchObject({ status: "scheduled", scheduledFor: due });
+      expect(res.json().action).toMatchObject({ status: "scheduled", requestedFor: due });
       expect(state.reddit.posts).toHaveLength(0);
 
       // Not due yet — the run is a no-op.
@@ -763,7 +769,10 @@ describe("social publishing API", () => {
         method: "POST",
         url: `/workspaces/${workspaceId}/publish/run`,
       });
-      expect(run.json().results).toEqual([{ id: res.json().id, ok: true }]);
+      expect(run.json().actions).toEqual([
+        expect.objectContaining({ action: expect.objectContaining({ id: res.json().action.id, status: "succeeded" }) }),
+      ]);
+      expect(run.json().results).toEqual([]);
       expect(state.reddit.posts).toHaveLength(1);
       const [publication] = await listPublications();
       expect(publication).toMatchObject({ status: "published", title: "Later" });
@@ -792,7 +801,7 @@ describe("social publishing API", () => {
           title: "T",
           scheduledFor: due,
         })
-      ).json();
+      ).json().action;
       state.reddit.failStatus = 500;
       vi.setSystemTime(new Date(due + 1000));
       const run = await app.inject({
@@ -800,13 +809,15 @@ describe("social publishing API", () => {
         url: `/workspaces/${workspaceId}/publish/run`,
       });
       expect(run.statusCode).toBe(200);
-      expect(run.json().results[0]).toMatchObject({ id: scheduled.id, ok: false });
+      expect(run.json().actions[0]).toMatchObject({
+        action: { id: scheduled.id, status: "failed" },
+      });
       const [publication] = await listPublications();
       expect(publication.status).toBe("failed");
       expect(publication.lastError).toBeTruthy();
     });
 
-    it("cancels a scheduled publication, and only a scheduled one", async () => {
+    it("cancels a scheduled action, while published receipts remain immutable", async () => {
       const connection = await connectReddit();
       const draftId = await approvedDraft();
       const scheduled = (
@@ -816,17 +827,22 @@ describe("social publishing API", () => {
           title: "T",
           scheduledFor: Date.now() + 60_000,
         })
-      ).json();
+      ).json().action;
       const cancel = await app.inject({
-        method: "DELETE",
-        url: `/workspaces/${workspaceId}/publications/${scheduled.id}`,
+        method: "POST",
+        url: `/workspaces/${workspaceId}/external-actions/${scheduled.id}/deny`,
+        payload: { reason: "Schedule changed" },
       });
-      expect(cancel.statusCode).toBe(204);
+      expect(cancel.statusCode).toBe(200);
+      expect(cancel.json().action.status).toBe("cancelled");
       expect(await listPublications()).toEqual([]);
 
-      const published = (
-        await publish(draftId, { connectionId: connection.id, target: "test", title: "T" })
-      ).json();
+      await publish(draftId, {
+        connectionId: connection.id,
+        target: "other",
+        title: "T",
+      });
+      const [published] = await listPublications();
       expect(published.status).toBe("published");
       const refuse = await app.inject({
         method: "DELETE",

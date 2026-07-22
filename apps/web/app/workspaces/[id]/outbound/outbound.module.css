@@ -13,7 +13,47 @@
 /* Drafted-email previews replace the raw text chain (spec §6.1). */
 .previewGrid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
   gap: 12px;
   margin-top: 10px;
+}
+
+.draftCard,
+.sendControls {
+  display: grid;
+  gap: 12px;
+}
+
+.draftCard {
+  align-content: start;
+}
+
+.sendControls {
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.sendActions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.sendSummary {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--status-info-wash);
+  color: var(--status-info-ink);
+  font-size: 13px;
+}
+
+.draftId {
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

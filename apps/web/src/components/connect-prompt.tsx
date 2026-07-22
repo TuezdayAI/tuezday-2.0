@@ -23,12 +23,12 @@ export function ConnectPrompt({ provider, promise, onConnect, connecting = false
   const label = PROVIDER_LABEL[provider];
   return (
     <div className={styles.prompt}>
-      <BrandIcon name={provider} size="lg" brandColor className={styles.mark} />
+      <BrandIcon name={provider} size="emphasized" brandColor className={styles.mark} />
       <div className={styles.copy}>
         <div className={styles.title}>Connect {label}</div>
         <div className={styles.promise}>{promise}</div>
       </div>
-      <Button variant="primary" size="sm" onClick={onConnect} disabled={connecting}>
+      <Button variant="primary" size="compact" onClick={onConnect} disabled={connecting}>
         {connecting ? "Connecting…" : "Connect"}
       </Button>
     </div>

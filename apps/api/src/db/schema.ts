@@ -1,4 +1,5 @@
-import { blob, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { sql } from "drizzle-orm";
+import { blob, check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 // Keep this schema Postgres-portable: text ids, integer epoch-ms timestamps,
 // no SQLite-only column tricks. The Postgres swap is planned for Sprint 8.
@@ -278,6 +279,9 @@ export const drafts = sqliteTable("drafts", {
   // generation at submit or refreshed by the Re-run review action. Null when
   // never reviewed.
   reviewJson: text("review_json"),
+  // Sprint 41: rendered visuals (LaunchMedia[] JSON) — what a reviewer sees,
+  // while content holds what they read. Null for text-only drafts.
+  mediaJson: text("media_json"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -303,6 +307,41 @@ export const approvalDecisions = sqliteTable("approval_decisions", {
 });
 
 export type ApprovalDecisionRow = typeof approvalDecisions.$inferSelect;
+
+// UI revamp conversational editor: one persisted natural-language revision
+// turn per request. The draft remains the approval object and owns the state
+// transition; these rows preserve conversation, provider metadata, and trace.
+export const draftRevisionTurns = sqliteTable(
+  "draft_revision_turns",
+  {
+    id: text("id").primaryKey(),
+    requestId: text("request_id").notNull(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    draftId: text("draft_id")
+      .notNull()
+      .references(() => drafts.id, { onDelete: "cascade" }),
+    actorId: text("actor_id").references(() => users.id, { onDelete: "set null" }),
+    instruction: text("instruction").notNull(),
+    sourceContent: text("source_content").notNull(),
+    resultContent: text("result_content"),
+    sectionsJson: text("sections_json").notNull().default("[]"),
+    status: text("status").notNull(),
+    error: text("error"),
+    model: text("model"),
+    provider: text("provider"),
+    durationMs: integer("duration_ms"),
+    createdAt: integer("created_at").notNull(),
+    completedAt: integer("completed_at"),
+  },
+  (t) => [
+    uniqueIndex("draft_revision_turn_request").on(t.draftId, t.requestId),
+    index("draft_revision_turn_draft").on(t.draftId, t.createdAt),
+  ],
+);
+
+export type DraftRevisionTurnRow = typeof draftRevisionTurns.$inferSelect;
 
 export const signals = sqliteTable("signals", {
   id: text("id").primaryKey(),
@@ -464,16 +503,126 @@ export const campaigns = sqliteTable("campaigns", {
   channelsJson: text("channels_json").notNull().default("[]"),
   personaIdsJson: text("persona_ids_json").notNull().default("[]"),
   overlay: text("overlay").notNull().default(""),
+  // Control-plane identity. Existing campaigns migrate as user-created,
+  // initiative campaigns; always-on system campaigns opt into other values.
+  origin: text("origin").notNull().default("user"),
+  purpose: text("purpose").notNull().default("initiative"),
   status: text("status").notNull().default("active"),
   // Social automation mode (Sprint 28): manual | human_in_the_loop | scheduled_auto.
   automationMode: text("automation_mode").notNull().default("manual"),
   // Per-campaign override of the daily auto-post cap; null = workspace default.
   autoDailyCap: integer("auto_daily_cap"),
+  // Service-validated pointer to the active immutable plan revision. Kept as
+  // a plain id to avoid a circular SQLite table-recreate migration.
+  currentPlanRevisionId: text("current_plan_revision_id"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
 
 export type CampaignRow = typeof campaigns.$inferSelect;
+
+// Immutable campaign intent snapshots. Activating a new row supersedes the
+// old one; historical generations keep the exact revision they used.
+export const campaignPlanRevisions = sqliteTable(
+  "campaign_plan_revisions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    revision: integer("revision").notNull(),
+    status: text("status").notNull().default("draft"),
+    objective: text("objective").notNull().default(""),
+    kpi: text("kpi").notNull().default(""),
+    timeframe: text("timeframe").notNull().default(""),
+    startAt: integer("start_at"),
+    endAt: integer("end_at"),
+    audienceIdsJson: text("audience_ids_json").notNull().default("[]"),
+    pillarsJson: text("pillars_json").notNull().default("[]"),
+    offersJson: text("offers_json").notNull().default("[]"),
+    ctasJson: text("ctas_json").notNull().default("[]"),
+    guidance: text("guidance").notNull().default(""),
+    createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: integer("created_at").notNull(),
+    activatedAt: integer("activated_at"),
+  },
+  (t) => [
+    uniqueIndex("campaign_plan_revision_number").on(t.campaignId, t.revision),
+    index("campaign_plan_workspace_campaign").on(t.workspaceId, t.campaignId),
+  ],
+);
+
+export type CampaignPlanRevisionRow = typeof campaignPlanRevisions.$inferSelect;
+
+// Stable production thread. Its revision-scoped configuration lives below so
+// historical attribution survives campaign plan edits.
+export const campaignLanes = sqliteTable(
+  "campaign_lanes",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    key: text("key").notNull(),
+    name: text("name").notNull(),
+    status: text("status").notNull().default("active"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("campaign_lane_key").on(t.campaignId, t.key),
+    index("campaign_lane_workspace_campaign").on(t.workspaceId, t.campaignId),
+  ],
+);
+
+export type CampaignLaneRow = typeof campaignLanes.$inferSelect;
+
+export const campaignLaneRevisions = sqliteTable(
+  "campaign_lane_revisions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    laneId: text("lane_id")
+      .notNull()
+      .references(() => campaignLanes.id, { onDelete: "cascade" }),
+    planRevisionId: text("plan_revision_id")
+      .notNull()
+      .references(() => campaignPlanRevisions.id, { onDelete: "cascade" }),
+    key: text("key").notNull().default(""),
+    name: text("name").notNull().default(""),
+    personaId: text("persona_id")
+      .notNull()
+      .references(() => personas.id, { onDelete: "restrict" }),
+    audienceId: text("audience_id").references(() => audiences.id, { onDelete: "set null" }),
+    channel: text("channel").notNull(),
+    format: text("format").notNull(),
+    publishingConnectionId: text("publishing_connection_id").references(() => connections.id, {
+      onDelete: "set null",
+    }),
+    providerTarget: text("provider_target").notNull().default(""),
+    deliveryMode: text("delivery_mode").notNull(),
+    plannedQuantity: integer("planned_quantity").notNull().default(0),
+    scheduleJson: text("schedule_json"),
+    reactivePeriod: text("reactive_period"),
+    reactiveCap: integer("reactive_cap"),
+    status: text("status").notNull().default("active"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("campaign_lane_plan_revision").on(t.laneId, t.planRevisionId),
+    index("campaign_lane_revision_plan").on(t.planRevisionId),
+  ],
+);
+
+export type CampaignLaneRevisionRow = typeof campaignLaneRevisions.$inferSelect;
 
 // Sprint 45 multi-candidate scoring: one row per candidate persona×campaign
 // pairing a discovered item scored above zero relevance for. Replaced
@@ -837,38 +986,590 @@ export const adCampaignMetrics = sqliteTable(
 
 export type AdCampaignMetricRow = typeof adCampaignMetrics.$inferSelect;
 
-// Social publishing receipts (Sprint 17) — one row per publish attempt (now
-// or scheduled); the post lives on the platform, Tuezday keeps status + URL.
-export const publications = sqliteTable("publications", {
-  id: text("id").primaryKey(),
+// Workspace and scoped governance rules for every external side effect. The
+// vocabulary and precedence live in @tuezday/contracts; these rows preserve
+// the founder's explicit policy choices and their provenance.
+export const externalActionPolicyRules = sqliteTable(
+  "external_action_policy_rules",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    scope: text("scope").notNull(),
+    scopeId: text("scope_id").notNull(),
+    actionKind: text("action_kind").notNull(),
+    rule: text("rule").notNull(),
+    createdBy: text("created_by").references(() => users.id, { onDelete: "set null" }),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("external_action_policy_scope_kind").on(
+      t.workspaceId,
+      t.scope,
+      t.scopeId,
+      t.actionKind,
+    ),
+    index("external_action_policy_workspace_scope").on(t.workspaceId, t.scope, t.scopeId),
+  ],
+);
+
+export type ExternalActionPolicyRuleRow = typeof externalActionPolicyRules.$inferSelect;
+
+// Durable authorization envelope. It separates permission to take an external
+// action from approval of the content that action may carry.
+export const externalActions = sqliteTable(
+  "external_actions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    status: text("status").notNull(),
+    subjectKind: text("subject_kind").notNull(),
+    subjectId: text("subject_id").notNull(),
+    draftId: text("draft_id").references(() => drafts.id, { onDelete: "set null" }),
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+    personaId: text("persona_id").references(() => personas.id, { onDelete: "set null" }),
+    connectionId: text("connection_id").references(() => connections.id, { onDelete: "set null" }),
+    laneRevisionId: text("lane_revision_id").references(() => campaignLaneRevisions.id, {
+      onDelete: "set null",
+    }),
+    payloadJson: text("payload_json").notNull(),
+    subjectSnapshotJson: text("subject_snapshot_json").notNull(),
+    requestedFor: integer("requested_for"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    fingerprint: text("fingerprint").notNull(),
+    policySnapshotJson: text("policy_snapshot_json").notNull(),
+    blockerCode: text("blocker_code"),
+    blockerDetail: text("blocker_detail"),
+    blockerRetryable: integer("blocker_retryable", { mode: "boolean" }),
+    // Plain ids avoid a SQLite self-reference table rebuild while preserving
+    // immutable supersession lineage.
+    supersedesActionId: text("supersedes_action_id"),
+    supersededByActionId: text("superseded_by_action_id"),
+    executionKind: text("execution_kind"),
+    executionId: text("execution_id"),
+    executionReceiptJson: text("execution_receipt_json"),
+    proposedByUserId: text("proposed_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    proposedByLabel: text("proposed_by_label").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+    authorizedAt: integer("authorized_at"),
+    dispatchedAt: integer("dispatched_at"),
+    completedAt: integer("completed_at"),
+  },
+  (t) => [
+    uniqueIndex("external_actions_workspace_idempotency").on(t.workspaceId, t.idempotencyKey),
+    index("external_actions_workspace_status").on(t.workspaceId, t.status),
+    index("external_actions_workspace_subject").on(t.workspaceId, t.subjectKind, t.subjectId),
+    index("external_actions_campaign").on(t.campaignId),
+  ],
+);
+
+export type ExternalActionRow = typeof externalActions.$inferSelect;
+
+// Durable, idempotent preview header for a bounded batch authorization. The
+// exact selection stays frozen while status/timestamps advance on confirm.
+export const externalActionBatches = sqliteTable(
+  "external_action_batches",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    requestId: text("request_id").notNull(),
+    selectionJson: text("selection_json").notNull(),
+    status: text("status").notNull(),
+    continuationCount: integer("continuation_count").notNull().default(0),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdByLabel: text("created_by_label").notNull(),
+    createdAt: integer("created_at").notNull(),
+    confirmedAt: integer("confirmed_at"),
+    completedAt: integer("completed_at"),
+  },
+  (t) => [
+    uniqueIndex("external_action_batches_workspace_request").on(
+      t.workspaceId,
+      t.requestId,
+    ),
+    index("external_action_batches_workspace_status").on(t.workspaceId, t.status),
+  ],
+);
+
+export type ExternalActionBatchRow = typeof externalActionBatches.$inferSelect;
+
+// One immutable action snapshot plus its mutable authorization outcome. Batch
+// deletion removes the snapshot; direct action deletion is restricted so the
+// authorization audit can never point at a vanished action.
+export const externalActionBatchItems = sqliteTable(
+  "external_action_batch_items",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    batchId: text("batch_id")
+      .notNull()
+      .references(() => externalActionBatches.id, { onDelete: "cascade" }),
+    actionId: text("action_id")
+      .notNull()
+      .references(() => externalActions.id, { onDelete: "restrict" }),
+    snapshotJson: text("snapshot_json").notNull(),
+    status: text("status").notNull(),
+    submissionJson: text("submission_json"),
+    error: text("error"),
+    processedAt: integer("processed_at"),
+  },
+  (t) => [
+    uniqueIndex("external_action_batch_items_batch_action").on(t.batchId, t.actionId),
+    index("external_action_batch_items_workspace_batch").on(t.workspaceId, t.batchId),
+  ],
+);
+
+export type ExternalActionBatchItemRow = typeof externalActionBatchItems.$inferSelect;
+
+// Append-only founder/operator decisions. Deleting an authorization envelope
+// removes its now-unreachable audit rows, while ordinary state changes retain
+// every decision forever.
+export const externalActionDecisions = sqliteTable(
+  "external_action_decisions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    actionId: text("action_id")
+      .notNull()
+      .references(() => externalActions.id, { onDelete: "cascade" }),
+    decision: text("decision").notNull(),
+    reason: text("reason"),
+    actorUserId: text("actor_user_id").references(() => users.id, { onDelete: "set null" }),
+    actorLabel: text("actor_label").notNull(),
+    subjectFingerprint: text("subject_fingerprint").notNull(),
+    policySnapshotJson: text("policy_snapshot_json").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("external_action_decisions_action").on(t.actionId, t.createdAt),
+    index("external_action_decisions_workspace").on(t.workspaceId, t.createdAt),
+  ],
+);
+
+export type ExternalActionDecisionRow = typeof externalActionDecisions.$inferSelect;
+
+// One verified sender identity and its workspace-owned safety settings. The
+// platform provider credential stays in the environment; only public domain
+// identifiers and DNS challenge projections are persisted here.
+export const workspaceEmailSenders = sqliteTable("workspace_email_senders", {
   workspaceId: text("workspace_id")
-    .notNull()
+    .primaryKey()
     .references(() => workspaces.id, { onDelete: "cascade" }),
-  draftId: text("draft_id")
-    .notNull()
-    .references(() => drafts.id, { onDelete: "cascade" }),
-  connectionId: text("connection_id")
-    .notNull()
-    .references(() => connections.id, { onDelete: "cascade" }),
-  providerKey: text("provider_key").notNull(),
-  target: text("target").notNull(),
-  title: text("title").notNull(),
-  // Attached media for platforms that need it (Instagram). JSON array of
-  // { url, type } or null. Posted alongside the draft body/caption.
-  mediaJson: text("media_json"),
-  // The posting cadence that auto-slotted this receipt (Sprint 27); null for a
-  // manual one-off publish. Set null when the cadence is deleted.
-  cadenceId: text("cadence_id").references(() => postingCadences.id, { onDelete: "set null" }),
-  status: text("status").notNull().default("scheduled"),
-  // The requested publish time; "post now" stamps the request time.
-  scheduledFor: integer("scheduled_for").notNull(),
-  publishedAt: integer("published_at"),
-  externalId: text("external_id"),
-  externalUrl: text("external_url"),
+  domain: text("domain").notNull(),
+  fromLocalPart: text("from_local_part").notNull(),
+  fromName: text("from_name").notNull(),
+  fromAddress: text("from_address").notNull(),
+  replyTo: text("reply_to"),
+  status: text("status").notNull().default("not_configured"),
+  provider: text("provider").notNull().default("resend"),
+  providerDomainId: text("provider_domain_id"),
+  dnsRecordsJson: text("dns_records_json").notNull().default("[]"),
+  // Existing and newly configured workspaces start safely disabled.
+  killSwitch: integer("kill_switch", { mode: "boolean" }).notNull().default(true),
+  dailyCap: integer("daily_cap").notNull().default(100),
+  lastCheckedAt: integer("last_checked_at"),
   lastError: text("last_error"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
+
+export type WorkspaceEmailSenderRow = typeof workspaceEmailSenders.$inferSelect;
+
+// Explicit technical send permission for one normalized recipient. Unknown is
+// a blocking state and remains distinct from a durable suppression.
+export const emailRecipientPermissions = sqliteTable(
+  "email_recipient_permissions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    normalizedEmail: text("normalized_email").notNull(),
+    status: text("status").notNull().default("unknown"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("email_recipient_permissions_workspace_email").on(
+      t.workspaceId,
+      t.normalizedEmail,
+    ),
+    index("email_recipient_permissions_workspace_status").on(t.workspaceId, t.status),
+  ],
+);
+
+export type EmailRecipientPermissionRow = typeof emailRecipientPermissions.$inferSelect;
+
+// Deliverability and founder suppressions are durable guardrails. A recipient
+// can have only one active suppression per workspace, regardless of source.
+export const emailSuppressions = sqliteTable(
+  "email_suppressions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    normalizedEmail: text("normalized_email").notNull(),
+    reason: text("reason").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("email_suppressions_workspace_email").on(t.workspaceId, t.normalizedEmail),
+    index("email_suppressions_workspace_created").on(t.workspaceId, t.createdAt),
+  ],
+);
+
+export type EmailSuppressionRow = typeof emailSuppressions.$inferSelect;
+
+// Durable message snapshot created before the provider call. Mutable columns
+// record delivery progress; recipient, sender, subject, and body remain the
+// exact action-authorized payload for audit and retry recovery.
+export const emailDeliveries = sqliteTable(
+  "email_deliveries",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    externalActionId: text("external_action_id")
+      .notNull()
+      .references(() => externalActions.id, { onDelete: "cascade" }),
+    origin: text("origin").notNull(),
+    originId: text("origin_id").notNull(),
+    normalizedRecipient: text("normalized_recipient").notNull(),
+    senderAddress: text("sender_address").notNull(),
+    replyTo: text("reply_to"),
+    subject: text("subject").notNull(),
+    text: text("text").notNull(),
+    html: text("html"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    provider: text("provider").notNull().default("resend"),
+    providerMessageId: text("provider_message_id"),
+    // Gmail thread id (Sprint 47) — the inbound-reply matching key. Null on
+    // Resend deliveries, which have no reply loop.
+    providerThreadId: text("provider_thread_id"),
+    // Which connected mailbox sent this (Sprint 47). Null = the Resend path.
+    mailboxId: text("mailbox_id").references(() => mailboxes.id, { onDelete: "set null" }),
+    status: text("status").notNull().default("queued"),
+    acceptedAt: integer("accepted_at"),
+    completedAt: integer("completed_at"),
+    lastError: text("last_error"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("email_deliveries_workspace_idempotency").on(
+      t.workspaceId,
+      t.idempotencyKey,
+    ),
+    uniqueIndex("email_deliveries_provider_message").on(t.provider, t.providerMessageId),
+    index("email_deliveries_workspace_status_accepted").on(
+      t.workspaceId,
+      t.status,
+      t.acceptedAt,
+    ),
+    index("email_deliveries_workspace_origin").on(t.workspaceId, t.origin, t.originId),
+  ],
+);
+
+export type EmailDeliveryRow = typeof emailDeliveries.$inferSelect;
+
+const MAX_EMAIL_DELIVERY_EVENT_PAYLOAD_CHARS = 1_000_000;
+
+// Append-only verified provider events. The raw bounded JSON supports audit
+// and replay without persisting webhook secrets or mutable projections.
+export const emailDeliveryEvents = sqliteTable(
+  "email_delivery_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    deliveryId: text("delivery_id")
+      .notNull()
+      .references(() => emailDeliveries.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull().default("resend"),
+    providerEventId: text("provider_event_id").notNull(),
+    eventType: text("event_type").notNull(),
+    payloadJson: text("payload_json").notNull(),
+    occurredAt: integer("occurred_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("email_delivery_events_provider_event").on(t.provider, t.providerEventId),
+    index("email_delivery_events_delivery_created").on(t.deliveryId, t.createdAt),
+    check(
+      "email_delivery_events_payload_bounded",
+      sql`length(${t.payloadJson}) <= ${sql.raw(
+        String(MAX_EMAIL_DELIVERY_EVENT_PAYLOAD_CHARS),
+      )}`,
+    ),
+  ],
+);
+
+export type EmailDeliveryEventRow = typeof emailDeliveryEvents.$inferSelect;
+
+// A connected outreach mailbox (Sprint 47): the send identity AND the reply
+// source. Rides a `gmail` connector row (tokens live in Nango, never here).
+// Modeled as a pool per workspace from day one; distinct from
+// workspaceEmailSenders (the Resend DNS-domain transactional identity).
+export const mailboxes = sqliteTable(
+  "mailboxes",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => connections.id, { onDelete: "cascade" }),
+    provider: text("provider").notNull().default("gmail"),
+    // Filled from the provider profile at connect time, never hand-typed.
+    address: text("address").notNull(),
+    displayName: text("display_name").notNull().default(""),
+    replyTo: text("reply_to"),
+    signature: text("signature").notNull().default(""),
+    // Founder decision: customizable, default 50 (MAILBOX_DEFAULT_DAILY_CAP).
+    dailyCap: integer("daily_cap").notNull().default(50),
+    // MailboxSendingWindow JSON; stored now, enforced by the Sprint 48 scheduler.
+    sendingWindowJson: text("sending_window_json").notNull().default("{}"),
+    defaultPersonaId: text("default_persona_id").references(() => personas.id, {
+      onDelete: "set null",
+    }),
+    status: text("status").notNull().default("connected"),
+    // Inbound poll cursor anchor for the mailbox-inbox tick.
+    lastPolledAt: integer("last_polled_at"),
+    lastError: text("last_error"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("mailboxes_workspace_address").on(t.workspaceId, t.address),
+    index("mailboxes_workspace_status").on(t.workspaceId, t.status),
+  ],
+);
+
+export type MailboxRow = typeof mailboxes.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Outreach sequences (Sprint 48) — a first-class, always-on email sequence.
+// Parallel to (and independent of) the S30 launch-bound sequence_* tables,
+// which stay frozen. Email-only; sends from a mailbox pool (S47).
+// ---------------------------------------------------------------------------
+
+export const outreachSequences = sqliteTable("outreach_sequences", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  campaignId: text("campaign_id")
+    .notNull()
+    .references(() => campaigns.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  goal: text("goal").notNull().default(""),
+  personaId: text("persona_id")
+    .notNull()
+    .references(() => personas.id, { onDelete: "cascade" }),
+  audienceId: text("audience_id")
+    .notNull()
+    .references(() => audiences.id, { onDelete: "cascade" }),
+  automationMode: text("automation_mode").notNull().default("manual"),
+  status: text("status").notNull().default("draft"),
+  dailyEnrollmentCap: integer("daily_enrollment_cap").notNull().default(50),
+  stopOnReply: integer("stop_on_reply").notNull().default(1),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type OutreachSequenceRow = typeof outreachSequences.$inferSelect;
+
+// The mailbox pool a sequence rotates across (M:N). "Pool, start with one."
+export const outreachSequenceMailboxes = sqliteTable(
+  "outreach_sequence_mailboxes",
+  {
+    sequenceId: text("sequence_id")
+      .notNull()
+      .references(() => outreachSequences.id, { onDelete: "cascade" }),
+    mailboxId: text("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade" }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.sequenceId, t.mailboxId] }),
+    index("outreach_sequence_mailboxes_mailbox").on(t.mailboxId),
+  ],
+);
+
+export type OutreachSequenceMailboxRow = typeof outreachSequenceMailboxes.$inferSelect;
+
+export const outreachSequenceSteps = sqliteTable(
+  "outreach_sequence_steps",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sequenceId: text("sequence_id")
+      .notNull()
+      .references(() => outreachSequences.id, { onDelete: "cascade" }),
+    stepNumber: integer("step_number").notNull(),
+    // Blank = the brain writes a natural follow-up; filled = steer that step.
+    instruction: text("instruction").notNull().default(""),
+    // Delay from the previous step's actual send; step 1 treated as 0.
+    delayHours: integer("delay_hours").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("outreach_steps_sequence_number").on(t.sequenceId, t.stepNumber)],
+);
+
+export type OutreachSequenceStepRow = typeof outreachSequenceSteps.$inferSelect;
+
+// One row per (sequence × recipient). The partial unique index on active rows
+// enforces "one active outreach sequence per person, workspace-wide".
+export const outreachEnrollments = sqliteTable(
+  "outreach_enrollments",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sequenceId: text("sequence_id")
+      .notNull()
+      .references(() => outreachSequences.id, { onDelete: "cascade" }),
+    recipientType: text("recipient_type").notNull(),
+    recipientId: text("recipient_id").notNull(),
+    recipientEmail: text("recipient_email").notNull().default(""),
+    // The mailbox pinned to this recipient at enroll (thread continuity).
+    mailboxId: text("mailbox_id").references(() => mailboxes.id, { onDelete: "set null" }),
+    // Gmail thread of the last send — follow-ups thread into it.
+    lastThreadId: text("last_thread_id"),
+    currentStep: integer("current_step").notNull().default(0),
+    status: text("status").notNull().default("active"),
+    nextDueAt: integer("next_due_at"),
+    lastSentAt: integer("last_sent_at"),
+    stoppedReason: text("stopped_reason"),
+    // Reply-check cursor (Sprint 49): the lookup uses max(lastSentAt, this) so an
+    // out-of-office pause is idempotent and the chain resumes cleanly.
+    lastReplyHandledAt: integer("last_reply_handled_at"),
+    enrolledAt: integer("enrolled_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("outreach_enrollments_sequence_recipient").on(
+      t.sequenceId,
+      t.recipientType,
+      t.recipientId,
+    ),
+    // The global "one active sequence per person" lock (decision 07).
+    uniqueIndex("outreach_enrollments_active_person")
+      .on(t.workspaceId, t.recipientType, t.recipientId)
+      .where(sql`status = 'active'`),
+    index("outreach_enrollments_due").on(t.status, t.nextDueAt),
+  ],
+);
+
+export type OutreachEnrollmentRow = typeof outreachEnrollments.$inferSelect;
+
+// One row per (enrollment × step) — the dispatch record (mirrors launchMessages).
+export const outreachMessages = sqliteTable(
+  "outreach_messages",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    enrollmentId: text("enrollment_id")
+      .notNull()
+      .references(() => outreachEnrollments.id, { onDelete: "cascade" }),
+    stepNumber: integer("step_number").notNull(),
+    draftId: text("draft_id").references(() => drafts.id, { onDelete: "set null" }),
+    externalActionId: text("external_action_id").references(() => externalActions.id, {
+      onDelete: "set null",
+    }),
+    // Gmail thread returned by the send — feeds the next step's threading.
+    providerThreadId: text("provider_thread_id"),
+    status: text("status").notNull().default("pending"),
+    sentAt: integer("sent_at"),
+    lastError: text("last_error"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("outreach_messages_enrollment_step").on(t.enrollmentId, t.stepNumber)],
+);
+
+export type OutreachMessageRow = typeof outreachMessages.$inferSelect;
+
+// A workspace's CAN-SPAM postal mailing address (Sprint 49), required before an
+// outreach sequence can activate and appended to every send's footer. Its own
+// table because a Gmail-only workspace has no workspaceEmailSenders row.
+export const workspaceCompliance = sqliteTable("workspace_compliance", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  postalAddress: text("postal_address").notNull().default(""),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type WorkspaceComplianceRow = typeof workspaceCompliance.$inferSelect;
+
+// Social publishing receipts (Sprint 17) — one row per publish attempt (now
+// or scheduled); the post lives on the platform, Tuezday keeps status + URL.
+export const publications = sqliteTable(
+  "publications",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    draftId: text("draft_id")
+      .notNull()
+      .references(() => drafts.id, { onDelete: "cascade" }),
+    externalActionId: text("external_action_id").references(() => externalActions.id, {
+      onDelete: "set null",
+    }),
+    connectionId: text("connection_id")
+      .notNull()
+      .references(() => connections.id, { onDelete: "cascade" }),
+    providerKey: text("provider_key").notNull(),
+    target: text("target").notNull(),
+    title: text("title").notNull(),
+    // Attached media for platforms that need it (Instagram). JSON array of
+    // { url, type } or null. Posted alongside the draft body/caption.
+    mediaJson: text("media_json"),
+    // The posting cadence that auto-slotted this receipt (Sprint 27); null for a
+    // manual one-off publish. Set null when the cadence is deleted.
+    cadenceId: text("cadence_id").references(() => postingCadences.id, { onDelete: "set null" }),
+    status: text("status").notNull().default("scheduled"),
+    // The requested publish time; "post now" stamps the request time.
+    scheduledFor: integer("scheduled_for").notNull(),
+    publishedAt: integer("published_at"),
+    externalId: text("external_id"),
+    externalUrl: text("external_url"),
+    lastError: text("last_error"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("publications_external_action").on(t.externalActionId)],
+);
 
 export type PublicationRow = typeof publications.$inferSelect;
 
@@ -917,6 +1618,9 @@ export const adLaunches = sqliteTable("ad_launches", {
   creativeDraftId: text("creative_draft_id")
     .notNull()
     .references(() => drafts.id, { onDelete: "cascade" }),
+  externalActionId: text("external_action_id").references(() => externalActions.id, {
+    onDelete: "set null",
+  }),
   name: text("name").notNull(),
   objective: text("objective").notNull(),
   pageId: text("page_id").notNull(),
@@ -934,6 +1638,9 @@ export const adLaunches = sqliteTable("ad_launches", {
   externalAdSetId: text("external_ad_set_id"),
   externalCreativeId: text("external_creative_id"),
   externalAdId: text("external_ad_id"),
+  // Meta adimages hash (Sprint 41 Part 5): persisted after uploadAdImage so a
+  // resumed launch never re-uploads; consumed by createAdCreative.
+  metaImageHash: text("meta_image_hash"),
   // The Sprint 14 reporting mirror row created on a successful launch.
   adCampaignId: text("ad_campaign_id").references(() => adCampaigns.id, { onDelete: "set null" }),
   platformStatus: text("platform_status"),
@@ -941,7 +1648,10 @@ export const adLaunches = sqliteTable("ad_launches", {
   lastError: text("last_error"),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
-});
+}, (t) => [
+  index("ad_launches_external_action").on(t.externalActionId),
+],
+);
 
 export type AdLaunchRow = typeof adLaunches.$inferSelect;
 
@@ -1162,6 +1872,9 @@ export const launchMessages = sqliteTable("launch_messages", {
   recipientEmail: text("recipient_email").notNull().default(""),
   recipientHandle: text("recipient_handle"),
   draftId: text("draft_id").references(() => drafts.id, { onDelete: "set null" }),
+  externalActionId: text("external_action_id").references(() => externalActions.id, {
+    onDelete: "set null",
+  }),
   status: text("status").notNull().default("pending"),
   skipReason: text("skip_reason"),
   externalId: text("external_id"),
@@ -1178,7 +1891,10 @@ export const launchMessages = sqliteTable("launch_messages", {
   connectionId: text("connection_id").references(() => connections.id, { onDelete: "set null" }),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
-});
+}, (t) => [
+  index("launch_messages_external_action").on(t.externalActionId),
+],
+);
 
 export type LaunchMessageRow = typeof launchMessages.$inferSelect;
 
@@ -1212,13 +1928,27 @@ export const inboxItems = sqliteTable(
     status: text("status").notNull().default("unread"),
     // The gated reply draft, once generated.
     replyDraftId: text("reply_draft_id").references(() => drafts.id, { onDelete: "set null" }),
+    externalActionId: text("external_action_id").references(() => externalActions.id, {
+      onDelete: "set null",
+    }),
     postedReplyExternalId: text("posted_reply_external_id"),
     postedReplyUrl: text("posted_reply_url"),
+    // The sent outreach email this replies to (kind "email" — Sprint 47); the
+    // email analog of publicationId (comment) / launchMessageId (dm).
+    emailDeliveryId: text("email_delivery_id").references(() => emailDeliveries.id, {
+      onDelete: "set null",
+    }),
+    // EmailReplyLabel from the best-effort LLM classifier; null = unclassified.
+    replyLabel: text("reply_label"),
+    replyLabeledAt: integer("reply_labeled_at"),
     externalCreatedAt: integer("external_created_at").notNull(),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
-  (table) => [uniqueIndex("inbox_items_connection_external").on(table.connectionId, table.externalId)],
+  (table) => [
+    uniqueIndex("inbox_items_connection_external").on(table.connectionId, table.externalId),
+    index("inbox_items_external_action").on(table.externalActionId),
+  ],
 );
 
 export type InboxItemRow = typeof inboxItems.$inferSelect;
@@ -1379,3 +2109,98 @@ export const apiKeys = sqliteTable("api_keys", {
 }, (t) => [uniqueIndex("api_keys_hash").on(t.keyHash)]);
 
 export type ApiKeyRow = typeof apiKeys.$inferSelect;
+
+// Design systems (Sprint 41 Part 2) — the Brain UI's additional "Design" tab.
+// Deliberately NOT part of brain_documents / BRAIN_DOC_TYPES: only the design
+// pipeline reads these, via resolveDesignSystem(), never packages/brain.
+// Multiple named systems per workspace are supported at the schema level;
+// v1 seeds exactly one org-level default (isDefault = 1) and the UI surfaces
+// only that one. Uniqueness is (workspaceId, name), NOT workspaceId; the
+// one-default-per-workspace invariant lives in the service.
+export const designSystems = sqliteTable(
+  "design_systems",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull().default("Default"),
+    isDefault: integer("is_default").notNull().default(0),
+    content: text("content").notNull(), // DESIGN.md-shaped markdown
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("design_systems_workspace_name").on(t.workspaceId, t.name)],
+);
+
+export type DesignSystemRow = typeof designSystems.$inferSelect;
+
+// Channel/persona/campaign overlays — clones guidance_overrides' shape and
+// most-specific-wins precedence (Sprint 44), scoped to a design system. The
+// winning overlay is appended to the base content as an addendum. Same SQLite
+// NULLs-are-distinct caveat as guidance_overrides: the service upserts
+// select-first instead of relying on ON CONFLICT.
+export const designOverlays = sqliteTable(
+  "design_overlays",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    designSystemId: text("design_system_id")
+      .notNull()
+      .references(() => designSystems.id, { onDelete: "cascade" }),
+    channel: text("channel").notNull(),
+    personaId: text("persona_id").references(() => personas.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "cascade" }),
+    content: text("content").notNull(), // partial DESIGN.md override/addendum
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("design_overlays_system_channel_scope").on(
+      t.designSystemId,
+      t.channel,
+      t.personaId,
+      t.campaignId,
+    ),
+  ],
+);
+
+export type DesignOverlayRow = typeof designOverlays.$inferSelect;
+
+// Cached, agent-authored HTML/CSS slide templates (Sprint 41 Part 3) —
+// authored ONCE per (workspace, design system, skill, fingerprint, shape) via
+// Open Design, then reused forever by the deterministic renderer. A design
+// edit changes the fingerprint so stale templates simply never match again —
+// rows are immutable, which also makes approved creatives reproducible.
+export const designTemplates = sqliteTable(
+  "design_templates",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    designSystemId: text("design_system_id")
+      .notNull()
+      .references(() => designSystems.id, { onDelete: "cascade" }),
+    skillId: text("skill_id").notNull(), // e.g. "social-carousel"
+    designSystemFingerprint: text("design_system_fingerprint").notNull(), // sha256 of *resolved* design markdown
+    slideShape: text("slide_shape").notNull(), // SLIDE_ARCHETYPES member or ad shape, e.g. "hook", "ad-1080x1080"
+    html: text("html").notNull(),
+    css: text("css").notNull(),
+    placeholders: text("placeholders_json").notNull(), // string[] of {{token}} names
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("design_templates_lookup").on(
+      t.workspaceId,
+      t.designSystemId,
+      t.skillId,
+      t.designSystemFingerprint,
+      t.slideShape,
+    ),
+  ],
+);
+
+export type DesignTemplateRow = typeof designTemplates.$inferSelect;

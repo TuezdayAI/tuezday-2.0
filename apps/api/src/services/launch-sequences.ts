@@ -4,6 +4,7 @@ import {
   type Channel,
   type Connection,
   type Draft,
+  type ExternalActionSubmission,
   type LaunchStatus,
   type Person,
   type SequenceChannel,
@@ -30,17 +31,26 @@ import {
   type SequenceRecipientRow,
   type SequenceStepRow,
 } from "../db/schema";
-import type { ConnectorFabric } from "../connectors/fabric";
-import { socialAdapterFor } from "../connectors/social";
 import type { EvidenceStore } from "../evidence/store";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { getAudienceDetail, loadPeople } from "./audiences";
 import { getSocialAutomationSettings, utcDayBounds } from "./automation";
 import { getBrain } from "./brain";
 import { composeResolveCampaign, getCampaign } from "./campaigns";
+import {
+  deriveSendIdempotencyKey,
+  prepareSendAction,
+} from "./external-action-adapters";
+import type { ExternalActionRuntime } from "./external-action-coordinator";
+import {
+  deriveEmailSendIdempotencyKey,
+  prepareEmailAction,
+} from "./external-action-email";
+import { checkEmailRecipientSafety } from "./email-recipient-safety";
+import { getExternalAction } from "./external-actions";
 import { resolveChannelGuidance } from "./guidance";
 import { selectiveContextInputs } from "./resolve-input";
-import { listConnections, providerByKey } from "./connections";
+import { listConnections } from "./connections";
 import { applyDraftAction, submitDraft, type DraftActor } from "./drafts";
 import { retrieveEvidence } from "./evidence";
 import { storeGeneration } from "./generations";
@@ -48,7 +58,6 @@ import { getPersona, toResolvePersona } from "./personas";
 import { resolveDraftAccount } from "./resolve-account";
 import { getWorkspace } from "./workspaces";
 
-type Fetcher = typeof fetch;
 const HOUR_MS = 60 * 60 * 1000;
 
 /** Sequence advance always acts as the system identity — generation + the
@@ -242,8 +251,9 @@ function resolveXConnection(db: Db, launch: LaunchRow): Connection | undefined {
   return candidates.length === 1 ? candidates[0] : undefined;
 }
 
-/** Sent X DMs on this connection on the given UTC day — the per-account cap. */
-function countConnectionDmsForDay(db: Db, connectionId: string, dayMs: number): number {
+/** Sent X DMs on this connection on the given UTC day — the per-account cap.
+ * Also consumed by the send action adapter as a dispatch guardrail. */
+export function countConnectionDmsForDay(db: Db, connectionId: string, dayMs: number): number {
   const { start, end } = utcDayBounds(dayMs);
   return db
     .select({ id: launchMessages.id })
@@ -290,8 +300,7 @@ interface RunCtx {
   db: Db;
   llm: LlmGateway;
   evidence: EvidenceStore;
-  fabric: ConnectorFabric;
-  fetcher: Fetcher;
+  runtime: ExternalActionRuntime;
   pool: Map<string, Person>;
 }
 
@@ -494,16 +503,78 @@ interface DispatchResult {
   sentAt?: number;
   blocked?: "kill_switch_on" | "connection_cap" | "no_connection";
   error?: string;
+  submission?: ExternalActionSubmission;
 }
 
-/** Send one X DM message row. Auto sends enforce the workspace kill switch +
- * per-connection daily cap; a block leaves the message pending (it retries). */
-async function dispatchXMessage(
+async function proposeEmailSend(
   ctx: RunCtx,
   launch: LaunchRow,
   messageId: string,
-  body: string,
-  recipientHandle: string,
+  nowMs: number,
+): Promise<DispatchResult> {
+  const message = ctx.db.select().from(launchMessages).where(eq(launchMessages.id, messageId)).get();
+  const draft = message ? draftRow(ctx.db, message.draftId) : undefined;
+  if (!message || !draft) return { sent: false, error: "message_missing" };
+  const baseKey = deriveEmailSendIdempotencyKey(message.id, {
+    draftId: draft.id,
+    content: draft.content,
+    stepNumber: message.stepNumber,
+  });
+
+  let submission: ExternalActionSubmission;
+  const existing = message.externalActionId
+    ? getExternalAction(ctx.db, launch.workspaceId, message.externalActionId)
+    : undefined;
+  if (existing) {
+    const retryableSafetyBlocker =
+      existing.status === "blocked" &&
+      ["permission_unknown", "suppressed", "kill_switch_on", "daily_cap_reached"].includes(
+        existing.blocker?.code ?? "",
+      );
+    if (!retryableSafetyBlocker) {
+      return { sent: message.status === "sent", sentAt: message.sentAt ?? undefined, submission: { action: existing, execution: existing.execution } };
+    }
+    if (!checkEmailRecipientSafety(ctx.db, launch.workspaceId, message.recipientEmail).ok) {
+      return { sent: false, submission: { action: existing, execution: existing.execution } };
+    }
+    submission = await ctx.runtime.repropose(
+      existing.id,
+      launch.workspaceId,
+      `${baseKey}:retry:${existing.id}`,
+      SYSTEM_ACTOR,
+    );
+  } else {
+    submission = await ctx.runtime.propose(
+      prepareEmailAction(ctx.db, launch.workspaceId, {
+        origin: "launch_message",
+        originId: message.id,
+        idempotencyKey: baseKey,
+      }),
+      SYSTEM_ACTOR,
+    );
+  }
+
+  ctx.db.update(launchMessages)
+    .set({ externalActionId: submission.action.id, updatedAt: Date.now() })
+    .where(eq(launchMessages.id, message.id))
+    .run();
+  const after = ctx.db.select().from(launchMessages).where(eq(launchMessages.id, message.id)).get();
+  return {
+    sent: submission.action.status === "succeeded" && after?.status === "sent",
+    sentAt: after?.sentAt ?? nowMs,
+    submission,
+  };
+}
+
+/** Propose one X DM as a durable `send` external action. Autonomous policy
+ * dispatches it in the same call; human policy leaves the message pending with
+ * an authorization queued in Review. Auto sends still enforce the workspace
+ * kill switch + per-connection daily cap before proposing, so a block leaves
+ * the message pending (it retries) rather than creating a dead action. */
+async function proposeXSend(
+  ctx: RunCtx,
+  launch: LaunchRow,
+  messageId: string,
   enforceGuardrails: boolean,
   nowMs: number,
 ): Promise<DispatchResult> {
@@ -523,37 +594,37 @@ async function dispatchXMessage(
       return { sent: false, blocked: "connection_cap" };
     }
   }
-  const provider = providerByKey("twitter");
-  const adapter = provider ? socialAdapterFor(ctx.fabric, provider, conn) : undefined;
+  const message = ctx.db.select().from(launchMessages).where(eq(launchMessages.id, messageId)).get();
+  const draft = message ? draftRow(ctx.db, message.draftId) : undefined;
+  if (!message || !draft) return { sent: false, error: "message_missing" };
   try {
-    if (!adapter?.sendDm) throw new Error("The X connection is not available — reconnect it.");
-    const res = await adapter.sendDm({ recipientHandle, body });
-    ctx.db
-      .update(launchMessages)
-      .set({
-        status: "sent",
-        sentAt: nowMs,
-        externalId: res.externalId,
-        externalUrl: res.url || null,
+    const command = prepareSendAction(ctx.db, launch.workspaceId, launch.id, messageId, {
+      idempotencyKey: deriveSendIdempotencyKey(messageId, {
         connectionId: conn.id,
-        lastError: null,
-        updatedAt: nowMs,
-      })
+        draftId: draft.id,
+        content: draft.content,
+      }),
+      connectionId: conn.id,
+      automated: launch.automationMode === "scheduled_auto",
+    });
+    const submission = await ctx.runtime.propose(command, SYSTEM_ACTOR);
+    const after = ctx.db
+      .select()
+      .from(launchMessages)
       .where(eq(launchMessages.id, messageId))
-      .run();
-    return { sent: true, sentAt: nowMs };
+      .get();
+    if (submission.action.status === "succeeded" && after?.status === "sent") {
+      return { sent: true, sentAt: after.sentAt ?? nowMs };
+    }
+    return { sent: false };
   } catch (err) {
-    const message = (err instanceof Error ? err.message : String(err)).slice(0, 500);
-    ctx.db
-      .update(launchMessages)
-      .set({ status: "failed", lastError: message, updatedAt: nowMs })
-      .where(eq(launchMessages.id, messageId))
-      .run();
-    return { sent: false, error: message };
+    // A conflicting or failed proposal never aborts the run — the message stays
+    // pending/failed with its durable action telling the story.
+    return { sent: false, error: (err instanceof Error ? err.message : String(err)).slice(0, 500) };
   }
 }
 
-/** Generate (and, in scheduled_auto, approve + for X send) one step for a recipient. */
+/** Generate and, in scheduled_auto, approve and send one step for a recipient. */
 async function startStep(
   ctx: RunCtx,
   launch: LaunchRow,
@@ -570,16 +641,10 @@ async function startStep(
   if (launch.automationMode === "scheduled_auto") {
     applyDraftAction(ctx.db, res.draft, "approve", SYSTEM_ACTOR);
     acc.autoApproved += 1;
-    if (recipient.channel === "x") {
-      const d = await dispatchXMessage(
-        ctx,
-        launch,
-        res.messageId,
-        res.draft.content,
-        recipient.recipientHandle ?? "",
-        true,
-        nowMs,
-      );
+    if (recipient.channel === "x" || recipient.channel === "email") {
+      const d = recipient.channel === "x"
+        ? await proposeXSend(ctx, launch, res.messageId, true, nowMs)
+        : await proposeEmailSend(ctx, launch, res.messageId, nowMs);
       if (d.sent) {
         acc.sent += 1;
         updateRecipient(ctx.db, recipient.id, { lastSentAt: d.sentAt! });
@@ -619,22 +684,23 @@ async function advanceRecipient(
   let cur = currentMessage(ctx.db, recipient.id, k);
   if (!cur) return; // defensive — nothing generated for the current step yet
 
-  // Approved but not sent: an X step dispatches on this run (in every mode — the
-  // mode only governs auto-approval, not whether an approved step is sent); only
-  // scheduled_auto enforces guardrails (a human already vetted the others). Email
-  // always waits for the CSV export (the deliverability boundary, manual in every mode).
+  // Approved but not sent: a personalized step proposes its send action on this run (in
+  // every mode — the mode only governs auto-approval, not whether an approved
+  // step is proposed); only scheduled_auto enforces guardrails (a human already
+  // vetted the others). A human_required policy leaves the action queued in
+  // Review while the recipient waits here. Native email uses the same durable
+  // action boundary and keeps CSV as recovery only.
   if (draftRow(ctx.db, cur.draftId)?.state === "approved" && cur.status === "pending") {
-    if (recipient.channel === "x") {
-      const body = draftRow(ctx.db, cur.draftId)?.content ?? "";
-      const d = await dispatchXMessage(
-        ctx,
-        launch,
-        cur.id,
-        body,
-        recipient.recipientHandle ?? "",
-        launch.automationMode === "scheduled_auto",
-        nowMs,
-      );
+    if (recipient.channel === "x" || recipient.channel === "email") {
+      const d = recipient.channel === "x"
+        ? await proposeXSend(
+            ctx,
+            launch,
+            cur.id,
+            launch.automationMode === "scheduled_auto",
+            nowMs,
+          )
+        : await proposeEmailSend(ctx, launch, cur.id, nowMs);
       if (d.sent) {
         acc.sent += 1;
         updateRecipient(ctx.db, recipient.id, { lastSentAt: d.sentAt! });
@@ -694,12 +760,11 @@ function makeCtx(
   db: Db,
   llm: LlmGateway,
   evidence: EvidenceStore,
-  fabric: ConnectorFabric,
-  fetcher: Fetcher,
+  runtime: ExternalActionRuntime,
   workspaceId: string,
 ): RunCtx {
   const pool = new Map(loadPeople(db, workspaceId).map((p) => [`${p.type}:${p.id}`, p]));
-  return { db, llm, evidence, fabric, fetcher, pool };
+  return { db, llm, evidence, runtime, pool };
 }
 
 // ---------------------------------------------------------------------------
@@ -715,8 +780,7 @@ export async function startSequence(
   db: Db,
   llm: LlmGateway,
   evidence: EvidenceStore,
-  fabric: ConnectorFabric,
-  fetcher: Fetcher,
+  runtime: ExternalActionRuntime,
   workspaceId: string,
   launchId: string,
   nowMs: number = Date.now(),
@@ -774,7 +838,7 @@ export async function startSequence(
   }
   if (launch.status === "draft") setLaunchStatus(db, launchId, "ready");
 
-  const ctx = makeCtx(db, llm, evidence, fabric, fetcher, workspaceId);
+  const ctx = makeCtx(db, llm, evidence, runtime, workspaceId);
   const fresh = launchRowById(db, workspaceId, launchId)!;
   await runForLaunch(ctx, fresh, now, acc);
   return { ok: true, result: toRunResult(acc, now) };
@@ -785,8 +849,7 @@ export async function runLaunchSequence(
   db: Db,
   llm: LlmGateway,
   evidence: EvidenceStore,
-  fabric: ConnectorFabric,
-  fetcher: Fetcher,
+  runtime: ExternalActionRuntime,
   workspaceId: string,
   launchId: string,
   nowMs: number = Date.now(),
@@ -795,7 +858,7 @@ export async function runLaunchSequence(
   if (!launch) return { ok: false, error: "launch_not_found" };
   if (stepRows(db, launchId).length === 0) return { ok: false, error: "no_sequence" };
   const acc = newAcc();
-  const ctx = makeCtx(db, llm, evidence, fabric, fetcher, workspaceId);
+  const ctx = makeCtx(db, llm, evidence, runtime, workspaceId);
   await runForLaunch(ctx, launch, nowMs, acc);
   return { ok: true, result: toRunResult(acc, nowMs) };
 }
@@ -805,8 +868,7 @@ export async function runSequences(
   db: Db,
   llm: LlmGateway,
   evidence: EvidenceStore,
-  fabric: ConnectorFabric,
-  fetcher: Fetcher,
+  runtime: ExternalActionRuntime,
   workspaceId: string,
   nowMs: number = Date.now(),
 ): Promise<SequenceRunResult> {
@@ -821,7 +883,7 @@ export async function runSequences(
         .map((r) => r.launchId),
     ),
   ];
-  const ctx = makeCtx(db, llm, evidence, fabric, fetcher, workspaceId);
+  const ctx = makeCtx(db, llm, evidence, runtime, workspaceId);
   for (const launchId of launchIds) {
     const launch = launchRowById(db, workspaceId, launchId);
     // Manual launches never advance on the worker tick — the founder drives them

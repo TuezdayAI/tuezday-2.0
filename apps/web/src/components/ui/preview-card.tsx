@@ -1,10 +1,11 @@
 // apps/web/src/components/ui/preview-card.tsx — spec §6.1.
 // Content rendered as itself: social/email/blog/ad framings, one shared chrome.
 import type { ReactNode } from "react";
+import type { WorkflowStatus } from "@tuezday/contracts";
 import styles from "./preview-card.module.css";
 import { Icon, BrandIcon, type IconName } from "./icon";
 import type { BrandName } from "./brand-icons";
-import { Badge } from "./badge";
+import { Badge, WorkflowStatusBadge } from "./badge";
 import type { PreviewKind } from "../../../lib/preview-kind";
 
 const KIND_ICON: Record<PreviewKind, IconName> = {
@@ -28,6 +29,7 @@ interface PreviewCardProps {
   /** Draft copy / subject-adjacent body text. Clamped by the renderer. */
   body: string;
   scheduledAt?: string;
+  workflowStatus?: WorkflowStatus;
   status?: string;
   statusTone?: StatusTone;
   /** Platform mark for social/ad framings. */
@@ -39,18 +41,22 @@ interface PreviewCardProps {
 }
 
 export function PreviewCard({
-  kind, title, body, scheduledAt, status, statusTone = "pending",
+  kind, title, body, scheduledAt, workflowStatus, status, statusTone = "pending",
   platform, mediaUrl, onOpen, actions,
 }: PreviewCardProps) {
   return (
     <article className={styles.card} data-kind={kind}>
       <header className={styles.chrome} data-tone-kind={kind}>
         <span className={styles.kind}>
-          <Icon name={KIND_ICON[kind]} size="sm" />
+          <Icon name={KIND_ICON[kind]} size="compact" />
           {KIND_LABEL[kind]}
         </span>
         {scheduledAt && <time className={styles.time}>{scheduledAt}</time>}
-        {status && <Badge tone={statusTone}>{status}</Badge>}
+        {workflowStatus ? (
+          <WorkflowStatusBadge status={workflowStatus} />
+        ) : (
+          status && <Badge tone={statusTone}>{status}</Badge>
+        )}
       </header>
 
       <button type="button" className={styles.surface} onClick={onOpen} disabled={!onOpen}>
@@ -59,7 +65,7 @@ export function PreviewCard({
             <div className={styles.socialTop}>
               <span className={styles.avatar} aria-hidden="true" />
               <span className={styles.handle}>{title}</span>
-              {platform && <BrandIcon name={platform} size="sm" className={styles.platform} />}
+              {platform && <BrandIcon name={platform} size="compact" className={styles.platform} />}
             </div>
             {mediaUrl ? (
               <img className={styles.media} src={mediaUrl} alt="" />
@@ -87,7 +93,7 @@ export function PreviewCard({
             {mediaUrl && <img className={styles.media} src={mediaUrl} alt="" />}
             <div className={styles.adMeta}>
               <span className={styles.adHeadline}>{title}</span>
-              {platform && <BrandIcon name={platform} size="sm" className={styles.platform} />}
+              {platform && <BrandIcon name={platform} size="compact" className={styles.platform} />}
             </div>
             {!mediaUrl && <p className={styles.copyClamp}>{body}</p>}
           </div>

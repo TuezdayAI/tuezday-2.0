@@ -1,0 +1,105 @@
+/* Outreach sequences (Sprint 48) — Editorial tokens only, mirrors launches. */
+
+.cardTitle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cardTitle svg {
+  color: var(--muted);
+}
+
+.detail {
+  border-top: 1px solid var(--border);
+  margin-top: 10px;
+  padding-top: 12px;
+  display: grid;
+  gap: 12px;
+}
+
+.poolGrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin-top: 6px;
+}
+
+.stepList {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.stepRow {
+  display: grid;
+  gap: 6px;
+}
+
+.stepHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.stepNum {
+  font-weight: 650;
+  color: var(--text);
+}
+
+.validationError {
+  color: var(--rose-ink);
+  background: var(--rose);
+  border-radius: var(--radius-sm);
+  padding: 8px 12px;
+  font-size: 13px;
+  margin: 0;
+}
+
+.enrollTableWrap {
+  overflow-x: auto;
+  margin-top: 8px;
+}
+
+.enrollTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.enrollTable th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.enrollTable td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  color: var(--text);
+}
+
+.enrollTable tr:last-child td {
+  border-bottom: none;
+}
+
+.enrollEmail {
+  font-weight: 600;
+}
+
+.enrollActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}

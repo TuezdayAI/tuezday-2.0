@@ -8,8 +8,52 @@ import {
   type MediaContactType,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
-import { mediaContacts, type MediaContactRow } from "../db/schema";
+import { drafts, mediaContacts, type MediaContactRow } from "../db/schema";
 import { parseCsvLine, type ImportResult } from "./leads";
+import {
+  deriveEmailSendIdempotencyKey,
+  prepareEmailAction,
+} from "./external-action-email";
+import type { ExternalActionCommand } from "./external-action-coordinator";
+
+export class PrDraftEmailError extends Error {
+  constructor(
+    readonly code: "draft_not_found" | "draft_not_approved" | "draft_not_pitch" | "contact_not_found",
+    message: string,
+  ) {
+    super(message);
+    this.name = "PrDraftEmailError";
+  }
+}
+
+export function preparePrDraftEmailAction(
+  db: Db,
+  workspaceId: string,
+  draftId: string,
+): ExternalActionCommand {
+  const draft = db.select().from(drafts).where(
+    and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)),
+  ).get();
+  if (!draft) throw new PrDraftEmailError("draft_not_found", "PR pitch draft not found.");
+  if (draft.state !== "approved") {
+    throw new PrDraftEmailError("draft_not_approved", "Approve this pitch before sending it.");
+  }
+  if (draft.channel !== "pr" || draft.taskType !== "pr_pitch") {
+    throw new PrDraftEmailError("draft_not_pitch", "This draft is not a media pitch.");
+  }
+  if (!draft.mediaContactId || !getMediaContact(db, workspaceId, draft.mediaContactId)) {
+    throw new PrDraftEmailError("contact_not_found", "This pitch is not linked to a current media contact.");
+  }
+  return prepareEmailAction(db, workspaceId, {
+    origin: "pr_draft",
+    originId: draft.id,
+    idempotencyKey: deriveEmailSendIdempotencyKey(draft.id, {
+      draftId: draft.id,
+      content: draft.content,
+      stepNumber: null,
+    }),
+  });
+}
 
 function rowToContact(row: MediaContactRow): MediaContact {
   return { ...row, type: row.type as MediaContactType };

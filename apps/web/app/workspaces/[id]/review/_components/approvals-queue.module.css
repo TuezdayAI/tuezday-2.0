@@ -1,0 +1,18 @@
+/* Approvals gallery — campaign/date groups own queue scanning; editor owns detail. */
+.group { margin-top: 28px; }
+.groupHead { display: flex; align-items: center; gap: 10px; min-height: 32px; margin-bottom: 12px; }
+.groupTitle { display: inline-flex; align-items: center; gap: 8px; margin: 0; color: var(--text); font-family: var(--font-display); font-size: 17px; font-weight: 600; }
+.groupTitle svg { color: var(--muted); }
+.groupRange { color: var(--muted-2); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.approveAll { margin-left: auto; }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 16px; align-items: start; }
+.filterRow { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin: 0 0 16px; }
+.filterField { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 11px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
+.filterField select { min-width: 160px; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); color: var(--text); font-size: 12.5px; }
+.filterField select:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+
+@media (max-width: 640px) {
+  .groupHead { align-items: flex-start; flex-wrap: wrap; }
+  .approveAll { margin-left: 0; }
+  .gallery { grid-template-columns: minmax(0, 1fr); }
+}

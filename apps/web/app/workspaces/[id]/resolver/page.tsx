@@ -37,6 +37,7 @@ import {
 } from "@tuezday/contracts";
 import type { ContextSection, ResolvedContext } from "@tuezday/brain";
 import { SectionBadges } from "@/components/why-this-output";
+import { ScopedActionPolicy } from "@/src/components/scoped-action-policy";
 import {
   connectionLabel,
   defaultTargetForChannel,
@@ -57,6 +58,7 @@ const TASK_LABELS: Record<TaskType, string> = {
   x_dm: "X DM",
   instagram_post: "Instagram post",
   engagement_reply: "Reply",
+  instagram_carousel: "Instagram carousel",
 };
 
 const MATRIX_DOC_LABELS: Record<MatrixDocType, string> = {
@@ -430,13 +432,13 @@ export default function ResolverPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="user" size="sm" />
+              <Icon name="user" size="compact" />
               Personas{" "}
               {personas.length > 0 && <CountBadge count={personas.length} label="personas" />}
             </span>
           }
           actions={
-            <Button variant="secondary" size="sm" onClick={() => startEdit()}>
+            <Button variant="secondary" size="compact" onClick={() => startEdit()}>
               + New persona
             </Button>
           }
@@ -446,7 +448,7 @@ export default function ResolverPage() {
             title="No personas yet"
             description="Create one (e.g. “CEO voice”, “Company page”) to see the same brain resolve differently per voice."
             primaryAction={
-              <Button variant="secondary" size="sm" onClick={() => startEdit()}>
+              <Button variant="secondary" size="compact" onClick={() => startEdit()}>
                 + New persona
               </Button>
             }
@@ -454,22 +456,34 @@ export default function ResolverPage() {
         ) : (
           <ul className="persona-list">
             {personas.map((p) => (
-              <li key={p.id} className="persona-card">
-                <div>
-                  <span className="name">{p.name}</span>
-                  {p.description && <span className="meta"> — {p.description}</span>}
-                  {p.topics.length > 0 && (
-                    <span className="meta"> · covers {p.topics.join(", ")}</span>
-                  )}
+              <li key={p.id} className={`persona-card ${styles.personaPolicyCard}`}>
+                <div className={styles.personaSummary}>
+                  <div>
+                    <span className="name">{p.name}</span>
+                    {p.description && <span className="meta"> — {p.description}</span>}
+                    {p.topics.length > 0 && (
+                      <span className="meta"> · covers {p.topics.join(", ")}</span>
+                    )}
+                  </div>
+                  <div className="persona-actions">
+                    <Button variant="secondary" size="compact" onClick={() => startEdit(p)}>
+                      Edit
+                    </Button>
+                    <Button variant="danger" size="compact" onClick={() => removePersona(p)}>
+                      Delete
+                    </Button>
+                  </div>
                 </div>
-                <div className="persona-actions">
-                  <Button variant="secondary" size="sm" onClick={() => startEdit(p)}>
-                    Edit
-                  </Button>
-                  <Button variant="danger" size="sm" onClick={() => removePersona(p)}>
-                    Delete
-                  </Button>
-                </div>
+                {showPersonaForm && editingId === p.id && (
+                  <div className={styles.personaPolicyEditor}>
+                    <ScopedActionPolicy
+                      workspaceId={id}
+                      scope="persona"
+                      scopeId={p.id}
+                      title={`Action permission for ${p.name}`}
+                    />
+                  </div>
+                )}
               </li>
             ))}
           </ul>
@@ -524,7 +538,7 @@ export default function ResolverPage() {
               </Button>
               <Button
                 variant="secondary"
-                size="sm"
+                size="compact"
                 type="button"
                 onClick={() => setShowPersonaForm(false)}
               >
@@ -537,7 +551,7 @@ export default function ResolverPage() {
         {personas.length > 0 && (
           <div style={{ borderTop: "1px solid var(--border)", marginTop: 18, paddingTop: 16 }}>
             <h2 className={styles.head}>
-              <Icon name="connect" size="sm" />
+              <Icon name="connect" size="compact" />
               Social account routing
             </h2>
             <p className="subtitle">
@@ -585,8 +599,8 @@ export default function ResolverPage() {
                                 )}{" "}
                                 {!assignment.isPrimary && (
                                   <Button
-                                    variant="ghost"
-                                    size="sm"
+                                    variant="tertiary"
+                                    size="compact"
                                     type="button"
                                     disabled={assignmentBusy === persona.id}
                                     onClick={() => void makePrimary(persona.id, assignment)}
@@ -595,8 +609,8 @@ export default function ResolverPage() {
                                   </Button>
                                 )}{" "}
                                 <Button
-                                  variant="ghost"
-                                  size="sm"
+                                  variant="tertiary"
+                                  size="compact"
                                   type="button"
                                   disabled={assignmentBusy === persona.id}
                                   onClick={() => void removeAssignment(persona.id, assignment.id)}
@@ -680,7 +694,7 @@ export default function ResolverPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="bundle" size="sm" />
+              <Icon name="bundle" size="compact" />
               Resolve
             </span>
           }
@@ -798,7 +812,7 @@ export default function ResolverPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="doc-icp" size="sm" />
+              <Icon name="doc-icp" size="compact" />
               Task × doc context matrix
             </span>
           }
@@ -852,8 +866,8 @@ export default function ResolverPage() {
                               <>
                                 <span className="guidance-source source-workspace">override</span>
                                 <Button
-                                  variant="ghost"
-                                  size="sm"
+                                  variant="tertiary"
+                                  size="compact"
                                   type="button"
                                   disabled={busy}
                                   onClick={() => void resetMatrixCell(t, d)}

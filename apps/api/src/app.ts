@@ -8,15 +8,24 @@ import { registerAuthGuard } from "./auth/guard";
 import type { ConnectorFabric } from "./connectors/fabric";
 import { NangoFabric } from "./connectors/nango";
 import type { Db } from "./db";
+import { OpenDesignProvider } from "./design/open-design";
+import type { DesignProvider } from "./design/provider";
+import { closeRenderer, renderSlide, type RenderInput } from "./design/render";
+import { S3AssetStorage, type AssetStorage } from "./design/storage";
 import type { Fetcher } from "./discovery/adapters";
 import { NullIntentProvider, type IntentProvider } from "./discovery/intent";
 import { DbEvidenceStore } from "./evidence/db-store";
 import type { EvidenceStore } from "./evidence/store";
-import { GeminiGateway } from "./llm/gemini";
+import { createLlmGatewayFromEnv } from "./llm";
 import type { LlmGateway } from "./llm/gateway";
 import { CsvOutboundExporter, type OutboundExporter } from "./outbound/exporter";
+import { createOutboundEmailProviderFromEnv } from "./outbound-email/resend";
+import { FabricGmailProvider, type GmailMailboxProvider } from "./outbound-email/gmail";
+import type { OutboundEmailProvider } from "./outbound-email/provider";
+import { createResendWebhookVerifierFromEnv, type ResendWebhookVerifier } from "./outbound-email/webhook";
 import { createDefaultMailer, type Mailer } from "./mail/mailer";
 import { registerAdCreativeRoutes } from "./routes/ad-creatives";
+import { registerAdImageRoutes } from "./routes/ad-images";
 import { registerAdLaunchRoutes } from "./routes/ad-launches";
 import { registerAdsRoutes } from "./routes/ads";
 import { registerAudienceRoutes } from "./routes/audiences";
@@ -25,21 +34,35 @@ import { registerAutomationRoutes } from "./routes/automation";
 import { registerBrainRoutes } from "./routes/brain";
 import { registerCadenceRoutes } from "./routes/cadences";
 import { registerCampaignRoutes } from "./routes/campaigns";
+import { registerCampaignPlanRoutes } from "./routes/campaign-plans";
+import { registerCarouselRoutes } from "./routes/carousels";
 import { registerConnectorRoutes } from "./routes/connectors";
 import { registerContextMatrixRoutes } from "./routes/context-matrix";
 import { registerCrmRoutes } from "./routes/crm";
 import { registerDiscoveryRoutes } from "./routes/discovery";
 import { registerDraftRoutes } from "./routes/drafts";
 import { registerEvidenceRoutes } from "./routes/evidence";
+import { registerExecutionRoutes } from "./routes/executions";
+import { registerExternalActionRoutes } from "./routes/external-actions";
+import { registerExternalActionBatchRoutes } from "./routes/external-action-batches";
+import { registerExternalActionPolicyRoutes } from "./routes/external-action-policies";
+import { registerEmailSenderRoutes } from "./routes/email-senders";
+import { registerEmailRecipientSafetyRoutes } from "./routes/email-recipient-safety";
+import { registerResendWebhookRoute } from "./routes/resend-webhooks";
+import { registerDesignSystemRoutes } from "./routes/design-systems";
 import { registerGuidanceRoutes } from "./routes/guidance";
 import { registerGenerationSettingsRoutes } from "./routes/generation-settings";
 import { registerInboxRoutes } from "./routes/inbox";
 import { registerLaunchRoutes } from "./routes/launches";
 import { registerLearningRoutes } from "./routes/learning";
 import { registerMailRoutes } from "./routes/mail";
+import { registerMailboxRoutes } from "./routes/mailboxes";
 import { registerNextActionRoutes } from "./routes/next-action";
 import { registerOutboundRoutes } from "./routes/outbound";
+import { registerOutreachRoutes } from "./routes/outreach";
+import { registerComplianceRoutes } from "./routes/compliance";
 import { registerPrRoutes } from "./routes/pr";
+import { registerPriorityRoutes } from "./routes/priorities";
 import { registerPublicationRoutes } from "./routes/publications";
 import { registerGenerationRoutes } from "./routes/generations";
 import { registerPersonaRoutes } from "./routes/personas";
@@ -54,6 +77,9 @@ import { registerBillingRoutes, registerStripeWebhookRoute } from "./routes/bill
 import { registerNotificationRoutes } from "./routes/notifications";
 import { registerApiKeyRoutes } from "./routes/api-keys";
 import { registerPublicApiRoutes } from "./routes/public-api";
+import { backfillExternalActionPolicies } from "./services/external-action-backfill";
+import { createExternalActionAdapters } from "./services/external-action-adapters";
+import { createExternalActionRuntime } from "./services/external-action-coordinator";
 
 export type TuezdayApp = FastifyInstance;
 
@@ -73,6 +99,12 @@ export interface BuildAppOptions {
   exporter?: OutboundExporter;
   /** Transactional mailer (Sprint 27); defaults to Resend, else a console logger. */
   mailer?: Mailer;
+  /** Governed outbound-email provider; uses the platform Resend key when configured. */
+  outboundEmail?: OutboundEmailProvider;
+  /** Gmail mailbox provider (Sprint 47); defaults to the fabric-backed client. */
+  gmail?: GmailMailboxProvider;
+  /** Signature verifier for public Resend delivery webhooks. */
+  resendWebhookVerifier?: ResendWebhookVerifier;
   /**
    * Shared secret that authenticates the worker as the `system` actor with
    * access to every workspace. Defaults to TUEZDAY_WORKER_TOKEN.
@@ -80,21 +112,46 @@ export interface BuildAppOptions {
   workerToken?: string;
   /** Product-analytics sink; defaults to PostHog-or-Noop from env. */
   analytics?: AnalyticsSink;
+  /** Design template author (Sprint 41); defaults to the self-hosted Open Design client. */
+  design?: DesignProvider;
+  /** Public asset storage (Sprint 41); defaults to the S3-compatible client from env. */
+  assetStorage?: AssetStorage;
+  /** Slide renderer (Sprint 41); defaults to the Playwright renderer — tests inject a fake. */
+  render?: (input: RenderInput) => Promise<Uint8Array>;
 }
 
 export async function buildApp({
   db,
-  llm = new GeminiGateway(),
+  llm = createLlmGatewayFromEnv(),
   fetcher = fetch,
   evidence = new DbEvidenceStore(db, llm),
   connectors = new NangoFabric(undefined, undefined, fetcher),
   intent = new NullIntentProvider(),
   exporter = new CsvOutboundExporter(),
   mailer = createDefaultMailer(fetcher),
+  outboundEmail = createOutboundEmailProviderFromEnv(fetcher),
+  gmail = new FabricGmailProvider(connectors),
+  resendWebhookVerifier = createResendWebhookVerifierFromEnv(),
   workerToken = process.env.TUEZDAY_WORKER_TOKEN,
   analytics = createAnalyticsSink(),
+  design = new OpenDesignProvider(),
+  assetStorage = new S3AssetStorage(),
+  render = renderSlide,
 }: BuildAppOptions): Promise<TuezdayApp> {
-  const app = Fastify({ logger: false });
+  // Signed public tokens can carry a normalized email address (up to 320
+  // characters) plus an HMAC. Keep a hard router bound above that envelope.
+  const app = Fastify({ logger: false, routerOptions: { maxParamLength: 1_024 } });
+  backfillExternalActionPolicies(db);
+  const externalActionRuntime = createExternalActionRuntime({
+    db,
+    adapters: createExternalActionAdapters(db, connectors, fetcher, outboundEmail, gmail),
+    analytics,
+  });
+
+  // The design renderer keeps one shared headless browser per process.
+  app.addHook("onClose", async () => {
+    await closeRenderer();
+  });
 
   // @fastify/cors only allows GET/HEAD/POST by default — the brain editor
   // saves with PUT, and later slices use PATCH/DELETE.
@@ -131,31 +188,46 @@ export async function buildApp({
   registerStripeWebhookRoute(app, db);
   registerBrainRoutes(app, db, llm);
   registerGuidanceRoutes(app, db);
+  registerDesignSystemRoutes(app, db);
   registerContextMatrixRoutes(app, db);
   registerGenerationSettingsRoutes(app, db);
   registerPersonaRoutes(app, db, evidence);
   registerGenerationRoutes(app, db, llm, evidence, analytics);
-  registerDraftRoutes(app, db, fetcher, llm, analytics, mailer);
+  registerDraftRoutes(app, db, fetcher, llm, analytics, mailer, evidence);
+  registerCarouselRoutes(app, db, design, assetStorage, render);
   registerNotificationRoutes(app, db, mailer, fetcher);
   registerSignalRoutes(app, db, llm, evidence);
   registerDiscoveryRoutes(app, db, llm, fetcher, intent, connectors);
   registerCampaignRoutes(app, db);
+  registerCampaignPlanRoutes(app, db);
   registerAudienceRoutes(app, db);
   registerEvidenceRoutes(app, db, evidence);
   registerLearningRoutes(app, db, llm, fetcher);
-  registerOutboundRoutes(app, db, llm, evidence);
-  registerLaunchRoutes(app, db, llm, evidence, connectors, fetcher, exporter);
+  registerOutboundRoutes(app, db, llm, evidence, externalActionRuntime);
+  registerOutreachRoutes(app, db, llm, evidence, externalActionRuntime, connectors, mailer, fetcher);
+  registerComplianceRoutes(app, db);
+  registerLaunchRoutes(app, db, llm, evidence, exporter, externalActionRuntime);
   registerConnectorRoutes(app, db, connectors, fetcher, analytics);
   registerCrmRoutes(app, db, connectors, fetcher);
   registerAdsRoutes(app, db, connectors, fetcher);
-  registerAdLaunchRoutes(app, db, connectors, fetcher);
+  registerAdLaunchRoutes(app, db, connectors, fetcher, externalActionRuntime);
   registerAdCreativeRoutes(app, db, llm, evidence);
-  registerPrRoutes(app, db, llm, evidence);
-  registerPublicationRoutes(app, db, connectors, fetcher, analytics);
-  registerCadenceRoutes(app, db, connectors, fetcher);
+  registerAdImageRoutes(app, db, design, assetStorage, render);
+  registerPrRoutes(app, db, llm, evidence, externalActionRuntime);
+  registerPublicationRoutes(app, db, connectors, fetcher, analytics, externalActionRuntime);
+  registerExecutionRoutes(app, db);
+  registerExternalActionRoutes(app, db, externalActionRuntime);
+  registerExternalActionBatchRoutes(app, db, externalActionRuntime);
+  registerExternalActionPolicyRoutes(app, db);
+  registerPriorityRoutes(app, db);
+  registerCadenceRoutes(app, db, externalActionRuntime);
   registerMailRoutes(app, db, mailer);
+  registerEmailSenderRoutes(app, db, outboundEmail);
+  registerMailboxRoutes(app, db, llm, gmail);
+  registerEmailRecipientSafetyRoutes(app, db);
+  registerResendWebhookRoute(app, db, resendWebhookVerifier);
   registerAutomationRoutes(app, db, llm, evidence);
-  registerInboxRoutes(app, db, llm, evidence, connectors, fetcher);
+  registerInboxRoutes(app, db, llm, evidence, connectors, externalActionRuntime);
   registerInsightsRoutes(app, db);
   registerNextActionRoutes(app, db);
 

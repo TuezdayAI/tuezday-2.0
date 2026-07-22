@@ -124,8 +124,8 @@ export default function EvidencePage() {
   return (
     <>
       <TopBarActions>
-        <Button variant="secondary" size="sm" onClick={() => setShowAdd((v) => !v)}>
-          <Icon name="add" size="sm" />
+        <Button variant="secondary" size="compact" onClick={() => setShowAdd((v) => !v)}>
+          <Icon name="add" size="compact" />
           Add evidence
         </Button>
       </TopBarActions>
@@ -147,7 +147,7 @@ export default function EvidencePage() {
           <CardHeader
             title={
               <span className={styles.head}>
-                <Icon name="add" size="sm" className={styles.headIcon} />
+                <Icon name="add" size="compact" className={styles.headIcon} />
                 Add evidence
               </span>
             }
@@ -193,7 +193,7 @@ export default function EvidencePage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="status-review" size="sm" className={styles.headIconReview} />
+              <Icon name="status-review" size="compact" className={styles.headIconReview} />
               Ingest candidates <CountBadge count={candidates.length} label="pending candidates" />
             </span>
           }
@@ -211,7 +211,7 @@ export default function EvidencePage() {
               <li key={c.id} className="section-card">
                 <div className="section-head">
                   <span className={styles.kindMark} title={originLabel(c.kind)}>
-                    <Icon name={kindIcon(c.kind)} size="sm" />
+                    <Icon name={kindIcon(c.kind)} size="compact" />
                   </span>
                   <span className="layer-badge">
                     {c.kind === "signal" ? "From signal" : "From published"}
@@ -229,7 +229,7 @@ export default function EvidencePage() {
                   <Button variant="primary" onClick={() => acceptCandidate(c)} disabled={!view.store.healthy}>
                     Accept into corpus
                   </Button>
-                  <Button variant="secondary" size="sm" onClick={() => dismissCandidate(c)}>
+                  <Button variant="secondary" size="compact" onClick={() => dismissCandidate(c)}>
                     Dismiss
                   </Button>
                 </div>
@@ -243,7 +243,7 @@ export default function EvidencePage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="doc-history" size="sm" className={styles.headIcon} />
+              <Icon name="doc-history" size="compact" className={styles.headIcon} />
               Corpus <CountBadge count={view.documents.length} label="documents in the corpus" />
             </span>
           }
@@ -253,8 +253,8 @@ export default function EvidencePage() {
             description={<>No evidence yet. Paste your website copy and a few past posts to give the brain
             something to cite.</>}
             primaryAction={
-              <Button variant="secondary" size="sm" onClick={() => setShowAdd(true)}>
-                <Icon name="add" size="sm" />
+              <Button variant="secondary" size="compact" onClick={() => setShowAdd(true)}>
+                <Icon name="add" size="compact" />
                 Add evidence
               </Button>
             }
@@ -262,21 +262,21 @@ export default function EvidencePage() {
               <div className={styles.previewList}>
                 <div className={styles.previewCard}>
                   <span className={styles.kindMark}>
-                    <Icon name="blog" size="sm" />
+                    <Icon name="blog" size="compact" />
                   </span>
                   <span className={styles.previewTitle}>Website copy — homepage & pricing</span>
                   <span className={styles.previewMeta}>4,200 chars</span>
                 </div>
                 <div className={styles.previewCard}>
                   <span className={styles.kindMark}>
-                    <Icon name="post" size="sm" />
+                    <Icon name="post" size="compact" />
                   </span>
                   <span className={styles.previewTitle}>June launch post</span>
                   <span className={styles.previewMeta}>1,100 chars</span>
                 </div>
                 <div className={styles.previewCard}>
                   <span className={styles.kindMark}>
-                    <Icon name="blog" size="sm" />
+                    <Icon name="blog" size="compact" />
                   </span>
                   <span className={styles.previewTitle}>Customer call notes — onboarding pains</span>
                   <span className={styles.previewMeta}>2,700 chars</span>
@@ -290,7 +290,7 @@ export default function EvidencePage() {
               <li key={doc.id} className="section-card">
                 <div className="section-head">
                   <span className={styles.kindMark} title={originLabel(doc.kind)}>
-                    <Icon name={kindIcon(doc.kind)} size="sm" />
+                    <Icon name={kindIcon(doc.kind)} size="compact" />
                   </span>
                   <Badge
                     tone={
@@ -312,7 +312,7 @@ export default function EvidencePage() {
                 </div>
                 {doc.error && <p className="error-inline">{doc.error}</p>}
                 <div className="rating-row" style={{ marginTop: 8 }}>
-                  <Button variant="danger" size="sm" onClick={() => remove(doc)}>
+                  <Button variant="danger" size="compact" onClick={() => remove(doc)}>
                     Delete
                   </Button>
                 </div>

@@ -2,8 +2,9 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { adLaunchTransitionTo, createAdLaunchInputSchema } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
 import { type ConnectorFabric, type ProxyJsonResult } from "../src/connectors/fabric";
+import { MetaAdsAdapter } from "../src/connectors/ads/meta";
 import type { LlmGateway } from "../src/llm/gateway";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 /** Fake gateway producing valid ad-creative formats (mirrors ad-creatives.test.ts). */
 function fakeGateway(): LlmGateway {
@@ -45,6 +46,20 @@ interface ExecGraphState {
   adSetPosts: RecordedPost[];
   creativePosts: RecordedPost[];
   adPosts: RecordedPost[];
+  adSetMutationPosts: RecordedPost[];
+  adSets: Record<
+    string,
+    {
+      id: string;
+      daily_budget?: string;
+      targeting?: {
+        geo_locations?: { countries?: string[] };
+        age_min?: number;
+        age_max?: number;
+      };
+      updated_time?: string;
+    }
+  >;
   /** Status flips POSTed to /{campaignId}. */
   statusFlips: Array<{ campaignId: string; status: string }>;
   /** effective_status served by the campaign listing; flips update it. */
@@ -64,6 +79,19 @@ function execGraphState(): ExecGraphState {
     adSetPosts: [],
     creativePosts: [],
     adPosts: [],
+    adSetMutationPosts: [],
+    adSets: {
+      set_1: {
+        id: "set_1",
+        daily_budget: "5000",
+        targeting: {
+          geo_locations: { countries: ["US", "DE"] },
+          age_min: 25,
+          age_max: 54,
+        },
+        updated_time: "2026-07-15T08:00:00Z",
+      },
+    },
     statusFlips: [],
     effectiveStatus: {},
     calls: [],
@@ -101,6 +129,8 @@ function handleGraph(
     if (/^\/v23\.0\/act_\d+\/insights/.test(path)) {
       return { status: 200, json: { data: [] } };
     }
+    const adSet = /^\/v23\.0\/(set_\d+)\?fields=/.exec(path);
+    if (adSet) return { status: 200, json: state.adSets[adSet[1]!] };
     return { status: 404, json: { error: { message: "no such endpoint" } } };
   }
 
@@ -118,6 +148,24 @@ function handleGraph(
   if (/^\/v23\.0\/act_\d+\/adsets$/.test(path)) return record(path, state.adSetPosts, "as");
   if (/^\/v23\.0\/act_\d+\/adcreatives$/.test(path)) return record(path, state.creativePosts, "crv");
   if (/^\/v23\.0\/act_\d+\/ads$/.test(path)) return record(path, state.adPosts, "ad");
+  const adSetMutation = /^\/v23\.0\/(set_\d+)$/.exec(path);
+  if (adSetMutation) {
+    const id = adSetMutation[1]!;
+    const current = state.adSets[id]!;
+    const patch = (body ?? {}) as {
+      daily_budget?: number;
+      targeting?: {
+        geo_locations: { countries: string[] };
+        age_min: number;
+        age_max: number;
+      };
+    };
+    state.adSetMutationPosts.push({ path, body: patch as Record<string, unknown> });
+    if (patch.daily_budget !== undefined) current.daily_budget = String(patch.daily_budget);
+    if (patch.targeting) current.targeting = patch.targeting;
+    current.updated_time = "2026-07-15T09:00:00Z";
+    return { status: 200, json: { success: true } };
+  }
   const flip = /^\/v23\.0\/(cmp_\d+)$/.exec(path);
   if (flip) {
     const status = ((body ?? {}) as { status?: string }).status ?? "";
@@ -127,6 +175,57 @@ function handleGraph(
   }
   return { status: 404, json: { error: { message: "no such endpoint" } } };
 }
+
+describe("Meta ad-set mutation proxy", () => {
+  it("reads provider state and normalizes targeting", async () => {
+    const state = execGraphState();
+    const adapter = new MetaAdsAdapter(fakeFabric(state), {
+      nangoConnectionId: "connection-1",
+      integrationKey: "tuezday-meta_ads",
+    });
+
+    expect(await adapter.getAdSetState("act_111", "set_1")).toEqual({
+      externalAdSetId: "set_1",
+      dailyBudgetCents: 5000,
+      countries: ["DE", "US"],
+      ageMin: 25,
+      ageMax: 54,
+      updatedAt: Date.parse("2026-07-15T08:00:00Z"),
+    });
+  });
+
+  it("posts focused mutations and returns a fresh provider read", async () => {
+    const state = execGraphState();
+    const adapter = new MetaAdsAdapter(fakeFabric(state), {
+      nangoConnectionId: "connection-1",
+      integrationKey: "tuezday-meta_ads",
+    });
+
+    const budget = await adapter.updateDailyBudget("act_111", "set_1", 7500);
+    expect(state.adSetMutationPosts[0]?.body).toEqual({ daily_budget: 7500 });
+    expect(budget.dailyBudgetCents).toBe(7500);
+
+    const targeting = await adapter.updateTargeting("act_111", "set_1", {
+      countries: ["GB", "US"],
+      ageMin: 30,
+      ageMax: 60,
+    });
+    expect(state.adSetMutationPosts[1]?.body).toEqual({
+      targeting: {
+        geo_locations: { countries: ["GB", "US"] },
+        age_min: 30,
+        age_max: 60,
+      },
+    });
+    expect(targeting).toMatchObject({
+      countries: ["GB", "US"],
+      ageMin: 30,
+      ageMax: 60,
+      updatedAt: Date.parse("2026-07-15T09:00:00Z"),
+    });
+    expect(state.calls.filter((call) => call === "GET /v23.0/set_1")).toHaveLength(2);
+  });
+});
 
 function fakeFabric(state: ExecGraphState): ConnectorFabric {
   return {
@@ -263,6 +362,12 @@ describe("ads execution API (Sprint 20)", () => {
         payload: { name: "Launch", objective: "Win the launch" },
       })
     ).json().id;
+    // Legacy direct-launch scenarios: paid launches run autonomously so the
+    // provider chain stays observable. The authorization queue itself is
+    // covered in external-action-paid-launch.test.ts.
+    await putActionPolicy(app, workspaceId, "campaign", campaignId, {
+      paid_launch: "autonomous",
+    });
 
     const connection = (
       await app.inject({
@@ -452,7 +557,7 @@ describe("ads execution API (Sprint 20)", () => {
       ).toBe(204);
 
       const live = await approvedLaunch();
-      expect((await act(live, "launch")).statusCode).toBe(200);
+      expect((await act(live, "launch")).statusCode).toBe(201);
       const blocked = await app.inject({
         method: "DELETE",
         url: `/workspaces/${workspaceId}/ads/launches/${live}`,
@@ -504,9 +609,12 @@ describe("ads execution API (Sprint 20)", () => {
     it("creates the Meta object chain and activates the campaign last", async () => {
       const id = await approvedLaunch({ startAt: Date.now() + 60_000 });
       const res = await act(id, "launch");
-      expect(res.statusCode).toBe(200);
-      const launch = res.json();
+      expect(res.statusCode).toBe(201);
+      expect(res.json().action.status).toBe("succeeded");
+      expect(res.json().execution).toMatchObject({ kind: "ad_launch", status: "launched" });
+      const launch = await getLaunch(id);
       expect(launch.status).toBe("launched");
+      expect(launch.externalActionId).toBe(res.json().action.id);
       expect(launch.platformStatus).toBe("ACTIVE");
       expect(launch.launchedAt).toBeGreaterThan(0);
       expect(launch.externalCampaignId).toBe("cmp_1");
@@ -565,7 +673,7 @@ describe("ads execution API (Sprint 20)", () => {
 
     it("maps the awareness objective to REACH", async () => {
       const id = await approvedLaunch({ objective: "OUTCOME_AWARENESS" });
-      expect((await act(id, "launch")).statusCode).toBe(200);
+      expect((await act(id, "launch")).statusCode).toBe(201);
       expect(state.adSetPosts[0]!.body.optimization_goal).toBe("REACH");
     });
 
@@ -593,7 +701,7 @@ describe("ads execution API (Sprint 20)", () => {
 
       await act(id, "submit");
       await act(id, "approve");
-      expect((await act(id, "launch")).statusCode).toBe(200);
+      expect((await act(id, "launch")).statusCode).toBe(201);
       const again = await act(id, "launch");
       expect(again.statusCode).toBe(409);
       expect(again.json().error).toBe("already_launched");
@@ -603,32 +711,38 @@ describe("ads execution API (Sprint 20)", () => {
       const id = await approvedLaunch();
       await putSettings({ killSwitch: true });
       const res = await act(id, "launch");
-      expect(res.statusCode).toBe(409);
-      expect(res.json().error).toBe("kill_switch_on");
+      expect(res.statusCode).toBe(201);
+      expect(res.json().action.status).toBe("blocked");
+      expect(res.json().action.blocker.code).toBe("kill_switch_on");
       expect(state.campaignPosts).toHaveLength(0);
+      expect((await getLaunch(id)).status).toBe("approved");
     });
 
     it("enforces the workspace daily cap over committed budgets, ignoring paused launches", async () => {
       await putSettings({ dailyCapCents: 800 });
       const first = await approvedLaunch({ dailyBudgetCents: 500 });
-      expect((await act(first, "launch")).statusCode).toBe(200);
+      expect((await act(first, "launch")).statusCode).toBe(201);
 
       const second = await approvedLaunch({ dailyBudgetCents: 500, name: "Second push" });
       const blocked = await act(second, "launch");
-      expect(blocked.statusCode).toBe(409);
-      expect(blocked.json().error).toBe("daily_cap_exceeded");
+      expect(blocked.statusCode).toBe(201);
+      expect(blocked.json().action.status).toBe("blocked");
+      expect(blocked.json().action.blocker.code).toBe("daily_cap_exceeded");
 
-      // Pausing the first frees its committed budget.
+      // Pausing the first frees its committed budget for a fresh attempt.
       expect((await act(first, "pause")).statusCode).toBe(200);
-      expect((await act(second, "launch")).statusCode).toBe(200);
+      const retried = await act(second, "launch");
+      expect(retried.statusCode).toBe(201);
+      expect(retried.json().action.status).toBe("succeeded");
     });
 
     it("keeps partial progress on failure and resumes the chain on retry", async () => {
       const id = await approvedLaunch();
       state.failOn = "/adsets";
       const failed = await act(id, "launch");
-      expect(failed.statusCode).toBe(502);
-      expect(failed.json().error).toBe("launch_failed");
+      expect(failed.statusCode).toBe(201);
+      expect(failed.json().action.status).toBe("failed");
+      expect(failed.json().execution.error).toContain("graph says no");
 
       const after = await getLaunch(id);
       expect(after.status).toBe("approved");
@@ -638,11 +752,13 @@ describe("ads execution API (Sprint 20)", () => {
 
       state.failOn = null;
       const retried = await act(id, "launch");
-      expect(retried.statusCode).toBe(200);
+      expect(retried.statusCode).toBe(201);
+      expect(retried.json().action.status).toBe("succeeded");
       // The campaign from the first attempt is reused, not duplicated.
       expect(state.campaignPosts).toHaveLength(1);
-      expect(retried.json().externalCampaignId).toBe("cmp_1");
-      expect(retried.json().status).toBe("launched");
+      const relaunched = await getLaunch(id);
+      expect(relaunched.externalCampaignId).toBe("cmp_1");
+      expect(relaunched.status).toBe("launched");
     });
   });
 

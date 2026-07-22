@@ -16,7 +16,7 @@ import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric"
 import type { Db } from "../src/db";
 import type { LlmGateway } from "../src/llm/gateway";
 import { applyDraftAction, listDecisions, submitDraft } from "../src/services/drafts";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 const fakeLlm: LlmGateway = {
   async generate() {
@@ -133,6 +133,13 @@ describe("engagement & reply inbox", () => {
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Inbox" } })
     ).json().id;
+    // Legacy direct-flow scenarios: publish + reply run autonomously so the
+    // provider behaviour stays observable. The reply authorization queue is
+    // covered in external-action-messaging.test.ts.
+    await putActionPolicy(app, workspaceId, "workspace", workspaceId, {
+      publish: "autonomous",
+      reply: "autonomous",
+    });
   });
 
   afterEach(async () => {
@@ -169,6 +176,10 @@ describe("engagement & reply inbox", () => {
         payload: { automationMode },
       });
     }
+    await putActionPolicy(app, workspaceId, "campaign", id, {
+      publish: "autonomous",
+      reply: "autonomous",
+    });
     return id;
   }
 
@@ -197,7 +208,10 @@ describe("engagement & reply inbox", () => {
       url: `/workspaces/${workspaceId}/drafts/${draftId}/publish`,
       payload: { connectionId, target: "r/test", title: "Our original post" },
     });
-    const pub = res.json();
+    expect(res.json().action.status).toBe("succeeded");
+    const pub = (
+      await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/publications` })
+    ).json()[0];
     expect(pub.externalId).toBeTruthy();
     return pub;
   }
@@ -243,7 +257,7 @@ describe("engagement & reply inbox", () => {
 
   describe("contracts", () => {
     it("defines the inbox + metric vocabulary and parses the schemas", () => {
-      expect(INBOX_ITEM_KINDS).toEqual(["comment", "dm"]);
+      expect(INBOX_ITEM_KINDS).toEqual(["comment", "dm", "email"]);
       expect(INBOX_ITEM_STATUSES).toEqual(["unread", "read", "replied", "dismissed"]);
       expect(METRIC_WINDOWS).toEqual(["24h", "7d"]);
       expect(TASK_TYPES).toContain("engagement_reply");
@@ -361,15 +375,19 @@ describe("engagement & reply inbox", () => {
     expect(early.statusCode).toBe(409);
     expect(early.json().error).toBe("reply_not_approved");
 
-    // Approve, then post.
+    // Approve, then post — the reply action executes autonomously here.
     await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/drafts/${draft.id}/approve` });
     const posted = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/inbox/${item.id}/post-reply`,
     });
-    expect(posted.statusCode).toBe(200);
-    expect(posted.json().status).toBe("replied");
-    expect(posted.json().postedReplyExternalId).toBeTruthy();
+    expect(posted.statusCode).toBe(201);
+    expect(posted.json().action.status).toBe("succeeded");
+    expect(posted.json().execution.kind).toBe("inbox_reply");
+    const replied = (await listInbox()).find((i: { id: string }) => i.id === item.id);
+    expect(replied.status).toBe("replied");
+    expect(replied.postedReplyExternalId).toBeTruthy();
+    expect(replied.externalActionId).toBe(posted.json().action.id);
     expect(state.postedReplies).toHaveLength(1);
     expect(state.postedReplies[0]?.thing_id).toBe(item.externalId);
 
@@ -503,7 +521,8 @@ describe("engagement & reply inbox", () => {
       method: "POST",
       url: `/workspaces/${workspaceId}/inbox/${item.id}/post-reply`,
     });
-    expect(posted.statusCode).toBe(200);
-    expect(posted.json().status).toBe("replied");
+    expect(posted.statusCode).toBe(201);
+    expect(posted.json().action.status).toBe("succeeded");
+    expect((await listInbox())[0].status).toBe("replied");
   });
 });

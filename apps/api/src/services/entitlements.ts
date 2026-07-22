@@ -4,6 +4,7 @@ import { getSubscription } from "./subscriptions";
 import { listMembers } from "./teams";
 import { listConnections } from "./connections";
 import { countGenerationsSince } from "./generations";
+import { countCompletedRevisionTurnsSince } from "./draft-revisions";
 
 export class EntitlementError extends Error {
   constructor(public readonly key: keyof Entitlements, public readonly limit: number) {
@@ -23,10 +24,12 @@ export function getEntitlements(db: Db, workspaceId: string): Entitlements {
 
 export function getUsage(db: Db, workspaceId: string) {
   const periodStart = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const monthlyGenerationCount = countGenerationsSince(db, workspaceId, periodStart);
+  const monthlyRevisionCount = countCompletedRevisionTurnsSince(db, workspaceId, periodStart);
   return {
     seats: listMembers(db, workspaceId).length,
     connectors: listConnections(db, workspaceId).length,
-    monthlyGenerations: countGenerationsSince(db, workspaceId, periodStart),
+    monthlyGenerations: monthlyGenerationCount + monthlyRevisionCount,
   };
 }
 

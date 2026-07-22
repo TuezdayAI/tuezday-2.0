@@ -16,7 +16,12 @@ import type { EvidenceStore } from "../evidence/store";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { listAdCreativeSets, parseGeneratedVariants, withViolations } from "../services/ad-creatives";
 import { getBrain } from "../services/brain";
-import { composeResolveCampaign, getCampaign, listCampaigns } from "../services/campaigns";
+import {
+  campaignExecutionError,
+  composeResolveCampaign,
+  getCampaign,
+  listCampaigns,
+} from "../services/campaigns";
 import { submitDraft } from "../services/drafts";
 import { retrieveEvidence } from "../services/evidence";
 import { storeGeneration } from "../services/generations";
@@ -55,9 +60,8 @@ export function registerAdCreativeRoutes(
 
       const campaign = getCampaign(db, request.params.id, parsed.data.campaignId);
       if (!campaign) return reply.status(404).send({ error: "campaign_not_found" });
-      if (campaign.status === "archived") {
-        return reply.status(409).send({ error: "campaign_archived" });
-      }
+      const campaignError = campaignExecutionError(campaign);
+      if (campaignError) return reply.status(409).send({ error: campaignError });
       let persona;
       if (parsed.data.personaId) {
         persona = getPersona(db, request.params.id, parsed.data.personaId);

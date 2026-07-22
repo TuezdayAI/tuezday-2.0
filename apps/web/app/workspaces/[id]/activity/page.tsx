@@ -77,7 +77,7 @@ export default function ActivityPage() {
 
       <Card>
         <div className={styles.sectionHead}>
-          <Icon name="info" size="sm" className={styles.sectionIcon} />
+          <Icon name="info" size="compact" className={styles.sectionIcon} />
           <h2>Event log</h2>
           {events !== null && events.length > 0 && (
             <CountBadge count={events.length} label="events logged" />
@@ -87,7 +87,7 @@ export default function ActivityPage() {
           <p className="meta">Loading…</p>
         ) : events.length === 0 ? (
           <EmptyState
-            icon={<Icon name="status-approved" size="lg" />}
+            icon={<Icon name="status-approved" size="emphasized" />}
             title="All quiet"
             description="Nothing has happened yet. As you approve drafts, publish posts, and connect tools, every action lands here — a full audit trail of what Tuezday did on your behalf."
           />
@@ -96,7 +96,7 @@ export default function ActivityPage() {
             {events.map((e) => (
               <li key={e.id} className={styles.eventRow}>
                 <span className={styles.eventIcon}>
-                  <Icon name={EVENT_ICONS[e.type] ?? "info"} size="sm" />
+                  <Icon name={EVENT_ICONS[e.type] ?? "info"} size="compact" />
                 </span>
                 <span className={styles.eventType}>{e.type}</span>
                 {e.deliveries.length > 0 && (

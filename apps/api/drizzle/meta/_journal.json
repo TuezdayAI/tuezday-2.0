@@ -264,8 +264,106 @@
     {
       "idx": 37,
       "version": "6",
-      "when": 1783727081824,
-      "tag": "0037_complex_ma_gnuci",
+      "when": 1783579274300,
+      "tag": "0037_deep_black_tarantula",
+      "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1783579706539,
+      "tag": "0038_moaning_master_mold",
+      "breakpoints": true
+    },
+    {
+      "idx": 39,
+      "version": "6",
+      "when": 1783580604699,
+      "tag": "0039_nappy_scream",
+      "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "6",
+      "when": 1783587147976,
+      "tag": "0040_colossal_peter_parker",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1783754508355,
+      "tag": "0041_optimal_ender_wiggin",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "6",
+      "when": 1783754926673,
+      "tag": "0042_lame_squadron_supreme",
+      "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "6",
+      "when": 1783933689093,
+      "tag": "0043_chilly_eternity",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1783962977257,
+      "tag": "0044_cheerful_vulcan",
+      "breakpoints": true
+    },
+    {
+      "idx": 45,
+      "version": "6",
+      "when": 1784011334584,
+      "tag": "0045_legal_azazel",
+      "breakpoints": true
+    },
+    {
+      "idx": 46,
+      "version": "6",
+      "when": 1784129529545,
+      "tag": "0046_flawless_terror",
+      "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "6",
+      "when": 1784140150954,
+      "tag": "0047_dashing_plazm",
+      "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1784539851732,
+      "tag": "0048_oval_ben_urich",
+      "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "6",
+      "when": 1784626462351,
+      "tag": "0049_goofy_xorn",
+      "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "6",
+      "when": 1784699346568,
+      "tag": "0050_goofy_mother_askani",
+      "breakpoints": true
+    },
+    {
+      "idx": 51,
+      "version": "6",
+      "when": 1784720194358,
+      "tag": "0051_mute_madripoor",
       "breakpoints": true
     }
   ]

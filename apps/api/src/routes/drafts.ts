@@ -3,8 +3,10 @@ import type { AnalyticsSink } from "../analytics/sink";
 import { track } from "../analytics/track";
 import {
   APPROVAL_STATES,
+  draftEditorContextSchema,
   editDraftInputSchema,
   isAdCreativeTaskType,
+  reviseDraftInputSchema,
   validateAdCreative,
   type ApprovalAction,
   type ApprovalState,
@@ -16,6 +18,7 @@ import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
 import { generations } from "../db/schema";
 import type { LlmGateway } from "../llm/gateway";
+import type { EvidenceStore } from "../evidence/store";
 import { getBrain } from "../services/brain";
 import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
 import {
@@ -28,6 +31,15 @@ import {
   submitDraft,
 } from "../services/drafts";
 import { emitEvent } from "../services/events";
+import {
+  DraftChangedError,
+  getDraftEditorContext,
+  RevisionFailedError,
+  RevisionInProgressError,
+  reviseDraft,
+} from "../services/draft-editor";
+import { EntitlementError } from "../services/entitlements";
+import { getTurnByRequest } from "../services/draft-revisions";
 import { getGenerationSettings } from "../services/generation-settings";
 import { getPersona, toResolvePersona } from "../services/personas";
 import { runPreReview, setDraftReview } from "../services/review";
@@ -53,6 +65,7 @@ export function registerDraftRoutes(
   llm: LlmGateway,
   analytics: AnalyticsSink,
   mailer: Mailer,
+  evidence: EvidenceStore,
 ): void {
   app.post<{ Params: { id: string; generationId: string } }>(
     "/workspaces/:id/generations/:generationId/submit",
@@ -139,6 +152,80 @@ export function registerDraftRoutes(
         return reply.status(400).send({ error: "invalid_state" });
       }
       return listDrafts(db, request.params.id, state as ApprovalState | undefined, campaignId);
+    },
+  );
+
+  app.get<{ Params: { id: string; draftId: string } }>(
+    "/workspaces/:id/drafts/:draftId/editor",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const context = getDraftEditorContext(db, request.params.id, request.params.draftId);
+      if (!context) return reply.status(404).send({ error: "draft_not_found" });
+      return draftEditorContextSchema.parse(context);
+    },
+  );
+
+  app.post<{ Params: { id: string; draftId: string } }>(
+    "/workspaces/:id/drafts/:draftId/revise",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const parsed = reviseDraftInputSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.status(400).send({
+          error: "invalid_input",
+          message: parsed.error.issues.map((issue) => issue.message).join("; "),
+        });
+      }
+      if (!getDraft(db, request.params.id, request.params.draftId)) {
+        return reply.status(404).send({ error: "draft_not_found" });
+      }
+      try {
+        const existingTurn = getTurnByRequest(
+          db,
+          request.params.id,
+          request.params.draftId,
+          parsed.data.requestId,
+        );
+        const result = await reviseDraft(
+          { db, llm, evidence },
+          {
+            workspaceId: request.params.id,
+            draftId: request.params.draftId,
+            ...parsed.data,
+            actor: actorOf(request),
+          },
+        );
+        if (!existingTurn) {
+          track(db, analytics, {
+            event: "review.revision_requested",
+            distinctId: request.actor.userId!,
+            workspaceId: request.params.id,
+            properties: { channel: result.draft.channel, taskType: result.draft.taskType },
+          });
+        }
+        return result;
+      } catch (error) {
+        if (error instanceof EntitlementError) {
+          return reply.status(402).send({
+            error: "upgrade_required",
+            key: error.key,
+            limit: error.limit,
+          });
+        }
+        if (error instanceof RevisionInProgressError) {
+          return reply.status(409).send({ error: "revision_in_progress", message: error.message });
+        }
+        if (error instanceof DraftChangedError) {
+          return reply.status(409).send({ error: "draft_changed", message: error.message });
+        }
+        if (error instanceof InvalidTransitionError) {
+          return reply.status(409).send({ error: "invalid_transition", message: error.message });
+        }
+        if (error instanceof RevisionFailedError) {
+          return reply.status(502).send({ error: "revision_failed", message: error.message });
+        }
+        throw error;
+      }
     },
   );
 

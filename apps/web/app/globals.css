@@ -126,7 +126,7 @@ h2 {
 .ws-kicker,
 .ws-workspace-label {
   color: var(--muted-2);
-  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 10.5px;
   font-weight: 500;
   letter-spacing: 0.06em;
@@ -171,7 +171,23 @@ h2 {
 .ws-nav {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
+}
+
+.ws-nav-group[data-section-start="true"] {
+  margin-top: 11px;
+}
+
+.ws-nav-group[data-section-start="true"]::before {
+  content: attr(data-section-label);
+  display: block;
+  padding: 0 10px 5px;
+  color: var(--muted-2);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .ws-nav-group,
@@ -364,15 +380,20 @@ h2 {
   .ws-sidebar {
     position: static;
     height: auto;
-    max-height: none;
+    max-height: 46vh;
+    overflow-y: auto;
     border-right: 0;
     border-bottom: 1px solid var(--border);
   }
 
   .ws-nav {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    gap: 8px;
   }
+
+  .ws-nav-group { min-width: 0; }
 
   .ws-nav-children {
     margin-left: 8px;
@@ -381,6 +402,11 @@ h2 {
   .ws-content {
     padding: 26px 18px 56px;
   }
+}
+
+@media (max-width: 560px) {
+  .ws-nav { grid-template-columns: 1fr; }
+  .ws-sidebar { max-height: 54vh; }
 }
 
 /* ---------- Page header pattern ---------- */
@@ -1240,6 +1266,7 @@ a.workspace-card:hover {
   margin-top: 32px;
   padding-top: 24px;
   border-top: 1px solid var(--border);
+  scroll-margin-top: 72px;
 }
 
 .guidance-section h2 {

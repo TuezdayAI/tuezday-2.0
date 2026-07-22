@@ -1,0 +1,106 @@
+import type {
+  ApprovalState,
+  Campaign,
+  Channel,
+  Draft,
+  InboxItemStatus,
+  WorkflowStatus,
+} from "@tuezday/contracts";
+
+/** Prefer a human campaign name, with its stable ID as the safe fallback. */
+export function campaignFilterName(campaigns: Campaign[], campaignId: string): string {
+  return campaigns.find((campaign) => campaign.id === campaignId)?.name ?? campaignId;
+}
+
+export const REVIEW_TABS = ["approvals", "inbox", "authorizations"] as const;
+export type ReviewTab = (typeof REVIEW_TABS)[number];
+
+export function reviewTab(value: string | null): ReviewTab {
+  return REVIEW_TABS.includes(value as ReviewTab) ? (value as ReviewTab) : "approvals";
+}
+
+export function reviewHref(
+  workspaceId: string,
+  opts?: {
+    tab?: ReviewTab;
+    campaign?: string;
+    state?: ApprovalState | "all";
+    channel?: Channel | "all";
+    /** Authorization-queue filters (action kind / lifecycle status). */
+    kind?: string;
+    status?: string;
+    draft?: string;
+    /** Selected external action on the authorizations tab. */
+    action?: string;
+  },
+): string {
+  const params = new URLSearchParams();
+  if (opts?.tab) params.set("tab", opts.tab);
+  if (opts?.campaign) params.set("campaign", opts.campaign);
+  if (opts?.state && opts.state !== "all") params.set("state", opts.state);
+  if (opts?.channel && opts.channel !== "all") params.set("channel", opts.channel);
+  if (opts?.kind && opts.kind !== "all") params.set("kind", opts.kind);
+  if (opts?.status && opts.status !== "all") params.set("status", opts.status);
+  if (opts?.draft) params.set("draft", opts.draft);
+  if (opts?.action) params.set("action", opts.action);
+  const query = params.toString();
+  return `/workspaces/${workspaceId}/review${query ? `?${query}` : ""}`;
+}
+
+const DRAFT_WORKFLOW_STATUS: Record<ApprovalState, WorkflowStatus> = {
+  draft: "draft",
+  pending_review: "review_required",
+  edited: "changes_requested",
+  approved: "approved",
+  rejected: "rejected",
+};
+
+export function draftWorkflowStatus(state: ApprovalState): WorkflowStatus {
+  return DRAFT_WORKFLOW_STATUS[state];
+}
+
+// Unread and read items both await a human decision; the status filter keeps
+// them distinguishable while the badge speaks the canonical vocabulary.
+const INBOX_WORKFLOW_STATUS: Record<InboxItemStatus, WorkflowStatus> = {
+  unread: "review_required",
+  read: "review_required",
+  replied: "completed",
+  dismissed: "archived",
+};
+
+export function inboxWorkflowStatus(status: InboxItemStatus): WorkflowStatus {
+  return INBOX_WORKFLOW_STATUS[status];
+}
+
+export interface DraftFilters {
+  state: ApprovalState | "all";
+  campaignId: string | "all";
+  channel: Channel | "all";
+}
+
+export function filterDrafts(drafts: Draft[], filters: DraftFilters): Draft[] {
+  return drafts.filter(
+    (d) =>
+      (filters.state === "all" || d.state === filters.state) &&
+      (filters.campaignId === "all" || d.campaignId === filters.campaignId) &&
+      (filters.channel === "all" || d.channel === filters.channel),
+  );
+}
+
+export function draftChannels(drafts: Draft[]): Channel[] {
+  const seen: Channel[] = [];
+  for (const d of drafts) if (!seen.includes(d.channel)) seen.push(d.channel);
+  return seen;
+}
+
+export function queueNeighbors(
+  orderedIds: string[],
+  currentId: string,
+): { prev: string | null; next: string | null } {
+  const index = orderedIds.indexOf(currentId);
+  if (index === -1) return { prev: null, next: null };
+  return {
+    prev: orderedIds[index - 1] ?? null,
+    next: orderedIds[index + 1] ?? null,
+  };
+}

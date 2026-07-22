@@ -173,6 +173,19 @@ export default function AdCreativesPage() {
     }
   }
 
+  async function generateAdImage(draftId: string) {
+    setBusy(true);
+    setError(null);
+    try {
+      await post(`/ad-creatives/${draftId}/image`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to generate ad image");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function draftAction(draftId: string, name: string, payload?: Record<string, unknown>) {
     setBusy(true);
     setError(null);
@@ -244,7 +257,7 @@ export default function AdCreativesPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="status-generating" size="sm" />
+              <Icon name="status-generating" size="compact" />
               Generate a variant set
             </span>
           }
@@ -318,7 +331,7 @@ export default function AdCreativesPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="ad" size="sm" />
+              <Icon name="ad" size="compact" />
               Variant sets{" "}
               {sets.length > 0 && <CountBadge count={sets.length} label="creative variant sets" />}
             </span>
@@ -346,7 +359,7 @@ export default function AdCreativesPage() {
                 </Select>
                 <Button
                   variant="secondary"
-                  size="sm"
+                  size="compact"
                   type="button"
                   onClick={() =>
                     void apiDownload(
@@ -478,7 +491,7 @@ export default function AdCreativesPage() {
                                             {spec.maxCount > 1 && values.length > spec.minCount && (
                                               <Button
                                                 variant="secondary"
-                                                size="sm"
+                                                size="compact"
                                                 title={`Remove this ${spec.label.toLowerCase()}`}
                                                 onClick={() =>
                                                   setEditFields((fields) =>
@@ -495,8 +508,8 @@ export default function AdCreativesPage() {
                                     })}
                                     {spec.maxCount > 1 && values.length < spec.maxCount && (
                                       <Button
-                                        variant="ghost"
-                                        size="sm"
+                                        variant="tertiary"
+                                        size="compact"
                                         onClick={() =>
                                           setEditFields((fields) => [
                                             ...fields,
@@ -516,7 +529,7 @@ export default function AdCreativesPage() {
                                 </Button>
                                 <Button
                                   variant="secondary"
-                                  size="sm"
+                                  size="compact"
                                   onClick={() => setEditingId(null)}
                                 >
                                   Cancel
@@ -525,6 +538,21 @@ export default function AdCreativesPage() {
                             </div>
                           ) : (
                             <>
+                              {draft.media?.[0] && (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img
+                                  src={draft.media[0].url}
+                                  alt="Generated ad image"
+                                  style={{
+                                    width: 200,
+                                    height: 200,
+                                    objectFit: "cover",
+                                    borderRadius: 8,
+                                    margin: "8px 0",
+                                    border: "1px solid var(--border, #e5e7eb)",
+                                  }}
+                                />
+                              )}
                               {parsed ? (
                                 <dl className="ad-creative-fields" style={{ margin: "8px 0" }}>
                                   {parsed.fields.map((field, i) => {
@@ -555,16 +583,27 @@ export default function AdCreativesPage() {
                               <div className="rating-row">
                                 <Button
                                   variant="secondary"
-                                  size="sm"
+                                  size="compact"
                                   onClick={() => copyDraft(draft)}
                                 >
                                   {copiedId === draft.id ? "✓ Copied" : "⧉ Copy"}
                                 </Button>
+                                {draft.state === "approved" && draft.taskType === "meta_ad_creative" && (
+                                  <Button
+                                    variant="secondary"
+                                    size="compact"
+                                    disabled={busy}
+                                    title="Render this approved copy as a branded 1080x1080 ad image"
+                                    onClick={() => generateAdImage(draft.id)}
+                                  >
+                                    ▦ {draft.media?.[0] ? "Regenerate ad image" : "Generate ad image"}
+                                  </Button>
+                                )}
                                 {editable && (
                                   <>
                                     <Button
                                       variant="secondary"
-                                      size="sm"
+                                      size="compact"
                                       className="rating-accepted"
                                       disabled={busy || draft.violations.length > 0}
                                       onClick={() => draftAction(draft.id, "approve")}
@@ -573,7 +612,7 @@ export default function AdCreativesPage() {
                                     </Button>
                                     <Button
                                       variant="secondary"
-                                      size="sm"
+                                      size="compact"
                                       disabled={busy}
                                       onClick={() => startEdit(set, draft)}
                                     >
@@ -581,7 +620,7 @@ export default function AdCreativesPage() {
                                     </Button>
                                     <Button
                                       variant="secondary"
-                                      size="sm"
+                                      size="compact"
                                       className="rating-rejected"
                                       disabled={busy}
                                       onClick={() => draftAction(draft.id, "reject")}
@@ -591,7 +630,7 @@ export default function AdCreativesPage() {
                                     {draft.state === "edited" && (
                                       <Button
                                         variant="secondary"
-                                        size="sm"
+                                        size="compact"
                                         disabled={busy}
                                         onClick={() => draftAction(draft.id, "resubmit")}
                                       >

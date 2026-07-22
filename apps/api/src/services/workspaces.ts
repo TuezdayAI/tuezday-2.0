@@ -4,6 +4,7 @@ import type { CreateWorkspaceInput, OnboardingCursor, Workspace } from "@tuezday
 import type { Db } from "../db";
 import { workspaceMembers, workspaces } from "../db/schema";
 import { ensureBrainDocs } from "./brain";
+import { ensureDefaultDesignSystem } from "./design-systems";
 
 /** DB stores the cursor as plain text; narrow it back to the contract enum. */
 function rowToWorkspace<T extends { onboardingStep: string | null }>(
@@ -29,6 +30,8 @@ export function createWorkspace(
   db.insert(workspaces).values(row).run();
   // Every workspace owns its five brain docs from the moment it exists.
   ensureBrainDocs(db, row.id);
+  // ...and its org-level default design system (Sprint 41 Part 2).
+  ensureDefaultDesignSystem(db, row.id);
   if (ownerId) {
     db.insert(workspaceMembers)
       .values({ id: randomUUID(), workspaceId: row.id, userId: ownerId, role: "owner", createdAt: now })

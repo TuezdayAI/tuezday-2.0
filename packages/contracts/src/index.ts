@@ -40,6 +40,9 @@ export const TASK_TYPES = [
   "instagram_post",
   // Sprint 29 (engagement inbox): a reply to an inbound comment/DM.
   "engagement_reply",
+  // Sprint 41 (design layer): a rendered multi-image carousel derived from an
+  // approved content draft. Never text-generated — the pipeline renders it.
+  "instagram_carousel",
 ] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
 
@@ -733,6 +736,10 @@ export const DEFAULT_TASK_DOC_MATRIX: Record<
     icp: { mode: "outline", reason: "The caption rides the visual; audience outline suffices, zoom follows the topic." },
     history: { mode: "outline", reason: "Topical lessons zoom in; the full history drowns a caption." },
   },
+  instagram_carousel: {
+    icp: { mode: "outline", reason: "Carousel copy is derived from an approved draft; audience detail was already spent there." },
+    history: { mode: "outline", reason: "The deterministic render pipeline never re-writes copy from history." },
+  },
   engagement_reply: {
     icp: { mode: "omit", reason: "The reply answers a specific person in a live thread — the conversation is the context." },
     history: { mode: "omit", reason: "Thread replies are voice + the conversation; company history is a distractor here." },
@@ -900,7 +907,13 @@ export type RateGenerationInput = z.infer<typeof rateGenerationInputSchema>;
 // Campaigns
 // ---------------------------------------------------------------------------
 
-export const CAMPAIGN_STATUSES = ["active", "archived"] as const;
+export const CAMPAIGN_ORIGINS = ["user", "system"] as const;
+export type CampaignOrigin = (typeof CAMPAIGN_ORIGINS)[number];
+
+export const CAMPAIGN_PURPOSES = ["initiative", "evergreen"] as const;
+export type CampaignPurpose = (typeof CAMPAIGN_PURPOSES)[number];
+
+export const CAMPAIGN_STATUSES = ["draft", "active", "paused", "completed", "archived"] as const;
 export type CampaignStatus = (typeof CAMPAIGN_STATUSES)[number];
 
 export const CAMPAIGN_OVERLAY_MAX_CHARS = 10_000;
@@ -923,6 +936,8 @@ export const campaignSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
   name: z.string().min(1).max(200),
+  origin: z.enum(CAMPAIGN_ORIGINS),
+  purpose: z.enum(CAMPAIGN_PURPOSES),
   objective: z.string().max(1000),
   kpi: z.string().max(500),
   timeframe: z.string().max(200),
@@ -935,6 +950,7 @@ export const campaignSchema = z.object({
   automationMode: z.enum(AUTOMATION_MODES),
   /** Per-campaign override of the daily auto-post cap; null = use the workspace default. */
   autoDailyCap: z.number().int().positive().max(1000).nullable(),
+  currentPlanRevisionId: z.string().uuid().nullable(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 });
@@ -946,6 +962,7 @@ export const upsertCampaignInputSchema = z.object({
     .trim()
     .min(1, "Campaign name is required")
     .max(200, "Campaign name must be 200 characters or fewer"),
+  purpose: z.enum(CAMPAIGN_PURPOSES).default("initiative"),
   objective: z.string().trim().max(1000).default(""),
   kpi: z.string().trim().max(500).default(""),
   timeframe: z.string().trim().max(200).default(""),
@@ -966,6 +983,1087 @@ export const updateCampaignAutomationInputSchema = z.object({
   autoDailyCap: z.number().int().positive().max(1000).nullable().default(null),
 });
 export type UpdateCampaignAutomationInput = z.infer<typeof updateCampaignAutomationInputSchema>;
+
+// ---------------------------------------------------------------------------
+// GTM orchestration control plane
+// ---------------------------------------------------------------------------
+
+export const PLAN_REVISION_STATUSES = ["draft", "active", "superseded"] as const;
+export type PlanRevisionStatus = (typeof PLAN_REVISION_STATUSES)[number];
+
+export const LANE_STATUSES = ["active", "paused", "retired"] as const;
+export type LaneStatus = (typeof LANE_STATUSES)[number];
+
+export const DELIVERY_MODES = ["planned", "reactive", "planned_and_reactive"] as const;
+export type DeliveryMode = (typeof DELIVERY_MODES)[number];
+
+export const REACTIVE_PERIODS = ["day", "week", "month"] as const;
+export type ReactivePeriod = (typeof REACTIVE_PERIODS)[number];
+
+export const PACKAGE_SOURCE_ROLES = [
+  "trigger",
+  "evidence",
+  "inspiration",
+  "instruction",
+  "repurposed_from",
+] as const;
+export type PackageSourceRole = (typeof PACKAGE_SOURCE_ROLES)[number];
+
+export const DELIVERABLE_PRODUCTION_STATUSES = [
+  "planned",
+  "assessing",
+  "research_needed",
+  "ready",
+  "generating",
+  "candidate_ready",
+  "fulfilled",
+  "stale",
+  "blocked",
+  "cancelled",
+] as const;
+export type DeliverableProductionStatus = (typeof DELIVERABLE_PRODUCTION_STATUSES)[number];
+
+export const EXTERNAL_ACTION_KINDS = [
+  "publish",
+  "send",
+  "reply",
+  "paid_launch",
+  "budget_change",
+  "targeting_change",
+] as const;
+export type ExternalActionKind = (typeof EXTERNAL_ACTION_KINDS)[number];
+
+export const EXTERNAL_ACTION_STATUSES = [
+  "proposed",
+  "authorization_required",
+  "authorized",
+  "scheduled",
+  "dispatching",
+  "succeeded",
+  "failed",
+  "blocked",
+  "stale",
+  "cancelled",
+] as const;
+export type ExternalActionStatus = (typeof EXTERNAL_ACTION_STATUSES)[number];
+
+export const EXTERNAL_ACTION_POLICY_SCOPES = [
+  "workspace",
+  "campaign",
+  "persona",
+  "connection",
+  "lane",
+] as const;
+export type ExternalActionPolicyScope = (typeof EXTERNAL_ACTION_POLICY_SCOPES)[number];
+
+export const EXTERNAL_ACTION_POLICY_RULES = [
+  "inherit",
+  "autonomous",
+  "human_required",
+] as const;
+export type ExternalActionPolicyRule = (typeof EXTERNAL_ACTION_POLICY_RULES)[number];
+
+export const EXTERNAL_ACTION_EFFECTIVE_POLICIES = ["autonomous", "human_required"] as const;
+export type ExternalActionEffectivePolicy =
+  (typeof EXTERNAL_ACTION_EFFECTIVE_POLICIES)[number];
+
+export const EXTERNAL_ACTION_DECISIONS = ["authorize", "deny"] as const;
+export type ExternalActionDecisionValue = (typeof EXTERNAL_ACTION_DECISIONS)[number];
+
+export const EXTERNAL_ACTION_SUBJECT_KINDS = [
+  "draft",
+  "inbox_item",
+  "launch_message",
+  "ad_launch",
+  "campaign",
+] as const;
+export type ExternalActionSubjectKind = (typeof EXTERNAL_ACTION_SUBJECT_KINDS)[number];
+
+export const EXTERNAL_ACTION_EXECUTION_KINDS = [
+  "publication",
+  "inbox_reply",
+  "launch_message",
+  "ad_launch",
+  "ad_mutation",
+  "email_delivery",
+] as const;
+export type ExternalActionExecutionKind = (typeof EXTERNAL_ACTION_EXECUTION_KINDS)[number];
+
+export const PRIORITY_ITEM_KINDS = [
+  "execution_failure",
+  "stale_action",
+  "policy_block",
+  "authorization",
+  "content_review",
+  "signal_triage",
+  "learning_review",
+  "connection_health",
+  "campaign_risk",
+] as const;
+export type PriorityItemKind = (typeof PRIORITY_ITEM_KINDS)[number];
+
+export const externalActionPolicyRuleSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    scope: z.enum(EXTERNAL_ACTION_POLICY_SCOPES),
+    scopeId: z.string().uuid(),
+    actionKind: z.enum(EXTERNAL_ACTION_KINDS),
+    rule: z.enum(EXTERNAL_ACTION_POLICY_RULES),
+    createdBy: z.string().uuid().nullable(),
+    createdAt: z.number().int(),
+    updatedAt: z.number().int(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.scope === "workspace" && value.scopeId !== value.workspaceId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["scopeId"],
+        message: "A workspace policy must use the workspace id as its scope id.",
+      });
+    }
+    if (value.scope === "workspace" && value.rule === "inherit") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["rule"],
+        message: "Workspace policy cannot inherit.",
+      });
+    }
+  });
+export type ExternalActionPolicyRuleRecord = z.infer<typeof externalActionPolicyRuleSchema>;
+
+export const externalActionPolicyContributionSchema = z.object({
+  scope: z.enum(EXTERNAL_ACTION_POLICY_SCOPES),
+  scopeId: z.string().uuid(),
+  scopeLabel: z.string().trim().min(1),
+  rule: z.enum(EXTERNAL_ACTION_POLICY_RULES),
+});
+export type ExternalActionPolicyContribution = z.infer<
+  typeof externalActionPolicyContributionSchema
+>;
+
+export const effectiveExternalActionPolicySchema = z.object({
+  effective: z.enum(EXTERNAL_ACTION_EFFECTIVE_POLICIES),
+  contributingRules: z.array(externalActionPolicyContributionSchema),
+});
+export type EffectiveExternalActionPolicy = z.infer<typeof effectiveExternalActionPolicySchema>;
+
+export const externalActionSubjectSchema = z.object({
+  kind: z.enum(EXTERNAL_ACTION_SUBJECT_KINDS),
+  id: z.string().uuid(),
+  title: z.string().trim().min(1),
+  summary: z.string(),
+  channel: z.string().nullable(),
+  destination: z.string().nullable(),
+});
+export type ExternalActionSubject = z.infer<typeof externalActionSubjectSchema>;
+
+export const externalActionContextSchema = z.object({
+  campaignId: z.string().uuid().nullable(),
+  campaignName: z.string().nullable(),
+  personaId: z.string().uuid().nullable(),
+  personaName: z.string().nullable(),
+  connectionId: z.string().uuid().nullable(),
+  connectionName: z.string().nullable(),
+  laneRevisionId: z.string().uuid().nullable(),
+  laneName: z.string().nullable(),
+});
+export type ExternalActionContext = z.infer<typeof externalActionContextSchema>;
+
+export const externalActionBlockerSchema = z.object({
+  code: z.string().trim().min(1),
+  message: z.string().trim().min(1),
+  retryable: z.boolean(),
+});
+export type ExternalActionBlocker = z.infer<typeof externalActionBlockerSchema>;
+
+export const externalActionExecutionRefSchema = z.object({
+  kind: z.enum(EXTERNAL_ACTION_EXECUTION_KINDS),
+  id: z.string().uuid(),
+  status: z.string().trim().min(1),
+  url: z.string().url().nullable(),
+  error: z.string().nullable(),
+});
+export type ExternalActionExecutionRef = z.infer<typeof externalActionExecutionRefSchema>;
+
+export const externalActionActorSchema = z.object({
+  userId: z.string().uuid().nullable(),
+  label: z.string().trim().min(1),
+});
+export type ExternalActionActor = z.infer<typeof externalActionActorSchema>;
+
+export const externalActionSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    kind: z.enum(EXTERNAL_ACTION_KINDS),
+    status: z.enum(EXTERNAL_ACTION_STATUSES),
+    subject: externalActionSubjectSchema,
+    context: externalActionContextSchema,
+    requestedFor: z.number().int().nullable(),
+    idempotencyKey: z.string().trim().min(1).max(300),
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    policy: effectiveExternalActionPolicySchema,
+    blocker: externalActionBlockerSchema.nullable(),
+    supersedesActionId: z.string().uuid().nullable(),
+    supersededByActionId: z.string().uuid().nullable(),
+    execution: externalActionExecutionRefSchema.nullable(),
+    proposedBy: externalActionActorSchema,
+    createdAt: z.number().int(),
+    updatedAt: z.number().int(),
+    authorizedAt: z.number().int().nullable(),
+    dispatchedAt: z.number().int().nullable(),
+    completedAt: z.number().int().nullable(),
+  })
+  .superRefine((value, ctx) => {
+    if ((value.status === "blocked" || value.status === "stale") && !value.blocker) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["blocker"],
+        message: `${value.status} actions require a durable blocker.`,
+      });
+    }
+    if (value.status === "succeeded" && !value.execution) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["execution"],
+        message: "Succeeded actions require an execution receipt.",
+      });
+    }
+  });
+export type ExternalAction = z.infer<typeof externalActionSchema>;
+
+export const externalActionDecisionSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  actionId: z.string().uuid(),
+  decision: z.enum(EXTERNAL_ACTION_DECISIONS),
+  reason: z.string().max(1_000).nullable(),
+  actor: externalActionActorSchema,
+  subjectFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  policy: effectiveExternalActionPolicySchema,
+  createdAt: z.number().int(),
+});
+export type ExternalActionDecision = z.infer<typeof externalActionDecisionSchema>;
+
+export const externalActionDetailSchema = z.object({
+  action: externalActionSchema,
+  decisions: z.array(externalActionDecisionSchema),
+});
+export type ExternalActionDetail = z.infer<typeof externalActionDetailSchema>;
+
+export const externalActionSubmissionSchema = z.object({
+  action: externalActionSchema,
+  execution: externalActionExecutionRefSchema.nullable(),
+});
+export type ExternalActionSubmission = z.infer<typeof externalActionSubmissionSchema>;
+
+export const AUTHORIZATION_BATCH_MODES = ["selected", "campaign"] as const;
+export type AuthorizationBatchMode = (typeof AUTHORIZATION_BATCH_MODES)[number];
+
+export const AUTHORIZATION_BATCH_STATUSES = [
+  "preview",
+  "running",
+  "completed",
+  "partially_completed",
+  "failed",
+] as const;
+export type AuthorizationBatchStatus = (typeof AUTHORIZATION_BATCH_STATUSES)[number];
+
+export const AUTHORIZATION_BATCH_ITEM_STATUSES = [
+  "pending",
+  "succeeded",
+  "scheduled",
+  "failed",
+  "blocked",
+  "stale",
+  "skipped",
+] as const;
+export type AuthorizationBatchItemStatus =
+  (typeof AUTHORIZATION_BATCH_ITEM_STATUSES)[number];
+
+const selectedAuthorizationBatchSchema = z
+  .object({
+    mode: z.literal("selected"),
+    actionIds: z.array(z.string().uuid()).min(1).max(25),
+  })
+  .strict();
+
+const campaignAuthorizationBatchSchema = z
+  .object({
+    mode: z.literal("campaign"),
+    campaignId: z.string().uuid(),
+    kinds: z
+      .array(z.enum(EXTERNAL_ACTION_KINDS))
+      .min(1)
+      .max(EXTERNAL_ACTION_KINDS.length)
+      .nullable()
+      .default(null),
+  })
+  .strict();
+
+export const authorizationBatchSelectionSchema = z
+  .discriminatedUnion("mode", [selectedAuthorizationBatchSchema, campaignAuthorizationBatchSchema])
+  .superRefine((value, ctx) => {
+    const values = value.mode === "selected" ? value.actionIds : (value.kinds ?? []);
+    if (new Set(values).size !== values.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [value.mode === "selected" ? "actionIds" : "kinds"],
+        message: "Batch selections cannot contain duplicates.",
+      });
+    }
+  });
+export type AuthorizationBatchSelection = z.infer<typeof authorizationBatchSelectionSchema>;
+
+export const createAuthorizationBatchInputSchema = z
+  .object({
+    requestId: z.string().uuid(),
+    selection: authorizationBatchSelectionSchema,
+  })
+  .strict();
+export type CreateAuthorizationBatchInput = z.infer<
+  typeof createAuthorizationBatchInputSchema
+>;
+
+const TERMINAL_AUTHORIZATION_BATCH_STATUSES: ReadonlySet<AuthorizationBatchStatus> = new Set([
+  "completed",
+  "partially_completed",
+  "failed",
+]);
+
+const TERMINAL_AUTHORIZATION_BATCH_ITEM_STATUSES: ReadonlySet<AuthorizationBatchItemStatus> =
+  new Set(["succeeded", "scheduled", "failed", "blocked", "stale", "skipped"]);
+
+export const authorizationBatchSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    requestId: z.string().uuid(),
+    selection: authorizationBatchSelectionSchema,
+    status: z.enum(AUTHORIZATION_BATCH_STATUSES),
+    continuationCount: z.number().int().nonnegative(),
+    includedCount: z.number().int().min(0).max(100),
+    excludedCount: z.number().int().nonnegative(),
+    createdBy: externalActionActorSchema,
+    createdAt: z.number().int(),
+    confirmedAt: z.number().int().nullable(),
+    completedAt: z.number().int().nullable(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.selection.mode === "selected" && value.continuationCount !== 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["continuationCount"],
+        message: "Selected batches cannot have continuation items.",
+      });
+    }
+    if (value.status === "preview" && (value.confirmedAt !== null || value.completedAt !== null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "Preview batches cannot be confirmed or completed.",
+      });
+    }
+    if (value.status === "running" && (value.confirmedAt === null || value.completedAt !== null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "Running batches require confirmation and cannot be completed.",
+      });
+    }
+    if (
+      TERMINAL_AUTHORIZATION_BATCH_STATUSES.has(value.status) &&
+      (value.confirmedAt === null || value.completedAt === null)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "Terminal batches require confirmation and completion timestamps.",
+      });
+    }
+    if (value.confirmedAt !== null && value.confirmedAt < value.createdAt) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["confirmedAt"],
+        message: "Confirmation cannot predate batch creation.",
+      });
+    }
+    if (
+      value.completedAt !== null &&
+      value.completedAt < (value.confirmedAt ?? value.createdAt)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["completedAt"],
+        message: "Completion cannot predate confirmation.",
+      });
+    }
+  });
+export type AuthorizationBatch = z.infer<typeof authorizationBatchSchema>;
+
+export const authorizationBatchItemSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    batchId: z.string().uuid(),
+    actionId: z.string().uuid(),
+    actionFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    actionUpdatedAt: z.number().int(),
+    kind: z.enum(EXTERNAL_ACTION_KINDS),
+    campaignId: z.string().uuid().nullable(),
+    impact: z.string().trim().min(1).max(1_000),
+    eligible: z.boolean(),
+    exclusionReason: z.string().trim().min(1).max(500).nullable(),
+    status: z.enum(AUTHORIZATION_BATCH_ITEM_STATUSES),
+    error: z.string().max(1_000).nullable(),
+    submission: externalActionSubmissionSchema.nullable(),
+    processedAt: z.number().int().nullable(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.eligible === (value.exclusionReason !== null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["exclusionReason"],
+        message: "Only excluded items require an exclusion reason.",
+      });
+    }
+    if (value.eligible === (value.status === "skipped")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "Only excluded items may be skipped.",
+      });
+    }
+    if (
+      value.status === "pending" &&
+      (value.submission !== null || value.error !== null || value.processedAt !== null)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "Pending items cannot carry an outcome.",
+      });
+    }
+    if (
+      value.eligible &&
+      TERMINAL_AUTHORIZATION_BATCH_ITEM_STATUSES.has(value.status) &&
+      value.processedAt === null
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["processedAt"],
+        message: "Processed eligible items require a timestamp.",
+      });
+    }
+    if ((value.status === "succeeded" || value.status === "scheduled") && !value.submission) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["submission"],
+        message: `${value.status} items require an action submission.`,
+      });
+    }
+    if (
+      value.eligible &&
+      value.status !== "pending" &&
+      !value.submission &&
+      value.error === null
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["error"],
+        message: "Processed items require a submission or durable error.",
+      });
+    }
+    if (
+      !value.eligible &&
+      (value.submission !== null || value.error !== null || value.processedAt !== null)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "Preview-excluded items cannot carry execution outcomes.",
+      });
+    }
+    if (value.submission) {
+      const action = value.submission.action;
+      if (
+        action.id !== value.actionId ||
+        action.fingerprint !== value.actionFingerprint ||
+        action.kind !== value.kind ||
+        action.context.campaignId !== value.campaignId
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["submission"],
+          message: "The submission must belong to the snapshotted action.",
+        });
+      }
+      const expectedStatus =
+        value.status === "succeeded"
+          ? "succeeded"
+          : value.status === "scheduled"
+            ? "scheduled"
+            : value.status === "failed"
+              ? "failed"
+              : value.status === "blocked"
+                ? "blocked"
+                : value.status === "stale"
+                  ? "stale"
+                  : null;
+      if (expectedStatus !== null && action.status !== expectedStatus) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["submission", "action", "status"],
+          message: "The submission status must match the stored item outcome.",
+        });
+      }
+    }
+  });
+export type AuthorizationBatchItem = z.infer<typeof authorizationBatchItemSchema>;
+
+export const authorizationBatchDetailSchema = z
+  .object({
+    batch: authorizationBatchSchema,
+    items: z.array(authorizationBatchItemSchema),
+  })
+  .superRefine((value, ctx) => {
+    const included = value.items.filter((item) => item.eligible);
+    const excluded = value.items.filter((item) => !item.eligible);
+    if (
+      included.length !== value.batch.includedCount ||
+      excluded.length !== value.batch.excludedCount
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["items"],
+        message: "Batch item counts must match the immutable preview.",
+      });
+    }
+    for (const [index, item] of value.items.entries()) {
+      if (item.batchId !== value.batch.id || item.workspaceId !== value.batch.workspaceId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["items", index],
+          message: "Batch items must belong to the same batch and workspace.",
+        });
+      }
+    }
+    if (
+      TERMINAL_AUTHORIZATION_BATCH_STATUSES.has(value.batch.status) &&
+      included.some((item) => !TERMINAL_AUTHORIZATION_BATCH_ITEM_STATUSES.has(item.status))
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["items"],
+        message: "Terminal batches cannot contain pending included items.",
+      });
+    }
+    if (
+      value.batch.status === "preview" &&
+      value.items.some(
+        (item) =>
+          (item.eligible && item.status !== "pending") ||
+          (!item.eligible && item.status !== "skipped"),
+      )
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["items"],
+        message: "Preview items must be pending or preview-excluded.",
+      });
+    }
+  });
+export type AuthorizationBatchDetail = z.infer<typeof authorizationBatchDetailSchema>;
+
+// ---------------------------------------------------------------------------
+// Governed native email — verified sender identity, explicit recipient safety,
+// durable delivery snapshots, and immutable provider event projections.
+// ---------------------------------------------------------------------------
+
+export const EMAIL_SENDER_STATUSES = [
+  "not_configured",
+  "pending",
+  "verified",
+  "failed",
+] as const;
+export type EmailSenderStatus = (typeof EMAIL_SENDER_STATUSES)[number];
+
+export const EMAIL_PERMISSION_STATUSES = ["unknown", "allowed", "suppressed"] as const;
+export type EmailPermissionStatus = (typeof EMAIL_PERMISSION_STATUSES)[number];
+
+export const EMAIL_DELIVERY_STATUSES = [
+  "queued",
+  "accepted",
+  "delivered",
+  "bounced",
+  "complained",
+  "failed",
+] as const;
+export type EmailDeliveryStatus = (typeof EMAIL_DELIVERY_STATUSES)[number];
+
+export const EMAIL_DELIVERY_ORIGINS = [
+  "launch_message",
+  "outbound_draft",
+  "pr_draft",
+] as const;
+export type EmailDeliveryOrigin = (typeof EMAIL_DELIVERY_ORIGINS)[number];
+
+export const normalizedEmailAddressSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .max(320)
+  .email("A valid email address is required");
+
+const emailSenderDomainSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(1)
+  .max(253)
+  .regex(
+    /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/,
+    "A valid sender domain is required",
+  );
+
+const emailSenderLocalPartSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(64)
+  .regex(
+    /^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*$/,
+    "Use a domain-free email local part",
+  );
+
+export const emailDnsRecordSchema = z
+  .object({
+    name: z.string().trim().min(1).max(253),
+    type: z.string().trim().min(1).max(16),
+    value: z.string().trim().min(1).max(4_096),
+    priority: z.number().int().min(0).max(65_535).nullable(),
+    status: z.string().trim().min(1).max(100),
+  })
+  .strict();
+export type EmailDnsRecord = z.infer<typeof emailDnsRecordSchema>;
+
+export const emailSenderSchema = z
+  .object({
+    workspaceId: z.string().uuid(),
+    domain: emailSenderDomainSchema,
+    fromLocalPart: emailSenderLocalPartSchema,
+    fromName: z.string().trim().min(1).max(200),
+    fromAddress: normalizedEmailAddressSchema,
+    replyTo: normalizedEmailAddressSchema.nullable(),
+    status: z.enum(EMAIL_SENDER_STATUSES),
+    provider: z.literal("resend"),
+    providerDomainId: z.string().trim().min(1).max(300).nullable(),
+    dnsRecords: z.array(emailDnsRecordSchema).max(20),
+    killSwitch: z.boolean(),
+    dailyCap: z.number().int().min(1).max(100_000),
+    lastCheckedAt: z.number().int().nullable(),
+    lastError: z.string().max(1_000).nullable(),
+    createdAt: z.number().int(),
+    updatedAt: z.number().int(),
+  })
+  .strict();
+export type EmailSender = z.infer<typeof emailSenderSchema>;
+
+export const updateEmailSenderInputSchema = z
+  .object({
+    domain: emailSenderDomainSchema,
+    fromLocalPart: emailSenderLocalPartSchema,
+    fromName: z.string().trim().min(1).max(200),
+    replyTo: normalizedEmailAddressSchema.nullable(),
+  })
+  .strict();
+export type UpdateEmailSenderInput = z.infer<typeof updateEmailSenderInputSchema>;
+
+export const emailRecipientPermissionSchema = z
+  .object({
+    workspaceId: z.string().uuid(),
+    normalizedEmail: normalizedEmailAddressSchema,
+    status: z.enum(EMAIL_PERMISSION_STATUSES),
+    createdAt: z.number().int(),
+    updatedAt: z.number().int(),
+  })
+  .strict();
+export type EmailRecipientPermission = z.infer<typeof emailRecipientPermissionSchema>;
+
+export const updateEmailPermissionInputSchema = z
+  .object({
+    status: z.enum(["allowed", "suppressed"]),
+  })
+  .strict();
+export type UpdateEmailPermissionInput = z.infer<typeof updateEmailPermissionInputSchema>;
+
+export const emailSafetySettingsSchema = z
+  .object({
+    killSwitch: z.boolean(),
+    dailyCap: z.number().int().min(1).max(100_000),
+  })
+  .strict();
+export type EmailSafetySettings = z.infer<typeof emailSafetySettingsSchema>;
+
+export const updateEmailSafetyInputSchema = emailSafetySettingsSchema;
+export type UpdateEmailSafetyInput = z.infer<typeof updateEmailSafetyInputSchema>;
+
+export const emailSuppressionSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    normalizedEmail: normalizedEmailAddressSchema,
+    reason: z.string().trim().min(1).max(200),
+    createdAt: z.number().int(),
+  })
+  .strict();
+export type EmailSuppression = z.infer<typeof emailSuppressionSchema>;
+
+export const emailDeliverySchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    externalActionId: z.string().uuid(),
+    origin: z.enum(EMAIL_DELIVERY_ORIGINS),
+    originId: z.string().uuid(),
+    normalizedRecipient: normalizedEmailAddressSchema,
+    senderAddress: normalizedEmailAddressSchema,
+    replyTo: normalizedEmailAddressSchema.nullable(),
+    subject: z.string().min(1).max(998),
+    text: z.string().min(1).max(2_000_000),
+    html: z.string().max(5_000_000).nullable(),
+    idempotencyKey: z.string().trim().min(1).max(256),
+    provider: z.literal("resend"),
+    providerMessageId: z.string().trim().min(1).max(300).nullable(),
+    status: z.enum(EMAIL_DELIVERY_STATUSES),
+    acceptedAt: z.number().int().nullable(),
+    completedAt: z.number().int().nullable(),
+    lastError: z.string().max(1_000).nullable(),
+    createdAt: z.number().int(),
+    updatedAt: z.number().int(),
+  })
+  .strict();
+export type EmailDelivery = z.infer<typeof emailDeliverySchema>;
+
+export const emailDeliveryEventSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    deliveryId: z.string().uuid(),
+    provider: z.literal("resend"),
+    providerEventId: z.string().trim().min(1).max(300),
+    eventType: z.string().trim().min(1).max(200),
+    payload: z.record(z.string(), z.unknown()),
+    occurredAt: z.number().int(),
+    createdAt: z.number().int(),
+  })
+  .strict();
+export type EmailDeliveryEvent = z.infer<typeof emailDeliveryEventSchema>;
+
+const EMAIL_DELIVERY_TRANSITIONS: Record<EmailDeliveryStatus, ReadonlySet<EmailDeliveryStatus>> = {
+  queued: new Set(["accepted", "failed"]),
+  accepted: new Set(["delivered", "bounced", "complained", "failed"]),
+  delivered: new Set(),
+  bounced: new Set(),
+  complained: new Set(),
+  failed: new Set(),
+};
+
+export function canTransitionEmailDelivery(
+  from: EmailDeliveryStatus,
+  to: EmailDeliveryStatus,
+): boolean {
+  return EMAIL_DELIVERY_TRANSITIONS[from].has(to);
+}
+
+export const externalActionListFiltersSchema = z.object({
+  status: z.enum(EXTERNAL_ACTION_STATUSES).optional(),
+  kind: z.enum(EXTERNAL_ACTION_KINDS).optional(),
+  campaign: z.string().uuid().optional(),
+  channel: z.string().trim().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(200).default(50),
+});
+export type ExternalActionListFilters = z.infer<typeof externalActionListFiltersSchema>;
+
+export const authorizeExternalActionInputSchema = z.object({}).strict();
+export const denyExternalActionInputSchema = z.object({
+  reason: z.string().trim().min(1).max(1_000).nullable().optional(),
+});
+export const reproposeExternalActionInputSchema = z.object({
+  idempotencyKey: z.string().trim().min(1).max(300),
+});
+
+const externalActionPolicyWriteSchema = z.object({
+  actionKind: z.enum(EXTERNAL_ACTION_KINDS),
+  rule: z.enum(EXTERNAL_ACTION_POLICY_RULES),
+});
+
+export const upsertExternalActionPoliciesInputSchema = z
+  .object({
+    scope: z.enum(EXTERNAL_ACTION_POLICY_SCOPES),
+    scopeId: z.string().uuid(),
+    expectedUpdatedAt: z.number().int().nullable(),
+    rules: z.array(externalActionPolicyWriteSchema).length(EXTERNAL_ACTION_KINDS.length),
+  })
+  .superRefine((value, ctx) => {
+    if (value.scope === "workspace" && value.rules.some((rule) => rule.rule === "inherit")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["rules"],
+        message: "Workspace policy cannot inherit.",
+      });
+    }
+    const kinds = value.rules.map((rule) => rule.actionKind);
+    if (new Set(kinds).size !== kinds.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["rules"],
+        message: "Each action kind may appear only once.",
+      });
+    }
+  });
+export type UpsertExternalActionPoliciesInput = z.infer<
+  typeof upsertExternalActionPoliciesInputSchema
+>;
+
+export const externalActionPolicyViewSchema = z.object({
+  scope: z.enum(EXTERNAL_ACTION_POLICY_SCOPES),
+  scopeId: z.string().uuid(),
+  scopeLabel: z.string().trim().min(1),
+  rules: z.array(externalActionPolicyRuleSchema),
+  effective: z.array(
+    z.object({
+      actionKind: z.enum(EXTERNAL_ACTION_KINDS),
+      policy: effectiveExternalActionPolicySchema,
+    }),
+  ),
+  updatedAt: z.number().int().nullable(),
+});
+export type ExternalActionPolicyView = z.infer<typeof externalActionPolicyViewSchema>;
+
+const DELIVERABLE_TRANSITIONS: Record<
+  DeliverableProductionStatus,
+  readonly DeliverableProductionStatus[]
+> = {
+  planned: ["assessing", "ready", "stale", "blocked", "cancelled"],
+  assessing: ["research_needed", "ready", "blocked", "cancelled"],
+  research_needed: ["assessing", "ready", "stale", "cancelled"],
+  ready: ["generating", "stale", "blocked", "cancelled"],
+  generating: ["candidate_ready", "ready", "blocked", "cancelled"],
+  candidate_ready: ["fulfilled", "generating", "stale", "cancelled"],
+  fulfilled: [],
+  stale: ["assessing", "cancelled"],
+  blocked: ["assessing", "cancelled"],
+  cancelled: [],
+};
+
+export function canTransitionDeliverable(
+  from: DeliverableProductionStatus,
+  to: DeliverableProductionStatus,
+): boolean {
+  return DELIVERABLE_TRANSITIONS[from].includes(to);
+}
+
+export const EXTERNAL_ACTION_TRANSITIONS: Record<
+  ExternalActionStatus,
+  readonly ExternalActionStatus[]
+> = {
+  proposed: ["authorization_required", "authorized", "blocked", "stale", "cancelled"],
+  authorization_required: ["authorized", "stale", "cancelled"],
+  authorized: ["scheduled", "dispatching", "blocked", "stale", "cancelled"],
+  scheduled: ["dispatching", "blocked", "stale", "cancelled"],
+  dispatching: ["succeeded", "failed"],
+  succeeded: [],
+  failed: ["scheduled", "dispatching", "cancelled"],
+  blocked: ["proposed", "cancelled"],
+  stale: ["cancelled"],
+  cancelled: [],
+};
+
+export function canTransitionExternalAction(
+  from: ExternalActionStatus,
+  to: ExternalActionStatus,
+): boolean {
+  return EXTERNAL_ACTION_TRANSITIONS[from].includes(to);
+}
+
+const campaignPlanFields = {
+  objective: z.string().trim().max(1_000).default(""),
+  kpi: z.string().trim().max(500).default(""),
+  timeframe: z.string().trim().max(200).default(""),
+  startAt: z.number().int().nullable(),
+  endAt: z.number().int().nullable(),
+  audienceIds: z.array(z.string().uuid()).default([]),
+  pillars: z.array(z.string().trim().min(1).max(200)).max(20).default([]),
+  offers: z.array(z.string().trim().min(1).max(300)).max(20).default([]),
+  ctas: z.array(z.string().trim().min(1).max(300)).max(20).default([]),
+  guidance: z.string().trim().max(CAMPAIGN_OVERLAY_MAX_CHARS).default(""),
+};
+
+function validatePlanWindow(
+  value: { startAt: number | null; endAt: number | null },
+  ctx: z.RefinementCtx,
+): void {
+  if (value.startAt !== null && value.endAt !== null && value.endAt <= value.startAt) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["endAt"],
+      message: "Campaign end must be after its start.",
+    });
+  }
+}
+
+export const campaignPlanRevisionSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    campaignId: z.string().uuid(),
+    revision: z.number().int().positive(),
+    status: z.enum(PLAN_REVISION_STATUSES),
+    ...campaignPlanFields,
+    createdBy: z.string().uuid().nullable(),
+    createdAt: z.number().int(),
+    activatedAt: z.number().int().nullable(),
+  })
+  .superRefine(validatePlanWindow);
+export type CampaignPlanRevision = z.infer<typeof campaignPlanRevisionSchema>;
+
+export const createCampaignPlanRevisionInputSchema = z
+  .object(campaignPlanFields)
+  .superRefine(validatePlanWindow);
+export type CreateCampaignPlanRevisionInput = z.infer<
+  typeof createCampaignPlanRevisionInputSchema
+>;
+
+export const campaignLaneSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  campaignId: z.string().uuid(),
+  key: z
+    .string()
+    .trim()
+    .min(1)
+    .max(120)
+    .regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/, "Use a lowercase kebab-case lane key."),
+  name: z.string().trim().min(1).max(120),
+  status: z.enum(LANE_STATUSES),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type CampaignLane = z.infer<typeof campaignLaneSchema>;
+
+export const laneScheduleSchema = z.object({
+  daysOfWeek: z
+    .array(z.number().int().min(0).max(6))
+    .min(1)
+    .transform((days) => [...new Set(days)].sort((a, b) => a - b)),
+  timeOfDay: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/, "Use a HH:MM 24-hour time"),
+  timezone: z.string().min(1).refine(isValidTimeZone, "Unknown time zone"),
+});
+export type LaneSchedule = z.infer<typeof laneScheduleSchema>;
+
+const campaignLaneRevisionFields = {
+  personaId: z.string().uuid(),
+  audienceId: z.string().uuid().nullable(),
+  channel: z.enum(CHANNELS),
+  format: z.string().trim().min(1).max(100),
+  publishingConnectionId: z.string().uuid().nullable(),
+  providerTarget: z.string().trim().max(200).default(""),
+  deliveryMode: z.enum(DELIVERY_MODES),
+  plannedQuantity: z.number().int().min(0).max(1_000),
+  schedule: laneScheduleSchema.nullable(),
+  reactivePeriod: z.enum(REACTIVE_PERIODS).nullable(),
+  reactiveCap: z.number().int().positive().max(1_000).nullable(),
+  status: z.enum(LANE_STATUSES),
+};
+
+function validateLaneDelivery(
+  value: {
+    deliveryMode: DeliveryMode;
+    plannedQuantity: number;
+    schedule: LaneSchedule | null;
+    reactivePeriod: ReactivePeriod | null;
+    reactiveCap: number | null;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if (value.deliveryMode !== "reactive") {
+    if (!value.schedule) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["schedule"],
+        message: "Planned delivery requires a schedule.",
+      });
+    }
+    if (value.plannedQuantity < 1) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["plannedQuantity"],
+        message: "Planned delivery requires a positive quantity.",
+      });
+    }
+  }
+  if (value.deliveryMode !== "planned" && (!value.reactivePeriod || !value.reactiveCap)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["reactiveCap"],
+      message: "Reactive delivery requires a period and positive cap.",
+    });
+  }
+}
+
+export const campaignLaneRevisionSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    laneId: z.string().uuid(),
+    planRevisionId: z.string().uuid(),
+    ...campaignLaneRevisionFields,
+    createdAt: z.number().int(),
+  })
+  .superRefine(validateLaneDelivery);
+export type CampaignLaneRevision = z.infer<typeof campaignLaneRevisionSchema>;
+
+export const campaignPlanIssueSchema = z.object({
+  path: z.string().min(1),
+  code: z.string().min(1),
+  message: z.string().min(1),
+});
+export type CampaignPlanIssue = z.infer<typeof campaignPlanIssueSchema>;
+
+export const campaignLaneRevisionViewSchema = campaignLaneRevisionSchema.and(
+  z.object({
+    key: campaignLaneSchema.shape.key,
+    name: campaignLaneSchema.shape.name,
+  }),
+);
+export type CampaignLaneRevisionView = z.infer<typeof campaignLaneRevisionViewSchema>;
+
+export const campaignPlanDetailSchema = z.object({
+  plan: campaignPlanRevisionSchema,
+  lanes: z.array(campaignLaneRevisionViewSchema),
+});
+export type CampaignPlanDetail = z.infer<typeof campaignPlanDetailSchema>;
+
+export const campaignPlanWorkspaceSchema = z.object({
+  currentPlanRevisionId: z.string().uuid().nullable(),
+  revisions: z.array(campaignPlanDetailSchema),
+  issues: z.array(campaignPlanIssueSchema),
+});
+export type CampaignPlanWorkspace = z.infer<typeof campaignPlanWorkspaceSchema>;
+
+export const upsertCampaignLaneRevisionInputSchema = z
+  .object({
+    laneId: z.string().uuid().optional(),
+    key: campaignLaneSchema.shape.key,
+    name: campaignLaneSchema.shape.name,
+    ...campaignLaneRevisionFields,
+  })
+  .superRefine(validateLaneDelivery);
+export type UpsertCampaignLaneRevisionInput = z.infer<
+  typeof upsertCampaignLaneRevisionInputSchema
+>;
 
 // ---------------------------------------------------------------------------
 // Signals (manual market input — source adapters arrive in a later slice)
@@ -1453,6 +2551,15 @@ export function canTransition(from: ApprovalState, action: ApprovalAction): bool
   return transitionTo(from, action) !== undefined;
 }
 
+export const LAUNCH_MEDIA_TYPES = ["image", "video"] as const;
+export type LaunchMediaType = (typeof LAUNCH_MEDIA_TYPES)[number];
+
+export const launchMediaSchema = z.object({
+  url: z.string().trim().url("A valid media URL is required"),
+  type: z.enum(LAUNCH_MEDIA_TYPES),
+});
+export type LaunchMedia = z.infer<typeof launchMediaSchema>;
+
 export const draftSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
@@ -1467,6 +2574,9 @@ export const draftSchema = z.object({
   originalContent: z.string(),
   content: z.string(),
   state: z.enum(APPROVAL_STATES),
+  // Rendered visuals attached to the draft (Sprint 41): what a reviewer SEES,
+  // while content holds what they READ. Same shape launches use.
+  media: z.array(launchMediaSchema).nullable().optional(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
   // The pre-review copied from the source generation at submit, or refreshed
@@ -1497,6 +2607,87 @@ export const editDraftInputSchema = z.object({
     .max(BRAIN_DOC_MAX_CHARS, `Draft must be ${BRAIN_DOC_MAX_CHARS} characters or fewer`),
 });
 export type EditDraftInput = z.infer<typeof editDraftInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Conversational draft revision — persisted turns attached to the approval
+// object. Successful turns still move through the canonical edit transition.
+// ---------------------------------------------------------------------------
+
+export const DRAFT_REVISION_STATUSES = ["running", "completed", "failed"] as const;
+export type DraftRevisionStatus = (typeof DRAFT_REVISION_STATUSES)[number];
+
+export const DRAFT_REVISION_INSTRUCTION_MAX_CHARS = 2_000;
+
+export const editorEvidenceCitationSchema = z.object({
+  documentId: z.string().min(1),
+  title: z.string().min(1),
+  kind: z.string().min(1),
+  url: z.string().url().nullable(),
+  score: z.number(),
+  finalScore: z.number(),
+  kept: z.boolean(),
+  exclusionReason: z.string().nullable(),
+});
+export type EditorEvidenceCitation = z.infer<typeof editorEvidenceCitationSchema>;
+
+export const editorContextSectionSchema = z.object({
+  key: z.string().min(1),
+  layer: z.string().min(1),
+  title: z.string().min(1),
+  content: z.string(),
+  included: z.boolean(),
+  reason: z.string(),
+  tokens: z.number().int().nonnegative(),
+  evidence: z
+    .object({
+      query: z.string(),
+      chunks: z.array(editorEvidenceCitationSchema),
+    })
+    .nullable(),
+});
+export type EditorContextSection = z.infer<typeof editorContextSectionSchema>;
+
+export const draftRevisionTurnSchema = z
+  .object({
+    id: z.string().uuid(),
+    requestId: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    draftId: z.string().uuid(),
+    actorId: z.string().uuid().nullable(),
+    instruction: z.string().min(1).max(DRAFT_REVISION_INSTRUCTION_MAX_CHARS),
+    sourceContent: z.string(),
+    resultContent: z.string().nullable(),
+    contextSections: z.array(editorContextSectionSchema),
+    status: z.enum(DRAFT_REVISION_STATUSES),
+    error: z.string().nullable(),
+    model: z.string().nullable(),
+    provider: z.string().nullable(),
+    durationMs: z.number().int().nonnegative().nullable(),
+    createdAt: z.number().int(),
+    completedAt: z.number().int().nullable(),
+  })
+  .superRefine((turn, ctx) => {
+    if (
+      turn.status === "completed" &&
+      (!turn.resultContent || !turn.model || !turn.provider || turn.completedAt === null)
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Completed revisions require result and provider metadata.",
+      });
+    }
+    if (turn.status === "failed" && !turn.error) {
+      ctx.addIssue({ code: "custom", message: "Failed revisions require an error." });
+    }
+  });
+export type DraftRevisionTurn = z.infer<typeof draftRevisionTurnSchema>;
+
+export const reviseDraftInputSchema = z.object({
+  requestId: z.string().uuid(),
+  instruction: z.string().trim().min(1).max(DRAFT_REVISION_INSTRUCTION_MAX_CHARS),
+  expectedDraftUpdatedAt: z.number().int().nonnegative(),
+});
+export type ReviseDraftInput = z.infer<typeof reviseDraftInputSchema>;
 
 // ---------------------------------------------------------------------------
 // Outbound leads
@@ -1786,6 +2977,24 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     testPath: "/v23.0/me",
     oauthScopes:
       "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement,business_management",
+  },
+  {
+    // Sprint 47: the outreach mailbox. OAuth popup via Nango like the social
+    // trio; creds are GMAIL_CLIENT_ID / GMAIL_CLIENT_SECRET in the root .env
+    // (a GCP OAuth app with the Gmail scopes; "Testing" mode works for the
+    // founder's own account, app verification needed for customers).
+    // gmail.send = outreach sends from the founder's real mailbox;
+    // gmail.readonly = polling inbound replies to Tuezday-sent threads only
+    // (the privacy invariant — unrelated mail is never ingested).
+    key: "gmail",
+    label: "Gmail",
+    nangoProvider: "google-mail",
+    authMode: "oauth",
+    categories: ["outbound"],
+    baseUrl: "https://gmail.googleapis.com",
+    testPath: "/gmail/v1/users/me/profile",
+    oauthScopes:
+      "https://www.googleapis.com/auth/gmail.send,https://www.googleapis.com/auth/gmail.readonly",
   },
   {
     // Proxy any API without auth (your own services, public APIs). Keyed
@@ -2484,6 +3693,8 @@ export const publicationSchema = z.object({
   externalId: z.string().nullable(),
   externalUrl: z.string().nullable(),
   lastError: z.string().nullable(),
+  /** Governing action for new receipts; absent/null on legacy rows. */
+  externalActionId: z.string().uuid().nullable().optional(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 });
@@ -2495,6 +3706,7 @@ export const publishDraftInputSchema = z.object({
   target: z.string().trim().min(1, "Target is required"),
   title: z.string().trim().min(1, "Title is required"),
   scheduledFor: z.number().int().positive().optional(),
+  idempotencyKey: z.string().trim().min(1).max(300).optional(),
 });
 export type PublishDraftInput = z.infer<typeof publishDraftInputSchema>;
 
@@ -2581,21 +3793,35 @@ export const updatePostingCadenceInputSchema = z
 export type UpdatePostingCadenceInput = z.infer<typeof updatePostingCadenceInputSchema>;
 
 /** A calendar cell: either a published/scheduled receipt or an empty slot. */
-export const CALENDAR_ENTRY_STATUSES = ["open", "scheduled", "published", "failed"] as const;
+export const CALENDAR_ENTRY_STATUSES = [
+  "open",
+  "authorization_required",
+  "authorized",
+  "scheduled",
+  "published",
+  "failed",
+  "blocked",
+  "stale",
+] as const;
 export type CalendarEntryStatus = (typeof CALENDAR_ENTRY_STATUSES)[number];
 
 export const calendarEntrySchema = z.object({
-  kind: z.enum(["slot", "publication"]),
+  kind: z.enum(["slot", "publication", "external_action"]),
   at: z.number().int(),
   cadenceId: z.string().uuid().nullable(),
   cadenceName: z.string().nullable(),
+  campaignId: z.string().uuid().nullable(),
+  campaignName: z.string().nullable(),
   channel: z.enum(CHANNELS).nullable(),
   providerKey: z.string().nullable(),
   status: z.enum(CALENDAR_ENTRY_STATUSES),
   title: z.string(),
   draftId: z.string().uuid().nullable(),
   publicationId: z.string().uuid().nullable(),
+  externalActionId: z.string().uuid().nullable().optional(),
   url: z.string().nullable(),
+  /** Last failure detail for a failed publication; null otherwise. */
+  error: z.string().nullable(),
 });
 export type CalendarEntry = z.infer<typeof calendarEntrySchema>;
 
@@ -2694,12 +3920,17 @@ export const adLaunchSchema = z.object({
   externalAdSetId: z.string().nullable(),
   externalCreativeId: z.string().nullable(),
   externalAdId: z.string().nullable(),
+  // Meta adimages hash (Sprint 41 Part 5) — set after uploadAdImage succeeds,
+  // consumed by createAdCreative; null for text-only creatives.
+  metaImageHash: z.string().nullable(),
   // The Sprint 14 ad_campaigns mirror row created on launch.
   adCampaignId: z.string().uuid().nullable(),
   // Raw platform effective_status, stamped by the sync job and pause/resume.
   platformStatus: z.string().nullable(),
   launchedAt: z.number().int().nullable(),
   lastError: z.string().nullable(),
+  /** Governing paid-launch action; absent/null on legacy rows. */
+  externalActionId: z.string().uuid().nullable().optional(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 });
@@ -2724,6 +3955,106 @@ const countryCodeSchema = z
   .toUpperCase()
   .regex(/^[A-Z]{2}$/, "Use 2-letter country codes (e.g. US, DE)");
 
+const normalizedCountryCodesSchema = z
+  .array(countryCodeSchema)
+  .min(1, "Target at least one country")
+  .max(25)
+  .transform((values) => Array.from(new Set(values)).sort());
+
+const dailyBudgetCentsSchema = z
+  .number()
+  .int()
+  .min(100, "Daily budget must be at least 100 cents")
+  .max(100_000_000);
+
+const targetingFieldsSchema = z.object({
+  countries: normalizedCountryCodesSchema,
+  ageMin: z.number().int().min(18).max(65),
+  ageMax: z.number().int().min(18).max(65),
+});
+
+function refineTargetingAgeRange(
+  value: { ageMin: number; ageMax: number },
+  ctx: z.RefinementCtx,
+): void {
+  if (value.ageMin > value.ageMax) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["ageMax"],
+      message: "Maximum age must be at least the minimum age",
+    });
+  }
+}
+
+const targetingSnapshotSchema = targetingFieldsSchema.superRefine(refineTargetingAgeRange);
+
+export const metaAdSetStateSchema = targetingFieldsSchema
+  .extend({
+    externalAdSetId: z.string().trim().min(1),
+    dailyBudgetCents: dailyBudgetCentsSchema,
+    updatedAt: z.number().int().nonnegative().nullable(),
+  })
+  .superRefine(refineTargetingAgeRange);
+export type MetaAdSetState = z.infer<typeof metaAdSetStateSchema>;
+
+const adMutationIdentitySchema = z.object({
+  launchId: z.string().uuid(),
+  adAccountId: z.string().uuid(),
+  externalAccountId: z.string().trim().min(1),
+  externalAdSetId: z.string().trim().min(1),
+  providerUpdatedAt: z.number().int().nonnegative().nullable(),
+});
+
+export const budgetChangeIntentSchema = adMutationIdentitySchema
+  .extend({
+    currency: z.string().trim().toUpperCase().regex(/^[A-Z]{3}$/),
+    beforeDailyBudgetCents: dailyBudgetCentsSchema,
+    afterDailyBudgetCents: dailyBudgetCentsSchema,
+  })
+  .superRefine((value, ctx) => {
+    if (value.beforeDailyBudgetCents === value.afterDailyBudgetCents) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["afterDailyBudgetCents"],
+        message: "The requested budget must differ from the provider budget",
+      });
+    }
+  });
+export type BudgetChangeIntent = z.infer<typeof budgetChangeIntentSchema>;
+
+export const targetingChangeIntentSchema = adMutationIdentitySchema
+  .extend({
+    before: targetingSnapshotSchema,
+    after: targetingSnapshotSchema,
+  })
+  .superRefine((value, ctx) => {
+    const unchanged =
+      value.before.ageMin === value.after.ageMin &&
+      value.before.ageMax === value.after.ageMax &&
+      value.before.countries.length === value.after.countries.length &&
+      value.before.countries.every((country, index) => country === value.after.countries[index]);
+    if (unchanged) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["after"],
+        message: "The requested targeting must differ from the provider targeting",
+      });
+    }
+  });
+export type TargetingChangeIntent = z.infer<typeof targetingChangeIntentSchema>;
+
+export const proposeBudgetChangeInputSchema = z.object({
+  dailyBudgetCents: dailyBudgetCentsSchema,
+  idempotencyKey: z.string().uuid(),
+});
+export type ProposeBudgetChangeInput = z.infer<typeof proposeBudgetChangeInputSchema>;
+
+export const proposeTargetingChangeInputSchema = targetingFieldsSchema
+  .extend({ idempotencyKey: z.string().uuid() })
+  .strict("Only countries and age range can be changed")
+  .superRefine(refineTargetingAgeRange);
+export type ProposeTargetingChangeInput = z.infer<typeof proposeTargetingChangeInputSchema>;
+
 const adLaunchFieldsSchema = z.object({
   adAccountId: z.string().uuid(),
   creativeDraftId: z.string().uuid(),
@@ -2736,11 +4067,7 @@ const adLaunchFieldsSchema = z.object({
     .url("A valid destination URL is required")
     .regex(/^https:\/\//, "Use an https destination URL"),
   // Meta's minimum daily budget is on the order of $1/day.
-  dailyBudgetCents: z
-    .number()
-    .int()
-    .min(100, "Daily budget must be at least 100 cents")
-    .max(100_000_000),
+  dailyBudgetCents: dailyBudgetCentsSchema,
   startAt: z.number().int().positive().optional(),
   endAt: z.number().int().positive().optional(),
   countries: z.array(countryCodeSchema).min(1, "Target at least one country").max(25),
@@ -2852,9 +4179,29 @@ export type AutomationRunResult = z.infer<typeof automationRunResultSchema>;
 // Engagement & reply inbox (Sprint 29)
 // ---------------------------------------------------------------------------
 
-/** A comment on one of our posts, or a reply to one of our outbound DMs. */
-export const INBOX_ITEM_KINDS = ["comment", "dm"] as const;
+/**
+ * A comment on one of our posts, a reply to one of our outbound DMs, or an
+ * inbound email reply to an outreach email sent from a connected mailbox
+ * (Sprint 47).
+ */
+export const INBOX_ITEM_KINDS = ["comment", "dm", "email"] as const;
 export type InboxItemKind = (typeof INBOX_ITEM_KINDS)[number];
+
+/**
+ * Best-effort LLM classification of an inbound email reply (Sprint 47).
+ * Labels only — reply-driven actions (stop chain, suppress, retry) are
+ * Sprint 49. `null` on the item means unclassified (LLM unavailable/failed);
+ * classification assists, never gates.
+ */
+export const EMAIL_REPLY_LABELS = [
+  "positive",
+  "not_interested",
+  "out_of_office",
+  "unsubscribe_request",
+  "bounce",
+  "other",
+] as const;
+export type EmailReplyLabel = (typeof EMAIL_REPLY_LABELS)[number];
 
 export const INBOX_ITEM_STATUSES = ["unread", "read", "replied", "dismissed"] as const;
 export type InboxItemStatus = (typeof INBOX_ITEM_STATUSES)[number];
@@ -2883,6 +4230,13 @@ export const inboxItemSchema = z.object({
   replyDraftId: z.string().uuid().nullable(),
   postedReplyExternalId: z.string().nullable(),
   postedReplyUrl: z.string().nullable(),
+  /** Governing reply action; absent/null until a reply proposal exists. */
+  externalActionId: z.string().uuid().nullable().optional(),
+  /** The sent outreach email this replies to (kind "email" only — Sprint 47). */
+  emailDeliveryId: z.string().uuid().nullable().optional(),
+  /** LLM classification of an email reply; null = unclassified. */
+  replyLabel: z.enum(EMAIL_REPLY_LABELS).nullable().optional(),
+  replyLabeledAt: z.number().int().nullable().optional(),
   externalCreatedAt: z.number().int(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
@@ -2901,6 +4255,15 @@ export const inboxItemWithContextSchema = inboxItemSchema.extend({
       url: z.string().nullable(),
     })
     .nullable(),
+  /** The outreach email a kind:"email" item replies to (Sprint 47). */
+  sentEmail: z
+    .object({
+      deliveryId: z.string().uuid(),
+      subject: z.string(),
+      sentAt: z.number().int().nullable(),
+    })
+    .nullable()
+    .optional(),
 });
 export type InboxItemWithContext = z.infer<typeof inboxItemWithContextSchema>;
 
@@ -3195,6 +4558,11 @@ export const EVENT_TYPES = [
   "post.published",
   "reply.posted",
   "webhook.ping",
+  // Outreach reply outcomes (Sprint 49).
+  "outreach.reply.positive",
+  "outreach.reply.unsubscribed",
+  "outreach.reply.bounced",
+  "crm.task.created",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
@@ -3245,14 +4613,8 @@ export type LaunchMessageKind = (typeof LAUNCH_MESSAGE_KINDS)[number];
 export const LAUNCH_MESSAGE_STATUSES = ["pending", "sent", "failed", "skipped"] as const;
 export type LaunchMessageStatus = (typeof LAUNCH_MESSAGE_STATUSES)[number];
 
-export const LAUNCH_MEDIA_TYPES = ["image", "video"] as const;
-export type LaunchMediaType = (typeof LAUNCH_MEDIA_TYPES)[number];
-
-export const launchMediaSchema = z.object({
-  url: z.string().trim().url("A valid media URL is required"),
-  type: z.enum(LAUNCH_MEDIA_TYPES),
-});
-export type LaunchMedia = z.infer<typeof launchMediaSchema>;
+// launchMediaSchema/LaunchMedia moved above draftSchema (Sprint 41 Part 4)
+// so drafts can carry the same media shape launches use.
 
 export const launchSchema = z.object({
   id: z.string().uuid(),
@@ -3291,6 +4653,8 @@ export const launchMessageSchema = z.object({
   externalUrl: z.string().nullable(),
   sentAt: z.number().int().nullable(),
   lastError: z.string().nullable(),
+  /** Governing send action; absent/null on legacy rows. */
+  externalActionId: z.string().uuid().nullable().optional(),
   // Which sequence step produced this message (Sprint 30). First-touch = 1.
   stepNumber: z.number().int(),
   // The linked draft's current approval state + content, for the launch UI.
@@ -3319,6 +4683,7 @@ export type GenerateLaunchInput = z.infer<typeof generateLaunchInputSchema>;
 export const dispatchChannelInputSchema = z.object({
   connectionId: z.string().uuid().optional(),
   media: z.array(launchMediaSchema).max(10, "At most 10 media items").optional(),
+  idempotencyKey: z.string().trim().min(1).max(300).optional(),
 });
 export type DispatchChannelInput = z.infer<typeof dispatchChannelInputSchema>;
 
@@ -3615,6 +4980,240 @@ export const apiErrorSchema = z.object({
 export type ApiError = z.infer<typeof apiErrorSchema>;
 
 // ---------------------------------------------------------------------------
+// Canonical workflow status vocabulary
+// ---------------------------------------------------------------------------
+
+export const WORKFLOW_STATUS_FAMILIES = [
+  "attention",
+  "progress",
+  "ready",
+  "blocked",
+  "informational",
+] as const;
+export type WorkflowStatusFamily = (typeof WORKFLOW_STATUS_FAMILIES)[number];
+
+export const WORKFLOW_STATUSES = [
+  "draft",
+  "review_required",
+  "authorization_required",
+  "changes_requested",
+  "generating",
+  "regenerating",
+  "scheduling",
+  "publishing",
+  "sending",
+  "launching",
+  "approved",
+  "rejected",
+  "authorized",
+  "scheduled",
+  "active",
+  "connected",
+  "completed",
+  "setup_required",
+  "connection_lost",
+  "policy_blocked",
+  "partially_failed",
+  "failed",
+  "stale",
+  "paused",
+  "superseded",
+  "archived",
+  "experimental",
+] as const;
+export type WorkflowStatus = (typeof WORKFLOW_STATUSES)[number];
+export const workflowStatusSchema = z.enum(WORKFLOW_STATUSES);
+
+export const WORKFLOW_STATUS_META: Record<
+  WorkflowStatus,
+  { label: string; family: WorkflowStatusFamily }
+> = {
+  draft: { label: "Draft", family: "attention" },
+  review_required: { label: "Review required", family: "attention" },
+  authorization_required: { label: "Authorization required", family: "attention" },
+  changes_requested: { label: "Changes requested", family: "attention" },
+  generating: { label: "Generating", family: "progress" },
+  regenerating: { label: "Regenerating", family: "progress" },
+  scheduling: { label: "Scheduling", family: "progress" },
+  publishing: { label: "Publishing", family: "progress" },
+  sending: { label: "Sending", family: "progress" },
+  launching: { label: "Launching", family: "progress" },
+  approved: { label: "Approved", family: "ready" },
+  rejected: { label: "Rejected", family: "informational" },
+  authorized: { label: "Authorized", family: "ready" },
+  scheduled: { label: "Scheduled", family: "ready" },
+  active: { label: "Active", family: "ready" },
+  connected: { label: "Connected", family: "ready" },
+  completed: { label: "Completed", family: "ready" },
+  setup_required: { label: "Setup required", family: "blocked" },
+  connection_lost: { label: "Connection lost", family: "blocked" },
+  policy_blocked: { label: "Policy blocked", family: "blocked" },
+  partially_failed: { label: "Partially failed", family: "blocked" },
+  failed: { label: "Failed", family: "blocked" },
+  stale: { label: "Stale", family: "blocked" },
+  paused: { label: "Paused", family: "informational" },
+  superseded: { label: "Superseded", family: "informational" },
+  archived: { label: "Archived", family: "informational" },
+  experimental: { label: "Experimental", family: "informational" },
+};
+
+export const priorityItemSchema = z.object({
+  id: z.string().uuid(),
+  kind: z.enum(PRIORITY_ITEM_KINDS),
+  status: workflowStatusSchema,
+  title: z.string().trim().min(1),
+  reason: z.string().trim().min(1),
+  consequence: z.string().trim().min(1),
+  href: z.string().startsWith("/"),
+  campaignId: z.string().uuid().nullable(),
+  campaignName: z.string().nullable(),
+  dueAt: z.number().int().nullable(),
+  createdAt: z.number().int(),
+});
+export type PriorityItem = z.infer<typeof priorityItemSchema>;
+
+export const priorityQueueSchema = z.object({
+  items: z.array(priorityItemSchema),
+  generatedAt: z.number().int(),
+});
+export type PriorityQueue = z.infer<typeof priorityQueueSchema>;
+
+// ---------------------------------------------------------------------------
+// Unified execution results (UI revamp golden loop) — one read-only projection
+// over publications, targeted launches, and ad launches. External actions join
+// this vocabulary once their API foundation exists.
+// ---------------------------------------------------------------------------
+
+export const EXECUTION_RESULT_KINDS = [
+  "publication",
+  "launch",
+  "ad_launch",
+  "ad_mutation",
+  "email_delivery",
+] as const;
+export type ExecutionResultKind = (typeof EXECUTION_RESULT_KINDS)[number];
+
+export const EXECUTION_RESULT_STATUSES = [
+  "running",
+  "completed",
+  "partially_failed",
+  "failed",
+] as const;
+export type ExecutionResultStatus = (typeof EXECUTION_RESULT_STATUSES)[number];
+
+const executionDestinationsSchema = z.object({
+  total: z.number().int().min(0),
+  succeeded: z.number().int().min(0),
+  failed: z.number().int().min(0),
+  skipped: z.number().int().min(0),
+  pending: z.number().int().min(0),
+});
+export type ExecutionDestinations = z.infer<typeof executionDestinationsSchema>;
+
+export const executionResultSchema = z
+  .object({
+    kind: z.enum(EXECUTION_RESULT_KINDS),
+    /** Id of the underlying publication / launch / ad launch row. */
+    id: z.string().uuid(),
+    title: z.string(),
+    channel: z.string().nullable(),
+    campaignId: z.string().uuid().nullable(),
+    campaignName: z.string().nullable(),
+    status: z.enum(EXECUTION_RESULT_STATUSES),
+    /** When the execution happened (or last progressed, for running launches). */
+    at: z.number().int(),
+    url: z.string().nullable(),
+    error: z.string().nullable(),
+    /** Raw platform effective_status — ad launches only; null elsewhere. */
+    platformStatus: z.string().nullable(),
+    destinations: executionDestinationsSchema,
+    draftId: z.string().uuid().nullable(),
+    /** Governed mutation kind; absent/null for legacy execution projections. */
+    actionKind: z.enum(EXTERNAL_ACTION_KINDS).nullable().optional(),
+    /** Empty for legacy results; launch rollups may carry several message actions. */
+    externalActionIds: z.array(z.string().uuid()).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      value.kind === "ad_mutation" &&
+      value.actionKind !== "budget_change" &&
+      value.actionKind !== "targeting_change"
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["actionKind"],
+        message: "Ad mutation results require a budget or targeting action kind",
+      });
+    }
+    if (value.kind !== "ad_mutation" && value.actionKind != null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["actionKind"],
+        message: "Legacy execution results cannot carry an action kind",
+      });
+    }
+  });
+export type ExecutionResult = z.infer<typeof executionResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Conversational editor read model. Declared after publication and execution
+// schemas so this composite projection can reuse their canonical contracts.
+// ---------------------------------------------------------------------------
+
+export const editorCampaignSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+  automationMode: z.enum(AUTOMATION_MODES),
+});
+export type EditorCampaign = z.infer<typeof editorCampaignSchema>;
+
+export const editorPersonaSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string(),
+});
+export type EditorPersona = z.infer<typeof editorPersonaSchema>;
+
+export const editorStalenessSchema = z.object({
+  stale: z.boolean(),
+  planActivatedAt: z.number().int().nullable(),
+  contextResolvedAt: z.number().int(),
+  reason: z.string(),
+});
+export type EditorStaleness = z.infer<typeof editorStalenessSchema>;
+
+export const editorSiblingSchema = z.object({
+  draftId: z.string().uuid(),
+  channel: z.enum(CHANNELS),
+  state: z.enum(APPROVAL_STATES),
+});
+export type EditorSibling = z.infer<typeof editorSiblingSchema>;
+
+export const editorDestinationSchema = z.object({
+  providerKey: z.string().min(1),
+  label: z.string().min(1),
+  status: z.enum(CONNECTION_STATUSES),
+  error: z.string().nullable(),
+});
+export type EditorDestination = z.infer<typeof editorDestinationSchema>;
+
+export const draftEditorContextSchema = z.object({
+  draft: draftSchema,
+  decisions: z.array(approvalDecisionSchema),
+  turns: z.array(draftRevisionTurnSchema),
+  contextSections: z.array(editorContextSectionSchema),
+  evidenceCitations: z.array(editorEvidenceCitationSchema),
+  campaign: editorCampaignSchema.nullable(),
+  persona: editorPersonaSchema.nullable(),
+  staleness: editorStalenessSchema,
+  siblings: z.array(editorSiblingSchema),
+  destination: editorDestinationSchema.nullable(),
+  publications: z.array(publicationSchema),
+  executions: z.array(executionResultSchema),
+  actions: z.array(externalActionSchema).optional(),
+});
+export type DraftEditorContext = z.infer<typeof draftEditorContextSchema>;
+
+// ---------------------------------------------------------------------------
 // Product analytics (internal — PostHog). NOT the native customer dashboard.
 // ---------------------------------------------------------------------------
 
@@ -3626,6 +5225,14 @@ export const ANALYTICS_EVENTS = [
   "draft.published",
   "connector.connected",
   "publication.started",
+  "home.next_action_opened",
+  "campaign.context_opened",
+  "review.item_opened",
+  "review.revision_requested",
+  "review.content_decided",
+  "review.action_authorized",
+  "calendar.item_scheduled",
+  "execution.result_viewed",
 ] as const;
 export type AnalyticsEvent = (typeof ANALYTICS_EVENTS)[number];
 
@@ -3669,6 +5276,15 @@ export type WorkspaceCapabilities = z.infer<typeof workspaceCapabilitiesSchema>;
 
 export type NavRequirement = "ads" | "insights" | "crm" | "connections";
 
+export const NAV_SECTIONS = [
+  { id: "operate", label: "Operate" },
+  { id: "grow", label: "Grow" },
+  { id: "foundations", label: "Foundations" },
+  { id: "library", label: "Work" },
+  { id: "workspace", label: "Workspace" },
+] as const;
+export type NavSection = (typeof NAV_SECTIONS)[number]["id"];
+
 export interface NavChild {
   label: string;
   path: string;
@@ -3681,6 +5297,7 @@ export interface NavChild {
 export interface NavItem {
   label: string;
   path: string;
+  section: NavSection;
   summary?: string;
   icon?: string;
   tone?: "belief" | "voice" | "history" | "icp" | "system" | "signal";
@@ -3695,34 +5312,38 @@ export const WORKSPACE_NAV: NavItem[] = [
     summary: "What needs attention now",
     tone: "system",
     icon: "home",
+    section: "operate",
   },
   {
-    label: "Brain",
-    path: "/brain",
-    summary: "Company context, evidence, and inspection",
-    tone: "system",
-    icon: "brain",
-    children: [
-      { label: "Brain docs", path: "/brain", summary: "The editable GTM memory", tone: "system", icon: "brain" },
-      { label: "Evidence library", path: "/evidence", summary: "Proof and source material", tone: "history", icon: "doc-history" },
-      { label: "Context inspector", path: "/resolver", summary: "See what Tuezday will use", tone: "icp", icon: "search" },
-    ],
+    label: "Calendar",
+    path: "/calendar",
+    summary: "Planned, scheduled, and completed work",
+    tone: "history",
+    icon: "calendar",
+    section: "operate",
   },
   {
     label: "Campaigns",
     path: "/campaigns",
-    summary: "Plans, calendar, automation, ads, and reporting",
+    summary: "Plans, work, channels, and results",
     tone: "voice",
     icon: "campaigns",
+    section: "operate",
     children: [
       { label: "Campaign home", path: "/campaigns", summary: "Goals and GTM pushes", tone: "voice", icon: "campaigns" },
-      { label: "Calendar", path: "/calendar", summary: "Scheduled posts and work", tone: "history", icon: "calendar" },
-      { label: "Cadence", path: "/cadence", summary: "Publishing rhythm", tone: "history", icon: "status-live" },
+      { label: "Schedule", path: "/cadence", summary: "Publishing rhythm", tone: "history", icon: "calendar" },
       { label: "Automation", path: "/automation", summary: "Human-in-the-loop rules", tone: "signal", icon: "regenerate" },
-      { label: "Ads", path: "/ads", summary: "Paid channel performance", tone: "belief", requires: "ads", icon: "ad" },
-      { label: "Launch ads", path: "/ad-launches", summary: "Spend-controlled ad launches", tone: "belief", requires: "ads", icon: "status-live" },
-      { label: "Insights", path: "/insights", summary: "What worked and why", tone: "icp", requires: "insights", icon: "status-learning" },
     ],
+  },
+  {
+    // Approvals and Inbox are sibling tabs inside the unified Review
+    // workspace (/review?tab=approvals|inbox), not separate nav children.
+    label: "Review",
+    path: "/review",
+    summary: "Approve, authorize, and respond",
+    tone: "icp",
+    icon: "review",
+    section: "operate",
   },
   {
     label: "Discover",
@@ -3730,55 +5351,95 @@ export const WORKSPACE_NAV: NavItem[] = [
     summary: "Market signals worth acting on",
     tone: "signal",
     icon: "discover",
-  },
-  {
-    label: "Create",
-    path: "/content",
-    summary: "Draft content, ads, and channel assets",
-    tone: "belief",
-    icon: "create",
-    children: [
-      { label: "Content", path: "/content", summary: "Posts and signal responses", tone: "belief", icon: "post" },
-      { label: "Playground", path: "/sandbox", summary: "Generate from the Brain", tone: "system", icon: "status-generating" },
-      { label: "Ad creatives", path: "/ad-creatives", summary: "Platform-ready variants", tone: "voice", icon: "ad" },
-    ],
-  },
-  {
-    label: "Review",
-    path: "/approvals",
-    summary: "Approve, edit, reply, and teach the Brain",
-    tone: "icp",
-    icon: "review",
-    children: [
-      { label: "Approval queue", path: "/approvals", summary: "Nothing ships without review", tone: "icp", icon: "review" },
-      { label: "Inbox", path: "/inbox", summary: "Replies and engagement", tone: "signal", icon: "email" },
-      { label: "Learning", path: "/learning", summary: "Brain updates from decisions", tone: "history", icon: "status-learning" },
-    ],
+    section: "grow",
   },
   {
     label: "Audience",
     path: "/outbound",
-    summary: "Leads, lists, launches, CRM, and PR contacts",
+    summary: "Recipients, lists, sequences, CRM, and media",
     tone: "icp",
     icon: "audience",
+    section: "grow",
     children: [
       { label: "Outbound", path: "/outbound", summary: "Lead-driven drafts", tone: "icp", icon: "external" },
       { label: "Lists & segments", path: "/lists", summary: "Reusable audiences", tone: "icp", icon: "audience" },
-      { label: "Launches", path: "/launches", summary: "Targeted campaign sends", tone: "voice", icon: "campaigns" },
+      { label: "Sequences", path: "/launches", summary: "Targeted campaign sends", tone: "voice", icon: "campaigns" },
       { label: "CRM", path: "/crm", summary: "Contacts and account context", tone: "icp", icon: "user" },
       { label: "PR & media", path: "/pr", summary: "Media contacts and pitches", tone: "belief", icon: "notification" },
     ],
   },
   {
-    label: "Settings",
+    label: "Ads",
+    path: "/ads",
+    summary: "Creative, launch, spend, and results",
+    tone: "belief",
+    icon: "ad",
+    section: "grow",
+    requires: "ads",
+    children: [
+      { label: "Overview", path: "/ads", summary: "Paid channel performance", tone: "belief", icon: "ad" },
+      { label: "Creative", path: "/ad-creatives", summary: "Platform-ready variants", tone: "voice", icon: "post" },
+      { label: "Launch & spend", path: "/ad-launches", summary: "Spend-controlled launches", tone: "belief", icon: "status-live" },
+    ],
+  },
+  {
+    label: "Insights",
+    path: "/insights",
+    summary: "Performance and accepted learning",
+    tone: "history",
+    icon: "status-learning",
+    section: "grow",
+    requires: "insights",
+    children: [
+      { label: "Performance", path: "/insights", summary: "What worked and why", tone: "icp", icon: "status-learning" },
+      { label: "Learning", path: "/learning", summary: "Brain updates from decisions", tone: "history", icon: "doc-history" },
+    ],
+  },
+  {
+    label: "Brain",
+    path: "/brain",
+    summary: "Brand, voice, evidence, and context",
+    tone: "system",
+    icon: "brain",
+    section: "foundations",
+    children: [
+      { label: "Brain docs", path: "/brain", summary: "The editable GTM memory", tone: "system", icon: "brain" },
+      { label: "Content Preferences", path: "/brain#content-preferences", summary: "Channel and scoped guidance", tone: "voice", icon: "edit" },
+      { label: "Source materials", path: "/evidence", summary: "Proof and evidence", tone: "history", icon: "doc-history" },
+      { label: "Advanced context", path: "/resolver", summary: "Inspect what Tuezday will use", tone: "icp", icon: "search" },
+    ],
+  },
+  {
+    label: "Integrations",
     path: "/connectors",
-    summary: "Integrations, team, billing, and account control",
+    summary: "Connect the GTM stack",
+    tone: "system",
+    icon: "connect",
+    section: "foundations",
+  },
+  {
+    label: "Create New",
+    path: "/content",
+    summary: "Draft cross-channel work",
+    tone: "belief",
+    icon: "create",
+    section: "library",
+    children: [
+      { label: "Create", path: "/content", summary: "Posts and signal responses", tone: "belief", icon: "post" },
+      { label: "Advanced", path: "/sandbox", summary: "Generate directly from the Brain", tone: "system", icon: "status-generating" },
+    ],
+  },
+  {
+    label: "Settings",
+    path: "/team",
+    summary: "Workspace administration",
     tone: "system",
     icon: "settings",
+    section: "workspace",
     children: [
-      { label: "Integrations", path: "/connectors", summary: "Connect the stack", tone: "system", icon: "connect" },
       { label: "Team", path: "/team", summary: "Members and invites", tone: "icp", icon: "audience" },
       { label: "Billing", path: "/billing", summary: "Plan and usage", tone: "history", icon: "doc-history" },
+      { label: "Notifications", path: "/notifications", summary: "Email and Telegram alerts", tone: "signal", icon: "notification" },
       { label: "Activity", path: "/activity", summary: "Event log and audit trail", tone: "system", icon: "info" },
     ],
   },
@@ -3843,6 +5504,7 @@ export function navEntryForPath(nav: NavItem[], relativePath: string): NavEntry 
   // beats the group, giving "Approval queue" with parentLabel "Review".
   const consider = (path: string, entry: NavEntry) => {
     if (path === "") return;
+    if (path.includes("#")) return;
     if (relativePath === path || relativePath.startsWith(`${path}/`)) {
       if (path.length >= bestDepth) {
         best = entry;
@@ -3955,7 +5617,7 @@ const CHECKLIST_TARGETS: Record<SetupChecklistItem, { module: string; label: str
   brain_reviewed: { module: "/brain", label: "Review your Brain", reason: "Your GTM memory needs a first review" },
   channel_connected: { module: "/connectors", label: "Connect a channel", reason: "No publishing channel is connected yet" },
   first_campaign: { module: "/campaigns", label: "Create your first campaign", reason: "No campaign exists yet" },
-  first_approval: { module: "/approvals", label: "Approve your first draft", reason: "Nothing has been approved yet" },
+  first_approval: { module: "/review", label: "Approve your first draft", reason: "Nothing has been approved yet" },
   insights_live: { module: "/connectors", label: "Turn on insights", reason: "Connect a channel with analytics to see results" },
   team_invited: { module: "/team", label: "Invite your team", reason: "You are the only member of this workspace" },
 };
@@ -3971,7 +5633,7 @@ export function nextActionFor(state: NextActionState): NextAction {
     const n = state.draftCount;
     return {
       kind: "review",
-      module: "/approvals",
+      module: "/review",
       label: "Review drafts",
       reason: `${n} draft${n === 1 ? "" : "s"} waiting for review`,
     };
@@ -4019,3 +5681,481 @@ export function nextActionFor(state: NextActionState): NextAction {
   }
   return { kind: "none", module: "", label: "All clear", reason: "Nothing needs you right now" };
 }
+
+// ---------------------------------------------------------------------------
+// Design systems (Sprint 41 Part 2)
+//
+// Brain-adjacent visual identity: a DESIGN.md-shaped markdown doc per named
+// design system, plus channel/persona/campaign overlays resolved
+// most-specific-wins (Sprint 44's guidance pattern, scoped to a system).
+// Deliberately NOT a brain doc type — never added to BRAIN_DOC_TYPES, never
+// resolved by packages/brain; only the design pipeline reads it.
+// ---------------------------------------------------------------------------
+
+export const DESIGN_CONTENT_MAX_CHARS = 24_000;
+export const DESIGN_SYSTEM_NAME_MAX_CHARS = 80;
+
+export const designSystemSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  name: z.string(),
+  isDefault: z.boolean(),
+  content: z.string(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type DesignSystem = z.infer<typeof designSystemSchema>;
+
+export const updateDesignSystemInputSchema = z.object({
+  content: z
+    .string()
+    .trim()
+    .min(1, "Design system cannot be empty")
+    .max(DESIGN_CONTENT_MAX_CHARS),
+});
+export type UpdateDesignSystemInput = z.infer<typeof updateDesignSystemInputSchema>;
+
+/** One overlay row (management read model, scope names joined in). */
+export const designOverlaySchema = z.object({
+  id: z.string().uuid(),
+  designSystemId: z.string().uuid(),
+  channel: z.enum(CHANNELS),
+  content: z.string(),
+  personaId: z.string().uuid().nullable(),
+  campaignId: z.string().uuid().nullable(),
+  personaName: z.string().nullable(),
+  campaignName: z.string().nullable(),
+  updatedAt: z.number().int(),
+});
+export type DesignOverlay = z.infer<typeof designOverlaySchema>;
+
+export const upsertDesignOverlayInputSchema = z.object({
+  channel: z.enum(CHANNELS),
+  content: z
+    .string()
+    .trim()
+    .min(1, "Overlay cannot be empty")
+    .max(DESIGN_CONTENT_MAX_CHARS),
+  personaId: z.string().uuid().optional(),
+  campaignId: z.string().uuid().optional(),
+  // Multi-system readiness: omit to target the workspace default system.
+  designSystemId: z.string().uuid().optional(),
+});
+export type UpsertDesignOverlayInput = z.infer<typeof upsertDesignOverlayInputSchema>;
+
+/** Which rung of the winner chain produced the resolved content. */
+export const DESIGN_TRACE_SOURCES = [
+  "persona+campaign",
+  "persona",
+  "campaign",
+  "channel",
+  "base",
+] as const;
+export type DesignTraceSource = (typeof DESIGN_TRACE_SOURCES)[number];
+
+/**
+ * Resolved design context: base system content plus (at most) the single
+ * winning overlay appended as an addendum, and a trace explaining why —
+ * readable before any template is authored, same transparency contract as
+ * the brain resolver.
+ */
+export const resolvedDesignSystemSchema = z.object({
+  content: z.string(),
+  trace: z.object({
+    source: z.enum(DESIGN_TRACE_SOURCES),
+    overlayId: z.string().uuid().nullable(),
+    designSystemId: z.string().uuid(),
+  }),
+});
+export type ResolvedDesignSystem = z.infer<typeof resolvedDesignSystemSchema>;
+
+/**
+ * Starter DESIGN.md seeded into every workspace's default system. Field set
+ * informed by the Sprint 41 competitor scan (docs/research/): semantic color
+ * roles (the one field no consumer brand kit has — Material's on-X convention
+ * gives templates auto-contrast), heading/body font roles with weights and
+ * fallbacks, a spacing/radius scale, an author strip block, and a "never do"
+ * list. Voice stays in the `voice` brain doc — linked, not duplicated.
+ */
+export const DEFAULT_DESIGN_SYSTEM_CONTENT = `# Visual identity
+
+The design pipeline reads this document every time it authors a slide or ad
+template — the palette, type, and rules below become the rendered look.
+How the brand *sounds* lives in the Voice brain doc; this doc is only how it
+*looks*.
+
+## Palette (semantic roles)
+
+- primary: #111827 — brand color; hook-slide and CTA backgrounds
+- on-primary: #FFFFFF — text and icons placed on primary
+- background: #FFFFFF — default slide background
+- surface: #F3F4F6 — cards, stat blocks, quote panels
+- text: #111827 — body copy on background/surface
+- accent: #2563EB — highlights, big numbers, swipe cues (use sparingly)
+
+## Typography
+
+- Heading: Inter, weight 800, tight line height. Fallback: system-ui, sans-serif.
+- Body: Inter, weight 450, line height 1.4. Fallback: system-ui, sans-serif.
+- At most two font families anywhere. Body text no smaller than ~40px on a
+  1080px canvas.
+
+## Spacing & shape
+
+- Spacing scale (1080px canvas): 8 / 16 / 24 / 40 / 64px.
+- Corner radius: 24px on cards and panels.
+- Shadows: flat by default; one soft shadow only when a card needs lift.
+
+## Logo & author strip
+
+- Logo: (paste a public URL; note light/dark variants if you have them)
+- Author strip: name, @handle, headshot URL — rendered small on every slide,
+  full-size on the CTA/outro slide.
+
+## Never do
+
+- Never place text over busy imagery without a solid or gradient scrim.
+- Never use colors outside the palette above.
+- Never use more than two font families or crop the hook headline out of the
+  center 3:4 safe zone.
+`;
+
+// ---------------------------------------------------------------------------
+// Slide archetypes (Sprint 41 Parts 3-4)
+//
+// Explicit, named slide roles for carousel templates — competitor tools bake
+// these into templates implicitly (only Taplio names any in its UI), so a
+// first-class vocabulary is a differentiator (see
+// docs/research/sprint-41-competitor-scan.md). Template authoring produces one
+// layout per archetype; the splitter assigns archetypes and enforces the word
+// budgets at generation time, which is cheaper than text-fit-at-render.
+// ---------------------------------------------------------------------------
+
+export const SLIDE_ARCHETYPES = [
+  "hook", // cover: 5-8 word headline, biggest type on deck, swipe cue
+  "body", // heading + 15-30 word body
+  "list_item", // one idea, big index number
+  "stat", // one oversized metric + one-line context
+  "quote", // large quotation + attribution
+  "tldr", // mid/late-deck recap
+  "cta", // outro: save/follow ask + author strip, strongest branding
+] as const;
+export type SlideArchetype = (typeof SLIDE_ARCHETYPES)[number];
+
+/** Word budgets enforced when copy is written, not fitted at render. */
+export const SLIDE_WORD_BUDGETS: Record<SlideArchetype, { title: number; body: number }> = {
+  hook: { title: 8, body: 12 },
+  body: { title: 10, body: 30 },
+  list_item: { title: 10, body: 30 },
+  stat: { title: 6, body: 20 },
+  quote: { title: 30, body: 10 }, // title carries the quote, body the attribution
+  tldr: { title: 8, body: 40 },
+  cta: { title: 8, body: 20 },
+};
+
+/** Meta Ads static image shape (Part 5) — same template machinery, single slide. */
+export const AD_IMAGE_SLIDE_SHAPE = "ad-1080x1080" as const;
+
+/** The only Open Design skills Tuezday will ever request (umbrella Decision 9). */
+export const DESIGN_SKILL_ALLOWLIST = ["social-carousel"] as const;
+export type DesignSkillId = (typeof DESIGN_SKILL_ALLOWLIST)[number];
+
+// ---------------------------------------------------------------------------
+// Outreach mailboxes (Sprint 47)
+// ---------------------------------------------------------------------------
+
+/**
+ * A connected sending/receiving mailbox — the outreach send identity AND the
+ * reply source, in one object. Modeled as a pool from day one (founder
+ * decision 05): a workspace can hold many mailboxes even while early
+ * sequences use a single one. Distinct from `workspaceEmailSenders` (the
+ * Resend DNS-domain identity for transactional/broadcast email) — the two
+ * send paths coexist.
+ */
+export const MAILBOX_PROVIDERS = ["gmail"] as const;
+export type MailboxProvider = (typeof MAILBOX_PROVIDERS)[number];
+
+export const MAILBOX_STATUSES = ["connected", "error", "disconnected"] as const;
+export type MailboxStatus = (typeof MAILBOX_STATUSES)[number];
+
+/** Founder decision: per-mailbox daily cap is customizable, default 50. */
+export const MAILBOX_DEFAULT_DAILY_CAP = 50;
+export const MAILBOX_MAX_DAILY_CAP = 500;
+
+/**
+ * When the mailbox may send, enforced by the Sprint 48 sequence scheduler
+ * (stored from Sprint 47 so settings survive). Empty object = always.
+ */
+export const mailboxSendingWindowSchema = z
+  .object({
+    /** 0 = Sunday … 6 = Saturday. Empty/absent = every day. */
+    days: z.array(z.number().int().min(0).max(6)).max(7).optional(),
+    /** Local hour bounds, half-open [startHour, endHour). */
+    startHour: z.number().int().min(0).max(23).optional(),
+    endHour: z.number().int().min(1).max(24).optional(),
+    /** IANA timezone, e.g. "Asia/Kolkata". Absent = workspace default. */
+    timezone: z.string().max(64).optional(),
+  })
+  .strict();
+export type MailboxSendingWindow = z.infer<typeof mailboxSendingWindowSchema>;
+
+export const mailboxSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  /** The gmail connector row this mailbox rides (tokens live in Nango). */
+  connectionId: z.string().uuid(),
+  provider: z.enum(MAILBOX_PROVIDERS),
+  /** The mailbox address, filled from the provider profile at connect time. */
+  address: z.string().email(),
+  displayName: z.string(),
+  replyTo: z.string().email().nullable(),
+  signature: z.string(),
+  dailyCap: z.number().int().min(1).max(MAILBOX_MAX_DAILY_CAP),
+  sendingWindow: mailboxSendingWindowSchema,
+  defaultPersonaId: z.string().uuid().nullable(),
+  status: z.enum(MAILBOX_STATUSES),
+  lastPolledAt: z.number().int().nullable(),
+  lastError: z.string().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type Mailbox = z.infer<typeof mailboxSchema>;
+
+/** A mailbox as the UI needs it: the row plus today's send usage. */
+export const mailboxWithUsageSchema = mailboxSchema.extend({
+  /** Accepted sends since UTC midnight, counted from email deliveries. */
+  sentToday: z.number().int(),
+});
+export type MailboxWithUsage = z.infer<typeof mailboxWithUsageSchema>;
+
+/** Create = point at a connected gmail connector; the address comes from the provider profile. */
+export const createMailboxInputSchema = z.object({
+  connectionId: z.string().uuid(),
+});
+export type CreateMailboxInput = z.infer<typeof createMailboxInputSchema>;
+
+export const updateMailboxInputSchema = z
+  .object({
+    displayName: z.string().max(200).optional(),
+    replyTo: z.string().email().nullable().optional(),
+    signature: z.string().max(2000).optional(),
+    dailyCap: z.number().int().min(1).max(MAILBOX_MAX_DAILY_CAP).optional(),
+    sendingWindow: mailboxSendingWindowSchema.optional(),
+    defaultPersonaId: z.string().uuid().nullable().optional(),
+  })
+  .strict();
+export type UpdateMailboxInput = z.infer<typeof updateMailboxInputSchema>;
+
+/** Send an approved, lead-linked outbound email draft from a mailbox (Sprint 47 send surface). */
+export const sendDraftFromMailboxInputSchema = z.object({
+  mailboxId: z.string().uuid(),
+});
+export type SendDraftFromMailboxInput = z.infer<typeof sendDraftFromMailboxInputSchema>;
+
+/** What one mailbox-inbox poll run did. */
+export const mailboxInboxRunResultSchema = z.object({
+  mailboxesPolled: z.number().int(),
+  messagesSeen: z.number().int(),
+  newItems: z.number().int(),
+  labeled: z.number().int(),
+  ranAt: z.number().int(),
+});
+export type MailboxInboxRunResult = z.infer<typeof mailboxInboxRunResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Outreach sequences (Sprint 48)
+// ---------------------------------------------------------------------------
+
+/**
+ * A first-class, always-on outreach sequence: an ordered chain of email steps
+ * sent from a mailbox pool to a live segment, brain-resolved + approval-gated
+ * per recipient, that auto-enrolls new segment matches and stops on reply.
+ * Distinct from S26/S30 launch sequences (which stay frozen).
+ */
+export const OUTREACH_SEQUENCE_STATUSES = ["draft", "active", "paused", "completed"] as const;
+export type OutreachSequenceStatus = (typeof OUTREACH_SEQUENCE_STATUSES)[number];
+
+export const OUTREACH_ENROLLMENT_STATUSES = [
+  "active",
+  "replied",
+  "stopped",
+  "completed",
+  "failed",
+] as const;
+export type OutreachEnrollmentStatus = (typeof OUTREACH_ENROLLMENT_STATUSES)[number];
+
+export const OUTREACH_MESSAGE_STATUSES = ["pending", "sent", "failed", "skipped"] as const;
+export type OutreachMessageStatus = (typeof OUTREACH_MESSAGE_STATUSES)[number];
+
+/** Founder decision: per-sequence daily new-enrollment cap is customizable, default 50. */
+export const OUTREACH_DEFAULT_ENROLLMENT_CAP = 50;
+export const OUTREACH_MAX_ENROLLMENT_CAP = 1000;
+export const OUTREACH_MAX_STEPS = 10;
+
+export const outreachSequenceStepSchema = z.object({
+  id: z.string().uuid(),
+  sequenceId: z.string().uuid(),
+  stepNumber: z.number().int().min(1),
+  instruction: z.string(),
+  delayHours: z.number().int().min(0),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type OutreachSequenceStep = z.infer<typeof outreachSequenceStepSchema>;
+
+export const outreachSequenceSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  campaignId: z.string().uuid(),
+  name: z.string(),
+  goal: z.string(),
+  personaId: z.string().uuid(),
+  audienceId: z.string().uuid(),
+  automationMode: z.enum(AUTOMATION_MODES),
+  status: z.enum(OUTREACH_SEQUENCE_STATUSES),
+  dailyEnrollmentCap: z.number().int().min(1).max(OUTREACH_MAX_ENROLLMENT_CAP),
+  stopOnReply: z.boolean(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type OutreachSequence = z.infer<typeof outreachSequenceSchema>;
+
+export const createOutreachSequenceInputSchema = z.object({
+  campaignId: z.string().uuid(),
+  personaId: z.string().uuid(),
+  audienceId: z.string().uuid(),
+  name: z.string().min(1).max(200),
+  goal: z.string().max(500).optional(),
+  automationMode: z.enum(AUTOMATION_MODES).optional(),
+  dailyEnrollmentCap: z.number().int().min(1).max(OUTREACH_MAX_ENROLLMENT_CAP).optional(),
+  stopOnReply: z.boolean().optional(),
+});
+export type CreateOutreachSequenceInput = z.infer<typeof createOutreachSequenceInputSchema>;
+
+/** Config edits never reset on a rename (S28 pattern) — every field optional. */
+export const updateOutreachSequenceInputSchema = z
+  .object({
+    name: z.string().min(1).max(200).optional(),
+    goal: z.string().max(500).optional(),
+    personaId: z.string().uuid().optional(),
+    campaignId: z.string().uuid().optional(),
+    audienceId: z.string().uuid().optional(),
+    automationMode: z.enum(AUTOMATION_MODES).optional(),
+    dailyEnrollmentCap: z.number().int().min(1).max(OUTREACH_MAX_ENROLLMENT_CAP).optional(),
+    stopOnReply: z.boolean().optional(),
+  })
+  .strict();
+export type UpdateOutreachSequenceInput = z.infer<typeof updateOutreachSequenceInputSchema>;
+
+export const outreachSequenceStepInputSchema = z.object({
+  stepNumber: z.number().int().min(1),
+  instruction: z.string().max(1000),
+  delayHours: z.number().int().min(0).max(8760),
+});
+
+/** Steps 1..N contiguous, unique, ≤10, and step 1 has no delay. */
+export const setOutreachStepsInputSchema = z
+  .object({ steps: z.array(outreachSequenceStepInputSchema).min(1).max(OUTREACH_MAX_STEPS) })
+  .superRefine((value, ctx) => {
+    const numbers = value.steps.map((s) => s.stepNumber).sort((a, b) => a - b);
+    numbers.forEach((n, i) => {
+      if (n !== i + 1) {
+        ctx.addIssue({ code: "custom", message: "step numbers must be contiguous 1..N" });
+      }
+    });
+    const first = value.steps.find((s) => s.stepNumber === 1);
+    if (first && first.delayHours !== 0) {
+      ctx.addIssue({ code: "custom", message: "step 1 must have delayHours 0" });
+    }
+  });
+export type SetOutreachStepsInput = z.infer<typeof setOutreachStepsInputSchema>;
+
+/** The mailbox pool a sequence rotates across (≥1; "pool, start with one"). */
+export const setOutreachMailboxesInputSchema = z.object({
+  mailboxIds: z.array(z.string().uuid()).min(1),
+});
+export type SetOutreachMailboxesInput = z.infer<typeof setOutreachMailboxesInputSchema>;
+
+export const outreachEnrollmentSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  sequenceId: z.string().uuid(),
+  recipientType: z.enum(AUDIENCE_MEMBER_TYPES),
+  recipientId: z.string(),
+  recipientEmail: z.string(),
+  mailboxId: z.string().uuid().nullable(),
+  lastThreadId: z.string().nullable(),
+  currentStep: z.number().int(),
+  status: z.enum(OUTREACH_ENROLLMENT_STATUSES),
+  nextDueAt: z.number().int().nullable(),
+  lastSentAt: z.number().int().nullable(),
+  stoppedReason: z.string().nullable(),
+  enrolledAt: z.number().int(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type OutreachEnrollment = z.infer<typeof outreachEnrollmentSchema>;
+
+/** Manual stop: at least one selector required. */
+export const stopOutreachInputSchema = z
+  .object({
+    enrollmentIds: z.array(z.string().uuid()).optional(),
+    emails: z.array(z.string()).optional(),
+    all: z.boolean().optional(),
+    reason: z.enum(["manual", "replied"]).default("manual"),
+  })
+  .refine(
+    (v) => (v.enrollmentIds?.length ?? 0) > 0 || (v.emails?.length ?? 0) > 0 || v.all === true,
+    { message: "provide enrollmentIds, emails, or all" },
+  );
+export type StopOutreachInput = z.infer<typeof stopOutreachInputSchema>;
+
+export const outreachSequenceDetailSchema = outreachSequenceSchema.extend({
+  steps: z.array(outreachSequenceStepSchema),
+  mailboxIds: z.array(z.string().uuid()),
+  enrollments: z.array(outreachEnrollmentSchema),
+});
+export type OutreachSequenceDetail = z.infer<typeof outreachSequenceDetailSchema>;
+
+export const outreachRunResultSchema = z.object({
+  enrolled: z.number().int(),
+  generated: z.number().int(),
+  dispatched: z.number().int(),
+  stopped: z.number().int(),
+  completed: z.number().int(),
+  ranAt: z.number().int(),
+});
+export type OutreachRunResult = z.infer<typeof outreachRunResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Reply-driven actions + compliance (Sprint 49)
+// ---------------------------------------------------------------------------
+
+/** Default pause before retrying a recipient who sent an out-of-office autoreply. */
+export const OUTREACH_OOO_RETRY_HOURS = 72;
+
+/** A workspace's CAN-SPAM postal address — required before outreach can send. */
+export const workspaceComplianceSchema = z.object({
+  workspaceId: z.string().uuid(),
+  postalAddress: z.string(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type WorkspaceCompliance = z.infer<typeof workspaceComplianceSchema>;
+
+export const updateComplianceInputSchema = z
+  .object({ postalAddress: z.string().max(500) })
+  .strict();
+export type UpdateComplianceInput = z.infer<typeof updateComplianceInputSchema>;
+
+/** Paste a batch of emails to block up front (suppression-list import). */
+export const importSuppressionsInputSchema = z.object({
+  emails: z.array(z.string()).min(1).max(1000),
+});
+export type ImportSuppressionsInput = z.infer<typeof importSuppressionsInputSchema>;
+
+export const importSuppressionsResultSchema = z.object({
+  imported: z.number().int(),
+  skipped: z.number().int(),
+});
+export type ImportSuppressionsResult = z.infer<typeof importSuppressionsResultSchema>;

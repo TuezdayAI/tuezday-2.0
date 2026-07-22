@@ -7,7 +7,8 @@ import {
   CircleAlert, Radio, Sparkles, Check, X, TrendingUp,
   Flame, Crosshair, Mic, BookOpen, Zap,
   Pencil, RefreshCw, Plug, Settings2,
-  Calendar, Search, Plus, ChevronRight, ChevronDown, ExternalLink, User, Bell, TriangleAlert, Info,
+  BadgeCheck, ListChecks, WalletCards, SlidersHorizontal, Send, Unplug, ShieldAlert,
+  Calendar, Search, Plus, ChevronLeft, ChevronRight, ChevronDown, ExternalLink, User, Bell, TriangleAlert, Info,
   type LucideIcon,
 } from "lucide-react";
 import { BRAND_ICONS, type BrandName } from "./brand-icons";
@@ -32,9 +33,12 @@ export const ICON_REGISTRY = {
   // actions
   approve: Check, reject: X, edit: Pencil, regenerate: RefreshCw,
   connect: Plug, "module-settings": Settings2,
+  authorize: BadgeCheck, batch: ListChecks, budget: WalletCards,
+  targeting: SlidersHorizontal, send: Send, signal: Radar,
+  "connection-lost": Unplug, "campaign-risk": ShieldAlert,
   // common UI
   calendar: Calendar, search: Search, add: Plus, close: X,
-  "chevron-right": ChevronRight, "chevron-down": ChevronDown,
+  "chevron-left": ChevronLeft, "chevron-right": ChevronRight, "chevron-down": ChevronDown,
   external: ExternalLink, user: User, notification: Bell,
   warning: TriangleAlert, info: Info,
 } satisfies Record<string, LucideIcon>;
@@ -42,8 +46,17 @@ export const ICON_REGISTRY = {
 export type IconName = keyof typeof ICON_REGISTRY;
 export const ICON_NAMES = Object.keys(ICON_REGISTRY) as IconName[];
 
-const SIZE_VAR = { sm: "var(--icon-sm)", md: "var(--icon-md)", lg: "var(--icon-lg)" } as const;
-export type IconSize = keyof typeof SIZE_VAR;
+const SEMANTIC_SIZE = {
+  compact: "16px",
+  standard: "18px",
+  emphasized: "20px",
+} as const;
+type SemanticIconSize = keyof typeof SEMANTIC_SIZE;
+export type IconSize = SemanticIconSize;
+
+function iconPixels(size: IconSize): (typeof SEMANTIC_SIZE)[SemanticIconSize] {
+  return SEMANTIC_SIZE[size];
+}
 
 interface IconProps {
   name: IconName;
@@ -53,13 +66,13 @@ interface IconProps {
   "aria-label"?: string;
 }
 
-export function Icon({ name, size = "md", className, ...rest }: IconProps) {
+export function Icon({ name, size = "standard", className, ...rest }: IconProps) {
   const Cmp = ICON_REGISTRY[name];
   return (
     <Cmp
       className={className}
-      strokeWidth={1.75}
-      style={{ width: SIZE_VAR[size], height: SIZE_VAR[size], flexShrink: 0 }}
+      strokeWidth={1.8}
+      style={{ width: iconPixels(size), height: iconPixels(size), flexShrink: 0 }}
       aria-hidden={rest["aria-label"] ? undefined : true}
       {...rest}
     />
@@ -78,11 +91,11 @@ const BRAND_HEX: Record<BrandName, string> = {
   meta: "#0081FB", google: "#4285F4", freshsales: "#FA692F",
 };
 
-export function BrandIcon({ name, size = "md", brandColor = false, style, ...rest }: BrandIconProps) {
+export function BrandIcon({ name, size = "standard", brandColor = false, style, ...rest }: BrandIconProps) {
   return (
     <svg
       viewBox="0 0 24 24"
-      style={{ width: SIZE_VAR[size], height: SIZE_VAR[size], flexShrink: 0, ...style }}
+      style={{ width: iconPixels(size), height: iconPixels(size), flexShrink: 0, ...style }}
       fill={brandColor ? BRAND_HEX[name] : "currentColor"}
       aria-hidden={rest["aria-label"] ? undefined : true}
       {...rest}

@@ -72,7 +72,7 @@ export default function WorkspaceInsightsPage() {
   return (
     <>
       <PageHeader title="Workspace Insights" subtitle={<>Aggregate metrics and brain completeness across your workspace.</>} actions={<>
-            <Button variant="secondary" size="sm" onClick={() => apiDownload(`/workspaces/${id}/insights?format=csv`, `workspace-insights-${id}.csv`)}>
+            <Button variant="secondary" size="compact" onClick={() => apiDownload(`/workspaces/${id}/insights?format=csv`, `workspace-insights-${id}.csv`)}>
             Export CSV
           </Button>
           </>} />
@@ -81,7 +81,7 @@ export default function WorkspaceInsightsPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="brain" size="sm" />
+              <Icon name="brain" size="compact" />
               Brain Completeness
             </span>
           }
@@ -128,7 +128,7 @@ export default function WorkspaceInsightsPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="status-learning" size="sm" />
+              <Icon name="status-learning" size="compact" />
               Metrics by Channel
             </span>
           }
@@ -196,7 +196,7 @@ export default function WorkspaceInsightsPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="campaigns" size="sm" />
+              <Icon name="campaigns" size="compact" />
               Campaigns Summary
             </span>
           }

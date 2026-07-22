@@ -8,6 +8,7 @@ import { useParams, usePathname } from "next/navigation";
 import { WORKSPACE_NAV, navEntryForPath } from "@tuezday/contracts";
 import { Icon, type IconName } from "./ui/icon";
 import { CountBadge } from "./ui/badge";
+import { ButtonLink } from "./ui/button";
 import styles from "./top-bar.module.css";
 
 const ACTIONS_SLOT_ID = "tz-topbar-actions";
@@ -28,10 +29,19 @@ export function TopBar({ workspaceName, reviewCount, userLabel }: TopBarProps) {
   return (
     <header className={styles.bar} data-tone={entry?.tone ?? "system"}>
       <div className={styles.title}>
-        {entry?.icon && <Icon name={entry.icon as IconName} size="md" className={styles.titleIcon} />}
+        {entry?.icon && <Icon name={entry.icon as IconName} size="standard" className={styles.titleIcon} />}
         {entry?.parentLabel && <span className={styles.crumb}>{entry.parentLabel} /</span>}
         <h1 className={styles.heading}>{entry?.label ?? workspaceName ?? "Workspace"}</h1>
       </div>
+      <ButtonLink
+        href={`/workspaces/${id}/content`}
+        variant="primary"
+        size="compact"
+        className={styles.create}
+      >
+        <Icon name="add" size="compact" />
+        Create New
+      </ButtonLink>
       <div id={ACTIONS_SLOT_ID} className={styles.actions} />
       <div className={styles.meta}>
         {reviewCount > 0 && <CountBadge count={reviewCount} label="drafts waiting for review" />}

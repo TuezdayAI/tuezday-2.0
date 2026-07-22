@@ -9,3 +9,21 @@
 .head svg {
   color: var(--muted);
 }
+
+.personaPolicyCard {
+  display: grid;
+  align-items: stretch;
+}
+
+.personaSummary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.personaPolicyEditor {
+  min-width: 0;
+  padding-top: 12px;
+  border-top: 1px solid var(--line-soft);
+}

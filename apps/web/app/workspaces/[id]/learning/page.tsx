@@ -2,7 +2,7 @@
 
 import { TopBarActions } from "@/src/components/top-bar";
 import { EmptyState } from "@/src/components/empty-state";
-import { Button } from "@/src/components/ui/button";
+import { Button, ButtonLink } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
 import { Badge, CountBadge } from "@/src/components/ui/badge";
 import { Icon, type IconName } from "@/src/components/ui/icon";
@@ -39,6 +39,7 @@ const TASK_LABELS: Record<TaskType, string> = {
   x_dm: "X DM",
   instagram_post: "Instagram post",
   engagement_reply: "Reply",
+  instagram_carousel: "Instagram carousel",
 };
 
 interface TrainingExample {
@@ -209,8 +210,8 @@ export default function LearningPage() {
   return (
     <>
       <TopBarActions>
-        <Button variant="primary" size="sm" disabled={synthesizing} onClick={synthesize}>
-          <Icon name="status-generating" size="sm" />
+        <Button variant="primary" size="compact" disabled={synthesizing} onClick={synthesize}>
+          <Icon name="status-generating" size="compact" />
           {synthesizing ? "Synthesizing…" : "Synthesize learnings"}
         </Button>
       </TopBarActions>
@@ -224,7 +225,7 @@ export default function LearningPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="status-learning" size="sm" className={styles.headIcon} />
+              <Icon name="status-learning" size="compact" className={styles.headIcon} />
               Signal so far
             </span>
           }
@@ -244,7 +245,7 @@ export default function LearningPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="doc-now" size="sm" className={styles.headIconNow} />
+              <Icon name="doc-now" size="compact" className={styles.headIconNow} />
               Proposed now updates{" "}
               {proposed.length > 0 && <CountBadge count={proposed.length} label="proposed now updates awaiting review" />}
             </span>
@@ -255,8 +256,8 @@ export default function LearningPage() {
             description={<>No syntheses yet. Approve/reject some work, then synthesize — or let the worker propose
             one weekly.</>}
             primaryAction={
-              <Button variant="secondary" size="sm" disabled={synthesizing} onClick={synthesize}>
-                <Icon name="status-generating" size="sm" />
+              <Button variant="secondary" size="compact" disabled={synthesizing} onClick={synthesize}>
+                <Icon name="status-generating" size="compact" />
                 Synthesize now
               </Button>
             }
@@ -294,9 +295,9 @@ export default function LearningPage() {
                     Synthesis · {new Date(s.createdAt).toLocaleString()}
                   </span>
                   {s.status === "accepted" && (
-                    <Link className="link-button" href={`/workspaces/${id}/brain`}>
+                    <ButtonLink variant="tertiary" size="compact" href={`/workspaces/${id}/brain`}>
                       view in brain →
-                    </Link>
+                    </ButtonLink>
                   )}
                 </div>
                 <pre className="output-text">{s.proposal}</pre>
@@ -305,20 +306,20 @@ export default function LearningPage() {
                   <div className="rating-row">
                     <Button
                       variant="secondary"
-                      size="sm"
+                      size="compact"
                       disabled={busy}
                       onClick={() => decide(s.id, "accept")}
                     >
-                      <Icon name="status-approved" size="sm" />
+                      <Icon name="status-approved" size="compact" />
                       Accept into now
                     </Button>
                     <Button
                       variant="secondary"
-                      size="sm"
+                      size="compact"
                       disabled={busy}
                       onClick={() => decide(s.id, "dismiss")}
                     >
-                      <Icon name="status-rejected" size="sm" />
+                      <Icon name="status-rejected" size="compact" />
                       Dismiss
                     </Button>
                   </div>
@@ -334,7 +335,7 @@ export default function LearningPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="status-live" size="sm" className={styles.headIconLive} />
+              <Icon name="status-live" size="compact" className={styles.headIconLive} />
               Record engagement metrics
             </span>
           }
@@ -421,7 +422,7 @@ export default function LearningPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="status-learning" size="sm" className={styles.headIcon} />
+              <Icon name="status-learning" size="compact" className={styles.headIcon} />
               Training examples <CountBadge count={examples.length} label="training examples" />
             </span>
           }

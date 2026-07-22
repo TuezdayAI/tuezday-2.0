@@ -217,7 +217,7 @@ export function ConnectPanel({ workspaceId, onContinue, onError }: WizardPanelPr
               ) : (
                 <Button
                   variant="secondary"
-                  size="sm"
+                  size="compact"
                   disabled={busyKey !== null || !canConnect}
                   onClick={() => provider && void connectOAuth(provider)}
                 >
@@ -251,7 +251,7 @@ export function ConnectPanel({ workspaceId, onContinue, onError }: WizardPanelPr
         </div>
         {profileStatus === "failed" && (
           <div>
-            <Button variant="ghost" size="sm" disabled={retrying} onClick={retryProfile}>
+            <Button variant="tertiary" size="compact" disabled={retrying} onClick={retryProfile}>
               {retrying ? "Retrying…" : "Retry"}
             </Button>
           </div>

@@ -13,7 +13,7 @@ import { assertWithinLimit, EntitlementError, getUsage } from "../services/entit
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { generateAngles } from "../services/angles";
 import { getBrain } from "../services/brain";
-import { composeResolveCampaign, getCampaign } from "../services/campaigns";
+import { campaignExecutionError, composeResolveCampaign, getCampaign } from "../services/campaigns";
 import { resolveChannelGuidance } from "../services/guidance";
 import { retrieveEvidence } from "../services/evidence";
 import type { EvidenceStore } from "../evidence/store";
@@ -71,9 +71,8 @@ export function registerGenerationRoutes(
     if (parsed.data.campaignId) {
       campaign = getCampaign(db, request.params.id, parsed.data.campaignId);
       if (!campaign) return reply.status(404).send({ error: "campaign_not_found" });
-      if (campaign.status === "archived") {
-        return reply.status(409).send({ error: "campaign_archived" });
-      }
+      const campaignError = campaignExecutionError(campaign);
+      if (campaignError) return reply.status(409).send({ error: campaignError });
     }
 
     const evidenceResolution = await retrieveEvidence(
@@ -242,9 +241,8 @@ export function registerGenerationRoutes(
     if (parsed.data.campaignId) {
       campaign = getCampaign(db, request.params.id, parsed.data.campaignId);
       if (!campaign) return reply.status(404).send({ error: "campaign_not_found" });
-      if (campaign.status === "archived") {
-        return reply.status(409).send({ error: "campaign_archived" });
-      }
+      const campaignError = campaignExecutionError(campaign);
+      if (campaignError) return reply.status(409).send({ error: campaignError });
     }
 
     // Sprint 43: angle suggestions run as the brief — Tier 1 + outlines only,

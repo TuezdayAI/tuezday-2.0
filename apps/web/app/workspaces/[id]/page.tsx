@@ -6,28 +6,25 @@
 // replacing the old four large stat cards.
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import {
   SETUP_CHECKLIST_ITEMS,
   type Campaign,
-  type Channel,
-  type Draft,
   type NextAction,
   type NextActionState,
   type NowSynthesis,
+  type PriorityQueue,
   type SetupChecklistItem,
   type Workspace,
 } from "@tuezday/contracts";
 import { API_URL, apiFetch } from "@/lib/api";
-import { previewKindFor } from "@/lib/preview-kind";
+import { priorityQueueState, priorityView } from "@/lib/priorities";
 import { EmptyState } from "@/src/components/empty-state";
 import { PageHeader } from "@/src/components/page-header";
-import { PreviewCard } from "@/src/components/ui/preview-card";
 import { Icon, type IconName } from "@/src/components/ui/icon";
-import type { BrandName } from "@/src/components/ui/brand-icons";
-import { CountBadge } from "@/src/components/ui/badge";
+import { CountBadge, WorkflowStatusBadge } from "@/src/components/ui/badge";
+import { ButtonLink } from "@/src/components/ui/button";
 import { LoopGlyph } from "@/src/components/ui/diagram-kit";
-import buttonStyles from "@/src/components/ui/button.module.css";
 import styles from "./home-hero.module.css";
 
 /** GET /workspaces/:id/next-action — shared next-action contract (spec §5.1). */
@@ -39,7 +36,7 @@ interface NextActionPayload {
 
 interface HomeData {
   workspace: Workspace;
-  drafts: Draft[];
+  priorities: PriorityQueue;
   newSignals: number;
   syntheses: NowSynthesis[];
   campaigns: Campaign[];
@@ -47,19 +44,12 @@ interface HomeData {
   next: NextActionPayload | null;
 }
 
-/** Channels with a real platform mark on the preview frame (spec §4 carve-out). */
-const CHANNEL_BRAND: Partial<Record<Channel, BrandName>> = {
-  linkedin: "linkedin",
-  x: "x",
-  instagram: "instagram",
-};
-
 /** Icon + deep link per checklist step (spec §5.4.2); order comes from contracts. */
 const CHECKLIST_META: Record<SetupChecklistItem, { icon: IconName; label: string; path: string }> = {
   brain_reviewed: { icon: "brain", label: "Review your Brain", path: "/brain" },
   channel_connected: { icon: "connect", label: "Connect a channel", path: "/connectors" },
   first_campaign: { icon: "campaigns", label: "Create your first campaign", path: "/campaigns" },
-  first_approval: { icon: "review", label: "Approve your first draft", path: "/approvals" },
+  first_approval: { icon: "review", label: "Approve your first draft", path: "/review" },
   insights_live: { icon: "status-learning", label: "Turn on insights", path: "/connectors" },
   team_invited: { icon: "audience", label: "Invite your team", path: "/team" },
 };
@@ -69,33 +59,25 @@ function truncate(text: string, max: number): string {
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
 }
 
-/** Email/blog framings read title + body; lead line becomes the subject/title. */
-function splitLead(content: string): { title: string; body: string } {
-  const [first = "", ...rest] = content.split(/\r?\n/);
-  const body = rest.join("\n").trim();
-  return { title: truncate(first, 80), body: body || content };
-}
-
 export default function WorkspaceHomePage() {
   const { id } = useParams<{ id: string }>();
-  const router = useRouter();
   const [data, setData] = useState<HomeData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
-      const [ws, drafts, signals, syntheses, campaigns, next] = await Promise.all([
+      const [ws, priorities, signals, syntheses, campaigns, next] = await Promise.all([
         apiFetch(`/workspaces/${id}`),
-        apiFetch(`/workspaces/${id}/drafts`),
+        apiFetch(`/workspaces/${id}/priorities`),
         apiFetch(`/workspaces/${id}/discovery/items?status=new`),
         apiFetch(`/workspaces/${id}/learning/syntheses`),
         apiFetch(`/workspaces/${id}/campaigns`),
         apiFetch(`/workspaces/${id}/next-action`),
       ]);
-      if (!ws.ok) throw new Error("not found");
+      if (!ws.ok || !priorities.ok) throw new Error("not found");
       setData({
         workspace: await ws.json(),
-        drafts: drafts.ok ? await drafts.json() : [],
+        priorities: await priorities.json(),
         newSignals: signals.ok ? ((await signals.json()) as unknown[]).length : 0,
         syntheses: syntheses.ok ? await syntheses.json() : [],
         campaigns: campaigns.ok ? await campaigns.json() : [],
@@ -122,19 +104,15 @@ export default function WorkspaceHomePage() {
 
   if (!data) return <EmptyState description="Loading..." />;
 
-  const { workspace, drafts, newSignals, syntheses, campaigns, next } = data;
-  const pendingReview = drafts.filter((d) => d.state === "pending_review").length;
+  const { workspace, priorities, newSignals, syntheses, campaigns, next } = data;
+  const pendingReview = priorities.items.filter((item) => item.kind === "content_review").length;
   const proposedUpdates = syntheses.filter((s) => s.status === "proposed").length;
   const activeCampaigns = campaigns.filter((c) => c.status === "active").length;
 
-  // Zone 1 — the work queue: oldest-waiting first, mirroring the review queue.
-  const queue = drafts
-    .filter((d) => d.state === "pending_review")
-    .sort((a, b) => a.createdAt - b.createdAt)
-    .slice(0, 8);
-  // Pending drafts are priority 1 in the next-action engine, so the top card
-  // mirrors the next action whenever the engine agrees (or isn't loaded yet).
-  const topMirrorsNextAction = queue.length > 0 && (!next || next.nextAction.kind === "review");
+  // The API owns urgency and deterministic ordering across authorization,
+  // blockers, failures, stale actions, and content review.
+  const queue = priorities.items.slice(0, 8);
+  const queueState = priorityQueueState(priorities);
   const generatingCount = next?.state.generatingCount ?? 0;
 
   // Zone 3 — recent learning-loop entries (dismissed ones taught us nothing).
@@ -143,46 +121,40 @@ export default function WorkspaceHomePage() {
     .sort((a, b) => b.createdAt - a.createdAt)
     .slice(0, 3);
 
-  const campaignName = (draft: Draft): string | null =>
-    draft.campaignId ? (campaigns.find((c) => c.id === draft.campaignId)?.name ?? null) : null;
-
   return (
     <>
       <PageHeader
         title="Command Center"
         subtitle={`The GTM loop for ${workspace.name}: review work, act on signals, update the Brain, and keep campaigns moving.`}
         actions={
-          <Link
-            className={`${buttonStyles.button} ${buttonStyles.secondary} ${buttonStyles.sm}`}
-            href={`/workspaces/${id}/content`}
-          >
+          <ButtonLink variant="secondary" size="standard" href={`/workspaces/${id}/content`}>
             Create draft
-          </Link>
+          </ButtonLink>
         }
       />
 
       {/* Slim icon+count strip — passive muted-ink counts, each deep-linking. */}
       <nav className={styles.statStrip} aria-label="Workspace counts">
-        <Link className={styles.stat} href={`/workspaces/${id}/approvals`}>
-          <Icon name="review" size="sm" />
+        <Link className={styles.stat} href={`/workspaces/${id}/review`}>
+          <Icon name="review" size="compact" />
           Needs review
           <CountBadge count={pendingReview} label="drafts waiting for review" />
         </Link>
         <span className={styles.statSep} aria-hidden="true">·</span>
         <Link className={styles.stat} href={`/workspaces/${id}/discovery`}>
-          <Icon name="discover" size="sm" />
+          <Icon name="discover" size="compact" />
           Signals
           <CountBadge count={newSignals} label="new market signals" />
         </Link>
         <span className={styles.statSep} aria-hidden="true">·</span>
         <Link className={styles.stat} href={`/workspaces/${id}/learning`}>
-          <Icon name="status-learning" size="sm" />
+          <Icon name="status-learning" size="compact" />
           Brain updates
           <CountBadge count={proposedUpdates} label="proposed brain updates" />
         </Link>
         <span className={styles.statSep} aria-hidden="true">·</span>
         <Link className={styles.stat} href={`/workspaces/${id}/campaigns`}>
-          <Icon name="status-live" size="sm" />
+          <Icon name="status-live" size="compact" />
           Live
           <CountBadge count={activeCampaigns} label="campaigns live" />
         </Link>
@@ -192,18 +164,11 @@ export default function WorkspaceHomePage() {
       <section className={styles.zone}>
         <div className={styles.zoneHead}>
           <h2 className={styles.zoneTitle}>Needs you now</h2>
-          {next && queue.length > 0 && next.nextAction.kind === "review" && (
-            <span className={styles.zoneMeta}>{next.nextAction.reason}</span>
-          )}
-          {queue.length > 0 && (
-            <Link className={`link-button ${styles.zoneLink}`} href={`/workspaces/${id}/approvals`}>
-              Open Review →
-            </Link>
-          )}
+          {queue.length > 0 && <span className={styles.zoneMeta}>Ranked by urgency and due time</span>}
         </div>
-        {queue.length === 0 ? (
+        {queueState === "all_clear" ? (
           <p className={styles.allClear}>
-            <Icon name="status-approved" size="sm" />
+            <Icon name="status-approved" size="compact" />
             All clear — nothing is waiting on you.
             {generatingCount > 0 && (
               <span className={styles.generating}>
@@ -212,43 +177,38 @@ export default function WorkspaceHomePage() {
             )}
           </p>
         ) : (
-          <div className={styles.queue}>
-            {queue.map((draft, i) => {
-              const kind = previewKindFor(draft.channel);
-              const campaign = campaignName(draft);
-              const framedTitle =
-                kind === "email" || kind === "blog"
-                  ? splitLead(draft.content).title
-                  : (campaign ?? workspace.name);
-              const framedBody =
-                kind === "email" || kind === "blog"
-                  ? splitLead(draft.content).body
-                  : draft.content;
+          <div className={styles.priorityGrid}>
+            {queue.map((priority, index) => {
+              const view = priorityView(priority);
               return (
-                <div key={draft.id} className={styles.queueItem}>
-                  <PreviewCard
-                    kind={kind}
-                    title={framedTitle}
-                    body={framedBody}
-                    scheduledAt={new Date(draft.createdAt).toLocaleDateString(undefined, {
-                      month: "short",
-                      day: "numeric",
-                    })}
-                    status="Review"
-                    statusTone="pending"
-                    platform={CHANNEL_BRAND[draft.channel]}
-                    onOpen={() => router.push(`/workspaces/${id}/approvals`)}
-                  />
-                  <span className={styles.caption}>
-                    {i === 0 && topMirrorsNextAction && (
-                      <span className={styles.nextTag}>Next up</span>
-                    )}
-                    <span className={styles.captionText}>
-                      {draft.taskType.replace(/_/g, " ")}
-                      {campaign ? ` · ${campaign}` : ""}
+                <article key={priority.id} className={styles.priorityCard}>
+                  <div className={styles.priorityHead}>
+                    <span className={styles.priorityKind}>
+                      <Icon name={view.icon} size="compact" />
+                      {index === 0 && <span className={styles.nextTag}>Next up</span>}
+                      {view.label}
                     </span>
-                  </span>
-                </div>
+                    <WorkflowStatusBadge status={view.status} />
+                  </div>
+                  <h3>{priority.title}</h3>
+                  <p className={styles.priorityReason}>{priority.reason}</p>
+                  <p className={styles.priorityConsequence}>{priority.consequence}</p>
+                  <div className={styles.priorityContext}>
+                    {priority.campaignId && (
+                      <Link href={`/workspaces/${id}/campaigns/${priority.campaignId}`}>
+                        {priority.campaignName ?? "Open campaign"}
+                      </Link>
+                    )}
+                    {priority.dueAt && (
+                      <time dateTime={new Date(priority.dueAt).toISOString()}>
+                        Due {new Date(priority.dueAt).toLocaleString()}
+                      </time>
+                    )}
+                  </div>
+                  <ButtonLink variant="secondary" size="standard" href={priority.href}>
+                    {view.cta}
+                  </ButtonLink>
+                </article>
               );
             })}
           </div>
@@ -280,7 +240,7 @@ export default function WorkspaceHomePage() {
                   data-next={(isNext && !done) || undefined}
                 >
                   <span className={styles.stepIcon}>
-                    <Icon name={done ? "status-approved" : meta.icon} size="sm" />
+                    <Icon name={done ? "status-approved" : meta.icon} size="compact" />
                   </span>
                   <span className={styles.stepLabel}>{meta.label}</span>
                 </Link>
@@ -295,9 +255,14 @@ export default function WorkspaceHomePage() {
         <section className={styles.zone}>
           <div className={styles.zoneHead}>
             <h2 className={styles.zoneTitle}>What the brain learned</h2>
-            <Link className={`link-button ${styles.zoneLink}`} href={`/workspaces/${id}/learning`}>
+            <ButtonLink
+              variant="tertiary"
+              size="compact"
+              className={styles.zoneLink}
+              href={`/workspaces/${id}/learning`}
+            >
               Open Learning →
-            </Link>
+            </ButtonLink>
           </div>
           <div className={styles.learned}>
             {learned.map((s) => (

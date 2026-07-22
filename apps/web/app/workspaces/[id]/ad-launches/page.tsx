@@ -6,9 +6,9 @@ import { EmptyState } from "@/src/components/empty-state";
 
 import { API_URL, apiFetch } from "@/lib/api";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import {
   AD_LAUNCH_OBJECTIVE_LABELS,
   AD_LAUNCH_OBJECTIVES,
@@ -19,11 +19,24 @@ import {
   type AdLaunchStatus,
   type Campaign,
   type Draft,
+  type ExternalActionSubmission,
+  type MetaAdSetState,
   type Workspace,
 } from "@tuezday/contracts";
-import { Button } from "@/src/components/ui/button";
+import {
+  actionAuthorizationHref,
+  budgetChangeDiff,
+  effectivePolicyWorkflowStatus,
+  externalActionHref,
+  externalActionWorkflowStatus,
+  policyExplanation,
+  submissionNote,
+  targetingChangeDiff,
+} from "@/lib/external-actions";
+import { reviewHref } from "@/lib/review-workspace";
+import { Button, ButtonLink } from "@/src/components/ui/button";
 import { Card, CardHeader } from "@/src/components/ui/card";
-import { CountBadge } from "@/src/components/ui/badge";
+import { CountBadge, WorkflowStatusBadge } from "@/src/components/ui/badge";
 import { Icon } from "@/src/components/ui/icon";
 import { Input, Select } from "@/src/components/ui/input";
 import styles from "./ad-launches.module.css";
@@ -54,6 +67,21 @@ interface LaunchDetail extends LaunchView {
 interface AdSettings {
   dailyCapCents: number;
   killSwitch: boolean;
+}
+
+type MutationKind = "budget" | "targeting";
+
+interface MutationFormState {
+  launchId: string;
+  kind: MutationKind;
+  provider: MetaAdSetState;
+  beforeDailyBudgetCents: number;
+  budgetInput: string;
+  countriesInput: string;
+  ageMinInput: string;
+  ageMaxInput: string;
+  idempotencyKey: string;
+  submission: ExternalActionSubmission | null;
 }
 
 /** An approved Meta creative the founder can build a launch from. */
@@ -106,6 +134,8 @@ function creativeFrom(content: string): CreativeFields | null {
 
 export default function AdLaunchesPage() {
   const { id } = useParams<{ id: string }>();
+  const searchParams = useSearchParams();
+  const openedRecovery = useRef(false);
 
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [accounts, setAccounts] = useState<AccountView[]>([]);
@@ -114,6 +144,10 @@ export default function AdLaunchesPage() {
   const [launches, setLaunches] = useState<LaunchView[]>([]);
   const [settings, setSettings] = useState<AdSettings | null>(null);
   const [detail, setDetail] = useState<Record<string, LaunchDetail>>({});
+  const [launchSubmissions, setLaunchSubmissions] = useState<
+    Record<string, ExternalActionSubmission>
+  >({});
+  const [mutation, setMutation] = useState<MutationFormState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -184,6 +218,17 @@ export default function AdLaunchesPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    if (openedRecovery.current || launches.length === 0) return;
+    const launchId = searchParams.get("launch");
+    const kind = searchParams.get("mutation");
+    if (!launchId || (kind !== "budget" && kind !== "targeting")) return;
+    const launch = launches.find((candidate) => candidate.id === launchId);
+    if (!launch || launch.status !== "launched") return;
+    openedRecovery.current = true;
+    void openMutation(launch, kind, true);
+  }, [launches, searchParams]);
+
   const connectedAccounts = useMemo(
     () => accounts.filter((a) => a.connectionId && a.connectionStatus === "connected"),
     [accounts],
@@ -218,6 +263,83 @@ export default function AdLaunchesPage() {
     } finally {
       setBusy(false);
     }
+  }
+
+  async function openMutation(launch: LaunchView, kind: MutationKind, forceRefresh = false) {
+    if (!forceRefresh && mutation?.launchId === launch.id && mutation.kind === kind) {
+      setMutation(null);
+      return;
+    }
+    await run(async () => {
+      const provider = (await call(
+        "GET",
+        `/ads/launches/${launch.id}/provider-state`,
+      )) as MetaAdSetState;
+      setMutation({
+        launchId: launch.id,
+        kind,
+        provider,
+        beforeDailyBudgetCents: provider.dailyBudgetCents,
+        budgetInput: (provider.dailyBudgetCents / 100).toFixed(2),
+        countriesInput: provider.countries.join(", "),
+        ageMinInput: String(provider.ageMin),
+        ageMaxInput: String(provider.ageMax),
+        idempotencyKey: crypto.randomUUID(),
+        submission: null,
+      });
+    });
+  }
+
+  function editMutation(patch: Partial<MutationFormState>) {
+    setMutation((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        ...patch,
+        idempotencyKey: current.submission ? crypto.randomUUID() : current.idempotencyKey,
+        submission: null,
+      };
+    });
+  }
+
+  async function proposeMutation() {
+    if (!mutation) return;
+    await run(async () => {
+      const path = `/ads/launches/${mutation.launchId}/${mutation.kind}-change`;
+      const payload =
+        mutation.kind === "budget"
+          ? {
+              dailyBudgetCents: Math.round(Number(mutation.budgetInput) * 100),
+              idempotencyKey: mutation.idempotencyKey,
+            }
+          : {
+              countries: mutation.countriesInput
+                .split(",")
+                .map((country) => country.trim().toUpperCase())
+                .filter(Boolean),
+              ageMin: Number(mutation.ageMinInput),
+              ageMax: Number(mutation.ageMaxInput),
+              idempotencyKey: mutation.idempotencyKey,
+            };
+      const response = await apiFetch(`/workspaces/${id}${path}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok && !body?.action) {
+        throw new Error(body?.message ?? body?.error ?? `API returned ${response.status}`);
+      }
+      const submission: ExternalActionSubmission =
+        body.execution !== undefined
+          ? (body as ExternalActionSubmission)
+          : { action: body.action, execution: body.action.execution ?? null };
+      setMutation((current) =>
+        current?.launchId === mutation.launchId ? { ...current, submission } : current,
+      );
+      setNote(submissionNote(submission));
+      await load();
+    });
   }
 
   async function saveCap() {
@@ -278,14 +400,34 @@ export default function AdLaunchesPage() {
   async function act(launch: LaunchView, action: string, confirmMsg?: string) {
     if (confirmMsg && !window.confirm(confirmMsg)) return;
     await run(async () => {
-      await call("POST", `/ads/launches/${launch.id}/${action}`, {});
+      if (action === "launch") {
+        const res = await apiFetch(`/workspaces/${id}/ads/launches/${launch.id}/launch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: "{}",
+        });
+        const body = await res.json().catch(() => null);
+        if (!res.ok && !body?.action) {
+          throw new Error(body?.message ?? body?.error ?? `API returned ${res.status}`);
+        }
+        // A stale 409 carries the durable action but omits the execution
+        // envelope. Preserve it so the launch still has an honest recovery UI.
+        const submission: ExternalActionSubmission =
+          body.execution !== undefined
+            ? (body as ExternalActionSubmission)
+            : { action: body.action, execution: body.action.execution ?? null };
+        setLaunchSubmissions((previous) => ({ ...previous, [launch.id]: submission }));
+        setNote(submissionNote(submission));
+      } else {
+        await call("POST", `/ads/launches/${launch.id}/${action}`, {});
+      }
       await load();
       if (detail[launch.id]) await loadDetail(launch.id);
     });
   }
 
   async function remove(launch: LaunchView) {
-    if (!window.confirm("Delete this launch?")) return;
+    if (!window.confirm(`Delete ad launch "${launch.name}"?`)) return;
     await run(async () => {
       await call("DELETE", `/ads/launches/${launch.id}`);
       await load();
@@ -338,7 +480,7 @@ export default function AdLaunchesPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="warning" size="sm" />
+              <Icon name="warning" size="compact" />
               Spend guardrails
             </span>
           }
@@ -360,12 +502,12 @@ export default function AdLaunchesPage() {
               style={{ width: 120 }}
             />
           </label>
-          <Button variant="secondary" size="sm" disabled={busy} onClick={saveCap}>
+          <Button variant="secondary" size="compact" disabled={busy} onClick={saveCap}>
             Save cap
           </Button>
           <Button
             variant={settings.killSwitch ? "primary" : "danger"}
-            size="sm"
+            size="compact"
             disabled={busy}
             onClick={toggleKillSwitch}
           >
@@ -388,7 +530,7 @@ export default function AdLaunchesPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="add" size="sm" />
+              <Icon name="add" size="compact" />
               New launch
             </span>
           }
@@ -536,7 +678,7 @@ export default function AdLaunchesPage() {
         <CardHeader
           title={
             <span className={styles.head}>
-              <Icon name="status-live" size="sm" />
+              <Icon name="status-live" size="compact" />
               Launches{" "}
               {launches.length > 0 && <CountBadge count={launches.length} label="ad launches" />}
             </span>
@@ -553,6 +695,10 @@ export default function AdLaunchesPage() {
               const currency = launch.account?.currency ?? "USD";
               const spending = isSpending(launch);
               const d = detail[launch.id];
+              const submission = launchSubmissions[launch.id] ?? null;
+              const campaignName = launch.campaignId
+                ? (campaigns.find((campaign) => campaign.id === launch.campaignId)?.name ?? "Unknown campaign")
+                : "No linked campaign";
               return (
                 <li key={launch.id} className="section-card">
                   <div className="section-head">
@@ -574,6 +720,26 @@ export default function AdLaunchesPage() {
                       : "creative unavailable"}
                   </p>
                   {launch.lastError && <p className="error-inline">{launch.lastError}</p>}
+                  {submission ? (
+                    <div className={styles.actionStatus}>
+                      <WorkflowStatusBadge
+                        status={externalActionWorkflowStatus(submission.action)}
+                      />
+                      <span>{submissionNote(submission)}</span>
+                      <Link href={actionAuthorizationHref(submission.action)}>View action</Link>
+                    </div>
+                  ) : launch.externalActionId ? (
+                    <p className={styles.actionStatus}>
+                      <Link
+                        href={reviewHref(id, {
+                          tab: "authorizations",
+                          action: launch.externalActionId,
+                        })}
+                      >
+                        View governing action
+                      </Link>
+                    </p>
+                  ) : null}
 
                   <div className="editor-actions">
                     {launch.status === "draft" && (
@@ -582,8 +748,8 @@ export default function AdLaunchesPage() {
                           Submit for approval
                         </Button>
                         <Button
-                          variant="secondary"
-                          size="sm"
+                          variant="danger"
+                          size="compact"
                           disabled={busy}
                           onClick={() => remove(launch)}
                         >
@@ -598,7 +764,7 @@ export default function AdLaunchesPage() {
                         </Button>
                         <Button
                           variant="secondary"
-                          size="sm"
+                          size="compact"
                           disabled={busy}
                           onClick={() => act(launch, "reject")}
                         >
@@ -606,7 +772,7 @@ export default function AdLaunchesPage() {
                         </Button>
                         <Button
                           variant="secondary"
-                          size="sm"
+                          size="compact"
                           disabled={busy}
                           onClick={() => act(launch, "revise")}
                         >
@@ -631,7 +797,7 @@ export default function AdLaunchesPage() {
                         </Button>
                         <Button
                           variant="secondary"
-                          size="sm"
+                          size="compact"
                           disabled={busy}
                           onClick={() => act(launch, "revise")}
                         >
@@ -648,7 +814,7 @@ export default function AdLaunchesPage() {
                       (spending ? (
                         <Button
                           variant="secondary"
-                          size="sm"
+                          size="compact"
                           disabled={busy}
                           onClick={() => act(launch, "pause")}
                         >
@@ -659,10 +825,197 @@ export default function AdLaunchesPage() {
                           Resume
                         </Button>
                       ))}
-                    <Button variant="ghost" size="sm" onClick={() => toggleDetail(launch.id)}>
+                    {launch.status === "launched" && (
+                      <>
+                        <Button
+                          variant="secondary"
+                          leadingIcon={<Icon name="budget" />}
+                          disabled={busy}
+                          onClick={() => void openMutation(launch, "budget")}
+                        >
+                          Change budget
+                        </Button>
+                        <Button
+                          variant="secondary"
+                          leadingIcon={<Icon name="targeting" />}
+                          disabled={busy}
+                          onClick={() => void openMutation(launch, "targeting")}
+                        >
+                          Change targeting
+                        </Button>
+                      </>
+                    )}
+                    <Button variant="tertiary" size="compact" onClick={() => toggleDetail(launch.id)}>
                       {d ? "Hide log" : "Decision log"}
                     </Button>
                   </div>
+
+                  {mutation?.launchId === launch.id && (() => {
+                    const requestedBudgetCents = Math.round(Number(mutation.budgetInput) * 100);
+                    const budgetDiff = budgetChangeDiff(
+                      mutation.beforeDailyBudgetCents,
+                      requestedBudgetCents,
+                    );
+                    const requestedTargeting = {
+                      countries: mutation.countriesInput
+                        .split(",")
+                        .map((country) => country.trim().toUpperCase())
+                        .filter(Boolean),
+                      ageMin: Number(mutation.ageMinInput),
+                      ageMax: Number(mutation.ageMaxInput),
+                    };
+                    const targetingDiff = targetingChangeDiff(
+                      mutation.provider,
+                      requestedTargeting,
+                    );
+                    const submission = mutation.submission;
+                    const recovery =
+                      submission && ["blocked", "stale", "failed"].includes(submission.action.status);
+                    return (
+                      <section className={styles.mutationPanel} aria-label={`Change ${mutation.kind}`}>
+                        <div className={styles.mutationHeading}>
+                          <div>
+                            <h4>{mutation.kind === "budget" ? "Change budget" : "Change targeting"}</h4>
+                            <p>
+                              {launch.account?.name ?? "Meta account"} · {campaignName} · {launch.name} ·{" "}
+                              {mutation.provider.externalAdSetId}
+                            </p>
+                          </div>
+                          <Button variant="tertiary" size="compact" onClick={() => setMutation(null)}>
+                            Close
+                          </Button>
+                        </div>
+
+                        {mutation.kind === "budget" ? (
+                          <>
+                            <div className={styles.formGrid}>
+                              <div className={styles.readValue}>
+                                <span>Current provider budget</span>
+                                <strong>{money(mutation.beforeDailyBudgetCents, currency)}/day</strong>
+                              </div>
+                              <label>
+                                Requested daily budget ({currency})
+                                <Input
+                                  type="number"
+                                  min="1"
+                                  step="0.01"
+                                  value={mutation.budgetInput}
+                                  onChange={(event) => editMutation({ budgetInput: event.target.value })}
+                                />
+                              </label>
+                            </div>
+                            {Number.isFinite(requestedBudgetCents) && (
+                              <p className={styles.diffSummary}>
+                                {budgetDiff.deltaCents >= 0 ? "Increase" : "Decrease"} by{" "}
+                                {money(budgetDiff.absoluteDeltaCents, currency)}
+                                {budgetDiff.percentDelta === null
+                                  ? ""
+                                  : ` (${budgetDiff.percentDelta >= 0 ? "+" : ""}${budgetDiff.percentDelta.toFixed(1)}%)`}
+                              </p>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <div className={styles.formGrid}>
+                              <label>
+                                Countries
+                                <Input
+                                  value={mutation.countriesInput}
+                                  onChange={(event) => editMutation({ countriesInput: event.target.value })}
+                                  placeholder="US, DE"
+                                />
+                              </label>
+                              <label>
+                                Minimum age
+                                <Input
+                                  type="number"
+                                  min="18"
+                                  max="65"
+                                  value={mutation.ageMinInput}
+                                  onChange={(event) => editMutation({ ageMinInput: event.target.value })}
+                                />
+                              </label>
+                              <label>
+                                Maximum age
+                                <Input
+                                  type="number"
+                                  min="18"
+                                  max="65"
+                                  value={mutation.ageMaxInput}
+                                  onChange={(event) => editMutation({ ageMaxInput: event.target.value })}
+                                />
+                              </label>
+                            </div>
+                            <div className={styles.diffGrid}>
+                              <p><strong>Countries added</strong><span>{targetingDiff.countriesAdded.join(", ") || "None"}</span></p>
+                              <p><strong>Countries removed</strong><span>{targetingDiff.countriesRemoved.join(", ") || "None"}</span></p>
+                              <p><strong>Age range</strong><span>{targetingDiff.beforeAge.min}–{targetingDiff.beforeAge.max} → {targetingDiff.afterAge.min}–{targetingDiff.afterAge.max}</span></p>
+                            </div>
+                          </>
+                        )}
+
+                        <p className={styles.guardrailNote}>
+                          Workspace kill switch, daily cap, account connection, and Meta limits are
+                          rechecked before this change executes.
+                        </p>
+
+                        {submission && (
+                          <div className={styles.mutationOutcome}>
+                            <div className={styles.badgeRow}>
+                              <WorkflowStatusBadge status={externalActionWorkflowStatus(submission.action)} />
+                              <WorkflowStatusBadge
+                                status={effectivePolicyWorkflowStatus(submission.action.policy.effective)}
+                              />
+                            </div>
+                            <p>{submissionNote(submission)}</p>
+                            <p>{policyExplanation(submission.action)}</p>
+                            {submission.action.blocker && <p className="error-inline">{submission.action.blocker.message}</p>}
+                            {submission.execution && (
+                              <p className={styles.receipt}>
+                                Provider receipt: {submission.execution.kind} · {submission.execution.status}
+                                {submission.execution.error ? ` · ${submission.execution.error}` : ""}
+                              </p>
+                            )}
+                            <ButtonLink
+                              variant={recovery ? "secondary" : "primary"}
+                              href={externalActionHref(submission.action)}
+                              leadingIcon={<Icon name={recovery ? "regenerate" : "authorize"} />}
+                              onClick={(event) => {
+                                if (!recovery) return;
+                                event.preventDefault();
+                                void openMutation(launch, mutation.kind, true);
+                              }}
+                            >
+                              {recovery
+                                ? "Refresh provider state"
+                                : submission.action.status === "authorization_required"
+                                  ? "Open authorization"
+                                  : "View action"}
+                            </ButtonLink>
+                          </div>
+                        )}
+
+                        <div className={styles.mutationActions}>
+                          <Button
+                            variant="primary"
+                            loading={busy}
+                            onClick={() => void proposeMutation()}
+                            disabled={
+                              mutation.kind === "budget"
+                                ? !Number.isFinite(requestedBudgetCents) || requestedBudgetCents < 100 || budgetDiff.deltaCents === 0
+                                : requestedTargeting.countries.length === 0 ||
+                                  requestedTargeting.ageMin < 18 ||
+                                  requestedTargeting.ageMax > 65 ||
+                                  requestedTargeting.ageMin > requestedTargeting.ageMax
+                            }
+                          >
+                            Propose {mutation.kind} change
+                          </Button>
+                          <span>Authorization decisions happen in Review, never inline.</span>
+                        </div>
+                      </section>
+                    );
+                  })()}
 
                   {d && (
                     <ul className="draft-chain">

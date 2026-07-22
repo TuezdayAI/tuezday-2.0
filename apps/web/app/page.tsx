@@ -61,9 +61,9 @@ export default function HomePage() {
         {userLabel && (
           <span className="header-user">
             {userLabel}{" "}
-            <button type="button" className="link-button" onClick={logout}>
+            <Button type="button" variant="tertiary" size="compact" onClick={logout}>
               Log out
-            </button>
+            </Button>
           </span>
         )}
       </header>
@@ -96,8 +96,8 @@ export default function HomePage() {
                   </span>
                   {w.onboardingStep && w.onboardingStep !== "done" && (
                     <Button
-                      variant="ghost"
-                      size="sm"
+                      variant="tertiary"
+                      size="compact"
                       onClick={(e) => {
                         e.preventDefault();
                         router.push(`/onboarding?workspace=${w.id}`);

@@ -8,10 +8,13 @@ import {
   type Channel,
   type Draft,
   type GenerationReview,
+  type LaunchMedia,
   type TaskType,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { approvalDecisions, drafts, generations, type DraftRow } from "../db/schema";
+
+type DraftWriteDb = Pick<Db, "insert" | "update">;
 
 /** Who performed a draft action — a user, or the worker's system identity. */
 export interface DraftActor {
@@ -27,18 +30,19 @@ export class InvalidTransitionError extends Error {
 }
 
 function rowToDraft(row: DraftRow): Draft {
-  const { reviewJson, ...rest } = row;
+  const { reviewJson, mediaJson, ...rest } = row;
   return {
     ...rest,
     taskType: row.taskType as TaskType,
     channel: row.channel as Channel,
     state: row.state as ApprovalState,
+    media: mediaJson ? (JSON.parse(mediaJson) as LaunchMedia[]) : null,
     review: reviewJson ? (JSON.parse(reviewJson) as GenerationReview) : null,
   };
 }
 
 function logDecision(
-  db: Db,
+  db: DraftWriteDb,
   draft: { id: string; workspaceId: string },
   actor: DraftActor,
   action: ApprovalAction,
@@ -73,6 +77,8 @@ export interface SubmitDraftInput {
   channel: Channel;
   personaId: string | null;
   content: string;
+  /** Rendered visuals (Sprint 41) — carousel/ad-image drafts attach these. */
+  media?: LaunchMedia[] | null;
 }
 
 export function draftForGeneration(
@@ -116,12 +122,34 @@ export function submitDraft(db: Db, input: SubmitDraftInput, actor: DraftActor):
     content: input.content,
     state: toState,
     reviewJson: sourceReviewJson,
+    mediaJson: input.media && input.media.length > 0 ? JSON.stringify(input.media) : null,
     createdAt: now,
     updatedAt: now,
   };
   db.insert(drafts).values(row).run();
   logDecision(db, row, actor, "submit", "draft", toState);
   return rowToDraft(row);
+}
+
+/** Attach rendered visuals to an existing draft (Sprint 41 Part 5). */
+export function setDraftMedia(
+  db: Db,
+  workspaceId: string,
+  draftId: string,
+  media: LaunchMedia[],
+): Draft | undefined {
+  const row = db
+    .select()
+    .from(drafts)
+    .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)))
+    .get();
+  if (!row) return undefined;
+  const now = Date.now();
+  db.update(drafts)
+    .set({ mediaJson: media.length > 0 ? JSON.stringify(media) : null, updatedAt: now })
+    .where(eq(drafts.id, draftId))
+    .run();
+  return rowToDraft({ ...row, mediaJson: media.length > 0 ? JSON.stringify(media) : null, updatedAt: now });
 }
 
 export function listDrafts(
@@ -172,6 +200,17 @@ export function listDecisions(db: Db, draftId: string): ApprovalDecision[] {
  */
 export function applyDraftAction(
   db: Db,
+  draft: Draft,
+  action: ApprovalAction,
+  actor: DraftActor,
+  newContent?: string,
+): Draft {
+  return applyDraftActionInTransaction(db, draft, action, actor, newContent);
+}
+
+/** Apply a draft action through either the root DB or an active transaction. */
+export function applyDraftActionInTransaction(
+  db: DraftWriteDb,
   draft: Draft,
   action: ApprovalAction,
   actor: DraftActor,

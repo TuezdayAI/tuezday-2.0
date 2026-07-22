@@ -7,16 +7,38 @@ import {
 } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
 import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric";
-import { inboxItems, socialAutomationSettings } from "../src/db/schema";
+import {
+  emailRecipientPermissions,
+  inboxItems,
+  socialAutomationSettings,
+  workspaceEmailSenders,
+} from "../src/db/schema";
 import type { Db } from "../src/db";
 import type { LlmGateway } from "../src/llm/gateway";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import type {
+  OutboundEmailDomain,
+  OutboundEmailMessage,
+  OutboundEmailProvider,
+} from "../src/outbound-email/provider";
+import { getExternalAction } from "../src/services/external-actions";
+import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 const fakeLlm: LlmGateway = {
   async generate() {
     return { text: "Personalized sequence message.", model: "fake", provider: "fake", durationMs: 1 };
   },
 };
+
+class FakeOutboundEmailProvider implements OutboundEmailProvider {
+  send = vi.fn(async (_message: OutboundEmailMessage) => ({
+    provider: "resend" as const,
+    messageId: `email_${randomUUID()}`,
+    acceptedAt: Date.now(),
+  }));
+  async createDomain(): Promise<OutboundEmailDomain> { throw new Error("unused"); }
+  async verifyDomain(): Promise<void> { throw new Error("unused"); }
+  async getDomain(): Promise<OutboundEmailDomain> { throw new Error("unused"); }
+}
 
 // ---------------------------------------------------------------------------
 // Minimal fake fabric — just enough X-DM behaviour for sequence dispatch.
@@ -120,6 +142,7 @@ describe("multi-step sequences", () => {
   let db: Db;
   let workspaceId: string;
   let state: State;
+  let emailProvider: FakeOutboundEmailProvider;
   const T0 = new Date("2026-07-06T08:00:00Z"); // a Monday, deterministic
   const HOUR = 60 * 60 * 1000;
 
@@ -130,10 +153,41 @@ describe("multi-step sequences", () => {
     vi.stubEnv("TWITTER_CLIENT_SECRET", "csecret");
     db = createTestDb();
     state = newState();
-    app = await buildAuthedApp({ db, llm: fakeLlm, connectors: fakeFabric(state) });
+    emailProvider = new FakeOutboundEmailProvider();
+    app = await buildAuthedApp({
+      db,
+      llm: fakeLlm,
+      connectors: fakeFabric(state),
+      outboundEmail: emailProvider,
+    });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Seq" } })
     ).json().id;
+    const now = Date.now();
+    db.insert(workspaceEmailSenders).values({
+      workspaceId,
+      domain: "example.com",
+      fromLocalPart: "hello",
+      fromName: "Seq",
+      fromAddress: "hello@example.com",
+      replyTo: null,
+      status: "verified",
+      provider: "resend",
+      providerDomainId: "domain_123",
+      dnsRecordsJson: "[]",
+      killSwitch: false,
+      dailyCap: 100,
+      lastCheckedAt: now,
+      lastError: null,
+      createdAt: now,
+      updatedAt: now,
+    }).run();
+    // Legacy engine scenarios: sends run autonomously so kill-switch/stop-on-
+    // reply behaviour stays observable. The send authorization queue is covered
+    // in external-action-messaging.test.ts.
+    await putActionPolicy(app, workspaceId, "workspace", workspaceId, {
+      send: "autonomous",
+    });
   });
 
   afterEach(async () => {
@@ -146,14 +200,26 @@ describe("multi-step sequences", () => {
     vi.setSystemTime(new Date(ms));
   }
 
-  async function createLead(name: string, xHandle = ""): Promise<string> {
-    return (
+  async function createLead(name: string, xHandle = "", allowEmail = true): Promise<string> {
+    const id = (
       await app.inject({
         method: "POST",
         url: `/workspaces/${workspaceId}/leads`,
         payload: { name, email: `${name.toLowerCase()}@acme.com`, company: "Acme", role: "VP", xHandle },
       })
     ).json().id;
+    if (allowEmail) {
+      const now = Date.now();
+      db.insert(emailRecipientPermissions).values({
+        id: randomUUID(),
+        workspaceId,
+        normalizedEmail: `${name.toLowerCase()}@acme.com`,
+        status: "allowed",
+        createdAt: now,
+        updatedAt: now,
+      }).run();
+    }
+    return id;
   }
 
   async function audienceOf(leadIds: string[]): Promise<string> {
@@ -230,6 +296,7 @@ describe("multi-step sequences", () => {
       draftState: string;
       stepNumber: number;
       recipientName: string;
+      externalActionId: string | null;
     }>;
   }) {
     return d.messages.filter((m) => m.channel === "email");
@@ -289,14 +356,15 @@ describe("multi-step sequences", () => {
     expect(d.sequenceRecipients).toHaveLength(1);
     expect(d.sequenceRecipients[0].currentStep).toBe(1);
     expect(d.sequenceRecipients[0].status).toBe("active");
-    // Step 1 auto-approved, awaiting the manual export (deliverability boundary).
+    // Step 1 auto-approved and accepted by the native provider.
     expect(emailMessages(d)).toHaveLength(1);
     expect(emailMessages(d)[0]!.draftState).toBe("approved");
-    expect(emailMessages(d)[0]!.status).toBe("pending");
+    expect(emailMessages(d)[0]!.status).toBe("sent");
+    expect(emailProvider.send).toHaveBeenCalledTimes(1);
 
-    // Export step 1 → marks it sent, starting the next step's delay clock.
+    // CSV remains available as recovery and does not trigger another send.
     expect((await exportCsv(launchId)).statusCode).toBe(200);
-    expect(emailMessages(await detail(launchId))[0]!.status).toBe("sent");
+    expect(emailProvider.send).toHaveBeenCalledTimes(1);
 
     // Before the delay elapses, no step 2.
     await runSeq(launchId);
@@ -309,15 +377,86 @@ describe("multi-step sequences", () => {
     const step2 = emailMessages(d).find((m) => m.stepNumber === 2);
     expect(step2).toBeTruthy();
     expect(step2!.draftState).toBe("approved");
-    await exportCsv(launchId);
+    expect(step2!.status).toBe("sent");
+    expect(emailProvider.send).toHaveBeenCalledTimes(2);
 
-    // After another 24h, step 3 generates; export; then the recipient completes.
+    // After another 24h, step 3 generates and sends; then the recipient completes.
     setNow(T0.getTime() + 48 * HOUR + 120_000);
     await runSeq(launchId);
     expect(emailMessages(await detail(launchId)).some((m) => m.stepNumber === 3)).toBe(true);
-    await exportCsv(launchId);
+    expect(emailProvider.send).toHaveBeenCalledTimes(3);
     await runSeq(launchId);
     expect((await detail(launchId)).sequenceRecipients[0].status).toBe("completed");
+  });
+
+  it("pauses a scheduled email step on unknown permission and retries after permission is allowed", async () => {
+    const lead = await createLead("Blocked", "", false);
+    const aud = await audienceOf([lead]);
+    const launchId = await makeLaunch(["email"], aud, "scheduled_auto");
+    await setSequence(launchId, [
+      { channel: "email", stepNumber: 1, instruction: "", delayHours: 0 },
+    ]);
+
+    await start(launchId);
+    let d = await detail(launchId);
+    const message = emailMessages(d)[0]!;
+    expect(message.status).toBe("pending");
+    expect(d.sequenceRecipients[0].status).toBe("active");
+    expect(getExternalAction(db, workspaceId, message.externalActionId!)).toMatchObject({
+      status: "blocked",
+      blocker: { code: "permission_unknown" },
+    });
+    expect(emailProvider.send).not.toHaveBeenCalled();
+
+    await runSeq(launchId);
+    d = await detail(launchId);
+    expect(emailMessages(d)[0]!.externalActionId).toBe(message.externalActionId);
+
+    await app.inject({
+      method: "PUT",
+      url: `/workspaces/${workspaceId}/email-permissions/blocked%40acme.com`,
+      payload: { status: "allowed" },
+    });
+    await runSeq(launchId);
+    d = await detail(launchId);
+    expect(emailMessages(d)[0]!.status).toBe("sent");
+    expect(emailProvider.send).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps a human-required email sequence pending until authorization", async () => {
+    await putActionPolicy(app, workspaceId, "workspace", workspaceId, {
+      send: "human_required",
+    });
+    const lead = await createLead("Human");
+    const aud = await audienceOf([lead]);
+    const launchId = await makeLaunch(["email"], aud, "scheduled_auto");
+    await setSequence(launchId, [
+      { channel: "email", stepNumber: 1, instruction: "", delayHours: 0 },
+      { channel: "email", stepNumber: 2, instruction: "follow up", delayHours: 0 },
+    ]);
+
+    await start(launchId);
+    let d = await detail(launchId);
+    const first = emailMessages(d)[0]!;
+    expect(first.status).toBe("pending");
+    expect(getExternalAction(db, workspaceId, first.externalActionId!)).toMatchObject({
+      status: "authorization_required",
+    });
+    expect(emailProvider.send).not.toHaveBeenCalled();
+
+    await runSeq(launchId);
+    expect(emailMessages(await detail(launchId))).toHaveLength(1);
+    await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/external-actions/${first.externalActionId}/authorize`,
+      payload: {},
+    });
+    expect(emailProvider.send).toHaveBeenCalledTimes(1);
+    await runSeq(launchId);
+    d = await detail(launchId);
+    expect(emailMessages(d)).toHaveLength(2);
+    expect(emailMessages(d)[1]!.status).toBe("pending");
+    expect(emailProvider.send).toHaveBeenCalledTimes(1);
   });
 
   it("a manual stop halts one recipient's email chain while others continue", async () => {
@@ -330,7 +469,7 @@ describe("multi-step sequences", () => {
       { channel: "email", stepNumber: 2, instruction: "bump", delayHours: 24 },
     ]);
     await start(launchId);
-    await exportCsv(launchId); // step 1 sent for both
+    expect(emailProvider.send).toHaveBeenCalledTimes(2); // step 1 sent for both
 
     const stop = await app.inject({
       method: "POST",

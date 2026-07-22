@@ -13,7 +13,7 @@ import type { Db } from "../src/db";
 import type { LlmGateway } from "../src/llm/gateway";
 import { applyDraftAction, listDecisions, listDrafts, submitDraft } from "../src/services/drafts";
 import { insertSignalMatch } from "../src/services/matching";
-import { buildAuthedApp, createTestDb } from "./helpers";
+import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 const fakeLlm: LlmGateway = {
   async generate() {
@@ -143,6 +143,10 @@ describe("social automation", () => {
       url: `/workspaces/${workspaceId}/campaigns/${campaignId}/automation`,
       payload: { automationMode, autoDailyCap },
     });
+  }
+
+  async function setPublishPolicy(campaignId: string, rule: "autonomous" | "human_required") {
+    return putActionPolicy(app, workspaceId, "campaign", campaignId, { publish: rule });
   }
 
   async function createSignal(content = "Competitor X launched a feature"): Promise<string> {
@@ -343,6 +347,7 @@ describe("social automation", () => {
     const connectionId = await connectReddit();
     const campaignId = await createCampaign(["linkedin"]);
     await setAutomation(campaignId, "scheduled_auto");
+    await setPublishPolicy(campaignId, "autonomous");
     const signalId = await createSignal();
     seedMatch(signalId, campaignId);
 
@@ -366,7 +371,11 @@ describe("social automation", () => {
 
     vi.setSystemTime(new Date("2026-07-06T13:05:00Z")); // past the 09:00 EDT (13:00Z) slot
     const published = await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
-    expect(published.json().results.filter((r: { ok: boolean }) => r.ok)).toHaveLength(1);
+    expect(
+      published
+        .json()
+        .actions.filter((submission: { action: { status: string } }) => submission.action.status === "succeeded"),
+    ).toHaveLength(1);
     expect(state.posts).toHaveLength(1);
   });
 
@@ -529,6 +538,7 @@ describe("social automation", () => {
     const connectionId = await connectReddit();
     const campaignId = await createCampaign(["linkedin"]);
     await setAutomation(campaignId, "scheduled_auto", 1); // 1 auto-post per campaign per day
+    await setPublishPolicy(campaignId, "autonomous");
     for (let i = 0; i < 4; i++) seedApprovedDraft(campaignId);
     await createCadence({ campaignId, connectionId, name: "9am", timeOfDay: "09:00" });
     await createCadence({ campaignId, connectionId, name: "10am", timeOfDay: "10:00" });
@@ -540,6 +550,7 @@ describe("social automation", () => {
     const connectionId = await connectReddit();
     const campaignId = await createCampaign(["linkedin"]);
     await setAutomation(campaignId, "scheduled_auto", 50); // campaign cap out of the way
+    await setPublishPolicy(campaignId, "autonomous");
     await app.inject({
       method: "PATCH",
       url: `/workspaces/${workspaceId}/automation/settings`,

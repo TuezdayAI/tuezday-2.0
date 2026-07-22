@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   calendarEntrySchema,
@@ -9,6 +10,7 @@ import {
 import type { TuezdayApp } from "../src/app";
 import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric";
 import type { Db } from "../src/db";
+import { publications } from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
 import { applyDraftAction, submitDraft } from "../src/services/drafts";
 import { buildAuthedApp, createTestDb } from "./helpers";
@@ -210,6 +212,14 @@ describe("posting cadences", () => {
     return app.inject({ method: "POST", url: `/workspaces/${workspaceId}/cadences`, payload });
   }
 
+  async function listPublishActions() {
+    const response = await app.inject({
+      method: "GET",
+      url: `/workspaces/${workspaceId}/external-actions?kind=publish&limit=200`,
+    });
+    return response.json().actions as Array<Record<string, any>>;
+  }
+
   // --- Contracts ------------------------------------------------------------
 
   describe("contracts", () => {
@@ -381,6 +391,113 @@ describe("posting cadences", () => {
     }
   });
 
+  it("carries campaign identity and failure detail on calendar entries", async () => {
+    const connectionId = await connectReddit();
+    const campaignId = await createCampaign("Summer Launch");
+    seedApprovedDraft({ campaignId, channel: "linkedin" });
+    const cadenceId = (await createCadence(cadencePayload({ campaignId, connectionId }))).json().id;
+    const fill = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/cadences/${cadenceId}/fill`,
+    });
+    expect(fill.json().filled).toBe(1);
+    const action = (await listPublishActions())[0]!;
+    const authorized = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/external-actions/${action.id}/authorize`,
+      payload: {},
+    });
+    expect(authorized.json().action.status).toBe("scheduled");
+    vi.setSystemTime(new Date(action.requestedFor + 1));
+    await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
+
+    // Flip the receipt to failed directly — the failure path itself is covered
+    // in publish.test.ts; here we only assert the calendar projection.
+    const pub = (
+      await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/publications` })
+    ).json()[0];
+    db.update(publications)
+      .set({ status: "failed", lastError: "RATELIMIT: slow down" })
+      .where(eq(publications.id, pub.id))
+      .run();
+
+    const now = MONDAY_8AM_UTC.getTime();
+    const res = await app.inject({
+      method: "GET",
+      url: `/workspaces/${workspaceId}/calendar?from=${now}&to=${now + 7 * DAY_MS}`,
+    });
+    const entries = res.json().entries.map((e: unknown) => calendarEntrySchema.parse(e));
+
+    const receipt = entries.find((e: { kind: string }) => e.kind === "publication");
+    expect(receipt).toMatchObject({
+      campaignId,
+      campaignName: "Summer Launch",
+      error: "RATELIMIT: slow down",
+      status: "failed",
+    });
+
+    const slots = entries.filter((e: { kind: string }) => e.kind === "slot");
+    expect(slots.length).toBeGreaterThan(0);
+    for (const slot of slots) {
+      expect(slot.campaignId).toBe(campaignId);
+      expect(slot.campaignName).toBe("Summer Launch");
+      expect(slot.error).toBeNull();
+    }
+  });
+
+  it("projects a timed action on the calendar only until its receipt exists", async () => {
+    const connectionId = await connectReddit();
+    const campaignId = await createCampaign("Summer Launch");
+    seedApprovedDraft({ campaignId, channel: "linkedin" });
+    const cadenceId = (await createCadence(cadencePayload({ campaignId, connectionId }))).json().id;
+    await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/cadences/${cadenceId}/fill`,
+    });
+    const action = (await listPublishActions())[0]!;
+
+    const from = MONDAY_8AM_UTC.getTime();
+    const calendar = async () => {
+      const res = await app.inject({
+        method: "GET",
+        url: `/workspaces/${workspaceId}/calendar?from=${from}&to=${from + 7 * DAY_MS}`,
+      });
+      return res.json().entries.map((e: unknown) => calendarEntrySchema.parse(e));
+    };
+
+    // Queued: the action holds its slot — no duplicate open slot at that time.
+    let entries = await calendar();
+    const queued = entries.find((e: { kind: string }) => e.kind === "external_action");
+    expect(queued).toMatchObject({
+      at: action.requestedFor,
+      status: "authorization_required",
+      externalActionId: action.id,
+      campaignId,
+      campaignName: "Summer Launch",
+    });
+    expect(entries.filter((e: { at: number }) => e.at === action.requestedFor)).toHaveLength(1);
+
+    // Authorized before its due time → still the action, now `scheduled`.
+    await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/external-actions/${action.id}/authorize`,
+      payload: {},
+    });
+    entries = await calendar();
+    expect(
+      entries.find((e: { kind: string }) => e.kind === "external_action")?.status,
+    ).toBe("scheduled");
+    expect(entries.some((e: { kind: string }) => e.kind === "publication")).toBe(false);
+
+    // Once the runner produces the native receipt, the receipt replaces it.
+    vi.setSystemTime(new Date(action.requestedFor + 1));
+    await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
+    entries = await calendar();
+    expect(entries.some((e: { kind: string }) => e.kind === "external_action")).toBe(false);
+    const receipt = entries.find((e: { kind: string }) => e.kind === "publication");
+    expect(receipt?.at).toBe(action.requestedFor);
+  });
+
   // --- Fill -----------------------------------------------------------------
 
   describe("fill", () => {
@@ -413,21 +530,19 @@ describe("posting cadences", () => {
       });
       expect(fill.json().filled).toBe(3);
 
-      const pubs = (
-        await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/publications` })
-      ).json();
-      expect(pubs).toHaveLength(3);
-      for (const p of pubs) {
-        expect(p.status).toBe("scheduled");
-        expect(p.cadenceId).toBe(cadenceId);
-        expect(p.scheduledFor).toBeGreaterThan(Date.now());
-        expect(new Date(p.scheduledFor).getUTCHours()).toBe(13);
-        expect([1, 3, 5]).toContain(new Date(p.scheduledFor).getUTCDay());
-        expect(p.title).toBe("Headline of the post");
+      const actions = await listPublishActions();
+      expect(actions).toHaveLength(3);
+      for (const action of actions) {
+        expect(action.status).toBe("authorization_required");
+        expect(action.idempotencyKey).toContain(`cadence:${cadenceId}:`);
+        expect(action.requestedFor).toBeGreaterThan(Date.now());
+        expect(new Date(action.requestedFor).getUTCHours()).toBe(13);
+        expect([1, 3, 5]).toContain(new Date(action.requestedFor).getUTCDay());
+        expect(action.subject.title).toBe("Headline of the post");
       }
       // Distinct drafts, distinct slots.
-      expect(new Set(pubs.map((p: { draftId: string }) => p.draftId)).size).toBe(3);
-      expect(new Set(pubs.map((p: { scheduledFor: number }) => p.scheduledFor)).size).toBe(3);
+      expect(new Set(actions.map((action) => action.subject.id)).size).toBe(3);
+      expect(new Set(actions.map((action) => action.requestedFor)).size).toBe(3);
 
       // Second fill adds nothing.
       const again = await app.inject({
@@ -441,6 +556,7 @@ describe("posting cadences", () => {
       const connectionId = await connectReddit();
       const campaignId = await createCampaign();
       const personaId = await createPersona();
+      await assignSocialAccount(personaId, connectionId, "reddit", true);
       seedApprovedDraft({ campaignId, channel: "linkedin", personaId });
       seedApprovedDraft({ campaignId, channel: "linkedin", personaId: null }); // different persona
 
@@ -489,6 +605,13 @@ describe("posting cadences", () => {
       url: `/workspaces/${workspaceId}/cadences/${cadenceId}/fill`,
     });
     expect(fill.json().filled).toBe(1);
+    const action = (await listPublishActions())[0]!;
+    const authorized = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/external-actions/${action.id}/authorize`,
+      payload: {},
+    });
+    expect(authorized.json().action.status).toBe("scheduled");
 
     // Before the slot: nothing fires.
     const early = await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
@@ -497,7 +620,10 @@ describe("posting cadences", () => {
     // Advance past the slot and run.
     vi.setSystemTime(new Date(MONDAY_8AM_UTC.getTime() + 10 * 60 * 1000));
     const run = await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
-    expect(run.json().results).toEqual([{ id: expect.any(String), ok: true }]);
+    expect(run.json().actions).toEqual([
+      expect.objectContaining({ action: expect.objectContaining({ id: action.id, status: "succeeded" }) }),
+    ]);
+    expect(run.json().results).toEqual([]);
 
     const pubs = (
       await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/publications` })
@@ -513,14 +639,17 @@ describe("posting cadences", () => {
     seedApprovedDraft({ campaignId, channel: "linkedin" });
     const cadenceId = (await createCadence(cadencePayload({ campaignId, connectionId }))).json().id;
     await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/cadences/${cadenceId}/fill` });
-    expect(
-      (await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/publications` })).json(),
-    ).toHaveLength(1);
+    const action = (await listPublishActions())[0]!;
+    expect(action.status).toBe("authorization_required");
 
     await app.inject({ method: "DELETE", url: `/workspaces/${workspaceId}/cadences/${cadenceId}` });
-    const pubs = (
-      await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/publications` })
-    ).json();
-    expect(pubs).toHaveLength(0); // the scheduled (unfired) post was canceled
+    const detail = await app.inject({
+      method: "GET",
+      url: `/workspaces/${workspaceId}/external-actions/${action.id}`,
+    });
+    expect(detail.json().action.status).toBe("cancelled");
+    expect(
+      (await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/publications` })).json(),
+    ).toHaveLength(0);
   });
 });

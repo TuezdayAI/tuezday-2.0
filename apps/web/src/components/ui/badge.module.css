@@ -61,6 +61,42 @@
   padding: 1px 7px;
 }
 
+.workflow {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  border-color: currentColor;
+}
+
+.attention {
+  color: var(--status-attention-ink);
+  background: var(--status-attention-wash);
+}
+
+.progress {
+  color: var(--status-progress-ink);
+  background: var(--status-progress-wash);
+}
+
+.ready {
+  color: var(--status-ready-ink);
+  background: var(--status-ready-wash);
+}
+
+.blocked {
+  color: var(--status-blocked-ink);
+  background: var(--status-blocked-wash);
+}
+
+.informational {
+  color: var(--status-info-ink);
+  background: var(--status-info-wash);
+}
+
 /* The guide dot — the only animated, accent element. One pulse, then still. */
 .guideDot {
   display: inline-block;

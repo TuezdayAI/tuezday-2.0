@@ -20,7 +20,7 @@ import {
   type Channel,
 } from "@tuezday/contracts";
 import { apiFetch } from "@/lib/api";
-import { Button } from "@/src/components/ui/button";
+import { Button, ButtonLink } from "@/src/components/ui/button";
 import { Card } from "@/src/components/ui/card";
 import type { WizardPanelProps } from "./types";
 import "./draft-panel.css";
@@ -168,7 +168,7 @@ export function DraftPanel({
         const body = await res.json().catch(() => null);
         throw new Error(body?.message ?? "Could not finish onboarding");
       }
-      router.push(`/workspaces/${workspaceId}/approvals`);
+      router.push(`/workspaces/${workspaceId}/review`);
     } catch (err) {
       onError(err instanceof Error ? err.message : "Could not finish onboarding");
       setBusy(false);
@@ -208,10 +208,10 @@ export function DraftPanel({
           draft. Upgrade to keep drafting — or finish setup now and draft later.
         </p>
         <div className="ob-actions">
-          <Link className="link-button" href={`/workspaces/${workspaceId}/billing`}>
+          <ButtonLink variant="secondary" size="standard" href={`/workspaces/${workspaceId}/billing`}>
             See plans &amp; billing →
-          </Link>
-          <Button variant="ghost" size="sm" disabled={busy} onClick={finishViaShell}>
+          </ButtonLink>
+          <Button variant="tertiary" size="compact" disabled={busy} onClick={finishViaShell}>
             {busy ? "Finishing…" : "Finish without a draft"}
           </Button>
         </div>
@@ -228,10 +228,10 @@ export function DraftPanel({
           finish setup and draft your first post from the workspace instead.
         </p>
         <div className="ob-actions">
-          <Button variant="ghost" size="sm" disabled={busy} onClick={finishViaShell}>
+          <Button variant="tertiary" size="compact" disabled={busy} onClick={finishViaShell}>
             Finish without a draft
           </Button>
-          <Button variant="ghost" size="sm" disabled={busy} onClick={() => void run()}>
+          <Button variant="tertiary" size="compact" disabled={busy} onClick={() => void run()}>
             Retry
           </Button>
         </div>

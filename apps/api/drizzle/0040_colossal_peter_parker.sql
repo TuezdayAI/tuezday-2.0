@@ -1,0 +1,1 @@
+ALTER TABLE `ad_launches` ADD `meta_image_hash` text;

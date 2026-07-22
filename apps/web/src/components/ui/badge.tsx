@@ -1,7 +1,10 @@
 // apps/web/src/components/ui/badge.tsx
 import type { HTMLAttributes, ReactNode } from "react";
+import type { WorkflowStatus } from "@tuezday/contracts";
+import { workflowStatusView } from "@/lib/workflow-status";
 import styles from "./badge.module.css";
 import { formatCount, formatProgress } from "../../../lib/badge-format";
+import { Icon } from "./icon";
 
 type StateTone = "neutral" | "approved" | "pending" | "edited" | "rejected" | "draft" | "danger";
 type NavTone = "belief" | "voice" | "history" | "icp" | "system" | "signal";
@@ -48,4 +51,27 @@ interface GuideDotProps {
 /** THE guide dot — exactly one may be rendered app-wide at any moment (spec §5.3). */
 export function GuideDot({ reason }: GuideDotProps) {
   return <span className={styles.guideDot} title={reason} role="status" aria-label={reason} />;
+}
+
+interface WorkflowStatusBadgeProps extends Omit<HTMLAttributes<HTMLSpanElement>, "children"> {
+  status: WorkflowStatus;
+  label?: string;
+}
+
+export function WorkflowStatusBadge({
+  status,
+  label,
+  className,
+  ...rest
+}: WorkflowStatusBadgeProps) {
+  const view = workflowStatusView(status);
+  const classes = [styles.badge, styles.workflow, styles[view.family], className]
+    .filter(Boolean)
+    .join(" ");
+  return (
+    <span className={classes} data-workflow-status={status} {...rest}>
+      <Icon name={view.icon} size="compact" />
+      <span>{label ?? view.label}</span>
+    </span>
+  );
 }

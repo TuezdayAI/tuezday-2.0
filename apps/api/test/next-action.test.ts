@@ -74,7 +74,7 @@ describe("next-action API", () => {
     expect(body.state.draftCount).toBe(1);
     expect(body.nextAction).toMatchObject({
       kind: "review",
-      module: "/approvals",
+      module: "/review",
       reason: "1 draft waiting for review",
     });
   });
