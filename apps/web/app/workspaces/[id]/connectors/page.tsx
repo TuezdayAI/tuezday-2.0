@@ -33,6 +33,7 @@ import {
 import { connectionLabel } from "@/lib/persona-social-routing";
 import { ScopedActionPolicy } from "@/src/components/scoped-action-policy";
 import { MailboxesPanel } from "./mailboxes-panel";
+import { CompliancePanel } from "./compliance-panel";
 
 /** The API decorates OAuth providers with whether their app creds are set. */
 type ProviderView = ConnectorProvider & { oauthConfigured?: boolean };
@@ -916,6 +917,8 @@ export default function ConnectorsPage() {
         workspaceId={id}
         gmailConnections={view.connections.filter((c) => c.providerKey === "gmail")}
       />
+
+      <CompliancePanel workspaceId={id} />
 
       {groups.map((group) => (
         <section key={group.category} className={styles.group}>

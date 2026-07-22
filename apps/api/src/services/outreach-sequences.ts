@@ -28,6 +28,7 @@ import {
   type OutreachSequenceStepRow,
 } from "../db/schema";
 import { listConnectedMailboxes } from "./mailboxes";
+import { getPostalAddress } from "./compliance";
 
 export class OutreachSequenceError extends Error {
   constructor(
@@ -37,7 +38,8 @@ export class OutreachSequenceError extends Error {
       | "audience_not_found"
       | "sequence_not_found"
       | "mailbox_not_connected"
-      | "not_activatable",
+      | "not_activatable"
+      | "compliance_address_missing",
     message: string,
     readonly statusCode: number,
   ) {
@@ -313,6 +315,14 @@ export function activateOutreachSequence(
   }
   if (connectedPoolMailboxIds(db, workspaceId, sequenceId).length === 0) {
     throw new OutreachSequenceError("not_activatable", "Add at least one connected mailbox before activating.", 409);
+  }
+  // CAN-SPAM: a postal address must exist before any cold email goes out.
+  if (!getPostalAddress(db, workspaceId).trim()) {
+    throw new OutreachSequenceError(
+      "compliance_address_missing",
+      "Set your business mailing address before activating an outreach sequence.",
+      409,
+    );
   }
   setStatus(db, workspaceId, sequenceId, "active");
   return rowToSequence(getSequenceRow(db, workspaceId, sequenceId)!);

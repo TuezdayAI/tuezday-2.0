@@ -150,4 +150,21 @@ export class FreshsalesAdapter implements CrmAdapter {
       },
     });
   }
+
+  async createTask(
+    externalContactId: string,
+    input: { title: string; description?: string; dueAt?: number },
+  ): Promise<void> {
+    const numericId = Number(externalContactId);
+    await this.request("POST", "/api/tasks", {
+      task: {
+        title: input.title,
+        ...(input.description ? { description: input.description } : {}),
+        // Freshsales wants an ISO due date; default to +2 days when unspecified.
+        due_date: new Date(input.dueAt ?? Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
+        targetable_type: "Contact",
+        targetable_id: Number.isFinite(numericId) ? numericId : externalContactId,
+      },
+    });
+  }
 }

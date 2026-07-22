@@ -44,3 +44,10 @@
   font-size: 13px;
   margin: 0;
 }
+
+/* Sprint 49 — a positive outreach reply is the money moment; accent the whole
+   card with the same mint the "positive" badge uses (no new palette values). */
+.positiveItem {
+  border-left: 3px solid var(--mint-ink);
+  background: color-mix(in srgb, var(--mint) 22%, transparent);
+}

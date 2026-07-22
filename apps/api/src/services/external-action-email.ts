@@ -31,6 +31,7 @@ import type {
 } from "./external-action-coordinator";
 import { checkEmailRecipientSafety } from "./email-recipient-safety";
 import { getConnection } from "./connections";
+import { getPostalAddress } from "./compliance";
 import { getMailbox, mailboxDailySendCount } from "./mailboxes";
 
 export const emailActionPayloadSchema = z.object({
@@ -278,20 +279,25 @@ function gmailBlocker(
 
 /**
  * The body a Gmail send actually carries: the approved draft text, the
- * mailbox signature, and the unsubscribe footer (founder decision: from
- * send #1). The delivery row keeps the exact action-authorized text; the
- * footer is deterministic, so retries recompose the identical body.
+ * mailbox signature, the unsubscribe footer (founder decision: from send #1),
+ * and the workspace's CAN-SPAM postal address (Sprint 49). The delivery row
+ * keeps the exact action-authorized text; the footer is deterministic, so
+ * retries recompose the identical body. `postalAddress` is resolved by the
+ * caller (from workspace_compliance) — keep this function pure.
  */
 export function composeGmailBody(
   workspaceId: string,
   payload: Pick<EmailActionPayload, "to" | "text">,
   signature: string,
+  postalAddress = "",
 ): string {
   const token = createUnsubscribeToken(workspaceId, payload.to);
   const base = (process.env.APP_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
   const parts = [payload.text];
   if (signature.trim()) parts.push(signature.trim());
-  parts.push(`--\nDon't want these emails? Unsubscribe: ${base}/u/${token}`);
+  const footer = [`--`, `Don't want these emails? Unsubscribe: ${base}/u/${token}`];
+  if (postalAddress.trim()) footer.push(postalAddress.trim());
+  parts.push(footer.join("\n"));
   return parts.join("\n\n");
 }
 
@@ -492,7 +498,12 @@ export function emailActionAdapter(
           fromName: mailbox.displayName,
           to: payload.to,
           subject: payload.subject,
-          text: composeGmailBody(action.workspaceId, payload, mailbox.signature),
+          text: composeGmailBody(
+            action.workspaceId,
+            payload,
+            mailbox.signature,
+            getPostalAddress(db, action.workspaceId),
+          ),
           replyTo: mailbox.replyTo,
           // Outreach follow-ups thread into the recipient's conversation (S48).
           ...(payload.threadId ? { threadId: payload.threadId } : {}),

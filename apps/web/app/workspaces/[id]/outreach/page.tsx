@@ -494,6 +494,9 @@ function OutreachDetailView({
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [validationError, setValidationError] = useState<string | null>(null);
+  // Set when activation is blocked because the workspace has no CAN-SPAM postal
+  // address yet (409 compliance_address_missing) — points to Integrations.
+  const [complianceMissing, setComplianceMissing] = useState(false);
 
   const call = async (
     path: string,
@@ -503,13 +506,22 @@ function OutreachDetailView({
     setBusy(true);
     setNote(null);
     setValidationError(null);
+    setComplianceMissing(false);
     try {
       const res = await apiFetch(
         `/workspaces/${workspaceId}/outreach-sequences/${seq.id}${path}`,
         init,
       );
       const body = await res.json().catch(() => null);
-      if (!res.ok) throw new Error(body?.message ?? body?.error ?? `API returned ${res.status}`);
+      if (!res.ok) {
+        if (res.status === 409 && body?.error === "compliance_address_missing") {
+          setComplianceMissing(true);
+          throw new Error(
+            "Set your business mailing address in settings before activating.",
+          );
+        }
+        throw new Error(body?.message ?? body?.error ?? `API returned ${res.status}`);
+      }
       setNote(okMessage);
       onChanged();
       return true;
@@ -561,7 +573,19 @@ function OutreachDetailView({
       </div>
 
       {note && <p className="bundle-summary">{note}</p>}
-      {validationError && <p className={styles.validationError}>{validationError}</p>}
+      {validationError && (
+        <p className={styles.validationError}>
+          {validationError}
+          {complianceMissing && (
+            <>
+              {" "}
+              <Link href={`/workspaces/${workspaceId}/connectors`}>
+                Open compliance settings →
+              </Link>
+            </>
+          )}
+        </p>
+      )}
       {canActivateHint && seq.status !== "active" && (
         <p className="meta">{canActivateHint}</p>
       )}

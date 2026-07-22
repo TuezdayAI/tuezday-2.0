@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, gte } from "drizzle-orm";
 import {
+  OUTREACH_OOO_RETRY_HOURS,
   type Draft,
   type MailboxSendingWindow,
   type OutreachRunResult,
@@ -8,6 +9,8 @@ import {
 } from "@tuezday/contracts";
 import { composeFollowupInstruction, resolveContext, type BrainContents } from "@tuezday/brain";
 import type { Db } from "../db";
+import type { ConnectorFabric } from "../connectors/fabric";
+import type { Mailer } from "../mail/mailer";
 import {
   audiences,
   drafts,
@@ -37,6 +40,10 @@ import { retrieveEvidence } from "./evidence";
 import { storeGeneration } from "./generations";
 import { resolveChannelGuidance } from "./guidance";
 import { getMailbox, listConnectedMailboxes, mailboxDailySendCount } from "./mailboxes";
+import { unsubscribeEmailRecipient } from "./email-recipient-safety";
+import { emitEvent } from "./events";
+import { notifyReplyOutcome } from "./notifications";
+import { logPositiveReplyTask } from "./crm";
 import { getPersona, toResolvePersona } from "./personas";
 import { resolveDraftAccount } from "./resolve-account";
 import { selectiveContextInputs } from "./resolve-input";
@@ -65,6 +72,10 @@ export interface OutreachDeps {
   llm: LlmGateway;
   evidence: EvidenceStore;
   runtime: ExternalActionRuntime;
+  // Sprint 49 reply-driven side-effects (best-effort): CRM task + founder notify.
+  fabric: ConnectorFabric;
+  mailer: Mailer;
+  fetcher: typeof fetch;
 }
 
 interface RunCtx extends OutreachDeps {
@@ -153,9 +164,38 @@ export function hasInboundEmailReply(
   recipientEmail: string,
   sinceMs: number,
 ): boolean {
+  return newestInboundEmailReply(db, workspaceId, recipientEmail, sinceMs) !== null;
+}
+
+export interface InboundReplyHit {
+  id: string;
+  label: string | null;
+  content: string;
+  emailDeliveryId: string | null;
+  externalCreatedAt: number;
+}
+
+/**
+ * The newest inbound email reply from this recipient after `sinceMs`, keeping
+ * its classification label (Sprint 49) so the engine can act per-label rather
+ * than treating every reply as a blunt stop.
+ */
+export function newestInboundEmailReply(
+  db: Db,
+  workspaceId: string,
+  recipientEmail: string,
+  sinceMs: number,
+): InboundReplyHit | null {
   const target = normalize(recipientEmail);
   const rows = db
-    .select({ author: inboxItems.authorHandle, at: inboxItems.externalCreatedAt })
+    .select({
+      id: inboxItems.id,
+      author: inboxItems.authorHandle,
+      label: inboxItems.replyLabel,
+      content: inboxItems.content,
+      emailDeliveryId: inboxItems.emailDeliveryId,
+      at: inboxItems.externalCreatedAt,
+    })
     .from(inboxItems)
     .where(
       and(
@@ -164,8 +204,121 @@ export function hasInboundEmailReply(
         gte(inboxItems.externalCreatedAt, sinceMs + 1),
       ),
     )
-    .all();
-  return rows.some((r) => normalize(r.author) === target);
+    .all()
+    .filter((r) => normalize(r.author) === target)
+    .sort((a, b) => b.at - a.at);
+  const newest = rows[0];
+  if (!newest) return null;
+  return {
+    id: newest.id,
+    label: newest.label,
+    content: newest.content,
+    emailDeliveryId: newest.emailDeliveryId,
+    externalCreatedAt: newest.at,
+  };
+}
+
+const OOO_RETRY_MS = OUTREACH_OOO_RETRY_HOURS * HOUR_MS;
+const OOO_MAX_RESUME_MS = 60 * 24 * HOUR_MS; // never park a recipient more than 60 days
+
+/**
+ * When an out-of-office reply names a return date, resume then; otherwise fall
+ * back to the fixed retry window. Best-effort — a parse failure just uses the
+ * default, never throws.
+ */
+export function parseOooResumeAt(body: string, nowMs: number): number {
+  const fallback = nowMs + OOO_RETRY_MS;
+  // Extract a clean date token, not surrounding prose: an ISO date, or a
+  // "Month DD[, YYYY]" phrase. Anything fuzzier falls back to the fixed window.
+  const iso = /\b(\d{4}-\d{2}-\d{2})\b/.exec(body);
+  const monthName =
+    /\b((?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2}(?:,?\s+\d{4})?)\b/i.exec(body);
+  const candidate = iso?.[1] ?? monthName?.[1];
+  if (!candidate) return fallback;
+  const parsed = Date.parse(candidate);
+  if (Number.isNaN(parsed)) return fallback;
+  // Resume the morning after the stated return date; clamp to sane bounds.
+  const resume = parsed + 12 * HOUR_MS;
+  if (resume <= nowMs) return fallback;
+  return Math.min(resume, nowMs + OOO_MAX_RESUME_MS);
+}
+
+/**
+ * Act on a classified reply (Sprint 49). Mutates the enrollment and fires the
+ * best-effort side-effects. Returns `"stop"` (caller returns — terminal) or
+ * `"pause"` (OOO — the enrollment is rescheduled and stays active).
+ */
+async function handleReplyOutcome(
+  ctx: RunCtx,
+  seq: OutreachSequenceRow,
+  enrollment: OutreachEnrollmentRow,
+  reply: InboundReplyHit,
+  nowMs: number,
+): Promise<"stop" | "pause"> {
+  const email = enrollment.recipientEmail;
+  const label = reply.label;
+
+  if (label === "out_of_office") {
+    const resumeAt = parseOooResumeAt(reply.content, nowMs);
+    updateEnrollment(ctx.db, enrollment.id, {
+      nextDueAt: resumeAt,
+      lastReplyHandledAt: reply.externalCreatedAt,
+    });
+    return "pause";
+  }
+
+  if (label === "unsubscribe_request") {
+    unsubscribeEmailRecipient(ctx.db, seq.workspaceId, email);
+    updateEnrollment(ctx.db, enrollment.id, {
+      status: "stopped",
+      stoppedReason: "unsubscribed",
+      nextDueAt: null,
+      lastReplyHandledAt: reply.externalCreatedAt,
+    });
+    await emitEvent(ctx.db, ctx.fetcher, seq.workspaceId, "outreach.reply.unsubscribed", { email });
+    return "stop";
+  }
+
+  if (label === "bounce") {
+    // A bounced address is invalid — suppress it, mirroring the Resend rule.
+    ctx.db
+      .insert(emailSuppressions)
+      .values({ id: randomUUID(), workspaceId: seq.workspaceId, normalizedEmail: normalize(email), reason: "bounce", createdAt: nowMs })
+      .onConflictDoNothing()
+      .run();
+    updateEnrollment(ctx.db, enrollment.id, {
+      status: "failed",
+      stoppedReason: "bounced",
+      nextDueAt: null,
+      lastReplyHandledAt: reply.externalCreatedAt,
+    });
+    await emitEvent(ctx.db, ctx.fetcher, seq.workspaceId, "outreach.reply.bounced", { email });
+    return "stop";
+  }
+
+  // positive, not_interested, other, or unclassified → stop the chain.
+  updateEnrollment(ctx.db, enrollment.id, {
+    status: "replied",
+    stoppedReason: "replied",
+    nextDueAt: null,
+    lastReplyHandledAt: reply.externalCreatedAt,
+  });
+
+  if (label === "positive") {
+    // Notify (email channels) + CRM follow-up task — both best-effort.
+    await notifyReplyOutcome(ctx.db, ctx.mailer, ctx.fetcher, {
+      workspaceId: seq.workspaceId,
+      recipientEmail: email,
+      label,
+      snippet: reply.content,
+      inboxItemId: reply.id,
+    });
+    if (enrollment.recipientType === "lead") {
+      await logPositiveReplyTask(ctx.db, ctx.fabric, ctx.fetcher, seq.workspaceId, enrollment.recipientId, reply.content);
+    }
+    await emitEvent(ctx.db, ctx.fetcher, seq.workspaceId, "outreach.reply.positive", { email });
+  }
+  return "stop";
 }
 
 function isSuppressed(db: Db, workspaceId: string, email: string): boolean {
@@ -467,13 +620,17 @@ async function advanceEnrollment(
   const total = steps.length;
   if (total === 0) return;
 
-  // Stop-on-reply — re-checked here and again pre-dispatch (poll-window guard).
+  // Reply handling (Sprint 49): act on the newest reply's label — OOO pauses,
+  // unsubscribe/bounce/positive drive their side-effects, others stop.
+  // The cursor (max of lastSentAt and lastReplyHandledAt) makes an OOO pause
+  // idempotent so the chain resumes cleanly.
   if (seq.stopOnReply === 1) {
-    const since = enrollment.lastSentAt ?? enrollment.enrolledAt;
-    if (hasInboundEmailReply(ctx.db, seq.workspaceId, enrollment.recipientEmail, since)) {
-      updateEnrollment(ctx.db, enrollment.id, { status: "replied", stoppedReason: "replied", nextDueAt: null });
-      acc.stopped += 1;
-      return;
+    const since = Math.max(enrollment.lastSentAt ?? enrollment.enrolledAt, enrollment.lastReplyHandledAt ?? 0);
+    const reply = newestInboundEmailReply(ctx.db, seq.workspaceId, enrollment.recipientEmail, since);
+    if (reply) {
+      const outcome = await handleReplyOutcome(ctx, seq, enrollment, reply, nowMs);
+      if (outcome === "stop") acc.stopped += 1;
+      return; // paused → wait for nextDueAt; stopped → terminal
     }
   }
 

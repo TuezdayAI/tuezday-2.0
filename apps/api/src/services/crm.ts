@@ -4,8 +4,11 @@ import type { CrmContact, CrmSyncFilter, Lead } from "@tuezday/contracts";
 import { crmSyncFilterSchema } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { crmContacts, crmSyncSettings, type CrmContactRow } from "../db/schema";
-import type { CrmAdapter } from "../connectors/crm";
+import { crmAdapterFor, type CrmAdapter } from "../connectors/crm";
+import type { ConnectorFabric } from "../connectors/fabric";
 import { createLead, listLeads } from "./leads";
+import { getConnection, providerByKey } from "./connections";
+import { emitEvent } from "./events";
 
 function rowToCrmContact(row: CrmContactRow): CrmContact {
   return { ...row };
@@ -266,4 +269,42 @@ export function setCrmSyncFilter(
     .onConflictDoUpdate({ target: crmSyncSettings.connectionId, set: { filterJson, updatedAt: now } })
     .run();
   return filter;
+}
+
+/**
+ * Best-effort CRM follow-up when a prospect replies positively (Sprint 49).
+ * Resolves the lead's linked CRM contact and drops a task on it. Returns true
+ * if a task was created; false (never throws) when no CRM is connected, the
+ * lead isn't linked, or the provider write fails — the founder notification +
+ * the in-app inbox item are the Tuezday-side fallback.
+ */
+export async function logPositiveReplyTask(
+  db: Db,
+  fabric: ConnectorFabric,
+  fetcher: typeof fetch,
+  workspaceId: string,
+  leadId: string,
+  snippet: string,
+): Promise<boolean> {
+  try {
+    const contact = getCrmContactByLead(db, workspaceId, leadId);
+    if (!contact) return false;
+    const connection = getConnection(db, workspaceId, contact.connectionId);
+    if (!connection || connection.status !== "connected") return false;
+    const provider = providerByKey(connection.providerKey);
+    if (!provider?.categories?.includes("crm")) return false;
+    const adapter = crmAdapterFor(fabric, provider, connection);
+    if (!adapter) return false;
+    await adapter.createTask(contact.externalId, {
+      title: `Follow up: ${contact.name || contact.email} replied to outreach`,
+      description: snippet ? `Reply: ${snippet.slice(0, 500)}` : undefined,
+    });
+    await emitEvent(db, fetcher, workspaceId, "crm.task.created", {
+      leadId,
+      contactId: contact.id,
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }

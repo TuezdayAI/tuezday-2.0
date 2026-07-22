@@ -7,8 +7,10 @@ import {
   updateOutreachSequenceInputSchema,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
+import type { ConnectorFabric } from "../connectors/fabric";
 import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
+import type { Mailer } from "../mail/mailer";
 import type { ExternalActionRuntime } from "../services/external-action-coordinator";
 import { runOutreach } from "../services/outreach-engine";
 import {
@@ -47,6 +49,9 @@ export function registerOutreachRoutes(
   llm: LlmGateway,
   evidence: EvidenceStore,
   runtime: ExternalActionRuntime,
+  fabric: ConnectorFabric,
+  mailer: Mailer,
+  fetcher: typeof fetch,
 ): void {
   app.get<{ Params: { id: string } }>("/workspaces/:id/outreach-sequences", async (request, reply) => {
     if (!workspaceOr404(db, request.params.id, reply)) return reply;
@@ -182,6 +187,6 @@ export function registerOutreachRoutes(
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/outreach/run", async (request, reply) => {
     if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return runOutreach(db, { llm, evidence, runtime }, request.params.id);
+    return runOutreach(db, { llm, evidence, runtime, fabric, mailer, fetcher }, request.params.id);
   });
 }

@@ -94,6 +94,12 @@ describe("outreach sequences (Sprint 48)", () => {
       await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/personas`, payload: { name: "CEO" } })
     ).json().id;
     await putActionPolicy(app, workspaceId, "workspace", workspaceId, { send: "autonomous" });
+    // Sprint 49: a postal address is required before a sequence can activate.
+    await app.inject({
+      method: "PUT",
+      url: `/workspaces/${workspaceId}/compliance`,
+      payload: { postalAddress: "Acme Inc, 1 Market St, SF CA 94105" },
+    });
   });
 
   afterEach(async () => {

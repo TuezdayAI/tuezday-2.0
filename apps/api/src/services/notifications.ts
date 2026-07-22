@@ -114,3 +114,51 @@ export async function notifyDraftPending(
     })
   );
 }
+
+/**
+ * Notify the founder of an outreach reply outcome (Sprint 49) — chiefly a hot
+ * positive reply. Fans out to the same enabled channels as draft approvals;
+ * no approve/reject tokens, just a summary + a deep link to the inbox item.
+ * Best-effort (swallows channel errors). The in-app surface is the inbox
+ * item itself with its label chip.
+ */
+export async function notifyReplyOutcome(
+  db: Db,
+  mailer: Mailer,
+  fetcher: typeof fetch,
+  input: {
+    workspaceId: string;
+    recipientEmail: string;
+    label: string;
+    snippet: string;
+    inboxItemId: string;
+  },
+): Promise<void> {
+  const channels = listChannels(db, input.workspaceId).filter((c) => c.enabled);
+  if (channels.length === 0) return;
+  const baseUrl = (process.env.APP_BASE_URL || "http://localhost:3000").replace(/\/$/, "");
+  const link = `${baseUrl}/workspaces/${input.workspaceId}/review?tab=inbox`;
+  const headline =
+    input.label === "positive"
+      ? `Positive reply from ${input.recipientEmail}`
+      : `Outreach reply (${input.label}) from ${input.recipientEmail}`;
+
+  // Founder decision: notify via in-app inbox + email. The inbox item is the
+  // in-app surface; here we fan out to the email channels.
+  void fetcher;
+  await Promise.all(
+    channels
+      .filter((c) => c.type === "email")
+      .map(async (c) => {
+        try {
+          await mailer.send({
+            to: c.target,
+            subject: headline,
+            text: `${headline}\n\n${input.snippet ? `"${input.snippet.slice(0, 500)}"\n\n` : ""}Open the inbox: ${link}`,
+          });
+        } catch {
+          // Best-effort per channel.
+        }
+      }),
+  );
+}
