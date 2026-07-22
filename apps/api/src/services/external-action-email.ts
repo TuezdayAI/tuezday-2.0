@@ -15,6 +15,9 @@ import {
   launches,
   leads,
   mediaContacts,
+  outreachEnrollments,
+  outreachMessages,
+  outreachSequences,
   personas,
   workspaceEmailSenders,
 } from "../db/schema";
@@ -28,11 +31,12 @@ import type {
 } from "./external-action-coordinator";
 import { checkEmailRecipientSafety } from "./email-recipient-safety";
 import { getConnection } from "./connections";
+import { getPostalAddress } from "./compliance";
 import { getMailbox, mailboxDailySendCount } from "./mailboxes";
 
 export const emailActionPayloadSchema = z.object({
   channel: z.literal("email"),
-  origin: z.enum(["launch_message", "outbound_draft", "pr_draft"]),
+  origin: z.enum(["launch_message", "outbound_draft", "pr_draft", "outreach_step"]),
   originId: z.string().uuid(),
   draftId: z.string().uuid(),
   to: z.string().email(),
@@ -44,6 +48,8 @@ export const emailActionPayloadSchema = z.object({
   html: z.string().nullable(),
   /** Present = send from this connected Gmail mailbox instead of Resend (Sprint 47). */
   mailboxId: z.string().uuid().optional(),
+  /** Reply into an existing Gmail thread — outreach follow-ups (Sprint 48). */
+  threadId: z.string().optional(),
 });
 export type EmailActionPayload = z.infer<typeof emailActionPayloadSchema>;
 
@@ -79,6 +85,8 @@ function emailIntent(
   let recipientName: string;
   let campaignId: string | null = null;
   let personaId: string | null = null;
+  // Outreach follow-ups thread into the recipient's existing Gmail conversation.
+  let threadId: string | undefined;
 
   if (origin === "launch_message") {
     const message = db.select().from(launchMessages).where(and(
@@ -93,6 +101,26 @@ function emailIntent(
     recipientName = message.recipientName || recipient;
     campaignId = launch.campaignId;
     personaId = launch.personaId;
+  } else if (origin === "outreach_step") {
+    const message = db.select().from(outreachMessages).where(and(
+      eq(outreachMessages.workspaceId, workspaceId),
+      eq(outreachMessages.id, originId),
+    )).get();
+    if (!message?.draftId) throw new Error("Outreach step message not found.");
+    const enrollment = db.select().from(outreachEnrollments).where(
+      eq(outreachEnrollments.id, message.enrollmentId),
+    ).get();
+    if (!enrollment) throw new Error("Outreach enrollment not found.");
+    const sequence = db.select().from(outreachSequences).where(
+      eq(outreachSequences.id, enrollment.sequenceId),
+    ).get();
+    if (!sequence) throw new Error("Outreach sequence not found.");
+    draftId = message.draftId;
+    recipient = enrollment.recipientEmail;
+    recipientName = enrollment.recipientEmail;
+    campaignId = sequence.campaignId;
+    personaId = sequence.personaId;
+    threadId = enrollment.lastThreadId ?? undefined;
   } else {
     draftId = originId;
     const draft = db.select().from(drafts).where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId))).get();
@@ -159,6 +187,7 @@ function emailIntent(
     text: content.text,
     html: null,
     ...(mailboxId ? { mailboxId } : {}),
+    ...(threadId ? { threadId } : {}),
   };
   return {
     subject: {
@@ -250,20 +279,25 @@ function gmailBlocker(
 
 /**
  * The body a Gmail send actually carries: the approved draft text, the
- * mailbox signature, and the unsubscribe footer (founder decision: from
- * send #1). The delivery row keeps the exact action-authorized text; the
- * footer is deterministic, so retries recompose the identical body.
+ * mailbox signature, the unsubscribe footer (founder decision: from send #1),
+ * and the workspace's CAN-SPAM postal address (Sprint 49). The delivery row
+ * keeps the exact action-authorized text; the footer is deterministic, so
+ * retries recompose the identical body. `postalAddress` is resolved by the
+ * caller (from workspace_compliance) — keep this function pure.
  */
 export function composeGmailBody(
   workspaceId: string,
   payload: Pick<EmailActionPayload, "to" | "text">,
   signature: string,
+  postalAddress = "",
 ): string {
   const token = createUnsubscribeToken(workspaceId, payload.to);
   const base = (process.env.APP_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
   const parts = [payload.text];
   if (signature.trim()) parts.push(signature.trim());
-  parts.push(`--\nDon't want these emails? Unsubscribe: ${base}/u/${token}`);
+  const footer = [`--`, `Don't want these emails? Unsubscribe: ${base}/u/${token}`];
+  if (postalAddress.trim()) footer.push(postalAddress.trim());
+  parts.push(footer.join("\n"));
   return parts.join("\n\n");
 }
 
@@ -322,6 +356,43 @@ function markLaunchMessageAccepted(
   }
 }
 
+/**
+ * Flip an outreach step message to `sent` on execute (Sprint 48), copying the
+ * delivery's Gmail thread id onto the message so the engine can thread the next
+ * step. The engine reads this to advance the enrollment. Mirrors
+ * `markLaunchMessageAccepted`; no-ops for other origins.
+ */
+function markOutreachStepAccepted(
+  db: Db,
+  workspaceId: string,
+  payload: EmailActionPayload,
+  actionId: string,
+  sentAt: number,
+): void {
+  if (payload.origin !== "outreach_step") return;
+  const delivery = db
+    .select({ providerThreadId: emailDeliveries.providerThreadId })
+    .from(emailDeliveries)
+    .where(eq(emailDeliveries.externalActionId, actionId))
+    .get();
+  db.update(outreachMessages)
+    .set({
+      externalActionId: actionId,
+      status: "sent",
+      sentAt,
+      providerThreadId: delivery?.providerThreadId ?? null,
+      lastError: null,
+      updatedAt: Date.now(),
+    })
+    .where(
+      and(
+        eq(outreachMessages.workspaceId, workspaceId),
+        eq(outreachMessages.id, payload.originId),
+      ),
+    )
+    .run();
+}
+
 export function emailActionAdapter(
   db: Db,
   provider: OutboundEmailProvider | undefined,
@@ -374,6 +445,13 @@ export function emailActionAdapter(
           action.id,
           delivery.acceptedAt ?? Date.now(),
         );
+        markOutreachStepAccepted(
+          db,
+          action.workspaceId,
+          payload,
+          action.id,
+          delivery.acceptedAt ?? Date.now(),
+        );
         return receipt(delivery);
       }
       if (!delivery) {
@@ -420,8 +498,15 @@ export function emailActionAdapter(
           fromName: mailbox.displayName,
           to: payload.to,
           subject: payload.subject,
-          text: composeGmailBody(action.workspaceId, payload, mailbox.signature),
+          text: composeGmailBody(
+            action.workspaceId,
+            payload,
+            mailbox.signature,
+            getPostalAddress(db, action.workspaceId),
+          ),
           replyTo: mailbox.replyTo,
+          // Outreach follow-ups thread into the recipient's conversation (S48).
+          ...(payload.threadId ? { threadId: payload.threadId } : {}),
         });
         const acceptedAt = Date.now();
         db.update(emailDeliveries).set({
@@ -433,6 +518,7 @@ export function emailActionAdapter(
           updatedAt: acceptedAt,
         }).where(eq(emailDeliveries.id, delivery.id)).run();
         markLaunchMessageAccepted(db, action.workspaceId, payload, action.id, acceptedAt);
+        markOutreachStepAccepted(db, action.workspaceId, payload, action.id, acceptedAt);
         return receipt(db.select().from(emailDeliveries).where(eq(emailDeliveries.id, delivery.id)).get()!);
       }
       const accepted = await provider!.send({

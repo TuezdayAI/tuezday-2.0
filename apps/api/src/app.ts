@@ -59,6 +59,8 @@ import { registerMailRoutes } from "./routes/mail";
 import { registerMailboxRoutes } from "./routes/mailboxes";
 import { registerNextActionRoutes } from "./routes/next-action";
 import { registerOutboundRoutes } from "./routes/outbound";
+import { registerOutreachRoutes } from "./routes/outreach";
+import { registerComplianceRoutes } from "./routes/compliance";
 import { registerPrRoutes } from "./routes/pr";
 import { registerPriorityRoutes } from "./routes/priorities";
 import { registerPublicationRoutes } from "./routes/publications";
@@ -202,6 +204,8 @@ export async function buildApp({
   registerEvidenceRoutes(app, db, evidence);
   registerLearningRoutes(app, db, llm, fetcher);
   registerOutboundRoutes(app, db, llm, evidence, externalActionRuntime);
+  registerOutreachRoutes(app, db, llm, evidence, externalActionRuntime, connectors, mailer, fetcher);
+  registerComplianceRoutes(app, db);
   registerLaunchRoutes(app, db, llm, evidence, exporter, externalActionRuntime);
   registerConnectorRoutes(app, db, connectors, fetcher, analytics);
   registerCrmRoutes(app, db, connectors, fetcher);

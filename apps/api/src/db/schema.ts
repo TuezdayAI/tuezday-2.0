@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { check, index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 // Keep this schema Postgres-portable: text ids, integer epoch-ms timestamps,
 // no SQLite-only column tricks. The Postgres swap is planned for Sprint 8.
@@ -1342,6 +1342,170 @@ export const mailboxes = sqliteTable(
 );
 
 export type MailboxRow = typeof mailboxes.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Outreach sequences (Sprint 48) — a first-class, always-on email sequence.
+// Parallel to (and independent of) the S30 launch-bound sequence_* tables,
+// which stay frozen. Email-only; sends from a mailbox pool (S47).
+// ---------------------------------------------------------------------------
+
+export const outreachSequences = sqliteTable("outreach_sequences", {
+  id: text("id").primaryKey(),
+  workspaceId: text("workspace_id")
+    .notNull()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  campaignId: text("campaign_id")
+    .notNull()
+    .references(() => campaigns.id, { onDelete: "cascade" }),
+  name: text("name").notNull(),
+  goal: text("goal").notNull().default(""),
+  personaId: text("persona_id")
+    .notNull()
+    .references(() => personas.id, { onDelete: "cascade" }),
+  audienceId: text("audience_id")
+    .notNull()
+    .references(() => audiences.id, { onDelete: "cascade" }),
+  automationMode: text("automation_mode").notNull().default("manual"),
+  status: text("status").notNull().default("draft"),
+  dailyEnrollmentCap: integer("daily_enrollment_cap").notNull().default(50),
+  stopOnReply: integer("stop_on_reply").notNull().default(1),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type OutreachSequenceRow = typeof outreachSequences.$inferSelect;
+
+// The mailbox pool a sequence rotates across (M:N). "Pool, start with one."
+export const outreachSequenceMailboxes = sqliteTable(
+  "outreach_sequence_mailboxes",
+  {
+    sequenceId: text("sequence_id")
+      .notNull()
+      .references(() => outreachSequences.id, { onDelete: "cascade" }),
+    mailboxId: text("mailbox_id")
+      .notNull()
+      .references(() => mailboxes.id, { onDelete: "cascade" }),
+  },
+  (t) => [
+    primaryKey({ columns: [t.sequenceId, t.mailboxId] }),
+    index("outreach_sequence_mailboxes_mailbox").on(t.mailboxId),
+  ],
+);
+
+export type OutreachSequenceMailboxRow = typeof outreachSequenceMailboxes.$inferSelect;
+
+export const outreachSequenceSteps = sqliteTable(
+  "outreach_sequence_steps",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sequenceId: text("sequence_id")
+      .notNull()
+      .references(() => outreachSequences.id, { onDelete: "cascade" }),
+    stepNumber: integer("step_number").notNull(),
+    // Blank = the brain writes a natural follow-up; filled = steer that step.
+    instruction: text("instruction").notNull().default(""),
+    // Delay from the previous step's actual send; step 1 treated as 0.
+    delayHours: integer("delay_hours").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("outreach_steps_sequence_number").on(t.sequenceId, t.stepNumber)],
+);
+
+export type OutreachSequenceStepRow = typeof outreachSequenceSteps.$inferSelect;
+
+// One row per (sequence × recipient). The partial unique index on active rows
+// enforces "one active outreach sequence per person, workspace-wide".
+export const outreachEnrollments = sqliteTable(
+  "outreach_enrollments",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sequenceId: text("sequence_id")
+      .notNull()
+      .references(() => outreachSequences.id, { onDelete: "cascade" }),
+    recipientType: text("recipient_type").notNull(),
+    recipientId: text("recipient_id").notNull(),
+    recipientEmail: text("recipient_email").notNull().default(""),
+    // The mailbox pinned to this recipient at enroll (thread continuity).
+    mailboxId: text("mailbox_id").references(() => mailboxes.id, { onDelete: "set null" }),
+    // Gmail thread of the last send — follow-ups thread into it.
+    lastThreadId: text("last_thread_id"),
+    currentStep: integer("current_step").notNull().default(0),
+    status: text("status").notNull().default("active"),
+    nextDueAt: integer("next_due_at"),
+    lastSentAt: integer("last_sent_at"),
+    stoppedReason: text("stopped_reason"),
+    // Reply-check cursor (Sprint 49): the lookup uses max(lastSentAt, this) so an
+    // out-of-office pause is idempotent and the chain resumes cleanly.
+    lastReplyHandledAt: integer("last_reply_handled_at"),
+    enrolledAt: integer("enrolled_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("outreach_enrollments_sequence_recipient").on(
+      t.sequenceId,
+      t.recipientType,
+      t.recipientId,
+    ),
+    // The global "one active sequence per person" lock (decision 07).
+    uniqueIndex("outreach_enrollments_active_person")
+      .on(t.workspaceId, t.recipientType, t.recipientId)
+      .where(sql`status = 'active'`),
+    index("outreach_enrollments_due").on(t.status, t.nextDueAt),
+  ],
+);
+
+export type OutreachEnrollmentRow = typeof outreachEnrollments.$inferSelect;
+
+// One row per (enrollment × step) — the dispatch record (mirrors launchMessages).
+export const outreachMessages = sqliteTable(
+  "outreach_messages",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    enrollmentId: text("enrollment_id")
+      .notNull()
+      .references(() => outreachEnrollments.id, { onDelete: "cascade" }),
+    stepNumber: integer("step_number").notNull(),
+    draftId: text("draft_id").references(() => drafts.id, { onDelete: "set null" }),
+    externalActionId: text("external_action_id").references(() => externalActions.id, {
+      onDelete: "set null",
+    }),
+    // Gmail thread returned by the send — feeds the next step's threading.
+    providerThreadId: text("provider_thread_id"),
+    status: text("status").notNull().default("pending"),
+    sentAt: integer("sent_at"),
+    lastError: text("last_error"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [uniqueIndex("outreach_messages_enrollment_step").on(t.enrollmentId, t.stepNumber)],
+);
+
+export type OutreachMessageRow = typeof outreachMessages.$inferSelect;
+
+// A workspace's CAN-SPAM postal mailing address (Sprint 49), required before an
+// outreach sequence can activate and appended to every send's footer. Its own
+// table because a Gmail-only workspace has no workspaceEmailSenders row.
+export const workspaceCompliance = sqliteTable("workspace_compliance", {
+  workspaceId: text("workspace_id")
+    .primaryKey()
+    .references(() => workspaces.id, { onDelete: "cascade" }),
+  postalAddress: text("postal_address").notNull().default(""),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type WorkspaceComplianceRow = typeof workspaceCompliance.$inferSelect;
 
 // Social publishing receipts (Sprint 17) — one row per publish attempt (now
 // or scheduled); the post lives on the platform, Tuezday keeps status + URL.

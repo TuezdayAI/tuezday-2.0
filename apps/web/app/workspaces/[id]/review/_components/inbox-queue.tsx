@@ -192,7 +192,18 @@ export function InboxQueue({
     }
   }
 
-  const filteredItems = filter === "all" ? items : items.filter((i) => i.status === filter);
+  // Sprint 49 — float outreach email replies that carry a label to the top,
+  // with a positive reply first, so the action-worthy ones stand out. Stable
+  // sort otherwise preserves the recency order.
+  const replyRank = (item: InboxItemWithContext): number => {
+    if (item.kind === "email" && item.replyLabel) {
+      return item.replyLabel === "positive" ? 0 : 1;
+    }
+    return 2;
+  };
+  const filteredItems = (filter === "all" ? items : items.filter((i) => i.status === filter))
+    .slice()
+    .sort((a, b) => replyRank(a) - replyRank(b));
   const { visible, hasMore, remaining, showMore } = useShowMore(filteredItems, 50);
   const counts = (f: Filter) =>
     f === "all" ? items.length : items.filter((i) => i.status === f).length;
@@ -303,8 +314,12 @@ export function InboxQueue({
               : item.externalActionId
                 ? reviewHref(id, { tab: "authorizations", action: item.externalActionId })
                 : null;
+            const isPositiveReply = item.kind === "email" && item.replyLabel === "positive";
             return (
-              <li key={item.id} className="section-card">
+              <li
+                key={item.id}
+                className={`section-card${isPositiveReply ? ` ${styles.positiveItem}` : ""}`}
+              >
                 <div className="section-head">
                   <span className={styles.itemMark} title={item.providerKey}>
                     {brand ? (

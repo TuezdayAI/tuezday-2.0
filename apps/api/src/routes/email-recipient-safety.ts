@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import {
+  importSuppressionsInputSchema,
   normalizedEmailAddressSchema,
   updateEmailPermissionInputSchema,
   updateEmailSafetyInputSchema,
@@ -10,6 +11,8 @@ import {
   EmailSafetyConfigurationError,
   getEmailPermission,
   getEmailSafetySettings,
+  importSuppressions,
+  listSuppressions,
   unsubscribeEmailRecipient,
   updateEmailPermission,
   updateEmailSafetySettings,
@@ -92,6 +95,21 @@ export function registerEmailRecipientSafetyRoutes(app: FastifyInstance, db: Db)
       }
       throw error;
     }
+  });
+
+  // Suppression list (Sprint 49): paste a batch of emails to block up front.
+  app.get<{ Params: { id: string } }>("/workspaces/:id/suppressions", async (request, reply) => {
+    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    return listSuppressions(db, request.params.id);
+  });
+
+  app.post<{ Params: { id: string } }>("/workspaces/:id/suppressions/import", async (request, reply) => {
+    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    const parsed = importSuppressionsInputSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.status(400).send({ error: "invalid_input", issues: parsed.error.issues });
+    }
+    return importSuppressions(db, request.params.id, parsed.data.emails);
   });
 
   app.get<{ Params: { token: string } }>("/u/:token", async (request, reply) => {

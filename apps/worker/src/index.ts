@@ -19,6 +19,7 @@ const CADENCE_FILL_INTERVAL_MIN = Number(process.env.CADENCE_FILL_INTERVAL_MIN ?
 const AUTOMATION_INTERVAL_MIN = Number(process.env.AUTOMATION_INTERVAL_MIN ?? 5);
 const INBOX_INTERVAL_MIN = Number(process.env.INBOX_INTERVAL_MIN ?? 5);
 const MAILBOX_INBOX_INTERVAL_MIN = Number(process.env.MAILBOX_INBOX_INTERVAL_MIN ?? 5);
+const OUTREACH_INTERVAL_MIN = Number(process.env.OUTREACH_INTERVAL_MIN ?? 5);
 const SEQUENCE_INTERVAL_MIN = Number(process.env.SEQUENCE_INTERVAL_MIN ?? 5);
 const EVIDENCE_SWEEP_MIN = Number(process.env.EVIDENCE_SWEEP_MIN ?? 30);
 
@@ -281,6 +282,14 @@ interface MailboxInboxRunResponse {
   labeled: number;
 }
 
+interface OutreachRunResponse {
+  enrolled: number;
+  generated: number;
+  dispatched: number;
+  stopped: number;
+  completed: number;
+}
+
 /** Poll inbound comments/DMs, refresh engagement metrics, then auto-generate +
  * post replies for scheduled_auto campaigns (when the master switch is on). */
 async function runInboxForAllWorkspaces(): Promise<void> {
@@ -380,6 +389,36 @@ async function mailboxInboxTick(): Promise<void> {
   }
 }
 
+// Outreach engine (Sprint 48): auto-enroll live-segment matches and advance
+// active enrollments (generate → gate → send from the mailbox pool).
+async function runOutreachForAllWorkspaces(): Promise<void> {
+  const res = await api(`/workspaces`);
+  if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
+  const workspaces = (await res.json()) as Workspace[];
+
+  for (const workspace of workspaces) {
+    try {
+      const runRes = await api(`/workspaces/${workspace.id}/outreach/run`, { method: "POST" });
+      if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);
+      const { enrolled, dispatched, stopped, completed } = (await runRes.json()) as OutreachRunResponse;
+      if (enrolled === 0 && dispatched === 0 && stopped === 0 && completed === 0) continue; // quiet
+      console.log(
+        `[outreach] ${workspace.name}: ${enrolled} enrolled, ${dispatched} sent, ${stopped} stopped, ${completed} completed`,
+      );
+    } catch (err) {
+      console.error("[outreach] ", workspace.name, "failed —", err instanceof Error ? err.message : err);
+    }
+  }
+}
+
+async function outreachTick(): Promise<void> {
+  try {
+    await runOutreachForAllWorkspaces();
+  } catch (err) {
+    console.error("[outreach] tick failed —", err instanceof Error ? err.message : err);
+  }
+}
+
 async function adsTick(): Promise<void> {
   try {
     await syncAdsForAllWorkspaces();
@@ -464,6 +503,10 @@ setInterval(() => void inboxTick(), INBOX_INTERVAL_MIN * 60 * 1000);
 // sequences — same reason: a detected reply stops the chain first (Sprint 47).
 void mailboxInboxTick();
 setInterval(() => void mailboxInboxTick(), MAILBOX_INBOX_INTERVAL_MIN * 60 * 1000);
+// Outreach runs after the mailbox inbox — an email reply detected this cycle
+// stops the enrollment before its next step generates (Sprint 48).
+void outreachTick();
+setInterval(() => void outreachTick(), OUTREACH_INTERVAL_MIN * 60 * 1000);
 // Sequences run after inbox — a reply detected this cycle stops the chain
 // before the next follow-up step generates.
 void sequenceTick();

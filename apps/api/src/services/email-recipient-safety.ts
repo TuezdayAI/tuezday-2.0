@@ -14,6 +14,7 @@ import {
   emailSuppressions,
   workspaceEmailSenders,
 } from "../db/schema";
+import { listConnectedMailboxes } from "./mailboxes";
 
 export type EmailRecipientSafetyResult =
   | { ok: true; normalizedEmail: string }
@@ -151,13 +152,68 @@ export function unsubscribeEmailRecipient(db: Db, workspaceId: string, email: st
   });
 }
 
+/**
+ * Bulk-block a pasted list of emails (Sprint 49). Invalid addresses and
+ * already-suppressed ones are counted as `skipped`. A suppression row is the
+ * single chokepoint checkEmailRecipientSafety blocks on, so the reason is
+ * informational (`import`).
+ */
+export function importSuppressions(
+  db: Db,
+  workspaceId: string,
+  emails: string[],
+): { imported: number; skipped: number } {
+  const now = Date.now();
+  let imported = 0;
+  let skipped = 0;
+  for (const raw of emails) {
+    const parsed = normalizedEmailAddressSchema.safeParse(raw);
+    if (!parsed.success) {
+      skipped += 1;
+      continue;
+    }
+    const res = db
+      .insert(emailSuppressions)
+      .values({ id: randomUUID(), workspaceId, normalizedEmail: parsed.data, reason: "import", createdAt: now })
+      .onConflictDoNothing()
+      .run();
+    if (res.changes > 0) imported += 1;
+    else skipped += 1;
+  }
+  return { imported, skipped };
+}
+
+/** Suppressed addresses for the workspace, newest first (for the settings list). */
+export function listSuppressions(
+  db: Db,
+  workspaceId: string,
+): { normalizedEmail: string; reason: string; createdAt: number }[] {
+  return db
+    .select({
+      normalizedEmail: emailSuppressions.normalizedEmail,
+      reason: emailSuppressions.reason,
+      createdAt: emailSuppressions.createdAt,
+    })
+    .from(emailSuppressions)
+    .where(eq(emailSuppressions.workspaceId, workspaceId))
+    .all()
+    .sort((a, b) => b.createdAt - a.createdAt);
+}
+
 export function getEmailSafetySettings(db: Db, workspaceId: string): EmailSafetySettings {
   const row = db
     .select({ killSwitch: workspaceEmailSenders.killSwitch, dailyCap: workspaceEmailSenders.dailyCap })
     .from(workspaceEmailSenders)
     .where(eq(workspaceEmailSenders.workspaceId, workspaceId))
     .get();
-  return row ?? { killSwitch: true, dailyCap: 100 };
+  if (row) return row;
+  // No Resend sender row: a Gmail-only workspace (Sprint 48) is still email-
+  // enabled if it has a connected mailbox — connecting one is the explicit
+  // opt-in. With neither, the kill switch stays on (the prior default).
+  return {
+    killSwitch: listConnectedMailboxes(db, workspaceId).length === 0,
+    dailyCap: 100,
+  };
 }
 
 export function updateEmailSafetySettings(

@@ -23,6 +23,11 @@ export interface CrmAdapter {
   /** Create a contact in the CRM; returns its external id. */
   createContact(input: { name: string; email: string; role?: string }): Promise<string>;
   createNote(externalContactId: string, body: string): Promise<void>;
+  /** Create a follow-up task on a contact (Sprint 49 — positive-reply handoff). */
+  createTask(
+    externalContactId: string,
+    input: { title: string; description?: string; dueAt?: number },
+  ): Promise<void>;
 }
 
 export function crmAdapterFor(

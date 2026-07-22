@@ -4558,6 +4558,11 @@ export const EVENT_TYPES = [
   "post.published",
   "reply.posted",
   "webhook.ping",
+  // Outreach reply outcomes (Sprint 49).
+  "outreach.reply.positive",
+  "outreach.reply.unsubscribed",
+  "outreach.reply.bounced",
+  "crm.task.created",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
@@ -5956,3 +5961,201 @@ export const mailboxInboxRunResultSchema = z.object({
   ranAt: z.number().int(),
 });
 export type MailboxInboxRunResult = z.infer<typeof mailboxInboxRunResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Outreach sequences (Sprint 48)
+// ---------------------------------------------------------------------------
+
+/**
+ * A first-class, always-on outreach sequence: an ordered chain of email steps
+ * sent from a mailbox pool to a live segment, brain-resolved + approval-gated
+ * per recipient, that auto-enrolls new segment matches and stops on reply.
+ * Distinct from S26/S30 launch sequences (which stay frozen).
+ */
+export const OUTREACH_SEQUENCE_STATUSES = ["draft", "active", "paused", "completed"] as const;
+export type OutreachSequenceStatus = (typeof OUTREACH_SEQUENCE_STATUSES)[number];
+
+export const OUTREACH_ENROLLMENT_STATUSES = [
+  "active",
+  "replied",
+  "stopped",
+  "completed",
+  "failed",
+] as const;
+export type OutreachEnrollmentStatus = (typeof OUTREACH_ENROLLMENT_STATUSES)[number];
+
+export const OUTREACH_MESSAGE_STATUSES = ["pending", "sent", "failed", "skipped"] as const;
+export type OutreachMessageStatus = (typeof OUTREACH_MESSAGE_STATUSES)[number];
+
+/** Founder decision: per-sequence daily new-enrollment cap is customizable, default 50. */
+export const OUTREACH_DEFAULT_ENROLLMENT_CAP = 50;
+export const OUTREACH_MAX_ENROLLMENT_CAP = 1000;
+export const OUTREACH_MAX_STEPS = 10;
+
+export const outreachSequenceStepSchema = z.object({
+  id: z.string().uuid(),
+  sequenceId: z.string().uuid(),
+  stepNumber: z.number().int().min(1),
+  instruction: z.string(),
+  delayHours: z.number().int().min(0),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type OutreachSequenceStep = z.infer<typeof outreachSequenceStepSchema>;
+
+export const outreachSequenceSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  campaignId: z.string().uuid(),
+  name: z.string(),
+  goal: z.string(),
+  personaId: z.string().uuid(),
+  audienceId: z.string().uuid(),
+  automationMode: z.enum(AUTOMATION_MODES),
+  status: z.enum(OUTREACH_SEQUENCE_STATUSES),
+  dailyEnrollmentCap: z.number().int().min(1).max(OUTREACH_MAX_ENROLLMENT_CAP),
+  stopOnReply: z.boolean(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type OutreachSequence = z.infer<typeof outreachSequenceSchema>;
+
+export const createOutreachSequenceInputSchema = z.object({
+  campaignId: z.string().uuid(),
+  personaId: z.string().uuid(),
+  audienceId: z.string().uuid(),
+  name: z.string().min(1).max(200),
+  goal: z.string().max(500).optional(),
+  automationMode: z.enum(AUTOMATION_MODES).optional(),
+  dailyEnrollmentCap: z.number().int().min(1).max(OUTREACH_MAX_ENROLLMENT_CAP).optional(),
+  stopOnReply: z.boolean().optional(),
+});
+export type CreateOutreachSequenceInput = z.infer<typeof createOutreachSequenceInputSchema>;
+
+/** Config edits never reset on a rename (S28 pattern) — every field optional. */
+export const updateOutreachSequenceInputSchema = z
+  .object({
+    name: z.string().min(1).max(200).optional(),
+    goal: z.string().max(500).optional(),
+    personaId: z.string().uuid().optional(),
+    campaignId: z.string().uuid().optional(),
+    audienceId: z.string().uuid().optional(),
+    automationMode: z.enum(AUTOMATION_MODES).optional(),
+    dailyEnrollmentCap: z.number().int().min(1).max(OUTREACH_MAX_ENROLLMENT_CAP).optional(),
+    stopOnReply: z.boolean().optional(),
+  })
+  .strict();
+export type UpdateOutreachSequenceInput = z.infer<typeof updateOutreachSequenceInputSchema>;
+
+export const outreachSequenceStepInputSchema = z.object({
+  stepNumber: z.number().int().min(1),
+  instruction: z.string().max(1000),
+  delayHours: z.number().int().min(0).max(8760),
+});
+
+/** Steps 1..N contiguous, unique, ≤10, and step 1 has no delay. */
+export const setOutreachStepsInputSchema = z
+  .object({ steps: z.array(outreachSequenceStepInputSchema).min(1).max(OUTREACH_MAX_STEPS) })
+  .superRefine((value, ctx) => {
+    const numbers = value.steps.map((s) => s.stepNumber).sort((a, b) => a - b);
+    numbers.forEach((n, i) => {
+      if (n !== i + 1) {
+        ctx.addIssue({ code: "custom", message: "step numbers must be contiguous 1..N" });
+      }
+    });
+    const first = value.steps.find((s) => s.stepNumber === 1);
+    if (first && first.delayHours !== 0) {
+      ctx.addIssue({ code: "custom", message: "step 1 must have delayHours 0" });
+    }
+  });
+export type SetOutreachStepsInput = z.infer<typeof setOutreachStepsInputSchema>;
+
+/** The mailbox pool a sequence rotates across (≥1; "pool, start with one"). */
+export const setOutreachMailboxesInputSchema = z.object({
+  mailboxIds: z.array(z.string().uuid()).min(1),
+});
+export type SetOutreachMailboxesInput = z.infer<typeof setOutreachMailboxesInputSchema>;
+
+export const outreachEnrollmentSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  sequenceId: z.string().uuid(),
+  recipientType: z.enum(AUDIENCE_MEMBER_TYPES),
+  recipientId: z.string(),
+  recipientEmail: z.string(),
+  mailboxId: z.string().uuid().nullable(),
+  lastThreadId: z.string().nullable(),
+  currentStep: z.number().int(),
+  status: z.enum(OUTREACH_ENROLLMENT_STATUSES),
+  nextDueAt: z.number().int().nullable(),
+  lastSentAt: z.number().int().nullable(),
+  stoppedReason: z.string().nullable(),
+  enrolledAt: z.number().int(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type OutreachEnrollment = z.infer<typeof outreachEnrollmentSchema>;
+
+/** Manual stop: at least one selector required. */
+export const stopOutreachInputSchema = z
+  .object({
+    enrollmentIds: z.array(z.string().uuid()).optional(),
+    emails: z.array(z.string()).optional(),
+    all: z.boolean().optional(),
+    reason: z.enum(["manual", "replied"]).default("manual"),
+  })
+  .refine(
+    (v) => (v.enrollmentIds?.length ?? 0) > 0 || (v.emails?.length ?? 0) > 0 || v.all === true,
+    { message: "provide enrollmentIds, emails, or all" },
+  );
+export type StopOutreachInput = z.infer<typeof stopOutreachInputSchema>;
+
+export const outreachSequenceDetailSchema = outreachSequenceSchema.extend({
+  steps: z.array(outreachSequenceStepSchema),
+  mailboxIds: z.array(z.string().uuid()),
+  enrollments: z.array(outreachEnrollmentSchema),
+});
+export type OutreachSequenceDetail = z.infer<typeof outreachSequenceDetailSchema>;
+
+export const outreachRunResultSchema = z.object({
+  enrolled: z.number().int(),
+  generated: z.number().int(),
+  dispatched: z.number().int(),
+  stopped: z.number().int(),
+  completed: z.number().int(),
+  ranAt: z.number().int(),
+});
+export type OutreachRunResult = z.infer<typeof outreachRunResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Reply-driven actions + compliance (Sprint 49)
+// ---------------------------------------------------------------------------
+
+/** Default pause before retrying a recipient who sent an out-of-office autoreply. */
+export const OUTREACH_OOO_RETRY_HOURS = 72;
+
+/** A workspace's CAN-SPAM postal address — required before outreach can send. */
+export const workspaceComplianceSchema = z.object({
+  workspaceId: z.string().uuid(),
+  postalAddress: z.string(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type WorkspaceCompliance = z.infer<typeof workspaceComplianceSchema>;
+
+export const updateComplianceInputSchema = z
+  .object({ postalAddress: z.string().max(500) })
+  .strict();
+export type UpdateComplianceInput = z.infer<typeof updateComplianceInputSchema>;
+
+/** Paste a batch of emails to block up front (suppression-list import). */
+export const importSuppressionsInputSchema = z.object({
+  emails: z.array(z.string()).min(1).max(1000),
+});
+export type ImportSuppressionsInput = z.infer<typeof importSuppressionsInputSchema>;
+
+export const importSuppressionsResultSchema = z.object({
+  imported: z.number().int(),
+  skipped: z.number().int(),
+});
+export type ImportSuppressionsResult = z.infer<typeof importSuppressionsResultSchema>;
