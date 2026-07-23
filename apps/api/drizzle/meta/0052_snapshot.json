@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "cffaef46-9d41-4839-b1e3-aa320b13ed3b",
-  "prevId": "7ee6748e-c643-4a31-8a6c-cd76c39654de",
+  "id": "c6fe5f8d-e4bc-4cc9-b8d4-4b9884e222d1",
+  "prevId": "cffaef46-9d41-4839-b1e3-aa320b13ed3b",
   "tables": {
     "ad_accounts": {
       "name": "ad_accounts",
@@ -4158,6 +4158,36 @@
           "notNull": false,
           "autoincrement": false
         },
+        "opened_at": {
+          "name": "opened_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "open_count": {
+          "name": "open_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "first_click_at": {
+          "name": "first_click_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "click_count": {
+          "name": "click_count",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -7615,6 +7645,14 @@
           "notNull": false,
           "autoincrement": false
         },
+        "outcome": {
+          "name": "outcome",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "'none'"
+        },
         "enrolled_at": {
           "name": "enrolled_at",
           "type": "integer",
@@ -8124,6 +8162,22 @@
           "autoincrement": false,
           "default": 1
         },
+        "track_opens": {
+          "name": "track_opens",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
+        "track_clicks": {
+          "name": "track_clicks",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": 0
+        },
         "created_at": {
           "name": "created_at",
           "type": "integer",
@@ -8191,6 +8245,100 @@
             "id"
           ],
           "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "outreach_tracking_events": {
+      "name": "outreach_tracking_events",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "text",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "workspace_id": {
+          "name": "workspace_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "email_delivery_id": {
+          "name": "email_delivery_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "type": {
+          "name": "type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "target_url": {
+          "name": "target_url",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "occurred_at": {
+          "name": "occurred_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "outreach_tracking_events_delivery": {
+          "name": "outreach_tracking_events_delivery",
+          "columns": [
+            "email_delivery_id"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {
+        "outreach_tracking_events_workspace_id_workspaces_id_fk": {
+          "name": "outreach_tracking_events_workspace_id_workspaces_id_fk",
+          "tableFrom": "outreach_tracking_events",
+          "tableTo": "workspaces",
+          "columnsFrom": [
+            "workspace_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "outreach_tracking_events_email_delivery_id_email_deliveries_id_fk": {
+          "name": "outreach_tracking_events_email_delivery_id_email_deliveries_id_fk",
+          "tableFrom": "outreach_tracking_events",
+          "tableTo": "email_deliveries",
+          "columnsFrom": [
+            "email_delivery_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "set null",
           "onUpdate": "no action"
         }
       },

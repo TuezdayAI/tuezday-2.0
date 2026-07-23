@@ -266,7 +266,7 @@ Small, high-leverage slices that sharpen every downstream module and clear the f
 - **Scope:** `discovery_sources.connectionId` (X, LinkedIn, authenticated Reddit via Nango); competitor-handle tracking; Instagram; queue/back-pressure (deferred #8).
 - **Size:** M–L.
 
-### Sprint 47 — Own the evidence store  *(R2R exit)*
+### Sprint 47 — Own the evidence store  *(R2R exit)*  — built 2026-07-11 (branch `sprint-47-own-evidence-store`)
 - **Goal:** Replace the R2R Docker stack with a native store behind the existing `EvidenceStore` seam.
 - **Builds on:** Sprint 9 (evidence), Sprint 32 (RAG hardening). Independent of 43–46.
 - **Scope:** `DbEvidenceStore` (FTS5 + sqlite-vec + RRF); gateway `embed()`; golden-query parity vs R2R; cutover + retire the Docker dependency. Also unlocks hybrid zoom ranking (deferred #22).

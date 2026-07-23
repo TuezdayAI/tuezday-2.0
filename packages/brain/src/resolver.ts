@@ -297,7 +297,7 @@ export interface EvidenceChunk {
   title: string;
   documentId: string;
   kind: EvidenceKind;
-  /** R2R similarity score (0–1). */
+  /** Evidence-store similarity score (0–1). */
   score: number;
   /** Recency decay applied by the retrieval policy (0–1). */
   recencyScore: number;

@@ -137,7 +137,7 @@ export default function EvidencePage() {
 
       {!view.store.healthy && (
         <p className="error">
-          Evidence store offline: {view.store.detail ?? "R2R is not reachable."} Existing context
+          Evidence store offline: {view.store.detail ?? "the evidence store is unavailable."} Existing context
           resolution keeps working without evidence.
         </p>
       )}
@@ -182,9 +182,6 @@ export default function EvidencePage() {
               >
                 {uploading ? "Ingesting…" : "Add to corpus"}
               </Button>
-              {!view.store.healthy && (
-                <span className="meta">Start the store with `npm run r2r:up` first.</span>
-              )}
             </div>
           </form>
         </Card>
