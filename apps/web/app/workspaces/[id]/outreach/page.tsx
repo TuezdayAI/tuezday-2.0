@@ -13,6 +13,7 @@ import { Card, CardHeader } from "@/src/components/ui/card";
 import { Badge, CountBadge } from "@/src/components/ui/badge";
 import { Icon } from "@/src/components/ui/icon";
 import { Input, Textarea, Select } from "@/src/components/ui/input";
+import { Tabs } from "@/src/components/ui/tabs";
 import styles from "./outreach.module.css";
 
 import { API_URL, apiFetch } from "@/lib/api";
@@ -25,12 +26,16 @@ import {
   OUTREACH_DEFAULT_ENROLLMENT_CAP,
   OUTREACH_MAX_ENROLLMENT_CAP,
   OUTREACH_MAX_STEPS,
+  OUTREACH_ENROLLMENT_OUTCOMES,
   type Audience,
   type AutomationMode,
   type Campaign,
+  type FunnelSlice,
   type MailboxWithUsage,
   type OutreachEnrollment,
+  type OutreachEnrollmentOutcome,
   type OutreachEnrollmentStatus,
+  type OutreachFunnel,
   type OutreachSequence,
   type OutreachSequenceDetail,
   type OutreachSequenceStatus,
@@ -73,6 +78,29 @@ const ENROLLMENT_STATUS_LABEL: Record<OutreachEnrollmentStatus, string> = {
   completed: "completed",
 };
 
+// Manual funnel outcome (Sprint 50) — the tail every enrollment carries.
+const OUTCOME_TONE: Record<
+  OutreachEnrollmentOutcome,
+  "neutral" | "approved" | "pending" | "rejected" | "draft"
+> = {
+  none: "draft",
+  meeting: "pending",
+  won: "approved",
+  lost: "rejected",
+};
+
+const OUTCOME_LABEL: Record<OutreachEnrollmentOutcome, string> = {
+  none: "no outcome",
+  meeting: "meeting",
+  won: "won",
+  lost: "lost",
+};
+
+// Rates arrive as fractions (0..1) — render as whole percents, matching insights.
+function pct(rate: number): string {
+  return `${Math.round(rate * 100)}%`;
+}
+
 // Sample sequences for the preview-value empty state — blurred behind the CTA.
 const SAMPLE_SEQUENCES = [
   { name: "Fintech VPs — nurture", status: "active", detail: "3 steps · 42 enrolled" },
@@ -111,6 +139,8 @@ export default function OutreachPage() {
     automationMode: AutomationMode;
     dailyEnrollmentCap: string;
     stopOnReply: boolean;
+    trackOpens: boolean;
+    trackClicks: boolean;
   }>({
     name: "",
     campaignId: "",
@@ -120,6 +150,8 @@ export default function OutreachPage() {
     automationMode: "manual",
     dailyEnrollmentCap: String(OUTREACH_DEFAULT_ENROLLMENT_CAP),
     stopOnReply: true,
+    trackOpens: false,
+    trackClicks: false,
   });
   const [saving, setSaving] = useState(false);
 
@@ -201,6 +233,8 @@ export default function OutreachPage() {
           automationMode: form.automationMode,
           dailyEnrollmentCap: Number.isInteger(cap) ? cap : undefined,
           stopOnReply: form.stopOnReply,
+          trackOpens: form.trackOpens,
+          trackClicks: form.trackClicks,
         }),
       });
       const body = await res.json().catch(() => null);
@@ -215,6 +249,8 @@ export default function OutreachPage() {
         automationMode: "manual",
         dailyEnrollmentCap: String(OUTREACH_DEFAULT_ENROLLMENT_CAP),
         stopOnReply: true,
+        trackOpens: false,
+        trackClicks: false,
       });
       await load();
       // Jump straight into the new sequence so the founder can add steps.
@@ -379,6 +415,28 @@ export default function OutreachPage() {
                 Stop on reply
               </label>
             </div>
+            <div className={styles.trackingRow}>
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={form.trackOpens}
+                  onChange={(e) => setForm({ ...form, trackOpens: e.target.checked })}
+                />
+                Track opens
+              </label>
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={form.trackClicks}
+                  onChange={(e) => setForm({ ...form, trackClicks: e.target.checked })}
+                />
+                Track clicks
+              </label>
+            </div>
+            <p className="meta">
+              Tracking is off by default. Turning it on sends an HTML email (open pixel + rewritten
+              links), which can reduce deliverability — opt in only when you need the funnel.
+            </p>
             <div className="editor-actions">
               <Button type="submit" variant="primary" disabled={createDisabled}>
                 {saving ? "Creating…" : "Create sequence"}
@@ -550,7 +608,12 @@ function OutreachDetailView({
         <span className="meta">
           {seq.steps.length} step(s) · {seq.mailboxIds.length} mailbox(es) · {enrolledCount}{" "}
           enrolled · cap {seq.dailyEnrollmentCap}/day · stop-on-reply{" "}
-          {seq.stopOnReply ? "on" : "off"}
+          {seq.stopOnReply ? "on" : "off"} · tracking{" "}
+          {seq.trackOpens || seq.trackClicks
+            ? [seq.trackOpens ? "opens" : null, seq.trackClicks ? "clicks" : null]
+                .filter(Boolean)
+                .join(" + ")
+            : "off"}
         </span>
         <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
           {seq.status !== "active" && (
@@ -589,6 +652,10 @@ function OutreachDetailView({
       {canActivateHint && seq.status !== "active" && (
         <p className="meta">{canActivateHint}</p>
       )}
+
+      <TrackingSettings workspaceId={workspaceId} sequence={seq} onChanged={onChanged} />
+
+      <FunnelWidget workspaceId={workspaceId} sequence={seq} />
 
       <MailboxPool
         workspaceId={workspaceId}
@@ -841,6 +908,240 @@ function StepEditor({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Tracking toggle (Sprint 50) — opt-in open/click tracking, saved via PATCH.
+// ---------------------------------------------------------------------------
+
+function TrackingSettings({
+  workspaceId,
+  sequence,
+  onChanged,
+}: {
+  workspaceId: string;
+  sequence: OutreachSequenceDetail;
+  onChanged: () => void;
+}) {
+  const [trackOpens, setTrackOpens] = useState(sequence.trackOpens);
+  const [trackClicks, setTrackClicks] = useState(sequence.trackClicks);
+  const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    setTrackOpens(sequence.trackOpens);
+    setTrackClicks(sequence.trackClicks);
+  }, [sequence.trackOpens, sequence.trackClicks]);
+
+  const dirty = trackOpens !== sequence.trackOpens || trackClicks !== sequence.trackClicks;
+
+  async function save() {
+    setBusy(true);
+    setNote(null);
+    try {
+      const res = await apiFetch(`/workspaces/${workspaceId}/outreach-sequences/${sequence.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trackOpens, trackClicks }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message ?? body?.error ?? `API returned ${res.status}`);
+      setNote("Tracking saved.");
+      onChanged();
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : "Failed to save tracking");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader
+        title={
+          <span className={styles.cardTitle}>
+            <Icon name="status-learning" size="compact" /> Tracking
+          </span>
+        }
+      />
+      <div className={styles.trackingRow}>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={trackOpens}
+            onChange={(e) => setTrackOpens(e.target.checked)}
+          />
+          Track opens
+        </label>
+        <label className="checkbox-label">
+          <input
+            type="checkbox"
+            checked={trackClicks}
+            onChange={(e) => setTrackClicks(e.target.checked)}
+          />
+          Track clicks
+        </label>
+      </div>
+      <p className="meta">
+        Off by default. Tracking sends an HTML email (invisible open pixel + rewritten links), which
+        can reduce deliverability — opt in only when you need the funnel. Opens are a soft signal:
+        Apple Mail Privacy Protection inflates them.
+      </p>
+      {note && <p className="bundle-summary">{note}</p>}
+      <div className="editor-actions" style={{ marginTop: 8 }}>
+        <Button variant="primary" size="compact" disabled={busy || !dirty} onClick={save}>
+          Save tracking
+        </Button>
+      </div>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Funnel + attribution (Sprint 50) — computed on read; hidden when unavailable.
+// ---------------------------------------------------------------------------
+
+const FUNNEL_STAGES: {
+  key: "sent" | "opened" | "clicked" | "replied" | "positive" | "meetings";
+  label: string;
+  rate?: "openRate" | "clickRate" | "replyRate" | "positiveRate";
+  soft?: boolean;
+}[] = [
+  { key: "sent", label: "Sent" },
+  { key: "opened", label: "Opened", rate: "openRate", soft: true },
+  { key: "clicked", label: "Clicked", rate: "clickRate" },
+  { key: "replied", label: "Replied", rate: "replyRate" },
+  { key: "positive", label: "Positive", rate: "positiveRate" },
+  { key: "meetings", label: "Meetings" },
+];
+
+function FunnelWidget({
+  workspaceId,
+  sequence,
+}: {
+  workspaceId: string;
+  sequence: OutreachSequenceDetail;
+}) {
+  const [funnel, setFunnel] = useState<OutreachFunnel | null>(null);
+  // null = still loading; false = route absent / tracking never on → hide entirely.
+  const [available, setAvailable] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setAvailable(null);
+    setFunnel(null);
+    apiFetch(`/workspaces/${workspaceId}/outreach-sequences/${sequence.id}/funnel`)
+      .then(async (res) => {
+        if (cancelled) return;
+        // 404 → route not live yet, or nothing tracked; degrade gracefully.
+        if (!res.ok) {
+          setAvailable(false);
+          return;
+        }
+        setFunnel((await res.json()) as OutreachFunnel);
+        setAvailable(true);
+      })
+      .catch(() => {
+        if (!cancelled) setAvailable(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceId, sequence.id]);
+
+  // Hide the widget outright when the funnel can't be shown.
+  if (available === false || (available === null && !funnel)) return null;
+  if (!funnel) return null;
+
+  return (
+    <Card>
+      <CardHeader
+        title={
+          <span className={styles.cardTitle}>
+            <Icon name="status-learning" size="compact" /> Funnel
+          </span>
+        }
+      />
+      <div className={styles.funnelRow}>
+        {FUNNEL_STAGES.map((stage) => (
+          <div key={stage.key} className={styles.funnelStage}>
+            <span className={styles.funnelCount}>{funnel[stage.key]}</span>
+            <span className={styles.funnelLabel}>
+              {stage.label}
+              {stage.soft && (
+                <span
+                  className={styles.softHint}
+                  title="Soft signal — inflated by Apple Mail Privacy Protection, which pre-fetches the pixel"
+                >
+                  soft
+                </span>
+              )}
+            </span>
+            {stage.rate && <span className="meta">{pct(funnel[stage.rate])}</span>}
+          </div>
+        ))}
+      </div>
+      <p className="meta">
+        Opens are a soft signal — inflated by Apple Mail Privacy Protection. Ranking leans on clicks
+        and replies.
+      </p>
+
+      <AttributionTable attribution={funnel.attribution} />
+    </Card>
+  );
+}
+
+function AttributionTable({
+  attribution,
+}: {
+  attribution: OutreachFunnel["attribution"];
+}) {
+  const [tab, setTab] = useState<"byStep" | "byPersona" | "bySegment">("byStep");
+  const rows: FunnelSlice[] = attribution[tab] ?? [];
+
+  return (
+    <div className={styles.attribution}>
+      <Tabs
+        tabs={[
+          { key: "byStep", label: "By step" },
+          { key: "byPersona", label: "By persona" },
+          { key: "bySegment", label: "By segment" },
+        ]}
+        active={tab}
+        onChange={(k) => setTab(k as typeof tab)}
+      />
+      {rows.length === 0 ? (
+        <p className="meta">No attribution rows yet.</p>
+      ) : (
+        <div className={styles.enrollTableWrap}>
+          <table className={styles.enrollTable}>
+            <thead>
+              <tr>
+                <th>{tab === "byStep" ? "Step" : tab === "byPersona" ? "Persona" : "Segment"}</th>
+                <th>Sent</th>
+                <th>Replied</th>
+                <th>Reply rate</th>
+                <th>Positive</th>
+                <th>Positive rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.key}>
+                  <td className={styles.enrollEmail}>{r.label}</td>
+                  <td>{r.sent}</td>
+                  <td>{r.replied}</td>
+                  <td>{r.sent > 0 ? pct(r.replied / r.sent) : "—"}</td>
+                  <td>{r.positive}</td>
+                  <td>{r.sent > 0 ? pct(r.positive / r.sent) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EnrollmentsTable({
   workspaceId,
   sequence,
@@ -877,6 +1178,29 @@ function EnrollmentsTable({
       onChanged();
     } catch (err) {
       setNote(err instanceof Error ? err.message : "Failed to stop");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function setOutcome(enrollmentId: string, outcome: OutreachEnrollmentOutcome) {
+    setBusy(true);
+    setNote(null);
+    try {
+      const res = await apiFetch(
+        `/workspaces/${workspaceId}/outreach-sequences/${sequence.id}/enrollments/${enrollmentId}/outcome`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ outcome }),
+        },
+      );
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message ?? body?.error ?? `API returned ${res.status}`);
+      setNote("Outcome updated.");
+      onChanged();
+    } catch (err) {
+      setNote(err instanceof Error ? err.message : "Failed to set outcome");
     } finally {
       setBusy(false);
     }
@@ -919,6 +1243,7 @@ function EnrollmentsTable({
               <th>Recipient</th>
               <th>Step</th>
               <th>Status</th>
+              <th>Outcome</th>
               <th>Next due</th>
               <th>Mailbox</th>
               <th />
@@ -933,6 +1258,26 @@ function EnrollmentsTable({
                   <Badge tone={ENROLLMENT_STATUS_TONE[e.status]}>
                     {ENROLLMENT_STATUS_LABEL[e.status]}
                   </Badge>
+                </td>
+                <td>
+                  <div className={styles.outcomeCell}>
+                    <Badge tone={OUTCOME_TONE[e.outcome]}>{OUTCOME_LABEL[e.outcome]}</Badge>
+                    <Select
+                      aria-label="Set outcome"
+                      value={e.outcome}
+                      disabled={busy}
+                      onChange={(ev) =>
+                        setOutcome(e.id, ev.target.value as OutreachEnrollmentOutcome)
+                      }
+                      className={styles.outcomeSelect}
+                    >
+                      {OUTREACH_ENROLLMENT_OUTCOMES.map((o) => (
+                        <option key={o} value={o}>
+                          {OUTCOME_LABEL[o]}
+                        </option>
+                      ))}
+                    </Select>
+                  </div>
                 </td>
                 <td>{e.status === "active" ? formatDue(e.nextDueAt) : "—"}</td>
                 <td>{mailboxAddress(e.mailboxId)}</td>

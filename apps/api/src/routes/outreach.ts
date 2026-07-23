@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import {
   createOutreachSequenceInputSchema,
+  setEnrollmentOutcomeInputSchema,
   setOutreachMailboxesInputSchema,
   setOutreachStepsInputSchema,
   stopOutreachInputSchema,
@@ -23,11 +24,13 @@ import {
   listOutreachSequences,
   pauseOutreachSequence,
   rowToEnrollment,
+  setEnrollmentOutcome,
   setMailboxes,
   setSteps,
   stopOutreach,
   updateOutreachSequence,
 } from "../services/outreach-sequences";
+import { getSequenceFunnel } from "../services/outreach-funnel";
 import { getWorkspace } from "../services/workspaces";
 
 function workspaceOr404(db: Db, id: string, reply: FastifyReply): boolean {
@@ -169,6 +172,35 @@ export function registerOutreachRoutes(
     async (request, reply) => {
       if (!workspaceOr404(db, request.params.id, reply)) return reply;
       return listEnrollments(db, request.params.seqId).map(rowToEnrollment);
+    },
+  );
+
+  app.get<{ Params: { id: string; seqId: string } }>(
+    "/workspaces/:id/outreach-sequences/:seqId/funnel",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const funnel = getSequenceFunnel(db, request.params.id, request.params.seqId);
+      if (!funnel) return reply.status(404).send({ error: "sequence_not_found" });
+      return funnel;
+    },
+  );
+
+  app.post<{ Params: { id: string; seqId: string; enrollmentId: string } }>(
+    "/workspaces/:id/outreach-sequences/:seqId/enrollments/:enrollmentId/outcome",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const parsed = setEnrollmentOutcomeInputSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.status(400).send({ error: "invalid_input", issues: parsed.error.issues });
+      }
+      const enrollment = setEnrollmentOutcome(
+        db,
+        request.params.id,
+        request.params.enrollmentId,
+        parsed.data.outcome,
+      );
+      if (!enrollment) return reply.status(404).send({ error: "enrollment_not_found" });
+      return enrollment;
     },
   );
 

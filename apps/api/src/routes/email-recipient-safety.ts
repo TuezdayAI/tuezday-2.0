@@ -32,7 +32,7 @@ function normalizedEmailOr400(value: string, reply: FastifyReply): string | null
   return null;
 }
 
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
   return value.replace(/[&<>"']/g, (character) => ({
     "&": "&amp;",
     "<": "&lt;",
