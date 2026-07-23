@@ -12,6 +12,7 @@ import {
   type UpdateOutreachSequenceInput,
   type AutomationMode,
   type OutreachEnrollmentStatus,
+  type OutreachEnrollmentOutcome,
   type AudienceMemberType,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
@@ -61,6 +62,8 @@ function rowToSequence(row: OutreachSequenceRow): OutreachSequence {
     status: row.status as OutreachSequenceStatus,
     dailyEnrollmentCap: row.dailyEnrollmentCap,
     stopOnReply: row.stopOnReply === 1,
+    trackOpens: row.trackOpens === 1,
+    trackClicks: row.trackClicks === 1,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
@@ -93,6 +96,7 @@ export function rowToEnrollment(row: OutreachEnrollmentRow): OutreachEnrollment 
     nextDueAt: row.nextDueAt,
     lastSentAt: row.lastSentAt,
     stoppedReason: row.stoppedReason,
+    outcome: row.outcome as OutreachEnrollmentOutcome,
     enrolledAt: row.enrolledAt,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

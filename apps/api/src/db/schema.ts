@@ -1246,6 +1246,12 @@ export const emailDeliveries = sqliteTable(
     acceptedAt: integer("accepted_at"),
     completedAt: integer("completed_at"),
     lastError: text("last_error"),
+    // Open/click tracking counters (Sprint 50). Opens are a soft signal (MPP
+    // inflation); the detail log lives in outreach_tracking_events.
+    openedAt: integer("opened_at"),
+    openCount: integer("open_count").notNull().default(0),
+    firstClickAt: integer("first_click_at"),
+    clickCount: integer("click_count").notNull().default(0),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -1369,6 +1375,9 @@ export const outreachSequences = sqliteTable("outreach_sequences", {
   status: text("status").notNull().default("draft"),
   dailyEnrollmentCap: integer("daily_enrollment_cap").notNull().default(50),
   stopOnReply: integer("stop_on_reply").notNull().default(1),
+  // Open/click tracking (Sprint 50) — off by default (deliverability-first).
+  trackOpens: integer("track_opens").notNull().default(0),
+  trackClicks: integer("track_clicks").notNull().default(0),
   createdAt: integer("created_at").notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
@@ -1444,6 +1453,8 @@ export const outreachEnrollments = sqliteTable(
     // Reply-check cursor (Sprint 49): the lookup uses max(lastSentAt, this) so an
     // out-of-office pause is idempotent and the chain resumes cleanly.
     lastReplyHandledAt: integer("last_reply_handled_at"),
+    // Manual funnel outcome (Sprint 50): none / meeting / won / lost.
+    outcome: text("outcome").notNull().default("none"),
     enrolledAt: integer("enrolled_at").notNull(),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
@@ -1492,6 +1503,29 @@ export const outreachMessages = sqliteTable(
 );
 
 export type OutreachMessageRow = typeof outreachMessages.$inferSelect;
+
+// Open/click engagement events on a sent outreach email (Sprint 50). Append-
+// only detail behind the denormalized counters on email_deliveries. Privacy-
+// first: no IP/user-agent.
+export const outreachTrackingEvents = sqliteTable(
+  "outreach_tracking_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    emailDeliveryId: text("email_delivery_id").references(() => emailDeliveries.id, {
+      onDelete: "set null",
+    }),
+    type: text("type").notNull(),
+    targetUrl: text("target_url"),
+    occurredAt: integer("occurred_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("outreach_tracking_events_delivery").on(t.emailDeliveryId)],
+);
+
+export type OutreachTrackingEventRow = typeof outreachTrackingEvents.$inferSelect;
 
 // A workspace's CAN-SPAM postal mailing address (Sprint 49), required before an
 // outreach sequence can activate and appended to every send's footer. Its own

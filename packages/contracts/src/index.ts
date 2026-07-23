@@ -5984,6 +5984,14 @@ export const OUTREACH_ENROLLMENT_STATUSES = [
 ] as const;
 export type OutreachEnrollmentStatus = (typeof OUTREACH_ENROLLMENT_STATUSES)[number];
 
+/** Manual terminal outcome on an enrollment (Sprint 50) — the funnel's tail. */
+export const OUTREACH_ENROLLMENT_OUTCOMES = ["none", "meeting", "won", "lost"] as const;
+export type OutreachEnrollmentOutcome = (typeof OUTREACH_ENROLLMENT_OUTCOMES)[number];
+
+/** Open/click engagement events on a sent outreach email (Sprint 50). */
+export const TRACKING_EVENT_TYPES = ["open", "click"] as const;
+export type TrackingEventType = (typeof TRACKING_EVENT_TYPES)[number];
+
 export const OUTREACH_MESSAGE_STATUSES = ["pending", "sent", "failed", "skipped"] as const;
 export type OutreachMessageStatus = (typeof OUTREACH_MESSAGE_STATUSES)[number];
 
@@ -6015,6 +6023,9 @@ export const outreachSequenceSchema = z.object({
   status: z.enum(OUTREACH_SEQUENCE_STATUSES),
   dailyEnrollmentCap: z.number().int().min(1).max(OUTREACH_MAX_ENROLLMENT_CAP),
   stopOnReply: z.boolean(),
+  // Open/click tracking (Sprint 50) — off by default (deliverability-first).
+  trackOpens: z.boolean(),
+  trackClicks: z.boolean(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
 });
@@ -6029,6 +6040,8 @@ export const createOutreachSequenceInputSchema = z.object({
   automationMode: z.enum(AUTOMATION_MODES).optional(),
   dailyEnrollmentCap: z.number().int().min(1).max(OUTREACH_MAX_ENROLLMENT_CAP).optional(),
   stopOnReply: z.boolean().optional(),
+  trackOpens: z.boolean().optional(),
+  trackClicks: z.boolean().optional(),
 });
 export type CreateOutreachSequenceInput = z.infer<typeof createOutreachSequenceInputSchema>;
 
@@ -6043,6 +6056,8 @@ export const updateOutreachSequenceInputSchema = z
     automationMode: z.enum(AUTOMATION_MODES).optional(),
     dailyEnrollmentCap: z.number().int().min(1).max(OUTREACH_MAX_ENROLLMENT_CAP).optional(),
     stopOnReply: z.boolean().optional(),
+    trackOpens: z.boolean().optional(),
+    trackClicks: z.boolean().optional(),
   })
   .strict();
 export type UpdateOutreachSequenceInput = z.infer<typeof updateOutreachSequenceInputSchema>;
@@ -6090,6 +6105,8 @@ export const outreachEnrollmentSchema = z.object({
   nextDueAt: z.number().int().nullable(),
   lastSentAt: z.number().int().nullable(),
   stoppedReason: z.string().nullable(),
+  // Manual funnel outcome (Sprint 50).
+  outcome: z.enum(OUTREACH_ENROLLMENT_OUTCOMES),
   enrolledAt: z.number().int(),
   createdAt: z.number().int(),
   updatedAt: z.number().int(),
@@ -6159,3 +6176,55 @@ export const importSuppressionsResultSchema = z.object({
   skipped: z.number().int(),
 });
 export type ImportSuppressionsResult = z.infer<typeof importSuppressionsResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Outreach tracking, funnel & attribution (Sprint 50)
+// ---------------------------------------------------------------------------
+
+export const setEnrollmentOutcomeInputSchema = z.object({
+  outcome: z.enum(OUTREACH_ENROLLMENT_OUTCOMES),
+});
+export type SetEnrollmentOutcomeInput = z.infer<typeof setEnrollmentOutcomeInputSchema>;
+
+/** The counters at any funnel node (whole sequence or an attribution slice). */
+export const funnelCountsSchema = z.object({
+  sent: z.number().int(),
+  // Opens are a SOFT signal — Apple Mail Privacy Protection inflates them.
+  opened: z.number().int(),
+  clicked: z.number().int(),
+  replied: z.number().int(),
+  positive: z.number().int(),
+  meetings: z.number().int(),
+  won: z.number().int(),
+  lost: z.number().int(),
+});
+export type FunnelCounts = z.infer<typeof funnelCountsSchema>;
+
+/** One attribution row: a label (step / persona / segment) + its counts. */
+export const funnelSliceSchema = funnelCountsSchema.extend({
+  key: z.string(),
+  label: z.string(),
+});
+export type FunnelSlice = z.infer<typeof funnelSliceSchema>;
+
+export const outreachFunnelSchema = funnelCountsSchema.extend({
+  sequenceId: z.string().uuid(),
+  openRate: z.number(),
+  clickRate: z.number(),
+  replyRate: z.number(),
+  positiveRate: z.number(),
+  attribution: z.object({
+    byStep: z.array(funnelSliceSchema),
+    byPersona: z.array(funnelSliceSchema),
+    bySegment: z.array(funnelSliceSchema),
+  }),
+});
+export type OutreachFunnel = z.infer<typeof outreachFunnelSchema>;
+
+/** Compact outreach rollup folded into a campaign's insights (Sprint 34 + 50). */
+export const campaignOutreachInsightsSchema = funnelCountsSchema.extend({
+  sequenceCount: z.number().int(),
+  replyRate: z.number(),
+  positiveRate: z.number(),
+});
+export type CampaignOutreachInsights = z.infer<typeof campaignOutreachInsightsSchema>;
