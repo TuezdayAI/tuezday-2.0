@@ -61,6 +61,7 @@ import { registerNextActionRoutes } from "./routes/next-action";
 import { registerOutboundRoutes } from "./routes/outbound";
 import { registerOutreachRoutes } from "./routes/outreach";
 import { registerComplianceRoutes } from "./routes/compliance";
+import { registerTrackingRoutes } from "./routes/tracking";
 import { registerPrRoutes } from "./routes/pr";
 import { registerPriorityRoutes } from "./routes/priorities";
 import { registerPublicationRoutes } from "./routes/publications";
@@ -139,8 +140,9 @@ export async function buildApp({
   render = renderSlide,
 }: BuildAppOptions): Promise<TuezdayApp> {
   // Signed public tokens can carry a normalized email address (up to 320
-  // characters) plus an HMAC. Keep a hard router bound above that envelope.
-  const app = Fastify({ logger: false, routerOptions: { maxParamLength: 1_024 } });
+  // characters) plus an HMAC; click-tracking tokens (Sprint 50) embed the whole
+  // redirect URL inside the signed payload. Keep the bound above that envelope.
+  const app = Fastify({ logger: false, routerOptions: { maxParamLength: 4_096 } });
   backfillExternalActionPolicies(db);
   const externalActionRuntime = createExternalActionRuntime({
     db,
@@ -206,6 +208,7 @@ export async function buildApp({
   registerOutboundRoutes(app, db, llm, evidence, externalActionRuntime);
   registerOutreachRoutes(app, db, llm, evidence, externalActionRuntime, connectors, mailer, fetcher);
   registerComplianceRoutes(app, db);
+  registerTrackingRoutes(app, db);
   registerLaunchRoutes(app, db, llm, evidence, exporter, externalActionRuntime);
   registerConnectorRoutes(app, db, connectors, fetcher, analytics);
   registerCrmRoutes(app, db, connectors, fetcher);

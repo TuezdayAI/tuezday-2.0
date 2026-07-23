@@ -24,6 +24,8 @@ import {
 import type { OutboundEmailProvider } from "../outbound-email/provider";
 import type { GmailMailboxProvider } from "../outbound-email/gmail";
 import { createUnsubscribeToken } from "../outbound-email/unsubscribe";
+import { createClickToken, createOpenToken } from "../outbound-email/tracking";
+import { escapeHtml } from "../routes/email-recipient-safety";
 import type {
   ExternalActionAdapter,
   ExternalActionCommand,
@@ -277,6 +279,81 @@ function gmailBlocker(
   return null;
 }
 
+/** Where tracking pixels/redirects are served — a dedicated subdomain if set. */
+function trackingBaseUrl(): string {
+  return (
+    process.env.TRACKING_BASE_URL ||
+    process.env.APP_BASE_URL ||
+    "http://localhost:3000"
+  ).replace(/\/$/, "");
+}
+
+/** Escape a block of plain text to HTML, turning newlines into <br>. */
+function textBlockToHtml(value: string): string {
+  return escapeHtml(value).replace(/\r?\n/g, "<br>\n");
+}
+
+interface TrackingConfig {
+  deliveryId: string;
+  trackOpens: boolean;
+  trackClicks: boolean;
+}
+
+/**
+ * The HTML alternative for a tracked send (Sprint 50). Mirrors the plain-text
+ * body but escaped, with http(s) links optionally rewritten through the signed
+ * click-redirect and an optional 1×1 open pixel appended. The click URL is
+ * carried inside the signed token, never as a query param (no open-redirect).
+ */
+function composeTrackedHtml(
+  workspaceId: string,
+  bodyText: string,
+  signature: string,
+  unsubscribeUrl: string,
+  postalAddress: string,
+  tracking: TrackingConfig,
+): string {
+  const trackingBase = trackingBaseUrl();
+
+  // Escape a block, and rewrite each http(s) link through /t/c when tracking.
+  const renderBlock = (value: string): string => {
+    const urlRe = /https?:\/\/[^\s<>"]+/g;
+    let out = "";
+    let last = 0;
+    for (const match of value.matchAll(urlRe)) {
+      const url = match[0];
+      const start = match.index ?? 0;
+      out += textBlockToHtml(value.slice(last, start));
+      if (tracking.trackClicks) {
+        const token = createClickToken(workspaceId, tracking.deliveryId, url);
+        const href = `${trackingBase}/t/c/${token}`;
+        out += `<a href="${escapeHtml(href)}">${escapeHtml(url)}</a>`;
+      } else {
+        out += escapeHtml(url);
+      }
+      last = start + url.length;
+    }
+    out += textBlockToHtml(value.slice(last));
+    return out;
+  };
+
+  const parts = [renderBlock(bodyText)];
+  if (signature.trim()) parts.push(renderBlock(signature.trim()));
+  const footer = [
+    "--",
+    `Don't want these emails? Unsubscribe: <a href="${escapeHtml(unsubscribeUrl)}">${escapeHtml(unsubscribeUrl)}</a>`,
+  ];
+  if (postalAddress.trim()) footer.push(textBlockToHtml(postalAddress.trim()));
+  parts.push(footer.join("<br>\n"));
+
+  let body = parts.join("<br><br>\n");
+  if (tracking.trackOpens) {
+    const openToken = createOpenToken(workspaceId, tracking.deliveryId);
+    body += `<img src="${escapeHtml(`${trackingBase}/t/o/${openToken}`)}" width="1" height="1" alt="">`;
+  }
+  return `<!doctype html><html><body>${body}</body></html>`;
+}
+
 /**
  * The body a Gmail send actually carries: the approved draft text, the
  * mailbox signature, the unsubscribe footer (founder decision: from send #1),
@@ -284,21 +361,70 @@ function gmailBlocker(
  * keeps the exact action-authorized text; the footer is deterministic, so
  * retries recompose the identical body. `postalAddress` is resolved by the
  * caller (from workspace_compliance) — keep this function pure.
+ *
+ * Returns `{ text, html }`: `text` is the plain-text body (unchanged, always
+ * the authorized/stored body). `html` is non-null only when the sequence tracks
+ * (Sprint 50) — an untracked send stays byte-identical plain text (`html` null).
  */
 export function composeGmailBody(
   workspaceId: string,
   payload: Pick<EmailActionPayload, "to" | "text">,
   signature: string,
   postalAddress = "",
-): string {
+  tracking?: TrackingConfig,
+): { text: string; html: string | null } {
   const token = createUnsubscribeToken(workspaceId, payload.to);
   const base = (process.env.APP_BASE_URL ?? "http://localhost:3000").replace(/\/$/, "");
+  const unsubscribeUrl = `${base}/u/${token}`;
   const parts = [payload.text];
   if (signature.trim()) parts.push(signature.trim());
-  const footer = [`--`, `Don't want these emails? Unsubscribe: ${base}/u/${token}`];
+  const footer = [`--`, `Don't want these emails? Unsubscribe: ${unsubscribeUrl}`];
   if (postalAddress.trim()) footer.push(postalAddress.trim());
   parts.push(footer.join("\n"));
-  return parts.join("\n\n");
+  const text = parts.join("\n\n");
+
+  const trackingOn = !!tracking && (tracking.trackOpens || tracking.trackClicks);
+  const html = trackingOn
+    ? composeTrackedHtml(workspaceId, payload.text, signature, unsubscribeUrl, postalAddress, tracking!)
+    : null;
+  return { text, html };
+}
+
+/**
+ * Resolve a sequence's open/click tracking flags for a send (Sprint 50).
+ * Tracking is a per-sequence opt-in, so only outreach-step sends can be tracked;
+ * every other origin returns `undefined` → plain-text, byte-identical to today.
+ */
+function resolveTrackingConfig(
+  db: Db,
+  workspaceId: string,
+  payload: EmailActionPayload,
+  deliveryId: string,
+): TrackingConfig | undefined {
+  if (payload.origin !== "outreach_step") return undefined;
+  const message = db
+    .select({ enrollmentId: outreachMessages.enrollmentId })
+    .from(outreachMessages)
+    .where(and(eq(outreachMessages.workspaceId, workspaceId), eq(outreachMessages.id, payload.originId)))
+    .get();
+  if (!message) return undefined;
+  const enrollment = db
+    .select({ sequenceId: outreachEnrollments.sequenceId })
+    .from(outreachEnrollments)
+    .where(eq(outreachEnrollments.id, message.enrollmentId))
+    .get();
+  if (!enrollment) return undefined;
+  const sequence = db
+    .select({ trackOpens: outreachSequences.trackOpens, trackClicks: outreachSequences.trackClicks })
+    .from(outreachSequences)
+    .where(eq(outreachSequences.id, enrollment.sequenceId))
+    .get();
+  if (!sequence) return undefined;
+  return {
+    deliveryId,
+    trackOpens: sequence.trackOpens === 1,
+    trackClicks: sequence.trackClicks === 1,
+  };
 }
 
 function receipt(delivery: { id: string; status: string; lastError: string | null }): ExternalActionExecutionRef {
@@ -493,17 +619,23 @@ export function emailActionAdapter(
         if (!mailbox) throw new Error("Mailbox not found.");
         const connection = getConnection(db, action.workspaceId, mailbox.connectionId);
         if (!connection) throw new Error("The mailbox's Gmail connection no longer exists.");
+        // Open/click tracking (Sprint 50) is a per-sequence opt-in, so it only
+        // applies to outreach steps: message → enrollment → sequence flags.
+        const tracking = resolveTrackingConfig(db, action.workspaceId, payload, delivery.id);
+        const body = composeGmailBody(
+          action.workspaceId,
+          payload,
+          mailbox.signature,
+          getPostalAddress(db, action.workspaceId),
+          tracking,
+        );
         const sent = await gmail!.sendEmail(connection.nangoConnectionId, {
           from: mailbox.address,
           fromName: mailbox.displayName,
           to: payload.to,
           subject: payload.subject,
-          text: composeGmailBody(
-            action.workspaceId,
-            payload,
-            mailbox.signature,
-            getPostalAddress(db, action.workspaceId),
-          ),
+          text: body.text,
+          ...(body.html ? { html: body.html } : {}),
           replyTo: mailbox.replyTo,
           // Outreach follow-ups thread into the recipient's conversation (S48).
           ...(payload.threadId ? { threadId: payload.threadId } : {}),

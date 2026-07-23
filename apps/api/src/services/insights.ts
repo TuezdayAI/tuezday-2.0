@@ -29,6 +29,7 @@ import {
   publications,
 } from "../db/schema";
 import { getCampaignAdMetrics } from "./ads";
+import { getCampaignOutreachFunnel } from "./outreach-funnel";
 import { listCampaigns } from "./campaigns";
 
 // ---------------------------------------------------------------------------
@@ -264,6 +265,7 @@ export function getCampaignInsights(db: Db, campaign: Campaign): CampaignInsight
       repliedCount,
       replyRate: Math.round(replyRate * 10000) / 10000,
     },
+    outreach: getCampaignOutreachFunnel(db, campaign.workspaceId, cid),
     quality: {
       draftCounts: draftCounts as Record<string, number>,
       approvalRate: Math.round(approvalRate * 10000) / 10000,

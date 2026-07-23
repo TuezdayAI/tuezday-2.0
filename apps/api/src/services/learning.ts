@@ -16,11 +16,51 @@ import {
   engagementMetrics,
   generations,
   nowSyntheses,
+  outreachSequences,
   type EngagementMetricRow,
   type NowSynthesisRow,
 } from "../db/schema";
 import type { LlmGateway } from "../llm/gateway";
 import { getBrain, updateBrainDoc, type BrainActor } from "./brain";
+import { getSequenceFunnel } from "./outreach-funnel";
+
+// ---------------------------------------------------------------------------
+// Outreach outcome signal (Sprint 50) — positive-reply rate by persona/step
+// folded into the now-doc synthesis prompt. Best-effort: contributes only when
+// the workspace has run outreach (never gates the "nothing to learn" check).
+// ---------------------------------------------------------------------------
+
+interface OutreachSignal {
+  lines: string[];
+  totals: { sequences: number; sent: number; replied: number; positive: number; meetings: number; won: number };
+}
+
+export function gatherOutreachSignal(db: Db, workspaceId: string): OutreachSignal {
+  const sequences = db
+    .select({ id: outreachSequences.id, name: outreachSequences.name })
+    .from(outreachSequences)
+    .where(eq(outreachSequences.workspaceId, workspaceId))
+    .all();
+  const lines: string[] = [];
+  const totals = { sequences: 0, sent: 0, replied: 0, positive: 0, meetings: 0, won: 0 };
+  for (const seq of sequences) {
+    const funnel = getSequenceFunnel(db, workspaceId, seq.id);
+    if (!funnel || funnel.sent === 0) continue;
+    totals.sequences += 1;
+    totals.sent += funnel.sent;
+    totals.replied += funnel.replied;
+    totals.positive += funnel.positive;
+    totals.meetings += funnel.meetings;
+    totals.won += funnel.won;
+    const persona = funnel.attribution.byPersona[0]?.label ?? "persona";
+    const bestStep = [...funnel.attribution.byStep].sort((a, b) => b.positive - a.positive)[0];
+    const stepNote = bestStep && bestStep.positive > 0 ? `, best step: ${bestStep.label} (${bestStep.positive} positive)` : "";
+    lines.push(
+      `- [${persona}] "${seq.name}": sent=${funnel.sent} replied=${funnel.replied} positive=${funnel.positive} meetings=${funnel.meetings} won=${funnel.won}${stepNote}`,
+    );
+  }
+  return { lines, totals };
+}
 
 // ---------------------------------------------------------------------------
 // Training examples (derived from what already happened — no new storage)
@@ -236,11 +276,16 @@ export async function synthesizeNow(
       `- [${m.channel}] ${m.description || "untitled"}: impressions=${m.impressions ?? "?"} engagements=${m.engagements ?? "?"} clicks=${m.clicks ?? "?"}${m.notes ? ` (${m.notes})` : ""}`,
   );
 
+  // Outreach outcomes (Sprint 50): positive-reply/meeting/won signal by sequence
+  // + persona + step, so the synthesis can say which outreach actually converts.
+  const outreach = gatherOutreachSignal(db, workspaceId);
+
   const prompt = [
     `You synthesize GTM learnings for ${workspaceName}. Review the human decisions, edits, and engagement metrics below and synthesize what is actually working and what should change. Be specific and grounded only in the data shown — no generic advice.`,
     `DECISION STATS: accepted: ${stats.ratings.accepted}, needs_edit: ${stats.ratings.needs_edit}, rejected ratings: ${stats.ratings.rejected}; approved drafts: ${stats.decisions.approved}, rejected drafts: ${stats.decisions.rejected}, edited before decision: ${stats.editedCount}.`,
     `EXAMPLES:\n${exampleLines.join("\n") || "(none)"}`,
     `ENGAGEMENT METRICS:\n${metricLines.join("\n") || "(none)"}`,
+    `OUTREACH OUTCOMES:\n${outreach.lines.join("\n") || "(none)"}`,
     `CURRENT NOW DOC:\n${nowDoc || "(empty)"}`,
     `Respond in EXACTLY this format (no code fences, no other text):\nPROPOSAL:\n<markdown bullet list of 2-6 concrete learnings, max ~250 words, written so it can be appended to the now doc>\nRATIONALE:\n<one short paragraph explaining what in the data supports these learnings>`,
   ].join("\n\n");
@@ -257,6 +302,7 @@ export async function synthesizeNow(
       examples: examples.length,
       metrics: metrics.length,
       stats,
+      outreach: outreach.totals,
     }),
     status: "proposed",
     createdAt: Date.now(),

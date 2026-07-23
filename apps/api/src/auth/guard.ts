@@ -39,6 +39,8 @@ const PUBLIC_ROUTES = new Set([
   "GET /a/:token",
   "GET /u/:token",
   "POST /u/:token",
+  "GET /t/o/:token",
+  "GET /t/c/:token",
   "POST /telegram/webhook",
 ]);
 function bearerToken(authorization: string | undefined): string | null {

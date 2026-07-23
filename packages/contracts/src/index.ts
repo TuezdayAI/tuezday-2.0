@@ -4917,6 +4917,23 @@ export const campaignInsightsSchema = z.object({
     repliedCount: z.number().int(),
     replyRate: z.number(),
   }),
+  // Outreach funnel rollup across this campaign's sequences (Sprint 50).
+  // Structurally identical to campaignOutreachInsightsSchema (defined later).
+  outreach: z
+    .object({
+      sent: z.number().int(),
+      opened: z.number().int(),
+      clicked: z.number().int(),
+      replied: z.number().int(),
+      positive: z.number().int(),
+      meetings: z.number().int(),
+      won: z.number().int(),
+      lost: z.number().int(),
+      sequenceCount: z.number().int(),
+      replyRate: z.number(),
+      positiveRate: z.number(),
+    })
+    .optional(),
   quality: z.object({
     draftCounts: z.record(z.string(), z.number().int()),
     approvalRate: z.number(),

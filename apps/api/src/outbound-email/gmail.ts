@@ -6,6 +6,7 @@
  * connection id carried on the Tuezday `connections` row.
  */
 
+import { randomBytes } from "node:crypto";
 import type { ConnectorFabric } from "../connectors/fabric";
 
 const GMAIL_BASE_URL = "https://gmail.googleapis.com";
@@ -20,6 +21,8 @@ export interface GmailSendInput {
   to: string;
   subject: string;
   text: string;
+  /** Tracked HTML alternative (Sprint 50) — set only when tracking is on. */
+  html?: string;
   replyTo: string | null;
   /** Reply into an existing Gmail thread (Sprint 48 follow-ups). */
   threadId?: string;
@@ -102,7 +105,27 @@ export function buildRfc2822(input: GmailSendInput): string {
   if (input.inReplyTo) {
     headers.push(`In-Reply-To: ${input.inReplyTo}`, `References: ${input.inReplyTo}`);
   }
-  headers.push("MIME-Version: 1.0", 'Content-Type: text/plain; charset="UTF-8"');
+  headers.push("MIME-Version: 1.0");
+  // Tracked sends (Sprint 50) carry a multipart/alternative body: the plain-text
+  // part (unchanged, still the authorized body) plus an HTML part with the open
+  // pixel + rewritten links. Untracked sends stay byte-identical text/plain.
+  if (input.html) {
+    const boundary = randomBytes(16).toString("hex");
+    headers.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
+    const body = [
+      `--${boundary}`,
+      'Content-Type: text/plain; charset="UTF-8"',
+      "",
+      input.text,
+      `--${boundary}`,
+      'Content-Type: text/html; charset="UTF-8"',
+      "",
+      input.html,
+      `--${boundary}--`,
+    ].join("\r\n");
+    return `${headers.join("\r\n")}\r\n\r\n${body}`;
+  }
+  headers.push('Content-Type: text/plain; charset="UTF-8"');
   return `${headers.join("\r\n")}\r\n\r\n${input.text}`;
 }
 

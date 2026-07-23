@@ -157,6 +157,8 @@ export function createOutreachSequence(
     status: "draft",
     dailyEnrollmentCap: input.dailyEnrollmentCap ?? OUTREACH_DEFAULT_ENROLLMENT_CAP,
     stopOnReply: input.stopOnReply === false ? 0 : 1,
+    trackOpens: input.trackOpens ? 1 : 0,
+    trackClicks: input.trackClicks ? 1 : 0,
     createdAt: now,
     updatedAt: now,
   }).run();
@@ -199,6 +201,8 @@ export function updateOutreachSequence(
     ...(input.automationMode !== undefined ? { automationMode: input.automationMode } : {}),
     ...(input.dailyEnrollmentCap !== undefined ? { dailyEnrollmentCap: input.dailyEnrollmentCap } : {}),
     ...(input.stopOnReply !== undefined ? { stopOnReply: input.stopOnReply ? 1 : 0 } : {}),
+    ...(input.trackOpens !== undefined ? { trackOpens: input.trackOpens ? 1 : 0 } : {}),
+    ...(input.trackClicks !== undefined ? { trackClicks: input.trackClicks ? 1 : 0 } : {}),
     updatedAt: Date.now(),
   }).where(and(eq(outreachSequences.workspaceId, workspaceId), eq(outreachSequences.id, sequenceId))).run();
   return rowToSequence(getSequenceRow(db, workspaceId, sequenceId)!);
@@ -412,4 +416,34 @@ export function stopOutreach(
   // Guard against a stray workspace mismatch on the enrollment rows.
   const scoped = active.filter((e) => e.workspaceId === workspaceId && targetIds.has(e.id)).map((e) => e.id);
   return stopEnrollments(db, scoped, input.reason);
+}
+
+/**
+ * Mark an enrollment's manual funnel outcome (Sprint 50): none / meeting / won
+ * / lost. Meeting/won/lost are human-set — no fabricated automation. Scoped to
+ * the workspace; returns the updated enrollment, or undefined if not found.
+ */
+export function setEnrollmentOutcome(
+  db: Db,
+  workspaceId: string,
+  enrollmentId: string,
+  outcome: OutreachEnrollmentOutcome,
+): OutreachEnrollment | undefined {
+  const row = db
+    .select()
+    .from(outreachEnrollments)
+    .where(and(eq(outreachEnrollments.workspaceId, workspaceId), eq(outreachEnrollments.id, enrollmentId)))
+    .get();
+  if (!row) return undefined;
+  db.update(outreachEnrollments)
+    .set({ outcome, updatedAt: Date.now() })
+    .where(and(eq(outreachEnrollments.workspaceId, workspaceId), eq(outreachEnrollments.id, enrollmentId)))
+    .run();
+  return rowToEnrollment(
+    db
+      .select()
+      .from(outreachEnrollments)
+      .where(and(eq(outreachEnrollments.workspaceId, workspaceId), eq(outreachEnrollments.id, enrollmentId)))
+      .get()!,
+  );
 }
