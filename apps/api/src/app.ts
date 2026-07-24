@@ -34,6 +34,7 @@ import { registerAutomationRoutes } from "./routes/automation";
 import { registerBrainRoutes } from "./routes/brain";
 import { registerCadenceRoutes } from "./routes/cadences";
 import { registerCampaignRoutes } from "./routes/campaigns";
+import { registerChatRoutes } from "./routes/chat";
 import { registerCampaignPlanRoutes } from "./routes/campaign-plans";
 import { registerCarouselRoutes } from "./routes/carousels";
 import { registerConnectorRoutes } from "./routes/connectors";
@@ -199,6 +200,7 @@ export async function buildApp({
   registerCarouselRoutes(app, db, design, assetStorage, render);
   registerNotificationRoutes(app, db, mailer, fetcher);
   registerSignalRoutes(app, db, llm, evidence);
+  registerChatRoutes(app, db, llm, evidence);
   registerDiscoveryRoutes(app, db, llm, fetcher, intent, connectors);
   registerCampaignRoutes(app, db);
   registerCampaignPlanRoutes(app, db);

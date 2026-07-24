@@ -1,0 +1,271 @@
+/* apps/web/src/components/copilot/copilot.tsx — Sprint 42 global copilot drawer.
+   Right-side slide-over over a dimmed canvas; reuses app tokens only. */
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  justify-content: flex-end;
+  background: oklch(0.205 0.030 264 / 0.28);
+  backdrop-filter: blur(2px);
+}
+
+.drawer {
+  width: min(440px, 100vw);
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border-left: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-modal);
+  animation: slideIn var(--dur-base) var(--ease-drawer);
+}
+
+@keyframes slideIn {
+  from { transform: translateX(24px); opacity: 0.6; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.headTitle {
+  font-family: var(--font-display);
+  font-size: 16px;
+  font-weight: 550;
+  margin: 0;
+  color: var(--text);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.headSpacer { flex: 1; }
+
+.iconBtn {
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  display: inline-flex;
+  align-items: center;
+}
+.iconBtn:hover { color: var(--text); background: var(--panel-2); }
+
+/* Session switcher panel */
+.sessionBar {
+  position: relative;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.sessionToggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 10px 16px;
+  text-align: left;
+  color: var(--text);
+  font-size: 13px;
+}
+.sessionToggle:hover { background: var(--panel-2); }
+.sessionToggleLabel {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+.sessionToggleHint { color: var(--muted); font-size: 12px; }
+
+.sessionPanel {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-low);
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+}
+
+.sessionRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: var(--radius-sm);
+  padding: 2px;
+}
+.sessionRow:hover { background: var(--panel-2); }
+
+.sessionSelect {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: none;
+  cursor: pointer;
+  text-align: left;
+  padding: 7px 8px;
+  color: var(--text);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sessionSelectActive { font-weight: 600; }
+.sessionEmpty { padding: 12px; color: var(--muted); font-size: 12.5px; }
+
+/* Thread */
+.thread {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+
+.row { display: flex; }
+.rowUser { justify-content: flex-end; }
+.rowAssistant { justify-content: flex-start; }
+
+.bubble {
+  max-width: 84%;
+  padding: 10px 13px;
+  border-radius: var(--radius-lg);
+  font-size: 13.5px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.bubbleUser {
+  background: var(--accent);
+  color: var(--accent-ink);
+  border-bottom-right-radius: var(--radius-sm);
+}
+.bubbleAssistant {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-bottom-left-radius: var(--radius-sm);
+}
+
+.toolLine {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  padding: 0 4px;
+}
+
+.pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.pending svg { animation: spin 1.4s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Citation chips */
+.citations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: var(--radius-pill);
+  padding: 3px 9px;
+  font-size: 11.5px;
+  color: var(--muted);
+  cursor: default;
+}
+.chip svg { color: var(--accent-deep); }
+.chipLabel { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Empty state */
+.empty {
+  margin: auto;
+  text-align: center;
+  display: grid;
+  gap: 14px;
+  max-width: 320px;
+  padding: 24px 8px;
+}
+.emptyIcon {
+  justify-self: center;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius);
+  display: grid;
+  place-items: center;
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+}
+.emptyTitle { font-family: var(--font-display); font-size: 16px; font-weight: 550; color: var(--text); margin: 0; }
+.emptyText { color: var(--muted); font-size: 13px; margin: 0; }
+.examples { display: grid; gap: 8px; }
+.example {
+  border: 1px solid var(--border);
+  background: var(--panel);
+  border-radius: var(--radius);
+  padding: 9px 12px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  text-align: left;
+}
+.example:hover { border-color: var(--border-strong); background: var(--panel-2); }
+.example:disabled { opacity: 0.6; cursor: default; }
+
+.unavailable {
+  margin: auto;
+  text-align: center;
+  display: grid;
+  gap: 8px;
+  max-width: 300px;
+  padding: 24px;
+  color: var(--muted);
+}
+
+/* Composer */
+.composer {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  padding: 12px 16px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.composerField {
+  flex: 1;
+  resize: none;
+  min-height: 40px;
+  max-height: 120px;
+}
