@@ -1565,6 +1565,47 @@ export const workspaceCompliance = sqliteTable("workspace_compliance", {
 
 export type WorkspaceComplianceRow = typeof workspaceCompliance.$inferSelect;
 
+// Chat copilot (Sprint 42): a workspace+user conversation with the grounded,
+// read-only copilot. Messages are the transcript (user/assistant/tool);
+// citations_json holds the ChatCitation[] provenance for an assistant turn.
+export const chatSessions = sqliteTable(
+  "chat_sessions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
+    title: text("title").notNull().default(""),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("chat_sessions_workspace_user").on(t.workspaceId, t.userId)],
+);
+
+export type ChatSessionRow = typeof chatSessions.$inferSelect;
+
+export const chatMessages = sqliteTable(
+  "chat_messages",
+  {
+    id: text("id").primaryKey(),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => chatSessions.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    content: text("content").notNull(),
+    toolName: text("tool_name"),
+    citationsJson: text("citations_json").notNull().default("[]"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("chat_messages_session_created").on(t.sessionId, t.createdAt)],
+);
+
+export type ChatMessageRow = typeof chatMessages.$inferSelect;
+
 // Social publishing receipts (Sprint 17) — one row per publish attempt (now
 // or scheduled); the post lives on the platform, Tuezday keeps status + URL.
 export const publications = sqliteTable(

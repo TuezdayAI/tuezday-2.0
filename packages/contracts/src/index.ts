@@ -6245,3 +6245,68 @@ export const campaignOutreachInsightsSchema = funnelCountsSchema.extend({
   positiveRate: z.number(),
 });
 export type CampaignOutreachInsights = z.infer<typeof campaignOutreachInsightsSchema>;
+
+// ---------------------------------------------------------------------------
+// Chat copilot (Sprint 42, part 1 — grounded read-only Q&A)
+// ---------------------------------------------------------------------------
+
+export const CHAT_MESSAGE_ROLES = ["user", "assistant", "tool"] as const;
+export type ChatMessageRole = (typeof CHAT_MESSAGE_ROLES)[number];
+
+/** Where a grounded answer's claim came from — surfaced as an inspectable chip. */
+export const CHAT_CITATION_KINDS = ["brain", "evidence", "data"] as const;
+export type ChatCitationKind = (typeof CHAT_CITATION_KINDS)[number];
+
+export const chatCitationSchema = z.object({
+  kind: z.enum(CHAT_CITATION_KINDS),
+  /** Stable anchor: a brain section slug, an evidence document id, or a tool name. */
+  ref: z.string(),
+  label: z.string(),
+  detail: z.string().optional(),
+});
+export type ChatCitation = z.infer<typeof chatCitationSchema>;
+
+export const chatSessionSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  userId: z.string().uuid().nullable(),
+  title: z.string(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type ChatSession = z.infer<typeof chatSessionSchema>;
+
+export const chatMessageSchema = z.object({
+  id: z.string().uuid(),
+  sessionId: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  role: z.enum(CHAT_MESSAGE_ROLES),
+  content: z.string(),
+  toolName: z.string().nullable(),
+  citations: z.array(chatCitationSchema),
+  createdAt: z.number().int(),
+});
+export type ChatMessage = z.infer<typeof chatMessageSchema>;
+
+export const createChatSessionInputSchema = z.object({
+  title: z.string().max(200).optional(),
+});
+export type CreateChatSessionInput = z.infer<typeof createChatSessionInputSchema>;
+
+export const sendChatMessageInputSchema = z.object({
+  message: z.string().min(1).max(4000),
+});
+export type SendChatMessageInput = z.infer<typeof sendChatMessageInputSchema>;
+
+/** The outcome of one copilot turn: the grounded answer + its provenance. */
+export const chatTurnResultSchema = z.object({
+  answer: z.string(),
+  citations: z.array(chatCitationSchema),
+  toolCalls: z.array(z.object({ tool: z.string(), ok: z.boolean() })),
+});
+export type ChatTurnResult = z.infer<typeof chatTurnResultSchema>;
+
+export const chatSessionDetailSchema = chatSessionSchema.extend({
+  messages: z.array(chatMessageSchema),
+});
+export type ChatSessionDetail = z.infer<typeof chatSessionDetailSchema>;

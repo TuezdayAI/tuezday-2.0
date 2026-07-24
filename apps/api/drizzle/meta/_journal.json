@@ -372,6 +372,13 @@
       "when": 1784808703571,
       "tag": "0052_clever_doctor_doom",
       "breakpoints": true
+    },
+    {
+      "idx": 53,
+      "version": "6",
+      "when": 1784901868778,
+      "tag": "0053_faithful_ultimates",
+      "breakpoints": true
     }
   ]
 }
