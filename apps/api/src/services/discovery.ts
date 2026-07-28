@@ -860,30 +860,54 @@ async function scoreUnscoredItems(
         const item = batch[entry.index];
         if (!item) continue;
         const matches = parseEntryMatches(entry, ctx);
-        const best = matches[0];
-        replaceItemMatches(db, workspaceId, item.id, matches);
-        db.update(discoveredItems)
-          .set({
-            // Overall relevance (the model's top-level judgment) drives the
-            // triage sort; the convenience fields mirror the best candidate.
-            score: clampScore(entry.score),
-            suggestedPersonaId: best?.personaId ?? null,
-            suggestedCampaignId: best?.campaignId ?? null,
-            scoreReason: best
-              ? best.reason
-              : typeof entry.reason === "string"
-                ? entry.reason.slice(0, 500)
-                : null,
-            scoredAt,
-          })
-          .where(
-            and(
-              eq(discoveredItems.workspaceId, workspaceId),
-              eq(discoveredItems.id, item.id),
-            ),
-          )
-          .run();
-        scoredCount += 1;
+        const overallScore = clampScore(entry.score);
+        const persisted = db.transaction((tx) => {
+          // The model call happens outside the transaction. Re-check both the
+          // triage state and every workspace-owned reference at write time so
+          // an accepted item or a moved/deleted target cannot be scored from a
+          // stale prompt snapshot.
+          const currentItem = tx
+            .select({ id: discoveredItems.id })
+            .from(discoveredItems)
+            .where(
+              and(
+                eq(discoveredItems.workspaceId, workspaceId),
+                eq(discoveredItems.id, item.id),
+                eq(discoveredItems.status, "new"),
+                isNull(discoveredItems.duplicateOfId),
+              ),
+            )
+            .get();
+          if (!currentItem) return false;
+
+          const matchesToPersist = revalidateSignalMatches(tx, workspaceId, matches);
+          const best = matchesToPersist[0];
+          replaceItemMatches(tx, workspaceId, item.id, matchesToPersist);
+          tx.update(discoveredItems)
+            .set({
+              // Overall relevance (the model's top-level judgment) drives the
+              // triage sort; the convenience fields mirror the best candidate.
+              score: overallScore,
+              suggestedPersonaId: best?.personaId ?? null,
+              suggestedCampaignId: best?.campaignId ?? null,
+              scoreReason: best
+                ? best.reason
+                : typeof entry.reason === "string"
+                  ? entry.reason.slice(0, 500)
+                  : null,
+              scoredAt,
+            })
+            .where(
+              and(
+                eq(discoveredItems.workspaceId, workspaceId),
+                eq(discoveredItems.id, item.id),
+                eq(discoveredItems.status, "new"),
+              ),
+            )
+            .run();
+          return true;
+        });
+        if (persisted) scoredCount += 1;
       }
     } catch {
       // Gateway failure mid-run: items stay unscored and triagable.

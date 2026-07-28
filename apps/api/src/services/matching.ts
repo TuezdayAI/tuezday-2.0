@@ -194,7 +194,7 @@ export function parseEntryMatches(
 
 /** Replace an item's candidate rows (delete-then-insert on every scoring). */
 export function replaceItemMatches(
-  db: Db,
+  db: DbExecutor,
   workspaceId: string,
   itemId: string,
   matches: ParsedMatch[],

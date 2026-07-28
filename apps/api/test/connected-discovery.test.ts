@@ -865,7 +865,13 @@ describe("connected discovery (Sprint 46)", () => {
 
       proxyHandler = (path) =>
         path.startsWith("/rest/posts")
-          ? { status: 403, json: { message: "Not enough permissions" } }
+          ? {
+              status: 403,
+              json: {
+                message: "Not enough permissions",
+                diagnostic: "provider-secret-must-not-escape",
+              },
+            }
           : undefined;
 
       const run = await runDiscoveryRoute();
@@ -880,6 +886,11 @@ describe("connected discovery (Sprint 46)", () => {
       expect(row.lastError).toContain("LinkedIn read scope or author role required");
       expect(jobsFor(rss.id).at(-1)!.status).toBe("succeeded");
       expect(jobsFor(linkedin.id).at(-1)!.status).toBe("failed");
+      expect(JSON.stringify(run)).not.toContain("provider-secret-must-not-escape");
+      expect(row.lastError).not.toContain("provider-secret-must-not-escape");
+      expect(jobsFor(linkedin.id).at(-1)!.error).not.toContain(
+        "provider-secret-must-not-escape",
+      );
     });
 
     it("marks an Instagram source permission_required when Meta refuses access", async () => {

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   DISCOVERY_MAX_MATCHES_PER_ITEM,
   discoverySourceSchema,
@@ -9,6 +9,7 @@ import {
 import type { TuezdayApp } from "../src/app";
 import type { Db } from "../src/db";
 import {
+  campaigns,
   discoveredItemMatches,
   discoveredItems,
   discoveryJobs,
@@ -1041,6 +1042,194 @@ describe("multi-candidate scoring (Sprint 45)", () => {
     expect(h.scoringPrompts[0]).toContain(`- ${h.fieldCto}: Field CTO — topics: agentic coding, evals`);
     expect(h.scoringPrompts[0]).toContain(`- ${h.communityLead}: Community Lead`);
     expect(h.scoringPrompts[0]).toContain(`personas: [${h.fieldCto}: Field CTO]`);
+  });
+
+  it("drops a campaign that leaves the workspace while scoring is in flight", async () => {
+    const otherWorkspaceId = (
+      await h.app.inject({
+        method: "POST",
+        url: "/workspaces",
+        payload: { name: "Scoring Race Workspace" },
+      })
+    ).json().id as string;
+    h.setResponder(() => {
+      h.db
+        .update(campaigns)
+        .set({ workspaceId: otherWorkspaceId })
+        .where(eq(campaigns.id, h.campaignA))
+        .run();
+      return [
+        {
+          index: 0,
+          score: 88,
+          matches: [
+            {
+              personaId: null,
+              campaignId: h.campaignA,
+              score: 90,
+              reason: "Stale campaign.",
+            },
+          ],
+        },
+      ];
+    });
+
+    await h.addSource();
+    await h.run();
+
+    const target = (await h.items("new"))[0]!;
+    expect(target.suggestedCampaignId).toBeNull();
+    expect(target.matches).toEqual([]);
+    expect(
+      h.db
+        .select()
+        .from(discoveredItemMatches)
+        .where(eq(discoveredItemMatches.itemId, target.id as string))
+        .all(),
+    ).toEqual([]);
+  });
+
+  it("does not score an item that is accepted while the judgment is in flight", async () => {
+    let acceptedSignalId: string | null = null;
+    h.setResponder(() => {
+      const item = h.db
+        .select()
+        .from(discoveredItems)
+        .where(eq(discoveredItems.workspaceId, h.workspaceId))
+        .get()!;
+      acceptedSignalId = acceptDiscoveredItem(h.db, h.workspaceId, item.id).signal.id;
+      return [
+        {
+          index: 0,
+          score: 88,
+          matches: [
+            {
+              personaId: h.fieldCto,
+              campaignId: h.campaignA,
+              score: 90,
+              reason: "Too late.",
+            },
+          ],
+        },
+      ];
+    });
+
+    await h.addSource();
+    await h.run();
+
+    const accepted = (await h.items()).find(
+      (item) => item.signalId === acceptedSignalId,
+    )!;
+    expect(accepted).toMatchObject({
+      status: "accepted",
+      score: null,
+      suggestedPersonaId: null,
+      suggestedCampaignId: null,
+      matches: [],
+    });
+    expect(
+      h.db
+        .select()
+        .from(discoveredItemMatches)
+        .where(eq(discoveredItemMatches.itemId, accepted.id as string))
+        .all(),
+    ).toEqual([]);
+    expect(
+      h.db
+        .select()
+        .from(signalMatches)
+        .where(eq(signalMatches.signalId, acceptedSignalId!))
+        .all(),
+    ).toEqual([]);
+  });
+
+  it("rolls back match replacement when one scoring write fails", async () => {
+    h.setResponder(() => [
+      {
+        index: 0,
+        score: 88,
+        matches: [
+          {
+            personaId: h.fieldCto,
+            campaignId: h.campaignA,
+            score: 90,
+            reason: "Original judgment.",
+          },
+        ],
+      },
+    ]);
+    await h.addSource();
+    await h.run();
+    const target = (await h.items()).find((item) => item.score === 88)!;
+    const before = h.db
+      .select()
+      .from(discoveredItemMatches)
+      .where(eq(discoveredItemMatches.itemId, target.id as string))
+      .all();
+
+    h.db
+      .update(discoveredItems)
+      .set({ scoredAt: Date.now() - 60_000 })
+      .where(eq(discoveredItems.id, target.id as string))
+      .run();
+    const bumped = await h.app.inject({
+      method: "PUT",
+      url: `/workspaces/${h.workspaceId}/personas/${h.fieldCto}`,
+      payload: {
+        name: "Field CTO",
+        topics: ["post-training", "evals"],
+      },
+    });
+    expect(bumped.statusCode).toBe(200);
+    h.db.run(sql.raw(`
+      CREATE TRIGGER reject_fault_scoring_match
+      BEFORE INSERT ON discovered_item_matches
+      WHEN NEW.reason = 'fault_after_first_match'
+      BEGIN
+        SELECT RAISE(ABORT, 'fault_after_first_match');
+      END
+    `));
+    h.setResponder((prompt) => {
+      const targetIndex = prompt
+        .split("ITEM ")
+        .slice(1)
+        .findIndex((block) => block.includes(target.title as string));
+      expect(targetIndex).toBeGreaterThanOrEqual(0);
+      return [
+        {
+          index: targetIndex,
+          score: 42,
+          matches: [
+            {
+              personaId: h.fieldCto,
+              campaignId: h.campaignA,
+              score: 90,
+              reason: "Replacement judgment.",
+            },
+            {
+              personaId: null,
+              campaignId: h.campaignB,
+              score: 80,
+              reason: "fault_after_first_match",
+            },
+          ],
+        },
+      ];
+    });
+
+    await h.run();
+
+    expect(
+      h.db
+        .select()
+        .from(discoveredItemMatches)
+        .where(eq(discoveredItemMatches.itemId, target.id as string))
+        .all(),
+    ).toEqual(before);
+    expect((await h.items()).find((item) => item.id === target.id)).toMatchObject({
+      score: 88,
+      scoreReason: "Original judgment.",
+    });
   });
 
   it("keeps only the top-scoring five when the model over-suggests", async () => {
