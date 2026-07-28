@@ -22,7 +22,7 @@ export type SafeFetchErrorCode = (typeof SAFE_FETCH_ERROR_CODES)[number];
 const PUBLIC_MESSAGES: Record<SafeFetchErrorCode, string> = {
   invalid_url: "The destination URL is invalid.",
   scheme_blocked: "The destination protocol is not allowed.",
-  credentials_blocked: "Credentials are not allowed in destination URLs.",
+  credentials_blocked: "Credentials and unsafe request headers are not allowed.",
   destination_blocked: "The destination is not allowed.",
   dns_failed: "The destination could not be resolved safely.",
   redirect_blocked: "The destination redirect is not allowed.",
