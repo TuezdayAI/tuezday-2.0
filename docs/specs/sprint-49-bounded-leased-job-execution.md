@@ -1,6 +1,6 @@
 # Sprint 49 — Bounded, Leased, Restart-Safe Job Execution
 
-> **Status:** Design direction approved; written specification awaiting founder review
+> **Status:** Founder-approved; implementation plan complete
 > **Date:** 2026-07-28
 > **Branch:** `sprint-49-bounded-leased-job-execution`
 > **Base:** `sprint-48-safe-fetch-tenant-isolation` at `d9717aa`
@@ -957,3 +957,8 @@ npm test
   `d9717aa`.
 - **2026-07-28:** Clean isolated baseline confirmed: 165 test files,
   1,718/1,718 tests, and all seven workspace typechecks pass.
+- **2026-07-28:** Founder approved the written specification at commit
+  `15d4bd8`.
+- **2026-07-28:** Task-by-task implementation plan completed at
+  `docs/superpowers/plans/2026-07-28-sprint-49-bounded-leased-job-execution.md`;
+  execution mode awaits founder choice.
