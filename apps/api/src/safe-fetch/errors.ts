@@ -19,6 +19,9 @@ export const SAFE_FETCH_ERROR_CODES = [
 
 export type SafeFetchErrorCode = (typeof SAFE_FETCH_ERROR_CODES)[number];
 
+const SAFE_FETCH_ERROR_CODE_SET = new Set<unknown>(SAFE_FETCH_ERROR_CODES);
+const TRUSTED_SAFE_FETCH_ERRORS = new WeakMap<object, SafeFetchErrorCode>();
+
 const PUBLIC_MESSAGES: Record<SafeFetchErrorCode, string> = {
   invalid_url: "The destination URL is invalid.",
   scheme_blocked: "The destination protocol is not allowed.",
@@ -38,16 +41,57 @@ const PUBLIC_MESSAGES: Record<SafeFetchErrorCode, string> = {
   transport_failed: "The destination could not be reached.",
 };
 
+export interface SerializedSafeFetchError {
+  code: SafeFetchErrorCode;
+  message: string;
+}
+
+export function safeFetchPublicMessage(code: SafeFetchErrorCode): string {
+  const canonical = SAFE_FETCH_ERROR_CODE_SET.has(code)
+    ? code
+    : "transport_failed";
+  return PUBLIC_MESSAGES[canonical];
+}
+
 export class SafeFetchError extends Error {
-  constructor(
-    public readonly code: SafeFetchErrorCode,
-    options?: { cause?: unknown },
-  ) {
-    super(PUBLIC_MESSAGES[code], options);
+  public readonly code: SafeFetchErrorCode;
+
+  constructor(code: SafeFetchErrorCode, options?: { cause?: unknown }) {
+    const canonical = SAFE_FETCH_ERROR_CODE_SET.has(code)
+      ? code
+      : "transport_failed";
+    super(safeFetchPublicMessage(canonical), options);
+    this.code = canonical;
     this.name = "SafeFetchError";
+    TRUSTED_SAFE_FETCH_ERRORS.set(this, canonical);
   }
 }
 
 export function safeFetchError(code: SafeFetchErrorCode, cause?: unknown): SafeFetchError {
   return new SafeFetchError(code, cause === undefined ? undefined : { cause });
+}
+
+export function toSafeFetchError(error: unknown): SafeFetchError {
+  let trustedCode: SafeFetchErrorCode | undefined;
+  try {
+    if (
+      (typeof error === "object" && error !== null) ||
+      typeof error === "function"
+    ) {
+      trustedCode = TRUSTED_SAFE_FETCH_ERRORS.get(error as object);
+    }
+  } catch {
+    // Hostile and revoked proxy values are always treated as unknown failures.
+  }
+  return safeFetchError(trustedCode ?? "transport_failed", error);
+}
+
+export function serializeSafeFetchError(
+  error: unknown,
+): SerializedSafeFetchError {
+  const safe = toSafeFetchError(error);
+  return {
+    code: safe.code,
+    message: safeFetchPublicMessage(safe.code),
+  };
 }

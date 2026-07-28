@@ -1,7 +1,7 @@
 import { isIP } from "node:net";
 import { readBoundedBody } from "./body";
 import { assertPublicAddress, normalizeHostname, validateSafeFetchUrl } from "./destination";
-import { SafeFetchError, safeFetchError } from "./errors";
+import { SafeFetchError, safeFetchError, toSafeFetchError } from "./errors";
 import {
   createSafeFetchPolicy,
   validateSafeFetchHeaders,
@@ -59,7 +59,11 @@ function resultFromBytes(
     bytes,
     text,
     json<T = unknown>(): T {
-      return JSON.parse(text()) as T;
+      try {
+        return JSON.parse(text()) as T;
+      } catch (cause) {
+        throw safeFetchError("transport_failed", cause);
+      }
     },
   };
 }
@@ -178,6 +182,16 @@ export class DefaultSafeFetchService implements SafeFetchService {
   }
 
   async fetch(request: SafeFetchRequest): Promise<SafeFetchResult> {
+    try {
+      return await this.fetchWithPolicy(request);
+    } catch (cause) {
+      throw toSafeFetchError(cause);
+    }
+  }
+
+  private async fetchWithPolicy(
+    request: SafeFetchRequest,
+  ): Promise<SafeFetchResult> {
     let currentUrl = request.url;
     let redirectTarget = false;
     const headers = validateSafeFetchHeaders(request.headers);
