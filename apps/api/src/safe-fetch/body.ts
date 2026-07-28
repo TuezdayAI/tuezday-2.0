@@ -36,6 +36,13 @@ export interface BoundedBodyResult {
   contentType: string;
 }
 
+class UpstreamBodyError extends Error {
+  constructor(public readonly upstreamCause: unknown) {
+    super("The upstream response stream failed.");
+    this.name = "UpstreamBodyError";
+  }
+}
+
 export function normalizeContentType(value: string | undefined): string | undefined {
   if (typeof value !== "string") return undefined;
   const mime = value.split(";", 1)[0]?.trim().toLowerCase();
@@ -119,16 +126,39 @@ export async function readBoundedBody(
   const countedInput = async function* (
     source: AsyncIterable<unknown>,
   ): AsyncGenerator<Uint8Array> {
-    for await (const rawChunk of source) {
-      const chunk =
-        rawChunk instanceof Uint8Array
-          ? rawChunk
-          : Buffer.from(rawChunk as ArrayBuffer);
-      compressedBytes += chunk.byteLength;
-      if (compressedBytes > options.limits.maxCompressedBytes) {
-        throw safeFetchError("compressed_limit");
+    let iterator: AsyncIterator<unknown>;
+    try {
+      iterator = source[Symbol.asyncIterator]();
+    } catch (cause) {
+      throw new UpstreamBodyError(cause);
+    }
+
+    try {
+      while (true) {
+        let step: IteratorResult<unknown>;
+        try {
+          step = await iterator.next();
+        } catch (cause) {
+          throw new UpstreamBodyError(cause);
+        }
+        if (step.done) break;
+        const rawChunk = step.value;
+        const chunk =
+          rawChunk instanceof Uint8Array
+            ? rawChunk
+            : Buffer.from(rawChunk as ArrayBuffer);
+        compressedBytes += chunk.byteLength;
+        if (compressedBytes > options.limits.maxCompressedBytes) {
+          throw safeFetchError("compressed_limit");
+        }
+        yield chunk;
       }
-      yield chunk;
+    } finally {
+      try {
+        await iterator.return?.();
+      } catch {
+        // Preserve the primary limit, timeout, or transport failure.
+      }
     }
   };
 
@@ -195,8 +225,14 @@ export async function readBoundedBody(
     destroyBody(options.body);
     decoder?.destroy();
     if (options.signal.aborted) throw safeFetchError("total_timeout", cause);
+    if (cause instanceof UpstreamBodyError) {
+      throw safeFetchError("transport_failed", cause.upstreamCause);
+    }
     if (cause instanceof SafeFetchError) throw cause;
-    throw safeFetchError("encoding_blocked", cause);
+    throw safeFetchError(
+      decoder ? "encoding_blocked" : "transport_failed",
+      cause,
+    );
   } finally {
     options.signal.removeEventListener("abort", onAbort);
   }

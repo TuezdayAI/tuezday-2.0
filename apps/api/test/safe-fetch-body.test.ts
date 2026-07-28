@@ -12,6 +12,7 @@ import {
   createSafeFetchPolicy,
   normalizeContentType,
   readBoundedBody,
+  safeFetchPublicMessage,
   type PinnedRequest,
   type SafeFetchDeadline,
   type SafeFetchResolver,
@@ -42,6 +43,20 @@ class FixtureBody implements TransportBody {
     if (this.waitAfterChunks && !this.destroyed) {
       await new Promise<void>(() => {});
     }
+  }
+}
+
+class FailingBody implements TransportBody {
+  destroyed = false;
+
+  constructor(private readonly failure: unknown) {}
+
+  destroy(): void {
+    this.destroyed = true;
+  }
+
+  async *[Symbol.asyncIterator](): AsyncIterator<Uint8Array> {
+    throw this.failure;
   }
 }
 
@@ -368,6 +383,57 @@ describe("safe-fetch streaming decoding", () => {
     expect(body.destroyed).toBe(true);
   });
 
+  it("classifies an upstream identity stream failure as transport_failed", async () => {
+    const body = new FailingBody(
+      new Error("socket reset by db.internal at 169.254.169.254"),
+    );
+    await expect(
+      readBoundedBody({
+        body,
+        contentType: "application/json",
+        profile: "json",
+        limits: DEFAULT_BODY_LIMITS,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toMatchObject({
+      code: "transport_failed",
+      message: safeFetchPublicMessage("transport_failed"),
+    });
+    expect(body.destroyed).toBe(true);
+  });
+
+  it("classifies an upstream compressed stream failure as transport_failed", async () => {
+    const body = new FailingBody(
+      new Error("socket reset while reading https://user:secret@host"),
+    );
+    await expect(
+      readBoundedBody({
+        body,
+        contentType: "application/json",
+        contentEncoding: "gzip",
+        profile: "json",
+        limits: DEFAULT_BODY_LIMITS,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toMatchObject({
+      code: "transport_failed",
+      message: safeFetchPublicMessage("transport_failed"),
+    });
+    expect(body.destroyed).toBe(true);
+  });
+
+  it("classifies malformed gzip data as encoding_blocked", async () => {
+    const { body, result } = await readFixture(
+      Buffer.from("<html>private response</html>"),
+      { contentEncoding: "gzip" },
+    );
+    await expect(result).rejects.toMatchObject({
+      code: "encoding_blocked",
+      message: safeFetchPublicMessage("encoding_blocked"),
+    });
+    expect(body.destroyed).toBe(true);
+  });
+
   it("does not miss an abort that races with listener registration", async () => {
     let aborted = false;
     const racingSignal = {
@@ -389,6 +455,24 @@ describe("safe-fetch streaming decoding", () => {
 });
 
 describe("DefaultSafeFetchService resource policy", () => {
+  it("redacts response excerpts from JSON parsing failures", async () => {
+    const body = new FixtureBody([
+      Buffer.from('{"secret":"https://user:secret@db.internal",}'),
+    ]);
+    const h = serviceHarness({ responses: [transportResponse(200, body)] });
+    const result = await h.service.fetch({
+      url: "https://public.example/data",
+      profile: "json",
+    });
+
+    expect(() => result.json()).toThrowError(
+      expect.objectContaining({
+        code: "transport_failed",
+        message: safeFetchPublicMessage("transport_failed"),
+      }),
+    );
+  });
+
   it("honors lower caller body limits", async () => {
     const body = new FixtureBody([Buffer.alloc(1_001, 0x61)]);
     const h = serviceHarness({ responses: [transportResponse(200, body)] });

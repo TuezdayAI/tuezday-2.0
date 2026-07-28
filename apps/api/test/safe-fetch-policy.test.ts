@@ -1,12 +1,118 @@
 import { describe, expect, it } from "vitest";
 import {
+  SAFE_FETCH_ERROR_CODES,
   SAFE_FETCH_LIMITS,
   SAFE_FETCH_MIME_TYPES,
   SafeFetchError,
   assertPublicAddress,
   createSafeFetchPolicy,
+  safeFetchError,
+  safeFetchPublicMessage,
+  serializeSafeFetchError,
+  toSafeFetchError,
   validateSafeFetchUrl,
 } from "../src/safe-fetch";
+
+const HOSTILE_FAILURE_DETAILS = [
+  "169.254.169.254",
+  "db.internal",
+  "https://user:secret@host",
+  "<html><body>private response</body></html>",
+  "connect ECONNREFUSED 10.0.0.8:5432",
+] as const;
+
+describe("safe-fetch failure redaction", () => {
+  it.each(SAFE_FETCH_ERROR_CODES)(
+    "serializes %s to its exact public-only shape",
+    (code) => {
+      const cause = new Error(HOSTILE_FAILURE_DETAILS.join(" | "));
+      const error = safeFetchError(code, cause);
+      const expected = {
+        code,
+        message: safeFetchPublicMessage(code),
+      };
+
+      expect(error.cause).toBe(cause);
+      expect(error.message).toBe(expected.message);
+      expect(serializeSafeFetchError(error)).toEqual(expected);
+      expect(Object.keys(serializeSafeFetchError(error))).toEqual([
+        "code",
+        "message",
+      ]);
+
+      const persistedSafeText = JSON.stringify(serializeSafeFetchError(error));
+      for (const detail of HOSTILE_FAILURE_DETAILS) {
+        expect(error.message).not.toContain(detail);
+        expect(persistedSafeText).not.toContain(detail);
+      }
+    },
+  );
+
+  it("maps an unexpected hostile failure to transport_failed without stringifying it", () => {
+    let stringified = false;
+    const hostile = {
+      url: "https://user:secret@db.internal",
+      body: "<html>private response</html>",
+      toString() {
+        stringified = true;
+        return "169.254.169.254";
+      },
+    };
+
+    const safe = toSafeFetchError(hostile);
+    expect(safe).toMatchObject({
+      code: "transport_failed",
+      message: safeFetchPublicMessage("transport_failed"),
+      cause: hostile,
+    });
+    expect(serializeSafeFetchError(hostile)).toEqual({
+      code: "transport_failed",
+      message: safeFetchPublicMessage("transport_failed"),
+    });
+    expect(stringified).toBe(false);
+  });
+
+  it("reconstructs an existing failure from its original trusted class", () => {
+    const original = safeFetchError(
+      "dns_failed",
+      new Error("lookup db.internal at 169.254.169.254"),
+    );
+    Object.defineProperty(original, "message", {
+      value: "https://user:secret@db.internal",
+    });
+    (original as { code: string }).code = "169.254.169.254";
+
+    const reconstructed = toSafeFetchError(original);
+    expect(reconstructed).not.toBe(original);
+    expect(reconstructed).toMatchObject({
+      code: "dns_failed",
+      message: safeFetchPublicMessage("dns_failed"),
+      cause: original,
+    });
+  });
+
+  it("does not trust prototype-spoofed or revoked error-like values", () => {
+    const spoofed = Object.assign(
+      Object.create(SafeFetchError.prototype) as Record<string, unknown>,
+      {
+        code: "dns_failed",
+        message: "lookup db.internal at 169.254.169.254",
+      },
+    );
+    expect(serializeSafeFetchError(spoofed)).toEqual({
+      code: "transport_failed",
+      message: safeFetchPublicMessage("transport_failed"),
+    });
+
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    expect(() => toSafeFetchError(proxy)).not.toThrow();
+    expect(serializeSafeFetchError(proxy)).toEqual({
+      code: "transport_failed",
+      message: safeFetchPublicMessage("transport_failed"),
+    });
+  });
+});
 
 describe("createSafeFetchPolicy", () => {
   it("uses the fixed production limits", () => {
