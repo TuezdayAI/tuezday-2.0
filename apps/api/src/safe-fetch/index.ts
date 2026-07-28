@@ -3,6 +3,8 @@ import type { SafeFetchLimits, SafeFetchProfile } from "./policy";
 export * from "./destination";
 export * from "./errors";
 export * from "./policy";
+export * from "./service";
+export * from "./transport";
 
 export interface SafeFetchRequest {
   url: string;
