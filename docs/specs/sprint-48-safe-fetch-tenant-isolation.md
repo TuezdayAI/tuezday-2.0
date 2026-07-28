@@ -1,6 +1,6 @@
 # Sprint 48 — Safe Fetch Service and Tenant Isolation
 
-> **Status:** Design approved; implementation not started
+> **Status:** Implementation complete; release verification passed
 > **Date:** 2026-07-28
 > **Branch:** `sprint-48-safe-fetch-tenant-isolation`
 > **Base:** `main` at `03329c4`
@@ -416,3 +416,12 @@ The founder acceptance evidence for TAP-7 includes the three PRD cases:
 - **2026-07-28:** Isolated branch created from `main` at `03329c4`.
 - **2026-07-28:** Clean baseline confirmed: 162 test files and 1,520 tests pass
   after installing the missing Playwright Chromium test binary.
+- **2026-07-28:** All nine implementation cards completed and confirmed `Done`
+  in Plane: TAP-35 `aa2487c`, TAP-36 `cab7d97`, TAP-37 `10a97d5`, TAP-38
+  `ddbb198`, TAP-39 `db83e8f`, TAP-40 `b0ae203`, TAP-41 `4846c1e`, TAP-42
+  `a957e15`, and TAP-43 `441fff7`.
+- **2026-07-28:** Founder acceptance regressions passed: foreign references 4/4,
+  metadata-address create/fetch 2/2, and gzip-bomb bounds 1/1.
+- **2026-07-28:** Release verification passed across all seven workspaces:
+  `npm run typecheck` succeeded and `npm test` passed 165 test files with 1,715
+  tests.
