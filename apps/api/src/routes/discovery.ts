@@ -35,6 +35,7 @@ import {
   updateDiscoverySource,
 } from "../services/discovery";
 import { emitEvent } from "../services/events";
+import { SignalReferenceNotFoundError } from "../services/signals";
 import {
   DuplicateTrackedAccountError,
   InvalidTrackedHandleError,
@@ -299,6 +300,9 @@ export function registerDiscoveryRoutes(
       } catch (err) {
         if (err instanceof ItemNotTriagableError) {
           return reply.status(409).send({ error: "already_triaged", message: err.message });
+        }
+        if (err instanceof SignalReferenceNotFoundError) {
+          return reply.status(404).send({ error: "related_object_not_found" });
         }
         throw err;
       }

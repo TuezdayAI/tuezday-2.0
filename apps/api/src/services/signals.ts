@@ -17,12 +17,41 @@ import {
   listSignalMatchesForSignals,
   scoreSignalMatches,
 } from "./matching";
+import { getCampaign } from "./campaigns";
+import { getPersona } from "./personas";
 
 function rowToSignal(row: SignalRow, matches: DiscoveredItemMatch[]): Signal {
   return { ...row, source: row.source as SignalSource, matches };
 }
 
+export class SignalReferenceNotFoundError extends Error {
+  constructor() {
+    super("A related signal object was not found.");
+    this.name = "SignalReferenceNotFoundError";
+  }
+}
+
+export function resolveSignalReferences(
+  db: Db,
+  workspaceId: string,
+  input: Pick<CreateSignalInput, "suggestedPersonaId" | "suggestedCampaignId">,
+): void {
+  if (
+    input.suggestedPersonaId &&
+    !getPersona(db, workspaceId, input.suggestedPersonaId)
+  ) {
+    throw new SignalReferenceNotFoundError();
+  }
+  if (
+    input.suggestedCampaignId &&
+    !getCampaign(db, workspaceId, input.suggestedCampaignId)
+  ) {
+    throw new SignalReferenceNotFoundError();
+  }
+}
+
 export function createSignal(db: Db, workspaceId: string, input: CreateSignalInput): Signal {
+  resolveSignalReferences(db, workspaceId, input);
   const row: SignalRow = {
     id: randomUUID(),
     workspaceId,

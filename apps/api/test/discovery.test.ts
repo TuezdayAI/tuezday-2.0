@@ -13,6 +13,7 @@ import {
   discoveredItems,
   discoverySources,
   signalMatches,
+  signals,
 } from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
 import {
@@ -502,6 +503,40 @@ describe("discovery API", () => {
         url: `/workspaces/${workspaceId}/discovery/items/${top.id}/accept`,
       });
       expect(res.statusCode).toBe(409);
+    });
+
+    it("rejects a stale related reference without accepting the item", async () => {
+      await addRssSource();
+      await run();
+      const [top] = await items();
+      expect(top.suggestedPersonaId).toBe(personaRef.id);
+      const deleted = await app.inject({
+        method: "DELETE",
+        url: `/workspaces/${workspaceId}/personas/${personaRef.id}`,
+      });
+      expect(deleted.statusCode).toBe(204);
+
+      const accepted = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/discovery/items/${top.id}/accept`,
+      });
+
+      expect(accepted.statusCode).toBe(404);
+      expect(accepted.json()).toEqual({ error: "related_object_not_found" });
+      const storedItem = (await items()).find(
+        (candidate: { id: string }) => candidate.id === top.id,
+      );
+      expect(storedItem).toMatchObject({ status: "new", signalId: null });
+      expect(
+        db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
+      ).toHaveLength(0);
+      expect(
+        db
+          .select()
+          .from(signalMatches)
+          .where(eq(signalMatches.workspaceId, workspaceId))
+          .all(),
+      ).toHaveLength(0);
     });
 
     it("skips an item", async () => {
