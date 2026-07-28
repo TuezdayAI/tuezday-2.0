@@ -297,6 +297,7 @@ export function createDiscoverySource(
     connectionId,
     cursorJson: "{}",
     lastAttemptedAt: null,
+    executionVersion: 1,
     createdAt: Date.now(),
   };
   db.insert(discoverySources).values(row).run();

@@ -360,6 +360,18 @@ export const signals = sqliteTable("signals", {
 
 export type SignalRow = typeof signals.$inferSelect;
 
+export const taskLeases = sqliteTable("task_leases", {
+  key: text("key").primaryKey(),
+  owner: text("owner").notNull(),
+  version: integer("version").notNull().default(1),
+  expiresAt: integer("expires_at").notNull(),
+  heartbeatAt: integer("heartbeat_at").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type TaskLeaseRow = typeof taskLeases.$inferSelect;
+
 export const discoverySources = sqliteTable("discovery_sources", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id")
@@ -382,6 +394,7 @@ export const discoverySources = sqliteTable("discovery_sources", {
   // Rate-limit back-pressure: the source is not enqueued until this passes.
   backoffUntil: integer("backoff_until"),
   lastAttemptedAt: integer("last_attempted_at"),
+  executionVersion: integer("execution_version").notNull().default(1),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -403,6 +416,11 @@ export const discoveryJobs = sqliteTable(
     status: text("status").notNull(), // queued | running | succeeded | failed | skipped
     attempt: integer("attempt").notNull().default(0),
     lockedAt: integer("locked_at"),
+    sourceExecutionVersion: integer("source_execution_version").notNull().default(1),
+    leaseOwner: text("lease_owner"),
+    leaseVersion: integer("lease_version").notNull().default(0),
+    leaseExpiresAt: integer("lease_expires_at"),
+    heartbeatAt: integer("heartbeat_at"),
     startedAt: integer("started_at"),
     finishedAt: integer("finished_at"),
     fetchedCount: integer("fetched_count").notNull().default(0),
@@ -413,6 +431,9 @@ export const discoveryJobs = sqliteTable(
   (t) => [
     index("discovery_jobs_workspace_status").on(t.workspaceId, t.status, t.createdAt),
     index("discovery_jobs_source_status").on(t.sourceId, t.status),
+    uniqueIndex("discovery_jobs_one_active_source")
+      .on(t.sourceId)
+      .where(sql`${t.status} IN ('queued', 'running')`),
   ],
 );
 
