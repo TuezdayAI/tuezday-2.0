@@ -1,6 +1,15 @@
 import { safeFetchError } from "./errors";
 
-export const SAFE_FETCH_LIMITS = Object.freeze({
+export interface SafeFetchLimits {
+  connectTimeoutMs: number;
+  totalTimeoutMs: number;
+  maxRedirects: number;
+  maxCompressedBytes: number;
+  maxDecodedBytes: number;
+  maxExpansionRatio: number;
+}
+
+export const SAFE_FETCH_LIMITS: Readonly<SafeFetchLimits> = Object.freeze({
   connectTimeoutMs: 5_000,
   totalTimeoutMs: 20_000,
   maxRedirects: 5,
@@ -8,8 +17,6 @@ export const SAFE_FETCH_LIMITS = Object.freeze({
   maxDecodedBytes: 5 * 1024 * 1024,
   maxExpansionRatio: 20,
 });
-
-export type SafeFetchLimits = typeof SAFE_FETCH_LIMITS;
 
 export const SAFE_FETCH_MIME_TYPES = Object.freeze({
   feed: Object.freeze([
@@ -27,7 +34,7 @@ export type SafeFetchProfile = keyof typeof SAFE_FETCH_MIME_TYPES;
 
 export interface SafeFetchPolicy {
   allowHttp: boolean;
-  limits: SafeFetchLimits;
+  limits: Readonly<SafeFetchLimits>;
 }
 
 const SAFE_REQUEST_HEADERS = new Set(["accept", "user-agent"]);
