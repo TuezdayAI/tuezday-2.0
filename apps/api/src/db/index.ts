@@ -6,6 +6,8 @@ import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import * as schema from "./schema";
 
 export type Db = BetterSQLite3Database<typeof schema>;
+export type DbTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
+export type DbExecutor = Db | DbTransaction;
 
 const migrationsFolder = path.join(
   path.dirname(fileURLToPath(import.meta.url)),

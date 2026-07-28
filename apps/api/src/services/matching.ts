@@ -1,23 +1,20 @@
 // Sprint 45 shared matching module: the persona×campaign prompt context,
 // defensive match parsing, and signal/item match persistence used by both
-// discovery scoring (scoreUnscoredItems) and one-off signal scoring
-// (scoreSignalMatches). Factored out so a manually-created signal gets the
-// exact same judgment a discovered item does.
+// discovery scoring and one-off signal scoring. Factored out so a
+// manually-created signal gets the exact same judgment a discovered item does.
 
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import {
   DISCOVERY_MAX_MATCHES_PER_ITEM,
   type DiscoveredItemMatch,
-  type Signal,
 } from "@tuezday/contracts";
-import type { Db } from "../db";
+import type { Db, DbExecutor } from "../db";
 import {
   campaigns,
   discoveredItemMatches,
   personas,
   signalMatches,
-  signals,
   type SignalMatchRow,
 } from "../db/schema";
 import type { LlmGateway } from "../llm/gateway";
@@ -211,7 +208,7 @@ export function replaceItemMatches(
 }
 
 export function insertSignalMatch(
-  db: Db,
+  db: DbExecutor,
   workspaceId: string,
   signalId: string,
   match: { personaId: string | null; campaignId: string | null; score: number; reason: string },
@@ -287,7 +284,7 @@ export function listItemMatches(db: Db, itemId: string): DiscoveredItemMatch[] {
 
 /** Contract-shaped matches for many signals at once (one joined query). */
 export function listSignalMatchesForSignals(
-  db: Db,
+  db: DbExecutor,
   signalIds: string[],
 ): Map<string, DiscoveredItemMatch[]> {
   const map = new Map<string, DiscoveredItemMatch[]>();
@@ -316,8 +313,69 @@ export function listSignalMatchesForSignals(
   return map;
 }
 
-export function listSignalMatches(db: Db, signalId: string): DiscoveredItemMatch[] {
+export function listSignalMatches(db: DbExecutor, signalId: string): DiscoveredItemMatch[] {
   return listSignalMatchesForSignals(db, [signalId]).get(signalId) ?? [];
+}
+
+/**
+ * Re-check an LLM judgment against the workspace state that exists at write
+ * time. The gateway call is awaited outside the transaction, so personas,
+ * active campaigns, or campaign assignments may have changed meanwhile.
+ */
+export function revalidateSignalMatches(
+  db: DbExecutor,
+  workspaceId: string,
+  matches: ParsedMatch[],
+): ParsedMatch[] {
+  if (matches.length === 0) return [];
+  const currentPersonaIds = new Set(
+    db
+      .select({ id: personas.id })
+      .from(personas)
+      .where(eq(personas.workspaceId, workspaceId))
+      .all()
+      .map((row) => row.id),
+  );
+  const currentCampaignPersonaIds = new Map(
+    db
+      .select({
+        id: campaigns.id,
+        personaIdsJson: campaigns.personaIdsJson,
+      })
+      .from(campaigns)
+      .where(
+        and(
+          eq(campaigns.workspaceId, workspaceId),
+          eq(campaigns.status, "active"),
+        ),
+      )
+      .all()
+      .map((row) => [
+        row.id,
+        new Set(JSON.parse(row.personaIdsJson) as string[]),
+      ]),
+  );
+
+  return matches.flatMap((match) => {
+    const campaignId =
+      match.campaignId && currentCampaignPersonaIds.has(match.campaignId)
+        ? match.campaignId
+        : null;
+    let personaId =
+      match.personaId && currentPersonaIds.has(match.personaId)
+        ? match.personaId
+        : null;
+    if (
+      campaignId &&
+      personaId &&
+      !currentCampaignPersonaIds.get(campaignId)?.has(personaId)
+    ) {
+      personaId = null;
+    }
+    return campaignId || personaId
+      ? [{ ...match, personaId, campaignId }]
+      : [];
+  });
 }
 
 /**
@@ -361,42 +419,29 @@ export function getMatchingConfigVersion(db: Db, workspaceId: string): number {
 // ---------------------------------------------------------------------------
 
 /**
- * Score a single signal against the workspace's personas and campaigns using
- * the exact prompt/parse discovery items get, writing `signal_matches` rows
- * and patching the signal's `suggestedPersonaId`/`suggestedCampaignId`
- * convenience fields from the best candidate. Gateway failures propagate —
- * callers treat matching as best-effort and try/catch around this so an LLM
- * outage never blocks signal creation.
+ * Judge a single signal against the workspace's personas and campaigns using
+ * the exact prompt/parse discovery items get. This phase performs no writes,
+ * so callers can finish the complete persistence step in one transaction.
+ * Gateway failures propagate; callers convert them to an empty best-effort
+ * result before opening that transaction.
  */
-export async function scoreSignalMatches(
+export async function judgeSignalMatches(
   db: Db,
   llm: LlmGateway,
   workspaceId: string,
-  signal: Signal,
-): Promise<DiscoveredItemMatch[]> {
+  content: string,
+): Promise<ParsedMatch[]> {
   const ctx = buildMatchingContext(db, workspaceId);
   const prompt = buildMatchingPrompt({
     workspaceName: getWorkspace(db, workspaceId)?.name ?? "this workspace",
     digest: brainDigest(db, workspaceId),
     ctx,
-    itemsBlock: `ITEM 0: ${signal.content.slice(0, SIGNAL_CONTENT_PROMPT_CHARS)}`,
+    itemsBlock: `ITEM 0: ${content.slice(0, SIGNAL_CONTENT_PROMPT_CHARS)}`,
   });
   const result = await llm.generate({ prompt });
   const entries = parseJsonArray(result.text);
   if (!entries) return [];
   const entry = entries.find((e): e is Record<string, unknown> => typeof e === "object" && e !== null);
   if (!entry) return [];
-  const matches = parseEntryMatches(entry, ctx);
-
-  // Same replace posture as item scoring: never accumulate stale candidates.
-  db.delete(signalMatches).where(eq(signalMatches.signalId, signal.id)).run();
-  for (const match of matches) insertSignalMatch(db, workspaceId, signal.id, match);
-  const best = matches[0];
-  if (best) {
-    db.update(signals)
-      .set({ suggestedPersonaId: best.personaId, suggestedCampaignId: best.campaignId })
-      .where(eq(signals.id, signal.id))
-      .run();
-  }
-  return listSignalMatches(db, signal.id);
+  return parseEntryMatches(entry, ctx);
 }
