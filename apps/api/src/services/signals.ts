@@ -93,7 +93,7 @@ export function readSignal(
     .from(signals)
     .where(and(eq(signals.workspaceId, workspaceId), eq(signals.id, signalId)))
     .get();
-  return row ? rowToSignal(row, listSignalMatches(db, row.id)) : undefined;
+  return row ? rowToSignal(row, listSignalMatches(db, workspaceId, row.id)) : undefined;
 }
 
 export function persistSignalCreation(
@@ -214,6 +214,7 @@ export function listSignals(db: Db, workspaceId: string): SignalWithDrafts[] {
 
   const matchesBySignal = listSignalMatchesForSignals(
     db,
+    workspaceId,
     signalRows.map((s) => s.id),
   );
 

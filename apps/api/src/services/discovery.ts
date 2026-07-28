@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import {
   type CreateDiscoverySourceInput,
   type DiscoveredItem,
@@ -11,12 +11,15 @@ import {
   type DiscoverySourceType,
   type Signal,
   type SignalSource,
+  type TrackedSocialAccount,
+  type TrackedSocialPlatform,
   type UpdateDiscoverySourceInput,
 } from "@tuezday/contracts";
 import type { ConnectorFabric } from "../connectors/fabric";
-import type { Db } from "../db";
+import type { Db, DbExecutor } from "../db";
 import {
   discoveredItems,
+  discoveredItemMatches,
   discoveryJobs,
   discoverySources,
   type DiscoveredItemRow,
@@ -31,6 +34,7 @@ import {
   PermissionRequiredError,
   RateLimitedError,
   fetchConnectedSourceItems,
+  type ResolvedTrackedAccount,
 } from "../discovery/connected-adapters";
 import type { IntentProvider } from "../discovery/intent";
 import type { LlmGateway } from "../llm/gateway";
@@ -40,7 +44,10 @@ import {
   type SafeFetchService,
 } from "../safe-fetch";
 import { getConnection } from "./connections";
-import { resolveTrackedAccounts } from "./tracked-social-accounts";
+import {
+  DiscoveryReferenceNotFoundError,
+  requireTrackedAccounts,
+} from "./tracked-social-accounts";
 import {
   DISCOVERY_JOB_BATCH_SIZE,
   claimDiscoveryJobs,
@@ -61,10 +68,11 @@ import {
   listSignalMatches,
   parseEntryMatches,
   parseJsonArray,
+  revalidateSignalMatches,
   replaceItemMatches,
 } from "./matching";
 import { listPersonas } from "./personas";
-import { createSignal } from "./signals";
+import { insertSignalRow, readSignal } from "./signals";
 
 // ---------------------------------------------------------------------------
 // Sources
@@ -219,6 +227,51 @@ function validateSourceConnection(
   }
 }
 
+function trackedAccountIds(config: DiscoverySourceConfig): string[] {
+  return [
+    ...(config.trackedAccountId ? [config.trackedAccountId] : []),
+    ...(config.trackedAccountIds ?? []),
+  ];
+}
+
+function trackedPlatformForSource(
+  type: DiscoverySourceType,
+): TrackedSocialPlatform | undefined {
+  switch (type) {
+    case "x":
+      return "x";
+    case "linkedin":
+      return "linkedin";
+    case "instagram":
+      return "instagram";
+    case "reddit":
+      return "reddit";
+    default:
+      return undefined;
+  }
+}
+
+function requireSourceTrackedAccounts(
+  db: Db,
+  workspaceId: string,
+  type: DiscoverySourceType,
+  config: DiscoverySourceConfig,
+): TrackedSocialAccount[] {
+  const accounts = requireTrackedAccounts(
+    db,
+    workspaceId,
+    trackedAccountIds(config),
+  );
+  const expectedPlatform = trackedPlatformForSource(type);
+  if (
+    expectedPlatform &&
+    accounts.some((account) => account.platform !== expectedPlatform)
+  ) {
+    throw new DiscoveryReferenceNotFoundError();
+  }
+  return accounts;
+}
+
 export function createDiscoverySource(
   db: Db,
   workspaceId: string,
@@ -226,6 +279,7 @@ export function createDiscoverySource(
 ): DiscoverySource {
   const connectionId = input.connectionId ?? null;
   validateSourceConnection(db, workspaceId, input.type, input.config, connectionId);
+  requireSourceTrackedAccounts(db, workspaceId, input.type, input.config);
   const row: DiscoverySourceRow = {
     id: randomUUID(),
     workspaceId,
@@ -259,7 +313,7 @@ export function listDiscoverySources(db: Db, workspaceId: string): DiscoverySour
 }
 
 export function getDiscoverySource(
-  db: Db,
+  db: DbExecutor,
   workspaceId: string,
   sourceId: string,
 ): DiscoverySource | undefined {
@@ -290,13 +344,31 @@ export function updateDiscoverySource(
     configJson: JSON.stringify(nextConfig),
     connectionId: nextConnectionId,
   };
-  db.update(discoverySources).set(updated).where(eq(discoverySources.id, sourceId)).run();
+  requireSourceTrackedAccounts(db, workspaceId, existing.type, nextConfig);
+  db
+    .update(discoverySources)
+    .set(updated)
+    .where(
+      and(
+        eq(discoverySources.workspaceId, workspaceId),
+        eq(discoverySources.id, sourceId),
+      ),
+    )
+    .run();
   return getDiscoverySource(db, workspaceId, sourceId);
 }
 
 export function deleteDiscoverySource(db: Db, workspaceId: string, sourceId: string): boolean {
   if (!getDiscoverySource(db, workspaceId, sourceId)) return false;
-  db.delete(discoverySources).where(eq(discoverySources.id, sourceId)).run();
+  db
+    .delete(discoverySources)
+    .where(
+      and(
+        eq(discoverySources.workspaceId, workspaceId),
+        eq(discoverySources.id, sourceId),
+      ),
+    )
+    .run();
   return true;
 }
 
@@ -350,6 +422,7 @@ export function listDiscoveredItems(
     .all();
   const matchesByItem = listItemMatchesForItems(
     db,
+    workspaceId,
     rows.map((r) => r.id),
   );
   const duplicateCounts = countDuplicatesByCanonical(db, workspaceId);
@@ -359,7 +432,7 @@ export function listDiscoveredItems(
 }
 
 export function getDiscoveredItem(
-  db: Db,
+  db: DbExecutor,
   workspaceId: string,
   itemId: string,
 ): DiscoveredItem | undefined {
@@ -373,9 +446,18 @@ export function getDiscoveredItem(
     db
       .select({ count: sql<number>`COUNT(*)` })
       .from(discoveredItems)
-      .where(eq(discoveredItems.duplicateOfId, itemId))
+      .where(
+        and(
+          eq(discoveredItems.workspaceId, workspaceId),
+          eq(discoveredItems.duplicateOfId, itemId),
+        ),
+      )
       .get()?.count ?? 0;
-  return rowToItem(row, listItemMatches(db, itemId), duplicateCount);
+  return rowToItem(
+    row,
+    listItemMatches(db, workspaceId, itemId),
+    duplicateCount,
+  );
 }
 
 export interface DuplicateItemRef {
@@ -427,39 +509,149 @@ export class ItemNotTriagableError extends Error {
   }
 }
 
+export interface DiscoveryAcceptanceHooks {
+  afterSignalInsert?(): void;
+  afterMatchInsert?(index: number): void;
+  afterItemUpdate?(): void;
+}
+
+function requireCurrentMatchReferences(
+  db: DbExecutor,
+  workspaceId: string,
+  matches: Array<{
+    personaId: string | null;
+    campaignId: string | null;
+    score: number;
+    reason: string;
+  }>,
+): void {
+  const current = revalidateSignalMatches(db, workspaceId, matches);
+  if (
+    current.length !== matches.length ||
+    current.some(
+      (match, index) =>
+        match.personaId !== matches[index]?.personaId ||
+        match.campaignId !== matches[index]?.campaignId,
+    )
+  ) {
+    throw new DiscoveryReferenceNotFoundError();
+  }
+}
+
 export function acceptDiscoveredItem(
   db: Db,
   workspaceId: string,
-  item: DiscoveredItem,
+  itemId: string,
+  hooks?: DiscoveryAcceptanceHooks,
 ): { item: DiscoveredItem; signal: Signal } {
-  if (item.status !== "new") throw new ItemNotTriagableError(item.status);
-  const source = getDiscoverySource(db, workspaceId, item.sourceId);
-  const signal = createSignal(db, workspaceId, {
-    content: item.summary ? `${item.title}\n\n${item.summary}` : item.title,
-    source: source ? SIGNAL_SOURCE_BY_TYPE[source.type] : "other",
-    sourceUrl: item.url || undefined,
-    suggestedPersonaId: item.suggestedPersonaId ?? undefined,
-    suggestedCampaignId: item.suggestedCampaignId ?? undefined,
+  return db.transaction((tx) => {
+    const item = getDiscoveredItem(tx, workspaceId, itemId);
+    if (!item) throw new DiscoveryReferenceNotFoundError();
+    if (item.status !== "new") throw new ItemNotTriagableError(item.status);
+    const source = getDiscoverySource(tx, workspaceId, item.sourceId);
+    if (!source) throw new DiscoveryReferenceNotFoundError();
+    const foreignItemMatch = tx
+      .select({ id: discoveredItemMatches.id })
+      .from(discoveredItemMatches)
+      .where(
+        and(
+          eq(discoveredItemMatches.itemId, item.id),
+          ne(discoveredItemMatches.workspaceId, workspaceId),
+        ),
+      )
+      .get();
+    if (foreignItemMatch) throw new DiscoveryReferenceNotFoundError();
+    const itemMatches = tx
+      .select({
+        personaId: discoveredItemMatches.personaId,
+        campaignId: discoveredItemMatches.campaignId,
+        score: discoveredItemMatches.score,
+        reason: discoveredItemMatches.reason,
+      })
+      .from(discoveredItemMatches)
+      .where(
+        and(
+          eq(discoveredItemMatches.workspaceId, workspaceId),
+          eq(discoveredItemMatches.itemId, item.id),
+        ),
+      )
+      .orderBy(
+        desc(discoveredItemMatches.score),
+        asc(discoveredItemMatches.createdAt),
+      )
+      .all();
+    const references = [...itemMatches];
+    if (
+      (item.suggestedPersonaId || item.suggestedCampaignId) &&
+      !references.some(
+        (match) =>
+          match.personaId === item.suggestedPersonaId &&
+          match.campaignId === item.suggestedCampaignId,
+      )
+    ) {
+      references.push({
+        personaId: item.suggestedPersonaId,
+        campaignId: item.suggestedCampaignId,
+        score: item.score ?? 0,
+        reason: item.scoreReason ?? "",
+      });
+    }
+    requireCurrentMatchReferences(tx, workspaceId, references);
+
+    const signalInput = {
+      content: item.summary ? `${item.title}\n\n${item.summary}` : item.title,
+      source: SIGNAL_SOURCE_BY_TYPE[source.type],
+      sourceUrl: item.url || undefined,
+      suggestedPersonaId: item.suggestedPersonaId ?? undefined,
+      suggestedCampaignId: item.suggestedCampaignId ?? undefined,
+    };
+    const signalRow = insertSignalRow(tx, workspaceId, signalInput);
+    hooks?.afterSignalInsert?.();
+    itemMatches.forEach((match, index) => {
+      insertSignalMatch(tx, workspaceId, signalRow.id, match);
+      hooks?.afterMatchInsert?.(index);
+    });
+    tx.update(discoveredItems)
+      .set({ status: "accepted", signalId: signalRow.id })
+      .where(
+        and(
+          eq(discoveredItems.workspaceId, workspaceId),
+          eq(discoveredItems.id, item.id),
+          eq(discoveredItems.status, "new"),
+        ),
+      )
+      .run();
+    hooks?.afterItemUpdate?.();
+    const signal = readSignal(tx, workspaceId, signalRow.id);
+    if (!signal) throw new Error("Accepted discovery signal could not be read.");
+    return {
+      item: {
+        ...item,
+        matches: signal.matches,
+        status: "accepted",
+        signalId: signal.id,
+      },
+      signal,
+    };
   });
-  // Carry the full candidate list forward (Sprint 45): every scored
-  // persona×campaign pairing becomes a signal_matches row — no LLM call,
-  // automation routes on what discovery already judged.
-  for (const match of listItemMatches(db, item.id)) {
-    insertSignalMatch(db, workspaceId, signal.id, match);
-  }
-  db.update(discoveredItems)
-    .set({ status: "accepted", signalId: signal.id })
-    .where(eq(discoveredItems.id, item.id))
-    .run();
-  return {
-    item: { ...item, status: "accepted", signalId: signal.id },
-    signal: { ...signal, matches: listSignalMatches(db, signal.id) },
-  };
 }
 
-export function skipDiscoveredItem(db: Db, item: DiscoveredItem): DiscoveredItem {
+export function skipDiscoveredItem(
+  db: Db,
+  workspaceId: string,
+  item: DiscoveredItem,
+): DiscoveredItem {
   if (item.status !== "new") throw new ItemNotTriagableError(item.status);
-  db.update(discoveredItems).set({ status: "skipped" }).where(eq(discoveredItems.id, item.id)).run();
+  db
+    .update(discoveredItems)
+    .set({ status: "skipped" })
+    .where(
+      and(
+        eq(discoveredItems.workspaceId, workspaceId),
+        eq(discoveredItems.id, item.id),
+      ),
+    )
+    .run();
   return { ...item, status: "skipped" };
 }
 
@@ -622,7 +814,12 @@ async function scoreUnscoredItems(
                 : null,
             scoredAt,
           })
-          .where(eq(discoveredItems.id, item.id))
+          .where(
+            and(
+              eq(discoveredItems.workspaceId, workspaceId),
+              eq(discoveredItems.id, item.id),
+            ),
+          )
           .run();
         scoredCount += 1;
       }
@@ -662,6 +859,7 @@ async function fetchViaConnection(
   fabric: ConnectorFabric,
   workspaceId: string,
   source: DiscoverySource,
+  trackedAccounts: ResolvedTrackedAccount[],
 ): Promise<RawDiscoveredItem[]> {
   const connection = source.connectionId
     ? getConnection(db, workspaceId, source.connectionId)
@@ -670,14 +868,6 @@ async function fetchViaConnection(
     // The message doubles as the stable lastError value the UI keys on.
     throw new Error("connection_disconnected");
   }
-  const trackedIds = [
-    ...(source.config.trackedAccountId ? [source.config.trackedAccountId] : []),
-    ...(source.config.trackedAccountIds ?? []),
-  ];
-  const trackedAccounts = resolveTrackedAccounts(db, workspaceId, trackedIds).map((a) => ({
-    handle: a.handle,
-    externalId: a.externalId,
-  }));
   return fetchConnectedSourceItems({ source, connection, fabric, trackedAccounts });
 }
 
@@ -712,8 +902,27 @@ export async function runDiscovery(
       continue;
     }
     try {
+      // JSON-backed tracked-account references can become invalid after source
+      // creation. Resolve them before every adapter path, including keyless
+      // Reddit/RSS and intent providers, so no stale or foreign reference can
+      // trigger an external request.
+      const trackedAccounts = requireSourceTrackedAccounts(
+        db,
+        workspaceId,
+        source.type,
+        source.config,
+      ).map((account) => ({
+        handle: account.handle,
+        externalId: account.externalId,
+      }));
       const fetched = source.connectionId
-        ? await fetchViaConnection(db, fabric, workspaceId, source)
+        ? await fetchViaConnection(
+            db,
+            fabric,
+            workspaceId,
+            source,
+            trackedAccounts,
+          )
         : source.type === "intent"
           ? await intentProvider.fetchSignals(source.config)
           : await fetchSourceItems(source.type, source.config, safeFetch);
@@ -777,7 +986,12 @@ export async function runDiscovery(
           lastAttemptedAt: fetchedAt,
           backoffUntil: null,
         })
-        .where(eq(discoverySources.id, source.id))
+        .where(
+          and(
+            eq(discoverySources.workspaceId, workspaceId),
+            eq(discoverySources.id, source.id),
+          ),
+        )
         .run();
       completeDiscoveryJob(
         db,
@@ -793,7 +1007,12 @@ export async function runDiscovery(
         // again until the (exponential) backoff passes.
         db.update(discoverySources)
           .set({ backoffUntil: failedAt + rateLimitBackoffMs(db, source.id), lastAttemptedAt: failedAt })
-          .where(eq(discoverySources.id, source.id))
+          .where(
+            and(
+              eq(discoverySources.workspaceId, workspaceId),
+              eq(discoverySources.id, source.id),
+            ),
+          )
           .run();
         failDiscoveryJob(db, job.id, "rate_limited", failedAt);
         results.push({ sourceId: source.id, name: source.name, fetched: 0, new: 0, error: "rate_limited" });
@@ -804,6 +1023,9 @@ export async function runDiscovery(
       const message = (() => {
         if (err instanceof PermissionRequiredError) {
           return `permission_required: ${err.message}`;
+        }
+        if (err instanceof DiscoveryReferenceNotFoundError) {
+          return err.message;
         }
         if (
           err instanceof SafeFetchError ||
@@ -821,7 +1043,12 @@ export async function runDiscovery(
           lastFetchedAt: failedAt,
           lastAttemptedAt: failedAt,
         })
-        .where(eq(discoverySources.id, source.id))
+        .where(
+          and(
+            eq(discoverySources.workspaceId, workspaceId),
+            eq(discoverySources.id, source.id),
+          ),
+        )
         .run();
       failDiscoveryJob(db, job.id, message, failedAt);
       results.push({ sourceId: source.id, name: source.name, fetched: 0, new: 0, error: message });

@@ -177,6 +177,20 @@ describe("connected discovery (Sprint 46)", () => {
     return res.json();
   }
 
+  async function createTrackedAccount(
+    wsId: string,
+    platform: "x" | "linkedin" | "instagram" | "reddit",
+    handle: string,
+  ) {
+    const res = await app.inject({
+      method: "POST",
+      url: `/workspaces/${wsId}/discovery/tracked-accounts`,
+      payload: { platform, handle },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    return res.json() as { id: string; platform: string; handle: string };
+  }
+
   async function runDiscoveryRoute() {
     const res = await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/discovery/run` });
     expect(res.statusCode).toBe(200);
@@ -340,6 +354,28 @@ describe("connected discovery (Sprint 46)", () => {
         400,
       );
       expect(missing.error).toBe("connection_required");
+
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Foreign Connection Workspace" },
+        })
+      ).json().id as string;
+      const foreignConnectionId = insertConnection(
+        "twitter",
+        "connected",
+        otherWorkspaceId,
+      );
+      const foreign = await createSource(
+        {
+          type: "x",
+          config: { mode: "query", query: "gtm" },
+          connectionId: foreignConnectionId,
+        },
+        400,
+      );
+      expect(foreign).toEqual(missing);
     });
 
     it("creates an active connected source with a matching connection", async () => {
@@ -378,6 +414,124 @@ describe("connected discovery (Sprint 46)", () => {
       });
       expect(detach.statusCode).toBe(400);
       expect(detach.json().error).toBe("connection_required");
+    });
+
+    it("rejects foreign, unknown, mixed, and wrong-platform tracked IDs before create", async () => {
+      const connectionId = insertConnection("twitter");
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Foreign Tracked Accounts" },
+        })
+      ).json().id as string;
+      const foreign = await createTrackedAccount(otherWorkspaceId, "x", "foreign-rival");
+      const valid = await createTrackedAccount(workspaceId, "x", "valid-rival");
+      const wrongPlatform = await createTrackedAccount(
+        workspaceId,
+        "instagram",
+        "instagram-rival",
+      );
+      const submit = (config: Record<string, unknown>) =>
+        app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/discovery/sources`,
+          payload: {
+            type: "x",
+            config: { mode: "account_timeline", ...config },
+            connectionId,
+          },
+        });
+
+      const foreignResult = await submit({ trackedAccountId: foreign.id });
+      const unknownResult = await submit({ trackedAccountId: randomUUID() });
+      const mixedResult = await submit({
+        trackedAccountIds: [valid.id, foreign.id],
+      });
+      const wrongPlatformResult = await submit({
+        trackedAccountId: wrongPlatform.id,
+      });
+
+      for (const result of [
+        foreignResult,
+        unknownResult,
+        mixedResult,
+        wrongPlatformResult,
+      ]) {
+        expect(result.statusCode).toBe(404);
+        expect(result.json()).toEqual({ error: "related_object_not_found" });
+      }
+      expect(foreignResult.json()).toEqual(unknownResult.json());
+      expect(listDiscoverySources(db, workspaceId)).toHaveLength(0);
+    });
+
+    it("rejects foreign and unknown tracked IDs on update without changing the source", async () => {
+      const connectionId = insertConnection("twitter");
+      const valid = await createTrackedAccount(workspaceId, "x", "valid-update-rival");
+      const source = await createSource({
+        type: "x",
+        config: { mode: "account_timeline", trackedAccountId: valid.id },
+        connectionId,
+      });
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Foreign Update Accounts" },
+        })
+      ).json().id as string;
+      const foreign = await createTrackedAccount(otherWorkspaceId, "x", "foreign-update-rival");
+      const update = (trackedAccountId: string) =>
+        app.inject({
+          method: "PATCH",
+          url: `/workspaces/${workspaceId}/discovery/sources/${source.id}`,
+          payload: {
+            config: { mode: "account_timeline", trackedAccountId },
+          },
+        });
+
+      const foreignResult = await update(foreign.id);
+      const unknownResult = await update(randomUUID());
+
+      expect(foreignResult.statusCode).toBe(404);
+      expect(unknownResult.statusCode).toBe(404);
+      expect(foreignResult.json()).toEqual({ error: "related_object_not_found" });
+      expect(foreignResult.json()).toEqual(unknownResult.json());
+      expect(listDiscoverySources(db, workspaceId)).toEqual([
+        expect.objectContaining({
+          id: source.id,
+          config: {
+            mode: "account_timeline",
+            trackedAccountId: valid.id,
+          },
+        }),
+      ]);
+    });
+
+    it("fails connected fetch when a referenced tracked account becomes disabled", async () => {
+      const connectionId = insertConnection("twitter");
+      const tracked = await createTrackedAccount(workspaceId, "x", "disabled-rival");
+      const source = await createSource({
+        type: "x",
+        config: { mode: "account_timeline", trackedAccountId: tracked.id },
+        connectionId,
+      });
+      const disabled = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/discovery/tracked-accounts/${tracked.id}`,
+        payload: { enabled: false },
+      });
+      expect(disabled.statusCode).toBe(200);
+
+      const result = await runDiscoveryRoute();
+
+      expect(result.sources).toEqual([
+        expect.objectContaining({
+          sourceId: source.id,
+          error: "related_object_not_found",
+        }),
+      ]);
+      expect(proxyCalls).toEqual([]);
     });
   });
 
@@ -550,6 +704,37 @@ describe("connected discovery (Sprint 46)", () => {
       expect(post.url).toBe("https://www.reddit.com/r/startups/comments/abc/anyone/");
       expect(post.title).toBe("Anyone using agentic GTM tools?");
       expect(post.publishedAt).toBe(1_751_600_000_000);
+    });
+
+    it("blocks a keyless fetch when its tracked account becomes disabled", async () => {
+      const tracked = await createTrackedAccount(
+        workspaceId,
+        "reddit",
+        "tracked-saas",
+      );
+      const source = await createSource({
+        type: "reddit",
+        config: {
+          subreddit: "saas",
+          trackedAccountId: tracked.id,
+        },
+      });
+      const disabled = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/discovery/tracked-accounts/${tracked.id}`,
+        payload: { enabled: false },
+      });
+      expect(disabled.statusCode).toBe(200);
+
+      const result = await runDiscoveryRoute();
+
+      expect(result.sources).toEqual([
+        expect.objectContaining({
+          sourceId: source.id,
+          error: "related_object_not_found",
+        }),
+      ]);
+      expect(fetchedUrls.some((url) => url.includes("/r/saas/"))).toBe(false);
     });
   });
 

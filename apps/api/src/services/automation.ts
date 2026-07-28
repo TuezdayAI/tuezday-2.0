@@ -330,7 +330,12 @@ export async function runAutomation(
     for (const signal of signals) {
       // Sprint 45: a signal only reaches this campaign when discovery (or a
       // human) matched it above the workspace threshold — no more blind fan-out.
-      const match = getBestSignalMatchForCampaign(db, signal.id, campaign.id);
+      const match = getBestSignalMatchForCampaign(
+        db,
+        workspaceId,
+        signal.id,
+        campaign.id,
+      );
       if (!match || match.score < settings.matchThreshold) continue;
       const persona = match.personaId ? personasById.get(match.personaId) : undefined;
       for (const channel of campaign.channels) {

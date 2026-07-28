@@ -646,6 +646,83 @@ describe("signals API", () => {
   });
 
   describe("GET /workspaces/:id/signals", () => {
+    it("does not return a match row assigned to another workspace", async () => {
+      const persona = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/personas`,
+          payload: { name: "Scoped Persona" },
+        })
+      ).json();
+      const signal = (
+        await createSignal({ suggestedPersonaId: persona.id })
+      ).json();
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Foreign Signal Match Workspace" },
+        })
+      ).json().id as string;
+      db.update(signalMatches)
+        .set({ workspaceId: otherWorkspaceId })
+        .where(eq(signalMatches.signalId, signal.id))
+        .run();
+
+      const listed = (
+        await app.inject({
+          method: "GET",
+          url: `/workspaces/${workspaceId}/signals`,
+        })
+      ).json();
+
+      expect(listed).toHaveLength(1);
+      expect(listed[0].matches).toEqual([]);
+    });
+
+    it("does not disclose a foreign persona joined through a local match row", async () => {
+      const localPersona = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/personas`,
+          payload: { name: "Local Persona" },
+        })
+      ).json();
+      const signal = (
+        await createSignal({ suggestedPersonaId: localPersona.id })
+      ).json();
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Foreign Parent Workspace" },
+        })
+      ).json().id as string;
+      const foreignPersona = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${otherWorkspaceId}/personas`,
+          payload: { name: "Foreign Parent Persona" },
+        })
+      ).json();
+      db.update(signalMatches)
+        .set({ personaId: foreignPersona.id })
+        .where(eq(signalMatches.signalId, signal.id))
+        .run();
+
+      const listed = (
+        await app.inject({
+          method: "GET",
+          url: `/workspaces/${workspaceId}/signals`,
+        })
+      ).json();
+
+      expect(listed).toHaveLength(1);
+      expect(listed[0].matches).toEqual([]);
+      expect(JSON.stringify(listed)).not.toContain(foreignPersona.id);
+      expect(JSON.stringify(listed)).not.toContain("Foreign Parent Persona");
+    });
+
     it("lists signals newest first with draft summaries", async () => {
       const s1 = (await createSignal()).json();
       const s2 = (await createSignal({ content: "Second signal", source: "x" })).json();

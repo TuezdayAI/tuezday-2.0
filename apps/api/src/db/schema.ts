@@ -420,7 +420,8 @@ export type DiscoveryJobRow = typeof discoveryJobs.$inferSelect;
 
 // Tracked social accounts (Sprint 46): first-class competitor/source accounts.
 // Discovery sources reference them via config.trackedAccountId(s) — no FK from
-// the JSON config, so deleting one simply drops it from future fetches.
+// the JSON config, so services resolve the complete enabled set strictly on
+// source create, update, and fetch.
 export const trackedSocialAccounts = sqliteTable(
   "tracked_social_accounts",
   {
