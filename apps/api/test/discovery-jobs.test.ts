@@ -4,8 +4,8 @@ import { discoveryJobSchema } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
 import type { Db } from "../src/db";
 import { discoveryJobs, discoverySources } from "../src/db/schema";
-import type { Fetcher } from "../src/discovery/adapters";
 import type { LlmGateway } from "../src/llm/gateway";
+import { safeFetchError, safeFetchPublicMessage } from "../src/safe-fetch";
 import {
   DISCOVERY_JOB_BATCH_SIZE,
   DISCOVERY_JOB_LOCK_TIMEOUT_MS,
@@ -17,6 +17,7 @@ import {
 } from "../src/services/discovery-jobs";
 import { listDiscoverySources } from "../src/services/discovery";
 import { buildAuthedApp, createTestDb } from "./helpers";
+import { fixtureSafeFetch } from "./safe-fetch-fixtures";
 
 const stubLlm: LlmGateway = {
   async generate() {
@@ -25,12 +26,18 @@ const stubLlm: LlmGateway = {
 };
 
 /** Serves an empty-but-valid RSS feed; URLs containing "failing" 500. */
-const stubFetcher = (async (url: Parameters<typeof fetch>[0]) => {
-  if (String(url).includes("failing")) return new Response("boom", { status: 500 });
-  return new Response('<rss version="2.0"><channel><title>t</title></channel></rss>', {
-    status: 200,
-  });
-}) as Fetcher;
+const stubFetcher = fixtureSafeFetch((request) => {
+  if (request.url.includes("failing")) {
+    return {
+      contentType: "application/xml",
+      error: safeFetchError("upstream_status"),
+    };
+  }
+  return {
+    body: '<rss version="2.0"><channel><title>t</title></channel></rss>',
+    contentType: "application/xml",
+  };
+});
 
 describe("discovery job ledger (Sprint 46)", () => {
   let app: TuezdayApp;
@@ -39,7 +46,7 @@ describe("discovery job ledger (Sprint 46)", () => {
 
   beforeEach(async () => {
     db = createTestDb();
-    app = await buildAuthedApp({ db, llm: stubLlm, fetcher: stubFetcher });
+    app = await buildAuthedApp({ db, llm: stubLlm, safeFetch: stubFetcher });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Jobs" } })
     ).json().id;
@@ -213,11 +220,15 @@ describe("discovery job ledger (Sprint 46)", () => {
       expect(result.queued).toBe(2);
       expect(result.processed).toBe(2);
       const badResult = result.sources.find((s) => s.sourceId === bad.id)!;
-      expect(badResult.error).toContain("500");
+      expect(badResult.error).toBe(
+        `upstream_status: ${safeFetchPublicMessage("upstream_status")}`,
+      );
 
       const failedJob = jobRows().find((r) => r.sourceId === bad.id)!;
       expect(failedJob.status).toBe("failed");
-      expect(failedJob.error).toContain("500");
+      expect(failedJob.error).toBe(
+        `upstream_status: ${safeFetchPublicMessage("upstream_status")}`,
+      );
       const okJob = jobRows().find((r) => r.sourceId !== bad.id)!;
       expect(okJob.status).toBe("succeeded");
 

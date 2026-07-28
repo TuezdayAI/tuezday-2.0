@@ -1,11 +1,17 @@
 import { afterEach, describe, expect, it } from "vitest";
-import type { Fetcher } from "../src/discovery/adapters";
 import type { LlmGateway } from "../src/llm/gateway";
 import { GatewayError } from "../src/llm/gateway";
+import {
+  safeFetchError,
+  safeFetchPublicMessage,
+  type SafeFetchRequest,
+  type SafeFetchService,
+} from "../src/safe-fetch";
 import { scrapeWebsite, stripHtml } from "../src/services/scrape";
 import { BrandExtractError, extractBrandProfile } from "../src/services/brand-profile";
 import type { TuezdayApp } from "../src/app";
 import { buildAuthedApp, createTestDb } from "./helpers";
+import { fixtureSafeFetch } from "./safe-fetch-fixtures";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -45,21 +51,32 @@ const GOOD_PROFILE_JSON = JSON.stringify({
   sourceNotes: "",
 });
 
-function siteFetcher(pages: Record<string, string>, urls: string[] = []): Fetcher {
-  return (async (url: Parameters<typeof fetch>[0]) => {
-    const u = String(url);
-    urls.push(u);
-    const path = new URL(u).pathname;
+function siteFetcher(
+  pages: Record<string, string>,
+  requests: SafeFetchRequest[] = [],
+): SafeFetchService {
+  return fixtureSafeFetch((request) => {
+    requests.push(request);
+    const path = new URL(request.url).pathname;
     const body = pages[path];
-    if (body === undefined) return new Response("nope", { status: 404 });
-    return new Response(body, { status: 200, headers: { "content-type": "text/html" } });
-  }) as Fetcher;
+    if (body === undefined) {
+      return {
+        contentType: "text/html",
+        error: safeFetchError("upstream_status"),
+      };
+    }
+    return { body, contentType: "text/html" };
+  });
 }
 
-function failingFetcher(): Fetcher {
-  return (async () => {
-    throw new Error("connection refused");
-  }) as Fetcher;
+function failingFetcher(): SafeFetchService {
+  return fixtureSafeFetch(() => ({
+    contentType: "text/html",
+    error: safeFetchError(
+      "transport_failed",
+      new Error("connection refused at 169.254.169.254"),
+    ),
+  }));
 }
 
 /** Fake gateway: first `badCalls` responses are unparseable, then good JSON. */
@@ -109,12 +126,13 @@ describe("stripHtml", () => {
 
 describe("scrapeWebsite", () => {
   it("fetches the root and same-origin about-ish links only", async () => {
-    const urls: string[] = [];
+    const requests: SafeFetchRequest[] = [];
     const fetcher = siteFetcher(
       { "/": HOME_HTML, "/about": ABOUT_HTML, "/pricing": PRICING_HTML },
-      urls,
+      requests,
     );
     const result = await scrapeWebsite("https://hexalog.com", fetcher);
+    expect(requests.every((request) => request.profile === "website")).toBe(true);
     expect(result.corpus).toContain("see production clearly");
     expect(result.corpus).toContain("Founded in 2024");
     expect(result.corpus).toContain("$49 pro plan");
@@ -124,8 +142,8 @@ describe("scrapeWebsite", () => {
       "https://hexalog.com/pricing",
     ]);
     // never followed the external or blog links
-    expect(urls.some((u) => u.includes("twitter"))).toBe(false);
-    expect(urls.some((u) => u.includes("blog"))).toBe(false);
+    expect(requests.some((request) => request.url.includes("twitter"))).toBe(false);
+    expect(requests.some((request) => request.url.includes("blog"))).toBe(false);
   });
 
   it("tolerates subpage failures and still returns the root corpus", async () => {
@@ -144,6 +162,21 @@ describe("scrapeWebsite", () => {
 
   it("throws when the root page cannot be fetched", async () => {
     await expect(scrapeWebsite("https://hexalog.com", failingFetcher())).rejects.toThrow();
+  });
+
+  it("does not attempt a subpage after a metadata root is blocked", async () => {
+    const requests: SafeFetchRequest[] = [];
+    const safeFetch = fixtureSafeFetch((request) => {
+      requests.push(request);
+      return {
+        contentType: "text/html",
+        error: safeFetchError("destination_blocked"),
+      };
+    });
+    await expect(
+      scrapeWebsite("http://169.254.169.254/", safeFetch),
+    ).rejects.toMatchObject({ code: "destination_blocked" });
+    expect(requests).toHaveLength(1);
   });
 });
 
@@ -200,7 +233,7 @@ describe("brand profile API", () => {
   }
 
   it("GET returns status none before any run", async () => {
-    app = await buildAuthedApp({ db: createTestDb(), llm: markerLlm(0).llm, fetcher: siteFetcher({ "/": HOME_HTML }) });
+    app = await buildAuthedApp({ db: createTestDb(), llm: markerLlm(0).llm, safeFetch: siteFetcher({ "/": HOME_HTML }) });
     const ws = await createWorkspace(false);
     const res = await app.inject({ method: "GET", url: `/workspaces/${ws.id}/brand-profile` });
     expect(res.statusCode).toBe(200);
@@ -211,7 +244,7 @@ describe("brand profile API", () => {
     app = await buildAuthedApp({
       db: createTestDb(),
       llm: markerLlm(0).llm,
-      fetcher: siteFetcher({ "/": HOME_HTML, "/about": ABOUT_HTML, "/pricing": PRICING_HTML }),
+      safeFetch: siteFetcher({ "/": HOME_HTML, "/about": ABOUT_HTML, "/pricing": PRICING_HTML }),
     });
     const ws = await createWorkspace();
     const run = await app.inject({
@@ -231,7 +264,7 @@ describe("brand profile API", () => {
     app = await buildAuthedApp({
       db: createTestDb(),
       llm: markerLlm(0).llm,
-      fetcher: siteFetcher({ "/": HOME_HTML }),
+      safeFetch: siteFetcher({ "/": HOME_HTML }),
     });
     const ws = await createWorkspace();
     // fire-and-forget: give the inline promise a beat to finish
@@ -248,7 +281,7 @@ describe("brand profile API", () => {
   });
 
   it("refresh without a websiteUrl → 400", async () => {
-    app = await buildAuthedApp({ db: createTestDb(), llm: markerLlm(0).llm, fetcher: siteFetcher({}) });
+    app = await buildAuthedApp({ db: createTestDb(), llm: markerLlm(0).llm, safeFetch: siteFetcher({}) });
     const ws = await createWorkspace(false);
     const res = await app.inject({
       method: "POST",
@@ -259,7 +292,7 @@ describe("brand profile API", () => {
   });
 
   it("a failing scrape records status failed with the error", async () => {
-    app = await buildAuthedApp({ db: createTestDb(), llm: markerLlm(0).llm, fetcher: failingFetcher() });
+    app = await buildAuthedApp({ db: createTestDb(), llm: markerLlm(0).llm, safeFetch: failingFetcher() });
     const ws = await createWorkspace();
     const run = await app.inject({
       method: "POST",
@@ -267,11 +300,13 @@ describe("brand profile API", () => {
     });
     expect(run.statusCode).toBe(200);
     expect(run.json().status).toBe("failed");
-    expect(run.json().error).toContain("connection refused");
+    expect(run.json().error).toBe(
+      `transport_failed: ${safeFetchPublicMessage("transport_failed")}`,
+    );
   });
 
   it("a gateway failure records status failed", async () => {
-    app = await buildAuthedApp({ db: createTestDb(), llm: throwingLlm(), fetcher: siteFetcher({ "/": HOME_HTML }) });
+    app = await buildAuthedApp({ db: createTestDb(), llm: throwingLlm(), safeFetch: siteFetcher({ "/": HOME_HTML }) });
     const ws = await createWorkspace();
     const run = await app.inject({
       method: "POST",
@@ -285,7 +320,7 @@ describe("brand profile API", () => {
     app = await buildAuthedApp({
       db: createTestDb(),
       llm: markerLlm(0).llm,
-      fetcher: siteFetcher({ "/": HOME_HTML }),
+      safeFetch: siteFetcher({ "/": HOME_HTML }),
     });
     const ws = await createWorkspace();
     await app.inject({ method: "POST", url: `/workspaces/${ws.id}/brand-profile/refresh` });
@@ -304,7 +339,7 @@ describe("brand profile API", () => {
   });
 
   it("PATCH before any run → 409", async () => {
-    app = await buildAuthedApp({ db: createTestDb(), llm: markerLlm(0).llm, fetcher: siteFetcher({}) });
+    app = await buildAuthedApp({ db: createTestDb(), llm: markerLlm(0).llm, safeFetch: siteFetcher({}) });
     const ws = await createWorkspace(false);
     const res = await app.inject({
       method: "PATCH",
@@ -318,7 +353,7 @@ describe("brand profile API", () => {
     app = await buildAuthedApp({
       db: createTestDb(),
       llm: markerLlm(0).llm,
-      fetcher: siteFetcher({ "/": HOME_HTML }),
+      safeFetch: siteFetcher({ "/": HOME_HTML }),
     });
     const ws = await createWorkspace();
     await app.inject({ method: "POST", url: `/workspaces/${ws.id}/brand-profile/refresh` });

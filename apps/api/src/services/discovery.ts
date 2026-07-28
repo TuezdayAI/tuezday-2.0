@@ -25,7 +25,6 @@ import {
 import {
   fetchSourceItems,
   isLiveSourceType,
-  type Fetcher,
   type RawDiscoveredItem,
 } from "../discovery/adapters";
 import {
@@ -35,6 +34,11 @@ import {
 } from "../discovery/connected-adapters";
 import type { IntentProvider } from "../discovery/intent";
 import type { LlmGateway } from "../llm/gateway";
+import {
+  SafeFetchError,
+  serializeSafeFetchError,
+  type SafeFetchService,
+} from "../safe-fetch";
 import { getConnection } from "./connections";
 import { resolveTrackedAccounts } from "./tracked-social-accounts";
 import {
@@ -680,7 +684,7 @@ async function fetchViaConnection(
 export async function runDiscovery(
   db: Db,
   llm: LlmGateway,
-  fetcher: Fetcher,
+  safeFetch: SafeFetchService,
   intentProvider: IntentProvider,
   fabric: ConnectorFabric,
   workspaceId: string,
@@ -712,7 +716,7 @@ export async function runDiscovery(
         ? await fetchViaConnection(db, fabric, workspaceId, source)
         : source.type === "intent"
           ? await intentProvider.fetchSignals(source.config)
-          : await fetchSourceItems(source.type, source.config, fetcher);
+          : await fetchSourceItems(source.type, source.config, safeFetch);
       const existing = new Set(
         fetched.length
           ? db
@@ -797,12 +801,19 @@ export async function runDiscovery(
       }
       // Permission refusals get a stable, founder-actionable prefix; they are
       // source-local and never abort the rest of the run.
-      const message =
-        err instanceof PermissionRequiredError
-          ? `permission_required: ${err.message}`
-          : err instanceof Error
-            ? err.message
-            : String(err);
+      const message = (() => {
+        if (err instanceof PermissionRequiredError) {
+          return `permission_required: ${err.message}`;
+        }
+        if (
+          err instanceof SafeFetchError ||
+          (!source.connectionId && source.type !== "intent")
+        ) {
+          const safe = serializeSafeFetchError(err);
+          return `${safe.code}: ${safe.message}`;
+        }
+        return err instanceof Error ? err.message : String(err);
+      })();
       db.update(discoverySources)
         .set({
           status: "error",

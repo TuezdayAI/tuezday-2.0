@@ -12,10 +12,10 @@ import { OpenDesignProvider } from "./design/open-design";
 import type { DesignProvider } from "./design/provider";
 import { closeRenderer, renderSlide, type RenderInput } from "./design/render";
 import { S3AssetStorage, type AssetStorage } from "./design/storage";
-import type { Fetcher } from "./discovery/adapters";
 import { NullIntentProvider, type IntentProvider } from "./discovery/intent";
 import { R2REvidenceStore } from "./evidence/r2r";
 import type { EvidenceStore } from "./evidence/store";
+import type { TrustedFetcher } from "./http";
 import { createLlmGatewayFromEnv } from "./llm";
 import type { LlmGateway } from "./llm/gateway";
 import { CsvOutboundExporter, type OutboundExporter } from "./outbound/exporter";
@@ -76,6 +76,11 @@ import { registerPublicApiRoutes } from "./routes/public-api";
 import { backfillExternalActionPolicies } from "./services/external-action-backfill";
 import { createExternalActionAdapters } from "./services/external-action-adapters";
 import { createExternalActionRuntime } from "./services/external-action-coordinator";
+import {
+  createSafeFetchPolicy,
+  createSafeFetchService,
+  type SafeFetchService,
+} from "./safe-fetch";
 
 export type TuezdayApp = FastifyInstance;
 
@@ -83,8 +88,10 @@ export interface BuildAppOptions {
   db: Db;
   /** LLM gateway override; defaults to Gemini configured from env. */
   llm?: LlmGateway;
-  /** HTTP fetcher for discovery adapters; tests inject fixtures. */
-  fetcher?: Fetcher;
+  /** Raw HTTP seam retained for trusted providers, connectors, and events. */
+  fetcher?: TrustedFetcher;
+  /** Guarded outbound fetcher for discovery and website scraping. */
+  safeFetch?: SafeFetchService;
   /** Evidence store override; defaults to the R2R client from env. */
   evidence?: EvidenceStore;
   /** Connector fabric override; defaults to the Nango client from env. */
@@ -118,6 +125,7 @@ export async function buildApp({
   db,
   llm = createLlmGatewayFromEnv(),
   fetcher = fetch,
+  safeFetch,
   evidence = new R2REvidenceStore(),
   connectors = new NangoFabric(undefined, undefined, fetcher),
   intent = new NullIntentProvider(),
@@ -131,6 +139,8 @@ export async function buildApp({
   assetStorage = new S3AssetStorage(),
   render = renderSlide,
 }: BuildAppOptions): Promise<TuezdayApp> {
+  const guardedFetch =
+    safeFetch ?? createSafeFetchService(createSafeFetchPolicy());
   // Signed public tokens can carry a normalized email address (up to 320
   // characters) plus an HMAC. Keep a hard router bound above that envelope.
   const app = Fastify({ logger: false, routerOptions: { maxParamLength: 1_024 } });
@@ -171,8 +181,8 @@ export async function buildApp({
   });
 
   registerAuthRoutes(app, db, fetcher, analytics);
-  registerWorkspaceRoutes(app, db, llm, fetcher);
-  registerBrandProfileRoutes(app, db, llm, fetcher);
+  registerWorkspaceRoutes(app, db, llm, guardedFetch);
+  registerBrandProfileRoutes(app, db, llm, guardedFetch);
   registerSocialCorpusRoutes(app, db, connectors);
   registerBrainAutoDraftRoutes(app, db, llm, connectors);
   registerApiKeyRoutes(app, db);
@@ -190,7 +200,7 @@ export async function buildApp({
   registerCarouselRoutes(app, db, design, assetStorage, render);
   registerNotificationRoutes(app, db, mailer, fetcher);
   registerSignalRoutes(app, db, llm, evidence);
-  registerDiscoveryRoutes(app, db, llm, fetcher, intent, connectors);
+  registerDiscoveryRoutes(app, db, llm, guardedFetch, fetcher, intent, connectors);
   registerCampaignRoutes(app, db);
   registerCampaignPlanRoutes(app, db);
   registerAudienceRoutes(app, db);

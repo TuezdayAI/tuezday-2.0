@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { NeedsApiKeyError, fetchSourceItems, type Fetcher } from "../src/discovery/adapters";
+import { NeedsApiKeyError, fetchSourceItems } from "../src/discovery/adapters";
+import {
+  safeFetchError,
+  type SafeFetchRequest,
+  type SafeFetchService,
+} from "../src/safe-fetch";
+import { fixtureSafeFetch } from "./safe-fetch-fixtures";
 
 const RSS_FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
@@ -52,18 +58,23 @@ const REDDIT_FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
   </entry>
 </feed>`;
 
-function fixtureFetcher(body: string, contentType = "application/xml"): Fetcher {
-  return (async (url: Parameters<typeof fetch>[0]) =>
-    new Response(body, { status: 200, headers: { "content-type": contentType } })) as Fetcher;
+function fixtureFetcher(
+  body: string,
+  contentType = "application/xml",
+): SafeFetchService {
+  return fixtureSafeFetch(() => ({ body, contentType }));
 }
 
-function capturingFetcher(body: string): { fetcher: Fetcher; urls: string[] } {
-  const urls: string[] = [];
-  const fetcher = (async (url: Parameters<typeof fetch>[0]) => {
-    urls.push(String(url));
-    return new Response(body, { status: 200 });
-  }) as Fetcher;
-  return { fetcher, urls };
+function capturingFetcher(
+  body: string,
+  contentType = "application/xml",
+): { fetcher: SafeFetchService; requests: SafeFetchRequest[] } {
+  const requests: SafeFetchRequest[] = [];
+  const fetcher = fixtureSafeFetch((request) => {
+    requests.push(request);
+    return { body, contentType };
+  });
+  return { fetcher, requests };
 }
 
 describe("rss adapter", () => {
@@ -102,33 +113,38 @@ describe("rss adapter", () => {
   });
 
   it("throws a readable error on a non-200 response", async () => {
-    const fetcher = (async () => new Response("nope", { status: 404 })) as Fetcher;
+    const fetcher = fixtureSafeFetch(() => ({
+      contentType: "application/xml",
+      error: safeFetchError("upstream_status"),
+    }));
     await expect(
       fetchSourceItems("rss", { feedUrl: "https://example.com/feed.xml" }, fetcher),
-    ).rejects.toThrow(/404/);
+    ).rejects.toMatchObject({ code: "upstream_status" });
   });
 });
 
 describe("google_news adapter", () => {
   it("builds a Google News RSS search url from the query and parses the feed", async () => {
-    const { fetcher, urls } = capturingFetcher(RSS_FIXTURE);
+    const { fetcher, requests } = capturingFetcher(RSS_FIXTURE);
     const items = await fetchSourceItems("google_news", { query: "GTM orchestration" }, fetcher);
-    expect(urls[0]).toContain("news.google.com/rss/search");
-    expect(urls[0]).toContain(encodeURIComponent("GTM orchestration"));
+    expect(requests[0]).toMatchObject({ profile: "feed" });
+    expect(requests[0]?.url).toContain("news.google.com/rss/search");
+    expect(requests[0]?.url).toContain(encodeURIComponent("GTM orchestration"));
     expect(items).toHaveLength(2);
   });
 });
 
 describe("reddit adapter", () => {
   it("searches within a subreddit via the .rss endpoint", async () => {
-    const { fetcher, urls } = capturingFetcher(REDDIT_FIXTURE);
+    const { fetcher, requests } = capturingFetcher(REDDIT_FIXTURE);
     const items = await fetchSourceItems(
       "reddit",
       { subreddit: "SaaS", query: "AI marketing" },
       fetcher,
     );
-    expect(urls[0]).toContain("/r/SaaS/search.rss");
-    expect(urls[0]).toContain("restrict_sr=1");
+    expect(requests[0]).toMatchObject({ profile: "feed" });
+    expect(requests[0]?.url).toContain("/r/SaaS/search.rss");
+    expect(requests[0]?.url).toContain("restrict_sr=1");
     expect(items).toHaveLength(2);
     expect(items[0]).toMatchObject({
       externalId: "t3_abc123",
@@ -140,15 +156,15 @@ describe("reddit adapter", () => {
   });
 
   it("lists new posts when only a subreddit is given", async () => {
-    const { fetcher, urls } = capturingFetcher(REDDIT_FIXTURE);
+    const { fetcher, requests } = capturingFetcher(REDDIT_FIXTURE);
     await fetchSourceItems("reddit", { subreddit: "SaaS" }, fetcher);
-    expect(urls[0]).toContain("/r/SaaS/new.rss");
+    expect(requests[0]?.url).toContain("/r/SaaS/new.rss");
   });
 
   it("searches site-wide when only a query is given", async () => {
-    const { fetcher, urls } = capturingFetcher(REDDIT_FIXTURE);
+    const { fetcher, requests } = capturingFetcher(REDDIT_FIXTURE);
     await fetchSourceItems("reddit", { query: "GTM brain" }, fetcher);
-    expect(urls[0]).toContain("reddit.com/search.rss");
+    expect(requests[0]?.url).toContain("reddit.com/search.rss");
   });
 });
 
@@ -200,11 +216,12 @@ const YOUTUBE_FIXTURE = `<?xml version="1.0" encoding="UTF-8"?>
 
 describe("hacker_news adapter", () => {
   it("queries the Algolia API and maps hits (HN link + points-summary fallbacks)", async () => {
-    const { fetcher, urls } = capturingFetcher(HN_FIXTURE);
+    const { fetcher, requests } = capturingFetcher(HN_FIXTURE, "application/json");
     const items = await fetchSourceItems("hacker_news", { query: "GTM memory" }, fetcher);
-    expect(urls[0]).toContain("hn.algolia.com/api/v1/search_by_date");
-    expect(urls[0]).toContain("tags=story");
-    expect(urls[0]).toContain(encodeURIComponent("GTM memory"));
+    expect(requests[0]).toMatchObject({ profile: "json" });
+    expect(requests[0]?.url).toContain("hn.algolia.com/api/v1/search_by_date");
+    expect(requests[0]?.url).toContain("tags=story");
+    expect(requests[0]?.url).toContain(encodeURIComponent("GTM memory"));
     expect(items).toHaveLength(2);
     expect(items[0]).toMatchObject({
       externalId: "hn-40000001",
@@ -226,9 +243,9 @@ describe("hacker_news adapter", () => {
 
 describe("youtube adapter", () => {
   it("builds the channel feed url and parses entries", async () => {
-    const { fetcher, urls } = capturingFetcher(YOUTUBE_FIXTURE);
+    const { fetcher, requests } = capturingFetcher(YOUTUBE_FIXTURE);
     const items = await fetchSourceItems("youtube", { channelId: "UC_test" }, fetcher);
-    expect(urls[0]).toContain("youtube.com/feeds/videos.xml?channel_id=UC_test");
+    expect(requests[0]?.url).toContain("youtube.com/feeds/videos.xml?channel_id=UC_test");
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ title: "How GTM teams lose their memory" });
   });
@@ -236,37 +253,40 @@ describe("youtube adapter", () => {
 
 describe("podcast adapter", () => {
   it("fetches the feed url and parses RSS items", async () => {
-    const { fetcher, urls } = capturingFetcher(RSS_FIXTURE);
+    const { fetcher, requests } = capturingFetcher(RSS_FIXTURE);
     const items = await fetchSourceItems(
       "podcast",
       { feedUrl: "https://feeds.example.com/show.xml" },
       fetcher,
     );
-    expect(urls[0]).toBe("https://feeds.example.com/show.xml");
+    expect(requests[0]).toMatchObject({
+      url: "https://feeds.example.com/show.xml",
+      profile: "feed",
+    });
     expect(items).toHaveLength(2);
   });
 });
 
 describe("google_trends adapter", () => {
   it("builds the daily-trends rss url for the geo and parses items", async () => {
-    const { fetcher, urls } = capturingFetcher(RSS_FIXTURE);
+    const { fetcher, requests } = capturingFetcher(RSS_FIXTURE);
     const items = await fetchSourceItems("google_trends", { geo: "us" }, fetcher);
-    expect(urls[0]).toContain("trends.google.com/trends/trendingsearches/daily/rss");
-    expect(urls[0]).toContain("geo=US");
+    expect(requests[0]?.url).toContain("trends.google.com/trends/trendingsearches/daily/rss");
+    expect(requests[0]?.url).toContain("geo=US");
     expect(items.length).toBeGreaterThan(0);
   });
 });
 
 describe("funding_news adapter", () => {
   it("builds a funding-scoped Google News query", async () => {
-    const { fetcher, urls } = capturingFetcher(RSS_FIXTURE);
+    const { fetcher, requests } = capturingFetcher(RSS_FIXTURE);
     const items = await fetchSourceItems(
       "funding_news",
       { query: "fintech", sector: "payments" },
       fetcher,
     );
-    expect(urls[0]).toContain("news.google.com/rss/search");
-    const decoded = decodeURIComponent(urls[0]!);
+    expect(requests[0]?.url).toContain("news.google.com/rss/search");
+    const decoded = decodeURIComponent(requests[0]!.url);
     expect(decoded).toContain("fintech payments");
     expect(decoded).toMatch(/funding|raises|Series/);
     expect(items).toHaveLength(2);
