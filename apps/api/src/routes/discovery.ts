@@ -9,10 +9,15 @@ import {
 } from "@tuezday/contracts";
 import type { ConnectorFabric } from "../connectors/fabric";
 import type { Db } from "../db";
-import type { Fetcher } from "../discovery/adapters";
 import type { IntentProvider } from "../discovery/intent";
+import type { TrustedFetcher } from "../http";
 import type { LlmGateway } from "../llm/gateway";
 import { GatewayError } from "../llm/gateway";
+import {
+  SafeFetchError,
+  serializeSafeFetchError,
+  type SafeFetchService,
+} from "../safe-fetch";
 import {
   DiscoverySourceConnectionError,
   ItemNotTriagableError,
@@ -20,6 +25,7 @@ import {
   createDiscoverySource,
   deleteDiscoverySource,
   getDiscoveredItem,
+  getDiscoverySource,
   listDiscoveredItems,
   listDiscoverySources,
   listItemDuplicates,
@@ -51,7 +57,8 @@ export function registerDiscoveryRoutes(
   app: FastifyInstance,
   db: Db,
   llm: LlmGateway,
-  fetcher: Fetcher,
+  safeFetch: SafeFetchService,
+  trustedFetcher: TrustedFetcher,
   intent: IntentProvider,
   connectors: ConnectorFabric,
 ): void {
@@ -67,10 +74,19 @@ export function registerDiscoveryRoutes(
         });
       }
       try {
+        if (
+          (parsed.data.type === "rss" || parsed.data.type === "podcast") &&
+          parsed.data.config.feedUrl
+        ) {
+          safeFetch.validateUrl(parsed.data.config.feedUrl);
+        }
         return await reply
           .status(201)
           .send(createDiscoverySource(db, request.params.id, parsed.data));
       } catch (err) {
+        if (err instanceof SafeFetchError) {
+          return reply.status(400).send(serializeSafeFetchError(err));
+        }
         if (err instanceof DiscoverySourceConnectionError) {
           return reply.status(400).send({ error: err.code, message: err.message });
         }
@@ -99,6 +115,18 @@ export function registerDiscoveryRoutes(
         });
       }
       try {
+        if (
+          parsed.data.config?.feedUrl &&
+          ["rss", "podcast"].includes(
+            getDiscoverySource(
+              db,
+              request.params.id,
+              request.params.sourceId,
+            )?.type ?? "",
+          )
+        ) {
+          safeFetch.validateUrl(parsed.data.config.feedUrl);
+        }
         const updated = updateDiscoverySource(
           db,
           request.params.id,
@@ -108,6 +136,9 @@ export function registerDiscoveryRoutes(
         if (!updated) return reply.status(404).send({ error: "source_not_found" });
         return updated;
       } catch (err) {
+        if (err instanceof SafeFetchError) {
+          return reply.status(400).send(serializeSafeFetchError(err));
+        }
         if (err instanceof DiscoverySourceConnectionError) {
           return reply.status(400).send({ error: err.code, message: err.message });
         }
@@ -208,7 +239,15 @@ export function registerDiscoveryRoutes(
   app.post<{ Params: { id: string } }>("/workspaces/:id/discovery/run", async (request, reply) => {
     const workspace = workspaceOr404(db, request.params.id, reply);
     if (!workspace) return reply;
-    return runDiscovery(db, llm, fetcher, intent, connectors, request.params.id, workspace.name);
+    return runDiscovery(
+      db,
+      llm,
+      safeFetch,
+      intent,
+      connectors,
+      request.params.id,
+      workspace.name,
+    );
   });
 
   app.get<{ Params: { id: string }; Querystring: { status?: string } }>(
@@ -249,7 +288,7 @@ export function registerDiscoveryRoutes(
       if (!item) return reply.status(404).send({ error: "item_not_found" });
       try {
         const result = acceptDiscoveredItem(db, request.params.id, item);
-        await emitEvent(db, fetcher, request.params.id, "discovery.item.accepted", {
+        await emitEvent(db, trustedFetcher, request.params.id, "discovery.item.accepted", {
           itemId: result.item.id,
           signalId: result.signal.id,
           title: result.item.title,

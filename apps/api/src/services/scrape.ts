@@ -1,6 +1,6 @@
-import type { Fetcher } from "../discovery/adapters";
+import type { SafeFetchService } from "../safe-fetch";
 
-// Plain-fetch website scraping (Sprint 36.2). Deliberately no headless
+// Guarded website scraping (Sprint 36.2). Deliberately no headless
 // browser and no HTML-parser dependency — same regex approach as the
 // discovery adapters' cleanText. JS-only sites are a documented limitation.
 
@@ -56,10 +56,13 @@ export interface ScrapeResult {
   pagesFetched: string[];
 }
 
-async function fetchPage(url: string, fetcher: Fetcher): Promise<string> {
-  const res = await fetcher(url, { headers: { "User-Agent": USER_AGENT } });
-  if (!res.ok) throw new Error(`Fetch failed with HTTP ${res.status} for ${url}`);
-  return res.text();
+async function fetchPage(url: string, safeFetch: SafeFetchService): Promise<string> {
+  const result = await safeFetch.fetch({
+    url,
+    profile: "website",
+    headers: { "user-agent": USER_AGENT },
+  });
+  return result.text();
 }
 
 /**
@@ -67,17 +70,20 @@ async function fetchPage(url: string, fetcher: Fetcher): Promise<string> {
  * return a capped text corpus. The root page failing throws; subpage
  * failures are tolerated (best-effort).
  */
-export async function scrapeWebsite(websiteUrl: string, fetcher: Fetcher): Promise<ScrapeResult> {
+export async function scrapeWebsite(
+  websiteUrl: string,
+  safeFetch: SafeFetchService,
+): Promise<ScrapeResult> {
   const base = new URL(websiteUrl);
   const rootUrl = base.origin + (base.pathname === "" ? "/" : base.pathname);
-  const rootHtml = await fetchPage(rootUrl, fetcher);
+  const rootHtml = await fetchPage(rootUrl, safeFetch);
   const pagesFetched = [rootUrl];
   const sections = [`# ${rootUrl}\n${stripHtml(rootHtml)}`];
 
   for (const link of extractLinks(rootHtml, base)) {
     if (link === rootUrl) continue;
     try {
-      const html = await fetchPage(link, fetcher);
+      const html = await fetchPage(link, safeFetch);
       pagesFetched.push(link);
       sections.push(`# ${link}\n${stripHtml(html)}`);
     } catch {

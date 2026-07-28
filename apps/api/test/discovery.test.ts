@@ -8,10 +8,20 @@ import {
 } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
 import type { Db } from "../src/db";
-import { discoveredItemMatches, discoveredItems, signalMatches } from "../src/db/schema";
-import type { Fetcher } from "../src/discovery/adapters";
+import {
+  discoveredItemMatches,
+  discoveredItems,
+  discoverySources,
+  signalMatches,
+} from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
+import {
+  safeFetchError,
+  safeFetchPublicMessage,
+  type SafeFetchService,
+} from "../src/safe-fetch";
 import { buildAuthedApp, createTestDb } from "./helpers";
+import { fixtureSafeFetch } from "./safe-fetch-fixtures";
 
 const RSS_FIXTURE = `<?xml version="1.0"?>
 <rss version="2.0"><channel><title>Feed</title>
@@ -26,15 +36,38 @@ const RSS_FIXTURE_V2 = `<?xml version="1.0"?>
 </channel></rss>`;
 
 /** Serves RSS fixtures; second run serves v2 to test dedupe. Failing URLs 500. */
-function makeFetcher(): { fetcher: Fetcher; calls: string[] } {
+function makeFetcher(): { fetcher: SafeFetchService; calls: string[] } {
   const calls: string[] = [];
-  const fetcher = (async (url: Parameters<typeof fetch>[0]) => {
-    const u = String(url);
+  const fetcher = fixtureSafeFetch((request) => {
+    const u = request.url;
     calls.push(u);
-    if (u.includes("failing.example.com")) return new Response("boom", { status: 500 });
+    if (
+      u.includes("failing.example.com") ||
+      u.includes("169.254.169.254")
+    ) {
+      return {
+        contentType: "application/xml",
+        error: safeFetchError(
+          u.includes("169.254.169.254")
+            ? "destination_blocked"
+            : "upstream_status",
+        ),
+      };
+    }
+    if (u.includes("hostile.example.com")) {
+      return {
+        contentType: "application/xml",
+        error: new Error(
+          "parser saw <html>private</html> from db.internal at 169.254.169.254",
+        ),
+      };
+    }
     const timesFetched = calls.filter((c) => c === u).length;
-    return new Response(timesFetched > 1 ? RSS_FIXTURE_V2 : RSS_FIXTURE, { status: 200 });
-  }) as Fetcher;
+    return {
+      body: timesFetched > 1 ? RSS_FIXTURE_V2 : RSS_FIXTURE,
+      contentType: "application/xml",
+    };
+  });
   return { fetcher, calls };
 }
 
@@ -82,6 +115,7 @@ function scoringGateway(
 
 describe("discovery API", () => {
   let app: TuezdayApp;
+  let db: Db;
   let workspaceId: string;
   let personaRef: { id: string | null };
   let campaignRef: { id: string | null };
@@ -90,10 +124,11 @@ describe("discovery API", () => {
     personaRef = { id: null };
     campaignRef = { id: null };
     const { fetcher } = makeFetcher();
+    db = createTestDb();
     app = await buildAuthedApp({
-      db: createTestDb(),
+      db,
       llm: scoringGateway(personaRef, campaignRef),
-      fetcher,
+      safeFetch: fetcher,
     });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Disco" } })
@@ -178,6 +213,51 @@ describe("discovery API", () => {
       expect(res.statusCode).toBe(400);
     });
 
+    it("rejects a metadata feed URL at creation with only a safe failure", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/discovery/sources`,
+        payload: {
+          type: "rss",
+          config: { feedUrl: "http://169.254.169.254/latest/meta-data" },
+        },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toEqual({
+        code: "destination_blocked",
+        message: safeFetchPublicMessage("destination_blocked"),
+      });
+    });
+
+    it("blocks a pre-existing unsafe feed row during fetch and persists only the safe class", async () => {
+      const source = await addRssSource();
+      db.update(discoverySources)
+        .set({
+          configJson: JSON.stringify({
+            feedUrl: "http://169.254.169.254/latest/meta-data",
+          }),
+        })
+        .where(eq(discoverySources.id, source.id))
+        .run();
+
+      const result = await run();
+      expect(result.sources[0]?.error).toBe(
+        `destination_blocked: ${safeFetchPublicMessage("destination_blocked")}`,
+      );
+      const stored = (
+        await app.inject({
+          method: "GET",
+          url: `/workspaces/${workspaceId}/discovery/sources`,
+        })
+      )
+        .json()
+        .find((candidate: { id: string }) => candidate.id === source.id);
+      expect(stored.lastError).toBe(
+        `destination_blocked: ${safeFetchPublicMessage("destination_blocked")}`,
+      );
+      expect(stored.lastError).not.toContain("169.254.169.254");
+    });
+
     it("can disable a source", async () => {
       const source = await addRssSource();
       const res = await app.inject({
@@ -187,6 +267,44 @@ describe("discovery API", () => {
       });
       expect(res.json().enabled).toBe(false);
     });
+
+    it.each(["rss", "podcast"] as const)(
+      "rejects an unsafe %s feed update without changing the source",
+      async (type) => {
+        const originalFeedUrl = "https://feeds.example.com/original.xml";
+        const created = await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/discovery/sources`,
+          payload: { type, config: { feedUrl: originalFeedUrl } },
+        });
+        expect(created.statusCode).toBe(201);
+
+        const update = await app.inject({
+          method: "PATCH",
+          url: `/workspaces/${workspaceId}/discovery/sources/${created.json().id}`,
+          payload: {
+            config: {
+              feedUrl: "http://169.254.169.254/latest/meta-data",
+            },
+          },
+        });
+        expect(update.statusCode).toBe(400);
+        expect(update.json()).toEqual({
+          code: "destination_blocked",
+          message: safeFetchPublicMessage("destination_blocked"),
+        });
+
+        const stored = (
+          await app.inject({
+            method: "GET",
+            url: `/workspaces/${workspaceId}/discovery/sources`,
+          })
+        )
+          .json()
+          .find((candidate: { id: string }) => candidate.id === created.json().id);
+        expect(stored.config.feedUrl).toBe(originalFeedUrl);
+      },
+    );
 
     it("deletes a source", async () => {
       const source = await addRssSource();
@@ -240,15 +358,32 @@ describe("discovery API", () => {
       const bad = await addRssSource("https://failing.example.com/feed.xml");
       const result = await run();
       const badResult = result.sources.find((s: { sourceId: string }) => s.sourceId === bad.id);
-      expect(badResult.error).toContain("500");
+      expect(badResult.error).toBe(
+        `upstream_status: ${safeFetchPublicMessage("upstream_status")}`,
+      );
       const sources = (
         await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/discovery/sources` })
       ).json();
       const badSource = sources.find((s: { id: string }) => s.id === bad.id);
       expect(badSource.status).toBe("error");
-      expect(badSource.lastError).toContain("500");
+      expect(badSource.lastError).toBe(
+        `upstream_status: ${safeFetchPublicMessage("upstream_status")}`,
+      );
       // the healthy source still produced items
       expect((await items()).length).toBeGreaterThan(0);
+    });
+
+    it("redacts an unexpected keyless adapter failure before persistence", async () => {
+      const bad = await addRssSource("https://hostile.example.com/feed.xml");
+      const result = await run();
+      const failure = result.sources.find(
+        (source: { sourceId: string }) => source.sourceId === bad.id,
+      );
+      expect(failure.error).toBe(
+        `transport_failed: ${safeFetchPublicMessage("transport_failed")}`,
+      );
+      expect(failure.error).not.toContain("db.internal");
+      expect(failure.error).not.toContain("169.254.169.254");
     });
 
     it("skips disabled and needs_api_key sources", async () => {
@@ -303,7 +438,7 @@ describe("discovery API", () => {
       const localApp = await buildAuthedApp({
         db: createTestDb(),
         llm: scoringGateway({ id: null }, { id: null }),
-        fetcher,
+        safeFetch: fetcher,
         intent,
       });
       const ws = (
@@ -415,11 +550,16 @@ describe("discovery API", () => {
 // ---------------------------------------------------------------------------
 
 /** Serves a fixed XML body per feed URL; unknown URLs 404. */
-function fixtureFetcher(feeds: Record<string, string>): Fetcher {
-  return (async (url: Parameters<typeof fetch>[0]) => {
-    const body = feeds[String(url)];
-    return body ? new Response(body, { status: 200 }) : new Response("nope", { status: 404 });
-  }) as Fetcher;
+function fixtureFetcher(feeds: Record<string, string>): SafeFetchService {
+  return fixtureSafeFetch((request) => {
+    const body = feeds[request.url];
+    return body
+      ? { body, contentType: "application/xml" }
+      : {
+          contentType: "application/xml",
+          error: safeFetchError("upstream_status"),
+        };
+  });
 }
 
 interface MatchingHarness {
@@ -444,7 +584,7 @@ interface MatchingHarness {
  * Workspace with two personas and two active campaigns (each persona assigned
  * to its own campaign), driven by a scriptable scoring gateway.
  */
-async function buildMatchingHarness(fetcher?: Fetcher): Promise<MatchingHarness> {
+async function buildMatchingHarness(fetcher?: SafeFetchService): Promise<MatchingHarness> {
   const db = createTestDb();
   const scoringPrompts: string[] = [];
   let responder: (prompt: string) => unknown = () => [];
@@ -459,7 +599,11 @@ async function buildMatchingHarness(fetcher?: Fetcher): Promise<MatchingHarness>
       };
     },
   };
-  const app = await buildAuthedApp({ db, llm, fetcher: fetcher ?? makeFetcher().fetcher });
+  const app = await buildAuthedApp({
+    db,
+    llm,
+    safeFetch: fetcher ?? makeFetcher().fetcher,
+  });
   const workspaceId = (
     await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Match Co" } })
   ).json().id;

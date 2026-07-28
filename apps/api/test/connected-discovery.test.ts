@@ -5,10 +5,10 @@ import type { TuezdayApp } from "../src/app";
 import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric";
 import type { Db } from "../src/db";
 import { connections, discoveryJobs, discoverySources } from "../src/db/schema";
-import type { Fetcher } from "../src/discovery/adapters";
 import type { LlmGateway } from "../src/llm/gateway";
 import { RATE_LIMIT_BACKOFF_BASE_MS, listDiscoverySources } from "../src/services/discovery";
 import { buildAuthedApp, createTestDb } from "./helpers";
+import { fixtureSafeFetch } from "./safe-fetch-fixtures";
 
 const stubLlm: LlmGateway = {
   async generate() {
@@ -123,11 +123,11 @@ describe("connected discovery (Sprint 46)", () => {
     feedXml = EMPTY_RSS;
     const { fabric, calls } = makeFakeFabric(() => proxyHandler);
     proxyCalls = calls;
-    const fetcher = (async (url: Parameters<typeof fetch>[0]) => {
-      fetchedUrls.push(String(url));
-      return new Response(feedXml, { status: 200 });
-    }) as Fetcher;
-    app = await buildAuthedApp({ db, llm: stubLlm, fetcher, connectors: fabric });
+    const safeFetch = fixtureSafeFetch((request) => {
+      fetchedUrls.push(request.url);
+      return { body: feedXml, contentType: "application/xml" };
+    });
+    app = await buildAuthedApp({ db, llm: stubLlm, safeFetch, connectors: fabric });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Connected" } })
     ).json().id;
@@ -349,6 +349,15 @@ describe("connected discovery (Sprint 46)", () => {
         config: { mode: "query", query: "agentic gtm" },
         connectionId,
       });
+      db.update(discoverySources)
+        .set({
+          configJson: JSON.stringify({
+            ...source.config,
+            baseUrl: "http://169.254.169.254/latest/meta-data",
+          }),
+        })
+        .where(eq(discoverySources.id, source.id))
+        .run();
       expect(source).toMatchObject({ type: "x", status: "active", connectionId });
       // keyless x sources still park as needs_api_key
       const keyless = await createSource({ type: "x", config: { query: "agentic gtm" } });
@@ -398,6 +407,7 @@ describe("connected discovery (Sprint 46)", () => {
       expect(search.path).toContain(`query=${encodeURIComponent("agentic gtm")}`);
       expect(search.integrationKey).toBe("tuezday-twitter");
       expect(search.baseUrl).toBe("https://api.twitter.com");
+      expect(search.baseUrl).not.toContain("169.254.169.254");
 
       const items = await listItems("new");
       expect(items).toHaveLength(2);

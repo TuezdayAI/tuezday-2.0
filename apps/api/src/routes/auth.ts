@@ -5,11 +5,11 @@ import { EmailTakenError, getUser, login, registerAccount, revokeSession, update
 import { listUserMemberships } from "../services/teams";
 import type { AnalyticsSink } from "../analytics/sink";
 import { track } from "../analytics/track";
+import type { TrustedFetcher } from "../http";
 
-import type { Fetcher } from "../discovery/adapters";
 import { GoogleAuthError, exchangeCodeForProfile, googleAuthUrl } from "../auth/google";
 
-export function registerAuthRoutes(app: FastifyInstance, db: Db, fetcher: Fetcher, analytics: AnalyticsSink): void {
+export function registerAuthRoutes(app: FastifyInstance, db: Db, fetcher: TrustedFetcher, analytics: AnalyticsSink): void {
   app.post("/auth/register", async (request, reply) => {
     const parsed = registerInputSchema.safeParse(request.body);
     if (!parsed.success) {

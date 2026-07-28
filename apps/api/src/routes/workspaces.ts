@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
-import type { Fetcher } from "../discovery/adapters";
 import type { LlmGateway } from "../llm/gateway";
+import type { SafeFetchService } from "../safe-fetch";
 import { runBrandProfile } from "../services/brand-profile";
 import { hasSocialConnection } from "../services/social-corpus";
 import {
@@ -30,7 +30,7 @@ export function registerWorkspaceRoutes(
   app: FastifyInstance,
   db: Db,
   llm: LlmGateway,
-  fetcher: Fetcher,
+  safeFetch: SafeFetchService,
 ): void {
   app.post("/workspaces", async (request, reply) => {
     const parsed = createWorkspaceInputSchema.safeParse(request.body);
@@ -44,7 +44,7 @@ export function registerWorkspaceRoutes(
     if (workspace.websiteUrl) {
       // Onboarding Step 2: reading starts the moment the URL lands. The run
       // never throws; failures land in the brand_profiles row.
-      void runBrandProfile(db, llm, fetcher, workspace.id, workspace.websiteUrl);
+      void runBrandProfile(db, llm, safeFetch, workspace.id, workspace.websiteUrl);
     }
     return reply.status(201).send(workspace);
   });

@@ -1,8 +1,8 @@
 import type { FastifyInstance } from "fastify";
 import { updateBrandProfileInputSchema } from "@tuezday/contracts";
 import type { Db } from "../db";
-import type { Fetcher } from "../discovery/adapters";
 import type { LlmGateway } from "../llm/gateway";
+import type { SafeFetchService } from "../safe-fetch";
 import {
   getBrandProfileView,
   runBrandProfile,
@@ -19,7 +19,7 @@ export function registerBrandProfileRoutes(
   app: FastifyInstance,
   db: Db,
   llm: LlmGateway,
-  fetcher: Fetcher,
+  safeFetch: SafeFetchService,
 ): void {
   app.get<{ Params: { id: string } }>(
     "/workspaces/:id/brand-profile",
@@ -39,7 +39,7 @@ export function registerBrandProfileRoutes(
           message: "This workspace has no website URL to read.",
         });
       }
-      return runBrandProfile(db, llm, fetcher, workspace.id, workspace.websiteUrl);
+      return runBrandProfile(db, llm, safeFetch, workspace.id, workspace.websiteUrl);
     },
   );
 

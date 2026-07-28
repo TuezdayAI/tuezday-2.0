@@ -2,12 +2,19 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { workspaceSchema } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
 import { buildAuthedApp, createTestDb } from "./helpers";
+import { fixtureSafeFetch } from "./safe-fetch-fixtures";
 
 describe("workspaces API", () => {
   let app: TuezdayApp;
 
   beforeEach(async () => {
-    app = await buildAuthedApp({ db: createTestDb() });
+    app = await buildAuthedApp({
+      db: createTestDb(),
+      safeFetch: fixtureSafeFetch(() => ({
+        body: "<html><body>Workspace website</body></html>",
+        contentType: "text/html",
+      })),
+    });
   });
 
   afterEach(async () => {
