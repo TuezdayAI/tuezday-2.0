@@ -95,11 +95,7 @@ async function getJson(input: ConnectedDiscoveryInput, path: string, opts: Proxy
     throw new RateLimitedError(`${input.source.type} rate limit hit (HTTP 429).`);
   }
   if (res.status === 401 || res.status === 403 || (opts.permissionOn400 && res.status === 400)) {
-    const detail =
-      typeof res.json === "object" && res.json !== null
-        ? JSON.stringify(res.json).slice(0, 200)
-        : `HTTP ${res.status}`;
-    throw new PermissionRequiredError(`${opts.permissionMessage} (${detail})`);
+    throw new PermissionRequiredError(opts.permissionMessage);
   }
   if (res.status < 200 || res.status >= 300) {
     throw new Error(`${input.source.type} fetch returned HTTP ${res.status} for ${path}`);

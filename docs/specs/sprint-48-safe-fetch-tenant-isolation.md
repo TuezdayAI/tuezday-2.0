@@ -1,6 +1,6 @@
 # Sprint 48 — Safe Fetch Service and Tenant Isolation
 
-> **Status:** Implementation complete; release verification passed
+> **Status:** Founder acceptance audit passed; ready for founder merge
 > **Date:** 2026-07-28
 > **Branch:** `sprint-48-safe-fetch-tenant-isolation`
 > **Base:** `main` at `03329c4`
@@ -425,3 +425,14 @@ The founder acceptance evidence for TAP-7 includes the three PRD cases:
 - **2026-07-28:** Release verification passed across all seven workspaces:
   `npm run typecheck` succeeded and `npm test` passed 165 test files with 1,715
   tests.
+- **2026-07-28:** Delegated founder-acceptance audit found and closed two gaps:
+  connected-provider permission errors no longer expose upstream response
+  bodies, and discovery scoring now revalidates tenant references and triage
+  state inside an atomic transaction.
+- **2026-07-28:** Four new adversarial regressions cover permission-payload
+  redaction, a campaign leaving the workspace during scoring, acceptance
+  racing an in-flight judgment, and rollback after a partial match-write
+  fault. The affected discovery suites passed 72/72 tests.
+- **2026-07-28:** Final independent re-review reported no remaining findings.
+  The complete post-fix gate passed all seven workspace typechecks and 165 test
+  files with 1,718/1,718 tests.
