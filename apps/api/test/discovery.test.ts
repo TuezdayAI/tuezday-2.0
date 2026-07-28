@@ -11,6 +11,7 @@ import type { Db } from "../src/db";
 import {
   discoveredItemMatches,
   discoveredItems,
+  discoveryJobs,
   discoverySources,
   signalMatches,
   signals,
@@ -22,6 +23,7 @@ import {
   type SafeFetchService,
 } from "../src/safe-fetch";
 import { acceptDiscoveredItem } from "../src/services/discovery";
+import { enqueueDueDiscoveryJobs } from "../src/services/discovery-jobs";
 import { buildAuthedApp, createTestDb } from "./helpers";
 import { fixtureSafeFetch } from "./safe-fetch-fixtures";
 
@@ -268,6 +270,99 @@ describe("discovery API", () => {
         payload: { enabled: false },
       });
       expect(res.json().enabled).toBe(false);
+    });
+
+    it("rejects an invalid complete RSS config and preserves the stored source", async () => {
+      const source = await addRssSource();
+
+      const update = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/discovery/sources/${source.id}`,
+        payload: { config: {} },
+      });
+
+      expect(update.statusCode).toBe(400);
+      expect(update.json()).toEqual({
+        error: "invalid_input",
+        message: "An RSS source needs a feedUrl",
+      });
+      expect(JSON.stringify(update.json())).not.toContain(
+        "https://feeds.example.com/blog.xml",
+      );
+      const stored = db
+        .select()
+        .from(discoverySources)
+        .where(eq(discoverySources.id, source.id))
+        .get()!;
+      expect(JSON.parse(stored.configJson)).toEqual(source.config);
+    });
+
+    it("derives healthy runtime state after a valid material config change", async () => {
+      const source = await addRssSource();
+      db.update(discoverySources)
+        .set({
+          status: "error",
+          lastError: "transport_failed: stale failure",
+          backoffUntil: Date.now() + 60_000,
+        })
+        .where(eq(discoverySources.id, source.id))
+        .run();
+
+      const update = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/discovery/sources/${source.id}`,
+        payload: {
+          config: { feedUrl: "https://feeds.example.com/recovered.xml" },
+        },
+      });
+
+      expect(update.statusCode).toBe(200);
+      expect(update.json()).toMatchObject({
+        status: "active",
+        lastError: null,
+        backoffUntil: null,
+        config: { feedUrl: "https://feeds.example.com/recovered.xml" },
+      });
+    });
+
+    it("removes queued work when disabling or materially changing a source", async () => {
+      const disabledSource = await addRssSource(
+        "https://feeds.example.com/disable.xml",
+      );
+      const changedSource = await addRssSource(
+        "https://feeds.example.com/change.xml",
+      );
+      expect(
+        enqueueDueDiscoveryJobs(
+          db,
+          workspaceId,
+          [disabledSource, changedSource],
+          Date.now(),
+        ),
+      ).toBe(2);
+
+      const disabled = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/discovery/sources/${disabledSource.id}`,
+        payload: { enabled: false },
+      });
+      const changed = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/discovery/sources/${changedSource.id}`,
+        payload: {
+          config: { feedUrl: "https://feeds.example.com/changed.xml" },
+        },
+      });
+
+      expect(disabled.statusCode).toBe(200);
+      expect(changed.statusCode).toBe(200);
+      expect(
+        db
+          .select()
+          .from(discoveryJobs)
+          .where(eq(discoveryJobs.workspaceId, workspaceId))
+          .all(),
+      ).toEqual([]);
     });
 
     it.each(["rss", "podcast"] as const)(

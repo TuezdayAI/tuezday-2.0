@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
 import {
+  createDiscoverySourceInputSchema,
   type CreateDiscoverySourceInput,
   type DiscoveredItem,
   type DiscoveredItemMatch,
@@ -280,6 +281,10 @@ export function createDiscoverySource(
   const connectionId = input.connectionId ?? null;
   validateSourceConnection(db, workspaceId, input.type, input.config, connectionId);
   requireSourceTrackedAccounts(db, workspaceId, input.type, input.config);
+  const runtimeState = deriveDiscoverySourceRuntimeState(
+    input.type,
+    connectionId,
+  );
   const row: DiscoverySourceRow = {
     id: randomUUID(),
     workspaceId,
@@ -287,14 +292,10 @@ export function createDiscoverySource(
     name: input.name ?? defaultSourceName(input),
     configJson: JSON.stringify(input.config),
     enabled: true,
-    // A validated connection makes any source type live; keyless x/linkedin
-    // stay parked until credentials exist.
-    status: connectionId || isLiveSourceType(input.type) ? "active" : "needs_api_key",
-    lastError: null,
+    ...runtimeState,
     lastFetchedAt: null,
     connectionId,
     cursorJson: "{}",
-    backoffUntil: null,
     lastAttemptedAt: null,
     createdAt: Date.now(),
   };
@@ -325,6 +326,38 @@ export function getDiscoverySource(
   return row ? rowToSource(row) : undefined;
 }
 
+/**
+ * Apply a PATCH to the existing source in memory, then run the canonical
+ * create schema over the complete result. This prevents a syntactically valid
+ * partial body from producing an invalid stored source.
+ */
+export function validateDiscoverySourceTransition(
+  existing: DiscoverySource,
+  patch: UpdateDiscoverySourceInput,
+): CreateDiscoverySourceInput {
+  return createDiscoverySourceInputSchema.parse({
+    type: existing.type,
+    name: patch.name ?? existing.name,
+    config: patch.config ?? existing.config,
+    connectionId:
+      patch.connectionId === undefined
+        ? existing.connectionId
+        : patch.connectionId,
+  });
+}
+
+/** Runtime state is derived from the validated resulting source, never copied. */
+export function deriveDiscoverySourceRuntimeState(
+  type: DiscoverySourceType,
+  connectionId: string | null,
+): Pick<DiscoverySourceRow, "status" | "lastError" | "backoffUntil"> {
+  return {
+    status: connectionId || isLiveSourceType(type) ? "active" : "needs_api_key",
+    lastError: null,
+    backoffUntil: null,
+  };
+}
+
 export function updateDiscoverySource(
   db: Db,
   workspaceId: string,
@@ -333,29 +366,58 @@ export function updateDiscoverySource(
 ): DiscoverySource | undefined {
   const existing = getDiscoverySource(db, workspaceId, sourceId);
   if (!existing) return undefined;
-  const nextConfig = input.config ?? existing.config;
-  // undefined keeps the current connection; null detaches it.
-  const nextConnectionId =
-    input.connectionId === undefined ? existing.connectionId : input.connectionId;
-  validateSourceConnection(db, workspaceId, existing.type, nextConfig, nextConnectionId);
+  const transition = validateDiscoverySourceTransition(existing, input);
+  const nextConnectionId = transition.connectionId ?? null;
+  validateSourceConnection(
+    db,
+    workspaceId,
+    transition.type,
+    transition.config,
+    nextConnectionId,
+  );
+  requireSourceTrackedAccounts(
+    db,
+    workspaceId,
+    transition.type,
+    transition.config,
+  );
+  const nextEnabled = input.enabled ?? existing.enabled;
+  const materiallyChanged =
+    JSON.stringify(transition.config) !== JSON.stringify(existing.config) ||
+    nextConnectionId !== existing.connectionId;
   const updated = {
-    name: input.name ?? existing.name,
-    enabled: input.enabled ?? existing.enabled,
-    configJson: JSON.stringify(nextConfig),
+    name: transition.name ?? existing.name,
+    enabled: nextEnabled,
+    configJson: JSON.stringify(transition.config),
     connectionId: nextConnectionId,
+    ...deriveDiscoverySourceRuntimeState(
+      transition.type,
+      nextConnectionId,
+    ),
   };
-  requireSourceTrackedAccounts(db, workspaceId, existing.type, nextConfig);
-  db
-    .update(discoverySources)
-    .set(updated)
-    .where(
-      and(
-        eq(discoverySources.workspaceId, workspaceId),
-        eq(discoverySources.id, sourceId),
-      ),
-    )
-    .run();
-  return getDiscoverySource(db, workspaceId, sourceId);
+  return db.transaction((tx) => {
+    tx.update(discoverySources)
+      .set(updated)
+      .where(
+        and(
+          eq(discoverySources.workspaceId, workspaceId),
+          eq(discoverySources.id, sourceId),
+        ),
+      )
+      .run();
+    if (!nextEnabled || materiallyChanged) {
+      tx.delete(discoveryJobs)
+        .where(
+          and(
+            eq(discoveryJobs.workspaceId, workspaceId),
+            eq(discoveryJobs.sourceId, sourceId),
+            eq(discoveryJobs.status, "queued"),
+          ),
+        )
+        .run();
+    }
+    return getDiscoverySource(tx, workspaceId, sourceId);
+  });
 }
 
 export function deleteDiscoverySource(db: Db, workspaceId: string, sourceId: string): boolean {
