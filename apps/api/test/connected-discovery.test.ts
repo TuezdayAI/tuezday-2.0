@@ -416,6 +416,117 @@ describe("connected discovery (Sprint 46)", () => {
       expect(detach.json().error).toBe("connection_required");
     });
 
+    it.each([
+      ["query", { mode: "query" }, "A query-mode source needs a query"],
+      [
+        "account timeline",
+        { mode: "account_timeline" },
+        "An account_timeline source needs a handle or a tracked account",
+      ],
+      [
+        "list timeline",
+        { mode: "list_timeline" },
+        "A list_timeline source needs a listId",
+      ],
+    ] as const)(
+      "rejects a connected %s mode missing its target and preserves the row",
+      async (_label, config, message) => {
+        const connectionId = insertConnection("twitter");
+        const source = await createSource({
+          type: "x",
+          config: { mode: "query", query: "gtm" },
+          connectionId,
+        });
+
+        const update = await app.inject({
+          method: "PATCH",
+          url: `/workspaces/${workspaceId}/discovery/sources/${source.id}`,
+          payload: { config },
+        });
+
+        expect(update.statusCode).toBe(400);
+        expect(update.json()).toEqual({ error: "invalid_input", message });
+        expect(sourceRow(source.id)).toMatchObject({
+          configJson: JSON.stringify(source.config),
+          connectionId,
+        });
+      },
+    );
+
+    it("rejects foreign, wrong-provider, and disconnected connection patches without mutation", async () => {
+      const source = await createSource({
+        type: "x",
+        config: { query: "gtm" },
+      });
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Foreign Patch Connection Workspace" },
+        })
+      ).json().id as string;
+      const candidates = [
+        {
+          id: insertConnection("twitter", "connected", otherWorkspaceId),
+          error: "connection_required",
+        },
+        { id: insertConnection("reddit"), error: "wrong_provider" },
+        {
+          id: insertConnection("twitter", "disconnected"),
+          error: "connection_disconnected",
+        },
+      ];
+
+      for (const candidate of candidates) {
+        const update = await app.inject({
+          method: "PATCH",
+          url: `/workspaces/${workspaceId}/discovery/sources/${source.id}`,
+          payload: { connectionId: candidate.id },
+        });
+        expect(update.statusCode).toBe(400);
+        expect(update.json().error).toBe(candidate.error);
+        expect(sourceRow(source.id)).toMatchObject({
+          configJson: JSON.stringify(source.config),
+          connectionId: null,
+          status: "needs_api_key",
+        });
+      }
+    });
+
+    it("derives active and needs_api_key when attaching and detaching an optional connection", async () => {
+      const source = await createSource({
+        type: "x",
+        config: { query: "gtm" },
+      });
+      const connectionId = insertConnection("twitter");
+
+      const attached = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/discovery/sources/${source.id}`,
+        payload: { connectionId },
+      });
+      expect(attached.statusCode).toBe(200);
+      expect(attached.json()).toMatchObject({
+        connectionId,
+        status: "active",
+        lastError: null,
+        backoffUntil: null,
+      });
+
+      const detached = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/discovery/sources/${source.id}`,
+        payload: { connectionId: null },
+      });
+      expect(detached.statusCode).toBe(200);
+      expect(detached.json()).toMatchObject({
+        connectionId: null,
+        status: "needs_api_key",
+        lastError: null,
+        backoffUntil: null,
+      });
+    });
+
     it("rejects foreign, unknown, mixed, and wrong-platform tracked IDs before create", async () => {
       const connectionId = insertConnection("twitter");
       const otherWorkspaceId = (

@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
+import { ZodError } from "zod";
 import {
   DISCOVERED_ITEM_STATUSES,
   createDiscoverySourceInputSchema,
@@ -33,6 +34,7 @@ import {
   skipDiscoveredItem,
   suggestDiscoverySources,
   updateDiscoverySource,
+  validateDiscoverySourceTransition,
 } from "../services/discovery";
 import { emitEvent } from "../services/events";
 import {
@@ -119,17 +121,23 @@ export function registerDiscoveryRoutes(
         });
       }
       try {
+        const existing = getDiscoverySource(
+          db,
+          request.params.id,
+          request.params.sourceId,
+        );
+        if (!existing) {
+          return reply.status(404).send({ error: "source_not_found" });
+        }
+        const transition = validateDiscoverySourceTransition(
+          existing,
+          parsed.data,
+        );
         if (
-          parsed.data.config?.feedUrl &&
-          ["rss", "podcast"].includes(
-            getDiscoverySource(
-              db,
-              request.params.id,
-              request.params.sourceId,
-            )?.type ?? "",
-          )
+          transition.config.feedUrl &&
+          (transition.type === "rss" || transition.type === "podcast")
         ) {
-          safeFetch.validateUrl(parsed.data.config.feedUrl);
+          safeFetch.validateUrl(transition.config.feedUrl);
         }
         const updated = updateDiscoverySource(
           db,
@@ -140,6 +148,12 @@ export function registerDiscoveryRoutes(
         if (!updated) return reply.status(404).send({ error: "source_not_found" });
         return updated;
       } catch (err) {
+        if (err instanceof ZodError) {
+          return reply.status(400).send({
+            error: "invalid_input",
+            message: err.issues.map((issue) => issue.message).join("; "),
+          });
+        }
         if (err instanceof SafeFetchError) {
           return reply.status(400).send(serializeSafeFetchError(err));
         }
