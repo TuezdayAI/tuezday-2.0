@@ -1,8 +1,10 @@
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { draftSchema, signalSchema } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
-import { signalMatches } from "../src/db/schema";
+import type { Db } from "../src/db";
+import { signalMatches, signals } from "../src/db/schema";
 import { GatewayError, type LlmGateway } from "../src/llm/gateway";
 import { buildAuthedApp, createTestDb } from "./helpers";
 
@@ -21,10 +23,12 @@ function fakeGateway(): LlmGateway {
 
 describe("signals API", () => {
   let app: TuezdayApp;
+  let db: Db;
   let workspaceId: string;
 
   beforeEach(async () => {
-    app = await buildAuthedApp({ db: createTestDb(), llm: fakeGateway() });
+    db = createTestDb();
+    app = await buildAuthedApp({ db, llm: fakeGateway() });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Signals Co" } })
     ).json().id;
@@ -86,6 +90,63 @@ describe("signals API", () => {
       });
       expect(res.statusCode).toBe(404);
     });
+
+    it.each(["persona", "campaign", "both"] as const)(
+      "does not disclose or persist foreign and unknown %s references",
+      async (referenceKind) => {
+        const foreignWorkspaceId = (
+          await app.inject({
+            method: "POST",
+            url: "/workspaces",
+            payload: { name: "Foreign Signals Co" },
+          })
+        ).json().id as string;
+        const foreignPersonaId = (
+          await app.inject({
+            method: "POST",
+            url: `/workspaces/${foreignWorkspaceId}/personas`,
+            payload: { name: "Foreign Persona" },
+          })
+        ).json().id as string;
+        const foreignCampaignId = (
+          await app.inject({
+            method: "POST",
+            url: `/workspaces/${foreignWorkspaceId}/campaigns`,
+            payload: { name: "Foreign Campaign", objective: "Stay isolated" },
+          })
+        ).json().id as string;
+
+        const referenceInput = (personaId: string, campaignId: string) => ({
+          ...(referenceKind === "persona" || referenceKind === "both"
+            ? { suggestedPersonaId: personaId }
+            : {}),
+          ...(referenceKind === "campaign" || referenceKind === "both"
+            ? { suggestedCampaignId: campaignId }
+            : {}),
+        });
+        const foreign = await createSignal(
+          referenceInput(foreignPersonaId, foreignCampaignId),
+        );
+        const unknown = await createSignal(
+          referenceInput(randomUUID(), randomUUID()),
+        );
+
+        expect(foreign.statusCode).toBe(404);
+        expect(unknown.statusCode).toBe(404);
+        expect(foreign.json()).toEqual({ error: "related_object_not_found" });
+        expect(foreign.json()).toEqual(unknown.json());
+        expect(
+          db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
+        ).toHaveLength(0);
+        expect(
+          db
+            .select()
+            .from(signalMatches)
+            .where(eq(signalMatches.workspaceId, workspaceId))
+            .all(),
+        ).toHaveLength(0);
+      },
+    );
   });
 
   describe("POST /workspaces/:id/signals/:signalId/draft", () => {
