@@ -413,6 +413,55 @@ describe("social automation", () => {
       expect(listDrafts(db, workspaceId)).toHaveLength(1);
     });
 
+    it("uses the highest valid local match instead of a higher foreign-persona row", async () => {
+      const localPersonaId = await createPersona("Local Automation Persona");
+      const campaignId = await createCampaign(
+        ["linkedin"],
+        "Tenant-safe Campaign",
+        [localPersonaId],
+      );
+      await setAutomation(campaignId, "human_in_the_loop");
+      const signalId = await createSignal("Tenant-isolated routing");
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Foreign Automation Workspace" },
+        })
+      ).json().id as string;
+      const foreignPersonaId = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${otherWorkspaceId}/personas`,
+          payload: { name: "Foreign Automation Persona" },
+        })
+      ).json().id as string;
+      seedMatch(signalId, campaignId, {
+        personaId: localPersonaId,
+        score: 80,
+      });
+      seedMatch(signalId, campaignId, {
+        personaId: foreignPersonaId,
+        score: 90,
+      });
+
+      const result = await run();
+
+      expect(result.results[0]).toMatchObject({
+        generated: 1,
+        autoApproved: 0,
+        skipped: 0,
+        blocked: null,
+      });
+      expect(listDrafts(db, workspaceId)).toEqual([
+        expect.objectContaining({
+          campaignId,
+          personaId: localPersonaId,
+          sourceSignalId: signalId,
+        }),
+      ]);
+    });
+
     it("a signal matching two campaigns generates for both, each as its own persona", async () => {
       const personaA = await createPersona("Field CTO");
       const personaB = await createPersona("Community Lead");

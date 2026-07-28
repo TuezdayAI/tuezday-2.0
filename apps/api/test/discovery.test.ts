@@ -21,6 +21,7 @@ import {
   safeFetchPublicMessage,
   type SafeFetchService,
 } from "../src/safe-fetch";
+import { acceptDiscoveredItem } from "../src/services/discovery";
 import { buildAuthedApp, createTestDb } from "./helpers";
 import { fixtureSafeFetch } from "./safe-fetch-fixtures";
 
@@ -536,6 +537,186 @@ describe("discovery API", () => {
           .from(signalMatches)
           .where(eq(signalMatches.workspaceId, workspaceId))
           .all(),
+      ).toHaveLength(0);
+    });
+
+    it("rolls back signal creation when acceptance faults after the signal insert", async () => {
+      await addRssSource();
+      await run();
+      const [top] = await items();
+
+      expect(() =>
+        acceptDiscoveredItem(db, workspaceId, top.id, {
+          afterSignalInsert() {
+            throw new Error("fault_after_accept_signal");
+          },
+        }),
+      ).toThrow("fault_after_accept_signal");
+
+      const storedItem = (await items()).find(
+        (candidate: { id: string }) => candidate.id === top.id,
+      );
+      expect(storedItem).toMatchObject({ status: "new", signalId: null });
+      expect(
+        db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
+      ).toHaveLength(0);
+      expect(
+        db
+          .select()
+          .from(signalMatches)
+          .where(eq(signalMatches.workspaceId, workspaceId))
+          .all(),
+      ).toHaveLength(0);
+    });
+
+    it("returns 404 when accepting an item through a different workspace", async () => {
+      await addRssSource();
+      await run();
+      const [top] = await items();
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Other Triage Workspace" },
+        })
+      ).json().id as string;
+
+      const accepted = await app.inject({
+        method: "POST",
+        url: `/workspaces/${otherWorkspaceId}/discovery/items/${top.id}/accept`,
+      });
+
+      expect(accepted.statusCode).toBe(404);
+      expect(accepted.json()).toEqual({ error: "item_not_found" });
+      expect(
+        db.select().from(signals).where(eq(signals.workspaceId, otherWorkspaceId)).all(),
+      ).toHaveLength(0);
+    });
+
+    it("rejects an item whose source belongs to another workspace", async () => {
+      await addRssSource();
+      await run();
+      const [top] = await items();
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Foreign Item Source Workspace" },
+        })
+      ).json().id as string;
+      const foreignSource = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${otherWorkspaceId}/discovery/sources`,
+          payload: {
+            type: "rss",
+            config: { feedUrl: "https://feeds.example.com/foreign.xml" },
+          },
+        })
+      ).json();
+      db.update(discoveredItems)
+        .set({ sourceId: foreignSource.id })
+        .where(eq(discoveredItems.id, top.id))
+        .run();
+
+      const accepted = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/discovery/items/${top.id}/accept`,
+      });
+
+      expect(accepted.statusCode).toBe(404);
+      expect(accepted.json()).toEqual({ error: "related_object_not_found" });
+      expect(
+        db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
+      ).toHaveLength(0);
+    });
+
+    it("rejects a foreign copied match without partially accepting the item", async () => {
+      await addRssSource();
+      await run();
+      const [top] = await items();
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Foreign Match Workspace" },
+        })
+      ).json().id as string;
+      const foreignPersonaId = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${otherWorkspaceId}/personas`,
+          payload: { name: "Foreign Match Persona" },
+        })
+      ).json().id as string;
+      db.update(discoveredItemMatches)
+        .set({ personaId: foreignPersonaId })
+        .where(eq(discoveredItemMatches.itemId, top.id))
+        .run();
+      const visibleItem = (await items()).find(
+        (candidate: { id: string }) => candidate.id === top.id,
+      );
+      expect(visibleItem.matches).toEqual([]);
+      expect(JSON.stringify(visibleItem)).not.toContain(foreignPersonaId);
+
+      const accepted = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/discovery/items/${top.id}/accept`,
+      });
+
+      expect(accepted.statusCode).toBe(404);
+      expect(accepted.json()).toEqual({ error: "related_object_not_found" });
+      const storedItem = (await items()).find(
+        (candidate: { id: string }) => candidate.id === top.id,
+      );
+      expect(storedItem).toMatchObject({ status: "new", signalId: null });
+      expect(
+        db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
+      ).toHaveLength(0);
+      expect(
+        db
+          .select()
+          .from(signalMatches)
+          .where(eq(signalMatches.workspaceId, workspaceId))
+          .all(),
+      ).toHaveLength(0);
+    });
+
+    it("rejects an item-match row assigned to a different workspace", async () => {
+      await addRssSource();
+      await run();
+      const [top] = await items();
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Foreign Match Row Workspace" },
+        })
+      ).json().id as string;
+      db.update(discoveredItemMatches)
+        .set({ workspaceId: otherWorkspaceId })
+        .where(eq(discoveredItemMatches.itemId, top.id))
+        .run();
+      const visibleItem = (await items()).find(
+        (candidate: { id: string }) => candidate.id === top.id,
+      );
+      expect(visibleItem.matches).toEqual([]);
+
+      const accepted = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/discovery/items/${top.id}/accept`,
+      });
+
+      expect(accepted.statusCode).toBe(404);
+      expect(accepted.json()).toEqual({ error: "related_object_not_found" });
+      const storedItem = db
+        .select()
+        .from(discoveredItems)
+        .where(eq(discoveredItems.id, top.id))
+        .get();
+      expect(storedItem).toMatchObject({ status: "new", signalId: null });
+      expect(
+        db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
       ).toHaveLength(0);
     });
 

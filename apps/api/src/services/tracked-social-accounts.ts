@@ -27,6 +27,13 @@ export class InvalidTrackedHandleError extends Error {
   }
 }
 
+export class DiscoveryReferenceNotFoundError extends Error {
+  constructor() {
+    super("related_object_not_found");
+    this.name = "DiscoveryReferenceNotFoundError";
+  }
+}
+
 /**
  * Canonical handle form per platform, so "@Competitor" and "competitor" land
  * on the same row: X/Instagram strip the leading @ and lowercase (handles are
@@ -165,7 +172,12 @@ export function updateTrackedSocialAccount(
       enabled: input.enabled ?? existing.enabled,
       updatedAt: Date.now(),
     })
-    .where(eq(trackedSocialAccounts.id, accountId))
+    .where(
+      and(
+        eq(trackedSocialAccounts.workspaceId, workspaceId),
+        eq(trackedSocialAccounts.id, accountId),
+      ),
+    )
     .run();
   return getTrackedSocialAccount(db, workspaceId, accountId);
 }
@@ -176,7 +188,15 @@ export function deleteTrackedSocialAccount(
   accountId: string,
 ): boolean {
   if (!getTrackedSocialAccount(db, workspaceId, accountId)) return false;
-  db.delete(trackedSocialAccounts).where(eq(trackedSocialAccounts.id, accountId)).run();
+  db
+    .delete(trackedSocialAccounts)
+    .where(
+      and(
+        eq(trackedSocialAccounts.workspaceId, workspaceId),
+        eq(trackedSocialAccounts.id, accountId),
+      ),
+    )
+    .run();
   return true;
 }
 
@@ -202,4 +222,22 @@ export function resolveTrackedAccounts(
     )
     .all()
     .map(rowToAccount);
+}
+
+/**
+ * Resolve every requested enabled account inside one workspace. Missing,
+ * disabled, and foreign ids are deliberately indistinguishable.
+ */
+export function requireTrackedAccounts(
+  db: Db,
+  workspaceId: string,
+  ids: readonly string[],
+): TrackedSocialAccount[] {
+  const uniqueIds = [...new Set(ids)];
+  const accounts = resolveTrackedAccounts(db, workspaceId, uniqueIds);
+  if (accounts.length !== uniqueIds.length) {
+    throw new DiscoveryReferenceNotFoundError();
+  }
+  const accountById = new Map(accounts.map((account) => [account.id, account]));
+  return uniqueIds.map((id) => accountById.get(id)!);
 }

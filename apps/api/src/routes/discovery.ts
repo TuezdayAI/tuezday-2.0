@@ -35,8 +35,8 @@ import {
   updateDiscoverySource,
 } from "../services/discovery";
 import { emitEvent } from "../services/events";
-import { SignalReferenceNotFoundError } from "../services/signals";
 import {
+  DiscoveryReferenceNotFoundError,
   DuplicateTrackedAccountError,
   InvalidTrackedHandleError,
   createTrackedSocialAccount,
@@ -91,6 +91,9 @@ export function registerDiscoveryRoutes(
         if (err instanceof DiscoverySourceConnectionError) {
           return reply.status(400).send({ error: err.code, message: err.message });
         }
+        if (err instanceof DiscoveryReferenceNotFoundError) {
+          return reply.status(404).send({ error: "related_object_not_found" });
+        }
         throw err;
       }
     },
@@ -142,6 +145,9 @@ export function registerDiscoveryRoutes(
         }
         if (err instanceof DiscoverySourceConnectionError) {
           return reply.status(400).send({ error: err.code, message: err.message });
+        }
+        if (err instanceof DiscoveryReferenceNotFoundError) {
+          return reply.status(404).send({ error: "related_object_not_found" });
         }
         throw err;
       }
@@ -288,7 +294,7 @@ export function registerDiscoveryRoutes(
       const item = getDiscoveredItem(db, request.params.id, request.params.itemId);
       if (!item) return reply.status(404).send({ error: "item_not_found" });
       try {
-        const result = acceptDiscoveredItem(db, request.params.id, item);
+        const result = acceptDiscoveredItem(db, request.params.id, item.id);
         await emitEvent(db, trustedFetcher, request.params.id, "discovery.item.accepted", {
           itemId: result.item.id,
           signalId: result.signal.id,
@@ -301,7 +307,7 @@ export function registerDiscoveryRoutes(
         if (err instanceof ItemNotTriagableError) {
           return reply.status(409).send({ error: "already_triaged", message: err.message });
         }
-        if (err instanceof SignalReferenceNotFoundError) {
+        if (err instanceof DiscoveryReferenceNotFoundError) {
           return reply.status(404).send({ error: "related_object_not_found" });
         }
         throw err;
@@ -316,7 +322,7 @@ export function registerDiscoveryRoutes(
       const item = getDiscoveredItem(db, request.params.id, request.params.itemId);
       if (!item) return reply.status(404).send({ error: "item_not_found" });
       try {
-        return skipDiscoveredItem(db, item);
+        return skipDiscoveredItem(db, request.params.id, item);
       } catch (err) {
         if (err instanceof ItemNotTriagableError) {
           return reply.status(409).send({ error: "already_triaged", message: err.message });
