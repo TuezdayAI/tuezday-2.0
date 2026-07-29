@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { GeminiGateway } from "../src/llm/gemini";
 import { GatewayError } from "../src/llm/gateway";
+import { createLlmGatewayFromEnv } from "../src/llm";
 import { EVIDENCE_EMBEDDING_DIMENSIONS } from "../src/evidence/db-store";
 
 function okResponse(count: number): Response {
@@ -25,6 +26,7 @@ describe("GeminiGateway.embed", () => {
 
   afterEach(() => {
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
     if (savedKey === undefined) delete process.env.GEMINI_API_KEY;
     else process.env.GEMINI_API_KEY = savedKey;
     if (savedEmbedModel === undefined) delete process.env.GEMINI_EMBED_MODEL;
@@ -122,4 +124,23 @@ describe("GeminiGateway.embed", () => {
     expect(result.embeddings).toHaveLength(1);
     expect(result.dimensions).toBe(EVIDENCE_EMBEDDING_DIMENSIONS);
   });
+
+  it.each(["gemini", "openrouter"])(
+    "keeps Gemini embeddings when %s is the generation primary and both providers are configured",
+    async (provider) => {
+      vi.stubEnv("LLM_PROVIDER", provider);
+      vi.stubEnv("GEMINI_API_KEY", "gemini-key");
+      vi.stubEnv("OPENROUTER_API_KEY", "openrouter-key");
+      vi.stubGlobal("fetch", vi.fn(async () => okResponse(1)));
+
+      const gateway = createLlmGatewayFromEnv();
+
+      expect(gateway.embed).toBeTypeOf("function");
+      const result = await gateway.embed!({ texts: ["native evidence"] });
+      expect(result.provider).toBe("gemini");
+      expect(result.embeddings[0]).toHaveLength(
+        EVIDENCE_EMBEDDING_DIMENSIONS,
+      );
+    },
+  );
 });
