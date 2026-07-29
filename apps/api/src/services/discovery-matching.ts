@@ -161,7 +161,6 @@ export function claimMatchingBatch(
               "pending",
               "retryable_error",
             ]),
-            eq(discoveredItems.matchingState, "ready"),
             and(
               eq(discoveredItems.matchingState, "running"),
               lte(
@@ -182,36 +181,6 @@ export function claimMatchingBatch(
         candidate.workspaceId,
         candidate,
       );
-      if (
-        candidate.matchingState === "ready" &&
-        candidate.matchingInputFingerprint === fingerprint
-      ) {
-        continue;
-      }
-      const stateFence =
-        candidate.matchingState === "ready"
-          ? and(
-              eq(discoveredItems.matchingState, "ready"),
-              candidate.matchingInputFingerprint === null
-                ? isNull(discoveredItems.matchingInputFingerprint)
-                : eq(
-                    discoveredItems.matchingInputFingerprint,
-                    candidate.matchingInputFingerprint,
-                  ),
-            )
-          : or(
-              inArray(discoveredItems.matchingState, [
-                "pending",
-                "retryable_error",
-              ]),
-              and(
-                eq(discoveredItems.matchingState, "running"),
-                lte(
-                  discoveredItems.matchingLeaseExpiresAt,
-                  DATABASE_NOW_MS,
-                ),
-              ),
-            );
       const claimed = tx
         .update(discoveredItems)
         .set({
@@ -234,7 +203,19 @@ export function claimMatchingBatch(
             ),
             eq(discoveredItems.status, "new"),
             isNull(discoveredItems.duplicateOfId),
-            stateFence,
+            or(
+              inArray(discoveredItems.matchingState, [
+                "pending",
+                "retryable_error",
+              ]),
+              and(
+                eq(discoveredItems.matchingState, "running"),
+                lte(
+                  discoveredItems.matchingLeaseExpiresAt,
+                  DATABASE_NOW_MS,
+                ),
+              ),
+            ),
           ),
         )
         .returning({

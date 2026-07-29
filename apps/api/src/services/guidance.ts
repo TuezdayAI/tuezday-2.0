@@ -8,7 +8,7 @@ import {
   type GuidanceOverride,
   type GuidanceSource,
 } from "@tuezday/contracts";
-import type { Db } from "../db";
+import type { Db, DbExecutor } from "../db";
 import { campaigns, guidanceOverrides, personas, type GuidanceOverrideRow } from "../db/schema";
 
 /**
@@ -236,7 +236,7 @@ export function resetChannelGuidance(
  * the schema still declares cascade for the eventual Postgres swap.
  */
 export function deleteGuidanceForScope(
-  db: Db,
+  db: DbExecutor,
   workspaceId: string,
   scope: { personaId?: string; campaignId?: string },
 ): void {

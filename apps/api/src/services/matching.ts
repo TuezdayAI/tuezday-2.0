@@ -4,7 +4,7 @@
 // manually-created signal gets the exact same judgment a discovered item does.
 
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import {
   DISCOVERY_MAX_MATCHES_PER_ITEM,
   type DiscoveredItemMatch,
@@ -531,22 +531,6 @@ export function getBestSignalMatchForCampaign(
     (match) =>
       match.personaId === null || validPersonaIds.has(match.personaId),
   );
-}
-
-/**
- * Re-score watermark (Sprint 45): the newest persona/campaign `updatedAt` in
- * the workspace, 0 when both tables are empty. One MAX query; items whose
- * `scoredAt` predates this get re-judged on the next discovery run.
- */
-export function getMatchingConfigVersion(db: Db, workspaceId: string): number {
-  const row = db.get<{ v: number | null }>(sql`
-    SELECT MAX(v) AS v FROM (
-      SELECT MAX(${personas.updatedAt}) AS v FROM ${personas} WHERE ${personas.workspaceId} = ${workspaceId}
-      UNION ALL
-      SELECT MAX(${campaigns.updatedAt}) AS v FROM ${campaigns} WHERE ${campaigns.workspaceId} = ${workspaceId}
-    )
-  `);
-  return row?.v ?? 0;
 }
 
 // ---------------------------------------------------------------------------

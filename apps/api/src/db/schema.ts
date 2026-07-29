@@ -500,8 +500,8 @@ export const discoveredItems = sqliteTable(
     scoreReason: text("score_reason"),
     status: text("status").notNull().default("new"),
     signalId: text("signal_id"),
-    // Sprint 45: re-score watermark — when the item was last LLM-judged. Null
-    // for never-scored items.
+    // When the item was last LLM-judged. Null for never-scored items; queue
+    // eligibility is controlled by matchingState rather than this timestamp.
     scoredAt: integer("scored_at"),
     matchingState: text("matching_state").notNull().default("pending"),
     matchingVersion: integer("matching_version").notNull().default(0),

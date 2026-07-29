@@ -653,7 +653,7 @@ describe("discovery API", () => {
       expect(res.statusCode).toBe(409);
     });
 
-    it("rejects a stale related reference without accepting the item", async () => {
+    it("invalidates a stale related reference before it can be accepted", async () => {
       await addRssSource();
       await run();
       const [top] = await items();
@@ -669,12 +669,19 @@ describe("discovery API", () => {
         url: `/workspaces/${workspaceId}/discovery/items/${top.id}/accept`,
       });
 
-      expect(accepted.statusCode).toBe(404);
-      expect(accepted.json()).toEqual({ error: "related_object_not_found" });
+      expect(accepted.statusCode).toBe(409);
+      expect(accepted.json()).toEqual({
+        error: "matching_not_ready",
+        message: "Scoring has not completed for this item yet.",
+      });
       const storedItem = (await items()).find(
         (candidate: { id: string }) => candidate.id === top.id,
       );
-      expect(storedItem).toMatchObject({ status: "new", signalId: null });
+      expect(storedItem).toMatchObject({
+        status: "new",
+        signalId: null,
+        matchingState: "pending",
+      });
       expect(
         db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
       ).toHaveLength(0);
@@ -909,7 +916,7 @@ describe("discovery API", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Sprint 45 — multi-candidate scoring, re-score watermark, cross-source dedup
+// Sprint 45+49 — multi-candidate scoring, targeted re-score, cross-source dedup
 // ---------------------------------------------------------------------------
 
 /** Serves a fixed XML body per feed URL; unknown URLs 404. */
@@ -1212,11 +1219,6 @@ describe("multi-candidate scoring (Sprint 45)", () => {
       .where(eq(discoveredItemMatches.itemId, target.id as string))
       .all();
 
-    h.db
-      .update(discoveredItems)
-      .set({ scoredAt: Date.now() - 60_000 })
-      .where(eq(discoveredItems.id, target.id as string))
-      .run();
     const bumped = await h.app.inject({
       method: "PUT",
       url: `/workspaces/${h.workspaceId}/personas/${h.fieldCto}`,
@@ -1380,7 +1382,7 @@ describe("multi-candidate scoring (Sprint 45)", () => {
   });
 });
 
-describe("re-score on config change (Sprint 45)", () => {
+describe("targeted re-score on config change (Sprint 49)", () => {
   let h: MatchingHarness;
 
   beforeEach(async () => {
@@ -1400,15 +1402,6 @@ describe("re-score on config change (Sprint 45)", () => {
     await h.app.close();
   });
 
-  /** Push every item's watermark into the past so a config edit is strictly newer. */
-  function backdateScoredAt() {
-    h.db
-      .update(discoveredItems)
-      .set({ scoredAt: Date.now() - 60_000 })
-      .where(eq(discoveredItems.workspaceId, h.workspaceId))
-      .run();
-  }
-
   async function bumpPersona() {
     const res = await h.app.inject({
       method: "PUT",
@@ -1423,7 +1416,6 @@ describe("re-score on config change (Sprint 45)", () => {
     await h.run();
     expect(h.scoringPrompts).toHaveLength(1);
 
-    backdateScoredAt();
     await bumpPersona();
     h.setResponder((prompt) => {
       const count = (prompt.match(/ITEM \d+:/g) ?? []).length;
@@ -1451,7 +1443,6 @@ describe("re-score on config change (Sprint 45)", () => {
       url: `/workspaces/${h.workspaceId}/discovery/items/${top.id}/accept`,
     });
 
-    backdateScoredAt();
     await bumpPersona();
     h.setResponder((prompt) => {
       const count = (prompt.match(/ITEM \d+:/g) ?? []).length;
