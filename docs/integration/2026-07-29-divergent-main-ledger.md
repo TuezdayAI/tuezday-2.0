@@ -290,3 +290,53 @@ Append one dated entry per task with Plane item, commands, result, and commit.
   tasks, worker configuration, and non-overlapping loops.
 - `npm run typecheck -w apps/api` — passed.
 - `npm run typecheck -w apps/worker` — passed.
+
+### 2026-07-29 — TAP-135 — Final verification and inline code review
+
+- Refetched `origin/main`; the protected remote baseline remains
+  `a2b55231ebe38b9491151cd92928b521d22fed76`.
+- Commit audit — passed:
+  - all 28 local non-merge commits have explicit replay mappings;
+  - local merge tip `48a47c6` remains marked superseded;
+  - `git diff --check` reported no whitespace errors.
+- Canonical migration audit — passed:
+  - remote `0048`–`0052` remain unchanged;
+  - regenerated `0053`–`0055` are the only Sprint 49 persistence tail;
+  - snapshot `prevId` values form the exact `0052` → `0053` → `0054` →
+    `0055` chain;
+  - fresh-install migration gate passed 1 file and 3/3 tests with no foreign
+    key violations.
+- Reproducible install — `npm ci` passed, installing 387 packages. The
+  baseline's known 19 audit findings (1 low, 8 moderate, 8 high, 2 critical)
+  remain inherited; no unsafe forced upgrade was applied during integration.
+- Repository-wide verification from review-fix commit `251de8f`:
+  - `npm run typecheck` — all seven workspaces passed;
+  - `npm test` — 185 files and 1,979/1,979 tests passed;
+  - `npm run build` — MCP TypeScript and Next.js 15.5.19 production builds
+    passed; the existing environment-only multiple-lockfile warning remained.
+- Desktop acceptance — API health and the isolated web app both returned
+  `200`; all 10/10 Chromium desktop tests passed. The integration web app used
+  port 3100 because the founder-owned dirty checkout already occupied 3000;
+  that process was neither reused nor stopped. Temporary integration processes
+  were stopped after the gate.
+- Inline senior review covered migration numbering/snapshots/fresh install,
+  `app.ts`, `server.ts`, authentication, LLM/evidence composition, schema,
+  worker scheduling, remote feature preservation, local security/restart
+  guarantees, and auto-merge risks.
+  - Static preservation audit found zero missing remote route registrations
+    (55/55), zero missing remote schema tables (85/85), and zero missing remote
+    or local API dependencies.
+  - Important finding fixed: the environment-selected `FallbackGateway`
+    dropped Gemini's optional embedding capability whenever both generation
+    providers were configured, silently degrading native evidence to lexical
+    search. Red gate failed 2 provider-order cases; commit
+    `251de8f0e632d82d43ccd34bcea76ae93ce01a83` delegates embeddings to the
+    capable provider. Focused LLM/evidence/restart verification passed 4 files
+    and 44/44 tests before the full gate above.
+  - Accepted lower-severity limitation: worker loops are settled and
+    non-overlapping individually but not globally serialized across domains.
+    This preserves the remote behavior; per-send reply checks and durable
+    idempotency contain the current risk, while the cross-domain durable queue
+    remains explicitly deferred to Sprint 73.
+- Review assessment: no open P0/P1 findings; ready for a draft pull request,
+  not for automatic merge.
