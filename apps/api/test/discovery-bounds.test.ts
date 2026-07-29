@@ -223,7 +223,12 @@ describe("connected page accounting", () => {
       lastError: null,
       lastFetchedAt: null,
       connectionId: "connection",
-      cursor: {},
+      cursor: {
+        version: 1,
+        targetCount: 0,
+        backlog: false,
+        lastCheckpointAt: null,
+      },
       backoffUntil: null,
       lastAttemptedAt: null,
       createdAt: 1,

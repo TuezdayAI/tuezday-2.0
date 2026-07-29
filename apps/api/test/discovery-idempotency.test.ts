@@ -18,6 +18,12 @@ import {
   enqueueDueDiscoveryJobs,
 } from "../src/services/discovery-jobs";
 import { NullIntentProvider } from "../src/discovery/intent";
+import {
+  cursorMode,
+  readCursor,
+  reconcileTargets,
+  resolveDiscoveryTargets,
+} from "../src/discovery/paging";
 import { createTestDb } from "./helpers";
 
 function claimedFixture(
@@ -74,14 +80,16 @@ function claimedFixture(
     "workspace-1",
     "source-1",
   )!;
-  const cursor = {
-    version: 1 as const,
-    mode: "rss",
-    nextTargetIndex: 0,
-    targets: {},
-  };
+  const targets = resolveDiscoveryTargets({
+    source,
+    trackedAccounts: [],
+  });
+  const cursor = reconcileTargets(
+    readCursor("{}", cursorMode(source)),
+    targets,
+  );
   const page = {
-    targetKey: "default",
+    targetKey: targets[0]!.key,
     items: [
       {
         externalId: "occurrence-1",
@@ -97,7 +105,7 @@ function claimedFixture(
     callsUsed: 1,
     decodedBytes: 10,
   };
-  return { db, claim, source, cursor, page };
+  return { db, claim, source, cursor, page, targets };
 }
 
 const unusedSourceDependencies = {
@@ -275,7 +283,7 @@ describe("atomic discovery occurrence checkpoints", () => {
   });
 
   it("resumes after a committed checkpoint without duplicating the prior occurrence", async () => {
-    const { db, claim } = claimedFixture({
+    const { db, claim, targets } = claimedFixture({
       type: "x",
       config: {
         mode: "account_timeline",
@@ -361,7 +369,7 @@ describe("atomic discovery occurrence checkpoints", () => {
       new AbortController().signal,
     );
 
-    expect(visited[0]).toBe("handle:second");
+    expect(visited[0]).toBe(targets[1]!.key);
     expect(
       db
         .select({

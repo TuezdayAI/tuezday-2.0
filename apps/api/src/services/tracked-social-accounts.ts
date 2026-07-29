@@ -6,7 +6,7 @@ import type {
   TrackedSocialPlatform,
   UpdateTrackedSocialAccountInput,
 } from "@tuezday/contracts";
-import type { Db } from "../db";
+import type { Db, DbExecutor } from "../db";
 import {
   discoveryJobs,
   discoverySources,
@@ -313,7 +313,7 @@ export function deleteTrackedSocialAccount(
  * discovery fetch actually listens to. Unknown/deleted ids are dropped.
  */
 export function resolveTrackedAccounts(
-  db: Db,
+  db: DbExecutor,
   workspaceId: string,
   ids: string[],
 ): TrackedSocialAccount[] {
@@ -337,7 +337,7 @@ export function resolveTrackedAccounts(
  * disabled, and foreign ids are deliberately indistinguishable.
  */
 export function requireTrackedAccounts(
-  db: Db,
+  db: DbExecutor,
   workspaceId: string,
   ids: readonly string[],
 ): TrackedSocialAccount[] {

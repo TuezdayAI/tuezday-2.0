@@ -69,9 +69,12 @@ export function getConnectedDiscoveryErrorMetrics(
 
 /** A tracked account the source references, pre-resolved by the caller. */
 export interface ResolvedTrackedAccount {
+  id: string;
   handle: string;
   /** Provider-side id (e.g. a LinkedIn author URN) when known. */
   externalId: string | null;
+  enabled: boolean;
+  updatedAt: number;
 }
 
 export interface ConnectedDiscoveryInput {
@@ -566,14 +569,11 @@ export async function fetchConnectedSourcePage(input: {
         },
       }
     : input.source;
-  const trackedAccounts = input.target.handle
-    ? [
-        {
-          handle: input.target.handle,
-          externalId: input.target.externalId ?? null,
-        },
-      ]
-    : input.trackedAccounts;
+  const trackedAccounts = input.target.key.startsWith("tracked:")
+    ? input.trackedAccounts.filter(
+        (account) => `tracked:${account.id}` === input.target.key,
+      )
+    : [];
   let items: RawDiscoveredItem[];
   try {
     items = await fetchConnectedSourceItems({

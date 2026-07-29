@@ -2230,6 +2230,16 @@ export const discoverySourceConfigSchema = z.object({
 });
 export type DiscoverySourceConfig = z.infer<typeof discoverySourceConfigSchema>;
 
+export const discoveryCursorProgressSchema = z.object({
+  version: z.literal(1),
+  targetCount: z.number().int().nonnegative(),
+  backlog: z.boolean(),
+  lastCheckpointAt: z.number().int().nullable(),
+});
+export type DiscoveryCursorProgress = z.infer<
+  typeof discoveryCursorProgressSchema
+>;
+
 export const discoverySourceSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
@@ -2243,9 +2253,9 @@ export const discoverySourceSchema = z.object({
   // Connected sourcing (Sprint 46): the workspace connection this source reads
   // through. Null for keyless sources (RSS, Google News, keyless Reddit, ...).
   connectionId: z.string().uuid().nullable(),
-  // Best-effort provider pagination state keyed by mode; dedup on external ids
-  // remains the idempotency guarantee.
-  cursor: z.record(z.string(), z.unknown()),
+  // Safe progress summary. Provider cursors and target identities stay
+  // internal to the execution service.
+  cursor: discoveryCursorProgressSchema,
   // Rate-limit back-pressure: the source is not enqueued until this passes.
   backoffUntil: z.number().int().nullable(),
   lastAttemptedAt: z.number().int().nullable(),

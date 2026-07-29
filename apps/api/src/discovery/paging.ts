@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { DiscoverySource } from "@tuezday/contracts";
 import type { ConnectorFabric } from "../connectors/fabric";
 import type { Db } from "../db";
@@ -227,62 +228,180 @@ function modeFor(source: DiscoverySource): string {
   return source.config.mode?.trim() || source.type;
 }
 
-export function targetsForSource(
-  source: DiscoverySource,
-  trackedAccounts: ResolvedTrackedAccount[],
-): DiscoveryTarget[] {
+function sha256(value: string): string {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+function stableValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, stableValue(nested)]),
+    );
+  }
+  return value;
+}
+
+function normalizedConfig(source: DiscoverySource): string {
+  return JSON.stringify(stableValue(source.config));
+}
+
+function normalizedHandle(value: string): string {
+  return value.trim().replace(/^@+/, "").toLowerCase();
+}
+
+export function resolveDiscoveryTargets(input: {
+  source: DiscoverySource;
+  trackedAccounts: ResolvedTrackedAccount[];
+}): DiscoveryTarget[] {
+  const { source, trackedAccounts } = input;
   const mode = modeFor(source);
   if (mode === "account_timeline") {
-    const raw = [
-      ...(source.config.handle ? [source.config.handle] : []),
-      ...(source.config.handles ?? []),
-      ...trackedAccounts.map((account) => account.handle),
-    ];
     const seen = new Set<string>();
     const targets: DiscoveryTarget[] = [];
-    for (const value of raw) {
-      const handle = value.trim().replace(/^@+/, "");
-      const normalized = handle.toLowerCase();
-      if (!handle || seen.has(normalized)) continue;
+    for (const account of trackedAccounts) {
+      const normalized = normalizedHandle(account.handle);
+      if (!normalized || seen.has(normalized)) continue;
       seen.add(normalized);
-      const account = trackedAccounts.find(
-        (candidate) =>
-          candidate.handle.trim().replace(/^@+/, "").toLowerCase() ===
-          normalized,
-      );
-      const key = `handle:${normalized}`;
-      const externalId = account?.externalId ?? null;
+      const key = `tracked:${account.id}`;
       targets.push({
         key,
-        handle,
-        externalId,
-        fingerprint: JSON.stringify({
-          type: source.type,
-          mode,
-          key,
-          externalId,
-          config: source.config,
-        }),
+        handle: normalized,
+        externalId: account.externalId,
+        fingerprint: sha256(
+          JSON.stringify({
+            provider: source.type,
+            mode,
+            id: account.id,
+            handle: normalized,
+            externalId: account.externalId,
+            enabled: account.enabled,
+            updatedAt: account.updatedAt,
+          }),
+        ),
+      });
+    }
+    const inline = [
+      ...(source.config.handle ? [source.config.handle] : []),
+      ...(source.config.handles ?? []),
+    ];
+    for (const value of inline) {
+      const normalized = normalizedHandle(value);
+      if (!normalized || seen.has(normalized)) continue;
+      seen.add(normalized);
+      const key = sha256(`${source.type}|${mode}|${normalized}`);
+      targets.push({
+        key,
+        handle: normalized,
+        externalId: null,
+        fingerprint: sha256(
+          JSON.stringify({
+            provider: source.type,
+            mode,
+            target: normalized,
+            config: stableValue(source.config),
+          }),
+        ),
       });
     }
     if (targets.length > 0) return targets;
   }
 
-  const key =
-    mode === "hashtag" && source.config.hashtag
-      ? `hashtag:${source.config.hashtag.trim().replace(/^#+/, "").toLowerCase()}`
-      : "default";
+  const targetValue =
+    mode === "hashtag"
+      ? source.config.hashtag?.trim().replace(/^#+/, "").toLowerCase()
+      : mode === "query"
+        ? source.config.query?.trim().replace(/\s+/g, " ").toLowerCase()
+        : mode === "list_timeline"
+          ? source.config.listId?.trim()
+          : undefined;
+  const normalized = targetValue || normalizedConfig(source);
+  const key = sha256(
+    `${source.type}|${mode}|${normalized}`,
+  );
   return [
     {
       key,
-      fingerprint: JSON.stringify({
-        type: source.type,
-        mode,
-        key,
-        config: source.config,
-      }),
+      fingerprint: sha256(
+        JSON.stringify({
+          provider: source.type,
+          mode,
+          target: normalized,
+          config: stableValue(source.config),
+        }),
+      ),
     },
   ];
+}
+
+/** Backwards-compatible internal name while callers migrate. */
+export function targetsForSource(
+  source: DiscoverySource,
+  trackedAccounts: ResolvedTrackedAccount[],
+): DiscoveryTarget[] {
+  return resolveDiscoveryTargets({ source, trackedAccounts });
+}
+
+function newestItem(items: RawDiscoveredItem[]) {
+  return [...items].sort((left, right) => {
+    const byDate = (right.publishedAt ?? -1) - (left.publishedAt ?? -1);
+    return byDate || right.externalId.localeCompare(left.externalId);
+  })[0];
+}
+
+export function checkpointPage(input: {
+  cursor: DiscoveryCursorV1;
+  target: DiscoveryTarget;
+  page: DiscoveryPage;
+  nextTargetIndex: number;
+}): DiscoveryCursorV1 {
+  const prior =
+    input.cursor.targets[input.target.key] ??
+    emptyTargetCheckpoint(input.target.fingerprint);
+  const newest = newestItem(input.page.items);
+  const capturedNewest = prior.continuation?.newestExternalId
+    ? {
+        externalId: prior.continuation.newestExternalId,
+        publishedAt: prior.continuation.newestPublishedAt,
+      }
+    : newest
+      ? {
+          externalId: newest.externalId,
+          publishedAt: newest.publishedAt,
+        }
+      : null;
+  const boundaryExternalId =
+    prior.continuation?.boundaryExternalId ??
+    prior.highWatermark?.externalId ??
+    null;
+  const complete =
+    input.page.reachedBoundary || input.page.exhausted;
+  const checkpoint: DiscoveryTargetCheckpoint = {
+    targetFingerprint: input.target.fingerprint,
+    highWatermark:
+      complete && capturedNewest
+        ? capturedNewest
+        : prior.highWatermark,
+    continuation: complete
+      ? null
+      : {
+          providerToken: input.page.nextToken,
+          boundaryExternalId,
+          newestExternalId: capturedNewest?.externalId ?? null,
+          newestPublishedAt: capturedNewest?.publishedAt ?? null,
+        },
+    lastSafeError: null,
+  };
+  return {
+    ...input.cursor,
+    nextTargetIndex: input.nextTargetIndex,
+    targets: {
+      ...input.cursor.targets,
+      [input.target.key]: checkpoint,
+    },
+  };
 }
 
 export function cursorMode(source: DiscoverySource): string {

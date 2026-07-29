@@ -54,6 +54,7 @@ import {
 } from "../discovery/connected-adapters";
 import type { IntentProvider } from "../discovery/intent";
 import {
+  checkpointPage,
   cursorMode,
   readCursor,
   reconcileTargets,
@@ -311,7 +312,7 @@ function trackedPlatformForSource(
 }
 
 function requireSourceTrackedAccounts(
-  db: Db,
+  db: DbExecutor,
   workspaceId: string,
   type: DiscoverySourceType,
   config: DiscoverySourceConfig,
@@ -1073,13 +1074,6 @@ function sourceClaimIsLive(
   );
 }
 
-function newestItem(items: RawDiscoveredItem[]) {
-  return [...items].sort((left, right) => {
-    const byDate = (right.publishedAt ?? -1) - (left.publishedAt ?? -1);
-    return byDate || right.externalId.localeCompare(left.externalId);
-  })[0];
-}
-
 export interface DiscoveryCheckpointHooks {
   afterOccurrenceInsert?(index: number): void;
   afterCanonicalization?(): void;
@@ -1119,8 +1113,8 @@ export function persistDiscoveryPage(
       if (!sourceClaimIsLive(tx, claim)) {
         throw new DiscoveryCheckpointFenceError();
       }
-      const currentSource = tx
-        .select({ executionVersion: discoverySources.executionVersion })
+      const currentSourceRow = tx
+        .select()
         .from(discoverySources)
         .where(
           and(
@@ -1133,7 +1127,40 @@ export function persistDiscoveryPage(
           ),
         )
         .get();
-      if (!currentSource) throw new DiscoveryCheckpointFenceError();
+      if (!currentSourceRow) throw new DiscoveryCheckpointFenceError();
+      const currentSource = rowToSourceExecution(currentSourceRow);
+      let currentTargets: ReturnType<typeof targetsForSource>;
+      try {
+        const currentTrackedAccounts = requireSourceTrackedAccounts(
+          tx,
+          claim.workspaceId,
+          currentSource.type,
+          currentSource.config,
+        ).map((account) => ({
+          id: account.id,
+          handle: account.handle,
+          externalId: account.externalId,
+          enabled: account.enabled,
+          updatedAt: account.updatedAt,
+        }));
+        currentTargets = targetsForSource(
+          currentSource,
+          currentTrackedAccounts,
+        );
+      } catch {
+        throw new DiscoveryCheckpointFenceError();
+      }
+      const currentTarget = currentTargets.find(
+        (target) => target.key === page.targetKey,
+      );
+      const checkpoint = cursor.targets[page.targetKey];
+      if (
+        !currentTarget ||
+        !checkpoint ||
+        currentTarget.fingerprint !== checkpoint.targetFingerprint
+      ) {
+        throw new DiscoveryCheckpointFenceError();
+      }
 
       let inserted = 0;
       const checkpointAt = Date.now();
@@ -1477,8 +1504,11 @@ export async function runClaimedDiscoverySource(
       initial.type,
       initial.config,
     ).map((account) => ({
+      id: account.id,
       handle: account.handle,
       externalId: account.externalId,
+      enabled: account.enabled,
+      updatedAt: account.updatedAt,
     }));
   } catch (error) {
     const failure = safeExecutionFailure(error, initial, signal);
@@ -1510,7 +1540,7 @@ export async function runClaimedDiscoverySource(
   }
 
   const targets = targetsForSource(initial, trackedAccounts);
-  const cursor = reconcileTargets(initial.cursorState, targets);
+  let cursor = reconcileTargets(initial.cursorState, targets);
   const pageReader = deps.pageReader ?? defaultDiscoveryPageReader;
   let calls = 0;
   let pages = 0;
@@ -1619,30 +1649,22 @@ export async function runClaimedDiscoverySource(
       const admitted = page.items.slice(0, remainingItems);
       const truncated = admitted.length < page.items.length;
       admittedItems += admitted.length;
-      const newest = newestItem(admitted);
-      if (newest) {
-        checkpoint.highWatermark = {
-          externalId: newest.externalId,
-          publishedAt: newest.publishedAt,
-        };
-      }
-      checkpoint.lastSafeError = null;
-      checkpoint.continuation =
-        page.exhausted && !truncated
-          ? null
-          : {
-              providerToken: page.nextToken,
-              boundaryExternalId:
-                checkpoint.highWatermark?.externalId ?? null,
-              newestExternalId: newest?.externalId ?? null,
-              newestPublishedAt: newest?.publishedAt ?? null,
-            };
-      cursor.nextTargetIndex = (targetIndex + 1) % targets.length;
+      const admittedPage = {
+        ...page,
+        items: admitted,
+        exhausted: page.exhausted && !truncated,
+      };
+      cursor = checkpointPage({
+        cursor,
+        target,
+        page: admittedPage,
+        nextTargetIndex: (targetIndex + 1) % targets.length,
+      });
 
       const persisted = persistDiscoveryPage(deps.db, {
         claim,
         source: initial,
-        page: { ...page, items: admitted },
+        page: admittedPage,
         cursor,
       });
       if (!persisted) {
