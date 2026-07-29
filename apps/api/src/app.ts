@@ -284,7 +284,7 @@ export async function buildApp({
   registerMailboxRoutes(app, db, llm, gmail);
   registerEmailRecipientSafetyRoutes(app, db);
   registerResendWebhookRoute(app, db, resendWebhookVerifier);
-  registerAutomationRoutes(app, db, llm, evidence);
+  registerAutomationRoutes(app, db, llm, evidence, instanceId);
   registerInboxRoutes(app, db, llm, evidence, connectors, externalActionRuntime);
   registerInsightsRoutes(app, db);
   registerNextActionRoutes(app, db);

@@ -379,6 +379,13 @@
       "when": 1785345697138,
       "tag": "0053_sprint_49_leases",
       "breakpoints": true
+    },
+    {
+      "idx": 54,
+      "version": "6",
+      "when": 1785346127229,
+      "tag": "0054_sprint_49_automation_idempotency",
+      "breakpoints": true
     }
   ]
 }

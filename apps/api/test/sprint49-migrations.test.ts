@@ -76,4 +76,23 @@ describe("Sprint 49 migrations", () => {
       }),
     );
   });
+
+  it("installs automatic-draft idempotency as migration 0054", () => {
+    const sqlite = migratedEmptyDatabase();
+
+    expect(migrationFile("0054_")).toContain(
+      "sprint_49_automation_idempotency",
+    );
+    expect(columns(sqlite, "drafts")).toContain("automation_key");
+    const indexes = sqlite
+      .prepare("PRAGMA index_list(drafts)")
+      .all() as Array<{ name: string; unique: number; partial: number }>;
+    expect(indexes).toContainEqual(
+      expect.objectContaining({
+        name: "drafts_automation_key",
+        unique: 1,
+        partial: 1,
+      }),
+    );
+  });
 });

@@ -11,10 +11,10 @@ import {
   type LaunchMedia,
   type TaskType,
 } from "@tuezday/contracts";
-import type { Db } from "../db";
+import type { Db, DbExecutor } from "../db";
 import { approvalDecisions, drafts, generations, type DraftRow } from "../db/schema";
 
-type DraftWriteDb = Pick<Db, "insert" | "update">;
+type DraftWriteDb = Pick<DbExecutor, "insert" | "update">;
 
 /** Who performed a draft action — a user, or the worker's system identity. */
 export interface DraftActor {
@@ -30,7 +30,12 @@ export class InvalidTransitionError extends Error {
 }
 
 function rowToDraft(row: DraftRow): Draft {
-  const { reviewJson, mediaJson, ...rest } = row;
+  const {
+    automationKey: _automationKey,
+    reviewJson,
+    mediaJson,
+    ...rest
+  } = row;
   return {
     ...rest,
     taskType: row.taskType as TaskType,
@@ -96,6 +101,20 @@ export function draftForGeneration(
 
 /** Create a draft from a generation and submit it into review in one step. */
 export function submitDraft(db: Db, input: SubmitDraftInput, actor: DraftActor): Draft {
+  return db.transaction((tx) => {
+    const row = insertSubmittedDraft(tx, input, actor, null, false);
+    if (!row) throw new Error("draft_insert_failed");
+    return rowToDraft(row);
+  });
+}
+
+function insertSubmittedDraft(
+  db: DbExecutor,
+  input: SubmitDraftInput,
+  actor: DraftActor,
+  automationKey: string | null,
+  ignoreConflict: boolean,
+): DraftRow | null {
   const now = Date.now();
   const toState = transitionTo("draft", "submit")!;
   // Carry the source generation's pre-review (Sprint 22) onto the draft so the
@@ -121,14 +140,87 @@ export function submitDraft(db: Db, input: SubmitDraftInput, actor: DraftActor):
     originalContent: input.content,
     content: input.content,
     state: toState,
+    automationKey,
     reviewJson: sourceReviewJson,
     mediaJson: input.media && input.media.length > 0 ? JSON.stringify(input.media) : null,
     createdAt: now,
     updatedAt: now,
   };
-  db.insert(drafts).values(row).run();
+  const insert = db.insert(drafts).values(row);
+  const inserted = ignoreConflict
+    ? insert.onConflictDoNothing().returning().get()
+    : insert.returning().get();
+  if (!inserted) return null;
   logDecision(db, row, actor, "submit", "draft", toState);
-  return rowToDraft(row);
+  return inserted;
+}
+
+export function automaticDraftKey(input: {
+  workspaceId: string;
+  signalId: string;
+  campaignId: string;
+  channel: Channel;
+}): string {
+  return [
+    "automation:v1",
+    input.workspaceId,
+    input.signalId,
+    input.campaignId,
+    input.channel,
+  ].join(":");
+}
+
+export interface AutomaticDraftCommit {
+  draft: Draft;
+  created: boolean;
+  autoApproved: boolean;
+}
+
+export function submitAutomaticDraft(
+  db: Db,
+  input: SubmitDraftInput & {
+    automationKey: string;
+    autoApprove: boolean;
+  },
+  actor: DraftActor,
+): AutomaticDraftCommit {
+  return db.transaction((tx) => {
+    const inserted = insertSubmittedDraft(
+      tx,
+      input,
+      actor,
+      input.automationKey,
+      true,
+    );
+    if (!inserted) {
+      const existing = tx
+        .select()
+        .from(drafts)
+        .where(eq(drafts.automationKey, input.automationKey))
+        .get();
+      if (!existing) throw new Error("automatic_draft_conflict");
+      return {
+        draft: rowToDraft(existing),
+        created: false,
+        autoApproved: false,
+      };
+    }
+
+    let draft = rowToDraft(inserted);
+    if (input.autoApprove) {
+      draft = applyDraftActionInTransaction(
+        tx,
+        draft,
+        "approve",
+        actor,
+      );
+    }
+    return {
+      draft,
+      created: true,
+      autoApproved: input.autoApprove,
+    };
+  });
 }
 
 /** Attach rendered visuals to an existing draft (Sprint 41 Part 5). */

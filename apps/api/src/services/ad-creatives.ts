@@ -9,6 +9,8 @@ import {
   type ApprovalState,
   type Channel,
   type Draft,
+  type GenerationReview,
+  type LaunchMedia,
   type TaskType,
 } from "@tuezday/contracts";
 import { and, asc, eq, inArray } from "drizzle-orm";
@@ -60,11 +62,23 @@ export interface AdCreativeSet {
 }
 
 function rowToDraft(row: DraftRow): Draft {
+  const {
+    automationKey: _automationKey,
+    reviewJson: _reviewJson,
+    mediaJson: _mediaJson,
+    ...publicRow
+  } = row;
   return {
-    ...row,
+    ...publicRow,
     taskType: row.taskType as TaskType,
     channel: row.channel as Channel,
     state: row.state as ApprovalState,
+    media: _mediaJson
+      ? (JSON.parse(_mediaJson) as LaunchMedia[])
+      : null,
+    review: _reviewJson
+      ? (JSON.parse(_reviewJson) as GenerationReview)
+      : null,
   };
 }
 

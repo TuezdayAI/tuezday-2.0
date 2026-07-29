@@ -259,32 +259,43 @@ export const generations = sqliteTable("generations", {
 
 export type GenerationRow = typeof generations.$inferSelect;
 
-export const drafts = sqliteTable("drafts", {
-  id: text("id").primaryKey(),
-  workspaceId: text("workspace_id")
-    .notNull()
-    .references(() => workspaces.id, { onDelete: "cascade" }),
-  sourceGenerationId: text("source_generation_id"),
-  sourceSignalId: text("source_signal_id"),
-  campaignId: text("campaign_id"),
-  leadId: text("lead_id"),
-  mediaContactId: text("media_contact_id"),
-  taskType: text("task_type").notNull(),
-  channel: text("channel").notNull(),
-  personaId: text("persona_id"),
-  originalContent: text("original_content").notNull(),
-  content: text("content").notNull(),
-  state: text("state").notNull(),
-  // Sprint 22 pre-review (GenerationReview JSON), copied from the source
-  // generation at submit or refreshed by the Re-run review action. Null when
-  // never reviewed.
-  reviewJson: text("review_json"),
-  // Sprint 41: rendered visuals (LaunchMedia[] JSON) — what a reviewer sees,
-  // while content holds what they read. Null for text-only drafts.
-  mediaJson: text("media_json"),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-});
+export const drafts = sqliteTable(
+  "drafts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sourceGenerationId: text("source_generation_id"),
+    sourceSignalId: text("source_signal_id"),
+    campaignId: text("campaign_id"),
+    leadId: text("lead_id"),
+    mediaContactId: text("media_contact_id"),
+    taskType: text("task_type").notNull(),
+    channel: text("channel").notNull(),
+    personaId: text("persona_id"),
+    originalContent: text("original_content").notNull(),
+    content: text("content").notNull(),
+    state: text("state").notNull(),
+    // Internal-only deterministic identity for automatic signal fan-out.
+    // Manual submissions intentionally leave this null.
+    automationKey: text("automation_key"),
+    // Sprint 22 pre-review (GenerationReview JSON), copied from the source
+    // generation at submit or refreshed by the Re-run review action. Null when
+    // never reviewed.
+    reviewJson: text("review_json"),
+    // Sprint 41: rendered visuals (LaunchMedia[] JSON) — what a reviewer sees,
+    // while content holds what they read. Null for text-only drafts.
+    mediaJson: text("media_json"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("drafts_automation_key")
+      .on(t.automationKey)
+      .where(sql`${t.automationKey} IS NOT NULL`),
+  ],
+);
 
 export type DraftRow = typeof drafts.$inferSelect;
 

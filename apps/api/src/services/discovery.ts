@@ -60,6 +60,7 @@ import {
   safeCursorProgress,
   targetsForSource,
   type DiscoveryCursorV1,
+  type DiscoveryPage,
   type DiscoveryPageReader,
 } from "../discovery/paging";
 import type { LlmGateway } from "../llm/gateway";
@@ -869,10 +870,11 @@ export function hashContent(title: string, summary: string): string {
  * content hash — the row a fresh cross-source copy should link to.
  */
 function findCanonicalItem(
-  db: Db,
+  db: DbExecutor,
   workspaceId: string,
   urlHash: string | null,
   contentHash: string,
+  excludeId?: string,
 ): { id: string } | undefined {
   const hashMatches = [eq(discoveredItems.contentHash, contentHash)];
   if (urlHash) hashMatches.push(eq(discoveredItems.urlHash, urlHash));
@@ -884,6 +886,7 @@ function findCanonicalItem(
         eq(discoveredItems.workspaceId, workspaceId),
         isNull(discoveredItems.duplicateOfId),
         or(...hashMatches),
+        excludeId ? ne(discoveredItems.id, excludeId) : undefined,
       ),
     )
     .orderBy(asc(discoveredItems.createdAt))
@@ -1171,110 +1174,174 @@ function newestItem(items: RawDiscoveredItem[]) {
   })[0];
 }
 
-function persistClaimedPage(
-  db: Db,
-  claim: DiscoveryJobClaim,
-  source: DiscoverySourceExecution,
-  cursor: DiscoveryCursorV1,
-  items: RawDiscoveredItem[],
-): { ok: boolean; inserted: number } {
-  return db.transaction((tx) => {
-    if (!sourceClaimIsLive(tx, claim)) return { ok: false, inserted: 0 };
-    const currentSource = tx
-      .select({ executionVersion: discoverySources.executionVersion })
-      .from(discoverySources)
-      .where(
-        and(
-          eq(discoverySources.workspaceId, claim.workspaceId),
-          eq(discoverySources.id, source.id),
-          eq(
-            discoverySources.executionVersion,
-            claim.sourceExecutionVersion,
-          ),
-        ),
-      )
-      .get();
-    if (!currentSource) return { ok: false, inserted: 0 };
+export interface DiscoveryCheckpointHooks {
+  afterOccurrenceInsert?(index: number): void;
+  afterCanonicalization?(): void;
+  beforeCursorUpdate?(): void;
+}
 
-    const existing = new Set(
-      items.length
-        ? tx
-            .select({ externalId: discoveredItems.externalId })
-            .from(discoveredItems)
-            .where(
-              and(
-                eq(discoveredItems.sourceId, source.id),
-                inArray(
-                  discoveredItems.externalId,
-                  items.map((item) => item.externalId),
-                ),
-              ),
-            )
-            .all()
-            .map((row) => row.externalId)
-        : [],
-    );
-    const fresh = items.filter((item) => {
-      if (!item.externalId || existing.has(item.externalId)) return false;
-      existing.add(item.externalId);
-      return true;
-    });
-    const checkpointAt = Date.now();
-    for (const item of fresh) {
-      const urlHash = hashUrl(item.url);
-      const contentHash = hashContent(item.title, item.summary);
-      const canonical = findCanonicalItem(
-        tx as unknown as Db,
-        claim.workspaceId,
-        urlHash,
-        contentHash,
-      );
-      tx.insert(discoveredItems)
-        .values({
-          id: randomUUID(),
-          workspaceId: claim.workspaceId,
-          sourceId: source.id,
-          externalId: item.externalId,
-          title: item.title,
-          url: item.url,
-          summary: item.summary,
-          publishedAt: item.publishedAt,
-          score: null,
-          suggestedPersonaId: null,
-          suggestedCampaignId: null,
-          scoreReason: null,
-          status: canonical ? "duplicate" : "new",
-          signalId: null,
-          scoredAt: null,
+class DiscoveryCheckpointFenceError extends Error {
+  constructor() {
+    super("discovery_checkpoint_fence_changed");
+    this.name = "DiscoveryCheckpointFenceError";
+  }
+}
+
+export function persistDiscoveryPage(
+  db: Db,
+  input: {
+    claim: DiscoveryJobClaim;
+    source: DiscoverySourceExecution;
+    page: DiscoveryPage;
+    cursor: DiscoveryCursorV1;
+    hooks?: DiscoveryCheckpointHooks;
+  },
+): { inserted: number; fetched: number } | null {
+  if (
+    input.page.items.some(
+      (item) =>
+        typeof item.externalId !== "string" ||
+        item.externalId.trim() === "",
+    )
+  ) {
+    throw new Error("adapter_missing_external_id");
+  }
+
+  try {
+    return db.transaction((tx) => {
+      const { claim, source, page, cursor, hooks } = input;
+      if (!sourceClaimIsLive(tx, claim)) {
+        throw new DiscoveryCheckpointFenceError();
+      }
+      const currentSource = tx
+        .select({ executionVersion: discoverySources.executionVersion })
+        .from(discoverySources)
+        .where(
+          and(
+            eq(discoverySources.workspaceId, claim.workspaceId),
+            eq(discoverySources.id, source.id),
+            eq(
+              discoverySources.executionVersion,
+              claim.sourceExecutionVersion,
+            ),
+          ),
+        )
+        .get();
+      if (!currentSource) throw new DiscoveryCheckpointFenceError();
+
+      let inserted = 0;
+      const checkpointAt = Date.now();
+      for (const [index, item] of page.items.entries()) {
+        const id = randomUUID();
+        const urlHash = hashUrl(item.url);
+        const contentHash = hashContent(item.title, item.summary);
+        const insertedRow = tx
+          .insert(discoveredItems)
+          .values({
+            id,
+            workspaceId: claim.workspaceId,
+            sourceId: source.id,
+            externalId: item.externalId,
+            title: item.title,
+            url: item.url,
+            summary: item.summary,
+            publishedAt: item.publishedAt,
+            score: null,
+            suggestedPersonaId: null,
+            suggestedCampaignId: null,
+            scoreReason: null,
+            status: "new",
+            signalId: null,
+            scoredAt: null,
+            urlHash,
+            contentHash,
+            duplicateOfId: null,
+            createdAt: checkpointAt,
+          })
+          .onConflictDoNothing({
+            target: [
+              discoveredItems.sourceId,
+              discoveredItems.externalId,
+            ],
+          })
+          .returning({ id: discoveredItems.id })
+          .get();
+        hooks?.afterOccurrenceInsert?.(index);
+        if (!insertedRow) continue;
+
+        const canonical = findCanonicalItem(
+          tx,
+          claim.workspaceId,
           urlHash,
           contentHash,
-          duplicateOfId: canonical?.id ?? null,
-          createdAt: checkpointAt,
+          id,
+        );
+        if (canonical) {
+          tx.update(discoveredItems)
+            .set({
+              status: "duplicate",
+              duplicateOfId: canonical.id,
+            })
+            .where(eq(discoveredItems.id, id))
+            .run();
+        }
+        inserted += 1;
+      }
+      hooks?.afterCanonicalization?.();
+      hooks?.beforeCursorUpdate?.();
+
+      const sourceUpdated = tx
+        .update(discoverySources)
+        .set({
+          cursorJson: JSON.stringify(cursor),
+          status: "active",
+          lastError: null,
+          lastFetchedAt: checkpointAt,
+          lastAttemptedAt: checkpointAt,
+          backoffUntil: null,
         })
-        .run();
-    }
-    tx.update(discoverySources)
-      .set({
-        cursorJson: JSON.stringify(cursor),
-        status: "active",
-        lastError: null,
-        lastFetchedAt: checkpointAt,
-        lastAttemptedAt: checkpointAt,
-        backoffUntil: null,
-      })
-      .where(
-        and(
-          eq(discoverySources.workspaceId, claim.workspaceId),
-          eq(discoverySources.id, source.id),
-          eq(
-            discoverySources.executionVersion,
-            claim.sourceExecutionVersion,
+        .where(
+          and(
+            eq(discoverySources.workspaceId, claim.workspaceId),
+            eq(discoverySources.id, source.id),
+            eq(
+              discoverySources.executionVersion,
+              claim.sourceExecutionVersion,
+            ),
           ),
-        ),
-      )
-      .run();
-    return { ok: true, inserted: fresh.length };
-  });
+        )
+        .run();
+      if (sourceUpdated.changes !== 1) {
+        throw new DiscoveryCheckpointFenceError();
+      }
+
+      const jobUpdated = tx
+        .update(discoveryJobs)
+        .set({
+          fetchedCount: sql`
+            ${discoveryJobs.fetchedCount} + ${page.items.length}
+          `,
+          newCount: sql`${discoveryJobs.newCount} + ${inserted}`,
+        })
+        .where(
+          and(
+            eq(discoveryJobs.id, claim.id),
+            eq(discoveryJobs.status, "running"),
+            eq(discoveryJobs.leaseOwner, claim.leaseOwner),
+            eq(discoveryJobs.leaseVersion, claim.leaseVersion),
+            gt(discoveryJobs.leaseExpiresAt, DATABASE_NOW_MS),
+          ),
+        )
+        .run();
+      if (jobUpdated.changes !== 1) {
+        throw new DiscoveryCheckpointFenceError();
+      }
+      return { inserted, fetched: page.items.length };
+    });
+  } catch (error) {
+    if (error instanceof DiscoveryCheckpointFenceError) return null;
+    throw error;
+  }
 }
 
 function persistPermissionCheckpoint(
@@ -1357,6 +1424,15 @@ function safeExecutionFailure(
     return {
       code: "related_object_not_found",
       persisted: error.message.slice(0, 500),
+    };
+  }
+  if (
+    error instanceof Error &&
+    error.message === "adapter_missing_external_id"
+  ) {
+    return {
+      code: "adapter_missing_external_id",
+      persisted: "adapter_missing_external_id",
     };
   }
   if (
@@ -1653,14 +1729,13 @@ export async function runClaimedDiscoverySource(
             };
       cursor.nextTargetIndex = (targetIndex + 1) % targets.length;
 
-      const persisted = persistClaimedPage(
-        deps.db,
+      const persisted = persistDiscoveryPage(deps.db, {
         claim,
-        initial,
+        source: initial,
+        page: { ...page, items: admitted },
         cursor,
-        admitted,
-      );
-      if (!persisted.ok) {
+      });
+      if (!persisted) {
         terminalCode = "lease_lost";
         break;
       }
