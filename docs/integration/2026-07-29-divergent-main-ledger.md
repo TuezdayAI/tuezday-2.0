@@ -65,7 +65,7 @@
 | `e6b5a2f` | Regenerate matching state as migration 0055 | replayed as `7567576` |
 | `f01dd67` | Integrate scoped worker auth and managed scheduling | replayed as `163d3f2` |
 | `5221dbd` | Regenerate matching state as migration 0055 | replayed as `0ac0964` |
-| `555350d` | Reconcile UI, manifests, environment, and documentation | planned replay |
+| `555350d` | Reconcile UI, manifests, environment, and documentation | replayed as `57d1715` |
 | `5c712c9` | Run cross-history acceptance | planned replay |
 | `48a47c6` | Verify, review, and publish the integration branch | superseded by the new integration branch |
 
@@ -252,3 +252,22 @@ Append one dated entry per task with Plane item, commands, result, and commit.
 - `npm run typecheck -w apps/api` — passed.
 - `npm run typecheck -w apps/worker` — passed.
 - Worker `setInterval` scan — passed with zero matches.
+
+### 2026-07-29 — TAP-133 — Reconcile UI, environment, and documentation
+
+- `555350d` → `57d1715d9146ed09794d72597fd8d236ae4a8b9a`
+- Resolved the founder-acceptance conflict as a union: native evidence and the
+  Gmail/outreach/compliance/tracking path remain covered alongside local
+  safe-fetch, tenant-isolation, and bounded-execution acceptance.
+- The discovery UI now distinguishes busy and safety-limited runs, surfaces
+  scoring readiness in founder language, disables acceptance until matching is
+  ready, and preserves the server's stable readiness error.
+- `.env.example`, `README.md`, and `CLAUDE.md` document the operator-only
+  discovery policy, required API/worker topology, scoped internal URL/token,
+  complete scheduled loop set, and native evidence migration/parity path.
+- `npm install --package-lock-only --ignore-scripts` and `npm ci` — passed;
+  incidental npm-version peer-flag churn was discarded.
+- Focused UI/contracts/outreach gate — passed: 6 test files and 207 tests.
+- `npm run typecheck -w apps/web` — passed.
+- `npm run typecheck -w packages/contracts` — passed.
+- R2R runtime/script scan — passed with zero active references.
