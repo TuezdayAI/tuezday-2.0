@@ -63,7 +63,7 @@
 | `f182c8e` | Regenerate matching state as migration 0055 | replayed as `2136157` |
 | `cf58135` | Regenerate matching state as migration 0055 | replayed as `cb5e63b` |
 | `e6b5a2f` | Regenerate matching state as migration 0055 | replayed as `7567576` |
-| `f01dd67` | Integrate scoped worker auth and managed scheduling | planned replay |
+| `f01dd67` | Integrate scoped worker auth and managed scheduling | replayed as `163d3f2` |
 | `5221dbd` | Regenerate matching state as migration 0055 | replayed as `0ac0964` |
 | `555350d` | Reconcile UI, manifests, environment, and documentation | planned replay |
 | `5c712c9` | Run cross-history acceptance | planned replay |
@@ -230,3 +230,25 @@ Append one dated entry per task with Plane item, commands, result, and commit.
   including 154 existing contracts tests and 8 outbound-email tests.
 - `npm run typecheck -w apps/api` — passed.
 - `npm run typecheck -w packages/contracts` — passed.
+
+### 2026-07-29 — TAP-132 — Integrate scoped worker auth and scheduling
+
+- `f01dd67` → `163d3f2`
+- Used the local managed-worker implementation as the conflict base, then
+  ported the remote mailbox-inbox and outreach jobs into `startSettledLoop`.
+- Red config gate: 5 assertions failed because `mailboxInboxMs` and
+  `outreachMs` were missing. Green config gate: 34 tests passed after adding
+  both parsed, bounded intervals.
+- Authentication union:
+  - `/t/o/:token` and `/t/c/:token` remain public and reach signed-token
+    validation without session authentication;
+  - `/internal/*` remains exact-worker-token-only;
+  - the worker token can call only the explicit maintenance allowlist,
+    including mailbox-inbox and outreach.
+- `npm install --package-lock-only --ignore-scripts` and `npm ci` — passed;
+  incidental npm-version peer-flag churn was discarded while the worker
+  Vitest dependency change remained.
+- Auth/worker gate — passed: 9 test files and 145 tests.
+- `npm run typecheck -w apps/api` — passed.
+- `npm run typecheck -w apps/worker` — passed.
+- Worker `setInterval` scan — passed with zero matches.
