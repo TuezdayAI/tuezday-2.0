@@ -55,8 +55,8 @@
 | `d9717aa` | Integrate tenant isolation and guarded discovery | replayed as `a5a6f92` |
 | `15d4bd8` | Replay local documentation history | replayed as `77115df` |
 | `6a78150` | Replay local documentation history | replayed as `0951636` |
-| `96da3a3` | Regenerate lease persistence as migration 0053 | planned replay |
-| `7584eab` | Regenerate lease persistence as migration 0053 | planned replay |
+| `96da3a3` | Regenerate lease persistence as migration 0053 | replayed as `71711e3` |
+| `7584eab` | Regenerate lease persistence as migration 0053 | replayed as `d54ab36` |
 | `1679852` | Combine execution bounds, LLM gateway, and native evidence | planned replay |
 | `7ce5487` | Combine execution bounds, LLM gateway, and native evidence | planned replay |
 | `2ea63c5` | Regenerate automation idempotency as migration 0054 | planned replay |
@@ -159,4 +159,20 @@ Append one dated entry per task with Plane item, commands, result, and commit.
     tracking-token route support.
 - Remaining six commits replayed without conflicts.
 - Security and remote-regression gate — passed: 13 test files and 366 tests.
+- `npm run typecheck -w apps/api` — passed.
+
+### 2026-07-29 — TAP-128 — Regenerate lease persistence as migration 0053
+
+- `96da3a3` → `71711e3dd8e34046714f55fe5ba8221944c6b1a3`
+- `7584eab` → `d54ab360d21f6d22a6abdcce74967f86fd2773dc`
+- Discarded `0048_sprint_49_leases.sql` and its local snapshot/journal
+  lineage; remote migrations `0048`–`0052` remain unchanged.
+- Replaced the legacy-database repair test with the approved
+  disposable-database assertion over every numbered migration.
+- Red gate: `sprint49-migrations.test.ts` failed because no `0053` migration
+  existed.
+- Generated `0053_sprint_49_leases.sql` and `0053_snapshot.json`.
+  The snapshot `prevId` equals the remote `0052_snapshot.json` ID, and the
+  journal entry is index 53 with tag `0053_sprint_49_leases`.
+- Green lease gate — passed: 4 test files and 58 tests.
 - `npm run typecheck -w apps/api` — passed.
