@@ -4,7 +4,12 @@ import { eq } from "drizzle-orm";
 import type { TuezdayApp } from "../src/app";
 import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric";
 import type { Db } from "../src/db";
-import { connections, discoveryJobs, discoverySources } from "../src/db/schema";
+import {
+  connections,
+  discoveredItems,
+  discoveryJobs,
+  discoverySources,
+} from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
 import { RATE_LIMIT_BACKOFF_BASE_MS, listDiscoverySources } from "../src/services/discovery";
 import { buildAuthedApp, createTestDb } from "./helpers";
@@ -1025,6 +1030,10 @@ describe("connected discovery (Sprint 46)", () => {
       await runDiscoveryRoute();
 
       const [item] = await listItems("new");
+      db.update(discoveredItems)
+        .set({ matchingState: "ready", matchingError: null })
+        .where(eq(discoveredItems.id, item!.id as string))
+        .run();
       const accepted = await app.inject({
         method: "POST",
         url: `/workspaces/${workspaceId}/discovery/items/${item!.id}/accept`,

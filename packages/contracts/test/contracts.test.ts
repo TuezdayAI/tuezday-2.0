@@ -80,6 +80,7 @@ import {
   DISCOVERED_ITEM_STATUSES,
   DEFAULT_MATCH_THRESHOLD,
   DISCOVERY_MAX_MATCHES_PER_ITEM,
+  DISCOVERY_MATCHING_STATES,
   discoveredItemMatchSchema,
   discoveredItemSchema,
   DISCOVERY_SOURCE_MODES,
@@ -1070,6 +1071,8 @@ describe("discovery routing contracts (Sprint 45)", () => {
     scoreReason: "fits",
     status: "new",
     signalId: null,
+    matchingState: "ready",
+    matchingError: null,
     matches: [match],
     duplicateOfId: null,
     duplicateCount: 0,
@@ -1079,6 +1082,13 @@ describe("discovery routing contracts (Sprint 45)", () => {
   it("exposes the routing constants", () => {
     expect(DEFAULT_MATCH_THRESHOLD).toBe(50);
     expect(DISCOVERY_MAX_MATCHES_PER_ITEM).toBe(5);
+    expect(DISCOVERY_MATCHING_STATES).toEqual([
+      "pending",
+      "running",
+      "ready",
+      "retryable_error",
+      "frozen",
+    ]);
   });
 
   it("round-trips a match, including a null persona or campaign side", () => {
@@ -1121,6 +1131,18 @@ describe("discovery routing contracts (Sprint 45)", () => {
     expect(discoveredItemSchema.safeParse({ ...item, matches: [{ ...match, score: 101 }] }).success).toBe(
       false,
     );
+  });
+
+  it("exposes only the stable matching state and error", () => {
+    const parsed = discoveredItemSchema.parse({
+      ...item,
+      matchingState: "retryable_error",
+      matchingError: "matching_timeout",
+    });
+    expect(parsed).toMatchObject({
+      matchingState: "retryable_error",
+      matchingError: "matching_timeout",
+    });
   });
 
   it("signalSchema carries the same match shape", () => {

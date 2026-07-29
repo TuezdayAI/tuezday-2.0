@@ -22,6 +22,7 @@ import {
 import {
   DiscoverySourceConnectionError,
   ItemNotTriagableError,
+  MatchingNotReadyError,
   acceptDiscoveredItem,
   createDiscoverySource,
   deleteDiscoverySource,
@@ -330,6 +331,12 @@ export function registerDiscoveryRoutes(
         });
         return result;
       } catch (err) {
+        if (err instanceof MatchingNotReadyError) {
+          return reply.status(409).send({
+            error: "matching_not_ready",
+            message: "Scoring has not completed for this item yet.",
+          });
+        }
         if (err instanceof ItemNotTriagableError) {
           return reply.status(409).send({ error: "already_triaged", message: err.message });
         }

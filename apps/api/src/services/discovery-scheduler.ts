@@ -12,10 +12,13 @@ import {
   getDiscoverySourceMetrics,
   listDiscoverySources,
   runClaimedDiscoverySource,
-  scoreUnscoredItems,
   type DiscoveryRunResult,
   type SourceRunResult,
 } from "./discovery";
+import {
+  claimMatchingBatch,
+  runMatchingBatch,
+} from "./discovery-matching";
 import {
   claimNextDiscoveryJob,
   enqueueDueDiscoveryJobs,
@@ -337,29 +340,36 @@ export async function runDiscoveryScheduler(
         let matchingRemaining = deps.policy.maxMatchingItemsPerTick;
         for (const workspace of workspaceRows) {
           if (matchingRemaining <= 0 || tickSignal.aborted) break;
-          let scored: number;
-          let admitted = 0;
+          const claims = claimMatchingBatch(deps.db, {
+            workspaceId: workspace.id,
+            owner: `${deps.instanceId}:matching:${randomUUID()}`,
+            limit: matchingRemaining,
+            leaseMs: deps.policy.leaseMs,
+          });
+          if (claims.length === 0) continue;
+          matchingRemaining -= claims.length;
+          const matchingDeadline = deadline(
+            deps.policy.matchingTimeoutMs,
+            "matching_timeout",
+          );
           try {
-            scored = await scoreUnscoredItems(
-              deps.db,
-              deps.llm,
-              workspace.id,
-              workspace.name,
+            const matching = await runMatchingBatch(
               {
-                maxItems: matchingRemaining,
-                matchingTimeoutMs: deps.policy.matchingTimeoutMs,
-                signal: tickSignal,
-                onAdmitted: (count) => {
-                  admitted = count;
-                },
+                db: deps.db,
+                llm: deps.llm,
+                leaseMs: deps.policy.leaseMs,
+                heartbeatMs: deps.policy.heartbeatMs,
               },
+              claims,
+              AbortSignal.any([
+                tickSignal,
+                matchingDeadline.signal,
+              ]),
             );
-          } catch (error) {
-            if (tickSignal.aborted) break;
-            throw error;
+            result.scored += matching.ready;
+          } finally {
+            matchingDeadline.dispose();
           }
-          result.scored += scored;
-          matchingRemaining -= admitted;
         }
         return result;
       } finally {

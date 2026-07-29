@@ -23,7 +23,10 @@ import {
   safeFetchPublicMessage,
   type SafeFetchService,
 } from "../src/safe-fetch";
-import { acceptDiscoveredItem } from "../src/services/discovery";
+import {
+  MatchingNotReadyError,
+  acceptDiscoveredItem,
+} from "../src/services/discovery";
 import { enqueueDueDiscoveryJobs } from "../src/services/discovery-jobs";
 import { buildAuthedApp, createTestDb } from "./helpers";
 import { fixtureSafeFetch } from "./safe-fetch-fixtures";
@@ -578,6 +581,37 @@ describe("discovery API", () => {
   });
 
   describe("triage", () => {
+    it("returns a stable 409 while matching is not ready", async () => {
+      await addRssSource();
+      await run();
+      const [top] = await items();
+      db.update(discoveredItems)
+        .set({
+          matchingState: "pending",
+          matchingError: null,
+        })
+        .where(eq(discoveredItems.id, top.id))
+        .run();
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/discovery/items/${top.id}/accept`,
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toEqual({
+        error: "matching_not_ready",
+        message: "Scoring has not completed for this item yet.",
+      });
+      expect(
+        db
+          .select()
+          .from(signals)
+          .where(eq(signals.workspaceId, workspaceId))
+          .all(),
+      ).toEqual([]);
+    });
+
     it("accepting an item creates a linked signal with mapped source", async () => {
       await addRssSource();
       await run();
@@ -1106,15 +1140,19 @@ describe("multi-candidate scoring (Sprint 45)", () => {
     ).toEqual([]);
   });
 
-  it("does not score an item that is accepted while the judgment is in flight", async () => {
-    let acceptedSignalId: string | null = null;
+  it("blocks acceptance while matching is in flight", async () => {
+    let rejection: unknown;
     h.setResponder(() => {
       const item = h.db
         .select()
         .from(discoveredItems)
         .where(eq(discoveredItems.workspaceId, h.workspaceId))
         .get()!;
-      acceptedSignalId = acceptDiscoveredItem(h.db, h.workspaceId, item.id).signal.id;
+      try {
+        acceptDiscoveredItem(h.db, h.workspaceId, item.id);
+      } catch (error) {
+        rejection = error;
+      }
       return [
         {
           index: 0,
@@ -1134,28 +1172,18 @@ describe("multi-candidate scoring (Sprint 45)", () => {
     await h.addSource();
     await h.run();
 
-    const accepted = (await h.items()).find(
-      (item) => item.signalId === acceptedSignalId,
-    )!;
-    expect(accepted).toMatchObject({
-      status: "accepted",
-      score: null,
-      suggestedPersonaId: null,
-      suggestedCampaignId: null,
-      matches: [],
+    expect(rejection).toBeInstanceOf(MatchingNotReadyError);
+    const [ready] = await h.items();
+    expect(ready).toMatchObject({
+      status: "new",
+      matchingState: "ready",
+      score: 88,
     });
     expect(
       h.db
         .select()
-        .from(discoveredItemMatches)
-        .where(eq(discoveredItemMatches.itemId, accepted.id as string))
-        .all(),
-    ).toEqual([]);
-    expect(
-      h.db
-        .select()
-        .from(signalMatches)
-        .where(eq(signalMatches.signalId, acceptedSignalId!))
+        .from(signals)
+        .where(eq(signals.workspaceId, h.workspaceId))
         .all(),
     ).toEqual([]);
   });

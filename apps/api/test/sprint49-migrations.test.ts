@@ -95,4 +95,30 @@ describe("Sprint 49 migrations", () => {
       }),
     );
   });
+
+  it("installs matching claims as migration 0055", () => {
+    const sqlite = migratedEmptyDatabase();
+
+    expect(migrationFile("0055_")).toContain("sprint_49_matching_state");
+    expect(columns(sqlite, "discovered_items")).toEqual(
+      expect.arrayContaining([
+        "matching_state",
+        "matching_version",
+        "matching_input_fingerprint",
+        "matching_lease_owner",
+        "matching_lease_expires_at",
+        "matching_heartbeat_at",
+        "matching_error",
+      ]),
+    );
+    const indexes = sqlite
+      .prepare("PRAGMA index_list(discovered_items)")
+      .all() as Array<{ name: string }>;
+    expect(indexes).toContainEqual(
+      expect.objectContaining({
+        name: "discovered_items_matching_queue",
+      }),
+    );
+    expect(sqlite.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  });
 });

@@ -77,7 +77,9 @@ export interface MatchingContext {
  * suggest a persona actually allowed to speak for that campaign.
  */
 export function buildMatchingContext(db: Db, workspaceId: string): MatchingContext {
-  const workspacePersonas = listPersonas(db, workspaceId);
+  const workspacePersonas = listPersonas(db, workspaceId).sort((left, right) =>
+    left.id.localeCompare(right.id),
+  );
   const personaById = new Map(workspacePersonas.map((p) => [p.id, p]));
   const personaBlock =
     workspacePersonas
@@ -87,7 +89,13 @@ export function buildMatchingContext(db: Db, workspaceId: string): MatchingConte
           : `- ${p.id}: ${p.name}${p.description ? ` (${p.description})` : ""}`,
       )
       .join("\n") || "(no personas yet)";
-  const activeCampaigns = listCampaigns(db, workspaceId).filter((c) => c.status === "active");
+  const activeCampaigns = listCampaigns(db, workspaceId)
+    .filter((campaign) => campaign.status === "active")
+    .map((campaign) => ({
+      ...campaign,
+      personaIds: [...campaign.personaIds].sort(),
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
   const campaignBlock =
     activeCampaigns
       .map((c) => {

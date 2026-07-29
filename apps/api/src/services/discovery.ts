@@ -8,7 +8,6 @@ import {
   inArray,
   isNotNull,
   isNull,
-  lt,
   ne,
   or,
   sql,
@@ -19,6 +18,7 @@ import {
   type DiscoveredItem,
   type DiscoveredItemMatch,
   type DiscoveredItemStatus,
+  type DiscoveryMatchingState,
   type DiscoverySource,
   type DiscoverySourceConfig,
   type DiscoverySourceStatus,
@@ -83,18 +83,12 @@ import {
 import { DATABASE_NOW_MS } from "./task-leases";
 import {
   brainDigest,
-  buildMatchingContext,
-  buildMatchingPrompt,
-  clampScore,
-  getMatchingConfigVersion,
   insertSignalMatch,
   listItemMatches,
   listItemMatchesForItems,
   listSignalMatches,
-  parseEntryMatches,
   parseJsonArray,
   revalidateSignalMatches,
-  replaceItemMatches,
 } from "./matching";
 import { listPersonas } from "./personas";
 import { insertSignalRow, readSignal } from "./signals";
@@ -528,9 +522,18 @@ function rowToItem(
   matches: DiscoveredItemMatch[],
   duplicateCount: number,
 ): DiscoveredItem {
+  const {
+    matchingVersion: _matchingVersion,
+    matchingInputFingerprint: _matchingInputFingerprint,
+    matchingLeaseOwner: _matchingLeaseOwner,
+    matchingLeaseExpiresAt: _matchingLeaseExpiresAt,
+    matchingHeartbeatAt: _matchingHeartbeatAt,
+    ...publicRow
+  } = row;
   return {
-    ...row,
+    ...publicRow,
     status: row.status as DiscoveredItemStatus,
+    matchingState: row.matchingState as DiscoveryMatchingState,
     matches,
     duplicateCount,
   };
@@ -656,6 +659,13 @@ export class ItemNotTriagableError extends Error {
   }
 }
 
+export class MatchingNotReadyError extends Error {
+  constructor() {
+    super("matching_not_ready");
+    this.name = "MatchingNotReadyError";
+  }
+}
+
 export interface DiscoveryAcceptanceHooks {
   afterSignalInsert?(): void;
   afterMatchInsert?(index: number): void;
@@ -695,6 +705,9 @@ export function acceptDiscoveredItem(
     const item = getDiscoveredItem(tx, workspaceId, itemId);
     if (!item) throw new DiscoveryReferenceNotFoundError();
     if (item.status !== "new") throw new ItemNotTriagableError(item.status);
+    if (item.matchingState !== "ready") {
+      throw new MatchingNotReadyError();
+    }
     const source = getDiscoverySource(tx, workspaceId, item.sourceId);
     if (!source) throw new DiscoveryReferenceNotFoundError();
     const foreignItemMatch = tx
@@ -759,12 +772,20 @@ export function acceptDiscoveredItem(
       hooks?.afterMatchInsert?.(index);
     });
     tx.update(discoveredItems)
-      .set({ status: "accepted", signalId: signalRow.id })
+      .set({
+        status: "accepted",
+        signalId: signalRow.id,
+        matchingState: "frozen",
+        matchingLeaseOwner: null,
+        matchingLeaseExpiresAt: null,
+        matchingHeartbeatAt: null,
+      })
       .where(
         and(
           eq(discoveredItems.workspaceId, workspaceId),
           eq(discoveredItems.id, item.id),
           eq(discoveredItems.status, "new"),
+          eq(discoveredItems.matchingState, "ready"),
         ),
       )
       .run();
@@ -777,6 +798,7 @@ export function acceptDiscoveredItem(
         matches: signal.matches,
         status: "accepted",
         signalId: signal.id,
+        matchingState: "frozen",
       },
       signal,
     };
@@ -788,18 +810,34 @@ export function skipDiscoveredItem(
   workspaceId: string,
   item: DiscoveredItem,
 ): DiscoveredItem {
-  if (item.status !== "new") throw new ItemNotTriagableError(item.status);
-  db
-    .update(discoveredItems)
-    .set({ status: "skipped" })
-    .where(
-      and(
-        eq(discoveredItems.workspaceId, workspaceId),
-        eq(discoveredItems.id, item.id),
-      ),
-    )
-    .run();
-  return { ...item, status: "skipped" };
+  return db.transaction((tx) => {
+    const current = getDiscoveredItem(tx, workspaceId, item.id);
+    if (!current) throw new DiscoveryReferenceNotFoundError();
+    if (current.status !== "new") {
+      throw new ItemNotTriagableError(current.status);
+    }
+    tx.update(discoveredItems)
+      .set({
+        status: "skipped",
+        matchingState: "frozen",
+        matchingLeaseOwner: null,
+        matchingLeaseExpiresAt: null,
+        matchingHeartbeatAt: null,
+      })
+      .where(
+        and(
+          eq(discoveredItems.workspaceId, workspaceId),
+          eq(discoveredItems.id, item.id),
+          eq(discoveredItems.status, "new"),
+        ),
+      )
+      .run();
+    return {
+      ...current,
+      status: "skipped",
+      matchingState: "frozen",
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -822,8 +860,6 @@ export interface DiscoveryRunResult {
   sources: SourceRunResult[];
   scored: number;
 }
-
-const SCORE_BATCH_SIZE = 10;
 
 // ---------------------------------------------------------------------------
 // Cross-source dedup hashing (Sprint 45)
@@ -892,136 +928,6 @@ function findCanonicalItem(
     .orderBy(asc(discoveredItems.createdAt))
     .limit(1)
     .get();
-}
-
-// ---------------------------------------------------------------------------
-// Scoring (Sprint 45: multi-candidate, re-scored on persona/campaign change)
-// ---------------------------------------------------------------------------
-
-export async function scoreUnscoredItems(
-  db: Db,
-  llm: LlmGateway,
-  workspaceId: string,
-  workspaceName: string,
-  options: {
-    maxItems?: number;
-    matchingTimeoutMs?: number;
-    signal?: AbortSignal;
-    onAdmitted?: (count: number) => void;
-  } = {},
-): Promise<number> {
-  // Re-score watermark: a still-new item whose last judgment predates the
-  // newest persona/campaign edit gets re-judged; triaged items are frozen.
-  const configVersion = getMatchingConfigVersion(db, workspaceId);
-  const unscored = db
-    .select()
-    .from(discoveredItems)
-    .where(
-      and(
-        eq(discoveredItems.workspaceId, workspaceId),
-        eq(discoveredItems.status, "new"),
-        isNull(discoveredItems.duplicateOfId),
-        or(isNull(discoveredItems.scoredAt), lt(discoveredItems.scoredAt, configVersion)),
-      ),
-    )
-    .all()
-    .slice(0, options.maxItems ?? Number.POSITIVE_INFINITY);
-  options.onAdmitted?.(unscored.length);
-  if (unscored.length === 0) return 0;
-
-  const digest = brainDigest(db, workspaceId);
-  const ctx = buildMatchingContext(db, workspaceId);
-
-  let scoredCount = 0;
-  for (let offset = 0; offset < unscored.length; offset += SCORE_BATCH_SIZE) {
-    if (options.signal?.aborted) {
-      throw options.signal.reason ?? new Error("tick_budget_exhausted");
-    }
-    const batch = unscored.slice(offset, offset + SCORE_BATCH_SIZE);
-    const itemsBlock = batch
-      .map(
-        (item, i) =>
-          `ITEM ${i}: ${item.title}\n${item.summary ? item.summary.slice(0, 300) : "(no summary)"}`,
-      )
-      .join("\n\n");
-    const prompt = buildMatchingPrompt({ workspaceName, digest, ctx, itemsBlock });
-
-    try {
-      const matchingSignal = options.matchingTimeoutMs
-        ? AbortSignal.any([
-            ...(options.signal ? [options.signal] : []),
-            AbortSignal.timeout(options.matchingTimeoutMs),
-          ])
-        : options.signal;
-      const result = await llm.generate({ prompt, signal: matchingSignal });
-      const entries = parseJsonArray(result.text);
-      if (!entries) continue; // scoring assists, never gates: leave unscored
-      const scoredAt = Date.now();
-      for (const raw of entries) {
-        if (typeof raw !== "object" || raw === null) continue;
-        const entry = raw as Record<string, unknown>;
-        if (typeof entry.index !== "number" || typeof entry.score !== "number") continue;
-        const item = batch[entry.index];
-        if (!item) continue;
-        const matches = parseEntryMatches(entry, ctx);
-        const overallScore = clampScore(entry.score);
-        const persisted = db.transaction((tx) => {
-          // The model call happens outside the transaction. Re-check both the
-          // triage state and every workspace-owned reference at write time so
-          // an accepted item or a moved/deleted target cannot be scored from a
-          // stale prompt snapshot.
-          const currentItem = tx
-            .select({ id: discoveredItems.id })
-            .from(discoveredItems)
-            .where(
-              and(
-                eq(discoveredItems.workspaceId, workspaceId),
-                eq(discoveredItems.id, item.id),
-                eq(discoveredItems.status, "new"),
-                isNull(discoveredItems.duplicateOfId),
-              ),
-            )
-            .get();
-          if (!currentItem) return false;
-
-          const matchesToPersist = revalidateSignalMatches(tx, workspaceId, matches);
-          const best = matchesToPersist[0];
-          replaceItemMatches(tx, workspaceId, item.id, matchesToPersist);
-          tx.update(discoveredItems)
-            .set({
-              // Overall relevance (the model's top-level judgment) drives the
-              // triage sort; the convenience fields mirror the best candidate.
-              score: overallScore,
-              suggestedPersonaId: best?.personaId ?? null,
-              suggestedCampaignId: best?.campaignId ?? null,
-              scoreReason: best
-                ? best.reason
-                : typeof entry.reason === "string"
-                  ? entry.reason.slice(0, 500)
-                  : null,
-              scoredAt,
-            })
-            .where(
-              and(
-                eq(discoveredItems.workspaceId, workspaceId),
-                eq(discoveredItems.id, item.id),
-                eq(discoveredItems.status, "new"),
-              ),
-            )
-            .run();
-          return true;
-        });
-        if (persisted) scoredCount += 1;
-      }
-    } catch {
-      if (options.signal?.aborted) {
-        throw options.signal.reason ?? new Error("tick_budget_exhausted");
-      }
-      // Gateway failure mid-run: items stay unscored and triagable.
-      continue;
-    }
-  }
-  return scoredCount;
 }
 
 // Rate-limit back-pressure (Sprint 46): consecutive rate_limited failures
@@ -1281,6 +1187,10 @@ export function persistDiscoveryPage(
             .set({
               status: "duplicate",
               duplicateOfId: canonical.id,
+              matchingState: "frozen",
+              matchingLeaseOwner: null,
+              matchingLeaseExpiresAt: null,
+              matchingHeartbeatAt: null,
             })
             .where(eq(discoveredItems.id, id))
             .run();

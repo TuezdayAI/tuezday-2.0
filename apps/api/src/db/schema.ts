@@ -503,6 +503,13 @@ export const discoveredItems = sqliteTable(
     // Sprint 45: re-score watermark — when the item was last LLM-judged. Null
     // for never-scored items.
     scoredAt: integer("scored_at"),
+    matchingState: text("matching_state").notNull().default("pending"),
+    matchingVersion: integer("matching_version").notNull().default(0),
+    matchingInputFingerprint: text("matching_input_fingerprint"),
+    matchingLeaseOwner: text("matching_lease_owner"),
+    matchingLeaseExpiresAt: integer("matching_lease_expires_at"),
+    matchingHeartbeatAt: integer("matching_heartbeat_at"),
+    matchingError: text("matching_error"),
     // Sprint 45 cross-source dedup: sha256 of the normalized URL (null when the
     // item has no URL) and of the normalized title + summary prefix.
     urlHash: text("url_hash"),
@@ -517,6 +524,11 @@ export const discoveredItems = sqliteTable(
     uniqueIndex("discovered_items_source_external").on(t.sourceId, t.externalId),
     index("discovered_items_workspace_url_hash").on(t.workspaceId, t.urlHash),
     index("discovered_items_workspace_content_hash").on(t.workspaceId, t.contentHash),
+    index("discovered_items_matching_queue").on(
+      t.matchingState,
+      t.matchingLeaseExpiresAt,
+      t.createdAt,
+    ),
   ],
 );
 
