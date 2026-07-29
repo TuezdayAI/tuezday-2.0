@@ -37,11 +37,11 @@
 
 ## Commit disposition
 
-| Commit | Integration task | Initial disposition |
+| Commit | Integration task | Disposition |
 |---|---|---|
-| `03329c4` | Replay local documentation history | planned replay |
-| `e1ee8b5` | Replay local documentation history | planned replay |
-| `310284c` | Replay local documentation history | planned replay |
+| `03329c4` | Replay local documentation history | replayed as `83416e7` |
+| `e1ee8b5` | Replay local documentation history | replayed as `abeff1f` |
+| `310284c` | Replay local documentation history | replayed as `b38dd83` |
 | `aa2487c` | Integrate safe-fetch foundation | planned replay |
 | `cab7d97` | Integrate safe-fetch foundation | planned replay |
 | `10a97d5` | Integrate safe-fetch foundation | planned replay |
@@ -53,8 +53,8 @@
 | `441fff7` | Integrate tenant isolation and guarded discovery | planned replay |
 | `6f9a839` | Integrate tenant isolation and guarded discovery | planned replay |
 | `d9717aa` | Integrate tenant isolation and guarded discovery | planned replay |
-| `15d4bd8` | Replay local documentation history | planned replay |
-| `6a78150` | Replay local documentation history | planned replay |
+| `15d4bd8` | Replay local documentation history | replayed as `77115df` |
+| `6a78150` | Replay local documentation history | replayed as `0951636` |
 | `96da3a3` | Regenerate lease persistence as migration 0053 | planned replay |
 | `7584eab` | Regenerate lease persistence as migration 0053 | planned replay |
 | `1679852` | Combine execution bounds, LLM gateway, and native evidence | planned replay |
@@ -100,3 +100,23 @@ Append one dated entry per task with Plane item, commands, result, and commit.
     workspace-root warning.
 - Baseline evidence commit:
   `22a64ce7d7d51ab084e5bbb04768b06dc4803d42`
+
+### 2026-07-29 — TAP-125 — Replay local documentation history
+
+- Source commits and replay results:
+  - `03329c4644375f312c8ae57e1efeb4338e96400e` →
+    `83416e7650781300ea90b9e7913d0f55438d9715`
+  - `e1ee8b507774e8a804ef8f427ae34cf2a4f871c6` →
+    `abeff1f507d9f4e7a1262ff3ef55287949f73fae`
+  - `310284c4d383f0532117b0d2191dc305104c671f` →
+    `b38dd83dabc8aa7ccf458da5bd6e6a12ccbb19ce`
+  - `15d4bd8788d7743e9e4b40ef5d2dbafede740afc` →
+    `77115dfc651599cef9b20f6c16fb2bba11cbb242`
+  - `6a78150e3f50c12219000b8dabb84855647d423e` →
+    `0951636d69a209a31cda37da4f866aa63d456491`
+- `git cherry-pick <five documentation commits>` — passed without conflicts.
+- `git diff --check origin/main...HEAD` — passed.
+- `rg -n "R2R|native evidence|safe-fetch|bounded leased" ...` — passed;
+  the five local documents are present. Historical R2R descriptions remain
+  historical; the approved integration design states that native evidence
+  owns the integrated runtime.
