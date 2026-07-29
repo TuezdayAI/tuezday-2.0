@@ -57,8 +57,8 @@
 | `6a78150` | Replay local documentation history | replayed as `0951636` |
 | `96da3a3` | Regenerate lease persistence as migration 0053 | replayed as `71711e3` |
 | `7584eab` | Regenerate lease persistence as migration 0053 | replayed as `d54ab36` |
-| `1679852` | Combine execution bounds, LLM gateway, and native evidence | planned replay |
-| `7ce5487` | Combine execution bounds, LLM gateway, and native evidence | planned replay |
+| `1679852` | Combine execution bounds, LLM gateway, and native evidence | replayed as `b949992` |
+| `7ce5487` | Combine execution bounds, LLM gateway, and native evidence | replayed as `f57bd60` |
 | `2ea63c5` | Regenerate automation idempotency as migration 0054 | planned replay |
 | `f182c8e` | Regenerate matching state as migration 0055 | planned replay |
 | `cf58135` | Regenerate matching state as migration 0055 | planned replay |
@@ -176,3 +176,22 @@ Append one dated entry per task with Plane item, commands, result, and commit.
   journal entry is index 53 with tag `0053_sprint_49_leases`.
 - Green lease gate — passed: 4 test files and 58 tests.
 - `npm run typecheck -w apps/api` — passed.
+
+### 2026-07-29 — TAP-129 — Combine execution bounds, LLM, and evidence
+
+- `1679852` → `b94999227fe15ddc85c8c889df4c6123262148da`
+- `7ce5487` → `f57bd60517f9e2e976a3e1d343b64f8b3c4f69fe`
+- Added the cancellation-plus-embedding regression before replay.
+  - Red: generation ignored the aborted signal and returned
+    `Gemini API returned an empty response`.
+  - Green after gateway replay: 2 files and 28 tests passed.
+- The gateway union keeps `GenerateParams.signal`, `EmbedParams`,
+  `EmbedResult`, and optional `LlmGateway.embed()`. Gemini keeps embeddings
+  and abort-aware generation; OpenRouter remains generation-only.
+- `app.ts`/`server.ts` resolution keeps one environment-selected
+  `LlmGateway`, shares it with `DbEvidenceStore`, retains the remote Gmail,
+  outreach, tracking, and 4,096-character tracking-token support, and adds
+  bounded discovery policy plus shutdown signaling.
+- Composition and bounds gate — passed: 11 test files and 228 tests.
+- `npm run typecheck -w apps/api` — passed.
+- R2R runtime/script scan — passed with zero matches.
