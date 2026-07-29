@@ -4,6 +4,7 @@
 export interface GenerateParams {
   prompt: string;
   maxOutputTokens?: number;
+  signal?: AbortSignal;
 }
 
 export interface GenerateResult {

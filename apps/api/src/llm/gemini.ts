@@ -51,7 +51,11 @@ export class GeminiGateway implements LlmGateway {
     this.embedModel = process.env.GEMINI_EMBED_MODEL?.trim() || DEFAULT_EMBED_MODEL;
   }
 
-  async generate({ prompt, maxOutputTokens }: GenerateParams): Promise<GenerateResult> {
+  async generate({
+    prompt,
+    maxOutputTokens,
+    signal,
+  }: GenerateParams): Promise<GenerateResult> {
     if (!this.apiKey) {
       throw new GatewayError(
         "missing_api_key",
@@ -77,9 +81,11 @@ export class GeminiGateway implements LlmGateway {
               thinkingConfig: thinkingConfigFor(this.model),
             },
           }),
+          signal,
         },
       );
     } catch (err) {
+      if (signal?.aborted) throw signal.reason ?? err;
       throw new GatewayError(
         "provider_error",
         `Could not reach the Gemini API: ${err instanceof Error ? err.message : String(err)}`,

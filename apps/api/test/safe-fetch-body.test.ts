@@ -564,6 +564,42 @@ describe("DefaultSafeFetchService resource policy", () => {
     expect(finalBody.destroyed).toBe(true);
   });
 
+  it("lets a caller abort destroy an in-flight transport body", async () => {
+    const deadlineController = new AbortController();
+    const callerController = new AbortController();
+    const body = new FixtureBody([Buffer.from("{")], true);
+    const h = serviceHarness({
+      deadline: {
+        signal: deadlineController.signal,
+        dispose() {},
+      },
+      responses: [transportResponse(200, body)],
+    });
+
+    const pending = h.service
+      .fetch({
+        url: "https://public.example/data",
+        profile: "json",
+        signal: callerController.signal,
+      })
+      .catch((error: unknown) => error);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    callerController.abort();
+
+    const stillPending = Symbol("still pending");
+    const outcome = await Promise.race([
+      pending,
+      new Promise<typeof stillPending>((resolve) =>
+        setTimeout(() => resolve(stillPending), 20),
+      ),
+    ]);
+    if (outcome === stillPending) deadlineController.abort();
+
+    expect(outcome).toMatchObject({ code: "total_timeout" });
+    expect(body.destroyed).toBe(true);
+    expect(h.requests[0]?.signal.aborted).toBe(true);
+  });
+
   it("actively bounds a DNS lookup with the same total deadline", async () => {
     const controller = new AbortController();
     const h = serviceHarness({

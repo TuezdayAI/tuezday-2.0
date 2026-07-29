@@ -2,7 +2,9 @@ import { createHmac } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { connectionSchema } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
+import { readBoundedJsonResponse } from "../src/connectors/bounded-json";
 import { ConnectorFabricError, type ConnectorFabric } from "../src/connectors/fabric";
+import { NangoFabric } from "../src/connectors/nango";
 import type { LlmGateway } from "../src/llm/gateway";
 import { buildAuthedApp, createTestDb } from "./helpers";
 
@@ -374,5 +376,88 @@ describe("connector fabric API", () => {
       ).json();
       expect(list).toEqual([]);
     });
+  });
+});
+
+function responseWithChunks(chunks: string[]) {
+  const encoded = chunks.map((chunk) => new TextEncoder().encode(chunk));
+  let cancelled = false;
+  let delivered = 0;
+  const response = new Response(
+    new ReadableStream<Uint8Array>(
+      {
+        pull(controller) {
+          const chunk = encoded.shift();
+          if (!chunk) {
+            controller.close();
+            return;
+          }
+          delivered += 1;
+          controller.enqueue(chunk);
+        },
+        cancel() {
+          cancelled = true;
+        }
+      },
+      { highWaterMark: 0 },
+    ),
+    {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    },
+  );
+  return {
+    response,
+    cancelled: () => cancelled,
+    delivered: () => delivered,
+  };
+}
+
+describe("bounded connector JSON", () => {
+  it("cancels the reader as soon as decoded bytes cross the response cap", async () => {
+    const fixture = responseWithChunks(['{"x":"', 'too-large"}']);
+
+    await expect(
+      readBoundedJsonResponse(fixture.response, {
+        maxBytes: 8,
+        signal: new AbortController().signal,
+      }),
+    ).rejects.toMatchObject({ code: "response_limit" });
+    expect(fixture.cancelled()).toBe(true);
+    expect(fixture.delivered()).toBe(2);
+  });
+
+  it("passes caller cancellation into Nango and reports decoded bytes", async () => {
+    const caller = new AbortController();
+    let requestSignal: AbortSignal | undefined;
+    const fetcher = (async (_url: unknown, init?: RequestInit) => {
+      requestSignal = init?.signal ?? undefined;
+      return new Response('{"ok":true}', {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }) as typeof fetch;
+    const fabric = new NangoFabric("http://nango.example", "secret", fetcher);
+
+    const result = await fabric.proxyJson(
+      "GET",
+      "/v1/items",
+      "connection",
+      "provider",
+      {
+        signal: caller.signal,
+        maxResponseBytes: 1024,
+      },
+    );
+
+    expect(result).toEqual({
+      status: 200,
+      json: { ok: true },
+      decodedBytes: 11,
+    });
+    expect(requestSignal).toBeInstanceOf(AbortSignal);
+    expect(requestSignal?.aborted).toBe(false);
+    caller.abort();
+    expect(requestSignal?.aborted).toBe(true);
   });
 });

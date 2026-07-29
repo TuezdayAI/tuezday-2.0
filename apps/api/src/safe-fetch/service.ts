@@ -154,7 +154,7 @@ export class DefaultSafeFetchService implements SafeFetchService {
     let answers: ResolvedAddress[];
     try {
       answers = await withDeadline(
-        Promise.resolve().then(() => this.resolver.resolve(hostname)),
+        Promise.resolve().then(() => this.resolver.resolve(hostname, signal)),
         signal,
       );
     } catch (cause) {
@@ -209,10 +209,13 @@ export class DefaultSafeFetchService implements SafeFetchService {
       maxExpansionRatio: this.policy.limits.maxExpansionRatio,
     };
     const deadline = this.deadlineFactory(this.policy.limits.totalTimeoutMs);
+    const signal = request.signal
+      ? AbortSignal.any([deadline.signal, request.signal])
+      : deadline.signal;
 
     try {
       for (let redirects = 0; ; redirects += 1) {
-        if (deadline.signal.aborted) throw safeFetchError("total_timeout");
+        if (signal.aborted) throw safeFetchError("total_timeout");
         let url: URL;
         try {
           url = this.validateUrl(currentUrl);
@@ -222,8 +225,8 @@ export class DefaultSafeFetchService implements SafeFetchService {
           }
           throw cause;
         }
-        const addresses = await this.resolveAndValidate(url, deadline.signal);
-        if (deadline.signal.aborted) throw safeFetchError("total_timeout");
+        const addresses = await this.resolveAndValidate(url, signal);
+        if (signal.aborted) throw safeFetchError("total_timeout");
         let response: TransportResponse;
         try {
           response = await withDeadline(
@@ -232,14 +235,14 @@ export class DefaultSafeFetchService implements SafeFetchService {
                 url,
                 address: addresses[0]!,
                 headers,
-                signal: deadline.signal,
+                signal,
                 connectTimeoutMs: this.policy.limits.connectTimeoutMs,
               }),
             ),
-            deadline.signal,
+            signal,
           );
         } catch (cause) {
-          if (deadline.signal.aborted) {
+          if (signal.aborted) {
             throw safeFetchError("total_timeout", cause);
           }
           if (hasErrorCode(cause, "UND_ERR_CONNECT_TIMEOUT")) {
@@ -268,7 +271,7 @@ export class DefaultSafeFetchService implements SafeFetchService {
             contentEncoding: headerValue(response.headers, "content-encoding"),
             profile: request.profile,
             limits,
-            signal: deadline.signal,
+            signal,
           });
           return resultFromBytes(url, response, body.contentType, body.bytes);
         }

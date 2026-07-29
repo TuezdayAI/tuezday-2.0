@@ -24,6 +24,8 @@ export interface ProxyJsonResult {
   status: number;
   /** Parsed response body; undefined when the upstream reply is not JSON. */
   json: unknown;
+  /** Decoded response size when the fabric supports bounded streaming. */
+  decodedBytes?: number;
 }
 
 export class ConnectorFabricError extends Error {
@@ -87,6 +89,8 @@ export interface ConnectorFabric {
       form?: Record<string, string>;
       headers?: Record<string, string>;
       baseUrlOverride?: string;
+      signal?: AbortSignal;
+      maxResponseBytes?: number;
     },
   ): Promise<ProxyJsonResult>;
 }

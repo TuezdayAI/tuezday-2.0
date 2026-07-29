@@ -9,7 +9,7 @@ export interface ResolvedAddress {
 }
 
 export interface SafeFetchResolver {
-  resolve(hostname: string): Promise<ResolvedAddress[]>;
+  resolve(hostname: string, signal?: AbortSignal): Promise<ResolvedAddress[]>;
 }
 
 export interface PinnedRequest {
@@ -35,7 +35,10 @@ export interface SafeFetchTransport {
 }
 
 export class NodeSafeFetchResolver implements SafeFetchResolver {
-  async resolve(hostname: string): Promise<ResolvedAddress[]> {
+  async resolve(
+    hostname: string,
+    _signal?: AbortSignal,
+  ): Promise<ResolvedAddress[]> {
     const addresses = await lookup(hostname, { all: true, verbatim: true });
     return addresses.map(({ address, family }) => ({
       address,

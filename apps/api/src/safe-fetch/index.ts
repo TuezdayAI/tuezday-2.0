@@ -10,6 +10,7 @@ export * from "./transport";
 export interface SafeFetchRequest {
   url: string;
   profile: SafeFetchProfile;
+  signal?: AbortSignal;
   headers?: Readonly<Record<string, string>>;
   limits?: Partial<
     Pick<SafeFetchLimits, "maxCompressedBytes" | "maxDecodedBytes">
