@@ -42,10 +42,10 @@
 | `03329c4` | Replay local documentation history | replayed as `83416e7` |
 | `e1ee8b5` | Replay local documentation history | replayed as `abeff1f` |
 | `310284c` | Replay local documentation history | replayed as `b38dd83` |
-| `aa2487c` | Integrate safe-fetch foundation | planned replay |
-| `cab7d97` | Integrate safe-fetch foundation | planned replay |
-| `10a97d5` | Integrate safe-fetch foundation | planned replay |
-| `ddbb198` | Integrate safe-fetch foundation | planned replay |
+| `aa2487c` | Integrate safe-fetch foundation | replayed as `39d6c8e` |
+| `cab7d97` | Integrate safe-fetch foundation | replayed as `8c86500` |
+| `10a97d5` | Integrate safe-fetch foundation | replayed as `6574a29` |
+| `ddbb198` | Integrate safe-fetch foundation | replayed as `372b8c4` |
 | `db83e8f` | Integrate tenant isolation and guarded discovery | planned replay |
 | `b0ae203` | Integrate tenant isolation and guarded discovery | planned replay |
 | `4846c1e` | Integrate tenant isolation and guarded discovery | planned replay |
@@ -120,3 +120,22 @@ Append one dated entry per task with Plane item, commands, result, and commit.
   the five local documents are present. Historical R2R descriptions remain
   historical; the approved integration design states that native evidence
   owns the integrated runtime.
+
+### 2026-07-29 — TAP-126 — Integrate safe-fetch foundation
+
+- Source commits and replay results:
+  - `aa2487c` → `39d6c8e29b2280bc3c44968c666a9ca7774065c8`
+  - `cab7d97` → `8c86500470679e1fdc36cea0cb708938ce8f6fbe`
+  - `10a97d5` → `6574a29221ef32ea3a8242d59049b82afbe112bf`
+  - `ddbb198` → `372b8c460f40ce0a11ff497031656924c9b06cee`
+- `git cherry-pick aa2487c cab7d97 10a97d5 ddbb198` — passed without
+  conflicts.
+- Dependency union confirmed in the API manifest and lockfile:
+  `ipaddr.js@^2.4.0`, `sqlite-vec@^0.1.9`, and `undici@^6.28.0`.
+- `npm install --package-lock-only --ignore-scripts` — passed. It produced
+  only unrelated npm-version peer-flag churn after the replayed lockfile was
+  already current, so that incidental metadata diff was discarded.
+- `npm ci` — passed; 387 packages installed and 395 audited. The inherited
+  audit baseline remained 19 vulnerabilities.
+- Focused safe-fetch gate — passed: 3 test files and 156 tests.
+- `npm run typecheck -w apps/api` — passed.
