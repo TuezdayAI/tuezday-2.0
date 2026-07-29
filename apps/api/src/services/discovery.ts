@@ -46,6 +46,7 @@ import {
 } from "../discovery/adapters";
 import {
   ConnectedDiscoveryBudgetError,
+  CursorInvalidError,
   PermissionRequiredError,
   RateLimitedError,
   fetchConnectedSourcePage,
@@ -1548,14 +1549,15 @@ export async function runClaimedDiscoverySource(
   let admittedItems = 0;
   let insertedItems = 0;
   let permissionFailures = 0;
-  let visitedTargets = 0;
+  const visitedTargets = new Set<string>();
+  const completedTargets = new Set<string>();
+  const replayedTargets = new Set<string>();
   let terminalCode: string | undefined;
   let terminalPersistedError: string | undefined;
   let permissionPersistedError: string | undefined;
-  const startingTargetIndex = cursor.nextTargetIndex;
 
   try {
-    for (let offset = 0; offset < targets.length; offset += 1) {
+    while (completedTargets.size < targets.length) {
       if (signal.aborted || Date.now() >= budget.deadlineMs) {
         terminalCode = signal.aborted
           ? executionCodeFromSignal(signal)
@@ -1579,8 +1581,16 @@ export async function runClaimedDiscoverySource(
         break;
       }
 
-      const targetIndex =
-        (startingTargetIndex + offset) % targets.length;
+      let targetIndex = -1;
+      for (let offset = 0; offset < targets.length; offset += 1) {
+        const candidate =
+          (cursor.nextTargetIndex + offset) % targets.length;
+        if (!completedTargets.has(targets[candidate]!.key)) {
+          targetIndex = candidate;
+          break;
+        }
+      }
+      if (targetIndex < 0) break;
       const target = targets[targetIndex]!;
       const checkpoint = cursor.targets[target.key]!;
       let page;
@@ -1613,6 +1623,30 @@ export async function runClaimedDiscoverySource(
           terminalCode = "source_byte_budget_exhausted";
           break;
         }
+        if (error instanceof CursorInvalidError) {
+          if (
+            checkpoint.continuation === null ||
+            replayedTargets.has(target.key)
+          ) {
+            throw error;
+          }
+          replayedTargets.add(target.key);
+          checkpoint.continuation = null;
+          checkpoint.lastSafeError = "cursor_replay";
+          cursor.nextTargetIndex = targetIndex;
+          if (
+            !persistPermissionCheckpoint(
+              deps.db,
+              claim,
+              initial,
+              cursor,
+            )
+          ) {
+            terminalCode = "lease_lost";
+            break;
+          }
+          continue;
+        }
         if (error instanceof PermissionRequiredError) {
           permissionFailures += 1;
           permissionPersistedError =
@@ -1624,7 +1658,8 @@ export async function runClaimedDiscoverySource(
             terminalCode = "lease_lost";
             break;
           }
-          visitedTargets += 1;
+          visitedTargets.add(target.key);
+          completedTargets.add(target.key);
           continue;
         }
         throw error;
@@ -1643,7 +1678,7 @@ export async function runClaimedDiscoverySource(
       calls = nextCalls;
       bytes = nextBytes;
       pages += 1;
-      visitedTargets += 1;
+      visitedTargets.add(target.key);
 
       const remainingItems = budget.maxItems - admittedItems;
       const admitted = page.items.slice(0, remainingItems);
@@ -1672,6 +1707,9 @@ export async function runClaimedDiscoverySource(
         break;
       }
       insertedItems += persisted.inserted;
+      if (admittedPage.reachedBoundary || admittedPage.exhausted) {
+        completedTargets.add(target.key);
+      }
       if (truncated) {
         terminalCode = "item_budget_exhausted";
         break;
@@ -1690,7 +1728,7 @@ export async function runClaimedDiscoverySource(
   }
   const continuationPending =
     Boolean(terminalCode) ||
-    visitedTargets < targets.length ||
+    visitedTargets.size < targets.length ||
     Object.values(cursor.targets).some(
       (checkpoint) => checkpoint.continuation !== null,
     );

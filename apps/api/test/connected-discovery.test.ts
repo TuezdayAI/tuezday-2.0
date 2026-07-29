@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
+import type { Connection, DiscoverySource } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
 import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric";
 import type { Db } from "../src/db";
@@ -12,6 +13,15 @@ import {
 } from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
 import { RATE_LIMIT_BACKOFF_BASE_MS, listDiscoverySources } from "../src/services/discovery";
+import {
+  CursorInvalidError,
+  fetchConnectedSourcePage,
+} from "../src/discovery/connected-adapters";
+import {
+  emptyTargetCheckpoint,
+  type DiscoveryTarget,
+  type DiscoveryTargetCheckpoint,
+} from "../src/discovery/paging";
 import { buildAuthedApp, createTestDb } from "./helpers";
 import { fixtureSafeFetch } from "./safe-fetch-fixtures";
 
@@ -111,6 +121,347 @@ const REDDIT_LISTING_FIXTURE = {
     ],
   },
 };
+
+function paginationSource(
+  type: DiscoverySource["type"],
+  config: DiscoverySource["config"],
+): DiscoverySource {
+  return {
+    id: "11111111-1111-4111-8111-111111111111",
+    workspaceId: "22222222-2222-4222-8222-222222222222",
+    type,
+    name: "Pagination",
+    config,
+    enabled: true,
+    status: "active",
+    lastError: null,
+    lastFetchedAt: null,
+    connectionId: "33333333-3333-4333-8333-333333333333",
+    cursor: {
+      version: 1,
+      targetCount: 1,
+      backlog: false,
+      lastCheckpointAt: null,
+    },
+    backoffUntil: null,
+    lastAttemptedAt: null,
+    createdAt: 1,
+  };
+}
+
+function paginationConnection(providerKey: string): Connection {
+  return {
+    id: "33333333-3333-4333-8333-333333333333",
+    workspaceId: "22222222-2222-4222-8222-222222222222",
+    providerKey,
+    nangoConnectionId: "nango-pagination",
+    config: {},
+    displayName: providerKey,
+    externalAccountId: null,
+    externalAccountName: null,
+    externalAccountHandle: null,
+    externalAccountUrl: null,
+    status: "connected",
+    lastCheckedAt: 1,
+    lastError: null,
+    contentProfile: { topics: [], guidance: "" },
+    createdAt: 1,
+    updatedAt: 1,
+  };
+}
+
+function continuationCheckpoint(
+  fingerprint: string,
+  providerToken: string,
+): DiscoveryTargetCheckpoint {
+  return {
+    ...emptyTargetCheckpoint(fingerprint),
+    continuation: {
+      providerToken,
+      boundaryExternalId: null,
+      newestExternalId: null,
+      newestPublishedAt: null,
+    },
+  };
+}
+
+async function connectedPage(input: {
+  source: DiscoverySource;
+  providerKey: string;
+  target?: DiscoveryTarget;
+  checkpoint?: DiscoveryTargetCheckpoint;
+  handler: ProxyHandler;
+}) {
+  const { fabric, calls } = makeFakeFabric(() => input.handler);
+  const target = input.target ?? {
+    key: "target",
+    fingerprint: "fingerprint",
+  };
+  const page = await fetchConnectedSourcePage({
+    source: input.source,
+    connection: paginationConnection(input.providerKey),
+    fabric,
+    trackedAccounts: [],
+    target,
+    checkpoint:
+      input.checkpoint ?? emptyTargetCheckpoint(target.fingerprint),
+    signal: new AbortController().signal,
+    maxItems: 25,
+    maxCalls: 10,
+    maxResponseBytes: 100_000,
+    maxBytes: 500_000,
+  });
+  return { page, calls };
+}
+
+describe("connected provider pagination", () => {
+  it.each([
+    {
+      label: "X search",
+      providerKey: "twitter",
+      source: paginationSource("x", {
+        mode: "query",
+        query: "agentic gtm",
+      }),
+      pathPrefix: "/2/tweets/search/recent",
+      response: {
+        data: [{ id: "x-1", text: "Newest" }],
+        meta: { next_token: "x-next" },
+      },
+      expectedToken: "x-next",
+      suppliedToken: "x-resume",
+      tokenFragment: "pagination_token=x-resume",
+    },
+    {
+      label: "Reddit",
+      providerKey: "reddit",
+      source: paginationSource("reddit", { subreddit: "startups" }),
+      pathPrefix: "/r/startups/new",
+      response: {
+        data: {
+          children: [
+            {
+              kind: "t3",
+              data: { id: "one", name: "t3_one", title: "Newest" },
+            },
+          ],
+          after: "t3_next",
+        },
+      },
+      expectedToken: "t3_next",
+      suppliedToken: "t3_resume",
+      tokenFragment: "after=t3_resume",
+    },
+    {
+      label: "LinkedIn",
+      providerKey: "linkedin",
+      source: paginationSource("linkedin", {
+        mode: "account_timeline",
+        handle: "urn:li:person:123",
+      }),
+      pathPrefix: "/rest/posts",
+      response: {
+        elements: [{ id: "urn:li:share:1", commentary: "Newest" }],
+        paging: { start: 0, count: 25, total: 60 },
+      },
+      expectedToken: "25",
+      suppliedToken: "50",
+      tokenFragment: "start=50",
+    },
+  ])(
+    "maps $label provider cursors to the internal page contract",
+    async (fixture) => {
+      const first = await connectedPage({
+        source: fixture.source,
+        providerKey: fixture.providerKey,
+        handler: (path) =>
+          path.startsWith(fixture.pathPrefix)
+            ? { status: 200, json: fixture.response }
+            : undefined,
+      });
+      expect(first.page.nextToken).toBe(fixture.expectedToken);
+      expect(first.page.exhausted).toBe(false);
+
+      const resumed = await connectedPage({
+        source: fixture.source,
+        providerKey: fixture.providerKey,
+        checkpoint: continuationCheckpoint(
+          "fingerprint",
+          fixture.suppliedToken,
+        ),
+        handler: (path) =>
+          path.startsWith(fixture.pathPrefix)
+            ? { status: 200, json: fixture.response }
+            : undefined,
+      });
+      expect(resumed.calls.at(-1)!.path).toContain(
+        fixture.tokenFragment,
+      );
+    },
+  );
+
+  it.each([
+    {
+      label: "account timeline",
+      config: { mode: "account_timeline", handle: "rival" } as const,
+      target: {
+        key: "account",
+        fingerprint: "account-fingerprint",
+        handle: "rival",
+        externalId: "user-9",
+      },
+      prefix: "/2/users/user-9/tweets",
+    },
+    {
+      label: "list timeline",
+      config: { mode: "list_timeline", listId: "list-9" } as const,
+      target: {
+        key: "list",
+        fingerprint: "list-fingerprint",
+      },
+      prefix: "/2/lists/list-9/tweets",
+    },
+  ])("resumes an X $label", async ({ config, target, prefix }) => {
+    const resumed = await connectedPage({
+      source: paginationSource("x", config),
+      providerKey: "twitter",
+      target,
+      checkpoint: continuationCheckpoint(
+        target.fingerprint,
+        "x-page-2",
+      ),
+      handler: (path) =>
+        path.startsWith(prefix)
+          ? {
+              status: 200,
+              json: {
+                data: [{ id: "x-2", text: "Older" }],
+                meta: { next_token: "x-page-3" },
+              },
+            }
+          : undefined,
+    });
+    expect(resumed.calls.at(-1)!.path).toContain(
+      "pagination_token=x-page-2",
+    );
+    expect(resumed.page.nextToken).toBe("x-page-3");
+  });
+
+  it.each([
+    { mode: "account_timeline" as const, handle: "rival" },
+    { mode: "hashtag" as const, hashtag: "buildinpublic" },
+  ])("resumes Instagram $mode media through Graph cursors", async (config) => {
+    const target: DiscoveryTarget = {
+      key: config.mode,
+      fingerprint: `${config.mode}-fingerprint`,
+      ...(config.mode === "account_timeline"
+        ? { handle: config.handle }
+        : {}),
+    };
+    const resumed = await connectedPage({
+      source: paginationSource("instagram", config),
+      providerKey: "instagram",
+      target,
+      checkpoint: continuationCheckpoint(
+        target.fingerprint,
+        "ig-page-2",
+      ),
+      handler: (path) => {
+        if (path.includes("/me/accounts")) {
+          return {
+            status: 200,
+            json: {
+              data: [{ instagram_business_account: { id: "ig-user" } }],
+            },
+          };
+        }
+        if (path.includes("ig_hashtag_search")) {
+          return { status: 200, json: { data: [{ id: "tag-1" }] } };
+        }
+        if (
+          path.includes("business_discovery") ||
+          path.includes("/tag-1/recent_media")
+        ) {
+          const media = {
+            data: [{ id: "ig-2", caption: "Older" }],
+            paging: { cursors: { after: "ig-page-3" } },
+          };
+          return {
+            status: 200,
+            json:
+              config.mode === "account_timeline"
+                ? { business_discovery: { media } }
+                : media,
+          };
+        }
+        return undefined;
+      },
+    });
+    const resumedPath = decodeURIComponent(
+      resumed.calls.at(-1)!.path,
+    );
+    expect(resumedPath).toContain(
+      config.mode === "account_timeline"
+        ? "media.after(ig-page-2)"
+        : "after=ig-page-2",
+    );
+    expect(resumed.page.nextToken).toBe("ig-page-3");
+  });
+
+  it("stops at the durable boundary and excludes older rows", async () => {
+    const target = { key: "query", fingerprint: "query-fingerprint" };
+    const checkpoint = emptyTargetCheckpoint(target.fingerprint);
+    checkpoint.highWatermark = {
+      externalId: "x:old-boundary",
+      publishedAt: 1,
+    };
+    const result = await connectedPage({
+      source: paginationSource("x", { mode: "query", query: "gtm" }),
+      providerKey: "twitter",
+      target,
+      checkpoint,
+      handler: () => ({
+        status: 200,
+        json: {
+          data: [
+            { id: "new", text: "New" },
+            { id: "old-boundary", text: "Boundary" },
+            { id: "older", text: "Older" },
+          ],
+          meta: { next_token: "must-not-continue" },
+        },
+      }),
+    });
+    expect(result.page.items.map((item) => item.externalId)).toEqual([
+      "x:new",
+    ]);
+    expect(result.page).toMatchObject({
+      reachedBoundary: true,
+      exhausted: true,
+      nextToken: null,
+    });
+  });
+
+  it("classifies a rejected continuation as an invalid cursor", async () => {
+    await expect(
+      connectedPage({
+        source: paginationSource("x", {
+          mode: "query",
+          query: "gtm",
+        }),
+        providerKey: "twitter",
+        checkpoint: continuationCheckpoint(
+          "fingerprint",
+          "expired-token",
+        ),
+        handler: () => ({
+          status: 400,
+          json: { errors: [{ code: "invalid_cursor" }] },
+        }),
+      }),
+    ).rejects.toBeInstanceOf(CursorInvalidError);
+  });
+});
 
 describe("connected discovery (Sprint 46)", () => {
   let app: TuezdayApp;

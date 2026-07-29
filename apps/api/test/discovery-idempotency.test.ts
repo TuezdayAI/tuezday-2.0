@@ -24,6 +24,7 @@ import {
   reconcileTargets,
   resolveDiscoveryTargets,
 } from "../src/discovery/paging";
+import { CursorInvalidError } from "../src/discovery/connected-adapters";
 import { createTestDb } from "./helpers";
 
 function claimedFixture(
@@ -380,5 +381,125 @@ describe("atomic discovery occurrence checkpoints", () => {
         .map((row) => row.externalId)
         .sort(),
     ).toEqual(["occurrence-first", "occurrence-second"]);
+  });
+
+  it("checkpoints a four-page burst and resumes the remaining pages on the next job", async () => {
+    const { db, claim } = claimedFixture({
+      type: "x",
+      config: { mode: "query", query: "founder" },
+    });
+    const visitedTokens: Array<string | null> = [];
+    const pageReader: NonNullable<
+      Parameters<typeof runClaimedDiscoverySource>[0]["pageReader"]
+    > = async (input) => {
+      const token =
+        input.checkpoint.continuation?.providerToken ?? null;
+      visitedTokens.push(token);
+      const pageNumber = token === null ? 1 : Number(token) + 1;
+      return {
+        targetKey: input.target.key,
+        items: [
+          {
+            externalId: `occurrence-page-${pageNumber}`,
+            title: `Page ${pageNumber}`,
+            url: `https://example.com/page-${pageNumber}`,
+            summary: "",
+            publishedAt: pageNumber,
+          },
+        ],
+        nextToken: pageNumber < 6 ? String(pageNumber) : null,
+        reachedBoundary: false,
+        exhausted: pageNumber === 6,
+        callsUsed: 1,
+        decodedBytes: 10,
+      };
+    };
+
+    const first = await runClaimedDiscoverySource(
+      { db, ...unusedSourceDependencies, pageReader },
+      claim,
+      { ...sourceBudget(), maxPages: 4 },
+      new AbortController().signal,
+    );
+    expect(first.error).toBe("page_budget_exhausted");
+    expect(visitedTokens).toEqual([null, "1", "2", "3"]);
+    expect(occurrenceCount(db)).toBe(4);
+
+    enqueueDueDiscoveryJobs(
+      db,
+      "workspace-1",
+      listDiscoverySources(db, "workspace-1"),
+      Date.now() + 1,
+    );
+    const retryClaim = claimNextDiscoveryJob(db, {
+      workspaceId: "workspace-1",
+      owner: "worker-2",
+      leaseMs: 60_000,
+    })!;
+    const second = await runClaimedDiscoverySource(
+      { db, ...unusedSourceDependencies, pageReader },
+      retryClaim,
+      { ...sourceBudget(), maxPages: 4 },
+      new AbortController().signal,
+    );
+
+    expect(second.error).toBeUndefined();
+    expect(visitedTokens).toEqual([null, "1", "2", "3", "4", "5"]);
+    expect(occurrenceCount(db)).toBe(6);
+  });
+
+  it("replays only the affected target when its provider cursor is rejected", async () => {
+    const { db, claim, cursor, targets } = claimedFixture({
+      type: "x",
+      config: { mode: "query", query: "founder" },
+    });
+    cursor.targets[targets[0]!.key]!.continuation = {
+      providerToken: "expired",
+      boundaryExternalId: null,
+      newestExternalId: "occurrence-newest",
+      newestPublishedAt: 5,
+    };
+    db.update(discoverySources)
+      .set({ cursorJson: JSON.stringify(cursor) })
+      .where(eq(discoverySources.id, claim.sourceId))
+      .run();
+    const visitedTokens: Array<string | null> = [];
+
+    const result = await runClaimedDiscoverySource(
+      {
+        db,
+        ...unusedSourceDependencies,
+        pageReader: async (input) => {
+          const token =
+            input.checkpoint.continuation?.providerToken ?? null;
+          visitedTokens.push(token);
+          if (token) throw new CursorInvalidError();
+          return {
+            targetKey: input.target.key,
+            items: [
+              {
+                externalId: "occurrence-replayed",
+                title: "Replayed",
+                url: "https://example.com/replayed",
+                summary: "",
+                publishedAt: 10,
+              },
+            ],
+            nextToken: null,
+            reachedBoundary: false,
+            exhausted: true,
+            callsUsed: 1,
+            decodedBytes: 10,
+          };
+        },
+      },
+      claim,
+      sourceBudget(),
+      new AbortController().signal,
+    );
+
+    expect(result.error).toBeUndefined();
+    expect(visitedTokens).toEqual(["expired", null]);
+    expect(occurrenceCount(db)).toBe(1);
   });
 });
