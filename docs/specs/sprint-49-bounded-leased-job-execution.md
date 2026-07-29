@@ -962,3 +962,38 @@ npm test
 - **2026-07-28:** Task-by-task implementation plan completed at
   `docs/superpowers/plans/2026-07-28-sprint-49-bounded-leased-job-execution.md`;
   execution mode awaits founder choice.
+- **2026-07-29:** TAP-44 completed at `7584eab` (persistence introduced at
+  `96da3a3`); database-clock task/job leases, expiry reclaim, source-version
+  cancellation, heartbeat, and stale-owner fencing are implemented.
+- **2026-07-29:** TAP-45 completed at `7ce5487` (transport bounds introduced at
+  `1679852`); API-owned discovery now enforces source-global item/page/call/byte
+  and time budgets with abort propagation and concurrency one.
+- **2026-07-29:** TAP-46 completed at `2ea63c5`; occurrence/checkpoint commits
+  and automatic draft/approval output converge under replay and overlap.
+- **2026-07-29:** TAP-47 completed at `f182c8e`, with founder-visible readiness
+  support at `555350d`; matching is versioned and leased, triage is fenced until
+  ready, and retryable failures stay distinct from valid zero-match results.
+- **2026-07-29:** TAP-48 completed at `e6b5a2f` (atomic cursor persistence at
+  `cf58135`); provider pagination resumes per target, promotes high-watermarks,
+  replays invalid cursors safely, and isolates target-local failures.
+- **2026-07-29:** TAP-49 completed at `f01dd67`, with operator-facing
+  documentation at `555350d`; the worker is a validated, self-scheduling caller
+  of constant-time-authenticated internal API tasks.
+- **2026-07-29:** TAP-50 completed at `5221dbd`; persona/campaign writes and
+  direct matching invalidation commit transactionally without a global
+  watermark scan.
+- **2026-07-29:** Migration compatibility is covered by
+  `0048_sprint_49_leases.sql`,
+  `0049_sprint_49_automation_idempotency.sql`, and
+  `0050_sprint_49_matching_state.sql`.
+- **2026-07-29:** Automated founder acceptance
+  `sprint49-acceptance.test.ts` passed on implementation head `555350d`. The
+  fault-injection scenario resumed six pages across two targets through a
+  second API instance, fenced the expired owner, admitted one overlapping tick,
+  blocked triage during matching, copied the ready match set exactly, and
+  converged a worker/manual automation race to one automatic draft and one
+  approval.
+- **2026-07-29:** Fresh final verification passed: 15 focused Sprint 49 files
+  with 222/222 tests, all seven workspace typechecks, and the complete
+  repository with 179 files and 1,893/1,893 tests. `git diff --check` reported
+  no whitespace errors.

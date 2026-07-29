@@ -776,15 +776,29 @@ process, and cross-tenant references cannot be observed or partially persisted.
 **Automated crash/race audit — no manual kill/restart choreography required**
 
 ```bash
-npm test -- discovery-bounds.test.ts discovery-idempotency.test.ts \
-  discovery-matching-state.test.ts matching-invalidation.test.ts \
-  automation.test.ts internal-tasks.test.ts scheduler.test.ts \
-  client.test.ts config.test.ts
+npm test -- sprint49-acceptance.test.ts
 ```
 
-That audit covers shutdown cancellation, lease reclaim and fencing, overlapping scheduler or
-worker ticks, page checkpoint replay, targeted matching invalidation, automation idempotency,
-internal-route authorization, worker startup retry, and bounded configuration.
+The single end-to-end scenario uses a temporary SQLite file and fixture
+providers. It faults after the first durable page, expires the old job and
+scheduler leases, resumes through a separately built API instance, and then
+races discovery, matching/acceptance, and worker/manual automation. It proves:
+
+- six pages across two targets are present exactly once after restart, with
+  both high-watermarks complete and the suspended old writer fenced;
+- a competing discovery tick reports busy and consumes no additional provider
+  work;
+- acceptance during matching returns the stable readiness conflict and creates
+  no signal, while acceptance after matching copies the exact candidate rows;
+- racing worker/manual automation creates one automatic draft and exactly one
+  approval transition.
+
+The focused suites additionally cover shutdown aborts, invalid-cursor replay,
+target-local failures, matching timeout/reclaim, targeted invalidation,
+internal-route authorization, validated worker startup, and interval bounds.
+The integration gate also runs the native evidence, Gmail, outreach,
+compliance, tracking, internal-task, and worker-loop suites. No live OAuth,
+provider, or network access is required.
 
 **Gate:** API restarts, worker restarts, overlapping ticks, provider pagination,
 matching changes, and automation races preserve one durable result; the founder
