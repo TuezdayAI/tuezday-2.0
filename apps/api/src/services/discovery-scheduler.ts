@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
+import type { DiscoveryRunSummary } from "@tuezday/contracts";
 import type { ConnectorFabric } from "../connectors/fabric";
 import type { Db } from "../db";
 import { discoveryJobs, workspaces } from "../db/schema";
@@ -12,7 +13,6 @@ import {
   getDiscoverySourceMetrics,
   listDiscoverySources,
   runClaimedDiscoverySource,
-  type DiscoveryRunResult,
   type SourceRunResult,
 } from "./discovery";
 import {
@@ -27,10 +27,7 @@ import {
 } from "./discovery-jobs";
 import { withTaskLease } from "./task-leases";
 
-export interface DiscoverySchedulerResult extends DiscoveryRunResult {
-  busy: boolean;
-  budgetExhausted: boolean;
-}
+export type DiscoverySchedulerResult = DiscoveryRunSummary;
 
 export interface DiscoveryOperatorEvent {
   code: string;

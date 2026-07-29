@@ -2401,6 +2401,29 @@ export const discoveredItemSchema = z.object({
 });
 export type DiscoveredItem = z.infer<typeof discoveredItemSchema>;
 
+export const discoveryRunSourceResultSchema = z.object({
+  sourceId: z.string().uuid(),
+  name: z.string().min(1),
+  fetched: z.number().int().nonnegative(),
+  new: z.number().int().nonnegative(),
+  error: z.string().optional(),
+});
+export type DiscoveryRunSourceResult = z.infer<
+  typeof discoveryRunSourceResultSchema
+>;
+
+export const discoveryRunSummarySchema = z.object({
+  busy: z.boolean(),
+  budgetExhausted: z.boolean(),
+  queued: z.number().int().nonnegative(),
+  processed: z.number().int().nonnegative(),
+  sources: z.array(discoveryRunSourceResultSchema),
+  scored: z.number().int().nonnegative(),
+});
+export type DiscoveryRunSummary = z.infer<
+  typeof discoveryRunSummarySchema
+>;
+
 // Discovery job ledger (Sprint 46): one row per source fetch attempt.
 // `/discovery/run` enqueues due sources and processes a bounded batch, so one
 // slow source cannot serialize the whole workspace and runs stay observable.

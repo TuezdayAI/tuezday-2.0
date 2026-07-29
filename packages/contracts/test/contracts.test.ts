@@ -88,6 +88,7 @@ import {
   discoverySourceSchema,
   discoverySourceConfigSchema,
   discoveryJobSchema,
+  discoveryRunSummarySchema,
   SIGNAL_SOURCES,
   TRACKED_SOCIAL_PLATFORMS,
   trackedSocialAccountSchema,
@@ -1143,6 +1144,39 @@ describe("discovery routing contracts (Sprint 45)", () => {
       matchingState: "retryable_error",
       matchingError: "matching_timeout",
     });
+  });
+
+  it("parses the complete discovery run summary including scheduler state", () => {
+    const summary = {
+      busy: false,
+      budgetExhausted: true,
+      queued: 8,
+      processed: 5,
+      sources: [
+        {
+          sourceId: uuid,
+          name: "Market feed",
+          fetched: 10,
+          new: 3,
+        },
+      ],
+      scored: 3,
+    };
+    expect(discoveryRunSummarySchema.safeParse(summary).success).toBe(true);
+    expect(
+      discoveryRunSummarySchema.safeParse({ ...summary, busy: undefined })
+        .success,
+    ).toBe(false);
+    expect(
+      discoveryRunSummarySchema.safeParse({
+        ...summary,
+        budgetExhausted: undefined,
+      }).success,
+    ).toBe(false);
+    expect(
+      discoveryRunSummarySchema.safeParse({ ...summary, processed: -1 })
+        .success,
+    ).toBe(false);
   });
 
   it("signalSchema carries the same match shape", () => {
