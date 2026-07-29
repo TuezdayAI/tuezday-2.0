@@ -148,7 +148,9 @@ export async function withTaskLease<T>(
       if (stopped) return;
       const renewed = heartbeatTaskLease(db, latestToken, input.leaseMs);
       if (!renewed) {
-        controller.abort(new Error("lease_lost"));
+        controller.abort(
+          Object.assign(new Error("lease_lost"), { code: "lease_lost" }),
+        );
         return;
       }
       latestToken = renewed;

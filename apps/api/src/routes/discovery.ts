@@ -30,12 +30,16 @@ import {
   listDiscoveredItems,
   listDiscoverySources,
   listItemDuplicates,
-  runDiscovery,
   skipDiscoveredItem,
   suggestDiscoverySources,
   updateDiscoverySource,
   validateDiscoverySourceTransition,
 } from "../services/discovery";
+import {
+  runDiscoveryScheduler,
+  type DiscoveryOperatorEvent,
+} from "../services/discovery-scheduler";
+import type { DiscoveryOperatorPolicy } from "../runtime/operator-policy";
 import { emitEvent } from "../services/events";
 import {
   DiscoveryReferenceNotFoundError,
@@ -64,6 +68,12 @@ export function registerDiscoveryRoutes(
   trustedFetcher: TrustedFetcher,
   intent: IntentProvider,
   connectors: ConnectorFabric,
+  scheduler: {
+    policy: DiscoveryOperatorPolicy;
+    instanceId: string;
+    shutdownSignal: AbortSignal;
+    log: (event: DiscoveryOperatorEvent) => void;
+  },
 ): void {
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/discovery/sources",
@@ -260,14 +270,16 @@ export function registerDiscoveryRoutes(
   app.post<{ Params: { id: string } }>("/workspaces/:id/discovery/run", async (request, reply) => {
     const workspace = workspaceOr404(db, request.params.id, reply);
     if (!workspace) return reply;
-    return runDiscovery(
-      db,
-      llm,
-      safeFetch,
-      intent,
-      connectors,
-      request.params.id,
-      workspace.name,
+    return runDiscoveryScheduler(
+      {
+        db,
+        llm,
+        safeFetch,
+        intentProvider: intent,
+        fabric: connectors,
+        ...scheduler,
+      },
+      { workspaceId: request.params.id },
     );
   });
 

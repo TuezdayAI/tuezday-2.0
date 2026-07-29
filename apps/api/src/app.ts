@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import rawBody from "fastify-raw-body";
@@ -81,6 +83,11 @@ import { registerPublicApiRoutes } from "./routes/public-api";
 import { backfillExternalActionPolicies } from "./services/external-action-backfill";
 import { createExternalActionAdapters } from "./services/external-action-adapters";
 import { createExternalActionRuntime } from "./services/external-action-coordinator";
+import type { DiscoveryOperatorEvent } from "./services/discovery-scheduler";
+import {
+  DEFAULT_DISCOVERY_POLICY,
+  type DiscoveryOperatorPolicy,
+} from "./runtime/operator-policy";
 import {
   createSafeFetchPolicy,
   createSafeFetchService,
@@ -88,6 +95,11 @@ import {
 } from "./safe-fetch";
 
 export type TuezdayApp = FastifyInstance;
+
+function logDiscoveryOperatorEvent(event: DiscoveryOperatorEvent): void {
+  if (process.env.NODE_ENV === "test") return;
+  console.info(JSON.stringify({ event: "discovery_operator", ...event }));
+}
 
 export interface BuildAppOptions {
   db: Db;
@@ -126,6 +138,14 @@ export interface BuildAppOptions {
   assetStorage?: AssetStorage;
   /** Slide renderer (Sprint 41); defaults to the Playwright renderer — tests inject a fake. */
   render?: (input: RenderInput) => Promise<Uint8Array>;
+  /** Validated deployment-only discovery budgets. */
+  operatorPolicy?: DiscoveryOperatorPolicy;
+  /** Stable API process identity used as the prefix for lease owners. */
+  instanceId?: string;
+  /** Safe structured discovery runtime event sink. */
+  operatorLog?: (event: DiscoveryOperatorEvent) => void;
+  /** Process shutdown signal; tests may inject one directly. */
+  shutdownSignal?: AbortSignal;
 }
 
 export async function buildApp({
@@ -146,6 +166,10 @@ export async function buildApp({
   design = new OpenDesignProvider(),
   assetStorage = new S3AssetStorage(),
   render = renderSlide,
+  operatorPolicy = DEFAULT_DISCOVERY_POLICY,
+  instanceId = `${process.env.HOSTNAME?.trim() || hostname()}:${randomUUID()}`,
+  operatorLog = logDiscoveryOperatorEvent,
+  shutdownSignal,
 }: BuildAppOptions): Promise<TuezdayApp> {
   const guardedFetch =
     safeFetch ?? createSafeFetchService(createSafeFetchPolicy());
@@ -153,6 +177,9 @@ export async function buildApp({
   // characters) plus an HMAC; click-tracking tokens (Sprint 50) embed the whole
   // redirect URL inside the signed payload. Keep the bound above that envelope.
   const app = Fastify({ logger: false, routerOptions: { maxParamLength: 4_096 } });
+  const ownedShutdown = shutdownSignal ? undefined : new AbortController();
+  const effectiveShutdownSignal =
+    shutdownSignal ?? ownedShutdown!.signal;
   backfillExternalActionPolicies(db);
   const externalActionRuntime = createExternalActionRuntime({
     db,
@@ -161,7 +188,11 @@ export async function buildApp({
   });
 
   // The design renderer keeps one shared headless browser per process.
+  app.addHook("preClose", async () => {
+    ownedShutdown?.abort(new Error("app_shutdown"));
+  });
   app.addHook("onClose", async () => {
+    ownedShutdown?.abort(new Error("app_shutdown"));
     await closeRenderer();
   });
 
@@ -209,7 +240,21 @@ export async function buildApp({
   registerCarouselRoutes(app, db, design, assetStorage, render);
   registerNotificationRoutes(app, db, mailer, fetcher);
   registerSignalRoutes(app, db, llm, evidence);
-  registerDiscoveryRoutes(app, db, llm, guardedFetch, fetcher, intent, connectors);
+  registerDiscoveryRoutes(
+    app,
+    db,
+    llm,
+    guardedFetch,
+    fetcher,
+    intent,
+    connectors,
+    {
+      policy: operatorPolicy,
+      instanceId,
+      shutdownSignal: effectiveShutdownSignal,
+      log: operatorLog,
+    },
+  );
   registerCampaignRoutes(app, db);
   registerCampaignPlanRoutes(app, db);
   registerAudienceRoutes(app, db);

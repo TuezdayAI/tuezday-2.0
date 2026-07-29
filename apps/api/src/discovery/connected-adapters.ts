@@ -1,6 +1,11 @@
 import type { Connection, DiscoverySource, DiscoverySourceConfig } from "@tuezday/contracts";
 import type { ConnectorFabric } from "../connectors/fabric";
 import type { RawDiscoveredItem } from "./adapters";
+import type {
+  DiscoveryPage,
+  DiscoveryTarget,
+  DiscoveryTargetCheckpoint,
+} from "./paging";
 
 /**
  * Connected discovery adapters (Sprint 46): fetch external posts through the
@@ -24,6 +29,44 @@ export class RateLimitedError extends Error {
   }
 }
 
+export class ConnectedDiscoveryBudgetError extends Error {
+  constructor(
+    public readonly code:
+      | "call_budget_exhausted"
+      | "source_byte_budget_exhausted",
+  ) {
+    super(code);
+    this.name = "ConnectedDiscoveryBudgetError";
+  }
+}
+
+export interface ConnectedDiscoveryErrorMetrics {
+  callsUsed: number;
+  decodedBytes: number;
+}
+
+const connectedDiscoveryErrorMetrics = new WeakMap<
+  object,
+  ConnectedDiscoveryErrorMetrics
+>();
+
+export function getConnectedDiscoveryErrorMetrics(
+  error: unknown,
+): ConnectedDiscoveryErrorMetrics {
+  if (
+    (typeof error !== "object" || error === null) &&
+    typeof error !== "function"
+  ) {
+    return { callsUsed: 0, decodedBytes: 0 };
+  }
+  return (
+    connectedDiscoveryErrorMetrics.get(error as object) ?? {
+      callsUsed: 0,
+      decodedBytes: 0,
+    }
+  );
+}
+
 /** A tracked account the source references, pre-resolved by the caller. */
 export interface ResolvedTrackedAccount {
   handle: string;
@@ -36,6 +79,11 @@ export interface ConnectedDiscoveryInput {
   connection: Connection;
   fabric: ConnectorFabric;
   trackedAccounts?: ResolvedTrackedAccount[];
+  signal?: AbortSignal;
+  maxResponseBytes?: number;
+  maxCalls?: number;
+  maxBytes?: number;
+  metrics?: { calls: number; bytes: number };
 }
 
 const MAX_ITEMS = 25;
@@ -84,13 +132,38 @@ interface ProxyOpts {
 }
 
 async function getJson(input: ConnectedDiscoveryInput, path: string, opts: ProxyOpts): Promise<unknown> {
+  const metrics = input.metrics;
+  if (
+    metrics &&
+    input.maxCalls !== undefined &&
+    metrics.calls >= input.maxCalls
+  ) {
+    throw new ConnectedDiscoveryBudgetError("call_budget_exhausted");
+  }
+  if (metrics) metrics.calls += 1;
   const res = await input.fabric.proxyJson(
     "GET",
     path,
     input.connection.nangoConnectionId,
     `tuezday-${input.connection.providerKey}`,
-    { baseUrlOverride: opts.baseUrl, headers: opts.headers },
+    {
+      baseUrlOverride: opts.baseUrl,
+      headers: opts.headers,
+      signal: input.signal,
+      maxResponseBytes: input.maxResponseBytes,
+    },
   );
+  if (metrics) {
+    metrics.bytes += res.decodedBytes ?? 0;
+    if (
+      input.maxBytes !== undefined &&
+      metrics.bytes > input.maxBytes
+    ) {
+      throw new ConnectedDiscoveryBudgetError(
+        "source_byte_budget_exhausted",
+      );
+    }
+  }
   if (res.status === 429) {
     throw new RateLimitedError(`${input.source.type} rate limit hit (HTTP 429).`);
   }
@@ -465,4 +538,74 @@ export async function fetchConnectedSourceItems(
     default:
       throw new Error(`${input.source.type} sources do not support connected fetching.`);
   }
+}
+
+export async function fetchConnectedSourcePage(input: {
+  source: DiscoverySource;
+  connection: Connection;
+  fabric: ConnectorFabric;
+  trackedAccounts: ResolvedTrackedAccount[];
+  target: DiscoveryTarget;
+  checkpoint: DiscoveryTargetCheckpoint;
+  signal: AbortSignal;
+  maxItems: number;
+  maxCalls: number;
+  maxResponseBytes: number;
+  maxBytes: number;
+}): Promise<DiscoveryPage> {
+  const metrics = { calls: 0, bytes: 0 };
+  const targetedSource: DiscoverySource = input.target.handle
+    ? {
+        ...input.source,
+        config: {
+          ...input.source.config,
+          handle: input.target.handle,
+          handles: [],
+          trackedAccountId: undefined,
+          trackedAccountIds: [],
+        },
+      }
+    : input.source;
+  const trackedAccounts = input.target.handle
+    ? [
+        {
+          handle: input.target.handle,
+          externalId: input.target.externalId ?? null,
+        },
+      ]
+    : input.trackedAccounts;
+  let items: RawDiscoveredItem[];
+  try {
+    items = await fetchConnectedSourceItems({
+      source: targetedSource,
+      connection: input.connection,
+      fabric: input.fabric,
+      trackedAccounts,
+      signal: input.signal,
+      maxResponseBytes: input.maxResponseBytes,
+      maxCalls: input.maxCalls,
+      maxBytes: input.maxBytes,
+      metrics,
+    });
+  } catch (error) {
+    if (
+      (typeof error === "object" && error !== null) ||
+      typeof error === "function"
+    ) {
+      connectedDiscoveryErrorMetrics.set(error as object, {
+        callsUsed: metrics.calls,
+        decodedBytes: metrics.bytes,
+      });
+    }
+    throw error;
+  }
+  return {
+    targetKey: input.target.key,
+    items: items.slice(0, input.maxItems),
+    nextToken: null,
+    reachedBoundary: false,
+    exhausted: true,
+    callsUsed: metrics.calls,
+    decodedBytes: metrics.bytes,
+  };
 }

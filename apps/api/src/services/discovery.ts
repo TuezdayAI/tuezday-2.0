@@ -1,5 +1,18 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, ne, or, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm";
 import {
   createDiscoverySourceInputSchema,
   type CreateDiscoverySourceInput,
@@ -27,18 +40,30 @@ import {
   type DiscoverySourceRow,
 } from "../db/schema";
 import {
-  fetchSourceItems,
+  fetchSourcePage,
   isLiveSourceType,
   type RawDiscoveredItem,
 } from "../discovery/adapters";
 import {
+  ConnectedDiscoveryBudgetError,
   PermissionRequiredError,
   RateLimitedError,
-  fetchConnectedSourceItems,
+  fetchConnectedSourcePage,
+  getConnectedDiscoveryErrorMetrics,
   type ResolvedTrackedAccount,
 } from "../discovery/connected-adapters";
 import type { IntentProvider } from "../discovery/intent";
+import {
+  cursorMode,
+  readCursor,
+  reconcileTargets,
+  safeCursorProgress,
+  targetsForSource,
+  type DiscoveryCursorV1,
+  type DiscoveryPageReader,
+} from "../discovery/paging";
 import type { LlmGateway } from "../llm/gateway";
+import { BoundedJsonError } from "../connectors/bounded-json";
 import {
   SafeFetchError,
   serializeSafeFetchError,
@@ -50,14 +75,11 @@ import {
   requireTrackedAccounts,
 } from "./tracked-social-accounts";
 import {
-  DISCOVERY_JOB_BATCH_SIZE,
-  DISCOVERY_JOB_LEASE_MS,
-  claimNextDiscoveryJob,
   completeDiscoveryJob,
-  enqueueDueDiscoveryJobs,
   failDiscoveryJob,
   type DiscoveryJobClaim,
 } from "./discovery-jobs";
+import { DATABASE_NOW_MS } from "./task-leases";
 import {
   brainDigest,
   buildMatchingContext,
@@ -81,22 +103,62 @@ import { insertSignalRow, readSignal } from "./signals";
 // ---------------------------------------------------------------------------
 
 function rowToSource(row: DiscoverySourceRow): DiscoverySource {
+  const config = JSON.parse(row.configJson) as DiscoverySourceConfig;
+  const sourceForMode = {
+    type: row.type as DiscoverySourceType,
+    config,
+  } as DiscoverySource;
+  const cursorState = readCursor(row.cursorJson, cursorMode(sourceForMode));
   return {
     id: row.id,
     workspaceId: row.workspaceId,
     type: row.type as DiscoverySourceType,
     name: row.name,
-    config: JSON.parse(row.configJson) as DiscoverySourceConfig,
+    config,
     enabled: row.enabled,
     status: row.status as DiscoverySourceStatus,
     lastError: row.lastError,
     lastFetchedAt: row.lastFetchedAt,
     connectionId: row.connectionId,
-    cursor: JSON.parse(row.cursorJson) as Record<string, unknown>,
+    cursor: safeCursorProgress(cursorState, row.lastFetchedAt),
     backoffUntil: row.backoffUntil,
     lastAttemptedAt: row.lastAttemptedAt,
     createdAt: row.createdAt,
   };
+}
+
+export interface DiscoverySourceExecution extends DiscoverySource {
+  executionVersion: number;
+  cursorState: DiscoveryCursorV1;
+}
+
+function rowToSourceExecution(
+  row: DiscoverySourceRow,
+): DiscoverySourceExecution {
+  const source = rowToSource(row);
+  return {
+    ...source,
+    executionVersion: row.executionVersion,
+    cursorState: readCursor(row.cursorJson, cursorMode(source)),
+  };
+}
+
+export function getDiscoverySourceExecution(
+  db: DbExecutor,
+  workspaceId: string,
+  sourceId: string,
+): DiscoverySourceExecution | undefined {
+  const row = db
+    .select()
+    .from(discoverySources)
+    .where(
+      and(
+        eq(discoverySources.workspaceId, workspaceId),
+        eq(discoverySources.id, sourceId),
+      ),
+    )
+    .get();
+  return row ? rowToSourceExecution(row) : undefined;
 }
 
 /** What a connected source targets, for default names ("@rival", "#tag", …). */
@@ -833,11 +895,17 @@ function findCanonicalItem(
 // Scoring (Sprint 45: multi-candidate, re-scored on persona/campaign change)
 // ---------------------------------------------------------------------------
 
-async function scoreUnscoredItems(
+export async function scoreUnscoredItems(
   db: Db,
   llm: LlmGateway,
   workspaceId: string,
   workspaceName: string,
+  options: {
+    maxItems?: number;
+    matchingTimeoutMs?: number;
+    signal?: AbortSignal;
+    onAdmitted?: (count: number) => void;
+  } = {},
 ): Promise<number> {
   // Re-score watermark: a still-new item whose last judgment predates the
   // newest persona/campaign edit gets re-judged; triaged items are frozen.
@@ -853,7 +921,9 @@ async function scoreUnscoredItems(
         or(isNull(discoveredItems.scoredAt), lt(discoveredItems.scoredAt, configVersion)),
       ),
     )
-    .all();
+    .all()
+    .slice(0, options.maxItems ?? Number.POSITIVE_INFINITY);
+  options.onAdmitted?.(unscored.length);
   if (unscored.length === 0) return 0;
 
   const digest = brainDigest(db, workspaceId);
@@ -861,6 +931,9 @@ async function scoreUnscoredItems(
 
   let scoredCount = 0;
   for (let offset = 0; offset < unscored.length; offset += SCORE_BATCH_SIZE) {
+    if (options.signal?.aborted) {
+      throw options.signal.reason ?? new Error("tick_budget_exhausted");
+    }
     const batch = unscored.slice(offset, offset + SCORE_BATCH_SIZE);
     const itemsBlock = batch
       .map(
@@ -871,7 +944,13 @@ async function scoreUnscoredItems(
     const prompt = buildMatchingPrompt({ workspaceName, digest, ctx, itemsBlock });
 
     try {
-      const result = await llm.generate({ prompt });
+      const matchingSignal = options.matchingTimeoutMs
+        ? AbortSignal.any([
+            ...(options.signal ? [options.signal] : []),
+            AbortSignal.timeout(options.matchingTimeoutMs),
+          ])
+        : options.signal;
+      const result = await llm.generate({ prompt, signal: matchingSignal });
       const entries = parseJsonArray(result.text);
       if (!entries) continue; // scoring assists, never gates: leave unscored
       const scoredAt = Date.now();
@@ -932,6 +1011,9 @@ async function scoreUnscoredItems(
         if (persisted) scoredCount += 1;
       }
     } catch {
+      if (options.signal?.aborted) {
+        throw options.signal.reason ?? new Error("tick_budget_exhausted");
+      }
       // Gateway failure mid-run: items stay unscored and triagable.
       continue;
     }
@@ -961,217 +1043,695 @@ function rateLimitBackoffMs(db: Db, sourceId: string): number {
   return Math.min(RATE_LIMIT_BACKOFF_BASE_MS * 2 ** streak, RATE_LIMIT_BACKOFF_MAX_MS);
 }
 
-/** Fetch a connected source through its workspace connection (Sprint 46). */
-async function fetchViaConnection(
-  db: Db,
-  fabric: ConnectorFabric,
-  workspaceId: string,
-  source: DiscoverySource,
-  trackedAccounts: ResolvedTrackedAccount[],
-): Promise<RawDiscoveredItem[]> {
-  const connection = source.connectionId
-    ? getConnection(db, workspaceId, source.connectionId)
-    : undefined;
-  if (!connection || connection.status !== "connected") {
-    // The message doubles as the stable lastError value the UI keys on.
-    throw new Error("connection_disconnected");
-  }
-  return fetchConnectedSourceItems({ source, connection, fabric, trackedAccounts });
+export interface SourceBudget {
+  deadlineMs: number;
+  maxItems: number;
+  maxPages: number;
+  maxCalls: number;
+  maxResponseBytes: number;
+  maxBytes: number;
 }
 
-export async function runDiscovery(
-  db: Db,
-  llm: LlmGateway,
-  safeFetch: SafeFetchService,
-  intentProvider: IntentProvider,
-  fabric: ConnectorFabric,
-  workspaceId: string,
-  workspaceName: string,
-): Promise<DiscoveryRunResult> {
-  // Job ledger (Sprint 46): enqueue every due source, then process a bounded
-  // batch. Leftover jobs stay queued for the next run, so one slow source (or
-  // many sources) never serializes the whole workspace in a single call.
-  const now = Date.now();
-  const eligible = listDiscoverySources(db, workspaceId).filter(
-    (s) =>
-      s.enabled &&
-      (s.status !== "needs_api_key" ||
-        (s.type === "intent" && intentProvider.isConfigured())),
+export interface DiscoverySourceDependencies {
+  db: Db;
+  safeFetch: SafeFetchService;
+  intentProvider: IntentProvider;
+  fabric: ConnectorFabric;
+  pageReader?: DiscoveryPageReader;
+}
+
+export interface DiscoverySourceMetrics {
+  code: string;
+  calls: number;
+  pages: number;
+  bytes: number;
+  items: number;
+  continuationPending: boolean;
+  replay: boolean;
+}
+
+const sourceResultMetrics = new WeakMap<
+  SourceRunResult,
+  DiscoverySourceMetrics
+>();
+
+export function getDiscoverySourceMetrics(
+  result: SourceRunResult,
+): DiscoverySourceMetrics {
+  return (
+    sourceResultMetrics.get(result) ?? {
+      code: result.error ?? "completed",
+      calls: 0,
+      pages: 0,
+      bytes: 0,
+      items: result.fetched,
+      continuationPending: false,
+      replay: false,
+    }
   );
-  const queued = enqueueDueDiscoveryJobs(db, workspaceId, eligible, now);
-  const claimed: DiscoveryJobClaim[] = [];
-  for (let index = 0; index < DISCOVERY_JOB_BATCH_SIZE; index += 1) {
-    const job = claimNextDiscoveryJob(db, {
-      workspaceId,
-      owner: `api:legacy-discovery:${randomUUID()}`,
-      leaseMs: DISCOVERY_JOB_LEASE_MS,
+}
+
+async function defaultDiscoveryPageReader(
+  input: Parameters<DiscoveryPageReader>[0],
+) {
+  if (input.source.connectionId) {
+    const connection = getConnection(
+      input.db,
+      input.source.workspaceId,
+      input.source.connectionId,
+    );
+    if (!connection || connection.status !== "connected") {
+      throw new Error("connection_disconnected");
+    }
+    return fetchConnectedSourcePage({
+      source: input.source,
+      connection,
+      fabric: input.fabric,
+      trackedAccounts: input.trackedAccounts,
+      target: input.target,
+      checkpoint: input.checkpoint,
+      signal: input.signal,
+      maxItems: input.maxItems,
+      maxCalls: input.maxCalls,
+      maxResponseBytes: input.maxResponseBytes,
+      maxBytes: input.maxBytes,
     });
-    if (!job) break;
-    claimed.push(job);
   }
+  if (input.source.type === "intent") {
+    const items = await input.intentProvider.fetchSignals(
+      input.source.config,
+      input.signal,
+    );
+    return {
+      targetKey: input.target.key,
+      items: items.slice(0, input.maxItems),
+      nextToken: null,
+      reachedBoundary: false,
+      exhausted: true,
+      callsUsed: 1,
+      decodedBytes: 0,
+    };
+  }
+  return fetchSourcePage({
+    source: input.source,
+    target: input.target,
+    checkpoint: input.checkpoint,
+    signal: input.signal,
+    maxItems: input.maxItems,
+    maxResponseBytes: input.maxResponseBytes,
+    safeFetch: input.safeFetch,
+  });
+}
 
-  const results: SourceRunResult[] = [];
-  for (const job of claimed) {
-    const source = getDiscoverySource(db, workspaceId, job.sourceId);
-    if (!source) {
-      failDiscoveryJob(db, job, "source_missing");
-      continue;
-    }
-    try {
-      // JSON-backed tracked-account references can become invalid after source
-      // creation. Resolve them before every adapter path, including keyless
-      // Reddit/RSS and intent providers, so no stale or foreign reference can
-      // trigger an external request.
-      const trackedAccounts = requireSourceTrackedAccounts(
-        db,
-        workspaceId,
-        source.type,
-        source.config,
-      ).map((account) => ({
-        handle: account.handle,
-        externalId: account.externalId,
-      }));
-      const fetched = source.connectionId
-        ? await fetchViaConnection(
-            db,
-            fabric,
-            workspaceId,
-            source,
-            trackedAccounts,
-          )
-        : source.type === "intent"
-          ? await intentProvider.fetchSignals(source.config)
-          : await fetchSourceItems(source.type, source.config, safeFetch);
-      const existing = new Set(
-        fetched.length
-          ? db
-              .select({ externalId: discoveredItems.externalId })
-              .from(discoveredItems)
-              .where(
-                and(
-                  eq(discoveredItems.sourceId, source.id),
-                  inArray(
-                    discoveredItems.externalId,
-                    fetched.map((f) => f.externalId),
-                  ),
+function sourceClaimIsLive(
+  db: DbExecutor,
+  claim: DiscoveryJobClaim,
+): boolean {
+  return Boolean(
+    db
+      .select({ id: discoveryJobs.id })
+      .from(discoveryJobs)
+      .where(
+        and(
+          eq(discoveryJobs.id, claim.id),
+          eq(discoveryJobs.status, "running"),
+          eq(discoveryJobs.leaseOwner, claim.leaseOwner),
+          eq(discoveryJobs.leaseVersion, claim.leaseVersion),
+          gt(discoveryJobs.leaseExpiresAt, DATABASE_NOW_MS),
+        ),
+      )
+      .get(),
+  );
+}
+
+function newestItem(items: RawDiscoveredItem[]) {
+  return [...items].sort((left, right) => {
+    const byDate = (right.publishedAt ?? -1) - (left.publishedAt ?? -1);
+    return byDate || right.externalId.localeCompare(left.externalId);
+  })[0];
+}
+
+function persistClaimedPage(
+  db: Db,
+  claim: DiscoveryJobClaim,
+  source: DiscoverySourceExecution,
+  cursor: DiscoveryCursorV1,
+  items: RawDiscoveredItem[],
+): { ok: boolean; inserted: number } {
+  return db.transaction((tx) => {
+    if (!sourceClaimIsLive(tx, claim)) return { ok: false, inserted: 0 };
+    const currentSource = tx
+      .select({ executionVersion: discoverySources.executionVersion })
+      .from(discoverySources)
+      .where(
+        and(
+          eq(discoverySources.workspaceId, claim.workspaceId),
+          eq(discoverySources.id, source.id),
+          eq(
+            discoverySources.executionVersion,
+            claim.sourceExecutionVersion,
+          ),
+        ),
+      )
+      .get();
+    if (!currentSource) return { ok: false, inserted: 0 };
+
+    const existing = new Set(
+      items.length
+        ? tx
+            .select({ externalId: discoveredItems.externalId })
+            .from(discoveredItems)
+            .where(
+              and(
+                eq(discoveredItems.sourceId, source.id),
+                inArray(
+                  discoveredItems.externalId,
+                  items.map((item) => item.externalId),
                 ),
-              )
-              .all()
-              .map((r) => r.externalId)
-          : [],
+              ),
+            )
+            .all()
+            .map((row) => row.externalId)
+        : [],
+    );
+    const fresh = items.filter((item) => {
+      if (!item.externalId || existing.has(item.externalId)) return false;
+      existing.add(item.externalId);
+      return true;
+    });
+    const checkpointAt = Date.now();
+    for (const item of fresh) {
+      const urlHash = hashUrl(item.url);
+      const contentHash = hashContent(item.title, item.summary);
+      const canonical = findCanonicalItem(
+        tx as unknown as Db,
+        claim.workspaceId,
+        urlHash,
+        contentHash,
       );
-      const fresh = fetched.filter((f) => f.externalId && !existing.has(f.externalId));
-      const fetchedAt = Date.now();
-      for (const item of fresh) {
-        // Cross-source dedup (Sprint 45): a story already seen via another
-        // source is kept but linked to the canonical item — it never enters
-        // triage and is never scored. Inserts are sequential, so two copies in
-        // the same batch still resolve (the second sees the first).
-        const urlHash = hashUrl(item.url);
-        const contentHash = hashContent(item.title, item.summary);
-        const canonical = findCanonicalItem(db, workspaceId, urlHash, contentHash);
-        db.insert(discoveredItems)
-          .values({
-            id: randomUUID(),
-            workspaceId,
-            sourceId: source.id,
-            externalId: item.externalId,
-            title: item.title,
-            url: item.url,
-            summary: item.summary,
-            publishedAt: item.publishedAt,
-            score: null,
-            suggestedPersonaId: null,
-            suggestedCampaignId: null,
-            scoreReason: null,
-            status: canonical ? "duplicate" : "new",
-            signalId: null,
-            scoredAt: null,
-            urlHash,
-            contentHash,
-            duplicateOfId: canonical?.id ?? null,
-            createdAt: fetchedAt,
-          })
-          .run();
-      }
-      db.update(discoverySources)
-        .set({
-          status: "active",
-          lastError: null,
-          lastFetchedAt: fetchedAt,
-          lastAttemptedAt: fetchedAt,
-          backoffUntil: null,
+      tx.insert(discoveredItems)
+        .values({
+          id: randomUUID(),
+          workspaceId: claim.workspaceId,
+          sourceId: source.id,
+          externalId: item.externalId,
+          title: item.title,
+          url: item.url,
+          summary: item.summary,
+          publishedAt: item.publishedAt,
+          score: null,
+          suggestedPersonaId: null,
+          suggestedCampaignId: null,
+          scoreReason: null,
+          status: canonical ? "duplicate" : "new",
+          signalId: null,
+          scoredAt: null,
+          urlHash,
+          contentHash,
+          duplicateOfId: canonical?.id ?? null,
+          createdAt: checkpointAt,
         })
-        .where(
-          and(
-            eq(discoverySources.workspaceId, workspaceId),
-            eq(discoverySources.id, source.id),
-          ),
-        )
         .run();
-      completeDiscoveryJob(
-        db,
-        job,
-        { fetchedCount: fetched.length, newCount: fresh.length },
-      );
-      results.push({ sourceId: source.id, name: source.name, fetched: fetched.length, new: fresh.length });
-    } catch (err) {
-      const failedAt = Date.now();
-      if (err instanceof RateLimitedError) {
-        // The source itself is healthy — stay active, just don't probe it
-        // again until the (exponential) backoff passes.
-        db.update(discoverySources)
-          .set({ backoffUntil: failedAt + rateLimitBackoffMs(db, source.id), lastAttemptedAt: failedAt })
-          .where(
-            and(
-              eq(discoverySources.workspaceId, workspaceId),
-              eq(discoverySources.id, source.id),
-            ),
-          )
-          .run();
-        failDiscoveryJob(db, job, "rate_limited");
-        results.push({ sourceId: source.id, name: source.name, fetched: 0, new: 0, error: "rate_limited" });
-        continue;
-      }
-      // Permission refusals get a stable, founder-actionable prefix; they are
-      // source-local and never abort the rest of the run.
-      const message = (() => {
-        if (err instanceof PermissionRequiredError) {
-          return `permission_required: ${err.message}`;
-        }
-        if (err instanceof DiscoveryReferenceNotFoundError) {
-          return err.message;
-        }
-        if (
-          err instanceof SafeFetchError ||
-          (!source.connectionId && source.type !== "intent")
-        ) {
-          const safe = serializeSafeFetchError(err);
-          return `${safe.code}: ${safe.message}`;
-        }
-        return err instanceof Error ? err.message : String(err);
-      })();
-      db.update(discoverySources)
-        .set({
-          status: "error",
-          lastError: message.slice(0, 500),
-          lastFetchedAt: failedAt,
-          lastAttemptedAt: failedAt,
-        })
-        .where(
-          and(
-            eq(discoverySources.workspaceId, workspaceId),
-            eq(discoverySources.id, source.id),
-          ),
-        )
-        .run();
-      failDiscoveryJob(db, job, message);
-      results.push({ sourceId: source.id, name: source.name, fetched: 0, new: 0, error: message });
     }
+    tx.update(discoverySources)
+      .set({
+        cursorJson: JSON.stringify(cursor),
+        status: "active",
+        lastError: null,
+        lastFetchedAt: checkpointAt,
+        lastAttemptedAt: checkpointAt,
+        backoffUntil: null,
+      })
+      .where(
+        and(
+          eq(discoverySources.workspaceId, claim.workspaceId),
+          eq(discoverySources.id, source.id),
+          eq(
+            discoverySources.executionVersion,
+            claim.sourceExecutionVersion,
+          ),
+        ),
+      )
+      .run();
+    return { ok: true, inserted: fresh.length };
+  });
+}
+
+function persistPermissionCheckpoint(
+  db: Db,
+  claim: DiscoveryJobClaim,
+  source: DiscoverySourceExecution,
+  cursor: DiscoveryCursorV1,
+): boolean {
+  return db.transaction((tx) => {
+    if (!sourceClaimIsLive(tx, claim)) return false;
+    return (
+      tx
+        .update(discoverySources)
+        .set({
+          cursorJson: JSON.stringify(cursor),
+          lastAttemptedAt: Date.now(),
+        })
+        .where(
+          and(
+            eq(discoverySources.workspaceId, claim.workspaceId),
+            eq(discoverySources.id, source.id),
+            eq(
+              discoverySources.executionVersion,
+              claim.sourceExecutionVersion,
+            ),
+          ),
+        )
+        .run().changes === 1
+    );
+  });
+}
+
+const SAFE_EXECUTION_CODES = new Set([
+  "lease_lost",
+  "source_timeout",
+  "tick_budget_exhausted",
+  "item_budget_exhausted",
+  "page_budget_exhausted",
+  "call_budget_exhausted",
+  "source_byte_budget_exhausted",
+  "response_limit",
+  "shutdown",
+]);
+
+function executionCodeFromSignal(signal: AbortSignal): string {
+  const reason = signal.reason as { code?: unknown } | undefined;
+  return typeof reason?.code === "string" &&
+    SAFE_EXECUTION_CODES.has(reason.code)
+    ? reason.code
+    : "source_timeout";
+}
+
+function safeExecutionFailure(
+  error: unknown,
+  source: DiscoverySourceExecution,
+  signal: AbortSignal,
+): { code: string; persisted: string } {
+  if (signal.aborted) {
+    const code = executionCodeFromSignal(signal);
+    return { code, persisted: code };
+  }
+  if (error instanceof ConnectedDiscoveryBudgetError) {
+    return { code: error.code, persisted: error.code };
+  }
+  if (error instanceof BoundedJsonError) {
+    const code =
+      error.code === "response_limit" ? "response_limit" : "source_timeout";
+    return { code, persisted: code };
+  }
+  if (error instanceof RateLimitedError) {
+    return { code: "rate_limited", persisted: "rate_limited" };
+  }
+  if (error instanceof PermissionRequiredError) {
+    return {
+      code: "permission_required",
+      persisted: `permission_required: ${error.message}`.slice(0, 500),
+    };
+  }
+  if (error instanceof DiscoveryReferenceNotFoundError) {
+    return {
+      code: "related_object_not_found",
+      persisted: error.message.slice(0, 500),
+    };
+  }
+  if (
+    error instanceof SafeFetchError ||
+    (!source.connectionId && source.type !== "intent")
+  ) {
+    const safe = serializeSafeFetchError(error);
+    return {
+      code: safe.code,
+      persisted: `${safe.code}: ${safe.message}`,
+    };
+  }
+  if (error instanceof Error && error.message === "connection_disconnected") {
+    return {
+      code: "connection_disconnected",
+      persisted: "connection_disconnected",
+    };
+  }
+  return { code: "provider_failed", persisted: "provider_failed" };
+}
+
+function writeSourceFailure(
+  db: Db,
+  source: DiscoverySourceExecution,
+  code: string,
+  persistedError = code,
+): void {
+  if (code === "lease_lost" || code === "shutdown") return;
+  const failedAt = Date.now();
+  if (code === "rate_limited") {
+    db.update(discoverySources)
+      .set({
+        backoffUntil: failedAt + rateLimitBackoffMs(db, source.id),
+        lastAttemptedAt: failedAt,
+      })
+      .where(
+        and(
+          eq(discoverySources.workspaceId, source.workspaceId),
+          eq(discoverySources.id, source.id),
+          eq(discoverySources.executionVersion, source.executionVersion),
+        ),
+      )
+      .run();
+    return;
+  }
+  const isBudget =
+    SAFE_EXECUTION_CODES.has(code) && code !== "source_timeout";
+  db.update(discoverySources)
+    .set({
+      status: isBudget ? "active" : "error",
+      lastError: persistedError.slice(0, 500),
+      lastFetchedAt: failedAt,
+      lastAttemptedAt: failedAt,
+    })
+    .where(
+      and(
+        eq(discoverySources.workspaceId, source.workspaceId),
+        eq(discoverySources.id, source.id),
+        eq(discoverySources.executionVersion, source.executionVersion),
+      ),
+    )
+    .run();
+}
+
+function resultWithMetrics(
+  result: SourceRunResult,
+  metrics: DiscoverySourceMetrics,
+): SourceRunResult {
+  sourceResultMetrics.set(result, metrics);
+  return result;
+}
+
+export async function runClaimedDiscoverySource(
+  deps: DiscoverySourceDependencies,
+  claim: DiscoveryJobClaim,
+  budget: SourceBudget,
+  signal: AbortSignal,
+): Promise<SourceRunResult> {
+  const initial = getDiscoverySourceExecution(
+    deps.db,
+    claim.workspaceId,
+    claim.sourceId,
+  );
+  if (!initial) {
+    failDiscoveryJob(deps.db, claim, "source_missing");
+    return resultWithMetrics(
+      {
+        sourceId: claim.sourceId,
+        name: claim.sourceId,
+        fetched: 0,
+        new: 0,
+        error: "source_missing",
+      },
+      {
+        code: "source_missing",
+        calls: 0,
+        pages: 0,
+        bytes: 0,
+        items: 0,
+        continuationPending: false,
+        replay: claim.attempt > 1,
+      },
+    );
+  }
+  if (initial.executionVersion !== claim.sourceExecutionVersion) {
+    failDiscoveryJob(deps.db, claim, "source_version_changed");
+    return resultWithMetrics(
+      {
+        sourceId: initial.id,
+        name: initial.name,
+        fetched: 0,
+        new: 0,
+        error: "source_version_changed",
+      },
+      {
+        code: "source_version_changed",
+        calls: 0,
+        pages: 0,
+        bytes: 0,
+        items: 0,
+        continuationPending: false,
+        replay: claim.attempt > 1,
+      },
+    );
   }
 
-  const scored = await scoreUnscoredItems(db, llm, workspaceId, workspaceName);
-  return { queued, processed: claimed.length, sources: results, scored };
+  let trackedAccounts: ResolvedTrackedAccount[];
+  try {
+    trackedAccounts = requireSourceTrackedAccounts(
+      deps.db,
+      claim.workspaceId,
+      initial.type,
+      initial.config,
+    ).map((account) => ({
+      handle: account.handle,
+      externalId: account.externalId,
+    }));
+  } catch (error) {
+    const failure = safeExecutionFailure(error, initial, signal);
+    writeSourceFailure(
+      deps.db,
+      initial,
+      failure.code,
+      failure.persisted,
+    );
+    failDiscoveryJob(deps.db, claim, failure.persisted);
+    return resultWithMetrics(
+      {
+        sourceId: initial.id,
+        name: initial.name,
+        fetched: 0,
+        new: 0,
+        error: failure.persisted,
+      },
+      {
+        code: failure.code,
+        calls: 0,
+        pages: 0,
+        bytes: 0,
+        items: 0,
+        continuationPending: false,
+        replay: claim.attempt > 1,
+      },
+    );
+  }
+
+  const targets = targetsForSource(initial, trackedAccounts);
+  const cursor = reconcileTargets(initial.cursorState, targets);
+  const pageReader = deps.pageReader ?? defaultDiscoveryPageReader;
+  let calls = 0;
+  let pages = 0;
+  let bytes = 0;
+  let admittedItems = 0;
+  let insertedItems = 0;
+  let permissionFailures = 0;
+  let visitedTargets = 0;
+  let terminalCode: string | undefined;
+  let terminalPersistedError: string | undefined;
+  let permissionPersistedError: string | undefined;
+  const startingTargetIndex = cursor.nextTargetIndex;
+
+  try {
+    for (let offset = 0; offset < targets.length; offset += 1) {
+      if (signal.aborted || Date.now() >= budget.deadlineMs) {
+        terminalCode = signal.aborted
+          ? executionCodeFromSignal(signal)
+          : "source_timeout";
+        break;
+      }
+      if (pages >= budget.maxPages) {
+        terminalCode = "page_budget_exhausted";
+        break;
+      }
+      if (calls >= budget.maxCalls) {
+        terminalCode = "call_budget_exhausted";
+        break;
+      }
+      if (bytes >= budget.maxBytes) {
+        terminalCode = "source_byte_budget_exhausted";
+        break;
+      }
+      if (admittedItems >= budget.maxItems) {
+        terminalCode = "item_budget_exhausted";
+        break;
+      }
+
+      const targetIndex =
+        (startingTargetIndex + offset) % targets.length;
+      const target = targets[targetIndex]!;
+      const checkpoint = cursor.targets[target.key]!;
+      let page;
+      try {
+        page = await pageReader({
+          db: deps.db,
+          source: initial,
+          target,
+          checkpoint,
+          signal,
+          maxItems: budget.maxItems - admittedItems,
+          maxCalls: budget.maxCalls - calls,
+          maxResponseBytes: budget.maxResponseBytes,
+          maxBytes: budget.maxBytes - bytes,
+          safeFetch: deps.safeFetch,
+          intentProvider: deps.intentProvider,
+          fabric: deps.fabric,
+          trackedAccounts,
+        });
+      } catch (error) {
+        const failedMetrics =
+          getConnectedDiscoveryErrorMetrics(error);
+        calls += failedMetrics.callsUsed;
+        bytes += failedMetrics.decodedBytes;
+        if (calls > budget.maxCalls) {
+          terminalCode = "call_budget_exhausted";
+          break;
+        }
+        if (bytes > budget.maxBytes) {
+          terminalCode = "source_byte_budget_exhausted";
+          break;
+        }
+        if (error instanceof PermissionRequiredError) {
+          permissionFailures += 1;
+          permissionPersistedError =
+            `permission_required: ${error.message}`.slice(0, 500);
+          checkpoint.lastSafeError = "permission_required";
+          checkpoint.continuation = null;
+          cursor.nextTargetIndex = (targetIndex + 1) % targets.length;
+          if (!persistPermissionCheckpoint(deps.db, claim, initial, cursor)) {
+            terminalCode = "lease_lost";
+            break;
+          }
+          visitedTargets += 1;
+          continue;
+        }
+        throw error;
+      }
+
+      const nextCalls = calls + page.callsUsed;
+      const nextBytes = bytes + page.decodedBytes;
+      if (nextCalls > budget.maxCalls) {
+        terminalCode = "call_budget_exhausted";
+        break;
+      }
+      if (nextBytes > budget.maxBytes) {
+        terminalCode = "source_byte_budget_exhausted";
+        break;
+      }
+      calls = nextCalls;
+      bytes = nextBytes;
+      pages += 1;
+      visitedTargets += 1;
+
+      const remainingItems = budget.maxItems - admittedItems;
+      const admitted = page.items.slice(0, remainingItems);
+      const truncated = admitted.length < page.items.length;
+      admittedItems += admitted.length;
+      const newest = newestItem(admitted);
+      if (newest) {
+        checkpoint.highWatermark = {
+          externalId: newest.externalId,
+          publishedAt: newest.publishedAt,
+        };
+      }
+      checkpoint.lastSafeError = null;
+      checkpoint.continuation =
+        page.exhausted && !truncated
+          ? null
+          : {
+              providerToken: page.nextToken,
+              boundaryExternalId:
+                checkpoint.highWatermark?.externalId ?? null,
+              newestExternalId: newest?.externalId ?? null,
+              newestPublishedAt: newest?.publishedAt ?? null,
+            };
+      cursor.nextTargetIndex = (targetIndex + 1) % targets.length;
+
+      const persisted = persistClaimedPage(
+        deps.db,
+        claim,
+        initial,
+        cursor,
+        admitted,
+      );
+      if (!persisted.ok) {
+        terminalCode = "lease_lost";
+        break;
+      }
+      insertedItems += persisted.inserted;
+      if (truncated) {
+        terminalCode = "item_budget_exhausted";
+        break;
+      }
+    }
+  } catch (error) {
+    const failure = safeExecutionFailure(error, initial, signal);
+    terminalCode = failure.code;
+    terminalPersistedError = failure.persisted;
+  }
+
+  if (!terminalCode && permissionFailures === targets.length) {
+    terminalCode = "permission_required";
+    terminalPersistedError =
+      permissionPersistedError ?? "permission_required";
+  }
+  const continuationPending =
+    Boolean(terminalCode) ||
+    visitedTargets < targets.length ||
+    Object.values(cursor.targets).some(
+      (checkpoint) => checkpoint.continuation !== null,
+    );
+  let code = terminalCode ?? "completed";
+
+  if (terminalCode) {
+    const persistedError = terminalPersistedError ?? terminalCode;
+    writeSourceFailure(
+      deps.db,
+      initial,
+      terminalCode,
+      persistedError,
+    );
+    if (!failDiscoveryJob(deps.db, claim, persistedError)) {
+      code = "lease_lost";
+    }
+  } else if (
+    !completeDiscoveryJob(deps.db, claim, {
+      fetchedCount: admittedItems,
+      newCount: insertedItems,
+    })
+  ) {
+    code = "lease_lost";
+  }
+
+  const result: SourceRunResult = {
+    sourceId: initial.id,
+    name: initial.name,
+    fetched: admittedItems,
+    new: insertedItems,
+    ...(code === "completed"
+      ? {}
+      : {
+          error:
+            code === "lease_lost"
+              ? code
+              : terminalPersistedError ?? code,
+        }),
+  };
+  return resultWithMetrics(result, {
+    code,
+    calls,
+    pages,
+    bytes,
+    items: admittedItems,
+    continuationPending,
+    replay: claim.attempt > 1,
+  });
 }
 
 // ---------------------------------------------------------------------------

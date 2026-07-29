@@ -108,5 +108,6 @@ describe("database-clock task leases", () => {
     await vi.advanceTimersByTimeAsync(10);
     await expect(resultPromise).resolves.toEqual({ busy: false, value: true });
     expect(signalSeen?.aborted).toBe(true);
+    expect(signalSeen?.reason).toMatchObject({ code: "lease_lost" });
   });
 });

@@ -96,4 +96,30 @@ describe("GeminiGateway.embed", () => {
     await new GeminiGateway().embed({ texts: ["x"] });
     expect((fetcher.mock.calls[0]! as unknown as [string])[0]).toContain("custom-embed-2");
   });
+
+  it("keeps embedding support when generation is cancelled", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+        if (init?.signal?.aborted) {
+          throw init.signal.reason;
+        }
+        return okResponse(1);
+      }),
+    );
+    const gateway = new GeminiGateway();
+    const controller = new AbortController();
+    controller.abort(new Error("cancelled_by_test"));
+
+    await expect(
+      gateway.generate({
+        prompt: "cancel me",
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow("cancelled_by_test");
+
+    const result = await gateway.embed({ texts: ["evidence survives"] });
+    expect(result.embeddings).toHaveLength(1);
+    expect(result.dimensions).toBe(EVIDENCE_EMBEDDING_DIMENSIONS);
+  });
 });

@@ -1,6 +1,15 @@
 import { XMLParser } from "fast-xml-parser";
-import type { DiscoverySourceConfig, DiscoverySourceType } from "@tuezday/contracts";
+import type {
+  DiscoverySource,
+  DiscoverySourceConfig,
+  DiscoverySourceType,
+} from "@tuezday/contracts";
 import type { SafeFetchService } from "../safe-fetch";
+import type {
+  DiscoveryPage,
+  DiscoveryTarget,
+  DiscoveryTargetCheckpoint,
+} from "./paging";
 
 /**
  * Source adapters. Each turns a source config into a normalized item list.
@@ -252,6 +261,59 @@ export async function fetchSourceItems(
     case "intent":
       throw new NeedsApiKeyError(type);
   }
+}
+
+export async function fetchSourcePage(input: {
+  source: DiscoverySource;
+  target: DiscoveryTarget;
+  checkpoint: DiscoveryTargetCheckpoint;
+  signal: AbortSignal;
+  maxItems: number;
+  maxResponseBytes: number;
+  safeFetch: SafeFetchService;
+}): Promise<DiscoveryPage> {
+  let callsUsed = 0;
+  let decodedBytes = 0;
+  const boundedSafeFetch: SafeFetchService = {
+    validateUrl(url) {
+      return input.safeFetch.validateUrl(url);
+    },
+    async fetch(request) {
+      callsUsed += 1;
+      const result = await input.safeFetch.fetch({
+        ...request,
+        signal: input.signal,
+        limits: {
+          maxCompressedBytes: Math.min(
+            request.limits?.maxCompressedBytes ?? Number.POSITIVE_INFINITY,
+            input.maxResponseBytes,
+            2 * 1024 * 1024,
+          ),
+          maxDecodedBytes: Math.min(
+            request.limits?.maxDecodedBytes ?? Number.POSITIVE_INFINITY,
+            input.maxResponseBytes,
+            5 * 1024 * 1024,
+          ),
+        },
+      });
+      decodedBytes += result.bytes.byteLength;
+      return result;
+    },
+  };
+  const items = await fetchSourceItems(
+    input.source.type,
+    input.source.config,
+    boundedSafeFetch,
+  );
+  return {
+    targetKey: input.target.key,
+    items: items.slice(0, input.maxItems),
+    nextToken: null,
+    reachedBoundary: false,
+    exhausted: true,
+    callsUsed,
+    decodedBytes,
+  };
 }
 
 /** Whether a source type can fetch today (no credentials required). */
