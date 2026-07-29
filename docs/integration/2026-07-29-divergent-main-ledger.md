@@ -60,11 +60,11 @@
 | `1679852` | Combine execution bounds, LLM gateway, and native evidence | replayed as `b949992` |
 | `7ce5487` | Combine execution bounds, LLM gateway, and native evidence | replayed as `f57bd60` |
 | `2ea63c5` | Regenerate automation idempotency as migration 0054 | replayed as `df5ca76` |
-| `f182c8e` | Regenerate matching state as migration 0055 | planned replay |
-| `cf58135` | Regenerate matching state as migration 0055 | planned replay |
-| `e6b5a2f` | Regenerate matching state as migration 0055 | planned replay |
+| `f182c8e` | Regenerate matching state as migration 0055 | replayed as `2136157` |
+| `cf58135` | Regenerate matching state as migration 0055 | replayed as `cb5e63b` |
+| `e6b5a2f` | Regenerate matching state as migration 0055 | replayed as `7567576` |
 | `f01dd67` | Integrate scoped worker auth and managed scheduling | planned replay |
-| `5221dbd` | Regenerate matching state as migration 0055 | planned replay |
+| `5221dbd` | Regenerate matching state as migration 0055 | replayed as `0ac0964` |
 | `555350d` | Reconcile UI, manifests, environment, and documentation | planned replay |
 | `5c712c9` | Run cross-history acceptance | planned replay |
 | `48a47c6` | Verify, review, and publish the integration branch | superseded by the new integration branch |
@@ -211,3 +211,22 @@ Append one dated entry per task with Plane item, commands, result, and commit.
   to `0053`.
 - Idempotency gate — passed: 4 test files and 45 tests.
 - `npm run typecheck -w apps/api` — passed.
+
+### 2026-07-29 — TAP-131 — Regenerate matching state as 0055
+
+- Source commits and replay results:
+  - `f182c8e` → `21361570b9f5d16bedae2da384c3cf1bf695416c`
+  - `cf58135` → `cb5e63b2675122b05879a22bbcdc75b3943b12d3`
+  - `e6b5a2f` → `75675761f976e63ca90644e4a38be6b0ed3ead37`
+  - `5221dbd` → `0ac0964198d46d1980294017959d0ee3dce89e3d`
+- Discarded local `0050_sprint_49_matching_state.sql`; the remote `0050`
+  snapshot and all earlier remote migrations remain canonical.
+- Red gate: `0053` and `0054` assertions passed; matching claims failed only
+  because no `0055` migration existed.
+- Generated `0055_sprint_49_matching_state.sql` and `0055_snapshot.json`.
+  It adds versioned matching claims, fingerprint/lease/error fields, and the
+  matching queue index; its snapshot points to `0054`.
+- Matching/cursor/invalidation gate — passed: 9 test files and 253 tests,
+  including 154 existing contracts tests and 8 outbound-email tests.
+- `npm run typecheck -w apps/api` — passed.
+- `npm run typecheck -w packages/contracts` — passed.
