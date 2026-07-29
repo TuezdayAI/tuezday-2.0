@@ -51,11 +51,12 @@ import {
 } from "./tracked-social-accounts";
 import {
   DISCOVERY_JOB_BATCH_SIZE,
-  claimDiscoveryJobs,
+  DISCOVERY_JOB_LEASE_MS,
+  claimNextDiscoveryJob,
   completeDiscoveryJob,
   enqueueDueDiscoveryJobs,
   failDiscoveryJob,
-  releaseStaleDiscoveryJobs,
+  type DiscoveryJobClaim,
 } from "./discovery-jobs";
 import {
   brainDigest,
@@ -386,6 +387,8 @@ export function updateDiscoverySource(
   const materiallyChanged =
     JSON.stringify(transition.config) !== JSON.stringify(existing.config) ||
     nextConnectionId !== existing.connectionId;
+  const executionChanged =
+    materiallyChanged || nextEnabled !== existing.enabled;
   const updated = {
     name: transition.name ?? existing.name,
     enabled: nextEnabled,
@@ -398,7 +401,16 @@ export function updateDiscoverySource(
   };
   return db.transaction((tx) => {
     tx.update(discoverySources)
-      .set(updated)
+      .set(
+        executionChanged
+          ? {
+              ...updated,
+              executionVersion: sql`
+                ${discoverySources.executionVersion} + 1
+              `,
+            }
+          : updated,
+      )
       .where(
         and(
           eq(discoverySources.workspaceId, workspaceId),
@@ -406,13 +418,22 @@ export function updateDiscoverySource(
         ),
       )
       .run();
-    if (!nextEnabled || materiallyChanged) {
-      tx.delete(discoveryJobs)
+    if (executionChanged) {
+      tx.update(discoveryJobs)
+        .set({
+          status: "skipped",
+          finishedAt: Date.now(),
+          error: "source_version_changed",
+          lockedAt: null,
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          heartbeatAt: null,
+        })
         .where(
           and(
             eq(discoveryJobs.workspaceId, workspaceId),
             eq(discoveryJobs.sourceId, sourceId),
-            eq(discoveryJobs.status, "queued"),
+            inArray(discoveryJobs.status, ["queued", "running"]),
           ),
         )
         .run();
@@ -971,7 +992,6 @@ export async function runDiscovery(
   // batch. Leftover jobs stay queued for the next run, so one slow source (or
   // many sources) never serializes the whole workspace in a single call.
   const now = Date.now();
-  releaseStaleDiscoveryJobs(db, now);
   const eligible = listDiscoverySources(db, workspaceId).filter(
     (s) =>
       s.enabled &&
@@ -979,13 +999,22 @@ export async function runDiscovery(
         (s.type === "intent" && intentProvider.isConfigured())),
   );
   const queued = enqueueDueDiscoveryJobs(db, workspaceId, eligible, now);
-  const claimed = claimDiscoveryJobs(db, workspaceId, DISCOVERY_JOB_BATCH_SIZE, now);
+  const claimed: DiscoveryJobClaim[] = [];
+  for (let index = 0; index < DISCOVERY_JOB_BATCH_SIZE; index += 1) {
+    const job = claimNextDiscoveryJob(db, {
+      workspaceId,
+      owner: `api:legacy-discovery:${randomUUID()}`,
+      leaseMs: DISCOVERY_JOB_LEASE_MS,
+    });
+    if (!job) break;
+    claimed.push(job);
+  }
 
   const results: SourceRunResult[] = [];
   for (const job of claimed) {
     const source = getDiscoverySource(db, workspaceId, job.sourceId);
     if (!source) {
-      failDiscoveryJob(db, job.id, "source_missing", Date.now());
+      failDiscoveryJob(db, job, "source_missing");
       continue;
     }
     try {
@@ -1082,9 +1111,8 @@ export async function runDiscovery(
         .run();
       completeDiscoveryJob(
         db,
-        job.id,
+        job,
         { fetchedCount: fetched.length, newCount: fresh.length },
-        fetchedAt,
       );
       results.push({ sourceId: source.id, name: source.name, fetched: fetched.length, new: fresh.length });
     } catch (err) {
@@ -1101,7 +1129,7 @@ export async function runDiscovery(
             ),
           )
           .run();
-        failDiscoveryJob(db, job.id, "rate_limited", failedAt);
+        failDiscoveryJob(db, job, "rate_limited");
         results.push({ sourceId: source.id, name: source.name, fetched: 0, new: 0, error: "rate_limited" });
         continue;
       }
@@ -1137,7 +1165,7 @@ export async function runDiscovery(
           ),
         )
         .run();
-      failDiscoveryJob(db, job.id, message, failedAt);
+      failDiscoveryJob(db, job, message);
       results.push({ sourceId: source.id, name: source.name, fetched: 0, new: 0, error: message });
     }
   }

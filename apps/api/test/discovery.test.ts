@@ -326,7 +326,7 @@ describe("discovery API", () => {
       });
     });
 
-    it("removes queued work when disabling or materially changing a source", async () => {
+    it("cancels queued work when disabling or materially changing a source", async () => {
       const disabledSource = await addRssSource(
         "https://feeds.example.com/disable.xml",
       );
@@ -357,13 +357,30 @@ describe("discovery API", () => {
 
       expect(disabled.statusCode).toBe(200);
       expect(changed.statusCode).toBe(200);
+      const cancelled = db
+        .select()
+        .from(discoveryJobs)
+        .where(eq(discoveryJobs.workspaceId, workspaceId))
+        .all();
+      expect(cancelled).toHaveLength(2);
       expect(
-        db
-          .select()
-          .from(discoveryJobs)
-          .where(eq(discoveryJobs.workspaceId, workspaceId))
-          .all(),
-      ).toEqual([]);
+        cancelled.map((job) => ({
+          status: job.status,
+          error: job.error,
+          hasFinishedAt: job.finishedAt !== null,
+        })),
+      ).toEqual([
+        {
+          status: "skipped",
+          error: "source_version_changed",
+          hasFinishedAt: true,
+        },
+        {
+          status: "skipped",
+          error: "source_version_changed",
+          hasFinishedAt: true,
+        },
+      ]);
     });
 
     it.each(["rss", "podcast"] as const)(
