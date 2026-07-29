@@ -98,3 +98,5 @@ Append one dated entry per task with Plane item, commands, result, and commit.
   - `npm run build` — passed: MCP TypeScript build and Next.js 15.5.19
     production build. Next.js emitted the inherited multiple-lockfile
     workspace-root warning.
+- Baseline evidence commit:
+  `22a64ce7d7d51ab084e5bbb04768b06dc4803d42`
