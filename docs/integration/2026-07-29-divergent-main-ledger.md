@@ -59,7 +59,7 @@
 | `7584eab` | Regenerate lease persistence as migration 0053 | replayed as `d54ab36` |
 | `1679852` | Combine execution bounds, LLM gateway, and native evidence | replayed as `b949992` |
 | `7ce5487` | Combine execution bounds, LLM gateway, and native evidence | replayed as `f57bd60` |
-| `2ea63c5` | Regenerate automation idempotency as migration 0054 | planned replay |
+| `2ea63c5` | Regenerate automation idempotency as migration 0054 | replayed as `df5ca76` |
 | `f182c8e` | Regenerate matching state as migration 0055 | planned replay |
 | `cf58135` | Regenerate matching state as migration 0055 | planned replay |
 | `e6b5a2f` | Regenerate matching state as migration 0055 | planned replay |
@@ -195,3 +195,19 @@ Append one dated entry per task with Plane item, commands, result, and commit.
 - Composition and bounds gate — passed: 11 test files and 228 tests.
 - `npm run typecheck -w apps/api` — passed.
 - R2R runtime/script scan — passed with zero matches.
+
+### 2026-07-29 — TAP-130 — Regenerate automation idempotency as 0054
+
+- `2ea63c5` → `df5ca7657c9d43e56221c82a977fae128581103f`
+- Discarded the local `0049_sprint_49_automation_idempotency.sql`
+  artifact and restored the canonical remote `0049` snapshot before
+  generation.
+- Red gate: the existing `0053` migration assertion passed and the new
+  automation-idempotency assertion failed only because no `0054` file
+  existed.
+- Generated `0054_sprint_49_automation_idempotency.sql` and
+  `0054_snapshot.json`. The migration adds nullable `drafts.automation_key`
+  plus the partial unique `drafts_automation_key` index; its snapshot points
+  to `0053`.
+- Idempotency gate — passed: 4 test files and 45 tests.
+- `npm run typecheck -w apps/api` — passed.
