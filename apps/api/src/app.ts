@@ -55,6 +55,7 @@ import { registerDesignSystemRoutes } from "./routes/design-systems";
 import { registerGuidanceRoutes } from "./routes/guidance";
 import { registerGenerationSettingsRoutes } from "./routes/generation-settings";
 import { registerInboxRoutes } from "./routes/inbox";
+import { registerInternalTaskRoutes } from "./routes/internal-tasks";
 import { registerLaunchRoutes } from "./routes/launches";
 import { registerLearningRoutes } from "./routes/learning";
 import { registerMailRoutes } from "./routes/mail";
@@ -218,6 +219,19 @@ export async function buildApp({
   app.get("/health", async () => {
     db.run(sql`select 1`);
     return { status: "ok", db: "ok" };
+  });
+
+  registerInternalTaskRoutes(app, {
+    db,
+    llm,
+    evidence,
+    safeFetch: guardedFetch,
+    intentProvider: intent,
+    fabric: connectors,
+    policy: operatorPolicy,
+    instanceId,
+    shutdownSignal: effectiveShutdownSignal,
+    log: operatorLog,
   });
 
   registerAuthRoutes(app, db, fetcher, analytics);

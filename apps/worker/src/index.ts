@@ -1,65 +1,27 @@
-// Tuezday worker. First job: poll signal discovery for every workspace on an
-// interval. The API owns all DB access — the worker only calls HTTP endpoints.
+import { createWorkerClient } from "./client";
+import { loadRootEnv, parseWorkerConfig } from "./config";
+import { startSettledLoop } from "./scheduler";
 
-const API_URL = process.env.TUEZDAY_API_URL ?? "http://localhost:3001";
-// Shared secret that authenticates the worker as the API's `system` actor
-// (Sprint 19). Must match TUEZDAY_WORKER_TOKEN on the API process.
-const WORKER_TOKEN = process.env.TUEZDAY_WORKER_TOKEN ?? "";
+loadRootEnv();
+const config = parseWorkerConfig(process.env);
+const worker = createWorkerClient(config);
 
 function api(path: string, init?: RequestInit): Promise<Response> {
-  const headers = new Headers(init?.headers);
-  if (WORKER_TOKEN) headers.set("Authorization", `Bearer ${WORKER_TOKEN}`);
-  return fetch(`${API_URL}${path}`, { ...init, headers });
+  return worker.request(path, init);
 }
-const INTERVAL_MIN = Number(process.env.DISCOVERY_INTERVAL_MIN ?? 30);
-const SYNTHESIS_DAYS = Number(process.env.LEARNING_SYNTHESIS_DAYS ?? 7);
-const ADS_SYNC_HOURS = Number(process.env.ADS_SYNC_HOURS ?? 6);
-const PUBLISH_INTERVAL_MIN = Number(process.env.PUBLISH_INTERVAL_MIN ?? 1);
-const CADENCE_FILL_INTERVAL_MIN = Number(process.env.CADENCE_FILL_INTERVAL_MIN ?? 5);
-const AUTOMATION_INTERVAL_MIN = Number(process.env.AUTOMATION_INTERVAL_MIN ?? 5);
-const INBOX_INTERVAL_MIN = Number(process.env.INBOX_INTERVAL_MIN ?? 5);
-const MAILBOX_INBOX_INTERVAL_MIN = Number(process.env.MAILBOX_INBOX_INTERVAL_MIN ?? 5);
-const OUTREACH_INTERVAL_MIN = Number(process.env.OUTREACH_INTERVAL_MIN ?? 5);
-const SEQUENCE_INTERVAL_MIN = Number(process.env.SEQUENCE_INTERVAL_MIN ?? 5);
-const EVIDENCE_SWEEP_MIN = Number(process.env.EVIDENCE_SWEEP_MIN ?? 30);
 
 interface Workspace {
   id: string;
   name: string;
 }
 
-interface RunResult {
-  sources: Array<{ name: string; fetched: number; new: number; error?: string }>;
-  scored: number;
-}
-
 async function runDiscoveryForAllWorkspaces(): Promise<void> {
-  const res = await api(`/workspaces`);
-  if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
-  const workspaces = (await res.json()) as Workspace[];
-
-  for (const workspace of workspaces) {
-    try {
-      const runRes = await api(`/workspaces/${workspace.id}/discovery/run`, {
-        method: "POST",
-      });
-      if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);
-      const result = (await runRes.json()) as RunResult;
-      const totals = result.sources.reduce(
-        (acc, s) => ({ fetched: acc.fetched + s.fetched, fresh: acc.fresh + s.new }),
-        { fetched: 0, fresh: 0 },
-      );
-      const errors = result.sources.filter((s) => s.error).length;
-      console.log(
-        `[discovery] ${workspace.name}: ${result.sources.length} sources, ${totals.fetched} fetched, ${totals.fresh} new, ${result.scored} scored${errors ? `, ${errors} source error(s)` : ""}`,
-      );
-    } catch (err) {
-      console.error(
-        `[discovery] ${workspace.name}: failed —`,
-        err instanceof Error ? err.message : err,
-      );
-    }
-  }
+  const result = (await worker.runInternal(
+    "/internal/discovery/tick",
+  )) as { busy?: boolean; processed?: number };
+  console.log(
+    `[discovery] ${result.busy ? "busy" : `${result.processed ?? 0} source job(s) processed`}`,
+  );
 }
 
 interface Synthesis {
@@ -82,7 +44,7 @@ async function maybeSynthesizeForAllWorkspaces(): Promise<void> {
       ).json()) as Synthesis[];
       const hasOpenProposal = list.some((s) => s.status === "proposed");
       const newest = list[0]?.createdAt ?? 0;
-      const due = Date.now() - newest > SYNTHESIS_DAYS * 24 * 60 * 60 * 1000;
+      const due = Date.now() - newest > config.intervals.learningMs;
       if (hasOpenProposal || !due) continue;
 
       const synth = await api(`/workspaces/${workspace.id}/learning/synthesize`, {
@@ -180,14 +142,6 @@ async function runDuePublicationsForAllWorkspaces(): Promise<void> {
   }
 }
 
-async function publishTick(): Promise<void> {
-  try {
-    await runDuePublicationsForAllWorkspaces();
-  } catch (err) {
-    console.error("[publish] tick failed —", err instanceof Error ? err.message : err);
-  }
-}
-
 interface CadenceRunResponse {
   results: Array<{ cadenceId: string; filled: number }>;
 }
@@ -216,58 +170,16 @@ async function fillCadencesForAllWorkspaces(): Promise<void> {
   }
 }
 
-async function cadenceTick(): Promise<void> {
-  try {
-    await fillCadencesForAllWorkspaces();
-  } catch (err) {
-    console.error("[cadence] tick failed —", err instanceof Error ? err.message : err);
-  }
-}
-
-interface AutomationRunResponse {
-  results: Array<{
-    campaignName: string;
-    generated: number;
-    autoApproved: number;
-    blocked: string | null;
-  }>;
-}
-
 /** Turn new discovery signals into channel drafts per each campaign's automation
  * mode: human_in_the_loop queues at the gate, scheduled_auto auto-approves so the
  * cadence tick can post them. */
 async function runAutomationForAllWorkspaces(): Promise<void> {
-  const res = await api(`/workspaces`);
-  if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
-  const workspaces = (await res.json()) as Workspace[];
-
-  for (const workspace of workspaces) {
-    try {
-      const runRes = await api(`/workspaces/${workspace.id}/automation/run`, { method: "POST" });
-      if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);
-      const { results } = (await runRes.json()) as AutomationRunResponse;
-      const generated = results.reduce((sum, r) => sum + r.generated, 0);
-      const autoApproved = results.reduce((sum, r) => sum + r.autoApproved, 0);
-      const blocked = results.filter((r) => r.blocked).length;
-      if (generated === 0 && blocked === 0) continue; // nothing happened — stay quiet
-      console.log(
-        `[automation] ${workspace.name}: ${generated} draft(s) generated, ${autoApproved} auto-approved${blocked ? `, ${blocked} campaign(s) blocked` : ""}`,
-      );
-    } catch (err) {
-      console.error(
-        `[automation] ${workspace.name}: failed —`,
-        err instanceof Error ? err.message : err,
-      );
-    }
-  }
-}
-
-async function automationTick(): Promise<void> {
-  try {
-    await runAutomationForAllWorkspaces();
-  } catch (err) {
-    console.error("[automation] tick failed —", err instanceof Error ? err.message : err);
-  }
+  const result = (await worker.runInternal(
+    "/internal/automation/tick",
+  )) as { busy?: boolean; processed?: number };
+  console.log(
+    `[automation] ${result.busy ? "busy" : `${result.processed ?? 0} workspace(s) processed`}`,
+  );
 }
 
 interface InboxRunResponse {
@@ -312,6 +224,73 @@ async function runInboxForAllWorkspaces(): Promise<void> {
   }
 }
 
+// Poll connected Gmail mailboxes for inbound replies to threads we started,
+// then classify them. The scheduler runs this before outreach so a reply found
+// in this cycle can stop the enrollment before its next step generates.
+async function runMailboxInboxForAllWorkspaces(): Promise<void> {
+  const res = await api(`/workspaces`);
+  if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
+  const workspaces = (await res.json()) as Workspace[];
+
+  for (const workspace of workspaces) {
+    try {
+      const runRes = await api(
+        `/workspaces/${workspace.id}/mailbox-inbox/run`,
+        { method: "POST" },
+      );
+      if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);
+      const { mailboxesPolled, newItems, labeled } =
+        (await runRes.json()) as MailboxInboxRunResponse;
+      if (mailboxesPolled === 0 || (newItems === 0 && labeled === 0)) {
+        continue;
+      }
+      console.log(
+        `[mailbox-inbox] ${workspace.name}: ${newItems} new repl(y/ies), ${labeled} labeled`,
+      );
+    } catch (err) {
+      console.error(
+        `[mailbox-inbox] ${workspace.name}: failed —`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+}
+
+// Auto-enroll live-segment matches and advance active outreach enrollments
+// through generate, approval, and mailbox delivery.
+async function runOutreachForAllWorkspaces(): Promise<void> {
+  const res = await api(`/workspaces`);
+  if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
+  const workspaces = (await res.json()) as Workspace[];
+
+  for (const workspace of workspaces) {
+    try {
+      const runRes = await api(`/workspaces/${workspace.id}/outreach/run`, {
+        method: "POST",
+      });
+      if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);
+      const { enrolled, dispatched, stopped, completed } =
+        (await runRes.json()) as OutreachRunResponse;
+      if (
+        enrolled === 0 &&
+        dispatched === 0 &&
+        stopped === 0 &&
+        completed === 0
+      ) {
+        continue;
+      }
+      console.log(
+        `[outreach] ${workspace.name}: ${enrolled} enrolled, ${dispatched} sent, ${stopped} stopped, ${completed} completed`,
+      );
+    } catch (err) {
+      console.error(
+        `[outreach] ${workspace.name}: failed —`,
+        err instanceof Error ? err.message : err,
+      );
+    }
+  }
+}
+
 interface SequenceRunResponse {
   generated: number;
   sent: number;
@@ -339,91 +318,6 @@ async function runSequencesForAllWorkspaces(): Promise<void> {
     } catch (err) {
       console.error("[sequences] ", workspace.name, "failed —", err instanceof Error ? err.message : err);
     }
-  }
-}
-
-async function sequenceTick(): Promise<void> {
-  try {
-    await runSequencesForAllWorkspaces();
-  } catch (err) {
-    console.error("[sequences] tick failed —", err instanceof Error ? err.message : err);
-  }
-}
-
-async function inboxTick(): Promise<void> {
-  try {
-    await runInboxForAllWorkspaces();
-  } catch (err) {
-    console.error("[inbox] tick failed —", err instanceof Error ? err.message : err);
-  }
-}
-
-// Poll connected Gmail mailboxes for inbound replies to threads we started
-// (Sprint 47), then classify them. Runs after the social inbox, before
-// sequences, so an email reply detected this cycle can stop a chain later.
-async function runMailboxInboxForAllWorkspaces(): Promise<void> {
-  const res = await api(`/workspaces`);
-  if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
-  const workspaces = (await res.json()) as Workspace[];
-
-  for (const workspace of workspaces) {
-    try {
-      const runRes = await api(`/workspaces/${workspace.id}/mailbox-inbox/run`, { method: "POST" });
-      if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);
-      const { mailboxesPolled, newItems, labeled } = (await runRes.json()) as MailboxInboxRunResponse;
-      if (mailboxesPolled === 0 || (newItems === 0 && labeled === 0)) continue; // quiet
-      console.log(
-        `[mailbox-inbox] ${workspace.name}: ${newItems} new repl(y/ies), ${labeled} labeled`,
-      );
-    } catch (err) {
-      console.error("[mailbox-inbox] ", workspace.name, "failed —", err instanceof Error ? err.message : err);
-    }
-  }
-}
-
-async function mailboxInboxTick(): Promise<void> {
-  try {
-    await runMailboxInboxForAllWorkspaces();
-  } catch (err) {
-    console.error("[mailbox-inbox] tick failed —", err instanceof Error ? err.message : err);
-  }
-}
-
-// Outreach engine (Sprint 48): auto-enroll live-segment matches and advance
-// active enrollments (generate → gate → send from the mailbox pool).
-async function runOutreachForAllWorkspaces(): Promise<void> {
-  const res = await api(`/workspaces`);
-  if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
-  const workspaces = (await res.json()) as Workspace[];
-
-  for (const workspace of workspaces) {
-    try {
-      const runRes = await api(`/workspaces/${workspace.id}/outreach/run`, { method: "POST" });
-      if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);
-      const { enrolled, dispatched, stopped, completed } = (await runRes.json()) as OutreachRunResponse;
-      if (enrolled === 0 && dispatched === 0 && stopped === 0 && completed === 0) continue; // quiet
-      console.log(
-        `[outreach] ${workspace.name}: ${enrolled} enrolled, ${dispatched} sent, ${stopped} stopped, ${completed} completed`,
-      );
-    } catch (err) {
-      console.error("[outreach] ", workspace.name, "failed —", err instanceof Error ? err.message : err);
-    }
-  }
-}
-
-async function outreachTick(): Promise<void> {
-  try {
-    await runOutreachForAllWorkspaces();
-  } catch (err) {
-    console.error("[outreach] tick failed —", err instanceof Error ? err.message : err);
-  }
-}
-
-async function adsTick(): Promise<void> {
-  try {
-    await syncAdsForAllWorkspaces();
-  } catch (err) {
-    console.error("[ads] tick failed —", err instanceof Error ? err.message : err);
   }
 }
 
@@ -460,56 +354,88 @@ async function sweepEvidenceForAllWorkspaces(): Promise<void> {
   }
 }
 
-async function evidenceTick(): Promise<void> {
-  try {
-    await sweepEvidenceForAllWorkspaces();
-  } catch (err) {
-    console.error("[evidence] tick failed —", err instanceof Error ? err.message : err);
-  }
-}
-
-async function tick(): Promise<void> {
-  try {
-    await runDiscoveryForAllWorkspaces();
-  } catch (err) {
-    console.error("[discovery] tick failed —", err instanceof Error ? err.message : err);
-  }
-  try {
-    await maybeSynthesizeForAllWorkspaces();
-  } catch (err) {
-    console.error("[learning] tick failed —", err instanceof Error ? err.message : err);
-  }
-}
-
 console.log(
-  `Tuezday worker: polling discovery every ${INTERVAL_MIN} min, ads sync every ${ADS_SYNC_HOURS} h, automation every ${AUTOMATION_INTERVAL_MIN} min, cadence fill every ${CADENCE_FILL_INTERVAL_MIN} min, scheduled publishing every ${PUBLISH_INTERVAL_MIN} min, inbox every ${INBOX_INTERVAL_MIN} min, evidence sweep every ${EVIDENCE_SWEEP_MIN} min against ${API_URL} (set DISCOVERY_INTERVAL_MIN / ADS_SYNC_HOURS / AUTOMATION_INTERVAL_MIN / CADENCE_FILL_INTERVAL_MIN / PUBLISH_INTERVAL_MIN / INBOX_INTERVAL_MIN / EVIDENCE_SWEEP_MIN / TUEZDAY_API_URL to change).`,
+  `Tuezday worker: validated task intervals against ${config.internalApiUrl}`,
 );
-void tick();
-setInterval(() => void tick(), INTERVAL_MIN * 60 * 1000);
-void adsTick();
-setInterval(() => void adsTick(), ADS_SYNC_HOURS * 60 * 60 * 1000);
-// Automation (generate + auto-approve) runs before cadence fill (slot approved)
-// before publish (fire due), so a new signal can progress each cycle.
-void automationTick();
-setInterval(() => void automationTick(), AUTOMATION_INTERVAL_MIN * 60 * 1000);
-void cadenceTick();
-setInterval(() => void cadenceTick(), CADENCE_FILL_INTERVAL_MIN * 60 * 1000);
-void publishTick();
-setInterval(() => void publishTick(), PUBLISH_INTERVAL_MIN * 60 * 1000);
-// Inbox runs after publish — replies react to what's already posted.
-void inboxTick();
-setInterval(() => void inboxTick(), INBOX_INTERVAL_MIN * 60 * 1000);
-// Mailbox inbox (email replies) runs alongside the social inbox, before
-// sequences — same reason: a detected reply stops the chain first (Sprint 47).
-void mailboxInboxTick();
-setInterval(() => void mailboxInboxTick(), MAILBOX_INBOX_INTERVAL_MIN * 60 * 1000);
-// Outreach runs after the mailbox inbox — an email reply detected this cycle
-// stops the enrollment before its next step generates (Sprint 48).
-void outreachTick();
-setInterval(() => void outreachTick(), OUTREACH_INTERVAL_MIN * 60 * 1000);
-// Sequences run after inbox — a reply detected this cycle stops the chain
-// before the next follow-up step generates.
-void sequenceTick();
-setInterval(() => void sequenceTick(), SEQUENCE_INTERVAL_MIN * 60 * 1000);
-void evidenceTick();
-setInterval(() => void evidenceTick(), EVIDENCE_SWEEP_MIN * 60 * 1000);
+
+const loopSpecs = [
+  {
+    name: "discovery",
+    intervalMs: config.intervals.discoveryMs,
+    run: runDiscoveryForAllWorkspaces,
+  },
+  {
+    name: "automation",
+    intervalMs: config.intervals.automationMs,
+    run: runAutomationForAllWorkspaces,
+  },
+  {
+    name: "learning",
+    intervalMs: config.intervals.learningMs,
+    run: maybeSynthesizeForAllWorkspaces,
+  },
+  {
+    name: "ads",
+    intervalMs: config.intervals.adsMs,
+    run: syncAdsForAllWorkspaces,
+  },
+  {
+    name: "cadence",
+    intervalMs: config.intervals.cadenceMs,
+    run: fillCadencesForAllWorkspaces,
+  },
+  {
+    name: "publish",
+    intervalMs: config.intervals.publishMs,
+    run: runDuePublicationsForAllWorkspaces,
+  },
+  {
+    name: "inbox",
+    intervalMs: config.intervals.inboxMs,
+    run: runInboxForAllWorkspaces,
+  },
+  {
+    name: "mailbox-inbox",
+    intervalMs: config.intervals.mailboxInboxMs,
+    run: runMailboxInboxForAllWorkspaces,
+  },
+  {
+    name: "outreach",
+    intervalMs: config.intervals.outreachMs,
+    run: runOutreachForAllWorkspaces,
+  },
+  {
+    name: "sequence",
+    intervalMs: config.intervals.sequenceMs,
+    run: runSequencesForAllWorkspaces,
+  },
+  {
+    name: "evidence",
+    intervalMs: config.intervals.evidenceMs,
+    run: sweepEvidenceForAllWorkspaces,
+  },
+] as const;
+
+const loops = loopSpecs.map((spec) =>
+  startSettledLoop({
+    ...spec,
+    onError(error) {
+      console.error(
+        `[${spec.name}] tick failed —`,
+        error instanceof Error ? error.message : error,
+      );
+    },
+  }),
+);
+
+let stopping = false;
+function stopWorker(signal: NodeJS.Signals): void {
+  if (stopping) return;
+  stopping = true;
+  for (const loop of loops) loop.stop();
+  console.log(`Tuezday worker: stopped after ${signal}`);
+  process.exitCode = 0;
+}
+
+process.once("SIGINT", () => stopWorker("SIGINT"));
+process.once("SIGTERM", () => stopWorker("SIGTERM"));

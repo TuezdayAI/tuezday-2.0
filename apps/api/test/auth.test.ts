@@ -2,6 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { userSchema } from "@tuezday/contracts";
 import { buildApp, type TuezdayApp } from "../src/app";
+import { secureWorkerTokenEqual } from "../src/auth/guard";
 import type { Db } from "../src/db";
 import { sessions } from "../src/db/schema";
 import { asUser, createTestDb, registerUser, TEST_PASSWORD } from "./helpers";
@@ -194,5 +195,21 @@ describe("auth API", () => {
       const res = await authed.inject({ method: "PATCH", url: "/auth/me", payload: { name: "  " } });
       expect(res.statusCode).toBe(400);
     });
+  });
+});
+
+describe("worker token comparison", () => {
+  it("handles unequal lengths without throwing", () => {
+    expect(() =>
+      secureWorkerTokenEqual("short", "a-much-longer-worker-token"),
+    ).not.toThrow();
+    expect(
+      secureWorkerTokenEqual("short", "a-much-longer-worker-token"),
+    ).toBe(false);
+  });
+
+  it("accepts only the exact token", () => {
+    expect(secureWorkerTokenEqual("same-token", "same-token")).toBe(true);
+    expect(secureWorkerTokenEqual("same-token", "same-token!")).toBe(false);
   });
 });
