@@ -800,6 +800,14 @@ The integration gate also runs the native evidence, Gmail, outreach,
 compliance, tracking, internal-task, and worker-loop suites. No live OAuth,
 provider, or network access is required.
 
+**Fresh cross-history evidence (2026-07-29)**
+
+- The native-evidence assertion first failed against the replayed fake
+  (`included: false`), then passed with database-bound `DbEvidenceStore`
+  instances on both sides of the restart.
+- Combined acceptance gate — 11 files, 155/155 tests passed.
+- API and worker typechecks passed.
+
 **Gate:** API restarts, worker restarts, overlapping ticks, provider pagination,
 matching changes, and automation races preserve one durable result; the founder
 sees honest readiness/budget states without raw leases or provider cursors.

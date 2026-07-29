@@ -24,7 +24,10 @@ import {
   signals,
   taskLeases,
 } from "../src/db/schema";
-import type { EvidenceStore } from "../src/evidence/store";
+import {
+  DbEvidenceStore,
+  EVIDENCE_EMBEDDING_DIMENSIONS,
+} from "../src/evidence/db-store";
 import type { LlmGateway } from "../src/llm/gateway";
 import type { DiscoveryOperatorPolicy } from "../src/runtime/operator-policy";
 import { asUser, registerUser } from "./helpers";
@@ -38,23 +41,6 @@ function deferred<T>() {
   });
   return { promise, resolve };
 }
-
-const noEvidence: EvidenceStore = {
-  async health() {
-    return { healthy: true };
-  },
-  async createCollection() {
-    return "unused";
-  },
-  async addDocument() {
-    return "unused";
-  },
-  async attachDocument() {},
-  async deleteDocument() {},
-  async search() {
-    return [];
-  },
-};
 
 const acceptancePolicy: DiscoveryOperatorPolicy = {
   maxJobsPerTick: 1,
@@ -195,6 +181,19 @@ describe("Sprint 49 founder acceptance", () => {
       let automationTick: Promise<LightMyRequestResponse> | undefined;
 
       const llm: LlmGateway = {
+        async embed({ texts }) {
+          return {
+            embeddings: texts.map(() =>
+              Array.from(
+                { length: EVIDENCE_EMBEDDING_DIMENSIONS },
+                (_, index) => (index === 0 ? 1 : 0),
+              ),
+            ),
+            model: "fixture-embedding",
+            provider: "fixture",
+            dimensions: EVIDENCE_EMBEDDING_DIMENSIONS,
+          };
+        },
         async generate({ prompt }) {
           if (prompt.includes("DISCOVERED ITEMS:")) {
             matchingStarted.resolve(undefined);
@@ -239,7 +238,7 @@ describe("Sprint 49 founder acceptance", () => {
         appA = await buildApp({
           db: dbA,
           llm,
-          evidence: noEvidence,
+          evidence: new DbEvidenceStore(dbA, llm),
           connectors: fixtureFabric({
             instance: "api-a",
             stats,
@@ -263,6 +262,34 @@ describe("Sprint 49 founder acceptance", () => {
         });
         expect(workspaceResponse.statusCode, workspaceResponse.body).toBe(201);
         const workspaceId = workspaceResponse.json().id as string;
+
+        const evidenceUpload = await userA.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/evidence`,
+          payload: {
+            title: "Restart-safe operations",
+            content:
+              "Tuezday uses fenced leases and durable checkpoints for reliable GTM automation.",
+          },
+        });
+        expect(evidenceUpload.statusCode, evidenceUpload.body).toBe(201);
+        expect(evidenceUpload.json()).toMatchObject({ status: "ready" });
+
+        const resolved = await userA.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/resolve`,
+          payload: {
+            taskType: "linkedin_post",
+            channel: "linkedin",
+            useEvidence: true,
+          },
+        });
+        expect(resolved.statusCode, resolved.body).toBe(200);
+        expect(
+          resolved.json().sections.find(
+            (section: { key: string }) => section.key === "evidence",
+          ),
+        ).toMatchObject({ included: true });
 
         const personaResponse = await userA.inject({
           method: "POST",
@@ -376,7 +403,7 @@ describe("Sprint 49 founder acceptance", () => {
         appB = await buildApp({
           db: dbB,
           llm,
-          evidence: noEvidence,
+          evidence: new DbEvidenceStore(dbB, llm),
           connectors: fixtureFabric({
             instance: "api-b",
             stats,

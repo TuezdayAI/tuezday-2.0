@@ -997,3 +997,10 @@ npm test
   with 222/222 tests, all seven workspace typechecks, and the complete
   repository with 179 files and 1,893/1,893 tests. `git diff --check` reported
   no whitespace errors.
+- **2026-07-29 integration:** The divergent-main reconciliation regenerated
+  the three Sprint 49 migrations as canonical `0053`, `0054`, and `0055`
+  descendants of remote migration `0052`. The cross-history restart test now
+  uses the native, database-bound `DbEvidenceStore` before and after rebuilding
+  the API instance. Its red evidence assertion failed against the old fake,
+  then the combined native-evidence/Gmail/outreach/compliance/tracking/worker
+  gate passed 11 files and 155/155 tests; API and worker typechecks passed.

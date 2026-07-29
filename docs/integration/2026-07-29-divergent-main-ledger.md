@@ -66,7 +66,7 @@
 | `f01dd67` | Integrate scoped worker auth and managed scheduling | replayed as `163d3f2` |
 | `5221dbd` | Regenerate matching state as migration 0055 | replayed as `0ac0964` |
 | `555350d` | Reconcile UI, manifests, environment, and documentation | replayed as `57d1715` |
-| `5c712c9` | Run cross-history acceptance | planned replay |
+| `5c712c9` | Run cross-history acceptance | replayed as `e9a0f75` |
 | `48a47c6` | Verify, review, and publish the integration branch | superseded by the new integration branch |
 
 ## Verification evidence
@@ -271,3 +271,22 @@ Append one dated entry per task with Plane item, commands, result, and commit.
 - `npm run typecheck -w apps/web` — passed.
 - `npm run typecheck -w packages/contracts` — passed.
 - R2R runtime/script scan — passed with zero active references.
+
+### 2026-07-29 — TAP-134 — Run cross-history automated acceptance
+
+- `5c712c9` → `e9a0f75f7b5de285931b3211abde22179cce8241`
+- Replayed the restart/race acceptance scenario under the unambiguous
+  `Local Sprint 49 — Bounded leased execution` heading while preserving the
+  remote Sprint 49 compliance checklist.
+- Native-evidence red gate: the new resolver assertion failed against the
+  replayed evidence fake because the evidence section was not included.
+- Replaced the fake with `DbEvidenceStore(db, llm)` on both API instances and a
+  deterministic 768-dimension fixture embedding implementation; evidence
+  ingestion returned ready and resolution included the evidence section.
+- Focused native restart acceptance — passed: 1 file and 1 test.
+- Combined cross-history acceptance — passed: 11 files and 155 tests, covering
+  restart/fencing, canonical migrations, native evidence, Gmail privacy,
+  outreach sequences, reply actions, compliance, tracking, scoped internal
+  tasks, worker configuration, and non-overlapping loops.
+- `npm run typecheck -w apps/api` — passed.
+- `npm run typecheck -w apps/worker` — passed.
