@@ -46,13 +46,13 @@
 | `cab7d97` | Integrate safe-fetch foundation | replayed as `8c86500` |
 | `10a97d5` | Integrate safe-fetch foundation | replayed as `6574a29` |
 | `ddbb198` | Integrate safe-fetch foundation | replayed as `372b8c4` |
-| `db83e8f` | Integrate tenant isolation and guarded discovery | planned replay |
-| `b0ae203` | Integrate tenant isolation and guarded discovery | planned replay |
-| `4846c1e` | Integrate tenant isolation and guarded discovery | planned replay |
-| `a957e15` | Integrate tenant isolation and guarded discovery | planned replay |
-| `441fff7` | Integrate tenant isolation and guarded discovery | planned replay |
-| `6f9a839` | Integrate tenant isolation and guarded discovery | planned replay |
-| `d9717aa` | Integrate tenant isolation and guarded discovery | planned replay |
+| `db83e8f` | Integrate tenant isolation and guarded discovery | replayed as `8f7ef79` |
+| `b0ae203` | Integrate tenant isolation and guarded discovery | replayed as `1688566` |
+| `4846c1e` | Integrate tenant isolation and guarded discovery | replayed as `05a65ac` |
+| `a957e15` | Integrate tenant isolation and guarded discovery | replayed as `bfd4aba` |
+| `441fff7` | Integrate tenant isolation and guarded discovery | replayed as `8e00756` |
+| `6f9a839` | Integrate tenant isolation and guarded discovery | replayed as `78cc328` |
+| `d9717aa` | Integrate tenant isolation and guarded discovery | replayed as `a5a6f92` |
 | `15d4bd8` | Replay local documentation history | replayed as `77115df` |
 | `6a78150` | Replay local documentation history | replayed as `0951636` |
 | `96da3a3` | Regenerate lease persistence as migration 0053 | planned replay |
@@ -138,4 +138,25 @@ Append one dated entry per task with Plane item, commands, result, and commit.
 - `npm ci` — passed; 387 packages installed and 395 audited. The inherited
   audit baseline remained 19 vulnerabilities.
 - Focused safe-fetch gate — passed: 3 test files and 156 tests.
+- `npm run typecheck -w apps/api` — passed.
+
+### 2026-07-29 — TAP-127 — Integrate tenant isolation and guarded discovery
+
+- Source commits and replay results:
+  - `db83e8f` → `8f7ef79`
+  - `b0ae203` → `1688566`
+  - `4846c1e` → `05a65ac`
+  - `a957e15` → `bfd4aba`
+  - `441fff7` → `8e00756`
+  - `6f9a839` → `78cc328`
+  - `d9717aa` → `a5a6f92`
+- `apps/api/src/app.ts` was the only conflict. The resolution keeps:
+  - `TrustedFetcher` for Nango, Gmail/Resend, analytics, webhooks, and other
+    trusted provider seams;
+  - `SafeFetchService` for discovery and workspace/brand website scraping;
+  - `DbEvidenceStore(db, llm)` as the native evidence default;
+  - the remote Gmail, outreach, compliance, tracking, and 4,096-character
+    tracking-token route support.
+- Remaining six commits replayed without conflicts.
+- Security and remote-regression gate — passed: 13 test files and 366 tests.
 - `npm run typecheck -w apps/api` — passed.
