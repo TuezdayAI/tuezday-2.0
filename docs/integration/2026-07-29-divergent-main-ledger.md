@@ -340,3 +340,18 @@ Append one dated entry per task with Plane item, commands, result, and commit.
     remains explicitly deferred to Sprint 73.
 - Review assessment: no open P0/P1 findings; ready for a draft pull request,
   not for automatic merge.
+
+### 2026-07-30 — TAP-135 — Publication checkpoint
+
+- Pushed `integration/remote-main-local-s48-s49` and opened draft pull request
+  [#19](https://github.com/TuezdayAI/tuezday-2.0/pull/19) against `main`.
+- GitHub reported the pull request as open, draft, and merge-state clean; no
+  merge was performed.
+- GitHub Actions CI passed on reviewed code head
+  `00cd1f2479221b1bd47e4f98d59fd4d4aac622f7`:
+  [run 30478616479, job 90666547496](https://github.com/TuezdayAI/tuezday-2.0/actions/runs/30478616479/job/90666547496).
+- This publication-only ledger commit triggers a fresh CI run. Its final run
+  evidence is recorded in the TAP-135 Plane completion comment so the ledger
+  does not create an endless commit-and-rerun cycle.
+- TAP-123 remains In Progress as the founder-acceptance gate; the draft pull
+  request must not be merged until that approval is recorded.
