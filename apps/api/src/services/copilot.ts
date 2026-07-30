@@ -1,9 +1,22 @@
-import type { ChatCitation, ChatMessage, ChatTurnResult } from "@tuezday/contracts";
+import { randomUUID } from "node:crypto";
+import type {
+  ChatCitation,
+  ChatMessage,
+  ChatProposal,
+  ChatTurnResult,
+  ConfirmChatProposalInput,
+} from "@tuezday/contracts";
 import type { Db } from "../db";
 import type { EvidenceStore } from "../evidence/store";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
-import { appendMessage, listMessages } from "./chat";
+import { appendMessage, getPendingProposal, listMessages } from "./chat";
 import { COPILOT_TOOLS, getCopilotTool, type CopilotToolContext } from "./copilot-tools";
+import {
+  COPILOT_ACTION_TOOLS,
+  getCopilotActionTool,
+  type CopilotActionContext,
+} from "./copilot-actions";
+import type { ExternalActionRuntime } from "./external-action-coordinator";
 
 // ---------------------------------------------------------------------------
 // Grounded, read-only chat copilot (Sprint 42, Part 1).
@@ -19,6 +32,13 @@ import { COPILOT_TOOLS, getCopilotTool, type CopilotToolContext } from "./copilo
 export interface CopilotDeps {
   llm: LlmGateway;
   evidence: EvidenceStore;
+  /**
+   * The external-action coordinator. When present, the copilot may PROPOSE
+   * gated write actions (Sprint 42 P2); when absent, it stays read-only. The
+   * runtime is the only path to external actions and always parks proposals at
+   * authorization_required (`proposeForReview`) — the copilot never dispatches.
+   */
+  runtime?: ExternalActionRuntime;
 }
 
 export interface CopilotActor {
@@ -30,13 +50,43 @@ const MAX_ITERS = 6;
 const HISTORY_WINDOW = 20;
 const MSG_EXCERPT_CHARS = 1_200;
 
-const SYSTEM_PREAMBLE = [
-  "You are Tuezday's GTM copilot: a grounded, READ-ONLY assistant for one workspace.",
+const READONLY_PREAMBLE = [
+  "You are Tuezday's GTM copilot: a grounded assistant for one workspace.",
   "Answer strictly from the workspace's brain, evidence corpus, and live data — never invent numbers or facts.",
   "You have read-only tools; you cannot change anything. If asked to perform an action (draft, send, launch, edit),",
   "explain that executing actions arrives in a later release and answer only what you can read today.",
   "Always ground claims in the tool results and cite your sources.",
 ].join(" ");
+
+const ACTIONS_PREAMBLE = [
+  "You are Tuezday's GTM copilot: a grounded assistant for one workspace.",
+  "Answer strictly from the workspace's brain, evidence corpus, and live data — never invent numbers or facts.",
+  "You have READ tools and WRITE tools. Read tools answer questions. Write tools PROPOSE a change —",
+  "they never execute: a proposal always waits for the human to confirm, and even then it only creates a",
+  "draft in review or an action awaiting authorization. Call a write tool only when the user clearly asks you to",
+  "draft, reply, or propose an action. Otherwise answer with read tools. Always ground claims and cite sources.",
+].join(" ");
+
+/** Plain-text affirmatives that confirm a pending proposal. */
+const AFFIRMATIVES = new Set([
+  "yes",
+  "y",
+  "yes.",
+  "confirm",
+  "confirmed",
+  "do it",
+  "go ahead",
+  "send it",
+  "ok",
+  "okay",
+  "sure",
+  "yep",
+  "yeah",
+]);
+
+function isAffirmative(message: string): boolean {
+  return AFFIRMATIVES.has(message.trim().toLowerCase().replace(/[!.]+$/, ""));
+}
 
 const RESPONSE_INSTRUCTION = [
   "Respond with EITHER:",
@@ -65,9 +115,17 @@ interface Observation {
   summary: string;
 }
 
-function buildPrompt(history: ChatMessage[], observations: Observation[]): string {
-  const lines: string[] = [SYSTEM_PREAMBLE, "", "TOOLS (all read-only):"];
+function buildPrompt(
+  history: ChatMessage[],
+  observations: Observation[],
+  actionsEnabled: boolean,
+): string {
+  const lines: string[] = [actionsEnabled ? ACTIONS_PREAMBLE : READONLY_PREAMBLE, "", "READ TOOLS:"];
   for (const t of COPILOT_TOOLS) lines.push(`- ${t.name}: ${t.description}`);
+  if (actionsEnabled) {
+    lines.push("", "WRITE TOOLS (each only PROPOSES — the user must confirm; nothing is sent):");
+    for (const t of COPILOT_ACTION_TOOLS) lines.push(`- ${t.name}: ${t.description}`);
+  }
 
   lines.push("", "CONVERSATION SO FAR:");
   for (const m of history.slice(-HISTORY_WINDOW)) {
@@ -120,12 +178,25 @@ export async function runCopilotTurn(
   db: Db,
   deps: CopilotDeps,
   workspaceId: string,
-  _actor: CopilotActor,
+  actor: CopilotActor,
   sessionId: string,
   userMessage: string,
 ): Promise<ChatTurnResult> {
+  // A plain "yes" to a pending proposal confirms it — no LLM round-trip. This
+  // must be checked BEFORE the user message is appended (which would retire the
+  // proposal from the "latest message" pending window).
+  const pending = getPendingProposal(db, sessionId);
+  if (pending && isAffirmative(userMessage)) {
+    appendMessage(db, workspaceId, sessionId, { role: "user", content: userMessage });
+    return commitCopilotProposal(db, deps, workspaceId, actor, sessionId, {
+      confirmToken: pending.proposal.confirmToken,
+      decision: "confirm",
+    });
+  }
+
   appendMessage(db, workspaceId, sessionId, { role: "user", content: userMessage });
 
+  const actionsEnabled = !!deps.runtime;
   const history = listMessages(db, sessionId);
   const toolCtx: CopilotToolContext = { db, evidence: deps.evidence, workspaceId };
   const observations: Observation[] = [];
@@ -134,7 +205,7 @@ export async function runCopilotTurn(
   let answer = "";
 
   for (let iter = 0; iter < MAX_ITERS; iter++) {
-    const prompt = buildPrompt(history, observations);
+    const prompt = buildPrompt(history, observations, actionsEnabled);
 
     let text: string;
     try {
@@ -151,16 +222,78 @@ export async function runCopilotTurn(
 
     const parsed = parseJsonObject(text);
     const toolName = parsed && typeof parsed.tool === "string" ? parsed.tool : null;
-    const tool = toolName ? getCopilotTool(toolName) : undefined;
+    const readTool = toolName ? getCopilotTool(toolName) : undefined;
+    const actionTool = toolName && actionsEnabled ? getCopilotActionTool(toolName) : undefined;
 
-    // A parsed object naming a whitelisted tool → run it. Anything else
-    // (prose, unparseable text, or an unknown tool name) → final answer.
-    if (parsed && toolName && tool) {
-      const rawArgs =
-        parsed.args && typeof parsed.args === "object" && !Array.isArray(parsed.args)
-          ? (parsed.args as Record<string, unknown>)
-          : {};
-      const valid = tool.argsSchema.safeParse(rawArgs);
+    const rawArgs =
+      parsed && parsed.args && typeof parsed.args === "object" && !Array.isArray(parsed.args)
+        ? (parsed.args as Record<string, unknown>)
+        : {};
+
+    // --- Write tool: PROPOSE only, then end the turn awaiting confirmation. ---
+    if (parsed && toolName && actionTool) {
+      const valid = actionTool.argsSchema.safeParse(rawArgs);
+      if (!valid.success) {
+        const issue = valid.error.issues.map((i) => i.message).join("; ");
+        toolCalls.push({ tool: toolName, ok: false });
+        observations.push({
+          tool: toolName,
+          args: rawArgs,
+          summary: `Invalid arguments (${issue}). Ask the user for what's missing, or answer.`,
+        });
+        continue;
+      }
+
+      const actionCtx: CopilotActionContext = {
+        db,
+        llm: deps.llm,
+        evidence: deps.evidence,
+        runtime: deps.runtime!,
+        workspaceId,
+      };
+      let proposed;
+      try {
+        proposed = await actionTool.propose(actionCtx, valid.data as Record<string, unknown>);
+        toolCalls.push({ tool: toolName, ok: true });
+      } catch (err) {
+        toolCalls.push({ tool: toolName, ok: false });
+        observations.push({
+          tool: toolName,
+          args: valid.data,
+          summary: `Could not prepare that action: ${err instanceof Error ? err.message : String(err)}.`,
+        });
+        continue;
+      }
+
+      const proposal: ChatProposal = {
+        toolKind: toolName as ChatProposal["toolKind"],
+        summary: proposed.summary,
+        preview: proposed.preview,
+        confirmToken: randomUUID(),
+        ...(proposed.policyNote ? { policyNote: proposed.policyNote } : {}),
+      };
+      const noteLine = proposed.policyNote ? `\n\n⚠︎ ${proposed.policyNote}` : "";
+      const content = `${proposed.summary}. Review the proposal below, then Confirm to create it (nothing is sent) — or Discard.${noteLine}`;
+      const finalCitations = dedupeCitations(citations);
+      appendMessage(db, workspaceId, sessionId, {
+        role: "assistant",
+        content,
+        citations: finalCitations,
+        proposal,
+        proposalArgs: proposed.commitPayload,
+      });
+      return {
+        answer: content,
+        citations: finalCitations,
+        toolCalls,
+        status: "awaiting_confirmation",
+        proposal,
+      };
+    }
+
+    // --- Read tool: run it and feed the observation back into the loop. ---
+    if (parsed && toolName && readTool) {
+      const valid = readTool.argsSchema.safeParse(rawArgs);
       if (!valid.success) {
         const issue = valid.error.issues.map((i) => i.message).join("; ");
         toolCalls.push({ tool: toolName, ok: false });
@@ -175,7 +308,7 @@ export async function runCopilotTurn(
       let summary: string;
       let toolCitations: ChatCitation[] | undefined;
       try {
-        const out = await tool.run(toolCtx, valid.data as Record<string, unknown>);
+        const out = await readTool.run(toolCtx, valid.data as Record<string, unknown>);
         summary = out.summary;
         toolCitations = out.citations;
         toolCalls.push({ tool: toolName, ok: true });
@@ -218,4 +351,78 @@ export async function runCopilotTurn(
   });
 
   return { answer, citations: finalCitations, toolCalls, status: "answered" };
+}
+
+/**
+ * Confirm or discard the session's pending proposal (Sprint 42 P2). On confirm
+ * with a matching token, runs the write tool's commit half — the single gated
+ * enqueue (a `pending_review` draft, or an action at `authorization_required`)
+ * — and records what it produced. A missing/mismatched token or a discard
+ * writes nothing. Never throws — a commit failure degrades to an answer.
+ */
+export async function commitCopilotProposal(
+  db: Db,
+  deps: CopilotDeps,
+  workspaceId: string,
+  actor: CopilotActor,
+  sessionId: string,
+  input: ConfirmChatProposalInput,
+): Promise<ChatTurnResult> {
+  const pending = getPendingProposal(db, sessionId);
+
+  // Nothing to confirm, or the token doesn't match the current proposal.
+  if (!pending || pending.proposal.confirmToken !== input.confirmToken) {
+    const answer =
+      "That proposal is no longer available to confirm. Ask me again and I'll prepare a fresh one.";
+    appendMessage(db, workspaceId, sessionId, { role: "assistant", content: answer });
+    return { answer, citations: [], toolCalls: [], status: "answered" };
+  }
+
+  if (input.decision === "discard") {
+    const answer = "Okay — I've discarded that proposal. Nothing was created.";
+    appendMessage(db, workspaceId, sessionId, { role: "assistant", content: answer });
+    return { answer, citations: [], toolCalls: [], status: "answered" };
+  }
+
+  const tool = getCopilotActionTool(pending.proposal.toolKind);
+  if (!tool || !deps.runtime) {
+    const answer = "I can't complete that action right now. Please try again.";
+    appendMessage(db, workspaceId, sessionId, { role: "assistant", content: answer });
+    return { answer, citations: [], toolCalls: [{ tool: pending.proposal.toolKind, ok: false }], status: "answered" };
+  }
+
+  const actionCtx: CopilotActionContext = {
+    db,
+    llm: deps.llm,
+    evidence: deps.evidence,
+    runtime: deps.runtime,
+    workspaceId,
+  };
+  try {
+    const result = await tool.commit(actionCtx, pending.args, {
+      userId: actor.userId,
+      label: actor.label,
+    });
+    appendMessage(db, workspaceId, sessionId, {
+      role: "assistant",
+      content: result.summary,
+      producedRef: result.producedRef,
+    });
+    return {
+      answer: result.summary,
+      citations: [],
+      toolCalls: [{ tool: pending.proposal.toolKind, ok: true }],
+      status: "committed",
+      producedRef: result.producedRef,
+    };
+  } catch (err) {
+    const answer = `I couldn't complete that action: ${err instanceof Error ? err.message : String(err)}.`;
+    appendMessage(db, workspaceId, sessionId, { role: "assistant", content: answer });
+    return {
+      answer,
+      citations: [],
+      toolCalls: [{ tool: pending.proposal.toolKind, ok: false }],
+      status: "answered",
+    };
+  }
 }

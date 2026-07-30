@@ -35,12 +35,27 @@ function parseCitations(json: string): ChatCitation[] {
   }
 }
 
+/**
+ * The stored proposal blob wraps the client-facing `ChatProposal` together with
+ * the commit `args` (server-only — never surfaced in the ChatMessage contract).
+ */
+interface StoredProposal {
+  proposal: ChatProposal;
+  args: Record<string, unknown>;
+}
+
 /** Parse a stored proposal blob defensively — a bad blob reads as no proposal. */
-function parseProposal(json: string | null): ChatProposal | null {
+function parseStoredProposal(json: string | null): StoredProposal | null {
   if (!json) return null;
   try {
     const parsed = JSON.parse(json);
-    return parsed && typeof parsed === "object" ? (parsed as ChatProposal) : null;
+    if (!parsed || typeof parsed !== "object") return null;
+    // Wrapper shape { proposal, args }; tolerate a legacy bare ChatProposal.
+    if ("proposal" in parsed && typeof (parsed as StoredProposal).proposal === "object") {
+      const w = parsed as StoredProposal;
+      return { proposal: w.proposal, args: w.args ?? {} };
+    }
+    return { proposal: parsed as ChatProposal, args: {} };
   } catch {
     return null;
   }
@@ -55,7 +70,7 @@ export function rowToMessage(row: ChatMessageRow): ChatMessage {
     content: row.content,
     toolName: row.toolName ?? null,
     citations: parseCitations(row.citationsJson),
-    proposal: parseProposal(row.proposalJson),
+    proposal: parseStoredProposal(row.proposalJson)?.proposal ?? null,
     producedRef: row.producedRef ?? null,
     createdAt: row.createdAt,
   };
@@ -124,6 +139,34 @@ export function listMessages(db: Db, sessionId: string): ChatMessage[] {
     .map(rowToMessage);
 }
 
+export interface PendingProposal {
+  messageId: string;
+  proposal: ChatProposal;
+  /** Server-only commit args (not part of the ChatMessage contract). */
+  args: Record<string, unknown>;
+}
+
+/**
+ * The session's pending proposal, if any (Sprint 42 P2). A proposal is pending
+ * iff the latest ASSISTANT message carries one. Committing or discarding, or a
+ * normal answer, appends a later assistant message and thereby retires it — but
+ * a trailing user message (e.g. a plain-text "yes") does NOT, so the confirm
+ * can still find the proposal it is answering.
+ */
+export function getPendingProposal(db: Db, sessionId: string): PendingProposal | null {
+  const row = db
+    .select()
+    .from(chatMessages)
+    .where(and(eq(chatMessages.sessionId, sessionId), eq(chatMessages.role, "assistant")))
+    .orderBy(sql`${chatMessages}.rowid desc`)
+    .limit(1)
+    .get();
+  if (!row || !row.proposalJson) return null;
+  const stored = parseStoredProposal(row.proposalJson);
+  if (!stored) return null;
+  return { messageId: row.id, proposal: stored.proposal, args: stored.args };
+}
+
 export function deleteSession(db: Db, workspaceId: string, sessionId: string): boolean {
   const existing = getSession(db, workspaceId, sessionId);
   if (!existing) return false;
@@ -145,6 +188,8 @@ export interface AppendMessageInput {
   citations?: ChatCitation[];
   /** A pending proposal offered by this message (Sprint 42 P2). */
   proposal?: ChatProposal | null;
+  /** Server-only commit args stored alongside the proposal (never surfaced). */
+  proposalArgs?: Record<string, unknown> | null;
   /** A ref to the gated item this message created, once committed. */
   producedRef?: string | null;
 }
@@ -165,7 +210,9 @@ export function appendMessage(
     content: input.content,
     toolName: input.toolName ?? null,
     citationsJson: JSON.stringify(input.citations ?? []),
-    proposalJson: input.proposal ? JSON.stringify(input.proposal) : null,
+    proposalJson: input.proposal
+      ? JSON.stringify({ proposal: input.proposal, args: input.proposalArgs ?? {} })
+      : null,
     producedRef: input.producedRef ?? null,
     createdAt: now,
   };

@@ -200,7 +200,7 @@ export async function buildApp({
   registerCarouselRoutes(app, db, design, assetStorage, render);
   registerNotificationRoutes(app, db, mailer, fetcher);
   registerSignalRoutes(app, db, llm, evidence);
-  registerChatRoutes(app, db, llm, evidence);
+  registerChatRoutes(app, db, llm, evidence, externalActionRuntime);
   registerDiscoveryRoutes(app, db, llm, fetcher, intent, connectors);
   registerCampaignRoutes(app, db);
   registerCampaignPlanRoutes(app, db);
