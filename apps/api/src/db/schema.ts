@@ -1599,6 +1599,10 @@ export const chatMessages = sqliteTable(
     content: text("content").notNull(),
     toolName: text("tool_name"),
     citationsJson: text("citations_json").notNull().default("[]"),
+    // Sprint 42 P2: a pending proposal (with its confirm token) offered by this
+    // assistant message, and — once confirmed — a ref to the gated item created.
+    proposalJson: text("proposal_json"),
+    producedRef: text("produced_ref"),
     createdAt: integer("created_at").notNull(),
   },
   (t) => [index("chat_messages_session_created").on(t.sessionId, t.createdAt)],

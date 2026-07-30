@@ -4,6 +4,7 @@ import type {
   ChatCitation,
   ChatMessage,
   ChatMessageRole,
+  ChatProposal,
   ChatSession,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
@@ -34,6 +35,17 @@ function parseCitations(json: string): ChatCitation[] {
   }
 }
 
+/** Parse a stored proposal blob defensively — a bad blob reads as no proposal. */
+function parseProposal(json: string | null): ChatProposal | null {
+  if (!json) return null;
+  try {
+    const parsed = JSON.parse(json);
+    return parsed && typeof parsed === "object" ? (parsed as ChatProposal) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function rowToMessage(row: ChatMessageRow): ChatMessage {
   return {
     id: row.id,
@@ -43,6 +55,8 @@ export function rowToMessage(row: ChatMessageRow): ChatMessage {
     content: row.content,
     toolName: row.toolName ?? null,
     citations: parseCitations(row.citationsJson),
+    proposal: parseProposal(row.proposalJson),
+    producedRef: row.producedRef ?? null,
     createdAt: row.createdAt,
   };
 }
@@ -129,6 +143,10 @@ export interface AppendMessageInput {
   content: string;
   toolName?: string | null;
   citations?: ChatCitation[];
+  /** A pending proposal offered by this message (Sprint 42 P2). */
+  proposal?: ChatProposal | null;
+  /** A ref to the gated item this message created, once committed. */
+  producedRef?: string | null;
 }
 
 /** Persist one message and bump the session's updatedAt so lists resort. */
@@ -147,6 +165,8 @@ export function appendMessage(
     content: input.content,
     toolName: input.toolName ?? null,
     citationsJson: JSON.stringify(input.citations ?? []),
+    proposalJson: input.proposal ? JSON.stringify(input.proposal) : null,
+    producedRef: input.producedRef ?? null,
     createdAt: now,
   };
   db.insert(chatMessages).values(row).run();

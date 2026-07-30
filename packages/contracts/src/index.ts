@@ -6266,6 +6266,31 @@ export const chatCitationSchema = z.object({
 });
 export type ChatCitation = z.infer<typeof chatCitationSchema>;
 
+/** The write tools the copilot may propose (the write whitelist, Sprint 42 P2). */
+export const COPILOT_WRITE_TOOLS = ["draft_content", "draft_reply", "propose_action"] as const;
+export type CopilotWriteTool = (typeof COPILOT_WRITE_TOOLS)[number];
+
+/** The lifecycle of one copilot turn (Sprint 42 P2). */
+export const CHAT_TURN_STATUSES = ["answered", "awaiting_confirmation", "committed"] as const;
+export type ChatTurnStatus = (typeof CHAT_TURN_STATUSES)[number];
+
+/**
+ * A proposed write, surfaced in the thread for confirmation. Nothing is written
+ * until the user confirms with the server-issued `confirmToken`.
+ */
+export const chatProposalSchema = z.object({
+  toolKind: z.enum(COPILOT_WRITE_TOOLS),
+  /** One-line description of what will be created (not executed). */
+  summary: z.string(),
+  /** The rendered content / action detail the user is confirming. */
+  preview: z.string(),
+  /** Server-issued nonce; the commit step must echo it. */
+  confirmToken: z.string(),
+  /** Present when the effective policy would block or require scheduling. */
+  policyNote: z.string().optional(),
+});
+export type ChatProposal = z.infer<typeof chatProposalSchema>;
+
 export const chatSessionSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
@@ -6284,6 +6309,10 @@ export const chatMessageSchema = z.object({
   content: z.string(),
   toolName: z.string().nullable(),
   citations: z.array(chatCitationSchema),
+  /** A pending proposal offered by this assistant message (Sprint 42 P2). */
+  proposal: chatProposalSchema.nullable().optional(),
+  /** What a committed turn created, e.g. "draft:<id>" / "external_action:<id>". */
+  producedRef: z.string().nullable().optional(),
   createdAt: z.number().int(),
 });
 export type ChatMessage = z.infer<typeof chatMessageSchema>;
@@ -6303,6 +6332,12 @@ export const chatTurnResultSchema = z.object({
   answer: z.string(),
   citations: z.array(chatCitationSchema),
   toolCalls: z.array(z.object({ tool: z.string(), ok: z.boolean() })),
+  /** Turn lifecycle: a plain answer, a pending proposal, or a committed write. */
+  status: z.enum(CHAT_TURN_STATUSES).default("answered"),
+  /** Set when status is "awaiting_confirmation": the write awaiting a human yes. */
+  proposal: chatProposalSchema.nullable().optional(),
+  /** Set when status is "committed": the gated item that was created. */
+  producedRef: z.string().nullable().optional(),
 });
 export type ChatTurnResult = z.infer<typeof chatTurnResultSchema>;
 
@@ -6310,3 +6345,20 @@ export const chatSessionDetailSchema = chatSessionSchema.extend({
   messages: z.array(chatMessageSchema),
 });
 export type ChatSessionDetail = z.infer<typeof chatSessionDetailSchema>;
+
+// ---------------------------------------------------------------------------
+// Chat copilot (Sprint 42, part 2 — gated action execution)
+//
+// The copilot PROPOSES a write; a human CONFIRMS; the write only ever creates
+// a gated, not-yet-executed item (a draft in `pending_review`, or an external
+// action parked at `authorization_required`). Two independent gates stack:
+// the in-chat confirmation, then the existing approval/authorize gate. The
+// chat has no path to approve, authorize, or dispatch.
+// ---------------------------------------------------------------------------
+
+/** Confirm/decline a pending proposal. */
+export const confirmChatProposalInputSchema = z.object({
+  confirmToken: z.string().min(1),
+  decision: z.enum(["confirm", "discard"]),
+});
+export type ConfirmChatProposalInput = z.infer<typeof confirmChatProposalInputSchema>;

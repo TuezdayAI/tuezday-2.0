@@ -217,5 +217,5 @@ export async function runCopilotTurn(
     citations: finalCitations,
   });
 
-  return { answer, citations: finalCitations, toolCalls };
+  return { answer, citations: finalCitations, toolCalls, status: "answered" };
 }
