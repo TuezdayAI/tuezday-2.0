@@ -259,32 +259,43 @@ export const generations = sqliteTable("generations", {
 
 export type GenerationRow = typeof generations.$inferSelect;
 
-export const drafts = sqliteTable("drafts", {
-  id: text("id").primaryKey(),
-  workspaceId: text("workspace_id")
-    .notNull()
-    .references(() => workspaces.id, { onDelete: "cascade" }),
-  sourceGenerationId: text("source_generation_id"),
-  sourceSignalId: text("source_signal_id"),
-  campaignId: text("campaign_id"),
-  leadId: text("lead_id"),
-  mediaContactId: text("media_contact_id"),
-  taskType: text("task_type").notNull(),
-  channel: text("channel").notNull(),
-  personaId: text("persona_id"),
-  originalContent: text("original_content").notNull(),
-  content: text("content").notNull(),
-  state: text("state").notNull(),
-  // Sprint 22 pre-review (GenerationReview JSON), copied from the source
-  // generation at submit or refreshed by the Re-run review action. Null when
-  // never reviewed.
-  reviewJson: text("review_json"),
-  // Sprint 41: rendered visuals (LaunchMedia[] JSON) — what a reviewer sees,
-  // while content holds what they read. Null for text-only drafts.
-  mediaJson: text("media_json"),
-  createdAt: integer("created_at").notNull(),
-  updatedAt: integer("updated_at").notNull(),
-});
+export const drafts = sqliteTable(
+  "drafts",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sourceGenerationId: text("source_generation_id"),
+    sourceSignalId: text("source_signal_id"),
+    campaignId: text("campaign_id"),
+    leadId: text("lead_id"),
+    mediaContactId: text("media_contact_id"),
+    taskType: text("task_type").notNull(),
+    channel: text("channel").notNull(),
+    personaId: text("persona_id"),
+    originalContent: text("original_content").notNull(),
+    content: text("content").notNull(),
+    state: text("state").notNull(),
+    // Internal-only deterministic identity for automatic signal fan-out.
+    // Manual submissions intentionally leave this null.
+    automationKey: text("automation_key"),
+    // Sprint 22 pre-review (GenerationReview JSON), copied from the source
+    // generation at submit or refreshed by the Re-run review action. Null when
+    // never reviewed.
+    reviewJson: text("review_json"),
+    // Sprint 41: rendered visuals (LaunchMedia[] JSON) — what a reviewer sees,
+    // while content holds what they read. Null for text-only drafts.
+    mediaJson: text("media_json"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("drafts_automation_key")
+      .on(t.automationKey)
+      .where(sql`${t.automationKey} IS NOT NULL`),
+  ],
+);
 
 export type DraftRow = typeof drafts.$inferSelect;
 
@@ -360,6 +371,18 @@ export const signals = sqliteTable("signals", {
 
 export type SignalRow = typeof signals.$inferSelect;
 
+export const taskLeases = sqliteTable("task_leases", {
+  key: text("key").primaryKey(),
+  owner: text("owner").notNull(),
+  version: integer("version").notNull().default(1),
+  expiresAt: integer("expires_at").notNull(),
+  heartbeatAt: integer("heartbeat_at").notNull(),
+  createdAt: integer("created_at").notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});
+
+export type TaskLeaseRow = typeof taskLeases.$inferSelect;
+
 export const discoverySources = sqliteTable("discovery_sources", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id")
@@ -382,6 +405,7 @@ export const discoverySources = sqliteTable("discovery_sources", {
   // Rate-limit back-pressure: the source is not enqueued until this passes.
   backoffUntil: integer("backoff_until"),
   lastAttemptedAt: integer("last_attempted_at"),
+  executionVersion: integer("execution_version").notNull().default(1),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -403,6 +427,11 @@ export const discoveryJobs = sqliteTable(
     status: text("status").notNull(), // queued | running | succeeded | failed | skipped
     attempt: integer("attempt").notNull().default(0),
     lockedAt: integer("locked_at"),
+    sourceExecutionVersion: integer("source_execution_version").notNull().default(1),
+    leaseOwner: text("lease_owner"),
+    leaseVersion: integer("lease_version").notNull().default(0),
+    leaseExpiresAt: integer("lease_expires_at"),
+    heartbeatAt: integer("heartbeat_at"),
     startedAt: integer("started_at"),
     finishedAt: integer("finished_at"),
     fetchedCount: integer("fetched_count").notNull().default(0),
@@ -413,6 +442,9 @@ export const discoveryJobs = sqliteTable(
   (t) => [
     index("discovery_jobs_workspace_status").on(t.workspaceId, t.status, t.createdAt),
     index("discovery_jobs_source_status").on(t.sourceId, t.status),
+    uniqueIndex("discovery_jobs_one_active_source")
+      .on(t.sourceId)
+      .where(sql`${t.status} IN ('queued', 'running')`),
   ],
 );
 
@@ -420,7 +452,8 @@ export type DiscoveryJobRow = typeof discoveryJobs.$inferSelect;
 
 // Tracked social accounts (Sprint 46): first-class competitor/source accounts.
 // Discovery sources reference them via config.trackedAccountId(s) — no FK from
-// the JSON config, so deleting one simply drops it from future fetches.
+// the JSON config, so services resolve the complete enabled set strictly on
+// source create, update, and fetch.
 export const trackedSocialAccounts = sqliteTable(
   "tracked_social_accounts",
   {
@@ -467,9 +500,16 @@ export const discoveredItems = sqliteTable(
     scoreReason: text("score_reason"),
     status: text("status").notNull().default("new"),
     signalId: text("signal_id"),
-    // Sprint 45: re-score watermark — when the item was last LLM-judged. Null
-    // for never-scored items.
+    // When the item was last LLM-judged. Null for never-scored items; queue
+    // eligibility is controlled by matchingState rather than this timestamp.
     scoredAt: integer("scored_at"),
+    matchingState: text("matching_state").notNull().default("pending"),
+    matchingVersion: integer("matching_version").notNull().default(0),
+    matchingInputFingerprint: text("matching_input_fingerprint"),
+    matchingLeaseOwner: text("matching_lease_owner"),
+    matchingLeaseExpiresAt: integer("matching_lease_expires_at"),
+    matchingHeartbeatAt: integer("matching_heartbeat_at"),
+    matchingError: text("matching_error"),
     // Sprint 45 cross-source dedup: sha256 of the normalized URL (null when the
     // item has no URL) and of the normalized title + summary prefix.
     urlHash: text("url_hash"),
@@ -484,6 +524,11 @@ export const discoveredItems = sqliteTable(
     uniqueIndex("discovered_items_source_external").on(t.sourceId, t.externalId),
     index("discovered_items_workspace_url_hash").on(t.workspaceId, t.urlHash),
     index("discovered_items_workspace_content_hash").on(t.workspaceId, t.contentHash),
+    index("discovered_items_matching_queue").on(
+      t.matchingState,
+      t.matchingLeaseExpiresAt,
+      t.createdAt,
+    ),
   ],
 );
 

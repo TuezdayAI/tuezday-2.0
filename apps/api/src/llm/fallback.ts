@@ -1,4 +1,11 @@
-import { GatewayError, type GenerateParams, type GenerateResult, type LlmGateway } from "./gateway";
+import {
+  GatewayError,
+  type EmbedParams,
+  type EmbedResult,
+  type GenerateParams,
+  type GenerateResult,
+  type LlmGateway,
+} from "./gateway";
 
 /**
  * Tries the primary gateway and degrades to the secondary on any GatewayError
@@ -32,5 +39,31 @@ export class FallbackGateway implements LlmGateway {
         `All LLM providers failed. Primary: ${primaryError.message} Secondary: ${err.message}`,
       );
     }
+  }
+
+  async embed(params: EmbedParams): Promise<EmbedResult> {
+    const providers = [this.primary, this.secondary].filter(
+      (
+        provider,
+      ): provider is LlmGateway & Required<Pick<LlmGateway, "embed">> =>
+        typeof provider.embed === "function",
+    );
+    if (providers.length === 0) {
+      throw new GatewayError(
+        "provider_error",
+        "No configured LLM provider supports embeddings.",
+      );
+    }
+
+    let firstError: GatewayError | undefined;
+    for (const provider of providers) {
+      try {
+        return await provider.embed(params);
+      } catch (error) {
+        if (!(error instanceof GatewayError)) throw error;
+        firstError ??= error;
+      }
+    }
+    throw firstError!;
   }
 }

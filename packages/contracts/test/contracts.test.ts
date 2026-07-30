@@ -80,6 +80,7 @@ import {
   DISCOVERED_ITEM_STATUSES,
   DEFAULT_MATCH_THRESHOLD,
   DISCOVERY_MAX_MATCHES_PER_ITEM,
+  DISCOVERY_MATCHING_STATES,
   discoveredItemMatchSchema,
   discoveredItemSchema,
   DISCOVERY_SOURCE_MODES,
@@ -87,6 +88,7 @@ import {
   discoverySourceSchema,
   discoverySourceConfigSchema,
   discoveryJobSchema,
+  discoveryRunSummarySchema,
   SIGNAL_SOURCES,
   TRACKED_SOCIAL_PLATFORMS,
   trackedSocialAccountSchema,
@@ -1070,6 +1072,8 @@ describe("discovery routing contracts (Sprint 45)", () => {
     scoreReason: "fits",
     status: "new",
     signalId: null,
+    matchingState: "ready",
+    matchingError: null,
     matches: [match],
     duplicateOfId: null,
     duplicateCount: 0,
@@ -1079,6 +1083,13 @@ describe("discovery routing contracts (Sprint 45)", () => {
   it("exposes the routing constants", () => {
     expect(DEFAULT_MATCH_THRESHOLD).toBe(50);
     expect(DISCOVERY_MAX_MATCHES_PER_ITEM).toBe(5);
+    expect(DISCOVERY_MATCHING_STATES).toEqual([
+      "pending",
+      "running",
+      "ready",
+      "retryable_error",
+      "frozen",
+    ]);
   });
 
   it("round-trips a match, including a null persona or campaign side", () => {
@@ -1121,6 +1132,51 @@ describe("discovery routing contracts (Sprint 45)", () => {
     expect(discoveredItemSchema.safeParse({ ...item, matches: [{ ...match, score: 101 }] }).success).toBe(
       false,
     );
+  });
+
+  it("exposes only the stable matching state and error", () => {
+    const parsed = discoveredItemSchema.parse({
+      ...item,
+      matchingState: "retryable_error",
+      matchingError: "matching_timeout",
+    });
+    expect(parsed).toMatchObject({
+      matchingState: "retryable_error",
+      matchingError: "matching_timeout",
+    });
+  });
+
+  it("parses the complete discovery run summary including scheduler state", () => {
+    const summary = {
+      busy: false,
+      budgetExhausted: true,
+      queued: 8,
+      processed: 5,
+      sources: [
+        {
+          sourceId: uuid,
+          name: "Market feed",
+          fetched: 10,
+          new: 3,
+        },
+      ],
+      scored: 3,
+    };
+    expect(discoveryRunSummarySchema.safeParse(summary).success).toBe(true);
+    expect(
+      discoveryRunSummarySchema.safeParse({ ...summary, busy: undefined })
+        .success,
+    ).toBe(false);
+    expect(
+      discoveryRunSummarySchema.safeParse({
+        ...summary,
+        budgetExhausted: undefined,
+      }).success,
+    ).toBe(false);
+    expect(
+      discoveryRunSummarySchema.safeParse({ ...summary, processed: -1 })
+        .success,
+    ).toBe(false);
   });
 
   it("signalSchema carries the same match shape", () => {
@@ -1204,7 +1260,12 @@ describe("connected discovery contracts (Sprint 46)", () => {
       lastError: null,
       lastFetchedAt: null,
       connectionId: null,
-      cursor: {},
+      cursor: {
+        version: 1,
+        targetCount: 0,
+        backlog: false,
+        lastCheckpointAt: null,
+      },
       backoffUntil: null,
       lastAttemptedAt: null,
       createdAt: 1,
@@ -1217,7 +1278,12 @@ describe("connected discovery contracts (Sprint 46)", () => {
         type: "x",
         config: { mode: "query", query: "gtm memory" },
         connectionId: uuid,
-        cursor: { query: { nextToken: "abc" } },
+        cursor: {
+          version: 1,
+          targetCount: 1,
+          backlog: true,
+          lastCheckpointAt: 97,
+        },
         backoffUntil: 99,
         lastAttemptedAt: 98,
       }).success,

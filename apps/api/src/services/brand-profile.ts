@@ -9,8 +9,12 @@ import {
 } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { brandProfiles } from "../db/schema";
-import type { Fetcher } from "../discovery/adapters";
 import type { LlmGateway } from "../llm/gateway";
+import {
+  SafeFetchError,
+  serializeSafeFetchError,
+  type SafeFetchService,
+} from "../safe-fetch";
 import { scrapeWebsite } from "./scrape";
 
 /** LLM output failed to parse/validate even after the repair retry. */
@@ -154,7 +158,7 @@ export function getBrandProfileView(db: Db, workspaceId: string): BrandProfileVi
 export async function runBrandProfile(
   db: Db,
   llm: LlmGateway,
-  fetcher: Fetcher,
+  safeFetch: SafeFetchService,
   workspaceId: string,
   websiteUrl: string,
 ): Promise<BrandProfileView> {
@@ -165,12 +169,20 @@ export async function runBrandProfile(
     profileJson: null,
   });
   try {
-    const { corpus } = await scrapeWebsite(websiteUrl, fetcher);
+    const { corpus } = await scrapeWebsite(websiteUrl, safeFetch);
     upsertRow(db, workspaceId, { status: "extracting", corpusChars: corpus.length });
     const profile = await extractBrandProfile(llm, corpus);
     upsertRow(db, workspaceId, { status: "ready", profileJson: JSON.stringify(profile) });
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    const message =
+      err instanceof SafeFetchError
+        ? (() => {
+            const safe = serializeSafeFetchError(err);
+            return `${safe.code}: ${safe.message}`;
+          })()
+        : err instanceof Error
+          ? err.message
+          : String(err);
     upsertRow(db, workspaceId, { status: "failed", error: message.slice(0, 500) });
   }
   return getBrandProfileView(db, workspaceId);

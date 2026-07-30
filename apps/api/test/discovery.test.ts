@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import {
   DISCOVERY_MAX_MATCHES_PER_ITEM,
   discoverySourceSchema,
@@ -8,10 +8,28 @@ import {
 } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
 import type { Db } from "../src/db";
-import { discoveredItemMatches, discoveredItems, signalMatches } from "../src/db/schema";
-import type { Fetcher } from "../src/discovery/adapters";
+import {
+  campaigns,
+  discoveredItemMatches,
+  discoveredItems,
+  discoveryJobs,
+  discoverySources,
+  signalMatches,
+  signals,
+} from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
+import {
+  safeFetchError,
+  safeFetchPublicMessage,
+  type SafeFetchService,
+} from "../src/safe-fetch";
+import {
+  MatchingNotReadyError,
+  acceptDiscoveredItem,
+} from "../src/services/discovery";
+import { enqueueDueDiscoveryJobs } from "../src/services/discovery-jobs";
 import { buildAuthedApp, createTestDb } from "./helpers";
+import { fixtureSafeFetch } from "./safe-fetch-fixtures";
 
 const RSS_FIXTURE = `<?xml version="1.0"?>
 <rss version="2.0"><channel><title>Feed</title>
@@ -26,15 +44,38 @@ const RSS_FIXTURE_V2 = `<?xml version="1.0"?>
 </channel></rss>`;
 
 /** Serves RSS fixtures; second run serves v2 to test dedupe. Failing URLs 500. */
-function makeFetcher(): { fetcher: Fetcher; calls: string[] } {
+function makeFetcher(): { fetcher: SafeFetchService; calls: string[] } {
   const calls: string[] = [];
-  const fetcher = (async (url: Parameters<typeof fetch>[0]) => {
-    const u = String(url);
+  const fetcher = fixtureSafeFetch((request) => {
+    const u = request.url;
     calls.push(u);
-    if (u.includes("failing.example.com")) return new Response("boom", { status: 500 });
+    if (
+      u.includes("failing.example.com") ||
+      u.includes("169.254.169.254")
+    ) {
+      return {
+        contentType: "application/xml",
+        error: safeFetchError(
+          u.includes("169.254.169.254")
+            ? "destination_blocked"
+            : "upstream_status",
+        ),
+      };
+    }
+    if (u.includes("hostile.example.com")) {
+      return {
+        contentType: "application/xml",
+        error: new Error(
+          "parser saw <html>private</html> from db.internal at 169.254.169.254",
+        ),
+      };
+    }
     const timesFetched = calls.filter((c) => c === u).length;
-    return new Response(timesFetched > 1 ? RSS_FIXTURE_V2 : RSS_FIXTURE, { status: 200 });
-  }) as Fetcher;
+    return {
+      body: timesFetched > 1 ? RSS_FIXTURE_V2 : RSS_FIXTURE,
+      contentType: "application/xml",
+    };
+  });
   return { fetcher, calls };
 }
 
@@ -82,6 +123,7 @@ function scoringGateway(
 
 describe("discovery API", () => {
   let app: TuezdayApp;
+  let db: Db;
   let workspaceId: string;
   let personaRef: { id: string | null };
   let campaignRef: { id: string | null };
@@ -90,10 +132,11 @@ describe("discovery API", () => {
     personaRef = { id: null };
     campaignRef = { id: null };
     const { fetcher } = makeFetcher();
+    db = createTestDb();
     app = await buildAuthedApp({
-      db: createTestDb(),
+      db,
       llm: scoringGateway(personaRef, campaignRef),
-      fetcher,
+      safeFetch: fetcher,
     });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Disco" } })
@@ -178,6 +221,51 @@ describe("discovery API", () => {
       expect(res.statusCode).toBe(400);
     });
 
+    it("rejects a metadata feed URL at creation with only a safe failure", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/discovery/sources`,
+        payload: {
+          type: "rss",
+          config: { feedUrl: "http://169.254.169.254/latest/meta-data" },
+        },
+      });
+      expect(res.statusCode).toBe(400);
+      expect(res.json()).toEqual({
+        code: "destination_blocked",
+        message: safeFetchPublicMessage("destination_blocked"),
+      });
+    });
+
+    it("blocks a pre-existing unsafe feed row during fetch and persists only the safe class", async () => {
+      const source = await addRssSource();
+      db.update(discoverySources)
+        .set({
+          configJson: JSON.stringify({
+            feedUrl: "http://169.254.169.254/latest/meta-data",
+          }),
+        })
+        .where(eq(discoverySources.id, source.id))
+        .run();
+
+      const result = await run();
+      expect(result.sources[0]?.error).toBe(
+        `destination_blocked: ${safeFetchPublicMessage("destination_blocked")}`,
+      );
+      const stored = (
+        await app.inject({
+          method: "GET",
+          url: `/workspaces/${workspaceId}/discovery/sources`,
+        })
+      )
+        .json()
+        .find((candidate: { id: string }) => candidate.id === source.id);
+      expect(stored.lastError).toBe(
+        `destination_blocked: ${safeFetchPublicMessage("destination_blocked")}`,
+      );
+      expect(stored.lastError).not.toContain("169.254.169.254");
+    });
+
     it("can disable a source", async () => {
       const source = await addRssSource();
       const res = await app.inject({
@@ -187,6 +275,154 @@ describe("discovery API", () => {
       });
       expect(res.json().enabled).toBe(false);
     });
+
+    it("rejects an invalid complete RSS config and preserves the stored source", async () => {
+      const source = await addRssSource();
+
+      const update = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/discovery/sources/${source.id}`,
+        payload: { config: {} },
+      });
+
+      expect(update.statusCode).toBe(400);
+      expect(update.json()).toEqual({
+        error: "invalid_input",
+        message: "An RSS source needs a feedUrl",
+      });
+      expect(JSON.stringify(update.json())).not.toContain(
+        "https://feeds.example.com/blog.xml",
+      );
+      const stored = db
+        .select()
+        .from(discoverySources)
+        .where(eq(discoverySources.id, source.id))
+        .get()!;
+      expect(JSON.parse(stored.configJson)).toEqual(source.config);
+    });
+
+    it("derives healthy runtime state after a valid material config change", async () => {
+      const source = await addRssSource();
+      db.update(discoverySources)
+        .set({
+          status: "error",
+          lastError: "transport_failed: stale failure",
+          backoffUntil: Date.now() + 60_000,
+        })
+        .where(eq(discoverySources.id, source.id))
+        .run();
+
+      const update = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/discovery/sources/${source.id}`,
+        payload: {
+          config: { feedUrl: "https://feeds.example.com/recovered.xml" },
+        },
+      });
+
+      expect(update.statusCode).toBe(200);
+      expect(update.json()).toMatchObject({
+        status: "active",
+        lastError: null,
+        backoffUntil: null,
+        config: { feedUrl: "https://feeds.example.com/recovered.xml" },
+      });
+    });
+
+    it("cancels queued work when disabling or materially changing a source", async () => {
+      const disabledSource = await addRssSource(
+        "https://feeds.example.com/disable.xml",
+      );
+      const changedSource = await addRssSource(
+        "https://feeds.example.com/change.xml",
+      );
+      expect(
+        enqueueDueDiscoveryJobs(
+          db,
+          workspaceId,
+          [disabledSource, changedSource],
+          Date.now(),
+        ),
+      ).toBe(2);
+
+      const disabled = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/discovery/sources/${disabledSource.id}`,
+        payload: { enabled: false },
+      });
+      const changed = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/discovery/sources/${changedSource.id}`,
+        payload: {
+          config: { feedUrl: "https://feeds.example.com/changed.xml" },
+        },
+      });
+
+      expect(disabled.statusCode).toBe(200);
+      expect(changed.statusCode).toBe(200);
+      const cancelled = db
+        .select()
+        .from(discoveryJobs)
+        .where(eq(discoveryJobs.workspaceId, workspaceId))
+        .all();
+      expect(cancelled).toHaveLength(2);
+      expect(
+        cancelled.map((job) => ({
+          status: job.status,
+          error: job.error,
+          hasFinishedAt: job.finishedAt !== null,
+        })),
+      ).toEqual([
+        {
+          status: "skipped",
+          error: "source_version_changed",
+          hasFinishedAt: true,
+        },
+        {
+          status: "skipped",
+          error: "source_version_changed",
+          hasFinishedAt: true,
+        },
+      ]);
+    });
+
+    it.each(["rss", "podcast"] as const)(
+      "rejects an unsafe %s feed update without changing the source",
+      async (type) => {
+        const originalFeedUrl = "https://feeds.example.com/original.xml";
+        const created = await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/discovery/sources`,
+          payload: { type, config: { feedUrl: originalFeedUrl } },
+        });
+        expect(created.statusCode).toBe(201);
+
+        const update = await app.inject({
+          method: "PATCH",
+          url: `/workspaces/${workspaceId}/discovery/sources/${created.json().id}`,
+          payload: {
+            config: {
+              feedUrl: "http://169.254.169.254/latest/meta-data",
+            },
+          },
+        });
+        expect(update.statusCode).toBe(400);
+        expect(update.json()).toEqual({
+          code: "destination_blocked",
+          message: safeFetchPublicMessage("destination_blocked"),
+        });
+
+        const stored = (
+          await app.inject({
+            method: "GET",
+            url: `/workspaces/${workspaceId}/discovery/sources`,
+          })
+        )
+          .json()
+          .find((candidate: { id: string }) => candidate.id === created.json().id);
+        expect(stored.config.feedUrl).toBe(originalFeedUrl);
+      },
+    );
 
     it("deletes a source", async () => {
       const source = await addRssSource();
@@ -240,15 +476,32 @@ describe("discovery API", () => {
       const bad = await addRssSource("https://failing.example.com/feed.xml");
       const result = await run();
       const badResult = result.sources.find((s: { sourceId: string }) => s.sourceId === bad.id);
-      expect(badResult.error).toContain("500");
+      expect(badResult.error).toBe(
+        `upstream_status: ${safeFetchPublicMessage("upstream_status")}`,
+      );
       const sources = (
         await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/discovery/sources` })
       ).json();
       const badSource = sources.find((s: { id: string }) => s.id === bad.id);
       expect(badSource.status).toBe("error");
-      expect(badSource.lastError).toContain("500");
+      expect(badSource.lastError).toBe(
+        `upstream_status: ${safeFetchPublicMessage("upstream_status")}`,
+      );
       // the healthy source still produced items
       expect((await items()).length).toBeGreaterThan(0);
+    });
+
+    it("redacts an unexpected keyless adapter failure before persistence", async () => {
+      const bad = await addRssSource("https://hostile.example.com/feed.xml");
+      const result = await run();
+      const failure = result.sources.find(
+        (source: { sourceId: string }) => source.sourceId === bad.id,
+      );
+      expect(failure.error).toBe(
+        `transport_failed: ${safeFetchPublicMessage("transport_failed")}`,
+      );
+      expect(failure.error).not.toContain("db.internal");
+      expect(failure.error).not.toContain("169.254.169.254");
     });
 
     it("skips disabled and needs_api_key sources", async () => {
@@ -303,7 +556,7 @@ describe("discovery API", () => {
       const localApp = await buildAuthedApp({
         db: createTestDb(),
         llm: scoringGateway({ id: null }, { id: null }),
-        fetcher,
+        safeFetch: fetcher,
         intent,
       });
       const ws = (
@@ -328,6 +581,37 @@ describe("discovery API", () => {
   });
 
   describe("triage", () => {
+    it("returns a stable 409 while matching is not ready", async () => {
+      await addRssSource();
+      await run();
+      const [top] = await items();
+      db.update(discoveredItems)
+        .set({
+          matchingState: "pending",
+          matchingError: null,
+        })
+        .where(eq(discoveredItems.id, top.id))
+        .run();
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/discovery/items/${top.id}/accept`,
+      });
+
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toEqual({
+        error: "matching_not_ready",
+        message: "Scoring has not completed for this item yet.",
+      });
+      expect(
+        db
+          .select()
+          .from(signals)
+          .where(eq(signals.workspaceId, workspaceId))
+          .all(),
+      ).toEqual([]);
+    });
+
     it("accepting an item creates a linked signal with mapped source", async () => {
       await addRssSource();
       await run();
@@ -367,6 +651,227 @@ describe("discovery API", () => {
         url: `/workspaces/${workspaceId}/discovery/items/${top.id}/accept`,
       });
       expect(res.statusCode).toBe(409);
+    });
+
+    it("invalidates a stale related reference before it can be accepted", async () => {
+      await addRssSource();
+      await run();
+      const [top] = await items();
+      expect(top.suggestedPersonaId).toBe(personaRef.id);
+      const deleted = await app.inject({
+        method: "DELETE",
+        url: `/workspaces/${workspaceId}/personas/${personaRef.id}`,
+      });
+      expect(deleted.statusCode).toBe(204);
+
+      const accepted = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/discovery/items/${top.id}/accept`,
+      });
+
+      expect(accepted.statusCode).toBe(409);
+      expect(accepted.json()).toEqual({
+        error: "matching_not_ready",
+        message: "Scoring has not completed for this item yet.",
+      });
+      const storedItem = (await items()).find(
+        (candidate: { id: string }) => candidate.id === top.id,
+      );
+      expect(storedItem).toMatchObject({
+        status: "new",
+        signalId: null,
+        matchingState: "pending",
+      });
+      expect(
+        db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
+      ).toHaveLength(0);
+      expect(
+        db
+          .select()
+          .from(signalMatches)
+          .where(eq(signalMatches.workspaceId, workspaceId))
+          .all(),
+      ).toHaveLength(0);
+    });
+
+    it("rolls back signal creation when acceptance faults after the signal insert", async () => {
+      await addRssSource();
+      await run();
+      const [top] = await items();
+
+      expect(() =>
+        acceptDiscoveredItem(db, workspaceId, top.id, {
+          afterSignalInsert() {
+            throw new Error("fault_after_accept_signal");
+          },
+        }),
+      ).toThrow("fault_after_accept_signal");
+
+      const storedItem = (await items()).find(
+        (candidate: { id: string }) => candidate.id === top.id,
+      );
+      expect(storedItem).toMatchObject({ status: "new", signalId: null });
+      expect(
+        db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
+      ).toHaveLength(0);
+      expect(
+        db
+          .select()
+          .from(signalMatches)
+          .where(eq(signalMatches.workspaceId, workspaceId))
+          .all(),
+      ).toHaveLength(0);
+    });
+
+    it("returns 404 when accepting an item through a different workspace", async () => {
+      await addRssSource();
+      await run();
+      const [top] = await items();
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Other Triage Workspace" },
+        })
+      ).json().id as string;
+
+      const accepted = await app.inject({
+        method: "POST",
+        url: `/workspaces/${otherWorkspaceId}/discovery/items/${top.id}/accept`,
+      });
+
+      expect(accepted.statusCode).toBe(404);
+      expect(accepted.json()).toEqual({ error: "item_not_found" });
+      expect(
+        db.select().from(signals).where(eq(signals.workspaceId, otherWorkspaceId)).all(),
+      ).toHaveLength(0);
+    });
+
+    it("rejects an item whose source belongs to another workspace", async () => {
+      await addRssSource();
+      await run();
+      const [top] = await items();
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Foreign Item Source Workspace" },
+        })
+      ).json().id as string;
+      const foreignSource = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${otherWorkspaceId}/discovery/sources`,
+          payload: {
+            type: "rss",
+            config: { feedUrl: "https://feeds.example.com/foreign.xml" },
+          },
+        })
+      ).json();
+      db.update(discoveredItems)
+        .set({ sourceId: foreignSource.id })
+        .where(eq(discoveredItems.id, top.id))
+        .run();
+
+      const accepted = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/discovery/items/${top.id}/accept`,
+      });
+
+      expect(accepted.statusCode).toBe(404);
+      expect(accepted.json()).toEqual({ error: "related_object_not_found" });
+      expect(
+        db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
+      ).toHaveLength(0);
+    });
+
+    it("rejects a foreign copied match without partially accepting the item", async () => {
+      await addRssSource();
+      await run();
+      const [top] = await items();
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Foreign Match Workspace" },
+        })
+      ).json().id as string;
+      const foreignPersonaId = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${otherWorkspaceId}/personas`,
+          payload: { name: "Foreign Match Persona" },
+        })
+      ).json().id as string;
+      db.update(discoveredItemMatches)
+        .set({ personaId: foreignPersonaId })
+        .where(eq(discoveredItemMatches.itemId, top.id))
+        .run();
+      const visibleItem = (await items()).find(
+        (candidate: { id: string }) => candidate.id === top.id,
+      );
+      expect(visibleItem.matches).toEqual([]);
+      expect(JSON.stringify(visibleItem)).not.toContain(foreignPersonaId);
+
+      const accepted = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/discovery/items/${top.id}/accept`,
+      });
+
+      expect(accepted.statusCode).toBe(404);
+      expect(accepted.json()).toEqual({ error: "related_object_not_found" });
+      const storedItem = (await items()).find(
+        (candidate: { id: string }) => candidate.id === top.id,
+      );
+      expect(storedItem).toMatchObject({ status: "new", signalId: null });
+      expect(
+        db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
+      ).toHaveLength(0);
+      expect(
+        db
+          .select()
+          .from(signalMatches)
+          .where(eq(signalMatches.workspaceId, workspaceId))
+          .all(),
+      ).toHaveLength(0);
+    });
+
+    it("rejects an item-match row assigned to a different workspace", async () => {
+      await addRssSource();
+      await run();
+      const [top] = await items();
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Foreign Match Row Workspace" },
+        })
+      ).json().id as string;
+      db.update(discoveredItemMatches)
+        .set({ workspaceId: otherWorkspaceId })
+        .where(eq(discoveredItemMatches.itemId, top.id))
+        .run();
+      const visibleItem = (await items()).find(
+        (candidate: { id: string }) => candidate.id === top.id,
+      );
+      expect(visibleItem.matches).toEqual([]);
+
+      const accepted = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/discovery/items/${top.id}/accept`,
+      });
+
+      expect(accepted.statusCode).toBe(404);
+      expect(accepted.json()).toEqual({ error: "related_object_not_found" });
+      const storedItem = db
+        .select()
+        .from(discoveredItems)
+        .where(eq(discoveredItems.id, top.id))
+        .get();
+      expect(storedItem).toMatchObject({ status: "new", signalId: null });
+      expect(
+        db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
+      ).toHaveLength(0);
     });
 
     it("skips an item", async () => {
@@ -411,15 +916,20 @@ describe("discovery API", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Sprint 45 — multi-candidate scoring, re-score watermark, cross-source dedup
+// Sprint 45+49 — multi-candidate scoring, targeted re-score, cross-source dedup
 // ---------------------------------------------------------------------------
 
 /** Serves a fixed XML body per feed URL; unknown URLs 404. */
-function fixtureFetcher(feeds: Record<string, string>): Fetcher {
-  return (async (url: Parameters<typeof fetch>[0]) => {
-    const body = feeds[String(url)];
-    return body ? new Response(body, { status: 200 }) : new Response("nope", { status: 404 });
-  }) as Fetcher;
+function fixtureFetcher(feeds: Record<string, string>): SafeFetchService {
+  return fixtureSafeFetch((request) => {
+    const body = feeds[request.url];
+    return body
+      ? { body, contentType: "application/xml" }
+      : {
+          contentType: "application/xml",
+          error: safeFetchError("upstream_status"),
+        };
+  });
 }
 
 interface MatchingHarness {
@@ -444,7 +954,7 @@ interface MatchingHarness {
  * Workspace with two personas and two active campaigns (each persona assigned
  * to its own campaign), driven by a scriptable scoring gateway.
  */
-async function buildMatchingHarness(fetcher?: Fetcher): Promise<MatchingHarness> {
+async function buildMatchingHarness(fetcher?: SafeFetchService): Promise<MatchingHarness> {
   const db = createTestDb();
   const scoringPrompts: string[] = [];
   let responder: (prompt: string) => unknown = () => [];
@@ -459,7 +969,11 @@ async function buildMatchingHarness(fetcher?: Fetcher): Promise<MatchingHarness>
       };
     },
   };
-  const app = await buildAuthedApp({ db, llm, fetcher: fetcher ?? makeFetcher().fetcher });
+  const app = await buildAuthedApp({
+    db,
+    llm,
+    safeFetch: fetcher ?? makeFetcher().fetcher,
+  });
   const workspaceId = (
     await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Match Co" } })
   ).json().id;
@@ -588,6 +1102,183 @@ describe("multi-candidate scoring (Sprint 45)", () => {
     expect(h.scoringPrompts[0]).toContain(`personas: [${h.fieldCto}: Field CTO]`);
   });
 
+  it("drops a campaign that leaves the workspace while scoring is in flight", async () => {
+    const otherWorkspaceId = (
+      await h.app.inject({
+        method: "POST",
+        url: "/workspaces",
+        payload: { name: "Scoring Race Workspace" },
+      })
+    ).json().id as string;
+    h.setResponder(() => {
+      h.db
+        .update(campaigns)
+        .set({ workspaceId: otherWorkspaceId })
+        .where(eq(campaigns.id, h.campaignA))
+        .run();
+      return [
+        {
+          index: 0,
+          score: 88,
+          matches: [
+            {
+              personaId: null,
+              campaignId: h.campaignA,
+              score: 90,
+              reason: "Stale campaign.",
+            },
+          ],
+        },
+      ];
+    });
+
+    await h.addSource();
+    await h.run();
+
+    const target = (await h.items("new"))[0]!;
+    expect(target.suggestedCampaignId).toBeNull();
+    expect(target.matches).toEqual([]);
+    expect(
+      h.db
+        .select()
+        .from(discoveredItemMatches)
+        .where(eq(discoveredItemMatches.itemId, target.id as string))
+        .all(),
+    ).toEqual([]);
+  });
+
+  it("blocks acceptance while matching is in flight", async () => {
+    let rejection: unknown;
+    h.setResponder(() => {
+      const item = h.db
+        .select()
+        .from(discoveredItems)
+        .where(eq(discoveredItems.workspaceId, h.workspaceId))
+        .get()!;
+      try {
+        acceptDiscoveredItem(h.db, h.workspaceId, item.id);
+      } catch (error) {
+        rejection = error;
+      }
+      return [
+        {
+          index: 0,
+          score: 88,
+          matches: [
+            {
+              personaId: h.fieldCto,
+              campaignId: h.campaignA,
+              score: 90,
+              reason: "Too late.",
+            },
+          ],
+        },
+      ];
+    });
+
+    await h.addSource();
+    await h.run();
+
+    expect(rejection).toBeInstanceOf(MatchingNotReadyError);
+    const [ready] = await h.items();
+    expect(ready).toMatchObject({
+      status: "new",
+      matchingState: "ready",
+      score: 88,
+    });
+    expect(
+      h.db
+        .select()
+        .from(signals)
+        .where(eq(signals.workspaceId, h.workspaceId))
+        .all(),
+    ).toEqual([]);
+  });
+
+  it("rolls back match replacement when one scoring write fails", async () => {
+    h.setResponder(() => [
+      {
+        index: 0,
+        score: 88,
+        matches: [
+          {
+            personaId: h.fieldCto,
+            campaignId: h.campaignA,
+            score: 90,
+            reason: "Original judgment.",
+          },
+        ],
+      },
+    ]);
+    await h.addSource();
+    await h.run();
+    const target = (await h.items()).find((item) => item.score === 88)!;
+    const before = h.db
+      .select()
+      .from(discoveredItemMatches)
+      .where(eq(discoveredItemMatches.itemId, target.id as string))
+      .all();
+
+    const bumped = await h.app.inject({
+      method: "PUT",
+      url: `/workspaces/${h.workspaceId}/personas/${h.fieldCto}`,
+      payload: {
+        name: "Field CTO",
+        topics: ["post-training", "evals"],
+      },
+    });
+    expect(bumped.statusCode).toBe(200);
+    h.db.run(sql.raw(`
+      CREATE TRIGGER reject_fault_scoring_match
+      BEFORE INSERT ON discovered_item_matches
+      WHEN NEW.reason = 'fault_after_first_match'
+      BEGIN
+        SELECT RAISE(ABORT, 'fault_after_first_match');
+      END
+    `));
+    h.setResponder((prompt) => {
+      const targetIndex = prompt
+        .split("ITEM ")
+        .slice(1)
+        .findIndex((block) => block.includes(target.title as string));
+      expect(targetIndex).toBeGreaterThanOrEqual(0);
+      return [
+        {
+          index: targetIndex,
+          score: 42,
+          matches: [
+            {
+              personaId: h.fieldCto,
+              campaignId: h.campaignA,
+              score: 90,
+              reason: "Replacement judgment.",
+            },
+            {
+              personaId: null,
+              campaignId: h.campaignB,
+              score: 80,
+              reason: "fault_after_first_match",
+            },
+          ],
+        },
+      ];
+    });
+
+    await h.run();
+
+    expect(
+      h.db
+        .select()
+        .from(discoveredItemMatches)
+        .where(eq(discoveredItemMatches.itemId, target.id as string))
+        .all(),
+    ).toEqual(before);
+    expect((await h.items()).find((item) => item.id === target.id)).toMatchObject({
+      score: 88,
+      scoreReason: "Original judgment.",
+    });
+  });
+
   it("keeps only the top-scoring five when the model over-suggests", async () => {
     h.setResponder(() => [
       {
@@ -691,7 +1382,7 @@ describe("multi-candidate scoring (Sprint 45)", () => {
   });
 });
 
-describe("re-score on config change (Sprint 45)", () => {
+describe("targeted re-score on config change (Sprint 49)", () => {
   let h: MatchingHarness;
 
   beforeEach(async () => {
@@ -711,15 +1402,6 @@ describe("re-score on config change (Sprint 45)", () => {
     await h.app.close();
   });
 
-  /** Push every item's watermark into the past so a config edit is strictly newer. */
-  function backdateScoredAt() {
-    h.db
-      .update(discoveredItems)
-      .set({ scoredAt: Date.now() - 60_000 })
-      .where(eq(discoveredItems.workspaceId, h.workspaceId))
-      .run();
-  }
-
   async function bumpPersona() {
     const res = await h.app.inject({
       method: "PUT",
@@ -734,7 +1416,6 @@ describe("re-score on config change (Sprint 45)", () => {
     await h.run();
     expect(h.scoringPrompts).toHaveLength(1);
 
-    backdateScoredAt();
     await bumpPersona();
     h.setResponder((prompt) => {
       const count = (prompt.match(/ITEM \d+:/g) ?? []).length;
@@ -762,7 +1443,6 @@ describe("re-score on config change (Sprint 45)", () => {
       url: `/workspaces/${h.workspaceId}/discovery/items/${top.id}/accept`,
     });
 
-    backdateScoredAt();
     await bumpPersona();
     h.setResponder((prompt) => {
       const count = (prompt.match(/ITEM \d+:/g) ?? []).length;

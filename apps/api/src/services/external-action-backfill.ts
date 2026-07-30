@@ -5,7 +5,7 @@ import {
   type ExternalActionKind,
   type ExternalActionPolicyRule,
 } from "@tuezday/contracts";
-import type { Db } from "../db";
+import type { Db, DbExecutor } from "../db";
 import { campaigns, externalActionPolicyRules, workspaces } from "../db/schema";
 
 function campaignRule(
@@ -27,7 +27,7 @@ function campaignRule(
 }
 
 function insertPolicy(
-  db: Db,
+  db: DbExecutor,
   input: {
     workspaceId: string;
     scope: "workspace" | "campaign";
@@ -64,7 +64,7 @@ export function ensureWorkspaceActionPolicies(db: Db, workspaceId: string): void
 
 /** Preserve existing campaign automation semantics while making them explicit. */
 export function ensureCampaignActionPolicies(
-  db: Db,
+  db: DbExecutor,
   workspaceId: string,
   campaignId: string,
   automationMode: AutomationMode,

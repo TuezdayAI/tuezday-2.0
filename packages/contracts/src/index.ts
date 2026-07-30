@@ -2201,6 +2201,16 @@ export type DiscoverySourceMode = (typeof DISCOVERY_SOURCE_MODES)[number];
 export const DISCOVERED_ITEM_STATUSES = ["new", "accepted", "skipped", "duplicate"] as const;
 export type DiscoveredItemStatus = (typeof DISCOVERED_ITEM_STATUSES)[number];
 
+export const DISCOVERY_MATCHING_STATES = [
+  "pending",
+  "running",
+  "ready",
+  "retryable_error",
+  "frozen",
+] as const;
+export type DiscoveryMatchingState =
+  (typeof DISCOVERY_MATCHING_STATES)[number];
+
 export const discoverySourceConfigSchema = z.object({
   feedUrl: z.string().url().optional(),
   query: z.string().trim().max(300).optional(),
@@ -2220,6 +2230,16 @@ export const discoverySourceConfigSchema = z.object({
 });
 export type DiscoverySourceConfig = z.infer<typeof discoverySourceConfigSchema>;
 
+export const discoveryCursorProgressSchema = z.object({
+  version: z.literal(1),
+  targetCount: z.number().int().nonnegative(),
+  backlog: z.boolean(),
+  lastCheckpointAt: z.number().int().nullable(),
+});
+export type DiscoveryCursorProgress = z.infer<
+  typeof discoveryCursorProgressSchema
+>;
+
 export const discoverySourceSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
@@ -2233,9 +2253,9 @@ export const discoverySourceSchema = z.object({
   // Connected sourcing (Sprint 46): the workspace connection this source reads
   // through. Null for keyless sources (RSS, Google News, keyless Reddit, ...).
   connectionId: z.string().uuid().nullable(),
-  // Best-effort provider pagination state keyed by mode; dedup on external ids
-  // remains the idempotency guarantee.
-  cursor: z.record(z.string(), z.unknown()),
+  // Safe progress summary. Provider cursors and target identities stay
+  // internal to the execution service.
+  cursor: discoveryCursorProgressSchema,
   // Rate-limit back-pressure: the source is not enqueued until this passes.
   backoffUntil: z.number().int().nullable(),
   lastAttemptedAt: z.number().int().nullable(),
@@ -2366,6 +2386,8 @@ export const discoveredItemSchema = z.object({
   scoreReason: z.string().nullable(),
   status: z.enum(DISCOVERED_ITEM_STATUSES),
   signalId: z.string().uuid().nullable(),
+  matchingState: z.enum(DISCOVERY_MATCHING_STATES),
+  matchingError: z.string().nullable(),
   // Sprint 45: every persona×campaign candidate this item matched (names
   // joined in for display). The item's suggested*/score fields stay the
   // top-scoring match, kept for triage sort order and accept pre-fill.
@@ -2378,6 +2400,29 @@ export const discoveredItemSchema = z.object({
   createdAt: z.number().int(),
 });
 export type DiscoveredItem = z.infer<typeof discoveredItemSchema>;
+
+export const discoveryRunSourceResultSchema = z.object({
+  sourceId: z.string().uuid(),
+  name: z.string().min(1),
+  fetched: z.number().int().nonnegative(),
+  new: z.number().int().nonnegative(),
+  error: z.string().optional(),
+});
+export type DiscoveryRunSourceResult = z.infer<
+  typeof discoveryRunSourceResultSchema
+>;
+
+export const discoveryRunSummarySchema = z.object({
+  busy: z.boolean(),
+  budgetExhausted: z.boolean(),
+  queued: z.number().int().nonnegative(),
+  processed: z.number().int().nonnegative(),
+  sources: z.array(discoveryRunSourceResultSchema),
+  scored: z.number().int().nonnegative(),
+});
+export type DiscoveryRunSummary = z.infer<
+  typeof discoveryRunSummarySchema
+>;
 
 // Discovery job ledger (Sprint 46): one row per source fetch attempt.
 // `/discovery/run` enqueues due sources and processes a bounded batch, so one

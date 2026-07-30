@@ -2,7 +2,7 @@ import type { TuezdayApp } from "../app";
 import type { Db } from "../db";
 import { apiKeyAuth, requireScope } from "../auth/api-key";
 import { createSignalInputSchema, createLaunchInputSchema } from "@tuezday/contracts";
-import { createSignal } from "../services/signals";
+import { SignalReferenceNotFoundError, createSignal } from "../services/signals";
 import { listDrafts, applyDraftAction, InvalidTransitionError, getDraft } from "../services/drafts";
 import { createLaunch } from "../services/launches";
 
@@ -21,8 +21,15 @@ export function registerPublicApiRoutes(app: TuezdayApp, db: Db): void {
           return reply.status(400).send({ error: "invalid_input" });
         }
         const actor = request.apiActor!;
-        const signal = createSignal(db, actor.workspaceId, parsed.data);
-        return reply.status(201).send(signal);
+        try {
+          const signal = createSignal(db, actor.workspaceId, parsed.data);
+          return reply.status(201).send(signal);
+        } catch (err) {
+          if (err instanceof SignalReferenceNotFoundError) {
+            return reply.status(404).send({ error: "related_object_not_found" });
+          }
+          throw err;
+        }
       }
     );
 

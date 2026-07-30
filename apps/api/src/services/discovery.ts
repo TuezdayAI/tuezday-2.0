@@ -1,88 +1,161 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, or, sql } from "drizzle-orm";
 import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  ne,
+  or,
+  sql,
+} from "drizzle-orm";
+import {
+  createDiscoverySourceInputSchema,
   type CreateDiscoverySourceInput,
   type DiscoveredItem,
   type DiscoveredItemMatch,
   type DiscoveredItemStatus,
+  type DiscoveryMatchingState,
   type DiscoverySource,
   type DiscoverySourceConfig,
   type DiscoverySourceStatus,
   type DiscoverySourceType,
   type Signal,
   type SignalSource,
+  type TrackedSocialAccount,
+  type TrackedSocialPlatform,
   type UpdateDiscoverySourceInput,
 } from "@tuezday/contracts";
 import type { ConnectorFabric } from "../connectors/fabric";
-import type { Db } from "../db";
+import type { Db, DbExecutor } from "../db";
 import {
   discoveredItems,
+  discoveredItemMatches,
   discoveryJobs,
   discoverySources,
   type DiscoveredItemRow,
   type DiscoverySourceRow,
 } from "../db/schema";
 import {
-  fetchSourceItems,
+  fetchSourcePage,
   isLiveSourceType,
-  type Fetcher,
   type RawDiscoveredItem,
 } from "../discovery/adapters";
 import {
+  ConnectedDiscoveryBudgetError,
+  CursorInvalidError,
   PermissionRequiredError,
   RateLimitedError,
-  fetchConnectedSourceItems,
+  fetchConnectedSourcePage,
+  getConnectedDiscoveryErrorMetrics,
+  type ResolvedTrackedAccount,
 } from "../discovery/connected-adapters";
 import type { IntentProvider } from "../discovery/intent";
-import type { LlmGateway } from "../llm/gateway";
-import { getConnection } from "./connections";
-import { resolveTrackedAccounts } from "./tracked-social-accounts";
 import {
-  DISCOVERY_JOB_BATCH_SIZE,
-  claimDiscoveryJobs,
+  checkpointPage,
+  cursorMode,
+  readCursor,
+  reconcileTargets,
+  safeCursorProgress,
+  targetsForSource,
+  type DiscoveryCursorV1,
+  type DiscoveryPage,
+  type DiscoveryPageReader,
+} from "../discovery/paging";
+import type { LlmGateway } from "../llm/gateway";
+import { BoundedJsonError } from "../connectors/bounded-json";
+import {
+  SafeFetchError,
+  serializeSafeFetchError,
+  type SafeFetchService,
+} from "../safe-fetch";
+import { getConnection } from "./connections";
+import {
+  DiscoveryReferenceNotFoundError,
+  requireTrackedAccounts,
+} from "./tracked-social-accounts";
+import {
   completeDiscoveryJob,
-  enqueueDueDiscoveryJobs,
   failDiscoveryJob,
-  releaseStaleDiscoveryJobs,
+  type DiscoveryJobClaim,
 } from "./discovery-jobs";
+import { DATABASE_NOW_MS } from "./task-leases";
 import {
   brainDigest,
-  buildMatchingContext,
-  buildMatchingPrompt,
-  clampScore,
-  getMatchingConfigVersion,
   insertSignalMatch,
   listItemMatches,
   listItemMatchesForItems,
   listSignalMatches,
-  parseEntryMatches,
   parseJsonArray,
-  replaceItemMatches,
+  revalidateSignalMatches,
 } from "./matching";
 import { listPersonas } from "./personas";
-import { createSignal } from "./signals";
+import { insertSignalRow, readSignal } from "./signals";
 
 // ---------------------------------------------------------------------------
 // Sources
 // ---------------------------------------------------------------------------
 
 function rowToSource(row: DiscoverySourceRow): DiscoverySource {
+  const config = JSON.parse(row.configJson) as DiscoverySourceConfig;
+  const sourceForMode = {
+    type: row.type as DiscoverySourceType,
+    config,
+  } as DiscoverySource;
+  const cursorState = readCursor(row.cursorJson, cursorMode(sourceForMode));
   return {
     id: row.id,
     workspaceId: row.workspaceId,
     type: row.type as DiscoverySourceType,
     name: row.name,
-    config: JSON.parse(row.configJson) as DiscoverySourceConfig,
+    config,
     enabled: row.enabled,
     status: row.status as DiscoverySourceStatus,
     lastError: row.lastError,
     lastFetchedAt: row.lastFetchedAt,
     connectionId: row.connectionId,
-    cursor: JSON.parse(row.cursorJson) as Record<string, unknown>,
+    cursor: safeCursorProgress(cursorState, row.lastFetchedAt),
     backoffUntil: row.backoffUntil,
     lastAttemptedAt: row.lastAttemptedAt,
     createdAt: row.createdAt,
   };
+}
+
+export interface DiscoverySourceExecution extends DiscoverySource {
+  executionVersion: number;
+  cursorState: DiscoveryCursorV1;
+}
+
+function rowToSourceExecution(
+  row: DiscoverySourceRow,
+): DiscoverySourceExecution {
+  const source = rowToSource(row);
+  return {
+    ...source,
+    executionVersion: row.executionVersion,
+    cursorState: readCursor(row.cursorJson, cursorMode(source)),
+  };
+}
+
+export function getDiscoverySourceExecution(
+  db: DbExecutor,
+  workspaceId: string,
+  sourceId: string,
+): DiscoverySourceExecution | undefined {
+  const row = db
+    .select()
+    .from(discoverySources)
+    .where(
+      and(
+        eq(discoverySources.workspaceId, workspaceId),
+        eq(discoverySources.id, sourceId),
+      ),
+    )
+    .get();
+  return row ? rowToSourceExecution(row) : undefined;
 }
 
 /** What a connected source targets, for default names ("@rival", "#tag", …). */
@@ -215,6 +288,51 @@ function validateSourceConnection(
   }
 }
 
+function trackedAccountIds(config: DiscoverySourceConfig): string[] {
+  return [
+    ...(config.trackedAccountId ? [config.trackedAccountId] : []),
+    ...(config.trackedAccountIds ?? []),
+  ];
+}
+
+function trackedPlatformForSource(
+  type: DiscoverySourceType,
+): TrackedSocialPlatform | undefined {
+  switch (type) {
+    case "x":
+      return "x";
+    case "linkedin":
+      return "linkedin";
+    case "instagram":
+      return "instagram";
+    case "reddit":
+      return "reddit";
+    default:
+      return undefined;
+  }
+}
+
+function requireSourceTrackedAccounts(
+  db: DbExecutor,
+  workspaceId: string,
+  type: DiscoverySourceType,
+  config: DiscoverySourceConfig,
+): TrackedSocialAccount[] {
+  const accounts = requireTrackedAccounts(
+    db,
+    workspaceId,
+    trackedAccountIds(config),
+  );
+  const expectedPlatform = trackedPlatformForSource(type);
+  if (
+    expectedPlatform &&
+    accounts.some((account) => account.platform !== expectedPlatform)
+  ) {
+    throw new DiscoveryReferenceNotFoundError();
+  }
+  return accounts;
+}
+
 export function createDiscoverySource(
   db: Db,
   workspaceId: string,
@@ -222,6 +340,11 @@ export function createDiscoverySource(
 ): DiscoverySource {
   const connectionId = input.connectionId ?? null;
   validateSourceConnection(db, workspaceId, input.type, input.config, connectionId);
+  requireSourceTrackedAccounts(db, workspaceId, input.type, input.config);
+  const runtimeState = deriveDiscoverySourceRuntimeState(
+    input.type,
+    connectionId,
+  );
   const row: DiscoverySourceRow = {
     id: randomUUID(),
     workspaceId,
@@ -229,15 +352,12 @@ export function createDiscoverySource(
     name: input.name ?? defaultSourceName(input),
     configJson: JSON.stringify(input.config),
     enabled: true,
-    // A validated connection makes any source type live; keyless x/linkedin
-    // stay parked until credentials exist.
-    status: connectionId || isLiveSourceType(input.type) ? "active" : "needs_api_key",
-    lastError: null,
+    ...runtimeState,
     lastFetchedAt: null,
     connectionId,
     cursorJson: "{}",
-    backoffUntil: null,
     lastAttemptedAt: null,
+    executionVersion: 1,
     createdAt: Date.now(),
   };
   db.insert(discoverySources).values(row).run();
@@ -255,7 +375,7 @@ export function listDiscoverySources(db: Db, workspaceId: string): DiscoverySour
 }
 
 export function getDiscoverySource(
-  db: Db,
+  db: DbExecutor,
   workspaceId: string,
   sourceId: string,
 ): DiscoverySource | undefined {
@@ -267,6 +387,38 @@ export function getDiscoverySource(
   return row ? rowToSource(row) : undefined;
 }
 
+/**
+ * Apply a PATCH to the existing source in memory, then run the canonical
+ * create schema over the complete result. This prevents a syntactically valid
+ * partial body from producing an invalid stored source.
+ */
+export function validateDiscoverySourceTransition(
+  existing: DiscoverySource,
+  patch: UpdateDiscoverySourceInput,
+): CreateDiscoverySourceInput {
+  return createDiscoverySourceInputSchema.parse({
+    type: existing.type,
+    name: patch.name ?? existing.name,
+    config: patch.config ?? existing.config,
+    connectionId:
+      patch.connectionId === undefined
+        ? existing.connectionId
+        : patch.connectionId,
+  });
+}
+
+/** Runtime state is derived from the validated resulting source, never copied. */
+export function deriveDiscoverySourceRuntimeState(
+  type: DiscoverySourceType,
+  connectionId: string | null,
+): Pick<DiscoverySourceRow, "status" | "lastError" | "backoffUntil"> {
+  return {
+    status: connectionId || isLiveSourceType(type) ? "active" : "needs_api_key",
+    lastError: null,
+    backoffUntil: null,
+  };
+}
+
 export function updateDiscoverySource(
   db: Db,
   workspaceId: string,
@@ -275,24 +427,91 @@ export function updateDiscoverySource(
 ): DiscoverySource | undefined {
   const existing = getDiscoverySource(db, workspaceId, sourceId);
   if (!existing) return undefined;
-  const nextConfig = input.config ?? existing.config;
-  // undefined keeps the current connection; null detaches it.
-  const nextConnectionId =
-    input.connectionId === undefined ? existing.connectionId : input.connectionId;
-  validateSourceConnection(db, workspaceId, existing.type, nextConfig, nextConnectionId);
+  const transition = validateDiscoverySourceTransition(existing, input);
+  const nextConnectionId = transition.connectionId ?? null;
+  validateSourceConnection(
+    db,
+    workspaceId,
+    transition.type,
+    transition.config,
+    nextConnectionId,
+  );
+  requireSourceTrackedAccounts(
+    db,
+    workspaceId,
+    transition.type,
+    transition.config,
+  );
+  const nextEnabled = input.enabled ?? existing.enabled;
+  const materiallyChanged =
+    JSON.stringify(transition.config) !== JSON.stringify(existing.config) ||
+    nextConnectionId !== existing.connectionId;
+  const executionChanged =
+    materiallyChanged || nextEnabled !== existing.enabled;
   const updated = {
-    name: input.name ?? existing.name,
-    enabled: input.enabled ?? existing.enabled,
-    configJson: JSON.stringify(nextConfig),
+    name: transition.name ?? existing.name,
+    enabled: nextEnabled,
+    configJson: JSON.stringify(transition.config),
     connectionId: nextConnectionId,
+    ...deriveDiscoverySourceRuntimeState(
+      transition.type,
+      nextConnectionId,
+    ),
   };
-  db.update(discoverySources).set(updated).where(eq(discoverySources.id, sourceId)).run();
-  return getDiscoverySource(db, workspaceId, sourceId);
+  return db.transaction((tx) => {
+    tx.update(discoverySources)
+      .set(
+        executionChanged
+          ? {
+              ...updated,
+              executionVersion: sql`
+                ${discoverySources.executionVersion} + 1
+              `,
+            }
+          : updated,
+      )
+      .where(
+        and(
+          eq(discoverySources.workspaceId, workspaceId),
+          eq(discoverySources.id, sourceId),
+        ),
+      )
+      .run();
+    if (executionChanged) {
+      tx.update(discoveryJobs)
+        .set({
+          status: "skipped",
+          finishedAt: Date.now(),
+          error: "source_version_changed",
+          lockedAt: null,
+          leaseOwner: null,
+          leaseExpiresAt: null,
+          heartbeatAt: null,
+        })
+        .where(
+          and(
+            eq(discoveryJobs.workspaceId, workspaceId),
+            eq(discoveryJobs.sourceId, sourceId),
+            inArray(discoveryJobs.status, ["queued", "running"]),
+          ),
+        )
+        .run();
+    }
+    return getDiscoverySource(tx, workspaceId, sourceId);
+  });
 }
 
 export function deleteDiscoverySource(db: Db, workspaceId: string, sourceId: string): boolean {
   if (!getDiscoverySource(db, workspaceId, sourceId)) return false;
-  db.delete(discoverySources).where(eq(discoverySources.id, sourceId)).run();
+  db
+    .delete(discoverySources)
+    .where(
+      and(
+        eq(discoverySources.workspaceId, workspaceId),
+        eq(discoverySources.id, sourceId),
+      ),
+    )
+    .run();
   return true;
 }
 
@@ -305,9 +524,18 @@ function rowToItem(
   matches: DiscoveredItemMatch[],
   duplicateCount: number,
 ): DiscoveredItem {
+  const {
+    matchingVersion: _matchingVersion,
+    matchingInputFingerprint: _matchingInputFingerprint,
+    matchingLeaseOwner: _matchingLeaseOwner,
+    matchingLeaseExpiresAt: _matchingLeaseExpiresAt,
+    matchingHeartbeatAt: _matchingHeartbeatAt,
+    ...publicRow
+  } = row;
   return {
-    ...row,
+    ...publicRow,
     status: row.status as DiscoveredItemStatus,
+    matchingState: row.matchingState as DiscoveryMatchingState,
     matches,
     duplicateCount,
   };
@@ -346,6 +574,7 @@ export function listDiscoveredItems(
     .all();
   const matchesByItem = listItemMatchesForItems(
     db,
+    workspaceId,
     rows.map((r) => r.id),
   );
   const duplicateCounts = countDuplicatesByCanonical(db, workspaceId);
@@ -355,7 +584,7 @@ export function listDiscoveredItems(
 }
 
 export function getDiscoveredItem(
-  db: Db,
+  db: DbExecutor,
   workspaceId: string,
   itemId: string,
 ): DiscoveredItem | undefined {
@@ -369,9 +598,18 @@ export function getDiscoveredItem(
     db
       .select({ count: sql<number>`COUNT(*)` })
       .from(discoveredItems)
-      .where(eq(discoveredItems.duplicateOfId, itemId))
+      .where(
+        and(
+          eq(discoveredItems.workspaceId, workspaceId),
+          eq(discoveredItems.duplicateOfId, itemId),
+        ),
+      )
       .get()?.count ?? 0;
-  return rowToItem(row, listItemMatches(db, itemId), duplicateCount);
+  return rowToItem(
+    row,
+    listItemMatches(db, workspaceId, itemId),
+    duplicateCount,
+  );
 }
 
 export interface DuplicateItemRef {
@@ -423,40 +661,185 @@ export class ItemNotTriagableError extends Error {
   }
 }
 
+export class MatchingNotReadyError extends Error {
+  constructor() {
+    super("matching_not_ready");
+    this.name = "MatchingNotReadyError";
+  }
+}
+
+export interface DiscoveryAcceptanceHooks {
+  afterSignalInsert?(): void;
+  afterMatchInsert?(index: number): void;
+  afterItemUpdate?(): void;
+}
+
+function requireCurrentMatchReferences(
+  db: DbExecutor,
+  workspaceId: string,
+  matches: Array<{
+    personaId: string | null;
+    campaignId: string | null;
+    score: number;
+    reason: string;
+  }>,
+): void {
+  const current = revalidateSignalMatches(db, workspaceId, matches);
+  if (
+    current.length !== matches.length ||
+    current.some(
+      (match, index) =>
+        match.personaId !== matches[index]?.personaId ||
+        match.campaignId !== matches[index]?.campaignId,
+    )
+  ) {
+    throw new DiscoveryReferenceNotFoundError();
+  }
+}
+
 export function acceptDiscoveredItem(
   db: Db,
   workspaceId: string,
-  item: DiscoveredItem,
+  itemId: string,
+  hooks?: DiscoveryAcceptanceHooks,
 ): { item: DiscoveredItem; signal: Signal } {
-  if (item.status !== "new") throw new ItemNotTriagableError(item.status);
-  const source = getDiscoverySource(db, workspaceId, item.sourceId);
-  const signal = createSignal(db, workspaceId, {
-    content: item.summary ? `${item.title}\n\n${item.summary}` : item.title,
-    source: source ? SIGNAL_SOURCE_BY_TYPE[source.type] : "other",
-    sourceUrl: item.url || undefined,
-    suggestedPersonaId: item.suggestedPersonaId ?? undefined,
-    suggestedCampaignId: item.suggestedCampaignId ?? undefined,
+  return db.transaction((tx) => {
+    const item = getDiscoveredItem(tx, workspaceId, itemId);
+    if (!item) throw new DiscoveryReferenceNotFoundError();
+    if (item.status !== "new") throw new ItemNotTriagableError(item.status);
+    if (item.matchingState !== "ready") {
+      throw new MatchingNotReadyError();
+    }
+    const source = getDiscoverySource(tx, workspaceId, item.sourceId);
+    if (!source) throw new DiscoveryReferenceNotFoundError();
+    const foreignItemMatch = tx
+      .select({ id: discoveredItemMatches.id })
+      .from(discoveredItemMatches)
+      .where(
+        and(
+          eq(discoveredItemMatches.itemId, item.id),
+          ne(discoveredItemMatches.workspaceId, workspaceId),
+        ),
+      )
+      .get();
+    if (foreignItemMatch) throw new DiscoveryReferenceNotFoundError();
+    const itemMatches = tx
+      .select({
+        personaId: discoveredItemMatches.personaId,
+        campaignId: discoveredItemMatches.campaignId,
+        score: discoveredItemMatches.score,
+        reason: discoveredItemMatches.reason,
+      })
+      .from(discoveredItemMatches)
+      .where(
+        and(
+          eq(discoveredItemMatches.workspaceId, workspaceId),
+          eq(discoveredItemMatches.itemId, item.id),
+        ),
+      )
+      .orderBy(
+        desc(discoveredItemMatches.score),
+        asc(discoveredItemMatches.createdAt),
+      )
+      .all();
+    const references = [...itemMatches];
+    if (
+      (item.suggestedPersonaId || item.suggestedCampaignId) &&
+      !references.some(
+        (match) =>
+          match.personaId === item.suggestedPersonaId &&
+          match.campaignId === item.suggestedCampaignId,
+      )
+    ) {
+      references.push({
+        personaId: item.suggestedPersonaId,
+        campaignId: item.suggestedCampaignId,
+        score: item.score ?? 0,
+        reason: item.scoreReason ?? "",
+      });
+    }
+    requireCurrentMatchReferences(tx, workspaceId, references);
+
+    const signalInput = {
+      content: item.summary ? `${item.title}\n\n${item.summary}` : item.title,
+      source: SIGNAL_SOURCE_BY_TYPE[source.type],
+      sourceUrl: item.url || undefined,
+      suggestedPersonaId: item.suggestedPersonaId ?? undefined,
+      suggestedCampaignId: item.suggestedCampaignId ?? undefined,
+    };
+    const signalRow = insertSignalRow(tx, workspaceId, signalInput);
+    hooks?.afterSignalInsert?.();
+    itemMatches.forEach((match, index) => {
+      insertSignalMatch(tx, workspaceId, signalRow.id, match);
+      hooks?.afterMatchInsert?.(index);
+    });
+    tx.update(discoveredItems)
+      .set({
+        status: "accepted",
+        signalId: signalRow.id,
+        matchingState: "frozen",
+        matchingLeaseOwner: null,
+        matchingLeaseExpiresAt: null,
+        matchingHeartbeatAt: null,
+      })
+      .where(
+        and(
+          eq(discoveredItems.workspaceId, workspaceId),
+          eq(discoveredItems.id, item.id),
+          eq(discoveredItems.status, "new"),
+          eq(discoveredItems.matchingState, "ready"),
+        ),
+      )
+      .run();
+    hooks?.afterItemUpdate?.();
+    const signal = readSignal(tx, workspaceId, signalRow.id);
+    if (!signal) throw new Error("Accepted discovery signal could not be read.");
+    return {
+      item: {
+        ...item,
+        matches: signal.matches,
+        status: "accepted",
+        signalId: signal.id,
+        matchingState: "frozen",
+      },
+      signal,
+    };
   });
-  // Carry the full candidate list forward (Sprint 45): every scored
-  // persona×campaign pairing becomes a signal_matches row — no LLM call,
-  // automation routes on what discovery already judged.
-  for (const match of listItemMatches(db, item.id)) {
-    insertSignalMatch(db, workspaceId, signal.id, match);
-  }
-  db.update(discoveredItems)
-    .set({ status: "accepted", signalId: signal.id })
-    .where(eq(discoveredItems.id, item.id))
-    .run();
-  return {
-    item: { ...item, status: "accepted", signalId: signal.id },
-    signal: { ...signal, matches: listSignalMatches(db, signal.id) },
-  };
 }
 
-export function skipDiscoveredItem(db: Db, item: DiscoveredItem): DiscoveredItem {
-  if (item.status !== "new") throw new ItemNotTriagableError(item.status);
-  db.update(discoveredItems).set({ status: "skipped" }).where(eq(discoveredItems.id, item.id)).run();
-  return { ...item, status: "skipped" };
+export function skipDiscoveredItem(
+  db: Db,
+  workspaceId: string,
+  item: DiscoveredItem,
+): DiscoveredItem {
+  return db.transaction((tx) => {
+    const current = getDiscoveredItem(tx, workspaceId, item.id);
+    if (!current) throw new DiscoveryReferenceNotFoundError();
+    if (current.status !== "new") {
+      throw new ItemNotTriagableError(current.status);
+    }
+    tx.update(discoveredItems)
+      .set({
+        status: "skipped",
+        matchingState: "frozen",
+        matchingLeaseOwner: null,
+        matchingLeaseExpiresAt: null,
+        matchingHeartbeatAt: null,
+      })
+      .where(
+        and(
+          eq(discoveredItems.workspaceId, workspaceId),
+          eq(discoveredItems.id, item.id),
+          eq(discoveredItems.status, "new"),
+        ),
+      )
+      .run();
+    return {
+      ...current,
+      status: "skipped",
+      matchingState: "frozen",
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -479,8 +862,6 @@ export interface DiscoveryRunResult {
   sources: SourceRunResult[];
   scored: number;
 }
-
-const SCORE_BATCH_SIZE = 10;
 
 // ---------------------------------------------------------------------------
 // Cross-source dedup hashing (Sprint 45)
@@ -527,10 +908,11 @@ export function hashContent(title: string, summary: string): string {
  * content hash — the row a fresh cross-source copy should link to.
  */
 function findCanonicalItem(
-  db: Db,
+  db: DbExecutor,
   workspaceId: string,
   urlHash: string | null,
   contentHash: string,
+  excludeId?: string,
 ): { id: string } | undefined {
   const hashMatches = [eq(discoveredItems.contentHash, contentHash)];
   if (urlHash) hashMatches.push(eq(discoveredItems.urlHash, urlHash));
@@ -542,92 +924,12 @@ function findCanonicalItem(
         eq(discoveredItems.workspaceId, workspaceId),
         isNull(discoveredItems.duplicateOfId),
         or(...hashMatches),
+        excludeId ? ne(discoveredItems.id, excludeId) : undefined,
       ),
     )
     .orderBy(asc(discoveredItems.createdAt))
     .limit(1)
     .get();
-}
-
-// ---------------------------------------------------------------------------
-// Scoring (Sprint 45: multi-candidate, re-scored on persona/campaign change)
-// ---------------------------------------------------------------------------
-
-async function scoreUnscoredItems(
-  db: Db,
-  llm: LlmGateway,
-  workspaceId: string,
-  workspaceName: string,
-): Promise<number> {
-  // Re-score watermark: a still-new item whose last judgment predates the
-  // newest persona/campaign edit gets re-judged; triaged items are frozen.
-  const configVersion = getMatchingConfigVersion(db, workspaceId);
-  const unscored = db
-    .select()
-    .from(discoveredItems)
-    .where(
-      and(
-        eq(discoveredItems.workspaceId, workspaceId),
-        eq(discoveredItems.status, "new"),
-        isNull(discoveredItems.duplicateOfId),
-        or(isNull(discoveredItems.scoredAt), lt(discoveredItems.scoredAt, configVersion)),
-      ),
-    )
-    .all();
-  if (unscored.length === 0) return 0;
-
-  const digest = brainDigest(db, workspaceId);
-  const ctx = buildMatchingContext(db, workspaceId);
-
-  let scoredCount = 0;
-  for (let offset = 0; offset < unscored.length; offset += SCORE_BATCH_SIZE) {
-    const batch = unscored.slice(offset, offset + SCORE_BATCH_SIZE);
-    const itemsBlock = batch
-      .map(
-        (item, i) =>
-          `ITEM ${i}: ${item.title}\n${item.summary ? item.summary.slice(0, 300) : "(no summary)"}`,
-      )
-      .join("\n\n");
-    const prompt = buildMatchingPrompt({ workspaceName, digest, ctx, itemsBlock });
-
-    try {
-      const result = await llm.generate({ prompt });
-      const entries = parseJsonArray(result.text);
-      if (!entries) continue; // scoring assists, never gates: leave unscored
-      const scoredAt = Date.now();
-      for (const raw of entries) {
-        if (typeof raw !== "object" || raw === null) continue;
-        const entry = raw as Record<string, unknown>;
-        if (typeof entry.index !== "number" || typeof entry.score !== "number") continue;
-        const item = batch[entry.index];
-        if (!item) continue;
-        const matches = parseEntryMatches(entry, ctx);
-        const best = matches[0];
-        replaceItemMatches(db, workspaceId, item.id, matches);
-        db.update(discoveredItems)
-          .set({
-            // Overall relevance (the model's top-level judgment) drives the
-            // triage sort; the convenience fields mirror the best candidate.
-            score: clampScore(entry.score),
-            suggestedPersonaId: best?.personaId ?? null,
-            suggestedCampaignId: best?.campaignId ?? null,
-            scoreReason: best
-              ? best.reason
-              : typeof entry.reason === "string"
-                ? entry.reason.slice(0, 500)
-                : null,
-            scoredAt,
-          })
-          .where(eq(discoveredItems.id, item.id))
-          .run();
-        scoredCount += 1;
-      }
-    } catch {
-      // Gateway failure mid-run: items stay unscored and triagable.
-      continue;
-    }
-  }
-  return scoredCount;
 }
 
 // Rate-limit back-pressure (Sprint 46): consecutive rate_limited failures
@@ -652,99 +954,226 @@ function rateLimitBackoffMs(db: Db, sourceId: string): number {
   return Math.min(RATE_LIMIT_BACKOFF_BASE_MS * 2 ** streak, RATE_LIMIT_BACKOFF_MAX_MS);
 }
 
-/** Fetch a connected source through its workspace connection (Sprint 46). */
-async function fetchViaConnection(
-  db: Db,
-  fabric: ConnectorFabric,
-  workspaceId: string,
-  source: DiscoverySource,
-): Promise<RawDiscoveredItem[]> {
-  const connection = source.connectionId
-    ? getConnection(db, workspaceId, source.connectionId)
-    : undefined;
-  if (!connection || connection.status !== "connected") {
-    // The message doubles as the stable lastError value the UI keys on.
-    throw new Error("connection_disconnected");
-  }
-  const trackedIds = [
-    ...(source.config.trackedAccountId ? [source.config.trackedAccountId] : []),
-    ...(source.config.trackedAccountIds ?? []),
-  ];
-  const trackedAccounts = resolveTrackedAccounts(db, workspaceId, trackedIds).map((a) => ({
-    handle: a.handle,
-    externalId: a.externalId,
-  }));
-  return fetchConnectedSourceItems({ source, connection, fabric, trackedAccounts });
+export interface SourceBudget {
+  deadlineMs: number;
+  maxItems: number;
+  maxPages: number;
+  maxCalls: number;
+  maxResponseBytes: number;
+  maxBytes: number;
 }
 
-export async function runDiscovery(
-  db: Db,
-  llm: LlmGateway,
-  fetcher: Fetcher,
-  intentProvider: IntentProvider,
-  fabric: ConnectorFabric,
-  workspaceId: string,
-  workspaceName: string,
-): Promise<DiscoveryRunResult> {
-  // Job ledger (Sprint 46): enqueue every due source, then process a bounded
-  // batch. Leftover jobs stay queued for the next run, so one slow source (or
-  // many sources) never serializes the whole workspace in a single call.
-  const now = Date.now();
-  releaseStaleDiscoveryJobs(db, now);
-  const eligible = listDiscoverySources(db, workspaceId).filter(
-    (s) =>
-      s.enabled &&
-      (s.status !== "needs_api_key" ||
-        (s.type === "intent" && intentProvider.isConfigured())),
-  );
-  const queued = enqueueDueDiscoveryJobs(db, workspaceId, eligible, now);
-  const claimed = claimDiscoveryJobs(db, workspaceId, DISCOVERY_JOB_BATCH_SIZE, now);
+export interface DiscoverySourceDependencies {
+  db: Db;
+  safeFetch: SafeFetchService;
+  intentProvider: IntentProvider;
+  fabric: ConnectorFabric;
+  pageReader?: DiscoveryPageReader;
+}
 
-  const results: SourceRunResult[] = [];
-  for (const job of claimed) {
-    const source = getDiscoverySource(db, workspaceId, job.sourceId);
-    if (!source) {
-      failDiscoveryJob(db, job.id, "source_missing", Date.now());
-      continue;
+export interface DiscoverySourceMetrics {
+  code: string;
+  calls: number;
+  pages: number;
+  bytes: number;
+  items: number;
+  continuationPending: boolean;
+  replay: boolean;
+}
+
+const sourceResultMetrics = new WeakMap<
+  SourceRunResult,
+  DiscoverySourceMetrics
+>();
+
+export function getDiscoverySourceMetrics(
+  result: SourceRunResult,
+): DiscoverySourceMetrics {
+  return (
+    sourceResultMetrics.get(result) ?? {
+      code: result.error ?? "completed",
+      calls: 0,
+      pages: 0,
+      bytes: 0,
+      items: result.fetched,
+      continuationPending: false,
+      replay: false,
     }
-    try {
-      const fetched = source.connectionId
-        ? await fetchViaConnection(db, fabric, workspaceId, source)
-        : source.type === "intent"
-          ? await intentProvider.fetchSignals(source.config)
-          : await fetchSourceItems(source.type, source.config, fetcher);
-      const existing = new Set(
-        fetched.length
-          ? db
-              .select({ externalId: discoveredItems.externalId })
-              .from(discoveredItems)
-              .where(
-                and(
-                  eq(discoveredItems.sourceId, source.id),
-                  inArray(
-                    discoveredItems.externalId,
-                    fetched.map((f) => f.externalId),
-                  ),
-                ),
-              )
-              .all()
-              .map((r) => r.externalId)
-          : [],
+  );
+}
+
+async function defaultDiscoveryPageReader(
+  input: Parameters<DiscoveryPageReader>[0],
+) {
+  if (input.source.connectionId) {
+    const connection = getConnection(
+      input.db,
+      input.source.workspaceId,
+      input.source.connectionId,
+    );
+    if (!connection || connection.status !== "connected") {
+      throw new Error("connection_disconnected");
+    }
+    return fetchConnectedSourcePage({
+      source: input.source,
+      connection,
+      fabric: input.fabric,
+      trackedAccounts: input.trackedAccounts,
+      target: input.target,
+      checkpoint: input.checkpoint,
+      signal: input.signal,
+      maxItems: input.maxItems,
+      maxCalls: input.maxCalls,
+      maxResponseBytes: input.maxResponseBytes,
+      maxBytes: input.maxBytes,
+    });
+  }
+  if (input.source.type === "intent") {
+    const items = await input.intentProvider.fetchSignals(
+      input.source.config,
+      input.signal,
+    );
+    return {
+      targetKey: input.target.key,
+      items: items.slice(0, input.maxItems),
+      nextToken: null,
+      reachedBoundary: false,
+      exhausted: true,
+      callsUsed: 1,
+      decodedBytes: 0,
+    };
+  }
+  return fetchSourcePage({
+    source: input.source,
+    target: input.target,
+    checkpoint: input.checkpoint,
+    signal: input.signal,
+    maxItems: input.maxItems,
+    maxResponseBytes: input.maxResponseBytes,
+    safeFetch: input.safeFetch,
+  });
+}
+
+function sourceClaimIsLive(
+  db: DbExecutor,
+  claim: DiscoveryJobClaim,
+): boolean {
+  return Boolean(
+    db
+      .select({ id: discoveryJobs.id })
+      .from(discoveryJobs)
+      .where(
+        and(
+          eq(discoveryJobs.id, claim.id),
+          eq(discoveryJobs.status, "running"),
+          eq(discoveryJobs.leaseOwner, claim.leaseOwner),
+          eq(discoveryJobs.leaseVersion, claim.leaseVersion),
+          gt(discoveryJobs.leaseExpiresAt, DATABASE_NOW_MS),
+        ),
+      )
+      .get(),
+  );
+}
+
+export interface DiscoveryCheckpointHooks {
+  afterOccurrenceInsert?(index: number): void;
+  afterCanonicalization?(): void;
+  beforeCursorUpdate?(): void;
+}
+
+class DiscoveryCheckpointFenceError extends Error {
+  constructor() {
+    super("discovery_checkpoint_fence_changed");
+    this.name = "DiscoveryCheckpointFenceError";
+  }
+}
+
+export function persistDiscoveryPage(
+  db: Db,
+  input: {
+    claim: DiscoveryJobClaim;
+    source: DiscoverySourceExecution;
+    page: DiscoveryPage;
+    cursor: DiscoveryCursorV1;
+    hooks?: DiscoveryCheckpointHooks;
+  },
+): { inserted: number; fetched: number } | null {
+  if (
+    input.page.items.some(
+      (item) =>
+        typeof item.externalId !== "string" ||
+        item.externalId.trim() === "",
+    )
+  ) {
+    throw new Error("adapter_missing_external_id");
+  }
+
+  try {
+    return db.transaction((tx) => {
+      const { claim, source, page, cursor, hooks } = input;
+      if (!sourceClaimIsLive(tx, claim)) {
+        throw new DiscoveryCheckpointFenceError();
+      }
+      const currentSourceRow = tx
+        .select()
+        .from(discoverySources)
+        .where(
+          and(
+            eq(discoverySources.workspaceId, claim.workspaceId),
+            eq(discoverySources.id, source.id),
+            eq(
+              discoverySources.executionVersion,
+              claim.sourceExecutionVersion,
+            ),
+          ),
+        )
+        .get();
+      if (!currentSourceRow) throw new DiscoveryCheckpointFenceError();
+      const currentSource = rowToSourceExecution(currentSourceRow);
+      let currentTargets: ReturnType<typeof targetsForSource>;
+      try {
+        const currentTrackedAccounts = requireSourceTrackedAccounts(
+          tx,
+          claim.workspaceId,
+          currentSource.type,
+          currentSource.config,
+        ).map((account) => ({
+          id: account.id,
+          handle: account.handle,
+          externalId: account.externalId,
+          enabled: account.enabled,
+          updatedAt: account.updatedAt,
+        }));
+        currentTargets = targetsForSource(
+          currentSource,
+          currentTrackedAccounts,
+        );
+      } catch {
+        throw new DiscoveryCheckpointFenceError();
+      }
+      const currentTarget = currentTargets.find(
+        (target) => target.key === page.targetKey,
       );
-      const fresh = fetched.filter((f) => f.externalId && !existing.has(f.externalId));
-      const fetchedAt = Date.now();
-      for (const item of fresh) {
-        // Cross-source dedup (Sprint 45): a story already seen via another
-        // source is kept but linked to the canonical item — it never enters
-        // triage and is never scored. Inserts are sequential, so two copies in
-        // the same batch still resolve (the second sees the first).
+      const checkpoint = cursor.targets[page.targetKey];
+      if (
+        !currentTarget ||
+        !checkpoint ||
+        currentTarget.fingerprint !== checkpoint.targetFingerprint
+      ) {
+        throw new DiscoveryCheckpointFenceError();
+      }
+
+      let inserted = 0;
+      const checkpointAt = Date.now();
+      for (const [index, item] of page.items.entries()) {
+        const id = randomUUID();
         const urlHash = hashUrl(item.url);
         const contentHash = hashContent(item.title, item.summary);
-        const canonical = findCanonicalItem(db, workspaceId, urlHash, contentHash);
-        db.insert(discoveredItems)
+        const insertedRow = tx
+          .insert(discoveredItems)
           .values({
-            id: randomUUID(),
-            workspaceId,
+            id,
+            workspaceId: claim.workspaceId,
             sourceId: source.id,
             externalId: item.externalId,
             title: item.title,
@@ -755,70 +1184,599 @@ export async function runDiscovery(
             suggestedPersonaId: null,
             suggestedCampaignId: null,
             scoreReason: null,
-            status: canonical ? "duplicate" : "new",
+            status: "new",
             signalId: null,
             scoredAt: null,
             urlHash,
             contentHash,
-            duplicateOfId: canonical?.id ?? null,
-            createdAt: fetchedAt,
+            duplicateOfId: null,
+            createdAt: checkpointAt,
           })
-          .run();
+          .onConflictDoNothing({
+            target: [
+              discoveredItems.sourceId,
+              discoveredItems.externalId,
+            ],
+          })
+          .returning({ id: discoveredItems.id })
+          .get();
+        hooks?.afterOccurrenceInsert?.(index);
+        if (!insertedRow) continue;
+
+        const canonical = findCanonicalItem(
+          tx,
+          claim.workspaceId,
+          urlHash,
+          contentHash,
+          id,
+        );
+        if (canonical) {
+          tx.update(discoveredItems)
+            .set({
+              status: "duplicate",
+              duplicateOfId: canonical.id,
+              matchingState: "frozen",
+              matchingLeaseOwner: null,
+              matchingLeaseExpiresAt: null,
+              matchingHeartbeatAt: null,
+            })
+            .where(eq(discoveredItems.id, id))
+            .run();
+        }
+        inserted += 1;
       }
-      db.update(discoverySources)
+      hooks?.afterCanonicalization?.();
+      hooks?.beforeCursorUpdate?.();
+
+      const sourceUpdated = tx
+        .update(discoverySources)
         .set({
+          cursorJson: JSON.stringify(cursor),
           status: "active",
           lastError: null,
-          lastFetchedAt: fetchedAt,
-          lastAttemptedAt: fetchedAt,
+          lastFetchedAt: checkpointAt,
+          lastAttemptedAt: checkpointAt,
           backoffUntil: null,
         })
-        .where(eq(discoverySources.id, source.id))
+        .where(
+          and(
+            eq(discoverySources.workspaceId, claim.workspaceId),
+            eq(discoverySources.id, source.id),
+            eq(
+              discoverySources.executionVersion,
+              claim.sourceExecutionVersion,
+            ),
+          ),
+        )
         .run();
-      completeDiscoveryJob(
-        db,
-        job.id,
-        { fetchedCount: fetched.length, newCount: fresh.length },
-        fetchedAt,
-      );
-      results.push({ sourceId: source.id, name: source.name, fetched: fetched.length, new: fresh.length });
-    } catch (err) {
-      const failedAt = Date.now();
-      if (err instanceof RateLimitedError) {
-        // The source itself is healthy — stay active, just don't probe it
-        // again until the (exponential) backoff passes.
-        db.update(discoverySources)
-          .set({ backoffUntil: failedAt + rateLimitBackoffMs(db, source.id), lastAttemptedAt: failedAt })
-          .where(eq(discoverySources.id, source.id))
-          .run();
-        failDiscoveryJob(db, job.id, "rate_limited", failedAt);
-        results.push({ sourceId: source.id, name: source.name, fetched: 0, new: 0, error: "rate_limited" });
-        continue;
+      if (sourceUpdated.changes !== 1) {
+        throw new DiscoveryCheckpointFenceError();
       }
-      // Permission refusals get a stable, founder-actionable prefix; they are
-      // source-local and never abort the rest of the run.
-      const message =
-        err instanceof PermissionRequiredError
-          ? `permission_required: ${err.message}`
-          : err instanceof Error
-            ? err.message
-            : String(err);
-      db.update(discoverySources)
+
+      const jobUpdated = tx
+        .update(discoveryJobs)
         .set({
-          status: "error",
-          lastError: message.slice(0, 500),
-          lastFetchedAt: failedAt,
-          lastAttemptedAt: failedAt,
+          fetchedCount: sql`
+            ${discoveryJobs.fetchedCount} + ${page.items.length}
+          `,
+          newCount: sql`${discoveryJobs.newCount} + ${inserted}`,
         })
-        .where(eq(discoverySources.id, source.id))
+        .where(
+          and(
+            eq(discoveryJobs.id, claim.id),
+            eq(discoveryJobs.status, "running"),
+            eq(discoveryJobs.leaseOwner, claim.leaseOwner),
+            eq(discoveryJobs.leaseVersion, claim.leaseVersion),
+            gt(discoveryJobs.leaseExpiresAt, DATABASE_NOW_MS),
+          ),
+        )
         .run();
-      failDiscoveryJob(db, job.id, message, failedAt);
-      results.push({ sourceId: source.id, name: source.name, fetched: 0, new: 0, error: message });
-    }
+      if (jobUpdated.changes !== 1) {
+        throw new DiscoveryCheckpointFenceError();
+      }
+      return { inserted, fetched: page.items.length };
+    });
+  } catch (error) {
+    if (error instanceof DiscoveryCheckpointFenceError) return null;
+    throw error;
+  }
+}
+
+function persistPermissionCheckpoint(
+  db: Db,
+  claim: DiscoveryJobClaim,
+  source: DiscoverySourceExecution,
+  cursor: DiscoveryCursorV1,
+): boolean {
+  return db.transaction((tx) => {
+    if (!sourceClaimIsLive(tx, claim)) return false;
+    return (
+      tx
+        .update(discoverySources)
+        .set({
+          cursorJson: JSON.stringify(cursor),
+          lastAttemptedAt: Date.now(),
+        })
+        .where(
+          and(
+            eq(discoverySources.workspaceId, claim.workspaceId),
+            eq(discoverySources.id, source.id),
+            eq(
+              discoverySources.executionVersion,
+              claim.sourceExecutionVersion,
+            ),
+          ),
+        )
+        .run().changes === 1
+    );
+  });
+}
+
+const SAFE_EXECUTION_CODES = new Set([
+  "lease_lost",
+  "source_timeout",
+  "tick_budget_exhausted",
+  "item_budget_exhausted",
+  "page_budget_exhausted",
+  "call_budget_exhausted",
+  "source_byte_budget_exhausted",
+  "response_limit",
+  "shutdown",
+]);
+
+function executionCodeFromSignal(signal: AbortSignal): string {
+  const reason = signal.reason as { code?: unknown } | undefined;
+  return typeof reason?.code === "string" &&
+    SAFE_EXECUTION_CODES.has(reason.code)
+    ? reason.code
+    : "source_timeout";
+}
+
+function safeExecutionFailure(
+  error: unknown,
+  source: DiscoverySourceExecution,
+  signal: AbortSignal,
+): { code: string; persisted: string } {
+  if (signal.aborted) {
+    const code = executionCodeFromSignal(signal);
+    return { code, persisted: code };
+  }
+  if (error instanceof ConnectedDiscoveryBudgetError) {
+    return { code: error.code, persisted: error.code };
+  }
+  if (error instanceof BoundedJsonError) {
+    const code =
+      error.code === "response_limit" ? "response_limit" : "source_timeout";
+    return { code, persisted: code };
+  }
+  if (error instanceof RateLimitedError) {
+    return { code: "rate_limited", persisted: "rate_limited" };
+  }
+  if (error instanceof PermissionRequiredError) {
+    return {
+      code: "permission_required",
+      persisted: `permission_required: ${error.message}`.slice(0, 500),
+    };
+  }
+  if (error instanceof DiscoveryReferenceNotFoundError) {
+    return {
+      code: "related_object_not_found",
+      persisted: error.message.slice(0, 500),
+    };
+  }
+  if (
+    error instanceof Error &&
+    error.message === "adapter_missing_external_id"
+  ) {
+    return {
+      code: "adapter_missing_external_id",
+      persisted: "adapter_missing_external_id",
+    };
+  }
+  if (
+    error instanceof SafeFetchError ||
+    (!source.connectionId && source.type !== "intent")
+  ) {
+    const safe = serializeSafeFetchError(error);
+    return {
+      code: safe.code,
+      persisted: `${safe.code}: ${safe.message}`,
+    };
+  }
+  if (error instanceof Error && error.message === "connection_disconnected") {
+    return {
+      code: "connection_disconnected",
+      persisted: "connection_disconnected",
+    };
+  }
+  return { code: "provider_failed", persisted: "provider_failed" };
+}
+
+function writeSourceFailure(
+  db: Db,
+  source: DiscoverySourceExecution,
+  code: string,
+  persistedError = code,
+): void {
+  if (code === "lease_lost" || code === "shutdown") return;
+  const failedAt = Date.now();
+  if (code === "rate_limited") {
+    db.update(discoverySources)
+      .set({
+        backoffUntil: failedAt + rateLimitBackoffMs(db, source.id),
+        lastAttemptedAt: failedAt,
+      })
+      .where(
+        and(
+          eq(discoverySources.workspaceId, source.workspaceId),
+          eq(discoverySources.id, source.id),
+          eq(discoverySources.executionVersion, source.executionVersion),
+        ),
+      )
+      .run();
+    return;
+  }
+  const isBudget =
+    SAFE_EXECUTION_CODES.has(code) && code !== "source_timeout";
+  db.update(discoverySources)
+    .set({
+      status: isBudget ? "active" : "error",
+      lastError: persistedError.slice(0, 500),
+      lastFetchedAt: failedAt,
+      lastAttemptedAt: failedAt,
+    })
+    .where(
+      and(
+        eq(discoverySources.workspaceId, source.workspaceId),
+        eq(discoverySources.id, source.id),
+        eq(discoverySources.executionVersion, source.executionVersion),
+      ),
+    )
+    .run();
+}
+
+function resultWithMetrics(
+  result: SourceRunResult,
+  metrics: DiscoverySourceMetrics,
+): SourceRunResult {
+  sourceResultMetrics.set(result, metrics);
+  return result;
+}
+
+export async function runClaimedDiscoverySource(
+  deps: DiscoverySourceDependencies,
+  claim: DiscoveryJobClaim,
+  budget: SourceBudget,
+  signal: AbortSignal,
+): Promise<SourceRunResult> {
+  const initial = getDiscoverySourceExecution(
+    deps.db,
+    claim.workspaceId,
+    claim.sourceId,
+  );
+  if (!initial) {
+    failDiscoveryJob(deps.db, claim, "source_missing");
+    return resultWithMetrics(
+      {
+        sourceId: claim.sourceId,
+        name: claim.sourceId,
+        fetched: 0,
+        new: 0,
+        error: "source_missing",
+      },
+      {
+        code: "source_missing",
+        calls: 0,
+        pages: 0,
+        bytes: 0,
+        items: 0,
+        continuationPending: false,
+        replay: claim.attempt > 1,
+      },
+    );
+  }
+  if (initial.executionVersion !== claim.sourceExecutionVersion) {
+    failDiscoveryJob(deps.db, claim, "source_version_changed");
+    return resultWithMetrics(
+      {
+        sourceId: initial.id,
+        name: initial.name,
+        fetched: 0,
+        new: 0,
+        error: "source_version_changed",
+      },
+      {
+        code: "source_version_changed",
+        calls: 0,
+        pages: 0,
+        bytes: 0,
+        items: 0,
+        continuationPending: false,
+        replay: claim.attempt > 1,
+      },
+    );
   }
 
-  const scored = await scoreUnscoredItems(db, llm, workspaceId, workspaceName);
-  return { queued, processed: claimed.length, sources: results, scored };
+  let trackedAccounts: ResolvedTrackedAccount[];
+  try {
+    trackedAccounts = requireSourceTrackedAccounts(
+      deps.db,
+      claim.workspaceId,
+      initial.type,
+      initial.config,
+    ).map((account) => ({
+      id: account.id,
+      handle: account.handle,
+      externalId: account.externalId,
+      enabled: account.enabled,
+      updatedAt: account.updatedAt,
+    }));
+  } catch (error) {
+    const failure = safeExecutionFailure(error, initial, signal);
+    writeSourceFailure(
+      deps.db,
+      initial,
+      failure.code,
+      failure.persisted,
+    );
+    failDiscoveryJob(deps.db, claim, failure.persisted);
+    return resultWithMetrics(
+      {
+        sourceId: initial.id,
+        name: initial.name,
+        fetched: 0,
+        new: 0,
+        error: failure.persisted,
+      },
+      {
+        code: failure.code,
+        calls: 0,
+        pages: 0,
+        bytes: 0,
+        items: 0,
+        continuationPending: false,
+        replay: claim.attempt > 1,
+      },
+    );
+  }
+
+  const targets = targetsForSource(initial, trackedAccounts);
+  let cursor = reconcileTargets(initial.cursorState, targets);
+  const pageReader = deps.pageReader ?? defaultDiscoveryPageReader;
+  let calls = 0;
+  let pages = 0;
+  let bytes = 0;
+  let admittedItems = 0;
+  let insertedItems = 0;
+  let permissionFailures = 0;
+  const visitedTargets = new Set<string>();
+  const completedTargets = new Set<string>();
+  const replayedTargets = new Set<string>();
+  let terminalCode: string | undefined;
+  let terminalPersistedError: string | undefined;
+  let permissionPersistedError: string | undefined;
+
+  try {
+    while (completedTargets.size < targets.length) {
+      if (signal.aborted || Date.now() >= budget.deadlineMs) {
+        terminalCode = signal.aborted
+          ? executionCodeFromSignal(signal)
+          : "source_timeout";
+        break;
+      }
+      if (pages >= budget.maxPages) {
+        terminalCode = "page_budget_exhausted";
+        break;
+      }
+      if (calls >= budget.maxCalls) {
+        terminalCode = "call_budget_exhausted";
+        break;
+      }
+      if (bytes >= budget.maxBytes) {
+        terminalCode = "source_byte_budget_exhausted";
+        break;
+      }
+      if (admittedItems >= budget.maxItems) {
+        terminalCode = "item_budget_exhausted";
+        break;
+      }
+
+      let targetIndex = -1;
+      for (let offset = 0; offset < targets.length; offset += 1) {
+        const candidate =
+          (cursor.nextTargetIndex + offset) % targets.length;
+        if (!completedTargets.has(targets[candidate]!.key)) {
+          targetIndex = candidate;
+          break;
+        }
+      }
+      if (targetIndex < 0) break;
+      const target = targets[targetIndex]!;
+      const checkpoint = cursor.targets[target.key]!;
+      let page;
+      try {
+        page = await pageReader({
+          db: deps.db,
+          source: initial,
+          target,
+          checkpoint,
+          signal,
+          maxItems: budget.maxItems - admittedItems,
+          maxCalls: budget.maxCalls - calls,
+          maxResponseBytes: budget.maxResponseBytes,
+          maxBytes: budget.maxBytes - bytes,
+          safeFetch: deps.safeFetch,
+          intentProvider: deps.intentProvider,
+          fabric: deps.fabric,
+          trackedAccounts,
+        });
+      } catch (error) {
+        const failedMetrics =
+          getConnectedDiscoveryErrorMetrics(error);
+        calls += failedMetrics.callsUsed;
+        bytes += failedMetrics.decodedBytes;
+        if (calls > budget.maxCalls) {
+          terminalCode = "call_budget_exhausted";
+          break;
+        }
+        if (bytes > budget.maxBytes) {
+          terminalCode = "source_byte_budget_exhausted";
+          break;
+        }
+        if (error instanceof CursorInvalidError) {
+          if (
+            checkpoint.continuation === null ||
+            replayedTargets.has(target.key)
+          ) {
+            throw error;
+          }
+          replayedTargets.add(target.key);
+          checkpoint.continuation = null;
+          checkpoint.lastSafeError = "cursor_replay";
+          cursor.nextTargetIndex = targetIndex;
+          if (
+            !persistPermissionCheckpoint(
+              deps.db,
+              claim,
+              initial,
+              cursor,
+            )
+          ) {
+            terminalCode = "lease_lost";
+            break;
+          }
+          continue;
+        }
+        if (error instanceof PermissionRequiredError) {
+          permissionFailures += 1;
+          permissionPersistedError =
+            `permission_required: ${error.message}`.slice(0, 500);
+          checkpoint.lastSafeError = "permission_required";
+          checkpoint.continuation = null;
+          cursor.nextTargetIndex = (targetIndex + 1) % targets.length;
+          if (!persistPermissionCheckpoint(deps.db, claim, initial, cursor)) {
+            terminalCode = "lease_lost";
+            break;
+          }
+          visitedTargets.add(target.key);
+          completedTargets.add(target.key);
+          continue;
+        }
+        throw error;
+      }
+
+      const nextCalls = calls + page.callsUsed;
+      const nextBytes = bytes + page.decodedBytes;
+      if (nextCalls > budget.maxCalls) {
+        terminalCode = "call_budget_exhausted";
+        break;
+      }
+      if (nextBytes > budget.maxBytes) {
+        terminalCode = "source_byte_budget_exhausted";
+        break;
+      }
+      calls = nextCalls;
+      bytes = nextBytes;
+      pages += 1;
+      visitedTargets.add(target.key);
+
+      const remainingItems = budget.maxItems - admittedItems;
+      const admitted = page.items.slice(0, remainingItems);
+      const truncated = admitted.length < page.items.length;
+      admittedItems += admitted.length;
+      const admittedPage = {
+        ...page,
+        items: admitted,
+        exhausted: page.exhausted && !truncated,
+      };
+      cursor = checkpointPage({
+        cursor,
+        target,
+        page: admittedPage,
+        nextTargetIndex: (targetIndex + 1) % targets.length,
+      });
+
+      const persisted = persistDiscoveryPage(deps.db, {
+        claim,
+        source: initial,
+        page: admittedPage,
+        cursor,
+      });
+      if (!persisted) {
+        terminalCode = "lease_lost";
+        break;
+      }
+      insertedItems += persisted.inserted;
+      if (admittedPage.reachedBoundary || admittedPage.exhausted) {
+        completedTargets.add(target.key);
+      }
+      if (truncated) {
+        terminalCode = "item_budget_exhausted";
+        break;
+      }
+    }
+  } catch (error) {
+    const failure = safeExecutionFailure(error, initial, signal);
+    terminalCode = failure.code;
+    terminalPersistedError = failure.persisted;
+  }
+
+  if (!terminalCode && permissionFailures === targets.length) {
+    terminalCode = "permission_required";
+    terminalPersistedError =
+      permissionPersistedError ?? "permission_required";
+  }
+  const continuationPending =
+    Boolean(terminalCode) ||
+    visitedTargets.size < targets.length ||
+    Object.values(cursor.targets).some(
+      (checkpoint) => checkpoint.continuation !== null,
+    );
+  let code = terminalCode ?? "completed";
+
+  if (terminalCode) {
+    const persistedError = terminalPersistedError ?? terminalCode;
+    writeSourceFailure(
+      deps.db,
+      initial,
+      terminalCode,
+      persistedError,
+    );
+    if (!failDiscoveryJob(deps.db, claim, persistedError)) {
+      code = "lease_lost";
+    }
+  } else if (
+    !completeDiscoveryJob(deps.db, claim, {
+      fetchedCount: admittedItems,
+      newCount: insertedItems,
+    })
+  ) {
+    code = "lease_lost";
+  }
+
+  const result: SourceRunResult = {
+    sourceId: initial.id,
+    name: initial.name,
+    fetched: admittedItems,
+    new: insertedItems,
+    ...(code === "completed"
+      ? {}
+      : {
+          error:
+            code === "lease_lost"
+              ? code
+              : terminalPersistedError ?? code,
+        }),
+  };
+  return resultWithMetrics(result, {
+    code,
+    calls,
+    pages,
+    bytes,
+    items: admittedItems,
+    continuationPending,
+    replay: claim.attempt > 1,
+  });
 }
 
 // ---------------------------------------------------------------------------

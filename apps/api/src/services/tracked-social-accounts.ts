@@ -1,13 +1,18 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, ne } from "drizzle-orm";
+import { and, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import type {
   CreateTrackedSocialAccountInput,
   TrackedSocialAccount,
   TrackedSocialPlatform,
   UpdateTrackedSocialAccountInput,
 } from "@tuezday/contracts";
-import type { Db } from "../db";
-import { trackedSocialAccounts, type TrackedSocialAccountRow } from "../db/schema";
+import type { Db, DbExecutor } from "../db";
+import {
+  discoveryJobs,
+  discoverySources,
+  trackedSocialAccounts,
+  type TrackedSocialAccountRow,
+} from "../db/schema";
 
 // Tracked social accounts (Sprint 46): competitor/source accounts a workspace
 // listens to. Connected discovery sources reference them by id via
@@ -24,6 +29,13 @@ export class InvalidTrackedHandleError extends Error {
   constructor(handle: string) {
     super(`"${handle}" is not a usable account handle.`);
     this.name = "InvalidTrackedHandleError";
+  }
+}
+
+export class DiscoveryReferenceNotFoundError extends Error {
+  constructor() {
+    super("related_object_not_found");
+    this.name = "DiscoveryReferenceNotFoundError";
   }
 }
 
@@ -67,6 +79,79 @@ function findByHandle(
       ),
     )
     .get();
+}
+
+function trackedAccountIds(configJson: string): string[] {
+  try {
+    const config = JSON.parse(configJson) as {
+      trackedAccountId?: unknown;
+      trackedAccountIds?: unknown;
+    };
+    return [
+      ...(typeof config.trackedAccountId === "string"
+        ? [config.trackedAccountId]
+        : []),
+      ...(Array.isArray(config.trackedAccountIds)
+        ? config.trackedAccountIds.filter(
+            (value): value is string => typeof value === "string",
+          )
+        : []),
+    ];
+  } catch {
+    return [];
+  }
+}
+
+function invalidateSourcesForTrackedAccount(
+  db: Db,
+  workspaceId: string,
+  accountId: string,
+): void {
+  const affectedSourceIds = db
+    .select({
+      id: discoverySources.id,
+      configJson: discoverySources.configJson,
+    })
+    .from(discoverySources)
+    .where(eq(discoverySources.workspaceId, workspaceId))
+    .all()
+    .filter((source) =>
+      trackedAccountIds(source.configJson).includes(accountId),
+    )
+    .map((source) => source.id);
+  if (affectedSourceIds.length === 0) return;
+
+  db.update(discoverySources)
+    .set({
+      executionVersion: sql`
+        ${discoverySources.executionVersion} + 1
+      `,
+    })
+    .where(
+      and(
+        eq(discoverySources.workspaceId, workspaceId),
+        inArray(discoverySources.id, affectedSourceIds),
+      ),
+    )
+    .run();
+  db.update(discoveryJobs)
+    .set({
+      status: "skipped",
+      finishedAt: Date.now(),
+      error: "source_version_changed",
+      lockedAt: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      heartbeatAt: null,
+    })
+    .where(
+      and(
+        eq(discoveryJobs.workspaceId, workspaceId),
+        inArray(discoveryJobs.sourceId, affectedSourceIds),
+        inArray(discoveryJobs.status, ["queued", "running"]),
+      ),
+    )
+    .run();
 }
 
 export function createTrackedSocialAccount(
@@ -155,19 +240,47 @@ export function updateTrackedSocialAccount(
     if (clash) throw new DuplicateTrackedAccountError(existing.platform, handle);
   }
 
-  db.update(trackedSocialAccounts)
-    .set({
-      handle,
-      displayName: input.displayName === undefined ? existing.displayName : input.displayName,
-      externalId: input.externalId === undefined ? existing.externalId : input.externalId,
-      url: input.url === undefined ? existing.url : input.url,
-      notes: input.notes ?? existing.notes,
-      enabled: input.enabled ?? existing.enabled,
-      updatedAt: Date.now(),
-    })
-    .where(eq(trackedSocialAccounts.id, accountId))
-    .run();
-  return getTrackedSocialAccount(db, workspaceId, accountId);
+  const nextExternalId =
+    input.externalId === undefined ? existing.externalId : input.externalId;
+  const nextEnabled = input.enabled ?? existing.enabled;
+  const executionChanged =
+    handle !== existing.handle ||
+    nextExternalId !== existing.externalId ||
+    nextEnabled !== existing.enabled;
+  return db.transaction((tx) => {
+    tx.update(trackedSocialAccounts)
+      .set({
+        handle,
+        displayName:
+          input.displayName === undefined
+            ? existing.displayName
+            : input.displayName,
+        externalId: nextExternalId,
+        url: input.url === undefined ? existing.url : input.url,
+        notes: input.notes ?? existing.notes,
+        enabled: nextEnabled,
+        updatedAt: Date.now(),
+      })
+      .where(
+        and(
+          eq(trackedSocialAccounts.workspaceId, workspaceId),
+          eq(trackedSocialAccounts.id, accountId),
+        ),
+      )
+      .run();
+    if (executionChanged) {
+      invalidateSourcesForTrackedAccount(
+        tx as unknown as Db,
+        workspaceId,
+        accountId,
+      );
+    }
+    return getTrackedSocialAccount(
+      tx as unknown as Db,
+      workspaceId,
+      accountId,
+    );
+  });
 }
 
 export function deleteTrackedSocialAccount(
@@ -176,7 +289,22 @@ export function deleteTrackedSocialAccount(
   accountId: string,
 ): boolean {
   if (!getTrackedSocialAccount(db, workspaceId, accountId)) return false;
-  db.delete(trackedSocialAccounts).where(eq(trackedSocialAccounts.id, accountId)).run();
+  db.transaction((tx) => {
+    invalidateSourcesForTrackedAccount(
+      tx as unknown as Db,
+      workspaceId,
+      accountId,
+    );
+    tx
+      .delete(trackedSocialAccounts)
+      .where(
+        and(
+          eq(trackedSocialAccounts.workspaceId, workspaceId),
+          eq(trackedSocialAccounts.id, accountId),
+        ),
+      )
+      .run();
+  });
   return true;
 }
 
@@ -185,7 +313,7 @@ export function deleteTrackedSocialAccount(
  * discovery fetch actually listens to. Unknown/deleted ids are dropped.
  */
 export function resolveTrackedAccounts(
-  db: Db,
+  db: DbExecutor,
   workspaceId: string,
   ids: string[],
 ): TrackedSocialAccount[] {
@@ -202,4 +330,22 @@ export function resolveTrackedAccounts(
     )
     .all()
     .map(rowToAccount);
+}
+
+/**
+ * Resolve every requested enabled account inside one workspace. Missing,
+ * disabled, and foreign ids are deliberately indistinguishable.
+ */
+export function requireTrackedAccounts(
+  db: DbExecutor,
+  workspaceId: string,
+  ids: readonly string[],
+): TrackedSocialAccount[] {
+  const uniqueIds = [...new Set(ids)];
+  const accounts = resolveTrackedAccounts(db, workspaceId, uniqueIds);
+  if (accounts.length !== uniqueIds.length) {
+    throw new DiscoveryReferenceNotFoundError();
+  }
+  const accountById = new Map(accounts.map((account) => [account.id, account]));
+  return uniqueIds.map((id) => accountById.get(id)!);
 }

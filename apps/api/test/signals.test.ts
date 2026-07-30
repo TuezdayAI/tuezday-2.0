@@ -1,9 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import { draftSchema, signalSchema } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
-import { signalMatches } from "../src/db/schema";
+import type { Db } from "../src/db";
+import { signalMatches, signals } from "../src/db/schema";
 import { GatewayError, type LlmGateway } from "../src/llm/gateway";
+import { createSignalWithMatching } from "../src/services/signals";
 import { buildAuthedApp, createTestDb } from "./helpers";
 
 function fakeGateway(): LlmGateway {
@@ -21,10 +24,12 @@ function fakeGateway(): LlmGateway {
 
 describe("signals API", () => {
   let app: TuezdayApp;
+  let db: Db;
   let workspaceId: string;
 
   beforeEach(async () => {
-    app = await buildAuthedApp({ db: createTestDb(), llm: fakeGateway() });
+    db = createTestDb();
+    app = await buildAuthedApp({ db, llm: fakeGateway() });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Signals Co" } })
     ).json().id;
@@ -86,6 +91,63 @@ describe("signals API", () => {
       });
       expect(res.statusCode).toBe(404);
     });
+
+    it.each(["persona", "campaign", "both"] as const)(
+      "does not disclose or persist foreign and unknown %s references",
+      async (referenceKind) => {
+        const foreignWorkspaceId = (
+          await app.inject({
+            method: "POST",
+            url: "/workspaces",
+            payload: { name: "Foreign Signals Co" },
+          })
+        ).json().id as string;
+        const foreignPersonaId = (
+          await app.inject({
+            method: "POST",
+            url: `/workspaces/${foreignWorkspaceId}/personas`,
+            payload: { name: "Foreign Persona" },
+          })
+        ).json().id as string;
+        const foreignCampaignId = (
+          await app.inject({
+            method: "POST",
+            url: `/workspaces/${foreignWorkspaceId}/campaigns`,
+            payload: { name: "Foreign Campaign", objective: "Stay isolated" },
+          })
+        ).json().id as string;
+
+        const referenceInput = (personaId: string, campaignId: string) => ({
+          ...(referenceKind === "persona" || referenceKind === "both"
+            ? { suggestedPersonaId: personaId }
+            : {}),
+          ...(referenceKind === "campaign" || referenceKind === "both"
+            ? { suggestedCampaignId: campaignId }
+            : {}),
+        });
+        const foreign = await createSignal(
+          referenceInput(foreignPersonaId, foreignCampaignId),
+        );
+        const unknown = await createSignal(
+          referenceInput(randomUUID(), randomUUID()),
+        );
+
+        expect(foreign.statusCode).toBe(404);
+        expect(unknown.statusCode).toBe(404);
+        expect(foreign.json()).toEqual({ error: "related_object_not_found" });
+        expect(foreign.json()).toEqual(unknown.json());
+        expect(
+          db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
+        ).toHaveLength(0);
+        expect(
+          db
+            .select()
+            .from(signalMatches)
+            .where(eq(signalMatches.workspaceId, workspaceId))
+            .all(),
+        ).toHaveLength(0);
+      },
+    );
   });
 
   describe("POST /workspaces/:id/signals/:signalId/draft", () => {
@@ -271,6 +333,190 @@ describe("signals API", () => {
       };
     }
 
+    it.each([
+      ["signal insert", "afterSignalInsert", "fault_after_signal"],
+      ["match insert", "afterMatchInsert", "fault_after_match"],
+      ["suggested projection", "afterProjectionUpdate", "fault_after_projection"],
+    ] as const)(
+      "rolls back every write after a fault following %s",
+      async (_phase, hookName, fault) => {
+        const refs: { personaId: string | null; campaignId: string | null } = {
+          personaId: null,
+          campaignId: null,
+        };
+        const calls: string[] = [];
+        const { matchApp, db, wsId, personaId, campaignId } = await buildMatchingApp(
+          matchingGateway(refs, calls),
+        );
+        refs.personaId = personaId;
+        refs.campaignId = campaignId;
+        const hooks = {
+          [hookName]() {
+            throw new Error(fault);
+          },
+        };
+
+        await expect(
+          createSignalWithMatching(
+            db,
+            matchingGateway(refs, calls),
+            wsId,
+            { content: "Atomic signal", source: "other" },
+            hooks,
+          ),
+        ).rejects.toThrow(fault);
+        expect(
+          db.select().from(signals).where(eq(signals.workspaceId, wsId)).all(),
+        ).toHaveLength(0);
+        expect(
+          db
+            .select()
+            .from(signalMatches)
+            .where(eq(signalMatches.workspaceId, wsId))
+            .all(),
+        ).toHaveLength(0);
+        await matchApp.close();
+      },
+    );
+
+    it("commits one signal, its matches, projections, and response together", async () => {
+      const refs: { personaId: string | null; campaignId: string | null } = {
+        personaId: null,
+        campaignId: null,
+      };
+      const calls: string[] = [];
+      const { matchApp, db, wsId, personaId, campaignId } = await buildMatchingApp(
+        matchingGateway(refs, calls),
+      );
+      refs.personaId = personaId;
+      refs.campaignId = campaignId;
+
+      const created = await createSignalWithMatching(
+        db,
+        matchingGateway(refs, calls),
+        wsId,
+        { content: "Atomic successful signal", source: "other" },
+      );
+
+      expect(
+        db.select().from(signals).where(eq(signals.workspaceId, wsId)).all(),
+      ).toHaveLength(1);
+      expect(
+        db
+          .select()
+          .from(signalMatches)
+          .where(eq(signalMatches.workspaceId, wsId))
+          .all(),
+      ).toHaveLength(1);
+      expect(created).toMatchObject({
+        suggestedPersonaId: personaId,
+        suggestedCampaignId: campaignId,
+      });
+      expect(created.matches).toHaveLength(1);
+      expect(created.matches[0]).toMatchObject({ personaId, campaignId, score: 74 });
+      await matchApp.close();
+    });
+
+    it.each(["persona deletion", "campaign reassignment"] as const)(
+      "revalidates judged matches after a concurrent %s",
+      async (mutation) => {
+        const refs: { personaId: string | null; campaignId: string | null } = {
+          personaId: null,
+          campaignId: null,
+        };
+        let release!: () => void;
+        const released = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        let markStarted!: () => void;
+        const started = new Promise<void>((resolve) => {
+          markStarted = resolve;
+        });
+        const deferredGateway: LlmGateway = {
+          async generate() {
+            markStarted();
+            await released;
+            return {
+              text: JSON.stringify([
+                {
+                  index: 0,
+                  matches: [
+                    {
+                      personaId: refs.personaId,
+                      campaignId: refs.campaignId,
+                      score: 74,
+                      reason: "Fits before the workspace changes.",
+                    },
+                  ],
+                },
+              ]),
+              model: "fake",
+              provider: "fake",
+              durationMs: 3,
+            };
+          },
+        };
+        const { matchApp, db, wsId, personaId, campaignId } =
+          await buildMatchingApp(deferredGateway);
+        refs.personaId = personaId;
+        refs.campaignId = campaignId;
+
+        const creating = createSignalWithMatching(
+          db,
+          deferredGateway,
+          wsId,
+          { content: "Signal judged across a config change", source: "other" },
+        );
+        await started;
+        const mutationResponse =
+          mutation === "persona deletion"
+            ? await matchApp.inject({
+                method: "DELETE",
+                url: `/workspaces/${wsId}/personas/${personaId}`,
+              })
+            : await matchApp.inject({
+                method: "PUT",
+                url: `/workspaces/${wsId}/campaigns/${campaignId}`,
+                payload: {
+                  name: "Launch",
+                  objective: "Win fintech VPs",
+                  personaIds: [],
+                },
+              });
+        expect(mutationResponse.statusCode).toBe(
+          mutation === "persona deletion" ? 204 : 200,
+        );
+        release();
+
+        const created = await creating;
+        expect(created).toMatchObject({
+          suggestedPersonaId: null,
+          suggestedCampaignId: campaignId,
+        });
+        expect(created.matches).toEqual([
+          {
+            personaId: null,
+            personaName: null,
+            campaignId,
+            campaignName: "Launch",
+            score: 74,
+            reason: "Fits before the workspace changes.",
+          },
+        ]);
+        expect(
+          db.select().from(signals).where(eq(signals.workspaceId, wsId)).all(),
+        ).toHaveLength(1);
+        expect(
+          db
+            .select()
+            .from(signalMatches)
+            .where(eq(signalMatches.workspaceId, wsId))
+            .all(),
+        ).toHaveLength(1);
+        await matchApp.close();
+      },
+    );
+
     it("scores an unmapped signal through the LLM into signal_matches rows", async () => {
       const refs: { personaId: string | null; campaignId: string | null } = {
         personaId: null,
@@ -400,6 +646,83 @@ describe("signals API", () => {
   });
 
   describe("GET /workspaces/:id/signals", () => {
+    it("does not return a match row assigned to another workspace", async () => {
+      const persona = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/personas`,
+          payload: { name: "Scoped Persona" },
+        })
+      ).json();
+      const signal = (
+        await createSignal({ suggestedPersonaId: persona.id })
+      ).json();
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Foreign Signal Match Workspace" },
+        })
+      ).json().id as string;
+      db.update(signalMatches)
+        .set({ workspaceId: otherWorkspaceId })
+        .where(eq(signalMatches.signalId, signal.id))
+        .run();
+
+      const listed = (
+        await app.inject({
+          method: "GET",
+          url: `/workspaces/${workspaceId}/signals`,
+        })
+      ).json();
+
+      expect(listed).toHaveLength(1);
+      expect(listed[0].matches).toEqual([]);
+    });
+
+    it("does not disclose a foreign persona joined through a local match row", async () => {
+      const localPersona = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/personas`,
+          payload: { name: "Local Persona" },
+        })
+      ).json();
+      const signal = (
+        await createSignal({ suggestedPersonaId: localPersona.id })
+      ).json();
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Foreign Parent Workspace" },
+        })
+      ).json().id as string;
+      const foreignPersona = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${otherWorkspaceId}/personas`,
+          payload: { name: "Foreign Parent Persona" },
+        })
+      ).json();
+      db.update(signalMatches)
+        .set({ personaId: foreignPersona.id })
+        .where(eq(signalMatches.signalId, signal.id))
+        .run();
+
+      const listed = (
+        await app.inject({
+          method: "GET",
+          url: `/workspaces/${workspaceId}/signals`,
+        })
+      ).json();
+
+      expect(listed).toHaveLength(1);
+      expect(listed[0].matches).toEqual([]);
+      expect(JSON.stringify(listed)).not.toContain(foreignPersona.id);
+      expect(JSON.stringify(listed)).not.toContain("Foreign Parent Persona");
+    });
+
     it("lists signals newest first with draft summaries", async () => {
       const s1 = (await createSignal()).json();
       const s2 = (await createSignal({ content: "Second signal", source: "x" })).json();

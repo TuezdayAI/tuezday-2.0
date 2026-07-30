@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
+import { ZodError } from "zod";
 import {
   DISCOVERED_ITEM_STATUSES,
   createDiscoverySourceInputSchema,
@@ -9,27 +10,40 @@ import {
 } from "@tuezday/contracts";
 import type { ConnectorFabric } from "../connectors/fabric";
 import type { Db } from "../db";
-import type { Fetcher } from "../discovery/adapters";
 import type { IntentProvider } from "../discovery/intent";
+import type { TrustedFetcher } from "../http";
 import type { LlmGateway } from "../llm/gateway";
 import { GatewayError } from "../llm/gateway";
 import {
+  SafeFetchError,
+  serializeSafeFetchError,
+  type SafeFetchService,
+} from "../safe-fetch";
+import {
   DiscoverySourceConnectionError,
   ItemNotTriagableError,
+  MatchingNotReadyError,
   acceptDiscoveredItem,
   createDiscoverySource,
   deleteDiscoverySource,
   getDiscoveredItem,
+  getDiscoverySource,
   listDiscoveredItems,
   listDiscoverySources,
   listItemDuplicates,
-  runDiscovery,
   skipDiscoveredItem,
   suggestDiscoverySources,
   updateDiscoverySource,
+  validateDiscoverySourceTransition,
 } from "../services/discovery";
+import {
+  runDiscoveryScheduler,
+  type DiscoveryOperatorEvent,
+} from "../services/discovery-scheduler";
+import type { DiscoveryOperatorPolicy } from "../runtime/operator-policy";
 import { emitEvent } from "../services/events";
 import {
+  DiscoveryReferenceNotFoundError,
   DuplicateTrackedAccountError,
   InvalidTrackedHandleError,
   createTrackedSocialAccount,
@@ -51,9 +65,16 @@ export function registerDiscoveryRoutes(
   app: FastifyInstance,
   db: Db,
   llm: LlmGateway,
-  fetcher: Fetcher,
+  safeFetch: SafeFetchService,
+  trustedFetcher: TrustedFetcher,
   intent: IntentProvider,
   connectors: ConnectorFabric,
+  scheduler: {
+    policy: DiscoveryOperatorPolicy;
+    instanceId: string;
+    shutdownSignal: AbortSignal;
+    log: (event: DiscoveryOperatorEvent) => void;
+  },
 ): void {
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/discovery/sources",
@@ -67,12 +88,24 @@ export function registerDiscoveryRoutes(
         });
       }
       try {
+        if (
+          (parsed.data.type === "rss" || parsed.data.type === "podcast") &&
+          parsed.data.config.feedUrl
+        ) {
+          safeFetch.validateUrl(parsed.data.config.feedUrl);
+        }
         return await reply
           .status(201)
           .send(createDiscoverySource(db, request.params.id, parsed.data));
       } catch (err) {
+        if (err instanceof SafeFetchError) {
+          return reply.status(400).send(serializeSafeFetchError(err));
+        }
         if (err instanceof DiscoverySourceConnectionError) {
           return reply.status(400).send({ error: err.code, message: err.message });
+        }
+        if (err instanceof DiscoveryReferenceNotFoundError) {
+          return reply.status(404).send({ error: "related_object_not_found" });
         }
         throw err;
       }
@@ -99,6 +132,24 @@ export function registerDiscoveryRoutes(
         });
       }
       try {
+        const existing = getDiscoverySource(
+          db,
+          request.params.id,
+          request.params.sourceId,
+        );
+        if (!existing) {
+          return reply.status(404).send({ error: "source_not_found" });
+        }
+        const transition = validateDiscoverySourceTransition(
+          existing,
+          parsed.data,
+        );
+        if (
+          transition.config.feedUrl &&
+          (transition.type === "rss" || transition.type === "podcast")
+        ) {
+          safeFetch.validateUrl(transition.config.feedUrl);
+        }
         const updated = updateDiscoverySource(
           db,
           request.params.id,
@@ -108,8 +159,20 @@ export function registerDiscoveryRoutes(
         if (!updated) return reply.status(404).send({ error: "source_not_found" });
         return updated;
       } catch (err) {
+        if (err instanceof ZodError) {
+          return reply.status(400).send({
+            error: "invalid_input",
+            message: err.issues.map((issue) => issue.message).join("; "),
+          });
+        }
+        if (err instanceof SafeFetchError) {
+          return reply.status(400).send(serializeSafeFetchError(err));
+        }
         if (err instanceof DiscoverySourceConnectionError) {
           return reply.status(400).send({ error: err.code, message: err.message });
+        }
+        if (err instanceof DiscoveryReferenceNotFoundError) {
+          return reply.status(404).send({ error: "related_object_not_found" });
         }
         throw err;
       }
@@ -208,7 +271,17 @@ export function registerDiscoveryRoutes(
   app.post<{ Params: { id: string } }>("/workspaces/:id/discovery/run", async (request, reply) => {
     const workspace = workspaceOr404(db, request.params.id, reply);
     if (!workspace) return reply;
-    return runDiscovery(db, llm, fetcher, intent, connectors, request.params.id, workspace.name);
+    return runDiscoveryScheduler(
+      {
+        db,
+        llm,
+        safeFetch,
+        intentProvider: intent,
+        fabric: connectors,
+        ...scheduler,
+      },
+      { workspaceId: request.params.id },
+    );
   });
 
   app.get<{ Params: { id: string }; Querystring: { status?: string } }>(
@@ -248,8 +321,8 @@ export function registerDiscoveryRoutes(
       const item = getDiscoveredItem(db, request.params.id, request.params.itemId);
       if (!item) return reply.status(404).send({ error: "item_not_found" });
       try {
-        const result = acceptDiscoveredItem(db, request.params.id, item);
-        await emitEvent(db, fetcher, request.params.id, "discovery.item.accepted", {
+        const result = acceptDiscoveredItem(db, request.params.id, item.id);
+        await emitEvent(db, trustedFetcher, request.params.id, "discovery.item.accepted", {
           itemId: result.item.id,
           signalId: result.signal.id,
           title: result.item.title,
@@ -258,8 +331,17 @@ export function registerDiscoveryRoutes(
         });
         return result;
       } catch (err) {
+        if (err instanceof MatchingNotReadyError) {
+          return reply.status(409).send({
+            error: "matching_not_ready",
+            message: "Scoring has not completed for this item yet.",
+          });
+        }
         if (err instanceof ItemNotTriagableError) {
           return reply.status(409).send({ error: "already_triaged", message: err.message });
+        }
+        if (err instanceof DiscoveryReferenceNotFoundError) {
+          return reply.status(404).send({ error: "related_object_not_found" });
         }
         throw err;
       }
@@ -273,7 +355,7 @@ export function registerDiscoveryRoutes(
       const item = getDiscoveredItem(db, request.params.id, request.params.itemId);
       if (!item) return reply.status(404).send({ error: "item_not_found" });
       try {
-        return skipDiscoveredItem(db, item);
+        return skipDiscoveredItem(db, request.params.id, item);
       } catch (err) {
         if (err instanceof ItemNotTriagableError) {
           return reply.status(409).send({ error: "already_triaged", message: err.message });

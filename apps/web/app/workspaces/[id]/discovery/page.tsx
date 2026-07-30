@@ -22,6 +22,7 @@ import {
   type Campaign,
   type Connection,
   type DiscoveredItem,
+  type DiscoveryRunSummary,
   type DiscoverySource,
   type DiscoverySourceMode,
   type DiscoverySourceType,
@@ -94,15 +95,6 @@ interface SourceProposal {
   reason: string;
 }
 
-interface RunSummary {
-  /** Jobs enqueued by this run (Sprint 46 job ledger). */
-  queued: number;
-  /** Jobs claimed and processed by this run (bounded batch; the rest stay queued). */
-  processed: number;
-  sources: { sourceId: string; name: string; fetched: number; new: number; error?: string }[];
-  scored: number;
-}
-
 // Shape of GET /workspaces/:id/discovery/items/:itemId/duplicates (Sprint 45).
 interface DuplicateRef {
   id: string;
@@ -150,7 +142,7 @@ export default function DiscoveryPage() {
   const [trackedError, setTrackedError] = useState<string | null>(null);
 
   const [running, setRunning] = useState(false);
-  const [runSummary, setRunSummary] = useState<RunSummary | null>(null);
+  const [runSummary, setRunSummary] = useState<DiscoveryRunSummary | null>(null);
   const [suggesting, setSuggesting] = useState(false);
   const [proposals, setProposals] = useState<SourceProposal[] | null>(null);
   const [busy, setBusy] = useState(false);
@@ -393,9 +385,11 @@ export default function DiscoveryPage() {
     setRunSummary(null);
     try {
       const res = await apiFetch(`/workspaces/${id}/discovery/run`, { method: "POST" });
-      const body = await res.json().catch(() => null);
+      const body = (await res.json().catch(() => null)) as
+        | (Partial<DiscoveryRunSummary> & { message?: string })
+        | null;
       if (!res.ok) throw new Error(body?.message ?? `API returned ${res.status}`);
-      setRunSummary(body);
+      setRunSummary(body as DiscoveryRunSummary);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Discovery run failed");
@@ -421,11 +415,16 @@ export default function DiscoveryPage() {
 
   async function triage(itemId: string, action: "accept" | "skip") {
     setBusy(true);
+    setError(null);
     try {
-      await apiFetch(`/workspaces/${id}/discovery/items/${itemId}/${action}`, {
+      const res = await apiFetch(`/workspaces/${id}/discovery/items/${itemId}/${action}`, {
         method: "POST",
       });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message ?? `API returned ${res.status}`);
       await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Triage failed");
     } finally {
       setBusy(false);
     }
@@ -824,19 +823,30 @@ export default function DiscoveryPage() {
 
         {runSummary && (
           <p className="bundle-summary" style={{ marginTop: 12 }}>
-            Run finished: {runSummary.queued} queued · {runSummary.processed} processed
-            {runSummary.queued > runSummary.processed
-              ? " (the rest run on the next poll)"
-              : ""}
-            {runSummary.sources.length > 0 ? (
+            {runSummary.busy ? (
+              "Discovery is already running — this click did not start another run."
+            ) : (
               <>
-                {" · "}
-                {runSummary.sources
-                  .map((s) => `${s.name}: ${s.error ? "error" : `${s.new} new of ${s.fetched}`}`)
-                  .join(" · ")}
+                Run finished: {runSummary.queued} queued · {runSummary.processed} processed
+                {runSummary.budgetExhausted
+                  ? " (safety budget reached; queued work continues on the next poll)"
+                  : runSummary.queued > runSummary.processed
+                    ? " (the rest run on the next poll)"
+                    : ""}
+                {runSummary.sources.length > 0 ? (
+                  <>
+                    {" · "}
+                    {runSummary.sources
+                      .map(
+                        (s) =>
+                          `${s.name}: ${s.error ? "error" : `${s.new} new of ${s.fetched}`}`,
+                      )
+                      .join(" · ")}
+                  </>
+                ) : null}{" "}
+                · {runSummary.scored} scored by the brain
               </>
-            ) : null}{" "}
-            · {runSummary.scored} scored by the brain
+            )}
           </p>
         )}
         {error && <p className="error">{error}</p>}
@@ -975,6 +985,13 @@ export default function DiscoveryPage() {
               const persona = personaName(item.suggestedPersonaId);
               const campaign = campaignName(item.suggestedCampaignId);
               const source = sources.find((s) => s.id === item.sourceId);
+              const matchingReady = item.matchingState === "ready";
+              const matchingLabel =
+                item.matchingState === "retryable_error"
+                  ? "Scoring delayed — retry discovery"
+                  : item.matchingState === "pending" || item.matchingState === "running"
+                    ? "Scoring"
+                    : null;
               return (
                 <li key={item.id} className="section-card">
                   <div className="section-head">
@@ -989,6 +1006,18 @@ export default function DiscoveryPage() {
                     >
                       {item.score === null ? "unscored" : `${item.score}/100`}
                     </Badge>
+                    {matchingLabel && (
+                      <Badge
+                        tone={item.matchingState === "retryable_error" ? "edited" : "neutral"}
+                        title={
+                          item.matchingError
+                            ? "The last scoring attempt did not finish."
+                            : undefined
+                        }
+                      >
+                        {matchingLabel}
+                      </Badge>
+                    )}
                     <span className="section-title">
                       <a href={item.url} target="_blank" rel="noreferrer" className="signal-link">
                         {item.title}
@@ -1073,7 +1102,7 @@ export default function DiscoveryPage() {
                       variant="secondary"
                       size="compact"
                       className="rating-accepted"
-                      disabled={busy}
+                      disabled={busy || !matchingReady}
                       onClick={() => triage(item.id, "accept")}
                     >
                       ✓ Accept as signal

@@ -7,7 +7,12 @@ import { campaignExecutionError, getCampaign } from "../services/campaigns";
 import type { EvidenceStore } from "../evidence/store";
 import { getPersona } from "../services/personas";
 import { runPreReview, setGenerationReview } from "../services/review";
-import { createSignalWithMatching, getSignal, listSignals } from "../services/signals";
+import {
+  SignalReferenceNotFoundError,
+  createSignalWithMatching,
+  getSignal,
+  listSignals,
+} from "../services/signals";
 import { generateSignalDraft } from "../services/signal-drafting";
 import { getWorkspace } from "../services/workspaces";
 
@@ -37,8 +42,15 @@ export function registerSignalRoutes(
     // Sprint 45: auto-match unmapped signals; explicit persona/campaign input
     // becomes one trusted match with no LLM call. LLM failures never block
     // creation (the service catches them and returns the signal matchless).
-    const signal = await createSignalWithMatching(db, llm, request.params.id, parsed.data);
-    return reply.status(201).send(signal);
+    try {
+      const signal = await createSignalWithMatching(db, llm, request.params.id, parsed.data);
+      return reply.status(201).send(signal);
+    } catch (err) {
+      if (err instanceof SignalReferenceNotFoundError) {
+        return reply.status(404).send({ error: "related_object_not_found" });
+      }
+      throw err;
+    }
   });
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/signals", async (request, reply) => {

@@ -1,14 +1,22 @@
 import { XMLParser } from "fast-xml-parser";
-import type { DiscoverySourceConfig, DiscoverySourceType } from "@tuezday/contracts";
+import type {
+  DiscoverySource,
+  DiscoverySourceConfig,
+  DiscoverySourceType,
+} from "@tuezday/contracts";
+import type { SafeFetchService } from "../safe-fetch";
+import type {
+  DiscoveryPage,
+  DiscoveryTarget,
+  DiscoveryTargetCheckpoint,
+} from "./paging";
 
 /**
  * Source adapters. Each turns a source config into a normalized item list.
- * The fetcher is injectable so tests run on fixtures, never the network.
+ * Safe-fetch is injectable so tests run on fixtures, never the network.
  * Credential-gated types (x, linkedin) are registered here but refuse to
  * fetch until API keys exist — flipping them live only touches this file.
  */
-
-export type Fetcher = typeof fetch;
 
 export interface RawDiscoveredItem {
   externalId: string;
@@ -61,12 +69,16 @@ function asArray<T>(value: T | T[] | undefined): T[] {
   return Array.isArray(value) ? value : [value];
 }
 
-async function fetchText(url: string, fetcher: Fetcher): Promise<string> {
-  const res = await fetcher(url, { headers: { "User-Agent": USER_AGENT } });
-  if (!res.ok) {
-    throw new Error(`Fetch failed with HTTP ${res.status} for ${url}`);
-  }
-  return res.text();
+async function fetchFeedText(
+  url: string,
+  safeFetch: SafeFetchService,
+): Promise<string> {
+  const result = await safeFetch.fetch({
+    url,
+    profile: "feed",
+    headers: { "user-agent": USER_AGENT },
+  });
+  return result.text();
 }
 
 // ---------------------------------------------------------------------------
@@ -114,15 +126,15 @@ function parseFeed(xml: string): RawDiscoveredItem[] {
   });
 }
 
-async function fetchRss(config: DiscoverySourceConfig, fetcher: Fetcher) {
+async function fetchRss(config: DiscoverySourceConfig, safeFetch: SafeFetchService) {
   if (!config.feedUrl) throw new Error("RSS source has no feedUrl configured.");
-  return parseFeed(await fetchText(config.feedUrl, fetcher));
+  return parseFeed(await fetchFeedText(config.feedUrl, safeFetch));
 }
 
-async function fetchGoogleNews(config: DiscoverySourceConfig, fetcher: Fetcher) {
+async function fetchGoogleNews(config: DiscoverySourceConfig, safeFetch: SafeFetchService) {
   if (!config.query?.trim()) throw new Error("Google News source has no query configured.");
   const url = `https://news.google.com/rss/search?q=${encodeURIComponent(config.query.trim())}&hl=en-US&gl=US&ceid=US:en`;
-  return parseFeed(await fetchText(url, fetcher));
+  return parseFeed(await fetchFeedText(url, safeFetch));
 }
 
 // ---------------------------------------------------------------------------
@@ -132,7 +144,7 @@ async function fetchGoogleNews(config: DiscoverySourceConfig, fetcher: Fetcher) 
 // function.
 // ---------------------------------------------------------------------------
 
-async function fetchReddit(config: DiscoverySourceConfig, fetcher: Fetcher) {
+async function fetchReddit(config: DiscoverySourceConfig, safeFetch: SafeFetchService) {
   const subreddit = config.subreddit?.trim().replace(/^r\//, "");
   const query = config.query?.trim();
   let url: string;
@@ -145,7 +157,7 @@ async function fetchReddit(config: DiscoverySourceConfig, fetcher: Fetcher) {
   } else {
     throw new Error("Reddit source has neither query nor subreddit configured.");
   }
-  return parseFeed(await fetchText(url, fetcher));
+  return parseFeed(await fetchFeedText(url, safeFetch));
 }
 
 // ---------------------------------------------------------------------------
@@ -163,11 +175,16 @@ interface HnHit {
   created_at_i?: number;
 }
 
-async function fetchHackerNews(config: DiscoverySourceConfig, fetcher: Fetcher) {
+async function fetchHackerNews(config: DiscoverySourceConfig, safeFetch: SafeFetchService) {
   const query = config.query?.trim();
   if (!query) throw new Error("Hacker News source has no query configured.");
   const url = `https://hn.algolia.com/api/v1/search_by_date?query=${encodeURIComponent(query)}&tags=story&hitsPerPage=${MAX_ITEMS}`;
-  const body = JSON.parse(await fetchText(url, fetcher)) as { hits?: HnHit[] };
+  const result = await safeFetch.fetch({
+    url,
+    profile: "json",
+    headers: { "user-agent": USER_AGENT },
+  });
+  const body = result.json<{ hits?: HnHit[] }>();
   return (body.hits ?? [])
     .filter((h) => h.objectID && h.title)
     .map((h) => ({
@@ -181,33 +198,33 @@ async function fetchHackerNews(config: DiscoverySourceConfig, fetcher: Fetcher) 
     }));
 }
 
-async function fetchYoutube(config: DiscoverySourceConfig, fetcher: Fetcher) {
+async function fetchYoutube(config: DiscoverySourceConfig, safeFetch: SafeFetchService) {
   const channelId = config.channelId?.trim();
   if (!channelId) throw new Error("YouTube source has no channelId configured.");
   const url = `https://www.youtube.com/feeds/videos.xml?channel_id=${encodeURIComponent(channelId)}`;
-  return parseFeed(await fetchText(url, fetcher));
+  return parseFeed(await fetchFeedText(url, safeFetch));
 }
 
-async function fetchPodcast(config: DiscoverySourceConfig, fetcher: Fetcher) {
+async function fetchPodcast(config: DiscoverySourceConfig, safeFetch: SafeFetchService) {
   if (!config.feedUrl) throw new Error("Podcast source has no feedUrl configured.");
-  return parseFeed(await fetchText(config.feedUrl, fetcher));
+  return parseFeed(await fetchFeedText(config.feedUrl, safeFetch));
 }
 
-async function fetchGoogleTrends(config: DiscoverySourceConfig, fetcher: Fetcher) {
+async function fetchGoogleTrends(config: DiscoverySourceConfig, safeFetch: SafeFetchService) {
   const geo = (config.geo?.trim() || "US").toUpperCase();
   const url = `https://trends.google.com/trends/trendingsearches/daily/rss?geo=${encodeURIComponent(geo)}`;
-  const items = parseFeed(await fetchText(url, fetcher));
+  const items = parseFeed(await fetchFeedText(url, safeFetch));
   // Trends items can lack a guid/link; fall back to the title so they dedupe.
   return items.map((i) => ({ ...i, externalId: i.externalId || i.title }));
 }
 
-async function fetchFundingNews(config: DiscoverySourceConfig, fetcher: Fetcher) {
+async function fetchFundingNews(config: DiscoverySourceConfig, safeFetch: SafeFetchService) {
   const query = config.query?.trim();
   if (!query) throw new Error("Funding-news source has no query configured.");
   const scoped = config.sector?.trim() ? `${query} ${config.sector.trim()}` : query;
   const fundingQuery = `${scoped} (funding OR raises OR "Series A" OR "Series B" OR seed OR round)`;
   const url = `https://news.google.com/rss/search?q=${encodeURIComponent(fundingQuery)}&hl=en-US&gl=US&ceid=US:en`;
-  return parseFeed(await fetchText(url, fetcher));
+  return parseFeed(await fetchFeedText(url, safeFetch));
 }
 
 // ---------------------------------------------------------------------------
@@ -217,25 +234,25 @@ async function fetchFundingNews(config: DiscoverySourceConfig, fetcher: Fetcher)
 export async function fetchSourceItems(
   type: DiscoverySourceType,
   config: DiscoverySourceConfig,
-  fetcher: Fetcher = fetch,
+  safeFetch: SafeFetchService,
 ): Promise<RawDiscoveredItem[]> {
   switch (type) {
     case "rss":
-      return fetchRss(config, fetcher);
+      return fetchRss(config, safeFetch);
     case "google_news":
-      return fetchGoogleNews(config, fetcher);
+      return fetchGoogleNews(config, safeFetch);
     case "reddit":
-      return fetchReddit(config, fetcher);
+      return fetchReddit(config, safeFetch);
     case "hacker_news":
-      return fetchHackerNews(config, fetcher);
+      return fetchHackerNews(config, safeFetch);
     case "youtube":
-      return fetchYoutube(config, fetcher);
+      return fetchYoutube(config, safeFetch);
     case "podcast":
-      return fetchPodcast(config, fetcher);
+      return fetchPodcast(config, safeFetch);
     case "google_trends":
-      return fetchGoogleTrends(config, fetcher);
+      return fetchGoogleTrends(config, safeFetch);
     case "funding_news":
-      return fetchFundingNews(config, fetcher);
+      return fetchFundingNews(config, safeFetch);
     case "x":
     case "linkedin":
     case "instagram":
@@ -244,6 +261,59 @@ export async function fetchSourceItems(
     case "intent":
       throw new NeedsApiKeyError(type);
   }
+}
+
+export async function fetchSourcePage(input: {
+  source: DiscoverySource;
+  target: DiscoveryTarget;
+  checkpoint: DiscoveryTargetCheckpoint;
+  signal: AbortSignal;
+  maxItems: number;
+  maxResponseBytes: number;
+  safeFetch: SafeFetchService;
+}): Promise<DiscoveryPage> {
+  let callsUsed = 0;
+  let decodedBytes = 0;
+  const boundedSafeFetch: SafeFetchService = {
+    validateUrl(url) {
+      return input.safeFetch.validateUrl(url);
+    },
+    async fetch(request) {
+      callsUsed += 1;
+      const result = await input.safeFetch.fetch({
+        ...request,
+        signal: input.signal,
+        limits: {
+          maxCompressedBytes: Math.min(
+            request.limits?.maxCompressedBytes ?? Number.POSITIVE_INFINITY,
+            input.maxResponseBytes,
+            2 * 1024 * 1024,
+          ),
+          maxDecodedBytes: Math.min(
+            request.limits?.maxDecodedBytes ?? Number.POSITIVE_INFINITY,
+            input.maxResponseBytes,
+            5 * 1024 * 1024,
+          ),
+        },
+      });
+      decodedBytes += result.bytes.byteLength;
+      return result;
+    },
+  };
+  const items = await fetchSourceItems(
+    input.source.type,
+    input.source.config,
+    boundedSafeFetch,
+  );
+  return {
+    targetKey: input.target.key,
+    items: items.slice(0, input.maxItems),
+    nextToken: null,
+    reachedBoundary: false,
+    exhausted: true,
+    callsUsed,
+    decodedBytes,
+  };
 }
 
 /** Whether a source type can fetch today (no credentials required). */

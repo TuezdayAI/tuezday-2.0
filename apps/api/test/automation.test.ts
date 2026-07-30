@@ -10,7 +10,10 @@ import {
 import type { TuezdayApp } from "../src/app";
 import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric";
 import type { Db } from "../src/db";
+import { taskLeases } from "../src/db/schema";
+import type { EvidenceStore } from "../src/evidence/store";
 import type { LlmGateway } from "../src/llm/gateway";
+import { runAutomationWithLease } from "../src/services/automation";
 import { applyDraftAction, listDecisions, listDrafts, submitDraft } from "../src/services/drafts";
 import { insertSignalMatch } from "../src/services/matching";
 import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
@@ -20,6 +23,31 @@ const fakeLlm: LlmGateway = {
     return { text: "Auto headline\nThe generated body.", model: "fake", provider: "fake", durationMs: 1 };
   },
 };
+
+const noEvidence: EvidenceStore = {
+  async health() {
+    return { healthy: true };
+  },
+  async createCollection() {
+    return "unused";
+  },
+  async addDocument() {
+    return "unused";
+  },
+  async attachDocument() {},
+  async deleteDocument() {},
+  async search() {
+    return [];
+  },
+};
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
+}
 
 // Monday 08:00:00 UTC — a fixed clock so slot timestamps are deterministic.
 const MONDAY_8AM_UTC = new Date("2026-07-06T08:00:00Z");
@@ -343,6 +371,103 @@ describe("social automation", () => {
     expect(listDrafts(db, workspaceId)).toHaveLength(4);
   });
 
+  it("serializes overlapping workspace automation and commits one automatic draft", async () => {
+    const campaignId = await createCampaign(["linkedin"]);
+    await setAutomation(campaignId, "scheduled_auto");
+    const signalId = await createSignal();
+    seedMatch(signalId, campaignId);
+    const started = deferred<void>();
+    const release = deferred<void>();
+    const blockingLlm: LlmGateway = {
+      async generate() {
+        started.resolve();
+        await release.promise;
+        return fakeLlm.generate({ prompt: "test" });
+      },
+    };
+    const deps = {
+      db,
+      llm: blockingLlm,
+      evidence: noEvidence,
+      leaseMs: 60_000,
+      heartbeatMs: 30_000,
+    };
+
+    const first = runAutomationWithLease(
+      deps,
+      workspaceId,
+      "owner-a",
+    );
+    await started.promise;
+    const second = await runAutomationWithLease(
+      deps,
+      workspaceId,
+      "owner-b",
+    );
+    release.resolve();
+    const firstResult = await first;
+
+    expect(firstResult.busy || second.busy).toBe(true);
+    const [draft] = listDrafts(db, workspaceId);
+    expect(draft).toBeDefined();
+    expect(draft).not.toHaveProperty("automationKey");
+    expect(listDrafts(db, workspaceId)).toEqual([draft]);
+    expect(listDecisions(db, draft!.id).map((decision) => decision.action))
+      .toEqual(["submit", "approve"]);
+  });
+
+  it("keeps one automatic draft when the workspace lease expires during generation", async () => {
+    const campaignId = await createCampaign(["linkedin"]);
+    await setAutomation(campaignId, "scheduled_auto");
+    const signalId = await createSignal();
+    seedMatch(signalId, campaignId);
+    const started = deferred<void>();
+    const release = deferred<void>();
+    let calls = 0;
+    const racingLlm: LlmGateway = {
+      async generate() {
+        calls += 1;
+        if (calls === 1) {
+          started.resolve();
+          await release.promise;
+        }
+        return fakeLlm.generate({ prompt: "test" });
+      },
+    };
+    const deps = {
+      db,
+      llm: racingLlm,
+      evidence: noEvidence,
+      leaseMs: 60_000,
+      heartbeatMs: 30_000,
+    };
+
+    const staleRun = runAutomationWithLease(
+      deps,
+      workspaceId,
+      "owner-stale",
+    );
+    await started.promise;
+    db.update(taskLeases)
+      .set({ expiresAt: 0 })
+      .run();
+    const winner = await runAutomationWithLease(
+      deps,
+      workspaceId,
+      "owner-winner",
+    );
+    release.resolve();
+    const stale = await staleRun;
+
+    expect(winner.busy).toBe(false);
+    expect(stale.busy).toBe(false);
+    expect(calls).toBeGreaterThanOrEqual(2);
+    const [draft] = listDrafts(db, workspaceId);
+    expect(listDrafts(db, workspaceId)).toEqual([draft]);
+    expect(listDecisions(db, draft!.id).map((decision) => decision.action))
+      .toEqual(["submit", "approve"]);
+  });
+
   it("scheduled_auto auto-approves through the gate and posts on the cadence", async () => {
     const connectionId = await connectReddit();
     const campaignId = await createCampaign(["linkedin"]);
@@ -411,6 +536,55 @@ describe("social automation", () => {
       const again = await run();
       expect(again.results.every((r: { generated: number }) => r.generated === 0)).toBe(true);
       expect(listDrafts(db, workspaceId)).toHaveLength(1);
+    });
+
+    it("uses the highest valid local match instead of a higher foreign-persona row", async () => {
+      const localPersonaId = await createPersona("Local Automation Persona");
+      const campaignId = await createCampaign(
+        ["linkedin"],
+        "Tenant-safe Campaign",
+        [localPersonaId],
+      );
+      await setAutomation(campaignId, "human_in_the_loop");
+      const signalId = await createSignal("Tenant-isolated routing");
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Foreign Automation Workspace" },
+        })
+      ).json().id as string;
+      const foreignPersonaId = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${otherWorkspaceId}/personas`,
+          payload: { name: "Foreign Automation Persona" },
+        })
+      ).json().id as string;
+      seedMatch(signalId, campaignId, {
+        personaId: localPersonaId,
+        score: 80,
+      });
+      seedMatch(signalId, campaignId, {
+        personaId: foreignPersonaId,
+        score: 90,
+      });
+
+      const result = await run();
+
+      expect(result.results[0]).toMatchObject({
+        generated: 1,
+        autoApproved: 0,
+        skipped: 0,
+        blocked: null,
+      });
+      expect(listDrafts(db, workspaceId)).toEqual([
+        expect.objectContaining({
+          campaignId,
+          personaId: localPersonaId,
+          sourceSignalId: signalId,
+        }),
+      ]);
     });
 
     it("a signal matching two campaigns generates for both, each as its own persona", async () => {

@@ -1,6 +1,11 @@
-import type { Connection, DiscoverySource, DiscoverySourceConfig } from "@tuezday/contracts";
+import type { Connection, DiscoverySource } from "@tuezday/contracts";
 import type { ConnectorFabric } from "../connectors/fabric";
 import type { RawDiscoveredItem } from "./adapters";
+import type {
+  DiscoveryPage,
+  DiscoveryTarget,
+  DiscoveryTargetCheckpoint,
+} from "./paging";
 
 /**
  * Connected discovery adapters (Sprint 46): fetch external posts through the
@@ -24,11 +29,59 @@ export class RateLimitedError extends Error {
   }
 }
 
+export class CursorInvalidError extends Error {
+  constructor() {
+    super("cursor_invalid");
+    this.name = "CursorInvalidError";
+  }
+}
+
+export class ConnectedDiscoveryBudgetError extends Error {
+  constructor(
+    public readonly code:
+      | "call_budget_exhausted"
+      | "source_byte_budget_exhausted",
+  ) {
+    super(code);
+    this.name = "ConnectedDiscoveryBudgetError";
+  }
+}
+
+export interface ConnectedDiscoveryErrorMetrics {
+  callsUsed: number;
+  decodedBytes: number;
+}
+
+const connectedDiscoveryErrorMetrics = new WeakMap<
+  object,
+  ConnectedDiscoveryErrorMetrics
+>();
+
+export function getConnectedDiscoveryErrorMetrics(
+  error: unknown,
+): ConnectedDiscoveryErrorMetrics {
+  if (
+    (typeof error !== "object" || error === null) &&
+    typeof error !== "function"
+  ) {
+    return { callsUsed: 0, decodedBytes: 0 };
+  }
+  return (
+    connectedDiscoveryErrorMetrics.get(error as object) ?? {
+      callsUsed: 0,
+      decodedBytes: 0,
+    }
+  );
+}
+
 /** A tracked account the source references, pre-resolved by the caller. */
 export interface ResolvedTrackedAccount {
+  id: string;
   handle: string;
   /** Provider-side id (e.g. a LinkedIn author URN) when known. */
   externalId: string | null;
+  enabled: boolean;
+  updatedAt: number;
 }
 
 export interface ConnectedDiscoveryInput {
@@ -36,6 +89,11 @@ export interface ConnectedDiscoveryInput {
   connection: Connection;
   fabric: ConnectorFabric;
   trackedAccounts?: ResolvedTrackedAccount[];
+  signal?: AbortSignal;
+  maxResponseBytes?: number;
+  maxCalls?: number;
+  maxBytes?: number;
+  metrics?: { calls: number; bytes: number };
 }
 
 const MAX_ITEMS = 25;
@@ -53,27 +111,6 @@ function parseDate(value: unknown): number | null {
   return Number.isNaN(ts) ? null : ts;
 }
 
-/** Every handle the source targets: inline config plus tracked accounts. */
-function targetHandles(
-  config: DiscoverySourceConfig,
-  trackedAccounts: ResolvedTrackedAccount[] | undefined,
-): string[] {
-  const raw = [
-    ...(config.handle ? [config.handle] : []),
-    ...(config.handles ?? []),
-    ...(trackedAccounts ?? []).map((a) => a.handle),
-  ];
-  const seen = new Set<string>();
-  const handles: string[] = [];
-  for (const value of raw) {
-    const handle = value.trim().replace(/^@+/, "");
-    if (!handle || seen.has(handle.toLowerCase())) continue;
-    seen.add(handle.toLowerCase());
-    handles.push(handle);
-  }
-  return handles;
-}
-
 interface ProxyOpts {
   baseUrl: string;
   headers?: Record<string, string>;
@@ -81,25 +118,71 @@ interface ProxyOpts {
   permissionMessage: string;
   /** Meta reports missing permissions as 400 OAuthException, not 403. */
   permissionOn400?: boolean;
+  /** This request includes a provider-issued continuation token. */
+  cursorRequested?: boolean;
+}
+
+function invalidCursorResponse(value: unknown): boolean {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(value).toLowerCase();
+  } catch {
+    return false;
+  }
+  return [
+    "invalid_cursor",
+    "invalid cursor",
+    "pagination_token",
+    "paging token",
+    "expired token",
+  ].some((marker) => serialized.includes(marker));
 }
 
 async function getJson(input: ConnectedDiscoveryInput, path: string, opts: ProxyOpts): Promise<unknown> {
+  const metrics = input.metrics;
+  if (
+    metrics &&
+    input.maxCalls !== undefined &&
+    metrics.calls >= input.maxCalls
+  ) {
+    throw new ConnectedDiscoveryBudgetError("call_budget_exhausted");
+  }
+  if (metrics) metrics.calls += 1;
   const res = await input.fabric.proxyJson(
     "GET",
     path,
     input.connection.nangoConnectionId,
     `tuezday-${input.connection.providerKey}`,
-    { baseUrlOverride: opts.baseUrl, headers: opts.headers },
+    {
+      baseUrlOverride: opts.baseUrl,
+      headers: opts.headers,
+      signal: input.signal,
+      maxResponseBytes: input.maxResponseBytes,
+    },
   );
+  if (metrics) {
+    metrics.bytes += res.decodedBytes ?? 0;
+    if (
+      input.maxBytes !== undefined &&
+      metrics.bytes > input.maxBytes
+    ) {
+      throw new ConnectedDiscoveryBudgetError(
+        "source_byte_budget_exhausted",
+      );
+    }
+  }
   if (res.status === 429) {
     throw new RateLimitedError(`${input.source.type} rate limit hit (HTTP 429).`);
   }
+  if (
+    res.status === 400 &&
+    opts.cursorRequested &&
+    invalidCursorResponse(res.json)
+  ) {
+    throw new CursorInvalidError();
+  }
   if (res.status === 401 || res.status === 403 || (opts.permissionOn400 && res.status === 400)) {
-    const detail =
-      typeof res.json === "object" && res.json !== null
-        ? JSON.stringify(res.json).slice(0, 200)
-        : `HTTP ${res.status}`;
-    throw new PermissionRequiredError(`${opts.permissionMessage} (${detail})`);
+    throw new PermissionRequiredError(opts.permissionMessage);
   }
   if (res.status < 200 || res.status >= 300) {
     throw new Error(`${input.source.type} fetch returned HTTP ${res.status} for ${path}`);
@@ -112,8 +195,6 @@ async function getJson(input: ConnectedDiscoveryInput, path: string, opts: Proxy
 // ---------------------------------------------------------------------------
 
 const X_BASE = "https://api.twitter.com";
-const X_TWEET_PARAMS =
-  "max_results=25&tweet.fields=created_at,author_id,public_metrics&expansions=author_id&user.fields=username,name";
 const X_PERMISSION =
   "X rejected the request — reconnect the X account (missing scope or revoked access)";
 const X_LIST_PERMISSION =
@@ -129,6 +210,7 @@ interface XTweet {
 interface XTweetsResponse {
   data?: XTweet[];
   includes?: { users?: Array<{ id?: string; username?: string }> };
+  meta?: { next_token?: string };
 }
 interface XUserResponse {
   data?: { id?: string; username?: string };
@@ -160,57 +242,6 @@ function xItems(json: XTweetsResponse, fallbackUsername?: string): RawDiscovered
     });
 }
 
-async function fetchXItems(input: ConnectedDiscoveryInput): Promise<RawDiscoveredItem[]> {
-  const { config } = input.source;
-  const opts: ProxyOpts = { baseUrl: X_BASE, permissionMessage: X_PERMISSION };
-  const mode = config.mode ?? "query";
-
-  if (mode === "query") {
-    const query = config.query?.trim();
-    if (!query) throw new Error("X query source has no query configured.");
-    const json = (await getJson(
-      input,
-      `/2/tweets/search/recent?query=${encodeURIComponent(query)}&${X_TWEET_PARAMS}`,
-      opts,
-    )) as XTweetsResponse;
-    return xItems(json);
-  }
-
-  if (mode === "account_timeline") {
-    const handles = targetHandles(config, input.trackedAccounts);
-    if (handles.length === 0) throw new Error("X account source has no handle configured.");
-    const items: RawDiscoveredItem[] = [];
-    for (const handle of handles) {
-      const user = (await getJson(
-        input,
-        `/2/users/by/username/${encodeURIComponent(handle)}`,
-        opts,
-      )) as XUserResponse;
-      // An unknown/renamed handle skips quietly; the other handles still fetch.
-      if (!user.data?.id) continue;
-      const timeline = (await getJson(
-        input,
-        `/2/users/${user.data.id}/tweets?${X_TWEET_PARAMS}`,
-        opts,
-      )) as XTweetsResponse;
-      items.push(...xItems(timeline, user.data.username ?? handle));
-    }
-    return items;
-  }
-
-  if (mode === "list_timeline") {
-    const listId = config.listId?.trim();
-    if (!listId) throw new Error("X list source has no listId configured.");
-    const json = (await getJson(input, `/2/lists/${encodeURIComponent(listId)}/tweets?${X_TWEET_PARAMS}`, {
-      ...opts,
-      permissionMessage: X_LIST_PERMISSION,
-    })) as XTweetsResponse;
-    return xItems(json);
-  }
-
-  throw new Error(`X sources do not support mode "${mode}".`);
-}
-
 // ---------------------------------------------------------------------------
 // Reddit (OAuth): subreddit new/search and global search via oauth.reddit.com.
 // Keyless Reddit sources never reach here — they keep the RSS adapter.
@@ -233,45 +264,7 @@ interface RedditChild {
   };
 }
 interface RedditListing {
-  data?: { children?: RedditChild[] };
-}
-
-async function fetchAuthenticatedRedditItems(
-  input: ConnectedDiscoveryInput,
-): Promise<RawDiscoveredItem[]> {
-  const { config } = input.source;
-  const subreddit = config.subreddit?.trim().replace(/^r\//, "");
-  const query = config.query?.trim();
-  let path: string;
-  if (subreddit && query) {
-    path = `/r/${encodeURIComponent(subreddit)}/search?q=${encodeURIComponent(query)}&restrict_sr=1&sort=new&limit=${MAX_ITEMS}`;
-  } else if (subreddit) {
-    path = `/r/${encodeURIComponent(subreddit)}/new?limit=${MAX_ITEMS}`;
-  } else if (query) {
-    path = `/search?q=${encodeURIComponent(query)}&sort=new&limit=${MAX_ITEMS}`;
-  } else {
-    throw new Error("Reddit source has neither query nor subreddit configured.");
-  }
-
-  const json = (await getJson(input, path, {
-    baseUrl: REDDIT_BASE,
-    headers: { "User-Agent": USER_AGENT },
-    permissionMessage: REDDIT_PERMISSION,
-  })) as RedditListing;
-
-  return (json.data?.children ?? [])
-    .filter((c) => c.data?.title && (c.data.name || c.data.id))
-    .slice(0, MAX_ITEMS)
-    .map((c) => {
-      const data = c.data!;
-      return {
-        externalId: data.name ?? `${c.kind ?? "t3"}_${data.id}`,
-        title: data.title!.trim(),
-        url: data.permalink ? `https://www.reddit.com${data.permalink}` : (data.url ?? ""),
-        summary: data.selftext?.trim() || data.url || "",
-        publishedAt: typeof data.created_utc === "number" ? data.created_utc * 1000 : null,
-      };
-    });
+  data?: { children?: RedditChild[]; after?: string | null };
 }
 
 // ---------------------------------------------------------------------------
@@ -294,49 +287,14 @@ interface LinkedInPostsResponse {
     createdAt?: number;
     publishedAt?: number;
   }>;
+  paging?: {
+    start?: number;
+    count?: number;
+    total?: number;
+  };
 }
 interface LinkedInUserInfo {
   sub?: string;
-}
-
-async function fetchLinkedInItems(input: ConnectedDiscoveryInput): Promise<RawDiscoveredItem[]> {
-  const { config } = input.source;
-  if ((config.mode ?? "account_timeline") !== "account_timeline") {
-    throw new Error(`LinkedIn sources do not support mode "${config.mode}".`);
-  }
-  const opts: ProxyOpts = {
-    baseUrl: LINKEDIN_BASE,
-    headers: LINKEDIN_HEADERS,
-    permissionMessage: LINKEDIN_PERMISSION,
-  };
-
-  // Author URN: tracked account's resolved URN, an URN typed as the handle,
-  // else the connected member themself (via OpenID userinfo).
-  let author =
-    (input.trackedAccounts ?? []).find((a) => a.externalId?.startsWith("urn:"))?.externalId ??
-    (config.handle?.trim().startsWith("urn:") ? config.handle.trim() : undefined);
-  if (!author) {
-    const userinfo = (await getJson(input, "/v2/userinfo", opts)) as LinkedInUserInfo;
-    if (!userinfo.sub) throw new PermissionRequiredError(LINKEDIN_PERMISSION);
-    author = `urn:li:person:${userinfo.sub}`;
-  }
-
-  const json = (await getJson(
-    input,
-    `/rest/posts?author=${encodeURIComponent(author)}&q=author&count=${MAX_ITEMS}&sortBy=LAST_MODIFIED`,
-    opts,
-  )) as LinkedInPostsResponse;
-
-  return (json.elements ?? [])
-    .filter((p) => p.id)
-    .slice(0, MAX_ITEMS)
-    .map((p) => ({
-      externalId: p.id!,
-      title: p.commentary ? clip(p.commentary, TITLE_MAX) : "LinkedIn post",
-      url: `https://www.linkedin.com/feed/update/${p.id}`,
-      summary: p.commentary?.trim() ?? "",
-      publishedAt: p.publishedAt ?? p.createdAt ?? null,
-    }));
 }
 
 // ---------------------------------------------------------------------------
@@ -362,13 +320,19 @@ interface IgMedia {
   comments_count?: number;
 }
 interface IgBusinessDiscoveryResponse {
-  business_discovery?: { media?: { data?: IgMedia[] } };
+  business_discovery?: {
+    media?: {
+      data?: IgMedia[];
+      paging?: { cursors?: { after?: string } };
+    };
+  };
 }
 interface IgHashtagSearchResponse {
   data?: Array<{ id?: string }>;
 }
 interface IgMediaListResponse {
   data?: IgMedia[];
+  paging?: { cursors?: { after?: string } };
 }
 
 function igItems(media: IgMedia[], fallbackTitle: string): RawDiscoveredItem[] {
@@ -390,83 +354,443 @@ function igItems(media: IgMedia[], fallbackTitle: string): RawDiscoveredItem[] {
     });
 }
 
-async function fetchInstagramItems(input: ConnectedDiscoveryInput): Promise<RawDiscoveredItem[]> {
-  const { config } = input.source;
-  const opts: ProxyOpts = {
-    baseUrl: GRAPH_BASE,
-    permissionMessage: INSTAGRAM_PERMISSION,
-    permissionOn400: true,
-  };
+interface ConnectedProviderPageInput extends ConnectedDiscoveryInput {
+  target: DiscoveryTarget;
+  checkpoint: DiscoveryTargetCheckpoint;
+  maxItems: number;
+}
 
-  // Same IG Business account lookup as the publishing adapter.
+interface ProviderPageResult {
+  items: RawDiscoveredItem[];
+  nextToken: string | null;
+}
+
+function providerToken(input: ConnectedProviderPageInput): string | null {
+  return input.checkpoint.continuation?.providerToken ?? null;
+}
+
+function appendQuery(
+  path: string,
+  key: string,
+  value: string | null,
+): string {
+  if (!value) return path;
+  return `${path}${path.includes("?") ? "&" : "?"}${key}=${encodeURIComponent(value)}`;
+}
+
+function pageSize(input: ConnectedProviderPageInput): number {
+  return Math.max(1, Math.min(MAX_ITEMS, input.maxItems));
+}
+
+async function fetchXPage(
+  input: ConnectedProviderPageInput,
+): Promise<ProviderPageResult> {
+  const { config } = input.source;
+  const token = providerToken(input);
+  const opts: ProxyOpts = {
+    baseUrl: X_BASE,
+    permissionMessage: X_PERMISSION,
+    cursorRequested: Boolean(token),
+  };
+  const params =
+    `max_results=${pageSize(input)}` +
+    "&tweet.fields=created_at,author_id,public_metrics" +
+    "&expansions=author_id&user.fields=username,name";
+  const mode = config.mode ?? "query";
+  let json: XTweetsResponse;
+  let fallbackUsername: string | undefined;
+
+  if (mode === "query") {
+    const query = config.query?.trim();
+    if (!query) throw new Error("X query source has no query configured.");
+    const path = appendQuery(
+      `/2/tweets/search/recent?query=${encodeURIComponent(query)}&${params}`,
+      "pagination_token",
+      token,
+    );
+    json = (await getJson(input, path, opts)) as XTweetsResponse;
+  } else if (mode === "account_timeline") {
+    const handle = input.target.handle?.trim().replace(/^@+/, "");
+    if (!handle) {
+      throw new Error("X account source has no handle configured.");
+    }
+    let userId = input.target.externalId?.trim() || null;
+    fallbackUsername = handle;
+    if (!userId) {
+      const user = (await getJson(
+        input,
+        `/2/users/by/username/${encodeURIComponent(handle)}`,
+        {
+          ...opts,
+          cursorRequested: false,
+        },
+      )) as XUserResponse;
+      if (!user.data?.id) {
+        return { items: [], nextToken: null };
+      }
+      userId = user.data.id;
+      fallbackUsername = user.data.username ?? handle;
+    }
+    const path = appendQuery(
+      `/2/users/${encodeURIComponent(userId)}/tweets?${params}`,
+      "pagination_token",
+      token,
+    );
+    json = (await getJson(input, path, opts)) as XTweetsResponse;
+  } else if (mode === "list_timeline") {
+    const listId = config.listId?.trim();
+    if (!listId) throw new Error("X list source has no listId configured.");
+    const path = appendQuery(
+      `/2/lists/${encodeURIComponent(listId)}/tweets?${params}`,
+      "pagination_token",
+      token,
+    );
+    json = (await getJson(input, path, {
+      ...opts,
+      permissionMessage: X_LIST_PERMISSION,
+    })) as XTweetsResponse;
+  } else {
+    throw new Error(`X sources do not support mode "${mode}".`);
+  }
+
+  return {
+    items: xItems(json, fallbackUsername),
+    nextToken: json.meta?.next_token?.trim() || null,
+  };
+}
+
+async function fetchRedditPage(
+  input: ConnectedProviderPageInput,
+): Promise<ProviderPageResult> {
+  const { config } = input.source;
+  const subreddit = config.subreddit?.trim().replace(/^r\//, "");
+  const query = config.query?.trim();
+  const limit = pageSize(input);
+  let path: string;
+  if (subreddit && query) {
+    path =
+      `/r/${encodeURIComponent(subreddit)}/search` +
+      `?q=${encodeURIComponent(query)}&restrict_sr=1&sort=new&limit=${limit}`;
+  } else if (subreddit) {
+    path = `/r/${encodeURIComponent(subreddit)}/new?limit=${limit}`;
+  } else if (query) {
+    path =
+      `/search?q=${encodeURIComponent(query)}&sort=new&limit=${limit}`;
+  } else {
+    throw new Error(
+      "Reddit source has neither query nor subreddit configured.",
+    );
+  }
+  const token = providerToken(input);
+  path = appendQuery(path, "after", token);
+  const json = (await getJson(input, path, {
+    baseUrl: REDDIT_BASE,
+    headers: { "User-Agent": USER_AGENT },
+    permissionMessage: REDDIT_PERMISSION,
+    cursorRequested: Boolean(token),
+  })) as RedditListing;
+  const items = (json.data?.children ?? [])
+    .filter((child) => child.data?.title && (child.data.name || child.data.id))
+    .slice(0, limit)
+    .map((child) => {
+      const data = child.data!;
+      return {
+        externalId: data.name ?? `${child.kind ?? "t3"}_${data.id}`,
+        title: data.title!.trim(),
+        url: data.permalink
+          ? `https://www.reddit.com${data.permalink}`
+          : (data.url ?? ""),
+        summary: data.selftext?.trim() || data.url || "",
+        publishedAt:
+          typeof data.created_utc === "number"
+            ? data.created_utc * 1000
+            : null,
+      };
+    });
+  return {
+    items,
+    nextToken: json.data?.after?.trim() || null,
+  };
+}
+
+async function fetchLinkedInPage(
+  input: ConnectedProviderPageInput,
+): Promise<ProviderPageResult> {
+  const { config } = input.source;
+  if ((config.mode ?? "account_timeline") !== "account_timeline") {
+    throw new Error(
+      `LinkedIn sources do not support mode "${config.mode}".`,
+    );
+  }
+  const token = providerToken(input);
+  const parsedStart = token === null ? 0 : Number.parseInt(token, 10);
+  if (
+    !Number.isSafeInteger(parsedStart) ||
+    parsedStart < 0 ||
+    (token !== null && String(parsedStart) !== token)
+  ) {
+    throw new CursorInvalidError();
+  }
+  const opts: ProxyOpts = {
+    baseUrl: LINKEDIN_BASE,
+    headers: LINKEDIN_HEADERS,
+    permissionMessage: LINKEDIN_PERMISSION,
+    cursorRequested: Boolean(token),
+  };
+  let author =
+    (input.target.externalId?.startsWith("urn:")
+      ? input.target.externalId
+      : undefined) ??
+    (input.target.handle?.trim().startsWith("urn:")
+      ? input.target.handle.trim()
+      : undefined) ??
+    (config.handle?.trim().startsWith("urn:")
+      ? config.handle.trim()
+      : undefined);
+  if (!author) {
+    const userinfo = (await getJson(input, "/v2/userinfo", {
+      ...opts,
+      cursorRequested: false,
+    })) as LinkedInUserInfo;
+    if (!userinfo.sub) throw new PermissionRequiredError(LINKEDIN_PERMISSION);
+    author = `urn:li:person:${userinfo.sub}`;
+  }
+
+  const count = pageSize(input);
+  const json = (await getJson(
+    input,
+    `/rest/posts?author=${encodeURIComponent(author)}` +
+      `&q=author&count=${count}&start=${parsedStart}` +
+      "&sortBy=LAST_MODIFIED",
+    opts,
+  )) as LinkedInPostsResponse;
+  const items = (json.elements ?? [])
+    .filter((post) => post.id)
+    .slice(0, count)
+    .map((post) => ({
+      externalId: post.id!,
+      title: post.commentary
+        ? clip(post.commentary, TITLE_MAX)
+        : "LinkedIn post",
+      url: `https://www.linkedin.com/feed/update/${post.id}`,
+      summary: post.commentary?.trim() ?? "",
+      publishedAt: post.publishedAt ?? post.createdAt ?? null,
+    }));
+  const pagingStart = json.paging?.start ?? parsedStart;
+  const pagingCount = json.paging?.count ?? count;
+  const nextStart = pagingStart + pagingCount;
+  const hasNext =
+    json.paging?.total !== undefined
+      ? nextStart < json.paging.total
+      : items.length >= count;
+  return {
+    items,
+    nextToken: hasNext ? String(nextStart) : null,
+  };
+}
+
+async function instagramUserId(
+  input: ConnectedProviderPageInput,
+  opts: ProxyOpts,
+): Promise<string> {
   const accounts = (await getJson(
     input,
     `/${GRAPH_V}/me/accounts?fields=instagram_business_account{id}`,
-    opts,
+    {
+      ...opts,
+      cursorRequested: false,
+    },
   )) as IgAccountsResponse;
   const igUserId = (accounts.data ?? [])
-    .map((p) => p.instagram_business_account?.id)
+    .map((page) => page.instagram_business_account?.id)
     .find(Boolean);
   if (!igUserId) {
     throw new PermissionRequiredError(
       `${INSTAGRAM_PERMISSION} (no IG Business account is linked to this Facebook login)`,
     );
   }
+  return igUserId;
+}
+
+async function fetchInstagramPage(
+  input: ConnectedProviderPageInput,
+): Promise<ProviderPageResult> {
+  const { config } = input.source;
+  const token = providerToken(input);
+  const opts: ProxyOpts = {
+    baseUrl: GRAPH_BASE,
+    permissionMessage: INSTAGRAM_PERMISSION,
+    permissionOn400: true,
+    cursorRequested: Boolean(token),
+  };
+  const igUserId = await instagramUserId(input, opts);
+  const limit = pageSize(input);
 
   if (config.mode === "hashtag") {
     const hashtag = config.hashtag?.trim().replace(/^#/, "");
-    if (!hashtag) throw new Error("Instagram hashtag source has no hashtag configured.");
+    if (!hashtag) {
+      throw new Error(
+        "Instagram hashtag source has no hashtag configured.",
+      );
+    }
     const search = (await getJson(
       input,
-      `/${GRAPH_V}/ig_hashtag_search?user_id=${igUserId}&q=${encodeURIComponent(hashtag)}`,
-      opts,
+      `/${GRAPH_V}/ig_hashtag_search?user_id=${igUserId}` +
+        `&q=${encodeURIComponent(hashtag)}`,
+      {
+        ...opts,
+        cursorRequested: false,
+      },
     )) as IgHashtagSearchResponse;
     const hashtagId = search.data?.[0]?.id;
-    if (!hashtagId) return [];
-    const media = (await getJson(
-      input,
-      `/${GRAPH_V}/${hashtagId}/recent_media?user_id=${igUserId}&fields=id,caption,permalink,timestamp&limit=${MAX_ITEMS}`,
-      opts,
-    )) as IgMediaListResponse;
-    return igItems(media.data ?? [], `#${hashtag} on Instagram`);
+    if (!hashtagId) return { items: [], nextToken: null };
+    let path =
+      `/${GRAPH_V}/${hashtagId}/recent_media?user_id=${igUserId}` +
+      `&fields=id,caption,permalink,timestamp&limit=${limit}`;
+    path = appendQuery(path, "after", token);
+    const media = (await getJson(input, path, opts)) as IgMediaListResponse;
+    return {
+      items: igItems(
+        media.data ?? [],
+        `#${hashtag} on Instagram`,
+      ),
+      nextToken: media.paging?.cursors?.after?.trim() || null,
+    };
   }
 
   if (config.mode === "account_timeline") {
-    const handles = targetHandles(config, input.trackedAccounts);
-    if (handles.length === 0) throw new Error("Instagram account source has no handle configured.");
-    const items: RawDiscoveredItem[] = [];
-    for (const handle of handles) {
-      const fields = `business_discovery.username(${handle}){media{id,caption,permalink,timestamp,like_count,comments_count}}`;
-      const json = (await getJson(
-        input,
-        `/${GRAPH_V}/${igUserId}?fields=${encodeURIComponent(fields)}`,
-        opts,
-      )) as IgBusinessDiscoveryResponse;
-      items.push(...igItems(json.business_discovery?.media?.data ?? [], `@${handle} on Instagram`));
+    const handle = input.target.handle?.trim().replace(/^@+/, "");
+    if (!handle) {
+      throw new Error(
+        "Instagram account source has no handle configured.",
+      );
     }
-    return items;
+    const mediaCursor = token
+      ? `.after(${token})`
+      : "";
+    const fields =
+      `business_discovery.username(${handle})` +
+      `{media${mediaCursor}.limit(${limit})` +
+      "{id,caption,permalink,timestamp,like_count,comments_count}}";
+    const path =
+      `/${GRAPH_V}/${igUserId}?fields=${encodeURIComponent(fields)}`;
+    const json = (await getJson(
+      input,
+      path,
+      opts,
+    )) as IgBusinessDiscoveryResponse;
+    const media = json.business_discovery?.media;
+    return {
+      items: igItems(
+        media?.data ?? [],
+        `@${handle} on Instagram`,
+      ),
+      nextToken: media?.paging?.cursors?.after?.trim() || null,
+    };
   }
 
-  throw new Error(`Instagram sources do not support mode "${config.mode}".`);
+  throw new Error(
+    `Instagram sources do not support mode "${config.mode}".`,
+  );
 }
 
-// ---------------------------------------------------------------------------
-// Dispatch
-// ---------------------------------------------------------------------------
-
-export async function fetchConnectedSourceItems(
-  input: ConnectedDiscoveryInput,
-): Promise<RawDiscoveredItem[]> {
+async function fetchConnectedProviderPage(
+  input: ConnectedProviderPageInput,
+): Promise<ProviderPageResult> {
   switch (input.source.type) {
     case "x":
-      return fetchXItems(input);
+      return fetchXPage(input);
     case "reddit":
-      return fetchAuthenticatedRedditItems(input);
+      return fetchRedditPage(input);
     case "linkedin":
-      return fetchLinkedInItems(input);
+      return fetchLinkedInPage(input);
     case "instagram":
-      return fetchInstagramItems(input);
+      return fetchInstagramPage(input);
     default:
-      throw new Error(`${input.source.type} sources do not support connected fetching.`);
+      throw new Error(
+        `${input.source.type} sources do not support connected fetching.`,
+      );
   }
+}
+
+function stopAtBoundary(
+  result: ProviderPageResult,
+  checkpoint: DiscoveryTargetCheckpoint,
+): ProviderPageResult & { reachedBoundary: boolean; exhausted: boolean } {
+  const boundaryExternalId =
+    checkpoint.continuation?.boundaryExternalId ??
+    checkpoint.highWatermark?.externalId ??
+    null;
+  const boundaryIndex = boundaryExternalId
+    ? result.items.findIndex(
+        (item) => item.externalId === boundaryExternalId,
+      )
+    : -1;
+  if (boundaryIndex >= 0) {
+    return {
+      items: result.items.slice(0, boundaryIndex),
+      nextToken: null,
+      reachedBoundary: true,
+      exhausted: true,
+    };
+  }
+  return {
+    ...result,
+    reachedBoundary: false,
+    exhausted: result.nextToken === null,
+  };
+}
+
+export async function fetchConnectedSourcePage(input: {
+  source: DiscoverySource;
+  connection: Connection;
+  fabric: ConnectorFabric;
+  trackedAccounts: ResolvedTrackedAccount[];
+  target: DiscoveryTarget;
+  checkpoint: DiscoveryTargetCheckpoint;
+  signal: AbortSignal;
+  maxItems: number;
+  maxCalls: number;
+  maxResponseBytes: number;
+  maxBytes: number;
+}): Promise<DiscoveryPage> {
+  const metrics = { calls: 0, bytes: 0 };
+  let result: ProviderPageResult;
+  try {
+    result = await fetchConnectedProviderPage({
+      source: input.source,
+      connection: input.connection,
+      fabric: input.fabric,
+      trackedAccounts: input.trackedAccounts,
+      signal: input.signal,
+      maxResponseBytes: input.maxResponseBytes,
+      maxCalls: input.maxCalls,
+      maxBytes: input.maxBytes,
+      metrics,
+      target: input.target,
+      checkpoint: input.checkpoint,
+      maxItems: input.maxItems,
+    });
+  } catch (error) {
+    if (
+      (typeof error === "object" && error !== null) ||
+      typeof error === "function"
+    ) {
+      connectedDiscoveryErrorMetrics.set(error as object, {
+        callsUsed: metrics.calls,
+        decodedBytes: metrics.bytes,
+      });
+    }
+    throw error;
+  }
+  const bounded = stopAtBoundary(result, input.checkpoint);
+  return {
+    targetKey: input.target.key,
+    items: bounded.items.slice(0, input.maxItems),
+    nextToken: bounded.nextToken,
+    reachedBoundary: bounded.reachedBoundary,
+    exhausted: bounded.exhausted,
+    callsUsed: metrics.calls,
+    decodedBytes: metrics.bytes,
+  };
 }

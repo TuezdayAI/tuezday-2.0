@@ -7,8 +7,10 @@ import {
   type ProxyJsonResult,
   type ProxyResult,
 } from "./fabric";
+import { readBoundedJsonResponse } from "./bounded-json";
 
 type Fetcher = typeof fetch;
+const DEFAULT_PROXY_JSON_MAX_BYTES = 10 * 1024 * 1024;
 
 /** Nango REST implementation. Self-hosted via infra/nango/compose.yaml. */
 export class NangoFabric implements ConnectorFabric {
@@ -207,6 +209,8 @@ export class NangoFabric implements ConnectorFabric {
       form?: Record<string, string>;
       headers?: Record<string, string>;
       baseUrlOverride?: string;
+      signal?: AbortSignal;
+      maxResponseBytes?: number;
     } = {},
   ): Promise<ProxyJsonResult> {
     const wireBody =
@@ -221,6 +225,10 @@ export class NangoFabric implements ConnectorFabric {
         : opts.body !== undefined
           ? "application/json"
           : undefined;
+    const transportSignal = AbortSignal.timeout(30_000);
+    const signal = opts.signal
+      ? AbortSignal.any([transportSignal, opts.signal])
+      : transportSignal;
     const res = await this.fetcher(`${this.baseUrl}/proxy${path}`, {
       method,
       headers: this.headers({
@@ -231,15 +239,12 @@ export class NangoFabric implements ConnectorFabric {
         ...(opts.headers ?? {}),
       }),
       ...(wireBody !== undefined ? { body: wireBody } : {}),
-      signal: AbortSignal.timeout(30_000),
+      signal,
     });
-    const text = await res.text().catch(() => "");
-    let json: unknown;
-    try {
-      json = JSON.parse(text);
-    } catch {
-      json = undefined;
-    }
-    return { status: res.status, json };
+    const bounded = await readBoundedJsonResponse(res, {
+      maxBytes: opts.maxResponseBytes ?? DEFAULT_PROXY_JSON_MAX_BYTES,
+      signal,
+    });
+    return { status: res.status, ...bounded };
   }
 }

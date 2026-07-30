@@ -29,7 +29,11 @@ export class OpenRouterGateway implements LlmGateway {
     this.fetcher = fetcher;
   }
 
-  async generate({ prompt, maxOutputTokens }: GenerateParams): Promise<GenerateResult> {
+  async generate({
+    prompt,
+    maxOutputTokens,
+    signal,
+  }: GenerateParams): Promise<GenerateResult> {
     if (!this.apiKey) {
       throw new GatewayError(
         "missing_api_key",
@@ -55,8 +59,10 @@ export class OpenRouterGateway implements LlmGateway {
           messages: [{ role: "user", content: prompt }],
           max_tokens: maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
         }),
+        signal,
       });
     } catch (err) {
+      if (signal?.aborted) throw signal.reason ?? err;
       throw new GatewayError(
         "provider_error",
         `Could not reach the OpenRouter API: ${err instanceof Error ? err.message : String(err)}`,
