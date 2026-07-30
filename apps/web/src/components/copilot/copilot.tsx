@@ -4,10 +4,12 @@
 // from the workspace nav; talks to /workspaces/:id/chat/* and degrades to a
 // friendly "unavailable" panel if those routes 404 (API not deployed yet).
 import { useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import type {
   ChatCitation,
   ChatCitationKind,
   ChatMessage,
+  ChatProposal,
   ChatSession,
   ChatSessionDetail,
   ChatTurnResult,
@@ -46,6 +48,7 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
   const [pending, setPending] = useState(false);
   const [showSessions, setShowSessions] = useState(false);
   const [draft, setDraft] = useState("");
+  const [confirming, setConfirming] = useState<string | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
 
   const base = `/workspaces/${workspaceId}/chat`;
@@ -218,6 +221,42 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
     }
   }
 
+  // Confirm or discard a pending proposal (Sprint 42 Part 2). Nothing is sent —
+  // confirm only creates the gated item (a draft in Review, or an action
+  // awaiting authorization); the human still clears the normal gate.
+  async function resolveProposal(confirmToken: string, decision: "confirm" | "discard") {
+    const sessionId = activeId;
+    if (!sessionId || confirming) return;
+    setConfirming(confirmToken);
+    try {
+      const res = await apiFetch(`${base}/sessions/${sessionId}/confirm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ confirmToken, decision }),
+      });
+      if (res.status === 404) {
+        setUnavailable(true);
+        return;
+      }
+      if (!res.ok) {
+        setMessages((prev) => [
+          ...prev,
+          errorBubble(sessionId, workspaceId, "Couldn't complete that just now. Please try again."),
+        ]);
+        return;
+      }
+      await loadSession(sessionId);
+      void loadSessions();
+    } catch {
+      setMessages((prev) => [
+        ...prev,
+        errorBubble(sessionId, workspaceId, "Couldn't reach the copilot. Check your connection and try again."),
+      ]);
+    } finally {
+      setConfirming(null);
+    }
+  }
+
   if (!open) return null;
 
   const activeSession = sessions.find((s) => s.id === activeId) ?? null;
@@ -355,6 +394,21 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
                               ))}
                             </div>
                           )}
+                          {m.role === "assistant" && m.proposal && (
+                            <ProposalCard
+                              proposal={m.proposal}
+                              // Only the latest message's proposal is still live;
+                              // a committed/discarded one is followed by a later message.
+                              actionable={m.id === visibleMessages[visibleMessages.length - 1]?.id}
+                              confirming={confirming === m.proposal.confirmToken}
+                              disabled={confirming !== null}
+                              onConfirm={() => void resolveProposal(m.proposal!.confirmToken, "confirm")}
+                              onDiscard={() => void resolveProposal(m.proposal!.confirmToken, "discard")}
+                            />
+                          )}
+                          {m.role === "assistant" && m.producedRef && (
+                            <ReviewLink workspaceId={workspaceId} producedRef={m.producedRef} />
+                          )}
                         </div>
                       </div>
                     ),
@@ -400,6 +454,62 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
         )}
       </aside>
     </div>
+  );
+}
+
+function ProposalCard({
+  proposal,
+  actionable,
+  confirming,
+  disabled,
+  onConfirm,
+  onDiscard,
+}: {
+  proposal: ChatProposal;
+  actionable: boolean;
+  confirming: boolean;
+  disabled: boolean;
+  onConfirm: () => void;
+  onDiscard: () => void;
+}) {
+  return (
+    <div className={styles.proposal}>
+      <div className={styles.proposalHead}>
+        <Icon name="edit" size="compact" />
+        <span className={styles.proposalSummary}>{proposal.summary}</span>
+      </div>
+      <pre className={styles.proposalPreview}>{proposal.preview}</pre>
+      {proposal.policyNote && (
+        <p className={styles.proposalNote}>
+          <Icon name="info" size="compact" />
+          {proposal.policyNote}
+        </p>
+      )}
+      {actionable ? (
+        <div className={styles.proposalActions}>
+          <Button variant="primary" size="compact" loading={confirming} disabled={disabled} onClick={onConfirm}>
+            Confirm
+          </Button>
+          <Button variant="secondary" size="compact" disabled={disabled} onClick={onDiscard}>
+            Discard
+          </Button>
+        </div>
+      ) : (
+        <p className={styles.proposalResolved}>This proposal has been resolved.</p>
+      )}
+    </div>
+  );
+}
+
+/** "Opened in Review →" — both drafts and external actions land on the Review page. */
+function ReviewLink({ workspaceId, producedRef }: { workspaceId: string; producedRef: string }) {
+  const isAction = producedRef.startsWith("external_action:");
+  const label = isAction ? "View the action in Review" : "Open the draft in Review";
+  return (
+    <Link className={styles.reviewLink} href={`/workspaces/${workspaceId}/review`}>
+      <Icon name="review" size="compact" />
+      {label}
+    </Link>
   );
 }
 

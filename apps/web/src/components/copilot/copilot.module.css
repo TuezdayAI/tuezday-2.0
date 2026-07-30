@@ -269,3 +269,71 @@
   min-height: 40px;
   max-height: 120px;
 }
+
+/* Proposal card (Sprint 42 Part 2) — a write the user confirms before it's created */
+.proposal {
+  margin-top: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md, 10px);
+  background: var(--panel);
+  overflow: hidden;
+}
+.proposalHead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 11px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-2);
+}
+.proposalSummary { word-break: break-word; }
+.proposalPreview {
+  margin: 0;
+  padding: 11px;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow-y: auto;
+}
+.proposalNote {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  padding: 8px 11px;
+  font-size: 12px;
+  color: var(--warning, #a86a00);
+  background: color-mix(in srgb, var(--warning, #a86a00) 10%, transparent);
+  border-top: 1px solid var(--border);
+}
+.proposalActions {
+  display: flex;
+  gap: 8px;
+  padding: 10px 11px;
+  border-top: 1px solid var(--border);
+}
+.proposalResolved {
+  margin: 0;
+  padding: 9px 11px;
+  font-size: 12px;
+  color: var(--muted);
+  border-top: 1px solid var(--border);
+}
+.reviewLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--accent);
+  text-decoration: none;
+}
+.reviewLink:hover { text-decoration: underline; }
