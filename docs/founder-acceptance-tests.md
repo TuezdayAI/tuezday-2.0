@@ -829,6 +829,51 @@ sees honest readiness/budget states without raw leases or provider cursors.
 
 ---
 
+## Local Sprint 50 — Provider repair and nondestructive discovery
+
+> Use a development workspace and development provider accounts. The automated
+> evidence bundle covers migrations, transaction rollback, dangling duplicate
+> repair, request-path fallbacks, and lease cleanup; the founder does not need
+> to inspect SQLite rows or provider request logs manually.
+
+- [ ] **LinkedIn organizations.** Create a LinkedIn account-timeline source for
+      a Company or School handle → the source resolves the organization and
+      fetches its posts. Try an unresolvable handle → the source shows a clear
+      `target_unresolvable` error and does not fall back to the connected
+      member's own feed.
+- [ ] **Direct Instagram identity.** Reconnect Instagram through direct
+      Instagram Login → the connection card shows the bound professional
+      account. An own-account source fetches media; competitor and hashtag
+      sources show honest `unsupported_target` / `unsupported_mode` guidance.
+      Legacy Facebook Login rows show `reconnect_required`.
+- [ ] **Reserved sources.** Google Trends, G2, Capterra, and intent remain
+      visible with a **reserved** label but cannot be added, enabled, or queued.
+      The UI does not request API keys because no production provider is
+      selected. G2/Capterra/intent activation remains unscheduled.
+- [ ] **Tracked-account resolution.** A tracked X, LinkedIn, Reddit, or
+      supported Instagram account shows its last resolution time or stable
+      error. Choose a compatible connection and use **Resolve** / **Retry
+      resolution** → the card refreshes without exposing an editable provider
+      ID.
+- [ ] **Nondestructive source deletion.** Use two sources that discover the
+      same story, then delete the source that first supplied it → the surviving
+      story, triage/scoring state, source provenance, and duplicate count remain
+      visible through the other source.
+
+**Automated evidence:** the Sprint 50 focused bundle passes 15 files and
+246 tests, covering provider configuration, resolver behavior, direct
+Instagram reads/publishing, scheduler exclusion, cache lifecycle, transactional
+promotion/rollback, legacy repair, and migrations. The complete repository gate
+passes 190 files and 2,024 tests, and every workspace typecheck passes. The
+dependency audit remains at the inherited baseline of 19 findings (1 low,
+8 moderate, 8 high, 2 critical); Sprint 50 changed no dependency versions.
+
+**Gate:** provider-backed discovery fails closed and explains why, unsupported
+vocabulary is visibly inert, tracked identities are retryable, and deleting a
+source never destroys a story still observed elsewhere.
+
+---
+
 ## Remote Sprint 50 — Outreach tracking
 
 - [ ] With tracking on, an outreach step arrives as HTML; links redirect through `/t/c`, and
