@@ -10,6 +10,7 @@ import {
   discoveredItems,
   discoveryJobs,
   discoverySources,
+  trackedSocialAccounts,
 } from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
 import { RATE_LIMIT_BACKOFF_BASE_MS, listDiscoverySources } from "../src/services/discovery";
@@ -150,16 +151,19 @@ function paginationSource(
 }
 
 function paginationConnection(providerKey: string): Connection {
+  const directInstagram = providerKey === "instagram";
   return {
     id: "33333333-3333-4333-8333-333333333333",
     workspaceId: "22222222-2222-4222-8222-222222222222",
     providerKey,
     nangoConnectionId: "nango-pagination",
-    config: {},
+    config: directInstagram
+      ? { authArchitecture: "instagram_login" }
+      : {},
     displayName: providerKey,
-    externalAccountId: null,
+    externalAccountId: directInstagram ? "ig-user" : null,
     externalAccountName: null,
-    externalAccountHandle: null,
+    externalAccountHandle: directInstagram ? "rival" : null,
     externalAccountUrl: null,
     status: "connected",
     lastCheckedAt: 1,
@@ -257,7 +261,7 @@ describe("connected provider pagination", () => {
       providerKey: "linkedin",
       source: paginationSource("linkedin", {
         mode: "account_timeline",
-        handle: "urn:li:person:123",
+        handle: "urn:li:organization:123",
       }),
       pathPrefix: "/rest/posts",
       response: {
@@ -347,16 +351,15 @@ describe("connected provider pagination", () => {
     expect(resumed.page.nextToken).toBe("x-page-3");
   });
 
-  it.each([
-    { mode: "account_timeline" as const, handle: "rival" },
-    { mode: "hashtag" as const, hashtag: "buildinpublic" },
-  ])("resumes Instagram $mode media through Graph cursors", async (config) => {
+  it("resumes direct Instagram own-account media through Graph cursors", async () => {
+    const config = {
+      mode: "account_timeline" as const,
+      handle: "rival",
+    };
     const target: DiscoveryTarget = {
       key: config.mode,
       fingerprint: `${config.mode}-fingerprint`,
-      ...(config.mode === "account_timeline"
-        ? { handle: config.handle }
-        : {}),
+      handle: config.handle,
     };
     const resumed = await connectedPage({
       source: paginationSource("instagram", config),
@@ -367,43 +370,24 @@ describe("connected provider pagination", () => {
         "ig-page-2",
       ),
       handler: (path) => {
-        if (path.includes("/me/accounts")) {
+        if (path.startsWith("/ig-user/media")) {
           return {
             status: 200,
             json: {
-              data: [{ instagram_business_account: { id: "ig-user" } }],
+              data: [{ id: "ig-2", caption: "Older" }],
+              paging: { cursors: { after: "ig-page-3" } },
             },
-          };
-        }
-        if (path.includes("ig_hashtag_search")) {
-          return { status: 200, json: { data: [{ id: "tag-1" }] } };
-        }
-        if (
-          path.includes("business_discovery") ||
-          path.includes("/tag-1/recent_media")
-        ) {
-          const media = {
-            data: [{ id: "ig-2", caption: "Older" }],
-            paging: { cursors: { after: "ig-page-3" } },
-          };
-          return {
-            status: 200,
-            json:
-              config.mode === "account_timeline"
-                ? { business_discovery: { media } }
-                : media,
           };
         }
         return undefined;
       },
     });
-    const resumedPath = decodeURIComponent(
-      resumed.calls.at(-1)!.path,
+    expect(resumed.calls.at(-1)!.path).toContain("after=ig-page-2");
+    expect(resumed.calls.at(-1)!.baseUrl).toBe(
+      "https://graph.instagram.com",
     );
-    expect(resumedPath).toContain(
-      config.mode === "account_timeline"
-        ? "media.after(ig-page-2)"
-        : "after=ig-page-2",
+    expect(resumed.calls.map((call) => call.path).join(" ")).not.toContain(
+      "/me/accounts",
     );
     expect(resumed.page.nextToken).toBe("ig-page-3");
   });
@@ -519,6 +503,21 @@ describe("connected discovery (Sprint 46)", () => {
         createdAt: now,
         updatedAt: now,
       })
+      .run();
+    return id;
+  }
+
+  function insertDirectInstagramConnection(handle = "tuezday"): string {
+    const id = insertConnection("instagram");
+    db.update(connections)
+      .set({
+        configJson: JSON.stringify({
+          authArchitecture: "instagram_login",
+        }),
+        externalAccountId: "ig-direct-42",
+        externalAccountHandle: handle,
+      })
+      .where(eq(connections.id, id))
       .run();
     return id;
   }
@@ -1078,6 +1077,17 @@ describe("connected discovery (Sprint 46)", () => {
       const [item] = await listItems("new");
       expect(item!.externalId).toBe("x:42");
       expect(item!.url).toBe("https://x.com/rivalco/status/42");
+      expect(
+        db
+          .select()
+          .from(trackedSocialAccounts)
+          .where(eq(trackedSocialAccounts.id, tracked.id))
+          .get(),
+      ).toMatchObject({
+        externalId: "u9",
+        lastResolvedAt: expect.any(Number),
+        lastError: null,
+      });
     });
 
     it("backs off exponentially on 429 without erroring the source", async () => {
@@ -1210,11 +1220,110 @@ describe("connected discovery (Sprint 46)", () => {
   // -------------------------------------------------------------------------
 
   describe("permission-gated providers", () => {
+    it("resolves a plain LinkedIn company handle before fetching its posts", async () => {
+      const connectionId = insertConnection("linkedin");
+      const tracked = await createTrackedAccount(
+        workspaceId,
+        "linkedin",
+        "@Acme",
+      );
+      await createSource({
+        type: "linkedin",
+        config: {
+          mode: "account_timeline",
+          trackedAccountId: tracked.id,
+        },
+        connectionId,
+      });
+      proxyHandler = (path) => {
+        if (path.startsWith("/rest/organizations")) {
+          return {
+            status: 200,
+            json: {
+              elements: [{ id: 73, vanityName: "Acme" }],
+            },
+          };
+        }
+        if (path.startsWith("/rest/posts")) {
+          return {
+            status: 200,
+            json: {
+              elements: [
+                {
+                  id: "urn:li:share:73",
+                  commentary: "Company update",
+                },
+              ],
+            },
+          };
+        }
+        return undefined;
+      };
+
+      const run = await runDiscoveryRoute();
+
+      expect(run.sources[0]).toMatchObject({ fetched: 1, new: 1 });
+      expect(proxyCalls.map((call) => call.path.split("?")[0])).toEqual([
+        "/rest/organizations",
+        "/rest/posts",
+      ]);
+      expect(proxyCalls[1]!.path).toContain(
+        `author=${encodeURIComponent("urn:li:organization:73")}`,
+      );
+      expect(proxyCalls[0]!.headers?.["LinkedIn-Version"]).toBe("202607");
+      expect(proxyCalls[1]!.headers?.["LinkedIn-Version"]).toBe("202607");
+      expect(
+        db
+          .select()
+          .from(trackedSocialAccounts)
+          .where(eq(trackedSocialAccounts.id, tracked.id))
+          .get(),
+      ).toMatchObject({
+        externalId: "urn:li:organization:73",
+        lastResolvedAt: expect.any(Number),
+        lastError: null,
+      });
+    });
+
+    it("fails an unresolvable LinkedIn handle without member or posts fallback", async () => {
+      const connectionId = insertConnection("linkedin");
+      const source = await createSource({
+        type: "linkedin",
+        config: {
+          mode: "account_timeline",
+          handle: "missing-company",
+        },
+        connectionId,
+      });
+      proxyHandler = (path) =>
+        path.startsWith("/rest/organizations")
+          ? { status: 200, json: { elements: [] } }
+          : undefined;
+
+      const run = await runDiscoveryRoute();
+
+      expect(run.sources[0]!.error).toContain("target_unresolvable");
+      expect(sourceRow(source.id).lastError).toContain(
+        "target_unresolvable",
+      );
+      expect(proxyCalls.map((call) => call.path)).toHaveLength(1);
+      expect(proxyCalls[0]!.path).toContain("/rest/organizations");
+      expect(proxyCalls.some((call) => call.path === "/v2/userinfo")).toBe(
+        false,
+      );
+      expect(
+        proxyCalls.some((call) => call.path.startsWith("/rest/posts")),
+      ).toBe(false);
+    });
+
     it("marks only the LinkedIn source as permission_required while others succeed", async () => {
       const connectionId = insertConnection("linkedin");
       const linkedin = await createSource({
         type: "linkedin",
-        config: { mode: "account_timeline", handle: "urn:li:person:ME" },
+        config: {
+          mode: "account_timeline",
+          handle: "urn:li:organization:73",
+        },
         connectionId,
       });
       const rss = await createSource({ type: "rss", config: { feedUrl: "https://ok.dev/f.xml" } });
@@ -1249,54 +1358,67 @@ describe("connected discovery (Sprint 46)", () => {
       );
     });
 
-    it("marks an Instagram source permission_required when Meta refuses access", async () => {
+    it("fails legacy Instagram sources closed with reconnect_required", async () => {
       const connectionId = insertConnection("instagram");
       const instagram = await createSource({
         type: "instagram",
         config: { mode: "hashtag", hashtag: "buildinpublic" },
         connectionId,
       });
-      proxyHandler = (path) =>
-        path.includes("/me/accounts")
-          ? { status: 403, json: { error: { message: "Requires instagram_basic" } } }
-          : undefined;
 
       const run = await runDiscoveryRoute();
-      expect(run.sources[0]!.error).toContain("permission_required");
+      expect(run.sources[0]!.error).toContain("reconnect_required");
       const row = sourceRow(instagram.id);
       expect(row.status).toBe("error");
-      expect(row.lastError).toContain("Instagram professional account or app review required");
+      expect(row.lastError).toContain("reconnect_required");
     });
 
-    it("fetches Instagram business-discovery media when access exists", async () => {
-      const connectionId = insertConnection("instagram");
-      await createSource({
+    it("rejects Instagram hashtag and competitor discovery with stable capability errors", async () => {
+      const connectionId = insertDirectInstagramConnection();
+      const hashtag = await createSource({
+        type: "instagram",
+        config: { mode: "hashtag", hashtag: "buildinpublic" },
+        connectionId,
+      });
+      const competitor = await createSource({
         type: "instagram",
         config: { mode: "account_timeline", handle: "@rivalco" },
         connectionId,
       });
+
+      const run = await runDiscoveryRoute();
+      expect(
+        run.sources.find((source) => source.sourceId === hashtag.id)!.error,
+      ).toContain("unsupported_mode");
+      expect(
+        run.sources.find((source) => source.sourceId === competitor.id)!
+          .error,
+      ).toContain("unsupported_target");
+      expect(proxyCalls).toHaveLength(0);
+    });
+
+    it("fetches only the direct Instagram connection's own media", async () => {
+      const connectionId = insertDirectInstagramConnection();
+      await createSource({
+        type: "instagram",
+        config: { mode: "account_timeline", handle: "@tuezday" },
+        connectionId,
+      });
       proxyHandler = (path) => {
-        if (path.includes("/me/accounts")) {
-          return { status: 200, json: { data: [{ instagram_business_account: { id: "ig1" } }] } };
-        }
-        if (path.includes("business_discovery")) {
+        if (path.startsWith("/ig-direct-42/media")) {
           return {
             status: 200,
             json: {
-              business_discovery: {
-                media: {
-                  data: [
-                    {
-                      id: "9001",
-                      caption: "Launch day!",
-                      permalink: "https://www.instagram.com/p/xyz/",
-                      timestamp: "2026-07-02T12:00:00+0000",
-                      like_count: 5,
-                      comments_count: 2,
-                    },
-                  ],
+              data: [
+                {
+                  id: "9001",
+                  caption: "Launch day!",
+                  permalink: "https://www.instagram.com/p/xyz/",
+                  timestamp: "2026-07-02T12:00:00+0000",
+                  like_count: 5,
+                  comments_count: 2,
                 },
-              },
+              ],
             },
           };
         }
@@ -1309,6 +1431,12 @@ describe("connected discovery (Sprint 46)", () => {
       expect(item!.externalId).toBe("ig:9001");
       expect(item!.url).toBe("https://www.instagram.com/p/xyz/");
       expect(item!.summary).toContain("5 likes");
+      expect(proxyCalls[0]).toMatchObject({
+        baseUrl: "https://graph.instagram.com",
+      });
+      expect(proxyCalls.map((call) => call.path).join(" ")).not.toContain(
+        "/me/accounts",
+      );
     });
   });
 

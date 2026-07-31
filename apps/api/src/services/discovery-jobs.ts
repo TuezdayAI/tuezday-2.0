@@ -46,6 +46,7 @@ export function enqueueDueDiscoveryJobs(
 ): number {
   let queued = 0;
   for (const source of sources) {
+    if (!source.enabled || source.status === "reserved") continue;
     if (source.backoffUntil !== null && source.backoffUntil > now) continue;
     const inserted = db.run(sql`
       INSERT INTO discovery_jobs (

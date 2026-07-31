@@ -247,13 +247,13 @@
 > Prereqs (one-time per platform, all using the Nango callback `http://localhost:3050/oauth/callback`):
 > - **LinkedIn** app at linkedin.com/developers/apps with "Sign In with LinkedIn using OpenID Connect" + "Share on LinkedIn"; set `LINKEDIN_CLIENT_ID` / `LINKEDIN_CLIENT_SECRET`.
 > - **X** OAuth 2.0 app at developer.x.com with tweet/users/dm scopes; set `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` (the OAuth 2.0 client id/secret, not the API key/secret).
-> - **Instagram** — a **Facebook** app at developers.facebook.com with the Instagram Graph API; publishing needs an Instagram **Business/Creator** account linked to a Facebook Page + `instagram_content_publish` via App Review; set `INSTAGRAM_CLIENT_ID` / `INSTAGRAM_CLIENT_SECRET` (the Facebook app id/secret).
+> - **Instagram** — a direct Instagram Login app for an Instagram **Business/Creator** account with `instagram_business_basic` and `instagram_business_content_publish`; set `INSTAGRAM_CLIENT_ID` / `INSTAGRAM_CLIENT_SECRET`. This flow does not use Facebook Pages.
 > Restart the API after editing `.env`.
 
 - [ ] `npm run nango:up`; Integrations page → LinkedIn / X / Instagram each show **Connect** (not "needs OAuth app") once their `.env` creds are set; with creds missing they show the per-platform setup hint instead.
 - [ ] **Connect LinkedIn** → OAuth popup → authorize → card shows `connected`; **Test** passes (`/v2/userinfo` identity through the proxy).
 - [ ] **Connect X** → OAuth popup → authorize → `connected`; **Test** passes (`/2/users/me`).
-- [ ] **Connect Instagram** → Facebook OAuth popup → authorize → `connected`; **Test** passes (`/v23.0/me`). (If `instagram_content_publish` isn't approved yet, identity still verifies — publishing is gated until Sprint 26.)
+- [ ] **Connect Instagram** → direct Instagram OAuth popup → authorize → the card shows the bound account handle and `connected`; **Test** passes (`/me?fields=id,user_id,username,name,account_type` on `graph.instagram.com`). A legacy Facebook Login connection instead shows `reconnect_required`.
 - [ ] **Disconnect** one platform → **Reconnect** via the popup → it returns to `connected` (same row revived).
 - [ ] **Reddit** still shows as parked / "needs OAuth app" (its key hasn't been issued) — confirm it wasn't removed.
 - [ ] No posting/DM controls appear yet — that's Sprint 26.
@@ -363,8 +363,9 @@ them — the targeting primitive Sprint 26 sends through.
 > Branch `sprint-26-targeted-launch` (built on Sprint 24 + Sprint 25; merge order
 > 24 → 25 → 26). Prereqs: LinkedIn / X / Instagram connected (Sprint 25) with
 > their creds in `.env`; a segment/list with a few leads, some carrying an X
-> handle. Instagram needs an IG **Business/Creator** account linked to a Page,
-> via the Facebook app (`INSTAGRAM_CLIENT_ID/SECRET`), with `instagram_content_publish`.
+> handle. Instagram needs a direct Instagram Login Business/Creator connection
+> (`INSTAGRAM_CLIENT_ID/SECRET`) with
+> `instagram_business_content_publish`.
 
 - [ ] **Set X handles:** Audience → a lead → **+ X handle** (or edit) → save → the
       handle shows on the lead (the leading `@` is stripped). CSV import with an
@@ -467,7 +468,7 @@ your voice and cleared through Review — without leaving Tuezday.
 
 ## Sprint 31 — Discovery Source Expansion + Auto-Mapping
 
-> Prereq: a workspace with ≥1 campaign and ≥1 persona, and brain docs filled enough to score. The new keyless sources (Hacker News, YouTube, podcast, Google Trends, funding-news) need no API keys. Run the worker for auto-polling, or click "Run discovery now".
+> Prereq: a workspace with ≥1 campaign and ≥1 persona, and brain docs filled enough to score. Hacker News, YouTube, podcast, and funding-news need no API keys. Run the worker for auto-polling, or click "Run discovery now". Google Trends is now visibly reserved because its former public RSS path is no longer supported.
 
 **Slice A — Campaign/persona auto-mapping**
 
@@ -478,16 +479,17 @@ your voice and cleared through Review — without leaving Tuezday.
 **Slice B — Keyless content adapters (live now)**
 
 - [ ] Add a **Hacker News** source (query) and a **Funding news** source (query, optional sector) → Run discovery → real items appear, scored and mapped.
-- [ ] Add a **YouTube channel** (channel ID), a **Podcast** (feed URL), and a **Google Trends** (geo) source → each fetches real items.
+- [ ] Add a **YouTube channel** (channel ID) and a **Podcast** (feed URL) → each fetches real items.
+- [ ] Confirm **Google Trends** remains visible as **reserved**, cannot be added or activated, and does not ask for an API key.
 - [ ] Re-run → no duplicates appear (per-source dedupe holds for the new types).
 - [ ] Accept a Hacker News item → it becomes a signal tagged "Hacker News" and drafts as usual.
 
-**Slice C — Provider-gated sources + IntentProvider boundary**
+**Slice C — Reserved provider vocabulary**
 
-- [ ] Add a **G2 reviews**, **Capterra reviews**, or **Intent signals** source → it registers and shows **"needs API key"**, and Run discovery skips it — exactly like X / LinkedIn today; nothing is scraped.
-- [ ] (Automated) The `IntentProvider` boundary is wired: with a real provider configured, an `intent` source fetches through it — covered by `apps/api/test/discovery.test.ts`.
+- [ ] Confirm **G2 reviews**, **Capterra reviews**, and **Intent signals** remain visible as **reserved** and cannot be added or activated.
+- [ ] Confirm the UI does not ask for provider API keys. No production provider has been selected, and activation is not assigned to a sprint.
 
-**Gate:** more of the outside world flows in (HN, YouTube, podcasts, Trends, funding news — keyless and live); every discovered item is routed to a campaign + persona you accept in one click into a pre-filled draft; and the review-site / intent providers are real registered infrastructure waiting only on a key.
+**Gate:** Hacker News, YouTube, podcasts, and funding news flow into the mapped triage path; Google Trends, G2, Capterra, and intent stay honestly visible but inert until provider-selection work is scheduled.
 
 ## Sprint 43 — Resolver v2: Tiered Selective Context
 
@@ -824,6 +826,53 @@ sees honest readiness/budget states without raw leases or provider cursors.
 - [ ] A positive reply is highlighted and notifies the workspace; when a linked CRM is connected,
       a follow-up task is created for the contact.
 - [ ] Importing a suppression list prevents those addresses from being sent any sequence step.
+
+---
+
+## Local Sprint 50 — Provider repair and nondestructive discovery
+
+> Use a development workspace and development provider accounts. The automated
+> evidence bundle covers migrations, transaction rollback, dangling duplicate
+> repair, request-path fallbacks, and lease cleanup; the founder does not need
+> to inspect SQLite rows or provider request logs manually.
+
+- [ ] **LinkedIn organizations.** Create a LinkedIn account-timeline source for
+      a Company or School handle → the source resolves the organization and
+      fetches its posts. Try an unresolvable handle → the source shows a clear
+      `target_unresolvable` error and does not fall back to the connected
+      member's own feed.
+- [ ] **Direct Instagram identity.** Reconnect Instagram through direct
+      Instagram Login → the connection card shows the bound professional
+      account. An own-account source fetches media; competitor and hashtag
+      sources show honest `unsupported_target` / `unsupported_mode` guidance.
+      Legacy Facebook Login rows show `reconnect_required`.
+- [ ] **Reserved sources.** Google Trends, G2, Capterra, and intent remain
+      visible with a **reserved** label but cannot be added, enabled, or queued.
+      The UI does not request API keys because no production provider is
+      selected. G2/Capterra/intent activation remains unscheduled.
+- [ ] **Tracked-account resolution.** A tracked X, LinkedIn, Reddit, or
+      supported Instagram account shows its last resolution time or stable
+      error. Choose a compatible connection and use **Resolve** / **Retry
+      resolution** → the card refreshes without exposing an editable provider
+      ID.
+- [ ] **Nondestructive source deletion.** Use two sources that discover the
+      same story, then delete the source that first supplied it → the surviving
+      story, triage/scoring state, source provenance, and duplicate count remain
+      visible through the other source.
+
+**Automated evidence:** the Sprint 50 focused bundle passes 16 files and
+247 tests, covering provider configuration, resolver behavior, direct
+Instagram reads/publishing, scheduler exclusion, cache lifecycle, transactional
+promotion/rollback, legacy repair, migrations, and the operator setup-copy
+contract. The final chat/Sprint 50 integration bundle passes 18 files and 266
+tests. The complete repository gate passes 193 files and 2,044 tests, and every
+workspace typecheck passes. The
+dependency audit remains at the inherited baseline of 19 findings (1 low,
+8 moderate, 8 high, 2 critical); Sprint 50 changed no dependency versions.
+
+**Gate:** provider-backed discovery fails closed and explains why, unsupported
+vocabulary is visibly inert, tracked identities are retryable, and deleting a
+source never destroys a story still observed elsewhere.
 
 ---
 

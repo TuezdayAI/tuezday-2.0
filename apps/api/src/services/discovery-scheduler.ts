@@ -213,9 +213,8 @@ export async function runDiscoveryScheduler(
           ).filter(
             (source) =>
               source.enabled &&
-              (source.status !== "needs_api_key" ||
-                (source.type === "intent" &&
-                  deps.intentProvider.isConfigured())),
+              source.status !== "reserved" &&
+              source.status !== "needs_api_key",
           );
           result.queued += enqueueDueDiscoveryJobs(
             deps.db,

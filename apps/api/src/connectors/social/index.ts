@@ -92,6 +92,8 @@ export function socialAdapterFor(
   const config = {
     nangoConnectionId: connection.nangoConnectionId,
     integrationKey: `tuezday-${provider.key}`,
+    externalAccountId: connection.externalAccountId,
+    externalAccountHandle: connection.externalAccountHandle,
   };
   switch (provider.key) {
     case "reddit":

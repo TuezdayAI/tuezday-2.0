@@ -9,6 +9,7 @@ import { createAnalyticsSink } from "./analytics/sink";
 import { registerAuthGuard } from "./auth/guard";
 import type { ConnectorFabric } from "./connectors/fabric";
 import { NangoFabric } from "./connectors/nango";
+import { assertProviderConfiguration } from "./connectors/provider-config";
 import type { Db } from "./db";
 import { OpenDesignProvider } from "./design/open-design";
 import type { DesignProvider } from "./design/provider";
@@ -85,6 +86,7 @@ import { registerPublicApiRoutes } from "./routes/public-api";
 import { backfillExternalActionPolicies } from "./services/external-action-backfill";
 import { createExternalActionAdapters } from "./services/external-action-adapters";
 import { createExternalActionRuntime } from "./services/external-action-coordinator";
+import { repairDanglingDuplicateGroups } from "./services/discovery-dedupe";
 import type { DiscoveryOperatorEvent } from "./services/discovery-scheduler";
 import {
   DEFAULT_DISCOVERY_POLICY,
@@ -173,6 +175,7 @@ export async function buildApp({
   operatorLog = logDiscoveryOperatorEvent,
   shutdownSignal,
 }: BuildAppOptions): Promise<TuezdayApp> {
+  assertProviderConfiguration();
   const guardedFetch =
     safeFetch ?? createSafeFetchService(createSafeFetchPolicy());
   // Signed public tokens can carry a normalized email address (up to 320
@@ -183,6 +186,7 @@ export async function buildApp({
   const effectiveShutdownSignal =
     shutdownSignal ?? ownedShutdown!.signal;
   backfillExternalActionPolicies(db);
+  repairDanglingDuplicateGroups(db);
   const externalActionRuntime = createExternalActionRuntime({
     db,
     adapters: createExternalActionAdapters(db, connectors, fetcher, outboundEmail, gmail),

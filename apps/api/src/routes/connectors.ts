@@ -12,6 +12,7 @@ import type { Db } from "../db";
 import { assertWithinLimit, EntitlementError, getUsage } from "../services/entitlements";
 import { ConnectorFabricError, type ConnectorFabric } from "../connectors/fabric";
 import {
+  bindInstagramOAuthIdentity,
   connectProvider,
   disconnectConnection,
   getConnection,
@@ -25,6 +26,7 @@ import {
   testConnection,
   updateConnection,
 } from "../services/connections";
+import { ProviderCapabilityError } from "../discovery/provider-errors";
 import {
   createWebhook,
   deleteWebhook,
@@ -148,13 +150,30 @@ export function registerConnectorRoutes(
           message: "The connector service does not know that connection — run the popup again.",
         });
       }
-      const connection = registerOAuthConnection(
+      let connection = registerOAuthConnection(
         db,
         request.params.id,
         provider,
         nangoConnectionId,
       );
-      await testConnection(db, fabric, connection);
+      try {
+        if (provider.key === "instagram") {
+          connection = await bindInstagramOAuthIdentity(
+            db,
+            fabric,
+            connection,
+          );
+        }
+        await testConnection(db, fabric, connection);
+      } catch (err) {
+        if (err instanceof ProviderCapabilityError) {
+          return reply.status(409).send({
+            error: err.code,
+            message: err.message,
+          });
+        }
+        throw err;
+      }
 
       track(db, analytics, {
         event: "connector.connected",

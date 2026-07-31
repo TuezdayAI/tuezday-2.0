@@ -5,19 +5,12 @@ import { InstagramAdapter } from "../src/connectors/social/instagram";
 // ---------------------------------------------------------------------------
 // InstagramAdapter.readSocialProfile (Sprint 36.3 — onboarding social corpus)
 //
-// Fake fabric keyed on Graph API path. igUserId() resolves the IG Business
-// user via GET /me/accounts, so the fake must answer that lookup too.
+// Direct Instagram Login binds the professional account during OAuth. The
+// adapter receives that persisted id and must never perform Page discovery.
 // ---------------------------------------------------------------------------
 
-const V = "v23.0";
-const ACCOUNTS_PATH = `/${V}/me/accounts?fields=instagram_business_account{id}`;
-const PROFILE_PATH = `/${V}/ig-user-1?fields=username,name,biography`;
-const MEDIA_PATH = `/${V}/ig-user-1/media?fields=caption,permalink,timestamp&limit=25`;
-
-const accountsOk: ProxyJsonResult = {
-  status: 200,
-  json: { data: [{ instagram_business_account: { id: "ig-user-1" } }] },
-};
+const PROFILE_PATH = `/ig-user-1?fields=username,name,biography`;
+const MEDIA_PATH = `/ig-user-1/media?fields=caption,permalink,timestamp&limit=25`;
 
 function adapterFor(routes: Record<string, ProxyJsonResult>, calls: string[] = []): InstagramAdapter {
   const fabric = {
@@ -31,6 +24,8 @@ function adapterFor(routes: Record<string, ProxyJsonResult>, calls: string[] = [
   return new InstagramAdapter(fabric, {
     nangoConnectionId: "c",
     integrationKey: "tuezday-instagram",
+    externalAccountId: "ig-user-1",
+    externalAccountHandle: "tuezhq",
   });
 }
 
@@ -39,7 +34,6 @@ describe("InstagramAdapter.readSocialProfile", () => {
     const calls: string[] = [];
     const adapter = adapterFor(
       {
-        [ACCOUNTS_PATH]: accountsOk,
         [PROFILE_PATH]: {
           status: 200,
           json: { username: "tuezhq", name: "Tuezday HQ", biography: "GTM brain for founders" },
@@ -77,12 +71,12 @@ describe("InstagramAdapter.readSocialProfile", () => {
       { text: "", url: "https://www.instagram.com/p/def/", createdAt: Date.parse("2026-05-20T08:30:00+0000") },
       { text: "Old one", url: "https://www.instagram.com/p/ghi/", createdAt: null },
     ]);
-    expect(calls).toEqual([`GET ${ACCOUNTS_PATH}`, `GET ${PROFILE_PATH}`, `GET ${MEDIA_PATH}`]);
+    expect(calls).toEqual([`GET ${PROFILE_PATH}`, `GET ${MEDIA_PATH}`]);
+    expect(calls.join(" ")).not.toContain("/me/accounts");
   });
 
   it("falls back to username for displayName and empty strings for missing fields", async () => {
     const adapter = adapterFor({
-      [ACCOUNTS_PATH]: accountsOk,
       [PROFILE_PATH]: { status: 200, json: { username: "tuezhq" } },
       [MEDIA_PATH]: { status: 200, json: { data: [{}] } },
     });
@@ -95,7 +89,6 @@ describe("InstagramAdapter.readSocialProfile", () => {
 
   it("returns [] when the media list has no data", async () => {
     const adapter = adapterFor({
-      [ACCOUNTS_PATH]: accountsOk,
       [PROFILE_PATH]: { status: 200, json: { username: "tuezhq", name: "Tuezday HQ", biography: "" } },
       [MEDIA_PATH]: { status: 200, json: {} },
     });
@@ -110,7 +103,6 @@ describe("InstagramAdapter.readSocialProfile", () => {
       timestamp: "2026-06-01T12:00:00+0000",
     }));
     const adapter = adapterFor({
-      [ACCOUNTS_PATH]: accountsOk,
       [PROFILE_PATH]: { status: 200, json: { username: "tuezhq" } },
       [MEDIA_PATH]: { status: 200, json: { data: many } },
     });
@@ -121,7 +113,6 @@ describe("InstagramAdapter.readSocialProfile", () => {
 
   it("throws ConnectorFabricError when the profile lookup is non-2xx", async () => {
     const adapter = adapterFor({
-      [ACCOUNTS_PATH]: accountsOk,
       [PROFILE_PATH]: { status: 403, json: { error: { message: "permission denied" } } },
     });
     await expect(adapter.readSocialProfile()).rejects.toThrow(ConnectorFabricError);
@@ -130,7 +121,6 @@ describe("InstagramAdapter.readSocialProfile", () => {
 
   it("throws ConnectorFabricError when the media list is non-2xx", async () => {
     const adapter = adapterFor({
-      [ACCOUNTS_PATH]: accountsOk,
       [PROFILE_PATH]: { status: 200, json: { username: "tuezhq" } },
       [MEDIA_PATH]: { status: 500, json: { error: { message: "boom" } } },
     });

@@ -10,9 +10,9 @@ import type {
   SocialProfileReadRaw,
 } from "./index";
 import type { SocialAdapterConfig } from "./linkedin";
+import { ProviderCapabilityError } from "../../discovery/provider-errors";
 
-const GRAPH = "https://graph.facebook.com";
-const V = "v23.0";
+const GRAPH = "https://graph.instagram.com";
 // Bounded in-request poll for reel/video processing. If still in progress after
 // this, we throw and the publication retry route finishes it (deferred: a
 // worker-driven async finalize — docs/deferred-improvements.md).
@@ -21,9 +21,6 @@ const VIDEO_POLL_DELAY_MS = 2000;
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
-interface AccountsResponse {
-  data?: Array<{ instagram_business_account?: { id?: string } }>;
-}
 interface IdResponse {
   id?: string;
   error?: { message?: string };
@@ -45,10 +42,9 @@ interface MediaListResponse {
 }
 
 /**
- * Instagram content publishing via the Facebook Graph API. The IG Business
- * account is discovered from the connected Facebook user's Pages. Publishing is
- * the two-step container → media_publish flow: single image, a single
- * video/reel (with bounded processing poll), or a 2–10 item carousel.
+ * Instagram content publishing via direct Instagram Login. OAuth completion
+ * binds one professional account id; publishing is the two-step container →
+ * media_publish flow for an image, video/reel, or 2–10 item carousel.
  */
 export class InstagramAdapter implements SocialAdapter {
   constructor(
@@ -68,25 +64,15 @@ export class InstagramAdapter implements SocialAdapter {
     return json;
   }
 
-  private async igUserId(): Promise<string> {
-    const res = await this.fabric.proxyJson(
-      "GET",
-      `/${V}/me/accounts?fields=instagram_business_account{id}`,
-      this.config.nangoConnectionId,
-      this.config.integrationKey,
-      { baseUrlOverride: GRAPH },
-    );
-    if (res.status < 200 || res.status >= 300) {
-      throw new ConnectorFabricError(`Instagram account lookup returned ${res.status}.`);
-    }
-    const data = (res.json as AccountsResponse)?.data ?? [];
-    const igId = data.map((p) => p.instagram_business_account?.id).find(Boolean);
-    if (!igId) {
-      throw new ConnectorFabricError(
-        "No Instagram Business account is linked to this Facebook login — link an IG Business/Creator account to a Page first.",
+  private igUserId(): string {
+    const accountId = this.config.externalAccountId?.trim();
+    if (!accountId) {
+      throw new ProviderCapabilityError(
+        "reconnect_required",
+        "Reconnect Instagram with direct Instagram Login.",
       );
     }
-    return igId;
+    return accountId;
   }
 
   private mediaParam(item: PublishMedia): Record<string, string> {
@@ -97,7 +83,7 @@ export class InstagramAdapter implements SocialAdapter {
     for (let i = 0; i < VIDEO_POLL_TRIES; i++) {
       const res = await this.fabric.proxyJson(
         "GET",
-        `/${V}/${creationId}?fields=status_code`,
+        `/${creationId}?fields=status_code`,
         this.config.nangoConnectionId,
         this.config.integrationKey,
         { baseUrlOverride: GRAPH },
@@ -115,20 +101,20 @@ export class InstagramAdapter implements SocialAdapter {
     if (media.length === 0) {
       throw new ConnectorFabricError("Instagram needs at least one image or video.");
     }
-    const igId = await this.igUserId();
+    const igId = this.igUserId();
     const hasVideo = media.some((m) => m.type === "video");
 
     let creationId: string;
     if (media.length === 1) {
-      const created = await this.post(`/${V}/${igId}/media`, { ...this.mediaParam(media[0]!), caption: input.body });
+      const created = await this.post(`/${igId}/media`, { ...this.mediaParam(media[0]!), caption: input.body });
       creationId = created.id!;
     } else {
       const children: string[] = [];
       for (const item of media) {
-        const child = await this.post(`/${V}/${igId}/media`, { ...this.mediaParam(item), is_carousel_item: "true" });
+        const child = await this.post(`/${igId}/media`, { ...this.mediaParam(item), is_carousel_item: "true" });
         children.push(child.id!);
       }
-      const parent = await this.post(`/${V}/${igId}/media`, {
+      const parent = await this.post(`/${igId}/media`, {
         media_type: "CAROUSEL",
         children: children.join(","),
         caption: input.body,
@@ -138,13 +124,13 @@ export class InstagramAdapter implements SocialAdapter {
 
     if (hasVideo) await this.waitForContainer(creationId);
 
-    const published = await this.post(`/${V}/${igId}/media_publish`, { creation_id: creationId });
+    const published = await this.post(`/${igId}/media_publish`, { creation_id: creationId });
     const mediaId = published.id!;
 
     let url = "";
     const link = await this.fabric.proxyJson(
       "GET",
-      `/${V}/${mediaId}?fields=permalink`,
+      `/${mediaId}?fields=permalink`,
       this.config.nangoConnectionId,
       this.config.integrationKey,
       { baseUrlOverride: GRAPH },
@@ -161,7 +147,7 @@ export class InstagramAdapter implements SocialAdapter {
   async fetchEngagement(post: PostRef): Promise<PostEngagement> {
     const res = await this.fabric.proxyJson(
       "GET",
-      `/${V}/${post.externalId}?fields=like_count,comments_count`,
+      `/${post.externalId}?fields=like_count,comments_count`,
       this.config.nangoConnectionId,
       this.config.integrationKey,
       { baseUrlOverride: GRAPH },
@@ -176,7 +162,7 @@ export class InstagramAdapter implements SocialAdapter {
   async fetchReplies(post: PostRef): Promise<InboundReply[]> {
     const res = await this.fabric.proxyJson(
       "GET",
-      `/${V}/${post.externalId}/comments?fields=id,text,username,timestamp`,
+      `/${post.externalId}/comments?fields=id,text,username,timestamp`,
       this.config.nangoConnectionId,
       this.config.integrationKey,
       { baseUrlOverride: GRAPH },
@@ -200,7 +186,7 @@ export class InstagramAdapter implements SocialAdapter {
   }
 
   async postReply(input: { parentExternalId: string; body: string }): Promise<SocialPostResult> {
-    const created = await this.post(`/${V}/${input.parentExternalId}/replies`, { message: input.body });
+    const created = await this.post(`/${input.parentExternalId}/replies`, { message: input.body });
     return { externalId: created.id!, url: "" };
   }
 
@@ -208,11 +194,11 @@ export class InstagramAdapter implements SocialAdapter {
   // account's own profile + recent media. ---
 
   async readSocialProfile(): Promise<SocialProfileReadRaw> {
-    const igId = await this.igUserId();
+    const igId = this.igUserId();
 
     const profileRes = await this.fabric.proxyJson(
       "GET",
-      `/${V}/${igId}?fields=username,name,biography`,
+      `/${igId}?fields=username,name,biography`,
       this.config.nangoConnectionId,
       this.config.integrationKey,
       { baseUrlOverride: GRAPH },
@@ -226,7 +212,7 @@ export class InstagramAdapter implements SocialAdapter {
 
     const mediaRes = await this.fabric.proxyJson(
       "GET",
-      `/${V}/${igId}/media?fields=caption,permalink,timestamp&limit=25`,
+      `/${igId}/media?fields=caption,permalink,timestamp&limit=25`,
       this.config.nangoConnectionId,
       this.config.integrationKey,
       { baseUrlOverride: GRAPH },

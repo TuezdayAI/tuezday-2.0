@@ -14,6 +14,7 @@ import {
 } from "drizzle-orm";
 import {
   createDiscoverySourceInputSchema,
+  isReservedDiscoverySourceType,
   type CreateDiscoverySourceInput,
   type DiscoveredItem,
   type DiscoveredItemMatch,
@@ -65,6 +66,9 @@ import {
   type DiscoveryPage,
   type DiscoveryPageReader,
 } from "../discovery/paging";
+import { ProviderCapabilityError } from "../discovery/provider-errors";
+import { deleteDiscoverySourcePreservingDuplicates } from "./discovery-dedupe";
+import { resolveTrackedAccountsForSource } from "./tracked-account-resolver";
 import type { LlmGateway } from "../llm/gateway";
 import { BoundedJsonError } from "../connectors/bounded-json";
 import {
@@ -244,6 +248,15 @@ export class DiscoverySourceConnectionError extends Error {
   }
 }
 
+export class DiscoverySourceReservedError extends Error {
+  readonly code = "source_reserved";
+
+  constructor(type: DiscoverySourceType) {
+    super(`${type} is reserved and has no production provider.`);
+    this.name = "DiscoverySourceReservedError";
+  }
+}
+
 function validateSourceConnection(
   db: Db,
   workspaceId: string,
@@ -338,6 +351,9 @@ export function createDiscoverySource(
   workspaceId: string,
   input: CreateDiscoverySourceInput,
 ): DiscoverySource {
+  if (isReservedDiscoverySourceType(input.type)) {
+    throw new DiscoverySourceReservedError(input.type);
+  }
   const connectionId = input.connectionId ?? null;
   validateSourceConnection(db, workspaceId, input.type, input.config, connectionId);
   requireSourceTrackedAccounts(db, workspaceId, input.type, input.config);
@@ -412,6 +428,13 @@ export function deriveDiscoverySourceRuntimeState(
   type: DiscoverySourceType,
   connectionId: string | null,
 ): Pick<DiscoverySourceRow, "status" | "lastError" | "backoffUntil"> {
+  if (isReservedDiscoverySourceType(type)) {
+    return {
+      status: "reserved",
+      lastError: "source_reserved",
+      backoffUntil: null,
+    };
+  }
   return {
     status: connectionId || isLiveSourceType(type) ? "active" : "needs_api_key",
     lastError: null,
@@ -427,6 +450,12 @@ export function updateDiscoverySource(
 ): DiscoverySource | undefined {
   const existing = getDiscoverySource(db, workspaceId, sourceId);
   if (!existing) return undefined;
+  if (
+    isReservedDiscoverySourceType(existing.type) &&
+    input.enabled === true
+  ) {
+    throw new DiscoverySourceReservedError(existing.type);
+  }
   const transition = validateDiscoverySourceTransition(existing, input);
   const nextConnectionId = transition.connectionId ?? null;
   validateSourceConnection(
@@ -502,17 +531,11 @@ export function updateDiscoverySource(
 }
 
 export function deleteDiscoverySource(db: Db, workspaceId: string, sourceId: string): boolean {
-  if (!getDiscoverySource(db, workspaceId, sourceId)) return false;
-  db
-    .delete(discoverySources)
-    .where(
-      and(
-        eq(discoverySources.workspaceId, workspaceId),
-        eq(discoverySources.id, sourceId),
-      ),
-    )
-    .run();
-  return true;
+  return deleteDiscoverySourcePreservingDuplicates(
+    db,
+    workspaceId,
+    sourceId,
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1358,6 +1381,12 @@ function safeExecutionFailure(
       persisted: `permission_required: ${error.message}`.slice(0, 500),
     };
   }
+  if (error instanceof ProviderCapabilityError) {
+    return {
+      code: error.code,
+      persisted: `${error.code}: ${error.message}`.slice(0, 500),
+    };
+  }
   if (error instanceof DiscoveryReferenceNotFoundError) {
     return {
       code: "related_object_not_found",
@@ -1497,14 +1526,44 @@ export async function runClaimedDiscoverySource(
     );
   }
 
+  let calls = 0;
+  let pages = 0;
+  let bytes = 0;
+  let admittedItems = 0;
+  let insertedItems = 0;
+  let permissionFailures = 0;
   let trackedAccounts: ResolvedTrackedAccount[];
   try {
-    trackedAccounts = requireSourceTrackedAccounts(
+    let referencedAccounts = requireSourceTrackedAccounts(
       deps.db,
       claim.workspaceId,
       initial.type,
       initial.config,
-    ).map((account) => ({
+    );
+    if (initial.connectionId) {
+      const resolutionMetrics = { calls: 0, bytes: 0 };
+      try {
+        referencedAccounts = await resolveTrackedAccountsForSource(
+          { db: deps.db, fabric: deps.fabric },
+          {
+            source: initial,
+            accounts: referencedAccounts,
+            connectionId: initial.connectionId,
+            runtime: {
+              signal,
+              maxCalls: budget.maxCalls,
+              maxBytes: budget.maxBytes,
+              maxResponseBytes: budget.maxResponseBytes,
+              metrics: resolutionMetrics,
+            },
+          },
+        );
+      } finally {
+        calls += resolutionMetrics.calls;
+        bytes += resolutionMetrics.bytes;
+      }
+    }
+    trackedAccounts = referencedAccounts.map((account) => ({
       id: account.id,
       handle: account.handle,
       externalId: account.externalId,
@@ -1530,9 +1589,9 @@ export async function runClaimedDiscoverySource(
       },
       {
         code: failure.code,
-        calls: 0,
+        calls,
         pages: 0,
-        bytes: 0,
+        bytes,
         items: 0,
         continuationPending: false,
         replay: claim.attempt > 1,
@@ -1543,12 +1602,6 @@ export async function runClaimedDiscoverySource(
   const targets = targetsForSource(initial, trackedAccounts);
   let cursor = reconcileTargets(initial.cursorState, targets);
   const pageReader = deps.pageReader ?? defaultDiscoveryPageReader;
-  let calls = 0;
-  let pages = 0;
-  let bytes = 0;
-  let admittedItems = 0;
-  let insertedItems = 0;
-  let permissionFailures = 0;
   const visitedTargets = new Set<string>();
   const completedTargets = new Set<string>();
   const replayedTargets = new Set<string>();

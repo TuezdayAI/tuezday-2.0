@@ -2,10 +2,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import {
   DISCOVERY_MAX_MATCHES_PER_ITEM,
+  RESERVED_DISCOVERY_SOURCE_TYPES,
   discoverySourceSchema,
   discoveredItemSchema,
+  isReservedDiscoverySourceType,
   signalSchema,
 } from "@tuezday/contracts";
+import { isLiveSourceType } from "../src/discovery/adapters";
 import type { TuezdayApp } from "../src/app";
 import type { Db } from "../src/db";
 import {
@@ -194,6 +197,60 @@ describe("discovery API", () => {
   }
 
   describe("sources", () => {
+    it("rejects Google Trends creation and activation as reserved", async () => {
+      const created = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/discovery/sources`,
+        payload: {
+          type: "google_trends",
+          config: { geo: "US" },
+        },
+      });
+      expect(created.statusCode).toBe(409);
+      expect(created.json()).toMatchObject({ error: "source_reserved" });
+
+      const sourceId = "11111111-1111-4111-8111-111111111111";
+      db.insert(discoverySources)
+        .values({
+          id: sourceId,
+          workspaceId,
+          type: "google_trends",
+          name: "Legacy Trends",
+          configJson: JSON.stringify({ geo: "US" }),
+          enabled: false,
+          status: "reserved",
+          lastError: "source_reserved",
+          lastFetchedAt: null,
+          connectionId: null,
+          cursorJson: "{}",
+          backoffUntil: null,
+          lastAttemptedAt: null,
+          executionVersion: 1,
+          createdAt: 1,
+        })
+        .run();
+
+      const activated = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/discovery/sources/${sourceId}`,
+        payload: { enabled: true },
+      });
+      expect(activated.statusCode).toBe(409);
+      expect(activated.json()).toMatchObject({ error: "source_reserved" });
+
+      const renamed = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/discovery/sources/${sourceId}`,
+        payload: { name: "Archived Trends" },
+      });
+      expect(renamed.statusCode).toBe(200);
+      expect(renamed.json()).toMatchObject({
+        name: "Archived Trends",
+        status: "reserved",
+        enabled: false,
+      });
+    });
+
     it("creates a live rss source as active", async () => {
       const source = await addRssSource();
       expect(discoverySourceSchema.safeParse(source).success).toBe(true);
@@ -524,59 +581,28 @@ describe("discovery API", () => {
     });
   });
 
-  describe("provider-gated sources (Sprint 31)", () => {
-    it("registers intent/g2/capterra as needs_api_key and skips them without a provider", async () => {
+  describe("reserved provider vocabulary", () => {
+    it("keeps unsupported commercial source types visible but blocked", async () => {
+      expect(RESERVED_DISCOVERY_SOURCE_TYPES).toEqual([
+        "google_trends",
+        "g2",
+        "capterra",
+        "intent",
+      ]);
       for (const type of ["intent", "g2", "capterra"] as const) {
+        expect(isReservedDiscoverySourceType(type)).toBe(true);
+        expect(isLiveSourceType(type)).toBe(false);
         const res = await app.inject({
           method: "POST",
           url: `/workspaces/${workspaceId}/discovery/sources`,
           payload: { type, config: { query: "acme" } },
         });
-        expect(res.json().status).toBe("needs_api_key");
+        expect(res.statusCode).toBe(409);
+        expect(res.json().error).toBe("source_reserved");
       }
       const result = await run();
-      expect(result.sources).toEqual([]); // all inert, nothing fetched
+      expect(result.sources).toEqual([]);
       expect(await items()).toEqual([]);
-    });
-
-    it("fetches intent items through a configured IntentProvider", async () => {
-      const { fetcher } = makeFetcher();
-      const intent = {
-        isConfigured: () => true,
-        fetchSignals: async () => [
-          {
-            externalId: "funding-1",
-            title: "Acme raised a $20M Series B",
-            url: "https://example.com/acme",
-            summary: "Funding round closed.",
-            publishedAt: Date.now(),
-          },
-        ],
-      };
-      const localApp = await buildAuthedApp({
-        db: createTestDb(),
-        llm: scoringGateway({ id: null }, { id: null }),
-        safeFetch: fetcher,
-        intent,
-      });
-      const ws = (
-        await localApp.inject({ method: "POST", url: "/workspaces", payload: { name: "Intent" } })
-      ).json().id;
-      await localApp.inject({
-        method: "POST",
-        url: `/workspaces/${ws}/discovery/sources`,
-        payload: { type: "intent", config: { query: "acme.com" } },
-      });
-      const result = (
-        await localApp.inject({ method: "POST", url: `/workspaces/${ws}/discovery/run` })
-      ).json();
-      expect(result.sources).toHaveLength(1);
-      expect(result.sources[0].new).toBe(1);
-      const list = (
-        await localApp.inject({ method: "GET", url: `/workspaces/${ws}/discovery/items` })
-      ).json();
-      expect(list[0].title).toContain("Acme raised");
-      await localApp.close();
     });
   });
 

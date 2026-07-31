@@ -1,4 +1,8 @@
 import { describe, expect, it } from "vitest";
+import {
+  DISCOVERY_SOURCE_STATUSES,
+  isReservedDiscoverySourceType,
+} from "@tuezday/contracts";
 import { NeedsApiKeyError, fetchSourceItems } from "../src/discovery/adapters";
 import {
   safeFetchError,
@@ -268,12 +272,14 @@ describe("podcast adapter", () => {
 });
 
 describe("google_trends adapter", () => {
-  it("builds the daily-trends rss url for the geo and parses items", async () => {
+  it("is reserved and never calls the retired daily-trends RSS surface", async () => {
     const { fetcher, requests } = capturingFetcher(RSS_FIXTURE);
-    const items = await fetchSourceItems("google_trends", { geo: "us" }, fetcher);
-    expect(requests[0]?.url).toContain("trends.google.com/trends/trendingsearches/daily/rss");
-    expect(requests[0]?.url).toContain("geo=US");
-    expect(items.length).toBeGreaterThan(0);
+    expect(DISCOVERY_SOURCE_STATUSES).toContain("reserved");
+    expect(isReservedDiscoverySourceType("google_trends")).toBe(true);
+    await expect(
+      fetchSourceItems("google_trends", { geo: "us" }, fetcher),
+    ).rejects.toBeInstanceOf(NeedsApiKeyError);
+    expect(requests).toEqual([]);
   });
 });
 

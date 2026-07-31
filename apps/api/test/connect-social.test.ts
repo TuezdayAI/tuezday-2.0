@@ -36,11 +36,11 @@ const SOCIAL = [
   {
     key: "instagram",
     label: "Instagram",
-    nangoProvider: "facebook",
+    nangoProvider: "instagram",
     idEnv: "INSTAGRAM_CLIENT_ID",
     secretEnv: "INSTAGRAM_CLIENT_SECRET",
     scopes:
-      "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement,business_management",
+      "instagram_business_basic,instagram_business_content_publish",
   },
 ] as const;
 
@@ -136,7 +136,19 @@ function fakeFabric(state: FabricState): ConnectorFabric {
     async proxyGet() {
       return { status: state.proxyStatus, bodySnippet: '{"sub":"member-123"}' };
     },
-    async proxyJson() {
+    async proxyJson(_method, path) {
+      if (path.startsWith("/me?fields=id,user_id,username,name,account_type")) {
+        return {
+          status: state.proxyStatus,
+          json: {
+            id: "ig-direct-42",
+            user_id: "ig-direct-42",
+            username: "tuezday",
+            name: "Tuezday",
+            account_type: "BUSINESS",
+          },
+        };
+      }
       return { status: state.proxyStatus, json: { ok: true } };
     },
   };
@@ -255,7 +267,7 @@ describe("connect social API", () => {
       }
     });
 
-    it("adds r_member_social to LinkedIn only when LINKEDIN_COMMUNITY_APPROVED is set", async () => {
+    it("adds approved LinkedIn read scopes only when LINKEDIN_COMMUNITY_APPROVED is true", async () => {
       stubSocialEnv();
       process.env.LINKEDIN_COMMUNITY_APPROVED = "1";
       try {
@@ -265,7 +277,24 @@ describe("connect social API", () => {
         });
         expect(res.statusCode).toBe(200);
         expect(state.integrationOAuth.get("tuezday-linkedin")?.scopes).toBe(
-          "openid,profile,email,w_member_social,r_member_social",
+          "openid,profile,email,w_member_social,r_member_social,r_organization_social",
+        );
+      } finally {
+        delete process.env.LINKEDIN_COMMUNITY_APPROVED;
+      }
+    });
+
+    it("does not enable approved scopes for the literal string false", async () => {
+      stubSocialEnv();
+      process.env.LINKEDIN_COMMUNITY_APPROVED = "false";
+      try {
+        const res = await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/connectors/linkedin/oauth/session`,
+        });
+        expect(res.statusCode).toBe(200);
+        expect(state.integrationOAuth.get("tuezday-linkedin")?.scopes).toBe(
+          "openid,profile,email,w_member_social",
         );
       } finally {
         delete process.env.LINKEDIN_COMMUNITY_APPROVED;
@@ -287,6 +316,19 @@ describe("connect social API", () => {
         expect(row.status).toBe("connected");
         expect(row.lastCheckedAt).toBeTruthy();
       }
+    });
+
+    it("binds the direct Instagram professional account at OAuth completion", async () => {
+      stubSocialEnv();
+      const connection = await connect("instagram");
+
+      expect(connection).toMatchObject({
+        providerKey: "instagram",
+        status: "connected",
+        externalAccountId: "ig-direct-42",
+        externalAccountHandle: "tuezday",
+        config: { authArchitecture: "instagram_login" },
+      });
     });
 
     it("keeps multiple OAuth accounts for the same social provider", async () => {

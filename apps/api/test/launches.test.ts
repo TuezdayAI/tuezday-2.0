@@ -121,6 +121,18 @@ function handlePlatform(
   }
 
   // Instagram (Graph API)
+  if (p === "/me") {
+    return {
+      status: 200,
+      json: {
+        id: "ig-1",
+        user_id: "ig-1",
+        username: "tuezday",
+        name: "Tuezday",
+        account_type: "BUSINESS",
+      },
+    };
+  }
   if (p.endsWith("/media_publish")) {
     state.igPublished += 1;
     return { status: 200, json: { id: `ig-media-${state.igPublished}` } };
@@ -129,11 +141,8 @@ function handlePlatform(
     state.igContainers += 1;
     return { status: 200, json: { id: `ig-container-${state.igContainers}` } };
   }
-  if (p.includes("/me/accounts")) {
-    return { status: 200, json: { data: [{ instagram_business_account: { id: "ig-1" } }] } };
-  }
-  if (p.startsWith("/v23.0/ig-container-")) return { status: 200, json: { status_code: "FINISHED" } };
-  if (p.startsWith("/v23.0/ig-media-")) {
+  if (p.startsWith("/ig-container-")) return { status: 200, json: { status_code: "FINISHED" } };
+  if (p.startsWith("/ig-media-")) {
     return { status: 200, json: { permalink: "https://www.instagram.com/p/abc/" } };
   }
 
@@ -215,6 +224,10 @@ describe("launch contracts", () => {
 
 describe("social adapters", () => {
   const config = { nangoConnectionId: "nc-1", integrationKey: "tuezday-x" };
+  const instagramIdentity = {
+    externalAccountId: "ig-1",
+    externalAccountHandle: "tuezday",
+  };
 
   it("LinkedIn posts a member share and returns the post id + url", async () => {
     const state = platformState();
@@ -231,6 +244,7 @@ describe("social adapters", () => {
     const result = await new InstagramAdapter(fakeFabric(state), {
       ...config,
       integrationKey: "tuezday-instagram",
+      ...instagramIdentity,
     }).publishPost({ target: "feed", title: "", body: "Caption", media: [{ url: "https://img/1.jpg", type: "image" }] });
     expect(result.externalId).toBe("ig-media-1");
     expect(state.igContainers).toBe(1);
@@ -239,7 +253,11 @@ describe("social adapters", () => {
 
   it("Instagram builds a carousel from multiple media", async () => {
     const state = platformState();
-    await new InstagramAdapter(fakeFabric(state), { ...config, integrationKey: "tuezday-instagram" }).publishPost({
+    await new InstagramAdapter(fakeFabric(state), {
+      ...config,
+      integrationKey: "tuezday-instagram",
+      ...instagramIdentity,
+    }).publishPost({
       target: "feed",
       title: "",
       body: "Caption",
@@ -256,7 +274,11 @@ describe("social adapters", () => {
   it("Instagram refuses to publish with no media", async () => {
     const state = platformState();
     await expect(
-      new InstagramAdapter(fakeFabric(state), { ...config, integrationKey: "tuezday-instagram" }).publishPost({
+      new InstagramAdapter(fakeFabric(state), {
+        ...config,
+        integrationKey: "tuezday-instagram",
+        ...instagramIdentity,
+      }).publishPost({
         target: "feed",
         title: "",
         body: "Caption",

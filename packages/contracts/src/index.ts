@@ -1000,6 +1000,7 @@ export type DeliveryMode = (typeof DELIVERY_MODES)[number];
 export const REACTIVE_PERIODS = ["day", "week", "month"] as const;
 export type ReactivePeriod = (typeof REACTIVE_PERIODS)[number];
 
+// Reserved orchestration vocabulary. Package source roles activate in Sprint 62.
 export const PACKAGE_SOURCE_ROLES = [
   "trigger",
   "evidence",
@@ -1009,6 +1010,7 @@ export const PACKAGE_SOURCE_ROLES = [
 ] as const;
 export type PackageSourceRole = (typeof PACKAGE_SOURCE_ROLES)[number];
 
+// Reserved orchestration vocabulary. Deliverable production state activates in Sprint 63.
 export const DELIVERABLE_PRODUCTION_STATUSES = [
   "planned",
   "assessing",
@@ -2174,14 +2176,38 @@ export const DISCOVERY_SOURCE_TYPES = [
   "x",
   "linkedin",
   "instagram",
+  // Reserved. Activation sprint is not scheduled; a provider-specific sprint
+  // must be created before g2, capterra, or intent becomes available.
   "g2",
   "capterra",
   "intent",
 ] as const;
 export type DiscoverySourceType = (typeof DISCOVERY_SOURCE_TYPES)[number];
 
-export const DISCOVERY_SOURCE_STATUSES = ["active", "needs_api_key", "error"] as const;
+export const DISCOVERY_SOURCE_STATUSES = [
+  "active",
+  "needs_api_key",
+  "reserved",
+  "error",
+] as const;
 export type DiscoverySourceStatus = (typeof DISCOVERY_SOURCE_STATUSES)[number];
+
+export const RESERVED_DISCOVERY_SOURCE_TYPES = [
+  "google_trends",
+  "g2",
+  "capterra",
+  "intent",
+] as const satisfies readonly DiscoverySourceType[];
+
+const RESERVED_DISCOVERY_SOURCE_TYPE_SET = new Set<DiscoverySourceType>(
+  RESERVED_DISCOVERY_SOURCE_TYPES,
+);
+
+export function isReservedDiscoverySourceType(
+  type: DiscoverySourceType,
+): boolean {
+  return RESERVED_DISCOVERY_SOURCE_TYPE_SET.has(type);
+}
 
 // Connected sourcing (Sprint 46): how a source listens. Keyless sources leave
 // `mode` unset; connected sources pick a provider-supported mode (X: query /
@@ -2480,7 +2506,6 @@ export const createTrackedSocialAccountInputSchema = z.object({
   platform: z.enum(TRACKED_SOCIAL_PLATFORMS),
   handle: z.string().trim().min(1).max(100),
   displayName: z.string().trim().max(200).optional(),
-  externalId: z.string().trim().max(200).optional(),
   url: z.string().url().optional(),
   notes: z.string().trim().max(2_000).optional(),
 });
@@ -2491,13 +2516,19 @@ export type CreateTrackedSocialAccountInput = z.infer<
 export const updateTrackedSocialAccountInputSchema = z.object({
   handle: z.string().trim().min(1).max(100).optional(),
   displayName: z.string().trim().max(200).nullable().optional(),
-  externalId: z.string().trim().max(200).nullable().optional(),
   url: z.string().url().nullable().optional(),
   notes: z.string().trim().max(2_000).optional(),
   enabled: z.boolean().optional(),
 });
 export type UpdateTrackedSocialAccountInput = z.infer<
   typeof updateTrackedSocialAccountInputSchema
+>;
+
+export const resolveTrackedSocialAccountInputSchema = z.object({
+  connectionId: z.string().uuid(),
+});
+export type ResolveTrackedSocialAccountInput = z.infer<
+  typeof resolveTrackedSocialAccountInputSchema
 >;
 
 // ---------------------------------------------------------------------------
@@ -2973,10 +3004,9 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     // hits /v2/userinfo (OpenID) so a connection verifies the member identity.
     // w_member_social is provisioned now so Sprint 26 can broadcast posts
     // (LinkedIn's API forbids cold per-person DMs) without a reconnect.
-    // r_member_social (Sprint 46) is the read scope connected discovery
-    // needs to fetch member-authored posts — LinkedIn only grants it to
-    // apps with Community Management approval, so discovery surfaces a
-    // permission_required source error until the app is approved.
+    // r_member_social and r_organization_social are the read scopes connected
+    // discovery needs. LinkedIn grants them through Community Management
+    // approval, so discovery surfaces permission_required until approval.
     key: "linkedin",
     label: "LinkedIn",
     nangoProvider: "linkedin",
@@ -2984,10 +3014,10 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     categories: ["social"],
     baseUrl: "https://api.linkedin.com",
     testPath: "/v2/userinfo",
-    // r_member_social (member-post READ) needs LinkedIn Community Management
-    // approval and, being all-or-nothing, blocks the whole OAuth grant when the
-    // app lacks it. Kept OUT of the default; the API re-adds it only when
-    // LINKEDIN_COMMUNITY_APPROVED is set (see resolveOAuthScopes).
+    // The two read scopes stay OUT of the default because an unapproved scope
+    // blocks the whole grant. The API adds both only when the operator sets
+    // LINKEDIN_COMMUNITY_APPROVED to a strict true value; existing connections
+    // must reconnect after approval.
     oauthScopes: "openid,profile,email,w_member_social",
   },
   {
@@ -3008,20 +3038,18 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     oauthScopes: "tweet.read,tweet.write,users.read,dm.read,dm.write,offline.access,list.read",
   },
   {
-    // Instagram content publishing runs through the Facebook Graph API and
-    // needs an Instagram Business/Creator account linked to a Facebook Page,
-    // plus a Facebook app with instagram_content_publish approved. Creds are
-    // the Facebook app's INSTAGRAM_CLIENT_ID / INSTAGRAM_CLIENT_SECRET.
-    // testPath hits /me to verify identity; Sprint 26 does the broadcast post.
+    // Direct Instagram Login for professional Business/Creator accounts.
+    // OAuth completion binds the returned account id and username so every
+    // later read/write is scoped to that one account without Facebook Pages.
     key: "instagram",
     label: "Instagram",
-    nangoProvider: "facebook",
+    nangoProvider: "instagram",
     authMode: "oauth",
     categories: ["social"],
-    baseUrl: "https://graph.facebook.com",
-    testPath: "/v23.0/me",
+    baseUrl: "https://graph.instagram.com",
+    testPath: "/me?fields=id,user_id,username,name,account_type",
     oauthScopes:
-      "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement,business_management",
+      "instagram_business_basic,instagram_business_content_publish",
   },
   {
     // Sprint 47: the outreach mailbox. OAuth popup via Nango like the social
@@ -3137,6 +3165,7 @@ export const connectionSchema = z.object({
   config: z.object({
     baseUrl: z.string().optional(),
     testPath: z.string().optional(),
+    authArchitecture: z.literal("instagram_login").optional(),
   }),
   contentProfile: connectionContentProfileSchema,
   displayName: z.string(),

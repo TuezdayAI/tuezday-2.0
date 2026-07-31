@@ -18,6 +18,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
   DISCOVERY_SOURCE_TYPES,
+  isReservedDiscoverySourceType,
   TRACKED_SOCIAL_PLATFORMS,
   type Campaign,
   type Connection,
@@ -49,14 +50,14 @@ const TYPE_SHORT_LABELS: Record<DiscoverySourceType, string> = {
   hacker_news: "Hacker News",
   youtube: "YouTube",
   podcast: "Podcast",
-  google_trends: "Trends",
+  google_trends: "Trends · reserved",
   funding_news: "Funding",
   x: "X",
   linkedin: "LinkedIn",
   instagram: "Instagram",
-  g2: "G2",
-  capterra: "Capterra",
-  intent: "Intent",
+  g2: "G2 · reserved",
+  capterra: "Capterra · reserved",
+  intent: "Intent · reserved",
 };
 
 const PLATFORM_LABELS: Record<TrackedSocialPlatform, string> = {
@@ -78,14 +79,14 @@ const TYPE_LABELS: Record<DiscoverySourceType, string> = {
   hacker_news: "Hacker News",
   youtube: "YouTube channel",
   podcast: "Podcast",
-  google_trends: "Google Trends",
+  google_trends: "Google Trends — reserved",
   funding_news: "Funding news",
   x: "X (connected or API key)",
   linkedin: "LinkedIn (connected or API key)",
   instagram: "Instagram (connected account)",
-  g2: "G2 reviews (needs API key)",
-  capterra: "Capterra reviews (needs API key)",
-  intent: "Intent signals (needs API key)",
+  g2: "G2 reviews — reserved",
+  capterra: "Capterra reviews — reserved",
+  intent: "Intent signals — reserved",
 };
 
 interface SourceProposal {
@@ -130,7 +131,6 @@ export default function DiscoveryPage() {
   const [mode, setMode] = useState<DiscoverySourceMode | "">("");
   const [handle, setHandle] = useState("");
   const [listId, setListId] = useState("");
-  const [hashtag, setHashtag] = useState("");
   const [trackedAccountId, setTrackedAccountId] = useState("");
 
   // tracked-accounts form
@@ -140,6 +140,8 @@ export default function DiscoveryPage() {
   const [trackedDisplayName, setTrackedDisplayName] = useState("");
   const [trackedNotes, setTrackedNotes] = useState("");
   const [trackedError, setTrackedError] = useState<string | null>(null);
+  const [resolutionConnectionIds, setResolutionConnectionIds] =
+    useState<Record<string, string>>({});
 
   const [running, setRunning] = useState(false);
   const [runSummary, setRunSummary] = useState<DiscoveryRunSummary | null>(null);
@@ -212,7 +214,6 @@ export default function DiscoveryPage() {
       setMode("");
       setHandle("");
       setListId("");
-      setHashtag("");
       setTrackedAccountId("");
       await load();
     } catch (err) {
@@ -235,12 +236,13 @@ export default function DiscoveryPage() {
   }
 
   // Effective listen mode while the form is open. X defaults to search; a
-  // connected LinkedIn source only supports account timelines; Instagram
-  // defaults to account posts.
+  // connected LinkedIn source only supports account timelines.
   const xMode: DiscoverySourceMode = mode === "" ? "query" : mode;
-  const igMode: DiscoverySourceMode = mode === "" ? "account_timeline" : mode;
 
   const matchingConnections = connectionsForType(newType);
+  const selectedConnection = matchingConnections.find(
+    (connection) => connection.id === connectionId,
+  );
   const showConnectionPicker = Boolean(SOURCE_PROVIDERS[newType]);
   const instagramUnconnectable = newType === "instagram" && matchingConnections.length === 0;
   const showQueryField =
@@ -255,11 +257,11 @@ export default function DiscoveryPage() {
     (newType === "linkedin" && !connectionId);
   const showAccountTarget =
     (newType === "x" && Boolean(connectionId) && xMode === "account_timeline") ||
-    (newType === "linkedin" && Boolean(connectionId)) ||
-    (newType === "instagram" && igMode === "account_timeline");
+    (newType === "linkedin" && Boolean(connectionId));
 
   function submitForm(e: React.FormEvent) {
     e.preventDefault();
+    if (isReservedDiscoverySourceType(newType)) return;
     const config: Record<string, string | undefined> = {};
     const accountTarget: Record<string, string | undefined> = trackedAccountId
       ? { trackedAccountId }
@@ -297,9 +299,9 @@ export default function DiscoveryPage() {
       }
     }
     if (newType === "instagram") {
-      config.mode = igMode;
-      if (igMode === "account_timeline") Object.assign(config, accountTarget);
-      if (igMode === "hashtag") config.hashtag = hashtag.trim();
+      config.mode = "account_timeline";
+      config.handle =
+        selectedConnection?.externalAccountHandle?.trim() || undefined;
     }
     if (newType === "youtube") config.channelId = channelId.trim();
     if (newType === "google_trends" && geo.trim()) config.geo = geo.trim();
@@ -321,7 +323,12 @@ export default function DiscoveryPage() {
   }
 
   async function removeSource(source: DiscoverySource) {
-    if (!confirm(`Delete source "${source.name}"? Its discovered items go with it.`)) return;
+    if (
+      !confirm(
+        `Delete source "${source.name}"? Stories also seen through another source will be preserved.`,
+      )
+    )
+      return;
     await apiFetch(`/workspaces/${id}/discovery/sources/${source.id}`, {
       method: "DELETE",
     });
@@ -377,6 +384,43 @@ export default function DiscoveryPage() {
       method: "DELETE",
     });
     await load();
+  }
+
+  async function retryTrackedResolution(account: TrackedSocialAccount) {
+    const compatible = connectionsForType(account.platform);
+    const selected =
+      resolutionConnectionIds[account.id] ?? compatible[0]?.id;
+    if (!selected) return;
+    setBusy(true);
+    setTrackedError(null);
+    try {
+      const res = await apiFetch(
+        `/workspaces/${id}/discovery/tracked-accounts/${account.id}/resolve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ connectionId: selected }),
+        },
+      );
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(
+          body?.message ?? `API returned ${res.status}`,
+        );
+      }
+      setTracked((current) =>
+        current.map((row) => (row.id === account.id ? body : row)),
+      );
+    } catch (err) {
+      setTrackedError(
+        err instanceof Error
+          ? err.message
+          : "Failed to resolve tracked account",
+      );
+      await load();
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function runNow() {
@@ -474,6 +518,7 @@ export default function DiscoveryPage() {
     if (s.status === "error" && s.lastError === "connection_disconnected")
       return { label: "needs connection", tone: "rejected" };
     if (s.status === "error") return { label: "error", tone: "rejected" };
+    if (s.status === "reserved") return { label: "reserved", tone: "edited" };
     if (s.status === "needs_api_key") return { label: "needs API key", tone: "edited" };
     if (s.backoffUntil && s.backoffUntil > Date.now())
       return { label: "backing off", tone: "edited" };
@@ -537,7 +582,11 @@ export default function DiscoveryPage() {
                   }}
                 >
                   {DISCOVERY_SOURCE_TYPES.map((t) => (
-                    <option key={t} value={t}>
+                    <option
+                      key={t}
+                      value={t}
+                      disabled={isReservedDiscoverySourceType(t)}
+                    >
                       {TYPE_LABELS[t]}
                     </option>
                   ))}
@@ -585,20 +634,15 @@ export default function DiscoveryPage() {
                   </Select>
                 </label>
               )}
-              {newType === "instagram" && (
-                <label>
-                  Listen for
-                  <Select
-                    value={igMode}
-                    onChange={(e) => {
-                      setMode(e.target.value as DiscoverySourceMode);
-                      setTrackedAccountId("");
-                    }}
-                  >
-                    <option value="account_timeline">Account posts</option>
-                    <option value="hashtag">Hashtag</option>
-                  </Select>
-                </label>
+              {newType === "instagram" && connectionId && (
+                <p className="meta">
+                  Direct Instagram Login reads only posts from the connected
+                  account
+                  {selectedConnection?.externalAccountHandle
+                    ? ` @${selectedConnection.externalAccountHandle}`
+                    : ""}
+                  . Competitor and hashtag discovery are not supported.
+                </p>
               )}
               {(newType === "rss" || newType === "podcast") && (
                 <label style={{ flex: 1 }}>
@@ -671,16 +715,6 @@ export default function DiscoveryPage() {
                   />
                 </label>
               )}
-              {newType === "instagram" && igMode === "hashtag" && (
-                <label>
-                  Hashtag
-                  <Input
-                    value={hashtag}
-                    onChange={(e) => setHashtag(e.target.value)}
-                    placeholder="gtmstrategy"
-                  />
-                </label>
-              )}
               {newType === "youtube" && (
                 <label style={{ flex: 1 }}>
                   Channel ID
@@ -691,11 +725,11 @@ export default function DiscoveryPage() {
                   />
                 </label>
               )}
-              {newType === "google_trends" && (
-                <label>
-                  Geo (optional)
-                  <Input value={geo} onChange={(e) => setGeo(e.target.value)} placeholder="US" />
-                </label>
+              {isReservedDiscoverySourceType(newType) && (
+                <p className="meta">
+                  This source is reserved because no production provider is
+                  selected. It cannot be added or activated yet.
+                </p>
               )}
               {newType === "funding_news" && (
                 <label>
@@ -710,7 +744,11 @@ export default function DiscoveryPage() {
               <Button
                 variant="primary"
                 type="submit"
-                disabled={busy || (newType === "instagram" && !connectionId)}
+                disabled={
+                  busy ||
+                  isReservedDiscoverySourceType(newType) ||
+                  (newType === "instagram" && !connectionId)
+                }
               >
                 Add
               </Button>
@@ -808,9 +846,11 @@ export default function DiscoveryPage() {
                   </div>
                   {s.lastError && <p className="error-inline">{s.lastError}</p>}
                   <div className="rating-row" style={{ marginTop: 8 }}>
-                    <Button variant="secondary" size="compact" onClick={() => toggleSource(s)}>
-                      {s.enabled ? "Disable" : "Enable"}
-                    </Button>
+                    {s.status !== "reserved" && (
+                      <Button variant="secondary" size="compact" onClick={() => toggleSource(s)}>
+                        {s.enabled ? "Disable" : "Enable"}
+                      </Button>
+                    )}
                     <Button variant="danger" size="compact" onClick={() => removeSource(s)}>
                       Delete
                     </Button>
@@ -928,7 +968,13 @@ export default function DiscoveryPage() {
           <EmptyState description={<>No tracked accounts yet. They are optional — add competitor handles here to reuse them across connected sources.</>} />
         ) : (
           <ul className="section-list">
-            {tracked.map((a) => (
+            {tracked.map((a) => {
+              const compatibleConnections = connectionsForType(a.platform);
+              const resolutionConnectionId =
+                resolutionConnectionIds[a.id] ??
+                compatibleConnections[0]?.id ??
+                "";
+              return (
               <li key={a.id} className={`section-card ${a.enabled ? "" : "excluded"}`}>
                 <div className="section-head">
                   <span className="layer-badge">{PLATFORM_LABELS[a.platform]}</span>
@@ -947,6 +993,37 @@ export default function DiscoveryPage() {
                 {a.notes && <p className="section-reason">{a.notes}</p>}
                 {a.lastError && <p className="error-inline">{a.lastError}</p>}
                 <div className="rating-row" style={{ marginTop: 8 }}>
+                  <Select
+                    aria-label={`Connection for ${trackedHandleLabel(a)}`}
+                    value={resolutionConnectionId}
+                    onChange={(event) =>
+                      setResolutionConnectionIds((current) => ({
+                        ...current,
+                        [a.id]: event.target.value,
+                      }))
+                    }
+                  >
+                    {compatibleConnections.length === 0 && (
+                      <option value="">No compatible connection</option>
+                    )}
+                    {compatibleConnections.map((connection) => (
+                      <option key={connection.id} value={connection.id}>
+                        {connection.displayName}
+                      </option>
+                    ))}
+                  </Select>
+                  <Button
+                    variant="secondary"
+                    size="compact"
+                    disabled={
+                      busy ||
+                      !a.enabled ||
+                      !resolutionConnectionId
+                    }
+                    onClick={() => retryTrackedResolution(a)}
+                  >
+                    {a.lastResolvedAt ? "Retry resolution" : "Resolve"}
+                  </Button>
                   <Button variant="secondary" size="compact" onClick={() => toggleTrackedAccount(a)}>
                     {a.enabled ? "Disable" : "Enable"}
                   </Button>
@@ -959,7 +1036,8 @@ export default function DiscoveryPage() {
                   </Button>
                 </div>
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </Card>
