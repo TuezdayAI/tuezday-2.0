@@ -13,6 +13,7 @@ import {
 import type { Db } from "../db";
 import { connections, type ConnectionRow } from "../db/schema";
 import type { ConnectorFabric, ImportCredentials } from "../connectors/fabric";
+import { operatorFlagEnabled } from "../connectors/provider-config";
 
 export function providerByKey(key: string): ConnectorProvider | undefined {
   return CONNECTOR_PROVIDERS.find((p) => p.key === key);
@@ -26,12 +27,22 @@ export function providerByKey(key: string): ConnectorProvider | undefined {
  * added back only when the operator sets LINKEDIN_COMMUNITY_APPROVED, once
  * their LinkedIn app is approved.
  */
-export function resolveOAuthScopes(provider: ConnectorProvider): string {
+export function resolveOAuthScopes(
+  provider: ConnectorProvider,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
   const base = provider.oauthScopes ?? "";
-  if (provider.key === "linkedin" && process.env.LINKEDIN_COMMUNITY_APPROVED?.trim()) {
-    return base ? `${base},r_member_social` : "r_member_social";
+  if (
+    provider.key !== "linkedin" ||
+    !operatorFlagEnabled(env.LINKEDIN_COMMUNITY_APPROVED)
+  ) {
+    return base;
   }
-  return base;
+  return [
+    ...base.split(",").filter(Boolean),
+    "r_member_social",
+    "r_organization_social",
+  ].join(",");
 }
 
 function rowToConnection(row: ConnectionRow): Connection {

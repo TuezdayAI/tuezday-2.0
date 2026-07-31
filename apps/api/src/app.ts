@@ -9,6 +9,7 @@ import { createAnalyticsSink } from "./analytics/sink";
 import { registerAuthGuard } from "./auth/guard";
 import type { ConnectorFabric } from "./connectors/fabric";
 import { NangoFabric } from "./connectors/nango";
+import { assertProviderConfiguration } from "./connectors/provider-config";
 import type { Db } from "./db";
 import { OpenDesignProvider } from "./design/open-design";
 import type { DesignProvider } from "./design/provider";
@@ -172,6 +173,7 @@ export async function buildApp({
   operatorLog = logDiscoveryOperatorEvent,
   shutdownSignal,
 }: BuildAppOptions): Promise<TuezdayApp> {
+  assertProviderConfiguration();
   const guardedFetch =
     safeFetch ?? createSafeFetchService(createSafeFetchPolicy());
   // Signed public tokens can carry a normalized email address (up to 320

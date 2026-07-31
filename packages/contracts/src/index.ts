@@ -2973,10 +2973,9 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     // hits /v2/userinfo (OpenID) so a connection verifies the member identity.
     // w_member_social is provisioned now so Sprint 26 can broadcast posts
     // (LinkedIn's API forbids cold per-person DMs) without a reconnect.
-    // r_member_social (Sprint 46) is the read scope connected discovery
-    // needs to fetch member-authored posts — LinkedIn only grants it to
-    // apps with Community Management approval, so discovery surfaces a
-    // permission_required source error until the app is approved.
+    // r_member_social and r_organization_social are the read scopes connected
+    // discovery needs. LinkedIn grants them through Community Management
+    // approval, so discovery surfaces permission_required until approval.
     key: "linkedin",
     label: "LinkedIn",
     nangoProvider: "linkedin",
@@ -2984,10 +2983,10 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     categories: ["social"],
     baseUrl: "https://api.linkedin.com",
     testPath: "/v2/userinfo",
-    // r_member_social (member-post READ) needs LinkedIn Community Management
-    // approval and, being all-or-nothing, blocks the whole OAuth grant when the
-    // app lacks it. Kept OUT of the default; the API re-adds it only when
-    // LINKEDIN_COMMUNITY_APPROVED is set (see resolveOAuthScopes).
+    // The two read scopes stay OUT of the default because an unapproved scope
+    // blocks the whole grant. The API adds both only when the operator sets
+    // LINKEDIN_COMMUNITY_APPROVED to a strict true value; existing connections
+    // must reconnect after approval.
     oauthScopes: "openid,profile,email,w_member_social",
   },
   {

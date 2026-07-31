@@ -1,5 +1,6 @@
 import type { Connection, DiscoverySource } from "@tuezday/contracts";
 import type { ConnectorFabric } from "../connectors/fabric";
+import { linkedinRestHeaders } from "../connectors/provider-config";
 import type { RawDiscoveredItem } from "./adapters";
 import type {
   DiscoveryPage,
@@ -274,10 +275,6 @@ interface RedditListing {
 // ---------------------------------------------------------------------------
 
 const LINKEDIN_BASE = "https://api.linkedin.com";
-const LINKEDIN_HEADERS = {
-  "LinkedIn-Version": "202506",
-  "X-Restli-Protocol-Version": "2.0.0",
-};
 const LINKEDIN_PERMISSION = "LinkedIn read scope or author role required";
 
 interface LinkedInPostsResponse {
@@ -533,7 +530,7 @@ async function fetchLinkedInPage(
   }
   const opts: ProxyOpts = {
     baseUrl: LINKEDIN_BASE,
-    headers: LINKEDIN_HEADERS,
+    headers: linkedinRestHeaders(),
     permissionMessage: LINKEDIN_PERMISSION,
     cursorRequested: Boolean(token),
   };

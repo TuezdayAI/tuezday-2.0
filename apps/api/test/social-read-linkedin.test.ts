@@ -101,7 +101,7 @@ describe("LinkedInAdapter.readSocialProfile", () => {
     expect(postsCall!.method).toBe("GET");
     expect(postsCall!.path).toContain(`author=${encodeURIComponent("urn:li:person:abc123")}`);
     expect(postsCall!.path).toContain("q=author");
-    expect(postsCall!.opts?.headers?.["LinkedIn-Version"]).toBeDefined();
+    expect(postsCall!.opts?.headers?.["LinkedIn-Version"]).toBe("202607");
   });
 
   it("caps recent posts at 25", async () => {

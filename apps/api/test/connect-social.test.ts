@@ -255,7 +255,7 @@ describe("connect social API", () => {
       }
     });
 
-    it("adds r_member_social to LinkedIn only when LINKEDIN_COMMUNITY_APPROVED is set", async () => {
+    it("adds approved LinkedIn read scopes only when LINKEDIN_COMMUNITY_APPROVED is true", async () => {
       stubSocialEnv();
       process.env.LINKEDIN_COMMUNITY_APPROVED = "1";
       try {
@@ -265,7 +265,24 @@ describe("connect social API", () => {
         });
         expect(res.statusCode).toBe(200);
         expect(state.integrationOAuth.get("tuezday-linkedin")?.scopes).toBe(
-          "openid,profile,email,w_member_social,r_member_social",
+          "openid,profile,email,w_member_social,r_member_social,r_organization_social",
+        );
+      } finally {
+        delete process.env.LINKEDIN_COMMUNITY_APPROVED;
+      }
+    });
+
+    it("does not enable approved scopes for the literal string false", async () => {
+      stubSocialEnv();
+      process.env.LINKEDIN_COMMUNITY_APPROVED = "false";
+      try {
+        const res = await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/connectors/linkedin/oauth/session`,
+        });
+        expect(res.statusCode).toBe(200);
+        expect(state.integrationOAuth.get("tuezday-linkedin")?.scopes).toBe(
+          "openid,profile,email,w_member_social",
         );
       } finally {
         delete process.env.LINKEDIN_COMMUNITY_APPROVED;

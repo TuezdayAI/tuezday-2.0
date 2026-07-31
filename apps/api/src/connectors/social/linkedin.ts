@@ -1,4 +1,5 @@
 import { ConnectorFabricError, type ConnectorFabric } from "../fabric";
+import { linkedinRestHeaders } from "../provider-config";
 import type {
   InboundReply,
   PostEngagement,
@@ -209,7 +210,7 @@ export class LinkedInAdapter implements SocialAdapter {
       this.config.nangoConnectionId,
       this.config.integrationKey,
       {
-        headers: { "X-Restli-Protocol-Version": "2.0.0", "LinkedIn-Version": "202411" },
+        headers: linkedinRestHeaders(),
         baseUrlOverride: LINKEDIN_API,
       },
     );
