@@ -55,9 +55,9 @@ const TYPE_SHORT_LABELS: Record<DiscoverySourceType, string> = {
   x: "X",
   linkedin: "LinkedIn",
   instagram: "Instagram",
-  g2: "G2",
-  capterra: "Capterra",
-  intent: "Intent",
+  g2: "G2 · reserved",
+  capterra: "Capterra · reserved",
+  intent: "Intent · reserved",
 };
 
 const PLATFORM_LABELS: Record<TrackedSocialPlatform, string> = {
@@ -84,9 +84,9 @@ const TYPE_LABELS: Record<DiscoverySourceType, string> = {
   x: "X (connected or API key)",
   linkedin: "LinkedIn (connected or API key)",
   instagram: "Instagram (connected account)",
-  g2: "G2 reviews (needs API key)",
-  capterra: "Capterra reviews (needs API key)",
-  intent: "Intent signals (needs API key)",
+  g2: "G2 reviews — reserved",
+  capterra: "Capterra reviews — reserved",
+  intent: "Intent signals — reserved",
 };
 
 interface SourceProposal {
@@ -725,9 +725,10 @@ export default function DiscoveryPage() {
                   />
                 </label>
               )}
-              {newType === "google_trends" && (
+              {isReservedDiscoverySourceType(newType) && (
                 <p className="meta">
-                  Google Trends is reserved while the official API remains limited access.
+                  This source is reserved because no production provider is
+                  selected. It cannot be added or activated yet.
                 </p>
               )}
               {newType === "funding_news" && (

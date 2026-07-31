@@ -1000,6 +1000,7 @@ export type DeliveryMode = (typeof DELIVERY_MODES)[number];
 export const REACTIVE_PERIODS = ["day", "week", "month"] as const;
 export type ReactivePeriod = (typeof REACTIVE_PERIODS)[number];
 
+// Reserved orchestration vocabulary. Package source roles activate in Sprint 62.
 export const PACKAGE_SOURCE_ROLES = [
   "trigger",
   "evidence",
@@ -1009,6 +1010,7 @@ export const PACKAGE_SOURCE_ROLES = [
 ] as const;
 export type PackageSourceRole = (typeof PACKAGE_SOURCE_ROLES)[number];
 
+// Reserved orchestration vocabulary. Deliverable production state activates in Sprint 63.
 export const DELIVERABLE_PRODUCTION_STATUSES = [
   "planned",
   "assessing",
@@ -2174,6 +2176,8 @@ export const DISCOVERY_SOURCE_TYPES = [
   "x",
   "linkedin",
   "instagram",
+  // Reserved. Activation sprint is not scheduled; a provider-specific sprint
+  // must be created before g2, capterra, or intent becomes available.
   "g2",
   "capterra",
   "intent",
@@ -2190,6 +2194,9 @@ export type DiscoverySourceStatus = (typeof DISCOVERY_SOURCE_STATUSES)[number];
 
 export const RESERVED_DISCOVERY_SOURCE_TYPES = [
   "google_trends",
+  "g2",
+  "capterra",
+  "intent",
 ] as const satisfies readonly DiscoverySourceType[];
 
 const RESERVED_DISCOVERY_SOURCE_TYPE_SET = new Set<DiscoverySourceType>(

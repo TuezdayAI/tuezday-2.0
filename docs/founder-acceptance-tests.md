@@ -468,7 +468,7 @@ your voice and cleared through Review — without leaving Tuezday.
 
 ## Sprint 31 — Discovery Source Expansion + Auto-Mapping
 
-> Prereq: a workspace with ≥1 campaign and ≥1 persona, and brain docs filled enough to score. The new keyless sources (Hacker News, YouTube, podcast, Google Trends, funding-news) need no API keys. Run the worker for auto-polling, or click "Run discovery now".
+> Prereq: a workspace with ≥1 campaign and ≥1 persona, and brain docs filled enough to score. Hacker News, YouTube, podcast, and funding-news need no API keys. Run the worker for auto-polling, or click "Run discovery now". Google Trends is now visibly reserved because its former public RSS path is no longer supported.
 
 **Slice A — Campaign/persona auto-mapping**
 
@@ -479,16 +479,17 @@ your voice and cleared through Review — without leaving Tuezday.
 **Slice B — Keyless content adapters (live now)**
 
 - [ ] Add a **Hacker News** source (query) and a **Funding news** source (query, optional sector) → Run discovery → real items appear, scored and mapped.
-- [ ] Add a **YouTube channel** (channel ID), a **Podcast** (feed URL), and a **Google Trends** (geo) source → each fetches real items.
+- [ ] Add a **YouTube channel** (channel ID) and a **Podcast** (feed URL) → each fetches real items.
+- [ ] Confirm **Google Trends** remains visible as **reserved**, cannot be added or activated, and does not ask for an API key.
 - [ ] Re-run → no duplicates appear (per-source dedupe holds for the new types).
 - [ ] Accept a Hacker News item → it becomes a signal tagged "Hacker News" and drafts as usual.
 
-**Slice C — Provider-gated sources + IntentProvider boundary**
+**Slice C — Reserved provider vocabulary**
 
-- [ ] Add a **G2 reviews**, **Capterra reviews**, or **Intent signals** source → it registers and shows **"needs API key"**, and Run discovery skips it — exactly like X / LinkedIn today; nothing is scraped.
-- [ ] (Automated) The `IntentProvider` boundary is wired: with a real provider configured, an `intent` source fetches through it — covered by `apps/api/test/discovery.test.ts`.
+- [ ] Confirm **G2 reviews**, **Capterra reviews**, and **Intent signals** remain visible as **reserved** and cannot be added or activated.
+- [ ] Confirm the UI does not ask for provider API keys. No production provider has been selected, and activation is not assigned to a sprint.
 
-**Gate:** more of the outside world flows in (HN, YouTube, podcasts, Trends, funding news — keyless and live); every discovered item is routed to a campaign + persona you accept in one click into a pre-filled draft; and the review-site / intent providers are real registered infrastructure waiting only on a key.
+**Gate:** Hacker News, YouTube, podcasts, and funding news flow into the mapped triage path; Google Trends, G2, Capterra, and intent stay honestly visible but inert until provider-selection work is scheduled.
 
 ## Sprint 43 — Resolver v2: Tiered Selective Context
 

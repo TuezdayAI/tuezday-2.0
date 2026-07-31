@@ -230,4 +230,110 @@ describe("Sprint 50 migrations", () => {
         .get("instagram-job"),
     ).toEqual({ status: "skipped", error: "reconnect_required" });
   });
+
+  it("parks unsupported commercial sources and their active jobs", () => {
+    const sqlite = databaseThrough("0057");
+    sqlite
+      .prepare(
+        "INSERT INTO workspaces (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+      )
+      .run("workspace-1", "Workspace", 1, 1);
+    const insertSource = sqlite.prepare(
+      `INSERT INTO discovery_sources (
+        id, workspace_id, type, name, config_json, enabled, status,
+        last_error, last_fetched_at, connection_id, cursor_json,
+        backoff_until, last_attempted_at, execution_version, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    const insertJob = sqlite.prepare(
+      `INSERT INTO discovery_jobs (
+        id, workspace_id, source_id, status, attempt, locked_at,
+        source_execution_version, lease_owner, lease_version,
+        lease_expires_at, heartbeat_at, started_at, finished_at,
+        fetched_count, new_count, error, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const type of ["g2", "capterra", "intent"]) {
+      const sourceId = `${type}-source`;
+      insertSource.run(
+        sourceId,
+        "workspace-1",
+        type,
+        type,
+        '{"query":"market"}',
+        1,
+        "active",
+        null,
+        null,
+        null,
+        "{}",
+        999,
+        null,
+        1,
+        1,
+      );
+      insertJob.run(
+        `${type}-job`,
+        "workspace-1",
+        sourceId,
+        "queued",
+        0,
+        null,
+        1,
+        null,
+        0,
+        null,
+        null,
+        null,
+        null,
+        0,
+        0,
+        null,
+        1,
+      );
+    }
+
+    applySqlFile(sqlite, "0058_sprint_50_reserved_vocabulary.sql");
+
+    expect(
+      sqlite
+        .prepare(
+          "SELECT type, status, enabled, last_error, backoff_until FROM discovery_sources ORDER BY type",
+        )
+        .all(),
+    ).toEqual([
+      {
+        type: "capterra",
+        status: "reserved",
+        enabled: 0,
+        last_error: "source_reserved",
+        backoff_until: null,
+      },
+      {
+        type: "g2",
+        status: "reserved",
+        enabled: 0,
+        last_error: "source_reserved",
+        backoff_until: null,
+      },
+      {
+        type: "intent",
+        status: "reserved",
+        enabled: 0,
+        last_error: "source_reserved",
+        backoff_until: null,
+      },
+    ]);
+    expect(
+      sqlite
+        .prepare(
+          "SELECT status, error FROM discovery_jobs ORDER BY id",
+        )
+        .all(),
+    ).toEqual([
+      { status: "skipped", error: "source_reserved" },
+      { status: "skipped", error: "source_reserved" },
+      { status: "skipped", error: "source_reserved" },
+    ]);
+  });
 });
