@@ -4,8 +4,9 @@ import { fileURLToPath } from "node:url";
 import { buildApp } from "./app";
 import { createDb } from "./db";
 import { DbEvidenceStore } from "./evidence/db-store";
-import { GeminiGateway } from "./llm/gemini";
+import { createLlmGatewayFromEnv } from "./llm";
 import { backfillCollections } from "./services/evidence";
+import { parseDiscoveryOperatorPolicy } from "./runtime/operator-policy";
 
 // Load a root .env (gitignored) so GEMINI_API_KEY etc. reach the dev server
 // without extra tooling. Existing env vars win.
@@ -25,13 +26,22 @@ if (fs.existsSync(envFile)) {
 
 const DB_FILE = process.env.TUEZDAY_DB ?? "tuezday.db";
 const PORT = Number(process.env.PORT ?? 3001);
+let operatorPolicy;
+try {
+  operatorPolicy = parseDiscoveryOperatorPolicy(process.env);
+} catch (error) {
+  const message =
+    error instanceof Error ? error.message : "The policy is invalid.";
+  console.error(`Invalid discovery operator configuration: ${message}`);
+  process.exit(1);
+}
 
 const db = createDb(DB_FILE);
 // One gateway instance shared by generation and the evidence store's
 // embeddings (Sprint 47: evidence is native — no external service).
-const llm = new GeminiGateway();
+const llm = createLlmGatewayFromEnv();
 const evidence = new DbEvidenceStore(db, llm);
-const app = await buildApp({ db, llm, evidence });
+const app = await buildApp({ db, llm, evidence, operatorPolicy });
 
 try {
   await app.listen({ port: PORT, host: "127.0.0.1" });

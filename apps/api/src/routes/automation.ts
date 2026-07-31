@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { FastifyInstance, FastifyReply } from "fastify";
 import {
   updateCampaignAutomationInputSchema,
@@ -8,7 +9,7 @@ import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
 import {
   getSocialAutomationSettings,
-  runAutomation,
+  runAutomationWithLease,
   updateSocialAutomationSettings,
 } from "../services/automation";
 import { setCampaignAutomation } from "../services/campaigns";
@@ -33,6 +34,7 @@ export function registerAutomationRoutes(
   db: Db,
   llm: LlmGateway,
   evidence: EvidenceStore,
+  instanceId: string,
 ): void {
   app.get<{ Params: { id: string } }>(
     "/workspaces/:id/automation/settings",
@@ -56,7 +58,17 @@ export function registerAutomationRoutes(
     "/workspaces/:id/automation/run",
     async (request, reply) => {
       if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      return runAutomation(db, llm, evidence, request.params.id);
+      return runAutomationWithLease(
+        {
+          db,
+          llm,
+          evidence,
+          leaseMs: 60_000,
+          heartbeatMs: 20_000,
+        },
+        request.params.id,
+        `${instanceId}:automation:${randomUUID()}`,
+      );
     },
   );
 

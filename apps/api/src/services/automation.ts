@@ -24,10 +24,14 @@ import {
 import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
 import { listAutomatedCampaigns } from "./campaigns";
-import { applyDraftAction, type DraftActor } from "./drafts";
+import {
+  automaticDraftKey,
+  type DraftActor,
+} from "./drafts";
 import { getBestSignalMatchForCampaign } from "./matching";
 import { listPersonas } from "./personas";
 import { generateSignalDraft } from "./signal-drafting";
+import { withTaskLease } from "./task-leases";
 import { getWorkspace } from "./workspaces";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -264,6 +268,7 @@ function signalsOldestFirst(db: Db, workspaceId: string): Signal[] {
 
 function hasDraftFor(
   db: Db,
+  workspaceId: string,
   signalId: string,
   campaignId: string,
   channel: Channel,
@@ -274,6 +279,7 @@ function hasDraftFor(
       .from(drafts)
       .where(
         and(
+          eq(drafts.workspaceId, workspaceId),
           eq(drafts.sourceSignalId, signalId),
           eq(drafts.campaignId, campaignId),
           eq(drafts.channel, channel),
@@ -330,26 +336,53 @@ export async function runAutomation(
     for (const signal of signals) {
       // Sprint 45: a signal only reaches this campaign when discovery (or a
       // human) matched it above the workspace threshold — no more blind fan-out.
-      const match = getBestSignalMatchForCampaign(db, signal.id, campaign.id);
+      const match = getBestSignalMatchForCampaign(
+        db,
+        workspaceId,
+        signal.id,
+        campaign.id,
+      );
       if (!match || match.score < settings.matchThreshold) continue;
       const persona = match.personaId ? personasById.get(match.personaId) : undefined;
       for (const channel of campaign.channels) {
-        if (hasDraftFor(db, signal.id, campaign.id, channel)) continue;
+        if (
+          hasDraftFor(
+            db,
+            workspaceId,
+            signal.id,
+            campaign.id,
+            channel,
+          )
+        ) {
+          continue;
+        }
         try {
-          const draft = await generateSignalDraft(
+          const committed = await generateSignalDraft(
             db,
             llm,
             evidence,
             workspace,
             signal,
-            { channel, campaign, persona, useEvidence: true },
+            {
+              channel,
+              campaign,
+              persona,
+              useEvidence: true,
+              automation: {
+                key: automaticDraftKey({
+                  workspaceId,
+                  signalId: signal.id,
+                  campaignId: campaign.id,
+                  channel,
+                }),
+                autoApprove:
+                  campaign.automationMode === "scheduled_auto",
+              },
+            },
             SYSTEM_ACTOR,
           );
-          generated += 1;
-          if (campaign.automationMode === "scheduled_auto") {
-            applyDraftAction(db, draft, "approve", SYSTEM_ACTOR);
-            autoApproved += 1;
-          }
+          if (committed.created) generated += 1;
+          if (committed.autoApproved) autoApproved += 1;
         } catch {
           // One bad signal never aborts the run; it's counted and retried next tick.
           skipped += 1;
@@ -361,4 +394,38 @@ export async function runAutomation(
   }
 
   return { results, ranAt: nowMs };
+}
+
+export interface AutomationDependencies {
+  db: Db;
+  llm: LlmGateway;
+  evidence: EvidenceStore;
+  leaseMs: number;
+  heartbeatMs: number;
+}
+
+export async function runAutomationWithLease(
+  deps: AutomationDependencies,
+  workspaceId: string,
+  owner: string,
+): Promise<AutomationRunResult & { busy: boolean }> {
+  const leased = await withTaskLease(
+    deps.db,
+    {
+      key: `automation:${workspaceId}`,
+      owner,
+      leaseMs: deps.leaseMs,
+      heartbeatMs: deps.heartbeatMs,
+    },
+    () =>
+      runAutomation(
+        deps.db,
+        deps.llm,
+        deps.evidence,
+        workspaceId,
+      ),
+  );
+  return leased.busy
+    ? { results: [], ranAt: Date.now(), busy: true }
+    : { ...leased.value, busy: false };
 }

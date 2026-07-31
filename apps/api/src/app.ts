@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { hostname } from "node:os";
 import Fastify, { type FastifyInstance } from "fastify";
 import cors from "@fastify/cors";
 import rawBody from "fastify-raw-body";
@@ -12,10 +14,10 @@ import { OpenDesignProvider } from "./design/open-design";
 import type { DesignProvider } from "./design/provider";
 import { closeRenderer, renderSlide, type RenderInput } from "./design/render";
 import { S3AssetStorage, type AssetStorage } from "./design/storage";
-import type { Fetcher } from "./discovery/adapters";
 import { NullIntentProvider, type IntentProvider } from "./discovery/intent";
 import { DbEvidenceStore } from "./evidence/db-store";
 import type { EvidenceStore } from "./evidence/store";
+import type { TrustedFetcher } from "./http";
 import { createLlmGatewayFromEnv } from "./llm";
 import type { LlmGateway } from "./llm/gateway";
 import { CsvOutboundExporter, type OutboundExporter } from "./outbound/exporter";
@@ -54,6 +56,7 @@ import { registerDesignSystemRoutes } from "./routes/design-systems";
 import { registerGuidanceRoutes } from "./routes/guidance";
 import { registerGenerationSettingsRoutes } from "./routes/generation-settings";
 import { registerInboxRoutes } from "./routes/inbox";
+import { registerInternalTaskRoutes } from "./routes/internal-tasks";
 import { registerLaunchRoutes } from "./routes/launches";
 import { registerLearningRoutes } from "./routes/learning";
 import { registerMailRoutes } from "./routes/mail";
@@ -82,15 +85,32 @@ import { registerPublicApiRoutes } from "./routes/public-api";
 import { backfillExternalActionPolicies } from "./services/external-action-backfill";
 import { createExternalActionAdapters } from "./services/external-action-adapters";
 import { createExternalActionRuntime } from "./services/external-action-coordinator";
+import type { DiscoveryOperatorEvent } from "./services/discovery-scheduler";
+import {
+  DEFAULT_DISCOVERY_POLICY,
+  type DiscoveryOperatorPolicy,
+} from "./runtime/operator-policy";
+import {
+  createSafeFetchPolicy,
+  createSafeFetchService,
+  type SafeFetchService,
+} from "./safe-fetch";
 
 export type TuezdayApp = FastifyInstance;
+
+function logDiscoveryOperatorEvent(event: DiscoveryOperatorEvent): void {
+  if (process.env.NODE_ENV === "test") return;
+  console.info(JSON.stringify({ event: "discovery_operator", ...event }));
+}
 
 export interface BuildAppOptions {
   db: Db;
   /** LLM gateway override; defaults to Gemini configured from env. */
   llm?: LlmGateway;
-  /** HTTP fetcher for discovery adapters; tests inject fixtures. */
-  fetcher?: Fetcher;
+  /** Raw HTTP seam retained for trusted providers, connectors, and events. */
+  fetcher?: TrustedFetcher;
+  /** Guarded outbound fetcher for discovery and website scraping. */
+  safeFetch?: SafeFetchService;
   /** Evidence store override; defaults to the native SQLite store (Sprint 47). */
   evidence?: EvidenceStore;
   /** Connector fabric override; defaults to the Nango client from env. */
@@ -120,12 +140,21 @@ export interface BuildAppOptions {
   assetStorage?: AssetStorage;
   /** Slide renderer (Sprint 41); defaults to the Playwright renderer — tests inject a fake. */
   render?: (input: RenderInput) => Promise<Uint8Array>;
+  /** Validated deployment-only discovery budgets. */
+  operatorPolicy?: DiscoveryOperatorPolicy;
+  /** Stable API process identity used as the prefix for lease owners. */
+  instanceId?: string;
+  /** Safe structured discovery runtime event sink. */
+  operatorLog?: (event: DiscoveryOperatorEvent) => void;
+  /** Process shutdown signal; tests may inject one directly. */
+  shutdownSignal?: AbortSignal;
 }
 
 export async function buildApp({
   db,
   llm = createLlmGatewayFromEnv(),
   fetcher = fetch,
+  safeFetch,
   evidence = new DbEvidenceStore(db, llm),
   connectors = new NangoFabric(undefined, undefined, fetcher),
   intent = new NullIntentProvider(),
@@ -139,11 +168,20 @@ export async function buildApp({
   design = new OpenDesignProvider(),
   assetStorage = new S3AssetStorage(),
   render = renderSlide,
+  operatorPolicy = DEFAULT_DISCOVERY_POLICY,
+  instanceId = `${process.env.HOSTNAME?.trim() || hostname()}:${randomUUID()}`,
+  operatorLog = logDiscoveryOperatorEvent,
+  shutdownSignal,
 }: BuildAppOptions): Promise<TuezdayApp> {
+  const guardedFetch =
+    safeFetch ?? createSafeFetchService(createSafeFetchPolicy());
   // Signed public tokens can carry a normalized email address (up to 320
   // characters) plus an HMAC; click-tracking tokens (Sprint 50) embed the whole
   // redirect URL inside the signed payload. Keep the bound above that envelope.
   const app = Fastify({ logger: false, routerOptions: { maxParamLength: 4_096 } });
+  const ownedShutdown = shutdownSignal ? undefined : new AbortController();
+  const effectiveShutdownSignal =
+    shutdownSignal ?? ownedShutdown!.signal;
   backfillExternalActionPolicies(db);
   const externalActionRuntime = createExternalActionRuntime({
     db,
@@ -152,7 +190,11 @@ export async function buildApp({
   });
 
   // The design renderer keeps one shared headless browser per process.
+  app.addHook("preClose", async () => {
+    ownedShutdown?.abort(new Error("app_shutdown"));
+  });
   app.addHook("onClose", async () => {
+    ownedShutdown?.abort(new Error("app_shutdown"));
     await closeRenderer();
   });
 
@@ -180,9 +222,22 @@ export async function buildApp({
     return { status: "ok", db: "ok" };
   });
 
+  registerInternalTaskRoutes(app, {
+    db,
+    llm,
+    evidence,
+    safeFetch: guardedFetch,
+    intentProvider: intent,
+    fabric: connectors,
+    policy: operatorPolicy,
+    instanceId,
+    shutdownSignal: effectiveShutdownSignal,
+    log: operatorLog,
+  });
+
   registerAuthRoutes(app, db, fetcher, analytics);
-  registerWorkspaceRoutes(app, db, llm, fetcher);
-  registerBrandProfileRoutes(app, db, llm, fetcher);
+  registerWorkspaceRoutes(app, db, llm, guardedFetch);
+  registerBrandProfileRoutes(app, db, llm, guardedFetch);
   registerSocialCorpusRoutes(app, db, connectors);
   registerBrainAutoDraftRoutes(app, db, llm, connectors);
   registerApiKeyRoutes(app, db);
@@ -201,7 +256,21 @@ export async function buildApp({
   registerNotificationRoutes(app, db, mailer, fetcher);
   registerSignalRoutes(app, db, llm, evidence);
   registerChatRoutes(app, db, llm, evidence, externalActionRuntime);
-  registerDiscoveryRoutes(app, db, llm, fetcher, intent, connectors);
+  registerDiscoveryRoutes(
+    app,
+    db,
+    llm,
+    guardedFetch,
+    fetcher,
+    intent,
+    connectors,
+    {
+      policy: operatorPolicy,
+      instanceId,
+      shutdownSignal: effectiveShutdownSignal,
+      log: operatorLog,
+    },
+  );
   registerCampaignRoutes(app, db);
   registerCampaignPlanRoutes(app, db);
   registerAudienceRoutes(app, db);
@@ -231,7 +300,7 @@ export async function buildApp({
   registerMailboxRoutes(app, db, llm, gmail);
   registerEmailRecipientSafetyRoutes(app, db);
   registerResendWebhookRoute(app, db, resendWebhookVerifier);
-  registerAutomationRoutes(app, db, llm, evidence);
+  registerAutomationRoutes(app, db, llm, evidence, instanceId);
   registerInboxRoutes(app, db, llm, evidence, connectors, externalActionRuntime);
   registerInsightsRoutes(app, db);
   registerNextActionRoutes(app, db);

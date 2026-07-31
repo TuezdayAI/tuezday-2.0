@@ -1,3 +1,4 @@
+import { createHash, timingSafeEqual } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import type { WorkspaceRole } from "@tuezday/contracts";
 import type { Db } from "../db";
@@ -43,6 +44,34 @@ const PUBLIC_ROUTES = new Set([
   "GET /t/c/:token",
   "POST /telegram/webhook",
 ]);
+
+const WORKER_ROUTE_ALLOWLIST = new Set([
+  "GET /workspaces",
+  "GET /workspaces/:id/learning/syntheses",
+  "POST /workspaces/:id/learning/synthesize",
+  "POST /workspaces/:id/ads/sync",
+  "POST /workspaces/:id/publish/run",
+  "POST /workspaces/:id/cadences/run",
+  "POST /workspaces/:id/inbox/run",
+  "POST /workspaces/:id/mailbox-inbox/run",
+  "POST /workspaces/:id/outreach/run",
+  "POST /workspaces/:id/sequences/run",
+  "POST /workspaces/:id/evidence/candidates/sweep",
+]);
+
+export function secureWorkerTokenEqual(
+  supplied: string,
+  expected: string,
+): boolean {
+  const suppliedDigest = createHash("sha256")
+    .update(supplied, "utf8")
+    .digest();
+  const expectedDigest = createHash("sha256")
+    .update(expected, "utf8")
+    .digest();
+  return timingSafeEqual(suppliedDigest, expectedDigest);
+}
+
 function bearerToken(authorization: string | undefined): string | null {
   if (!authorization) return null;
   const [scheme, token] = authorization.split(" ");
@@ -71,9 +100,28 @@ export function registerAuthGuard(app: FastifyInstance, db: Db, workerToken?: st
 
     const token = bearerToken(request.headers.authorization);
     if (!token) return reply.status(401).send({ error: "unauthenticated" });
+    const workerAuthenticated = Boolean(
+      workerToken && secureWorkerTokenEqual(token, workerToken),
+    );
 
-    if (workerToken && token === workerToken) {
+    if (route.startsWith("/internal/")) {
+      if (!workerAuthenticated) {
+        return reply.status(401).send({ error: "unauthenticated" });
+      }
       request.actor = { userId: null, label: "system", email: null, system: true };
+      return;
+    }
+
+    if (workerAuthenticated) {
+      if (!WORKER_ROUTE_ALLOWLIST.has(`${request.method} ${route}`)) {
+        return reply.status(403).send({ error: "forbidden" });
+      }
+      request.actor = {
+        userId: null,
+        label: "system",
+        email: null,
+        system: true,
+      };
     } else {
       const user = sessionUser(db, token);
       if (!user) return reply.status(401).send({ error: "unauthenticated" });

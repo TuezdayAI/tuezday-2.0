@@ -12,7 +12,10 @@ import { NeedsApiKeyError, type RawDiscoveredItem } from "./adapters";
 export interface IntentProvider {
   /** Whether a real provider + credentials are wired. */
   isConfigured(): boolean;
-  fetchSignals(config: DiscoverySourceConfig): Promise<RawDiscoveredItem[]>;
+  fetchSignals(
+    config: DiscoverySourceConfig,
+    signal?: AbortSignal,
+  ): Promise<RawDiscoveredItem[]>;
 }
 
 /** Default: no provider wired. Intent sources stay inert (needs_api_key). */
@@ -21,7 +24,10 @@ export class NullIntentProvider implements IntentProvider {
     return false;
   }
 
-  async fetchSignals(): Promise<RawDiscoveredItem[]> {
+  async fetchSignals(
+    _config: DiscoverySourceConfig,
+    _signal?: AbortSignal,
+  ): Promise<RawDiscoveredItem[]> {
     throw new NeedsApiKeyError("intent");
   }
 }

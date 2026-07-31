@@ -1,17 +1,15 @@
 // Sprint 45 shared matching module: the persona×campaign prompt context,
 // defensive match parsing, and signal/item match persistence used by both
-// discovery scoring (scoreUnscoredItems) and one-off signal scoring
-// (scoreSignalMatches). Factored out so a manually-created signal gets the
-// exact same judgment a discovered item does.
+// discovery scoring and one-off signal scoring. Factored out so a
+// manually-created signal gets the exact same judgment a discovered item does.
 
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import {
   DISCOVERY_MAX_MATCHES_PER_ITEM,
   type DiscoveredItemMatch,
-  type Signal,
 } from "@tuezday/contracts";
-import type { Db } from "../db";
+import type { Db, DbExecutor } from "../db";
 import {
   campaigns,
   discoveredItemMatches,
@@ -79,7 +77,9 @@ export interface MatchingContext {
  * suggest a persona actually allowed to speak for that campaign.
  */
 export function buildMatchingContext(db: Db, workspaceId: string): MatchingContext {
-  const workspacePersonas = listPersonas(db, workspaceId);
+  const workspacePersonas = listPersonas(db, workspaceId).sort((left, right) =>
+    left.id.localeCompare(right.id),
+  );
   const personaById = new Map(workspacePersonas.map((p) => [p.id, p]));
   const personaBlock =
     workspacePersonas
@@ -89,7 +89,13 @@ export function buildMatchingContext(db: Db, workspaceId: string): MatchingConte
           : `- ${p.id}: ${p.name}${p.description ? ` (${p.description})` : ""}`,
       )
       .join("\n") || "(no personas yet)";
-  const activeCampaigns = listCampaigns(db, workspaceId).filter((c) => c.status === "active");
+  const activeCampaigns = listCampaigns(db, workspaceId)
+    .filter((campaign) => campaign.status === "active")
+    .map((campaign) => ({
+      ...campaign,
+      personaIds: [...campaign.personaIds].sort(),
+    }))
+    .sort((left, right) => left.id.localeCompare(right.id));
   const campaignBlock =
     activeCampaigns
       .map((c) => {
@@ -196,12 +202,20 @@ export function parseEntryMatches(
 
 /** Replace an item's candidate rows (delete-then-insert on every scoring). */
 export function replaceItemMatches(
-  db: Db,
+  db: DbExecutor,
   workspaceId: string,
   itemId: string,
   matches: ParsedMatch[],
 ): void {
-  db.delete(discoveredItemMatches).where(eq(discoveredItemMatches.itemId, itemId)).run();
+  db
+    .delete(discoveredItemMatches)
+    .where(
+      and(
+        eq(discoveredItemMatches.workspaceId, workspaceId),
+        eq(discoveredItemMatches.itemId, itemId),
+      ),
+    )
+    .run();
   const now = Date.now();
   for (const match of matches) {
     db.insert(discoveredItemMatches)
@@ -211,7 +225,7 @@ export function replaceItemMatches(
 }
 
 export function insertSignalMatch(
-  db: Db,
+  db: DbExecutor,
   workspaceId: string,
   signalId: string,
   match: { personaId: string | null; campaignId: string | null; score: number; reason: string },
@@ -252,7 +266,8 @@ function toContractMatch(row: ContractMatch): DiscoveredItemMatch {
 
 /** Contract-shaped matches for many items at once (one joined query). */
 export function listItemMatchesForItems(
-  db: Db,
+  db: DbExecutor,
+  workspaceId: string,
   itemIds: string[],
 ): Map<string, DiscoveredItemMatch[]> {
   const map = new Map<string, DiscoveredItemMatch[]>();
@@ -260,20 +275,50 @@ export function listItemMatchesForItems(
   const rows = db
     .select({
       itemId: discoveredItemMatches.itemId,
-      personaId: discoveredItemMatches.personaId,
+      rawPersonaId: discoveredItemMatches.personaId,
+      personaId: personas.id,
       personaName: personas.name,
-      campaignId: discoveredItemMatches.campaignId,
+      rawCampaignId: discoveredItemMatches.campaignId,
+      campaignId: campaigns.id,
       campaignName: campaigns.name,
       score: discoveredItemMatches.score,
       reason: discoveredItemMatches.reason,
     })
     .from(discoveredItemMatches)
-    .leftJoin(personas, eq(discoveredItemMatches.personaId, personas.id))
-    .leftJoin(campaigns, eq(discoveredItemMatches.campaignId, campaigns.id))
-    .where(inArray(discoveredItemMatches.itemId, itemIds))
+    .leftJoin(
+      personas,
+      and(
+        eq(discoveredItemMatches.personaId, personas.id),
+        eq(personas.workspaceId, workspaceId),
+      ),
+    )
+    .leftJoin(
+      campaigns,
+      and(
+        eq(discoveredItemMatches.campaignId, campaigns.id),
+        eq(campaigns.workspaceId, workspaceId),
+      ),
+    )
+    .where(
+      and(
+        eq(discoveredItemMatches.workspaceId, workspaceId),
+        inArray(discoveredItemMatches.itemId, itemIds),
+      ),
+    )
     .orderBy(desc(discoveredItemMatches.score), asc(discoveredItemMatches.createdAt))
     .all();
-  for (const { itemId, ...match } of rows) {
+  for (const {
+    itemId,
+    rawPersonaId,
+    rawCampaignId,
+    ...match
+  } of rows) {
+    if (
+      (rawPersonaId !== null && match.personaId === null) ||
+      (rawCampaignId !== null && match.campaignId === null)
+    ) {
+      continue;
+    }
     const list = map.get(itemId) ?? [];
     list.push(toContractMatch(match));
     map.set(itemId, list);
@@ -281,13 +326,18 @@ export function listItemMatchesForItems(
   return map;
 }
 
-export function listItemMatches(db: Db, itemId: string): DiscoveredItemMatch[] {
-  return listItemMatchesForItems(db, [itemId]).get(itemId) ?? [];
+export function listItemMatches(
+  db: DbExecutor,
+  workspaceId: string,
+  itemId: string,
+): DiscoveredItemMatch[] {
+  return listItemMatchesForItems(db, workspaceId, [itemId]).get(itemId) ?? [];
 }
 
 /** Contract-shaped matches for many signals at once (one joined query). */
 export function listSignalMatchesForSignals(
-  db: Db,
+  db: DbExecutor,
+  workspaceId: string,
   signalIds: string[],
 ): Map<string, DiscoveredItemMatch[]> {
   const map = new Map<string, DiscoveredItemMatch[]>();
@@ -295,20 +345,50 @@ export function listSignalMatchesForSignals(
   const rows = db
     .select({
       signalId: signalMatches.signalId,
-      personaId: signalMatches.personaId,
+      rawPersonaId: signalMatches.personaId,
+      personaId: personas.id,
       personaName: personas.name,
-      campaignId: signalMatches.campaignId,
+      rawCampaignId: signalMatches.campaignId,
+      campaignId: campaigns.id,
       campaignName: campaigns.name,
       score: signalMatches.score,
       reason: signalMatches.reason,
     })
     .from(signalMatches)
-    .leftJoin(personas, eq(signalMatches.personaId, personas.id))
-    .leftJoin(campaigns, eq(signalMatches.campaignId, campaigns.id))
-    .where(inArray(signalMatches.signalId, signalIds))
+    .leftJoin(
+      personas,
+      and(
+        eq(signalMatches.personaId, personas.id),
+        eq(personas.workspaceId, workspaceId),
+      ),
+    )
+    .leftJoin(
+      campaigns,
+      and(
+        eq(signalMatches.campaignId, campaigns.id),
+        eq(campaigns.workspaceId, workspaceId),
+      ),
+    )
+    .where(
+      and(
+        eq(signalMatches.workspaceId, workspaceId),
+        inArray(signalMatches.signalId, signalIds),
+      ),
+    )
     .orderBy(desc(signalMatches.score), asc(signalMatches.createdAt))
     .all();
-  for (const { signalId, ...match } of rows) {
+  for (const {
+    signalId,
+    rawPersonaId,
+    rawCampaignId,
+    ...match
+  } of rows) {
+    if (
+      (rawPersonaId !== null && match.personaId === null) ||
+      (rawCampaignId !== null && match.campaignId === null)
+    ) {
+      continue;
+    }
     const list = map.get(signalId) ?? [];
     list.push(toContractMatch(match));
     map.set(signalId, list);
@@ -316,8 +396,73 @@ export function listSignalMatchesForSignals(
   return map;
 }
 
-export function listSignalMatches(db: Db, signalId: string): DiscoveredItemMatch[] {
-  return listSignalMatchesForSignals(db, [signalId]).get(signalId) ?? [];
+export function listSignalMatches(
+  db: DbExecutor,
+  workspaceId: string,
+  signalId: string,
+): DiscoveredItemMatch[] {
+  return listSignalMatchesForSignals(db, workspaceId, [signalId]).get(signalId) ?? [];
+}
+
+/**
+ * Re-check an LLM judgment against the workspace state that exists at write
+ * time. The gateway call is awaited outside the transaction, so personas,
+ * active campaigns, or campaign assignments may have changed meanwhile.
+ */
+export function revalidateSignalMatches(
+  db: DbExecutor,
+  workspaceId: string,
+  matches: ParsedMatch[],
+): ParsedMatch[] {
+  if (matches.length === 0) return [];
+  const currentPersonaIds = new Set(
+    db
+      .select({ id: personas.id })
+      .from(personas)
+      .where(eq(personas.workspaceId, workspaceId))
+      .all()
+      .map((row) => row.id),
+  );
+  const currentCampaignPersonaIds = new Map(
+    db
+      .select({
+        id: campaigns.id,
+        personaIdsJson: campaigns.personaIdsJson,
+      })
+      .from(campaigns)
+      .where(
+        and(
+          eq(campaigns.workspaceId, workspaceId),
+          eq(campaigns.status, "active"),
+        ),
+      )
+      .all()
+      .map((row) => [
+        row.id,
+        new Set(JSON.parse(row.personaIdsJson) as string[]),
+      ]),
+  );
+
+  return matches.flatMap((match) => {
+    const campaignId =
+      match.campaignId && currentCampaignPersonaIds.has(match.campaignId)
+        ? match.campaignId
+        : null;
+    let personaId =
+      match.personaId && currentPersonaIds.has(match.personaId)
+        ? match.personaId
+        : null;
+    if (
+      campaignId &&
+      personaId &&
+      !currentCampaignPersonaIds.get(campaignId)?.has(personaId)
+    ) {
+      personaId = null;
+    }
+    return campaignId || personaId
+      ? [{ ...match, personaId, campaignId }]
+      : [];
+  });
 }
 
 /**
@@ -328,32 +473,64 @@ export function listSignalMatches(db: Db, signalId: string): DiscoveredItemMatch
  */
 export function getBestSignalMatchForCampaign(
   db: Db,
+  workspaceId: string,
   signalId: string,
   campaignId: string,
 ): SignalMatchRow | undefined {
-  return db
+  const signalExists = db
+    .select({ id: signals.id })
+    .from(signals)
+    .where(and(eq(signals.workspaceId, workspaceId), eq(signals.id, signalId)))
+    .get();
+  const campaignExists = db
+    .select({ id: campaigns.id })
+    .from(campaigns)
+    .where(
+      and(
+        eq(campaigns.workspaceId, workspaceId),
+        eq(campaigns.id, campaignId),
+      ),
+    )
+    .get();
+  if (!signalExists || !campaignExists) return undefined;
+
+  const matches = db
     .select()
     .from(signalMatches)
-    .where(and(eq(signalMatches.signalId, signalId), eq(signalMatches.campaignId, campaignId)))
-    .orderBy(desc(signalMatches.score))
-    .limit(1)
-    .get();
-}
-
-/**
- * Re-score watermark (Sprint 45): the newest persona/campaign `updatedAt` in
- * the workspace, 0 when both tables are empty. One MAX query; items whose
- * `scoredAt` predates this get re-judged on the next discovery run.
- */
-export function getMatchingConfigVersion(db: Db, workspaceId: string): number {
-  const row = db.get<{ v: number | null }>(sql`
-    SELECT MAX(v) AS v FROM (
-      SELECT MAX(${personas.updatedAt}) AS v FROM ${personas} WHERE ${personas.workspaceId} = ${workspaceId}
-      UNION ALL
-      SELECT MAX(${campaigns.updatedAt}) AS v FROM ${campaigns} WHERE ${campaigns.workspaceId} = ${workspaceId}
+    .where(
+      and(
+        eq(signalMatches.workspaceId, workspaceId),
+        eq(signalMatches.signalId, signalId),
+        eq(signalMatches.campaignId, campaignId),
+      ),
     )
-  `);
-  return row?.v ?? 0;
+    .orderBy(desc(signalMatches.score))
+    .all();
+  if (matches.length === 0) return undefined;
+  const personaIds = [
+    ...new Set(
+      matches.flatMap((match) => (match.personaId ? [match.personaId] : [])),
+    ),
+  ];
+  const validPersonaIds = new Set(
+    personaIds.length
+      ? db
+          .select({ id: personas.id })
+          .from(personas)
+          .where(
+            and(
+              eq(personas.workspaceId, workspaceId),
+              inArray(personas.id, personaIds),
+            ),
+          )
+          .all()
+          .map((row) => row.id)
+      : [],
+  );
+  return matches.find(
+    (match) =>
+      match.personaId === null || validPersonaIds.has(match.personaId),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -361,42 +538,29 @@ export function getMatchingConfigVersion(db: Db, workspaceId: string): number {
 // ---------------------------------------------------------------------------
 
 /**
- * Score a single signal against the workspace's personas and campaigns using
- * the exact prompt/parse discovery items get, writing `signal_matches` rows
- * and patching the signal's `suggestedPersonaId`/`suggestedCampaignId`
- * convenience fields from the best candidate. Gateway failures propagate —
- * callers treat matching as best-effort and try/catch around this so an LLM
- * outage never blocks signal creation.
+ * Judge a single signal against the workspace's personas and campaigns using
+ * the exact prompt/parse discovery items get. This phase performs no writes,
+ * so callers can finish the complete persistence step in one transaction.
+ * Gateway failures propagate; callers convert them to an empty best-effort
+ * result before opening that transaction.
  */
-export async function scoreSignalMatches(
+export async function judgeSignalMatches(
   db: Db,
   llm: LlmGateway,
   workspaceId: string,
-  signal: Signal,
-): Promise<DiscoveredItemMatch[]> {
+  content: string,
+): Promise<ParsedMatch[]> {
   const ctx = buildMatchingContext(db, workspaceId);
   const prompt = buildMatchingPrompt({
     workspaceName: getWorkspace(db, workspaceId)?.name ?? "this workspace",
     digest: brainDigest(db, workspaceId),
     ctx,
-    itemsBlock: `ITEM 0: ${signal.content.slice(0, SIGNAL_CONTENT_PROMPT_CHARS)}`,
+    itemsBlock: `ITEM 0: ${content.slice(0, SIGNAL_CONTENT_PROMPT_CHARS)}`,
   });
   const result = await llm.generate({ prompt });
   const entries = parseJsonArray(result.text);
   if (!entries) return [];
   const entry = entries.find((e): e is Record<string, unknown> => typeof e === "object" && e !== null);
   if (!entry) return [];
-  const matches = parseEntryMatches(entry, ctx);
-
-  // Same replace posture as item scoring: never accumulate stale candidates.
-  db.delete(signalMatches).where(eq(signalMatches.signalId, signal.id)).run();
-  for (const match of matches) insertSignalMatch(db, workspaceId, signal.id, match);
-  const best = matches[0];
-  if (best) {
-    db.update(signals)
-      .set({ suggestedPersonaId: best.personaId, suggestedCampaignId: best.campaignId })
-      .where(eq(signals.id, signal.id))
-      .run();
-  }
-  return listSignalMatches(db, signal.id);
+  return parseEntryMatches(entry, ctx);
 }

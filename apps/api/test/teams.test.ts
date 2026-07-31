@@ -303,7 +303,7 @@ describe("teams API", () => {
   });
 
   describe("worker service token", () => {
-    it("authenticates as the system actor with access to all workspaces", async () => {
+    it("lists workspaces but cannot read workspace product data", async () => {
       const workerApp = asUser(app, "worker-secret");
       const all = await workerApp.inject({ method: "GET", url: "/workspaces" });
       expect(all.statusCode).toBe(200);
@@ -312,7 +312,8 @@ describe("teams API", () => {
         method: "GET",
         url: `/workspaces/${workspaceId}/brain`,
       });
-      expect(brain.statusCode).toBe(200);
+      expect(brain.statusCode).toBe(403);
+      expect(brain.json()).toEqual({ error: "forbidden" });
     });
   });
 

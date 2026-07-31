@@ -1,14 +1,29 @@
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
+import type { Connection, DiscoverySource } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
 import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric";
 import type { Db } from "../src/db";
-import { connections, discoveryJobs, discoverySources } from "../src/db/schema";
-import type { Fetcher } from "../src/discovery/adapters";
+import {
+  connections,
+  discoveredItems,
+  discoveryJobs,
+  discoverySources,
+} from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
 import { RATE_LIMIT_BACKOFF_BASE_MS, listDiscoverySources } from "../src/services/discovery";
+import {
+  CursorInvalidError,
+  fetchConnectedSourcePage,
+} from "../src/discovery/connected-adapters";
+import {
+  emptyTargetCheckpoint,
+  type DiscoveryTarget,
+  type DiscoveryTargetCheckpoint,
+} from "../src/discovery/paging";
 import { buildAuthedApp, createTestDb } from "./helpers";
+import { fixtureSafeFetch } from "./safe-fetch-fixtures";
 
 const stubLlm: LlmGateway = {
   async generate() {
@@ -107,6 +122,347 @@ const REDDIT_LISTING_FIXTURE = {
   },
 };
 
+function paginationSource(
+  type: DiscoverySource["type"],
+  config: DiscoverySource["config"],
+): DiscoverySource {
+  return {
+    id: "11111111-1111-4111-8111-111111111111",
+    workspaceId: "22222222-2222-4222-8222-222222222222",
+    type,
+    name: "Pagination",
+    config,
+    enabled: true,
+    status: "active",
+    lastError: null,
+    lastFetchedAt: null,
+    connectionId: "33333333-3333-4333-8333-333333333333",
+    cursor: {
+      version: 1,
+      targetCount: 1,
+      backlog: false,
+      lastCheckpointAt: null,
+    },
+    backoffUntil: null,
+    lastAttemptedAt: null,
+    createdAt: 1,
+  };
+}
+
+function paginationConnection(providerKey: string): Connection {
+  return {
+    id: "33333333-3333-4333-8333-333333333333",
+    workspaceId: "22222222-2222-4222-8222-222222222222",
+    providerKey,
+    nangoConnectionId: "nango-pagination",
+    config: {},
+    displayName: providerKey,
+    externalAccountId: null,
+    externalAccountName: null,
+    externalAccountHandle: null,
+    externalAccountUrl: null,
+    status: "connected",
+    lastCheckedAt: 1,
+    lastError: null,
+    contentProfile: { topics: [], guidance: "" },
+    createdAt: 1,
+    updatedAt: 1,
+  };
+}
+
+function continuationCheckpoint(
+  fingerprint: string,
+  providerToken: string,
+): DiscoveryTargetCheckpoint {
+  return {
+    ...emptyTargetCheckpoint(fingerprint),
+    continuation: {
+      providerToken,
+      boundaryExternalId: null,
+      newestExternalId: null,
+      newestPublishedAt: null,
+    },
+  };
+}
+
+async function connectedPage(input: {
+  source: DiscoverySource;
+  providerKey: string;
+  target?: DiscoveryTarget;
+  checkpoint?: DiscoveryTargetCheckpoint;
+  handler: ProxyHandler;
+}) {
+  const { fabric, calls } = makeFakeFabric(() => input.handler);
+  const target = input.target ?? {
+    key: "target",
+    fingerprint: "fingerprint",
+  };
+  const page = await fetchConnectedSourcePage({
+    source: input.source,
+    connection: paginationConnection(input.providerKey),
+    fabric,
+    trackedAccounts: [],
+    target,
+    checkpoint:
+      input.checkpoint ?? emptyTargetCheckpoint(target.fingerprint),
+    signal: new AbortController().signal,
+    maxItems: 25,
+    maxCalls: 10,
+    maxResponseBytes: 100_000,
+    maxBytes: 500_000,
+  });
+  return { page, calls };
+}
+
+describe("connected provider pagination", () => {
+  it.each([
+    {
+      label: "X search",
+      providerKey: "twitter",
+      source: paginationSource("x", {
+        mode: "query",
+        query: "agentic gtm",
+      }),
+      pathPrefix: "/2/tweets/search/recent",
+      response: {
+        data: [{ id: "x-1", text: "Newest" }],
+        meta: { next_token: "x-next" },
+      },
+      expectedToken: "x-next",
+      suppliedToken: "x-resume",
+      tokenFragment: "pagination_token=x-resume",
+    },
+    {
+      label: "Reddit",
+      providerKey: "reddit",
+      source: paginationSource("reddit", { subreddit: "startups" }),
+      pathPrefix: "/r/startups/new",
+      response: {
+        data: {
+          children: [
+            {
+              kind: "t3",
+              data: { id: "one", name: "t3_one", title: "Newest" },
+            },
+          ],
+          after: "t3_next",
+        },
+      },
+      expectedToken: "t3_next",
+      suppliedToken: "t3_resume",
+      tokenFragment: "after=t3_resume",
+    },
+    {
+      label: "LinkedIn",
+      providerKey: "linkedin",
+      source: paginationSource("linkedin", {
+        mode: "account_timeline",
+        handle: "urn:li:person:123",
+      }),
+      pathPrefix: "/rest/posts",
+      response: {
+        elements: [{ id: "urn:li:share:1", commentary: "Newest" }],
+        paging: { start: 0, count: 25, total: 60 },
+      },
+      expectedToken: "25",
+      suppliedToken: "50",
+      tokenFragment: "start=50",
+    },
+  ])(
+    "maps $label provider cursors to the internal page contract",
+    async (fixture) => {
+      const first = await connectedPage({
+        source: fixture.source,
+        providerKey: fixture.providerKey,
+        handler: (path) =>
+          path.startsWith(fixture.pathPrefix)
+            ? { status: 200, json: fixture.response }
+            : undefined,
+      });
+      expect(first.page.nextToken).toBe(fixture.expectedToken);
+      expect(first.page.exhausted).toBe(false);
+
+      const resumed = await connectedPage({
+        source: fixture.source,
+        providerKey: fixture.providerKey,
+        checkpoint: continuationCheckpoint(
+          "fingerprint",
+          fixture.suppliedToken,
+        ),
+        handler: (path) =>
+          path.startsWith(fixture.pathPrefix)
+            ? { status: 200, json: fixture.response }
+            : undefined,
+      });
+      expect(resumed.calls.at(-1)!.path).toContain(
+        fixture.tokenFragment,
+      );
+    },
+  );
+
+  it.each([
+    {
+      label: "account timeline",
+      config: { mode: "account_timeline", handle: "rival" } as const,
+      target: {
+        key: "account",
+        fingerprint: "account-fingerprint",
+        handle: "rival",
+        externalId: "user-9",
+      },
+      prefix: "/2/users/user-9/tweets",
+    },
+    {
+      label: "list timeline",
+      config: { mode: "list_timeline", listId: "list-9" } as const,
+      target: {
+        key: "list",
+        fingerprint: "list-fingerprint",
+      },
+      prefix: "/2/lists/list-9/tweets",
+    },
+  ])("resumes an X $label", async ({ config, target, prefix }) => {
+    const resumed = await connectedPage({
+      source: paginationSource("x", config),
+      providerKey: "twitter",
+      target,
+      checkpoint: continuationCheckpoint(
+        target.fingerprint,
+        "x-page-2",
+      ),
+      handler: (path) =>
+        path.startsWith(prefix)
+          ? {
+              status: 200,
+              json: {
+                data: [{ id: "x-2", text: "Older" }],
+                meta: { next_token: "x-page-3" },
+              },
+            }
+          : undefined,
+    });
+    expect(resumed.calls.at(-1)!.path).toContain(
+      "pagination_token=x-page-2",
+    );
+    expect(resumed.page.nextToken).toBe("x-page-3");
+  });
+
+  it.each([
+    { mode: "account_timeline" as const, handle: "rival" },
+    { mode: "hashtag" as const, hashtag: "buildinpublic" },
+  ])("resumes Instagram $mode media through Graph cursors", async (config) => {
+    const target: DiscoveryTarget = {
+      key: config.mode,
+      fingerprint: `${config.mode}-fingerprint`,
+      ...(config.mode === "account_timeline"
+        ? { handle: config.handle }
+        : {}),
+    };
+    const resumed = await connectedPage({
+      source: paginationSource("instagram", config),
+      providerKey: "instagram",
+      target,
+      checkpoint: continuationCheckpoint(
+        target.fingerprint,
+        "ig-page-2",
+      ),
+      handler: (path) => {
+        if (path.includes("/me/accounts")) {
+          return {
+            status: 200,
+            json: {
+              data: [{ instagram_business_account: { id: "ig-user" } }],
+            },
+          };
+        }
+        if (path.includes("ig_hashtag_search")) {
+          return { status: 200, json: { data: [{ id: "tag-1" }] } };
+        }
+        if (
+          path.includes("business_discovery") ||
+          path.includes("/tag-1/recent_media")
+        ) {
+          const media = {
+            data: [{ id: "ig-2", caption: "Older" }],
+            paging: { cursors: { after: "ig-page-3" } },
+          };
+          return {
+            status: 200,
+            json:
+              config.mode === "account_timeline"
+                ? { business_discovery: { media } }
+                : media,
+          };
+        }
+        return undefined;
+      },
+    });
+    const resumedPath = decodeURIComponent(
+      resumed.calls.at(-1)!.path,
+    );
+    expect(resumedPath).toContain(
+      config.mode === "account_timeline"
+        ? "media.after(ig-page-2)"
+        : "after=ig-page-2",
+    );
+    expect(resumed.page.nextToken).toBe("ig-page-3");
+  });
+
+  it("stops at the durable boundary and excludes older rows", async () => {
+    const target = { key: "query", fingerprint: "query-fingerprint" };
+    const checkpoint = emptyTargetCheckpoint(target.fingerprint);
+    checkpoint.highWatermark = {
+      externalId: "x:old-boundary",
+      publishedAt: 1,
+    };
+    const result = await connectedPage({
+      source: paginationSource("x", { mode: "query", query: "gtm" }),
+      providerKey: "twitter",
+      target,
+      checkpoint,
+      handler: () => ({
+        status: 200,
+        json: {
+          data: [
+            { id: "new", text: "New" },
+            { id: "old-boundary", text: "Boundary" },
+            { id: "older", text: "Older" },
+          ],
+          meta: { next_token: "must-not-continue" },
+        },
+      }),
+    });
+    expect(result.page.items.map((item) => item.externalId)).toEqual([
+      "x:new",
+    ]);
+    expect(result.page).toMatchObject({
+      reachedBoundary: true,
+      exhausted: true,
+      nextToken: null,
+    });
+  });
+
+  it("classifies a rejected continuation as an invalid cursor", async () => {
+    await expect(
+      connectedPage({
+        source: paginationSource("x", {
+          mode: "query",
+          query: "gtm",
+        }),
+        providerKey: "twitter",
+        checkpoint: continuationCheckpoint(
+          "fingerprint",
+          "expired-token",
+        ),
+        handler: () => ({
+          status: 400,
+          json: { errors: [{ code: "invalid_cursor" }] },
+        }),
+      }),
+    ).rejects.toBeInstanceOf(CursorInvalidError);
+  });
+});
+
 describe("connected discovery (Sprint 46)", () => {
   let app: TuezdayApp;
   let db: Db;
@@ -123,11 +479,11 @@ describe("connected discovery (Sprint 46)", () => {
     feedXml = EMPTY_RSS;
     const { fabric, calls } = makeFakeFabric(() => proxyHandler);
     proxyCalls = calls;
-    const fetcher = (async (url: Parameters<typeof fetch>[0]) => {
-      fetchedUrls.push(String(url));
-      return new Response(feedXml, { status: 200 });
-    }) as Fetcher;
-    app = await buildAuthedApp({ db, llm: stubLlm, fetcher, connectors: fabric });
+    const safeFetch = fixtureSafeFetch((request) => {
+      fetchedUrls.push(request.url);
+      return { body: feedXml, contentType: "application/xml" };
+    });
+    app = await buildAuthedApp({ db, llm: stubLlm, safeFetch, connectors: fabric });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Connected" } })
     ).json().id;
@@ -175,6 +531,20 @@ describe("connected discovery (Sprint 46)", () => {
     });
     expect(res.statusCode, res.body).toBe(expectStatus);
     return res.json();
+  }
+
+  async function createTrackedAccount(
+    wsId: string,
+    platform: "x" | "linkedin" | "instagram" | "reddit",
+    handle: string,
+  ) {
+    const res = await app.inject({
+      method: "POST",
+      url: `/workspaces/${wsId}/discovery/tracked-accounts`,
+      payload: { platform, handle },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    return res.json() as { id: string; platform: string; handle: string };
   }
 
   async function runDiscoveryRoute() {
@@ -340,6 +710,28 @@ describe("connected discovery (Sprint 46)", () => {
         400,
       );
       expect(missing.error).toBe("connection_required");
+
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Foreign Connection Workspace" },
+        })
+      ).json().id as string;
+      const foreignConnectionId = insertConnection(
+        "twitter",
+        "connected",
+        otherWorkspaceId,
+      );
+      const foreign = await createSource(
+        {
+          type: "x",
+          config: { mode: "query", query: "gtm" },
+          connectionId: foreignConnectionId,
+        },
+        400,
+      );
+      expect(foreign).toEqual(missing);
     });
 
     it("creates an active connected source with a matching connection", async () => {
@@ -349,6 +741,15 @@ describe("connected discovery (Sprint 46)", () => {
         config: { mode: "query", query: "agentic gtm" },
         connectionId,
       });
+      db.update(discoverySources)
+        .set({
+          configJson: JSON.stringify({
+            ...source.config,
+            baseUrl: "http://169.254.169.254/latest/meta-data",
+          }),
+        })
+        .where(eq(discoverySources.id, source.id))
+        .run();
       expect(source).toMatchObject({ type: "x", status: "active", connectionId });
       // keyless x sources still park as needs_api_key
       const keyless = await createSource({ type: "x", config: { query: "agentic gtm" } });
@@ -369,6 +770,235 @@ describe("connected discovery (Sprint 46)", () => {
       });
       expect(detach.statusCode).toBe(400);
       expect(detach.json().error).toBe("connection_required");
+    });
+
+    it.each([
+      ["query", { mode: "query" }, "A query-mode source needs a query"],
+      [
+        "account timeline",
+        { mode: "account_timeline" },
+        "An account_timeline source needs a handle or a tracked account",
+      ],
+      [
+        "list timeline",
+        { mode: "list_timeline" },
+        "A list_timeline source needs a listId",
+      ],
+    ] as const)(
+      "rejects a connected %s mode missing its target and preserves the row",
+      async (_label, config, message) => {
+        const connectionId = insertConnection("twitter");
+        const source = await createSource({
+          type: "x",
+          config: { mode: "query", query: "gtm" },
+          connectionId,
+        });
+
+        const update = await app.inject({
+          method: "PATCH",
+          url: `/workspaces/${workspaceId}/discovery/sources/${source.id}`,
+          payload: { config },
+        });
+
+        expect(update.statusCode).toBe(400);
+        expect(update.json()).toEqual({ error: "invalid_input", message });
+        expect(sourceRow(source.id)).toMatchObject({
+          configJson: JSON.stringify(source.config),
+          connectionId,
+        });
+      },
+    );
+
+    it("rejects foreign, wrong-provider, and disconnected connection patches without mutation", async () => {
+      const source = await createSource({
+        type: "x",
+        config: { query: "gtm" },
+      });
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Foreign Patch Connection Workspace" },
+        })
+      ).json().id as string;
+      const candidates = [
+        {
+          id: insertConnection("twitter", "connected", otherWorkspaceId),
+          error: "connection_required",
+        },
+        { id: insertConnection("reddit"), error: "wrong_provider" },
+        {
+          id: insertConnection("twitter", "disconnected"),
+          error: "connection_disconnected",
+        },
+      ];
+
+      for (const candidate of candidates) {
+        const update = await app.inject({
+          method: "PATCH",
+          url: `/workspaces/${workspaceId}/discovery/sources/${source.id}`,
+          payload: { connectionId: candidate.id },
+        });
+        expect(update.statusCode).toBe(400);
+        expect(update.json().error).toBe(candidate.error);
+        expect(sourceRow(source.id)).toMatchObject({
+          configJson: JSON.stringify(source.config),
+          connectionId: null,
+          status: "needs_api_key",
+        });
+      }
+    });
+
+    it("derives active and needs_api_key when attaching and detaching an optional connection", async () => {
+      const source = await createSource({
+        type: "x",
+        config: { query: "gtm" },
+      });
+      const connectionId = insertConnection("twitter");
+
+      const attached = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/discovery/sources/${source.id}`,
+        payload: { connectionId },
+      });
+      expect(attached.statusCode).toBe(200);
+      expect(attached.json()).toMatchObject({
+        connectionId,
+        status: "active",
+        lastError: null,
+        backoffUntil: null,
+      });
+
+      const detached = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/discovery/sources/${source.id}`,
+        payload: { connectionId: null },
+      });
+      expect(detached.statusCode).toBe(200);
+      expect(detached.json()).toMatchObject({
+        connectionId: null,
+        status: "needs_api_key",
+        lastError: null,
+        backoffUntil: null,
+      });
+    });
+
+    it("rejects foreign, unknown, mixed, and wrong-platform tracked IDs before create", async () => {
+      const connectionId = insertConnection("twitter");
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Foreign Tracked Accounts" },
+        })
+      ).json().id as string;
+      const foreign = await createTrackedAccount(otherWorkspaceId, "x", "foreign-rival");
+      const valid = await createTrackedAccount(workspaceId, "x", "valid-rival");
+      const wrongPlatform = await createTrackedAccount(
+        workspaceId,
+        "instagram",
+        "instagram-rival",
+      );
+      const submit = (config: Record<string, unknown>) =>
+        app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/discovery/sources`,
+          payload: {
+            type: "x",
+            config: { mode: "account_timeline", ...config },
+            connectionId,
+          },
+        });
+
+      const foreignResult = await submit({ trackedAccountId: foreign.id });
+      const unknownResult = await submit({ trackedAccountId: randomUUID() });
+      const mixedResult = await submit({
+        trackedAccountIds: [valid.id, foreign.id],
+      });
+      const wrongPlatformResult = await submit({
+        trackedAccountId: wrongPlatform.id,
+      });
+
+      for (const result of [
+        foreignResult,
+        unknownResult,
+        mixedResult,
+        wrongPlatformResult,
+      ]) {
+        expect(result.statusCode).toBe(404);
+        expect(result.json()).toEqual({ error: "related_object_not_found" });
+      }
+      expect(foreignResult.json()).toEqual(unknownResult.json());
+      expect(listDiscoverySources(db, workspaceId)).toHaveLength(0);
+    });
+
+    it("rejects foreign and unknown tracked IDs on update without changing the source", async () => {
+      const connectionId = insertConnection("twitter");
+      const valid = await createTrackedAccount(workspaceId, "x", "valid-update-rival");
+      const source = await createSource({
+        type: "x",
+        config: { mode: "account_timeline", trackedAccountId: valid.id },
+        connectionId,
+      });
+      const otherWorkspaceId = (
+        await app.inject({
+          method: "POST",
+          url: "/workspaces",
+          payload: { name: "Foreign Update Accounts" },
+        })
+      ).json().id as string;
+      const foreign = await createTrackedAccount(otherWorkspaceId, "x", "foreign-update-rival");
+      const update = (trackedAccountId: string) =>
+        app.inject({
+          method: "PATCH",
+          url: `/workspaces/${workspaceId}/discovery/sources/${source.id}`,
+          payload: {
+            config: { mode: "account_timeline", trackedAccountId },
+          },
+        });
+
+      const foreignResult = await update(foreign.id);
+      const unknownResult = await update(randomUUID());
+
+      expect(foreignResult.statusCode).toBe(404);
+      expect(unknownResult.statusCode).toBe(404);
+      expect(foreignResult.json()).toEqual({ error: "related_object_not_found" });
+      expect(foreignResult.json()).toEqual(unknownResult.json());
+      expect(listDiscoverySources(db, workspaceId)).toEqual([
+        expect.objectContaining({
+          id: source.id,
+          config: {
+            mode: "account_timeline",
+            trackedAccountId: valid.id,
+          },
+        }),
+      ]);
+    });
+
+    it("fails connected fetch when a referenced tracked account becomes disabled", async () => {
+      const connectionId = insertConnection("twitter");
+      const tracked = await createTrackedAccount(workspaceId, "x", "disabled-rival");
+      const source = await createSource({
+        type: "x",
+        config: { mode: "account_timeline", trackedAccountId: tracked.id },
+        connectionId,
+      });
+      const disabled = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/discovery/tracked-accounts/${tracked.id}`,
+        payload: { enabled: false },
+      });
+      expect(disabled.statusCode).toBe(200);
+
+      const result = await runDiscoveryRoute();
+
+      expect(result.sources).toEqual([
+        expect.objectContaining({
+          sourceId: source.id,
+          error: "related_object_not_found",
+        }),
+      ]);
+      expect(proxyCalls).toEqual([]);
     });
   });
 
@@ -398,6 +1028,7 @@ describe("connected discovery (Sprint 46)", () => {
       expect(search.path).toContain(`query=${encodeURIComponent("agentic gtm")}`);
       expect(search.integrationKey).toBe("tuezday-twitter");
       expect(search.baseUrl).toBe("https://api.twitter.com");
+      expect(search.baseUrl).not.toContain("169.254.169.254");
 
       const items = await listItems("new");
       expect(items).toHaveLength(2);
@@ -541,6 +1172,37 @@ describe("connected discovery (Sprint 46)", () => {
       expect(post.title).toBe("Anyone using agentic GTM tools?");
       expect(post.publishedAt).toBe(1_751_600_000_000);
     });
+
+    it("blocks a keyless fetch when its tracked account becomes disabled", async () => {
+      const tracked = await createTrackedAccount(
+        workspaceId,
+        "reddit",
+        "tracked-saas",
+      );
+      const source = await createSource({
+        type: "reddit",
+        config: {
+          subreddit: "saas",
+          trackedAccountId: tracked.id,
+        },
+      });
+      const disabled = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/discovery/tracked-accounts/${tracked.id}`,
+        payload: { enabled: false },
+      });
+      expect(disabled.statusCode).toBe(200);
+
+      const result = await runDiscoveryRoute();
+
+      expect(result.sources).toEqual([
+        expect.objectContaining({
+          sourceId: source.id,
+          error: "related_object_not_found",
+        }),
+      ]);
+      expect(fetchedUrls.some((url) => url.includes("/r/saas/"))).toBe(false);
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -559,7 +1221,13 @@ describe("connected discovery (Sprint 46)", () => {
 
       proxyHandler = (path) =>
         path.startsWith("/rest/posts")
-          ? { status: 403, json: { message: "Not enough permissions" } }
+          ? {
+              status: 403,
+              json: {
+                message: "Not enough permissions",
+                diagnostic: "provider-secret-must-not-escape",
+              },
+            }
           : undefined;
 
       const run = await runDiscoveryRoute();
@@ -574,6 +1242,11 @@ describe("connected discovery (Sprint 46)", () => {
       expect(row.lastError).toContain("LinkedIn read scope or author role required");
       expect(jobsFor(rss.id).at(-1)!.status).toBe("succeeded");
       expect(jobsFor(linkedin.id).at(-1)!.status).toBe("failed");
+      expect(JSON.stringify(run)).not.toContain("provider-secret-must-not-escape");
+      expect(row.lastError).not.toContain("provider-secret-must-not-escape");
+      expect(jobsFor(linkedin.id).at(-1)!.error).not.toContain(
+        "provider-secret-must-not-escape",
+      );
     });
 
     it("marks an Instagram source permission_required when Meta refuses access", async () => {
@@ -708,6 +1381,10 @@ describe("connected discovery (Sprint 46)", () => {
       await runDiscoveryRoute();
 
       const [item] = await listItems("new");
+      db.update(discoveredItems)
+        .set({ matchingState: "ready", matchingError: null })
+        .where(eq(discoveredItems.id, item!.id as string))
+        .run();
       const accepted = await app.inject({
         method: "POST",
         url: `/workspaces/${workspaceId}/discovery/items/${item!.id}/accept`,

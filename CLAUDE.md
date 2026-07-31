@@ -18,7 +18,8 @@ The planning documents define what gets built and in what order — read the rel
 ## Commands
 
 - `npm install` — install all workspaces (npm workspaces monorepo; Node ≥ 20)
-- `npm run dev` — run API (Fastify, http://localhost:3001) and web (Next.js, http://localhost:3000) together
+- `npm run dev` — run API (Fastify, http://localhost:3001), web (Next.js, http://localhost:3000), and the required background worker
+- `npm run dev:app` — run only API + web; automatic background work does not run
 - `npm test` — run all Vitest suites (api + contracts + brain). API tests use in-memory SQLite with the checked-in Drizzle migrations
 - `npm test -- <substring>` — run only test files whose path matches (e.g. `npm test -- brain`); add `-t "<name>"` to filter by test name
 - `npm run typecheck` — `tsc --noEmit` across all workspaces (there is no lint step)
@@ -33,6 +34,7 @@ Copy `.env.example` to `.env` at the repo root (dev server loads it via dotenv).
 
 - `GEMINI_API_KEY` — Gemini 2.5 Flash (default LLM). `GEMINI_MODEL` overrides the model name.
 - `TUEZDAY_WORKER_TOKEN` — system actor token used by the worker to call the API across workspaces. Generate with: `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`
+- `TUEZDAY_INTERNAL_API_URL` — direct worker-to-API origin; production requires HTTPS, while loopback HTTP is accepted locally. Do not point it at the browser/MCP API gateway.
 - `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` — social publishing connector (Sprint 17).
 - `LINKEDIN_CLIENT_ID/SECRET`, `TWITTER_CLIENT_ID/SECRET`, `INSTAGRAM_CLIENT_ID/SECRET` — social trio (Sprint 25+). Leave blank until those connectors are wired.
 
@@ -72,7 +74,9 @@ Key seams (integrations live behind these interfaces — never let provider code
 `auth/guard.ts` installs one global `preHandler` (`registerAuthGuard`, registered before all routes). Every route outside the `PUBLIC_ROUTES` allowlist (`/auth/register`, `/auth/login`, `/health`) needs a bearer token. A request resolves to an `Actor`:
 
 - a signed-in user (session token → `sessionUser`), or
-- the **system** actor when the token equals `TUEZDAY_WORKER_TOKEN` (how the worker calls the API across all workspaces).
+- the **system** actor when the token equals `TUEZDAY_WORKER_TOKEN` on the two
+  worker-only tick routes or the explicit maintenance allowlist. The worker
+  token is not a general session or API credential.
 
 Any `/workspaces/:id/...` route additionally requires membership in that workspace (system bypasses). Services attribute writes via `actorOf(request)` for version history / decision logs.
 
@@ -135,4 +139,9 @@ Defer: Graphiti (temporal graph) and Mem0 — only after RAG is useful. Avoid as
 - Resolver input: workspace, task type, channel, persona, optional campaign → output: ordered context bundle with a trace explaining why each section was included. Context must be readable before any LLM call.
 - Output ratings are stored as training signals that feed the learning loop back into the `now` doc.
 - A prior Tuezday codebase exists elsewhere; salvage concepts (prompt layering, approval statuses, draft state machine, training examples, webhook/event shape) but do not port code wholesale.
-- `apps/worker` is still a thin stub; background polling/sync that needs cross-workspace access calls the API as the system actor with `TUEZDAY_WORKER_TOKEN`.
+- `apps/worker` is deliberately thin but required: it runs validated,
+  non-overlapping loops for discovery, automation, learning, ads, publishing,
+  cadence, inbox, Gmail mailbox, outreach, sequences, and evidence sweeping.
+  It calls the API through `TUEZDAY_INTERNAL_API_URL` with the scoped
+  `TUEZDAY_WORKER_TOKEN`; the API owns database access, leases, checkpoints,
+  bounds, and durable task identity.

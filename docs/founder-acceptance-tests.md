@@ -679,7 +679,7 @@ behaves as if the item had come from any other source.
 
 ---
 
-## Sprint 47 — Own the evidence store (R2R exit)
+## Remote Sprint 47 — Own the evidence store (R2R exit)
 
 - [ ] **No Docker needed.** With every container stopped (never run `r2r:up` — it's gone), Brain →
       Evidence → add a document → status **ready**, no "store offline" banner. Search-backed
@@ -699,6 +699,143 @@ behaves as if the item had come from any other source.
 - [ ] **Key-less degradation.** Blank out `GEMINI_API_KEY` → adding evidence still works and
       retrieval falls back to lexical search (scores in the trace, no crash); restore the key and
       the next `reindex`/re-ingest backfills embeddings.
+
+---
+
+## Remote Sprint 47 — Gmail mailbox email loop
+
+- [ ] Connect Gmail through Nango with `GMAIL_CLIENT_ID` and `GMAIL_CLIENT_SECRET`; the mailbox
+      appears with its daily cap and accepts a signature.
+- [ ] Approve an email draft for a test lead and send it from the mailbox; it arrives from the
+      connected Gmail account with an unsubscribe footer.
+- [ ] Reply from the recipient account; within the mailbox poll interval (or after **Run now**) the
+      reply appears in Tuezday, threaded to the delivery and carrying a sensible classification.
+- [ ] Confirm an unrelated message from the same Gmail inbox never appears in Tuezday.
+
+---
+
+## Local Sprint 48 — Safe fetch and tenant isolation
+
+- [ ] A workspace-controlled URL using credentials, a metadata/private address, or disallowed HTTP
+      is rejected without echoing the unsafe target or an upstream response body.
+- [ ] Every redirect is revalidated and DNS-pinned; oversized, over-compressed, timed-out, or
+      unsupported responses stop at the configured safety bound.
+- [ ] Foreign-workspace persona, campaign, signal, or discovery references return the same `404` as
+      an unknown reference and reveal no tenant data.
+- [ ] A fault during signal creation, match replacement, or projection leaves no orphan or
+      half-written rows.
+- [ ] Invalid discovery-source transitions are rejected without changing the stored source, while
+      unrelated connected and keyless providers continue to work.
+
+**Gate:** workspace-influenced network access cannot reach internal infrastructure or exhaust the
+process, and cross-tenant references cannot be observed or partially persisted.
+
+---
+
+## Remote Sprint 48 — Outreach sequences
+
+- [ ] Create a dynamic segment, connect Gmail, and activate a two-step `scheduled_auto` sequence;
+      a segment member auto-enrolls and step 1 sends from Gmail without a Resend domain.
+- [ ] Add another eligible person to the segment; the next tick enrolls them automatically.
+- [ ] Let step 2 become due; it arrives in the same Gmail thread.
+- [ ] Reply as the recipient; the enrollment becomes `replied` and no later step sends.
+- [ ] Suppressed recipients and recipients already in another active sequence are not enrolled.
+
+---
+
+## Local Sprint 49 — Bounded leased execution
+
+> Local full-stack startup is `npm run dev` (API + web + worker).
+> `npm run dev:app` intentionally starts only API + web and therefore does not
+> perform automatic background work. Production also requires API and worker as
+> separate processes with the same `TUEZDAY_WORKER_TOKEN`; never paste a real
+> token or provider cursor into screenshots, tickets, or acceptance notes.
+
+- [ ] **Scoring is visible and safe.** Run discovery and open the triage inbox
+      while items are still being judged → pending/running items show
+      **Scoring** and their **Accept as signal** button is disabled; **Skip**
+      remains available. A retryable scoring failure shows
+      **Scoring delayed — retry discovery**. Ready items have no scoring label
+      and can be accepted.
+- [ ] **The readiness error is stable.** If an item becomes non-ready between
+      render and click, Accept shows **Scoring has not completed for this item
+      yet.** The item stays untriaged and no partial signal is created.
+- [ ] **A busy tick is not reported as empty success.** If another API process
+      already owns the scheduler lease, Run discovery reports that discovery is
+      already running. A completed empty tick still says `Run finished: 0
+      queued · 0 processed`.
+- [ ] **Safety limits are honest.** When a tick/source/matching budget is
+      reached, the run summary says the safety budget was reached and queued
+      work continues on the next poll; work is not silently dropped.
+- [ ] **Targeted re-scoring.** Edit a persona's name/description/topics or an
+      active campaign's name/objective/persona assignment → only affected
+      ready items plus eligible zero-match items return to Scoring. Unrelated
+      matched items stay ready. Drafting-only persona fields and campaign
+      automation mode/cap changes do not trigger re-scoring.
+
+**Automated crash/race audit — no manual kill/restart choreography required**
+
+```bash
+npm test -- sprint49-acceptance.test.ts
+```
+
+The single end-to-end scenario uses a temporary SQLite file and fixture
+providers. It faults after the first durable page, expires the old job and
+scheduler leases, resumes through a separately built API instance, and then
+races discovery, matching/acceptance, and worker/manual automation. It proves:
+
+- six pages across two targets are present exactly once after restart, with
+  both high-watermarks complete and the suspended old writer fenced;
+- a competing discovery tick reports busy and consumes no additional provider
+  work;
+- acceptance during matching returns the stable readiness conflict and creates
+  no signal, while acceptance after matching copies the exact candidate rows;
+- racing worker/manual automation creates one automatic draft and exactly one
+  approval transition.
+
+The focused suites additionally cover shutdown aborts, invalid-cursor replay,
+target-local failures, matching timeout/reclaim, targeted invalidation,
+internal-route authorization, validated worker startup, and interval bounds.
+The integration gate also runs the native evidence, Gmail, outreach,
+compliance, tracking, internal-task, and worker-loop suites. No live OAuth,
+provider, or network access is required.
+
+**Fresh cross-history evidence (2026-07-29)**
+
+- The native-evidence assertion first failed against the replayed fake
+  (`included: false`), then passed with database-bound `DbEvidenceStore`
+  instances on both sides of the restart.
+- Combined acceptance gate — 11 files, 155/155 tests passed.
+- API and worker typechecks passed.
+
+**Gate:** API restarts, worker restarts, overlapping ticks, provider pagination,
+matching changes, and automation races preserve one durable result; the founder
+sees honest readiness/budget states without raw leases or provider cursors.
+
+---
+
+## Remote Sprint 49 — Reply actions and compliance
+
+- [ ] Activating an outreach sequence without a workspace postal address is blocked; setting the
+      address allows activation.
+- [ ] An outreach email footer contains both the unsubscribe link and postal address.
+- [ ] An unsubscribe reply suppresses the address and stops the chain; an out-of-office reply
+      pauses the chain and permits its later resumption.
+- [ ] A positive reply is highlighted and notifies the workspace; when a linked CRM is connected,
+      a follow-up task is created for the contact.
+- [ ] Importing a suppression list prevents those addresses from being sent any sequence step.
+
+---
+
+## Remote Sprint 50 — Outreach tracking
+
+- [ ] With tracking on, an outreach step arrives as HTML; links redirect through `/t/c`, and
+      opening the message registers an open.
+- [ ] The sequence funnel shows sent → opened → clicked → replied and labels opens as a soft signal.
+- [ ] An interested reply increments positive outcomes; marking the enrollment **meeting** advances
+      the meeting stage.
+- [ ] Campaign insights includes the outreach funnel beside paid and organic results.
+- [ ] With tracking off, sends remain plain text and contain no tracking pixel.
 
 ## Cross-cutting things worth re-checking occasionally
 

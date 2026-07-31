@@ -1,42 +1,42 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, inArray, lt } from "drizzle-orm";
+import { and, asc, eq, gt, lte, or, sql } from "drizzle-orm";
 import type { DiscoverySource } from "@tuezday/contracts";
 import type { Db } from "../db";
-import { discoveryJobs, type DiscoveryJobRow } from "../db/schema";
+import {
+  discoveryJobs,
+  discoverySources,
+  type DiscoveryJobRow,
+} from "../db/schema";
+import { DATABASE_NOW_MS } from "./task-leases";
 
-// Discovery job ledger (Sprint 46): `/discovery/run` enqueues due sources and
-// processes a bounded batch synchronously. Local DB back-pressure — retries,
-// per-source progress, and no run-long serialization behind one slow source —
-// without a queue system. better-sqlite3 is synchronous on one connection, so
-// enqueue/claim need no locking beyond the status column itself.
-
-/** How many source jobs one `/discovery/run` call processes. */
+/** Temporary Sprint 46 route compatibility; Task 4 replaces this with policy. */
 export const DISCOVERY_JOB_BATCH_SIZE = 5;
-/** A `running` job locked longer than this is presumed dead and released. */
-export const DISCOVERY_JOB_LOCK_TIMEOUT_MS = 10 * 60 * 1000;
+export const DISCOVERY_JOB_LEASE_MS = 45_000;
 
-/**
- * Fail `running` jobs whose lock is older than the timeout (a crashed or
- * hung run). Failing them frees their sources for re-enqueueing.
- */
-export function releaseStaleDiscoveryJobs(db: Db, now: number): number {
-  const result = db
-    .update(discoveryJobs)
-    .set({ status: "failed", error: "stale_lock", finishedAt: now })
-    .where(
-      and(
-        eq(discoveryJobs.status, "running"),
-        lt(discoveryJobs.lockedAt, now - DISCOVERY_JOB_LOCK_TIMEOUT_MS),
-      ),
-    )
-    .run();
-  return result.changes;
+export interface DiscoveryJobClaim extends DiscoveryJobRow {
+  status: "running";
+  leaseOwner: string;
+  leaseExpiresAt: number;
+  heartbeatAt: number;
+}
+
+function toClaim(row: DiscoveryJobRow | undefined): DiscoveryJobClaim | null {
+  if (
+    !row ||
+    row.status !== "running" ||
+    row.leaseOwner === null ||
+    row.leaseExpiresAt === null ||
+    row.heartbeatAt === null
+  ) {
+    return null;
+  }
+  return row as DiscoveryJobClaim;
 }
 
 /**
- * Queue a job for each eligible source that is past its rate-limit backoff
- * and has no queued/running job already. Callers pass sources pre-filtered
- * for enabled/provider-configured status. Returns how many were enqueued.
+ * Queue each due source with its current execution version. The partial unique
+ * index is the concurrency boundary; conflict-ignore replaces read-before-write
+ * busy checks that race across API processes.
  */
 export function enqueueDueDiscoveryJobs(
   db: Db,
@@ -44,88 +44,191 @@ export function enqueueDueDiscoveryJobs(
   sources: DiscoverySource[],
   now: number,
 ): number {
-  const busy = new Set(
-    db
-      .select({ sourceId: discoveryJobs.sourceId })
-      .from(discoveryJobs)
-      .where(
-        and(
-          eq(discoveryJobs.workspaceId, workspaceId),
-          inArray(discoveryJobs.status, ["queued", "running"]),
-        ),
-      )
-      .all()
-      .map((r) => r.sourceId),
-  );
   let queued = 0;
   for (const source of sources) {
     if (source.backoffUntil !== null && source.backoffUntil > now) continue;
-    if (busy.has(source.id)) continue;
-    db.insert(discoveryJobs)
-      .values({
-        id: randomUUID(),
-        workspaceId,
-        sourceId: source.id,
-        status: "queued",
-        attempt: 0,
-        lockedAt: null,
-        startedAt: null,
-        finishedAt: null,
-        fetchedCount: 0,
-        newCount: 0,
-        error: null,
-        createdAt: now,
-      })
-      .run();
-    queued += 1;
+    const inserted = db.run(sql`
+      INSERT INTO discovery_jobs (
+        id,
+        workspace_id,
+        source_id,
+        status,
+        attempt,
+        locked_at,
+        source_execution_version,
+        lease_owner,
+        lease_version,
+        lease_expires_at,
+        heartbeat_at,
+        started_at,
+        finished_at,
+        fetched_count,
+        new_count,
+        error,
+        created_at
+      )
+      SELECT
+        ${randomUUID()},
+        ${workspaceId},
+        ${discoverySources.id},
+        'queued',
+        0,
+        NULL,
+        ${discoverySources.executionVersion},
+        NULL,
+        0,
+        NULL,
+        NULL,
+        NULL,
+        NULL,
+        0,
+        0,
+        NULL,
+        ${now}
+      FROM ${discoverySources}
+      WHERE
+        ${discoverySources.workspaceId} = ${workspaceId}
+        AND ${discoverySources.id} = ${source.id}
+      ON CONFLICT DO NOTHING
+    `);
+    queued += inserted.changes;
   }
   return queued;
 }
 
 /**
- * Move up to `limit` of the oldest queued jobs to `running` and return them.
- * Leftovers stay queued for the next run — the bounded-batch guarantee.
+ * Claim exactly one oldest queued job, or reclaim one expired running job.
+ * Selection and compare-and-swap share one SQLite transaction and database
+ * clock so caller time can never steal a live lease.
  */
-export function claimDiscoveryJobs(
+export function claimNextDiscoveryJob(
   db: Db,
-  workspaceId: string,
-  limit: number,
-  now: number,
-): DiscoveryJobRow[] {
-  const rows = db
-    .select()
-    .from(discoveryJobs)
-    .where(and(eq(discoveryJobs.workspaceId, workspaceId), eq(discoveryJobs.status, "queued")))
-    .orderBy(asc(discoveryJobs.createdAt))
-    .limit(limit)
-    .all();
-  return rows.map((row) => {
-    const claimed = {
-      status: "running",
-      attempt: row.attempt + 1,
-      lockedAt: now,
-      startedAt: now,
-    } as const;
-    db.update(discoveryJobs).set(claimed).where(eq(discoveryJobs.id, row.id)).run();
-    return { ...row, ...claimed };
+  input: {
+    workspaceId?: string;
+    owner: string;
+    leaseMs: number;
+  },
+): DiscoveryJobClaim | null {
+  return db.transaction((tx) => {
+    const candidate = tx
+      .select()
+      .from(discoveryJobs)
+      .where(
+        and(
+          input.workspaceId
+            ? eq(discoveryJobs.workspaceId, input.workspaceId)
+            : undefined,
+          or(
+            eq(discoveryJobs.status, "queued"),
+            and(
+              eq(discoveryJobs.status, "running"),
+              lte(discoveryJobs.leaseExpiresAt, DATABASE_NOW_MS),
+            ),
+          ),
+        ),
+      )
+      .orderBy(asc(discoveryJobs.createdAt), asc(discoveryJobs.id))
+      .limit(1)
+      .get();
+    if (!candidate) return null;
+
+    const claimed = tx
+      .update(discoveryJobs)
+      .set({
+        status: "running",
+        attempt: sql`${discoveryJobs.attempt} + 1`,
+        lockedAt: DATABASE_NOW_MS,
+        startedAt: DATABASE_NOW_MS,
+        leaseOwner: input.owner,
+        leaseVersion: sql`${discoveryJobs.leaseVersion} + 1`,
+        leaseExpiresAt: sql`${DATABASE_NOW_MS} + ${input.leaseMs}`,
+        heartbeatAt: DATABASE_NOW_MS,
+        finishedAt: null,
+        error: null,
+      })
+      .where(
+        and(
+          eq(discoveryJobs.id, candidate.id),
+          eq(discoveryJobs.leaseVersion, candidate.leaseVersion),
+          or(
+            eq(discoveryJobs.status, "queued"),
+            and(
+              eq(discoveryJobs.status, "running"),
+              lte(discoveryJobs.leaseExpiresAt, DATABASE_NOW_MS),
+            ),
+          ),
+        ),
+      )
+      .returning()
+      .get();
+    return toClaim(claimed);
   });
+}
+
+export function heartbeatDiscoveryJob(
+  db: Db,
+  claim: DiscoveryJobClaim,
+  leaseMs: number,
+): DiscoveryJobClaim | null {
+  const renewed = db
+    .update(discoveryJobs)
+    .set({
+      leaseExpiresAt: sql`${DATABASE_NOW_MS} + ${leaseMs}`,
+      heartbeatAt: DATABASE_NOW_MS,
+    })
+    .where(liveClaimWhere(claim))
+    .returning()
+    .get();
+  return toClaim(renewed);
+}
+
+function liveClaimWhere(claim: DiscoveryJobClaim) {
+  return and(
+    eq(discoveryJobs.id, claim.id),
+    eq(discoveryJobs.status, "running"),
+    eq(discoveryJobs.leaseOwner, claim.leaseOwner),
+    eq(discoveryJobs.leaseVersion, claim.leaseVersion),
+    gt(discoveryJobs.leaseExpiresAt, DATABASE_NOW_MS),
+  );
 }
 
 export function completeDiscoveryJob(
   db: Db,
-  jobId: string,
+  claim: DiscoveryJobClaim,
   counts: { fetchedCount: number; newCount: number },
-  now: number,
-): void {
-  db.update(discoveryJobs)
-    .set({ status: "succeeded", finishedAt: now, error: null, ...counts })
-    .where(eq(discoveryJobs.id, jobId))
+): boolean {
+  const result = db
+    .update(discoveryJobs)
+    .set({
+      status: "succeeded",
+      finishedAt: DATABASE_NOW_MS,
+      error: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      heartbeatAt: null,
+      ...counts,
+    })
+    .where(liveClaimWhere(claim))
     .run();
+  return result.changes === 1;
 }
 
-export function failDiscoveryJob(db: Db, jobId: string, error: string, now: number): void {
-  db.update(discoveryJobs)
-    .set({ status: "failed", finishedAt: now, error: error.slice(0, 500) })
-    .where(eq(discoveryJobs.id, jobId))
+export function failDiscoveryJob(
+  db: Db,
+  claim: DiscoveryJobClaim,
+  error: string,
+): boolean {
+  const result = db
+    .update(discoveryJobs)
+    .set({
+      status: "failed",
+      finishedAt: DATABASE_NOW_MS,
+      error: error.slice(0, 500),
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      heartbeatAt: null,
+    })
+    .where(liveClaimWhere(claim))
     .run();
+  return result.changes === 1;
 }

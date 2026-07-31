@@ -8,6 +8,10 @@ import { createLlmGatewayFromEnv } from "../src/llm";
 
 type Fetcher = typeof fetch;
 
+afterEach(() => {
+  vi.unstubAllGlobals();
+});
+
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
     status,
@@ -71,6 +75,45 @@ describe("OpenRouterGateway", () => {
       maxOutputTokens: 123,
     });
     expect(sentBody.max_tokens).toBe(123);
+  });
+
+  it("passes the caller abort signal to OpenRouter", async () => {
+    const controller = new AbortController();
+    let receivedSignal: AbortSignal | null | undefined;
+    const fetcher: Fetcher = (async (_url: unknown, init?: RequestInit) => {
+      receivedSignal = init?.signal;
+      return okChatCompletion("ok");
+    }) as Fetcher;
+
+    await new OpenRouterGateway("or-key", undefined, fetcher).generate({
+      prompt: "p",
+      signal: controller.signal,
+    });
+    expect(receivedSignal).toBe(controller.signal);
+  });
+
+  it("preserves the caller's abort reason instead of treating it as provider failure", async () => {
+    const controller = new AbortController();
+    const reason = new Error("source_timeout");
+    const fetcher: Fetcher = (async (_url: unknown, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        const signal = init?.signal;
+        signal?.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      })) as Fetcher;
+
+    const pending = new OpenRouterGateway(
+      "or-key",
+      undefined,
+      fetcher,
+    ).generate({
+      prompt: "p",
+      signal: controller.signal,
+    });
+    controller.abort(reason);
+
+    await expect(pending).rejects.toBe(reason);
   });
 
   it("throws provider_error including the status on non-2xx responses", async () => {
@@ -177,6 +220,22 @@ describe("FallbackGateway", () => {
     expect(result.provider).toBe("openrouter");
   });
 
+  it("passes the unchanged caller signal through both providers", async () => {
+    const controller = new AbortController();
+    const primary = fakeGateway(async () => {
+      throw new GatewayError("provider_error", "primary failed");
+    });
+    const secondary = fakeGateway(async () => okResult("openrouter"));
+
+    await new FallbackGateway(primary, secondary).generate({
+      prompt: "p",
+      signal: controller.signal,
+    });
+
+    expect(primary.calls[0]?.signal).toBe(controller.signal);
+    expect(secondary.calls[0]?.signal).toBe(controller.signal);
+  });
+
   it("throws a single GatewayError naming both providers when both fail", async () => {
     const primary = fakeGateway(async () => {
       throw new GatewayError("provider_error", "gemini exploded");
@@ -203,6 +262,57 @@ describe("FallbackGateway", () => {
       boom,
     );
     expect(secondary.calls).toHaveLength(0);
+  });
+});
+
+describe("GeminiGateway", () => {
+  it("passes the caller abort signal to Gemini", async () => {
+    const controller = new AbortController();
+    let receivedSignal: AbortSignal | null | undefined;
+    vi.stubGlobal(
+      "fetch",
+      async (_url: unknown, init?: RequestInit) => {
+        receivedSignal = init?.signal;
+        return jsonResponse(200, {
+          candidates: [
+            {
+              content: {
+                parts: [{ text: "ok" }],
+              },
+            },
+          ],
+        });
+      },
+    );
+
+    await new GeminiGateway("gemini-key").generate({
+      prompt: "p",
+      signal: controller.signal,
+    });
+    expect(receivedSignal).toBe(controller.signal);
+  });
+
+  it("preserves the caller's abort reason instead of treating it as provider failure", async () => {
+    const controller = new AbortController();
+    const reason = new Error("matching_timeout");
+    vi.stubGlobal(
+      "fetch",
+      async (_url: unknown, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const signal = init?.signal;
+          signal?.addEventListener("abort", () => reject(signal.reason), {
+            once: true,
+          });
+        }),
+    );
+
+    const pending = new GeminiGateway("gemini-key").generate({
+      prompt: "p",
+      signal: controller.signal,
+    });
+    controller.abort(reason);
+
+    await expect(pending).rejects.toBe(reason);
   });
 });
 

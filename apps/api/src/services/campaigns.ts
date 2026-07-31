@@ -11,11 +11,21 @@ import type {
   UpsertCampaignInput,
 } from "@tuezday/contracts";
 import type { ResolveCampaign } from "@tuezday/brain";
-import type { Db } from "../db";
-import { campaigns, drafts, type CampaignRow } from "../db/schema";
+import type { Db, DbExecutor } from "../db";
+import {
+  campaigns,
+  drafts,
+  externalActionPolicyRules,
+  type CampaignRow,
+} from "../db/schema";
 import { getCampaignAdMetrics, type CampaignAdMetrics } from "./ads";
 import { listCampaignAudiences } from "./audiences";
 import { ensureCampaignActionPolicies } from "./external-action-backfill";
+import { deleteGuidanceForScope } from "./guidance";
+import {
+  invalidateMatching,
+  itemIdsForCampaignChange,
+} from "./matching-invalidation";
 import {
   getCampaignControlPlaneSummary,
   type ControlPlaneSummary,
@@ -70,26 +80,39 @@ function inputToColumns(input: UpsertCampaignInput) {
 }
 
 export function createCampaign(db: Db, workspaceId: string, input: UpsertCampaignInput): Campaign {
-  const now = Date.now();
-  const row: CampaignRow = {
-    id: randomUUID(),
-    workspaceId,
-    origin: "user",
-    ...inputToColumns(input),
-    // Automation is set only via the dedicated toggle, never reset by a general
-    // campaign edit; a new campaign starts from the input defaults (manual / null).
-    automationMode: input.automationMode,
-    autoDailyCap: input.autoDailyCap,
-    currentPlanRevisionId: null,
-    createdAt: now,
-    updatedAt: now,
-  };
-  db.insert(campaigns).values(row).run();
-  ensureCampaignActionPolicies(db, workspaceId, row.id, input.automationMode);
-  return rowToCampaign(row);
+  return db.transaction((tx) => {
+    const now = Date.now();
+    const row: CampaignRow = {
+      id: randomUUID(),
+      workspaceId,
+      origin: "user",
+      ...inputToColumns(input),
+      // Automation is set only via the dedicated toggle, never reset by a general
+      // campaign edit; a new campaign starts from the input defaults (manual / null).
+      automationMode: input.automationMode,
+      autoDailyCap: input.autoDailyCap,
+      currentPlanRevisionId: null,
+      createdAt: now,
+      updatedAt: now,
+    };
+    tx.insert(campaigns).values(row).run();
+    ensureCampaignActionPolicies(
+      tx,
+      workspaceId,
+      row.id,
+      input.automationMode,
+    );
+    if (input.status === "active") {
+      invalidateMatching(tx, workspaceId, {
+        directItemIds: [],
+        includeReadyNoMatch: true,
+      });
+    }
+    return rowToCampaign(row);
+  });
 }
 
-export function listCampaigns(db: Db, workspaceId: string): Campaign[] {
+export function listCampaigns(db: DbExecutor, workspaceId: string): Campaign[] {
   return db
     .select()
     .from(campaigns)
@@ -100,7 +123,11 @@ export function listCampaigns(db: Db, workspaceId: string): Campaign[] {
     .sort((a, b) => (a.status === b.status ? 0 : a.status === "active" ? -1 : 1));
 }
 
-export function getCampaign(db: Db, workspaceId: string, campaignId: string): Campaign | undefined {
+export function getCampaign(
+  db: DbExecutor,
+  workspaceId: string,
+  campaignId: string,
+): Campaign | undefined {
   const row = db
     .select()
     .from(campaigns)
@@ -115,13 +142,77 @@ export function updateCampaign(
   campaignId: string,
   input: UpsertCampaignInput,
 ): Campaign | undefined {
-  const existing = getCampaign(db, workspaceId, campaignId);
-  if (!existing) return undefined;
-  db.update(campaigns)
-    .set({ ...inputToColumns(input), updatedAt: Date.now() })
-    .where(eq(campaigns.id, campaignId))
-    .run();
-  return getCampaign(db, workspaceId, campaignId);
+  return db.transaction((tx) => {
+    const existing = getCampaign(tx, workspaceId, campaignId);
+    if (!existing) return undefined;
+    const previousPersonaIds = [...existing.personaIds].sort();
+    const currentPersonaIds = [...input.personaIds].sort();
+    const matchingChanged =
+      existing.name !== input.name ||
+      existing.objective !== input.objective ||
+      existing.status !== input.status ||
+      JSON.stringify(previousPersonaIds) !==
+        JSON.stringify(currentPersonaIds);
+    const shouldInvalidate =
+      matchingChanged &&
+      (existing.status === "active" || input.status === "active");
+    const blastRadiusPersonaIds = [
+      ...new Set([...existing.personaIds, ...input.personaIds]),
+    ];
+    const directItemIds = shouldInvalidate
+      ? itemIdsForCampaignChange(
+          tx,
+          workspaceId,
+          campaignId,
+          blastRadiusPersonaIds,
+        )
+      : [];
+
+    tx.update(campaigns)
+      .set({ ...inputToColumns(input), updatedAt: Date.now() })
+      .where(eq(campaigns.id, campaignId))
+      .run();
+    if (shouldInvalidate) {
+      invalidateMatching(tx, workspaceId, {
+        directItemIds,
+        includeReadyNoMatch: input.status === "active",
+      });
+    }
+    return getCampaign(tx, workspaceId, campaignId);
+  });
+}
+
+export function deleteCampaign(
+  db: Db,
+  workspaceId: string,
+  campaignId: string,
+): boolean {
+  return db.transaction((tx) => {
+    const existing = getCampaign(tx, workspaceId, campaignId);
+    if (!existing) return false;
+    const directItemIds = itemIdsForCampaignChange(
+      tx,
+      workspaceId,
+      campaignId,
+      existing.personaIds,
+    );
+    invalidateMatching(tx, workspaceId, {
+      directItemIds,
+      includeReadyNoMatch: false,
+    });
+    deleteGuidanceForScope(tx, workspaceId, { campaignId });
+    tx.delete(externalActionPolicyRules)
+      .where(
+        and(
+          eq(externalActionPolicyRules.workspaceId, workspaceId),
+          eq(externalActionPolicyRules.scope, "campaign"),
+          eq(externalActionPolicyRules.scopeId, campaignId),
+        ),
+      )
+      .run();
+    tx.delete(campaigns).where(eq(campaigns.id, campaignId)).run();
+    return true;
+  });
 }
 
 /** Set a campaign's automation mode + per-campaign daily cap (Sprint 28). */

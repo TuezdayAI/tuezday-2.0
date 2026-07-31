@@ -5,7 +5,6 @@ import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
 import { getBrain } from "./brain";
 import { composeResolveCampaign } from "./campaigns";
-import { submitDraft, type DraftActor } from "./drafts";
 import { retrieveEvidence } from "./evidence";
 import { getGenerationSettings } from "./generation-settings";
 import { storeGeneration } from "./generations";
@@ -14,8 +13,14 @@ import { toResolvePersona } from "./personas";
 import { resolveDraftAccount } from "./resolve-account";
 import { selectiveContextInputs } from "./resolve-input";
 import { runPreReview, setGenerationReview } from "./review";
+import {
+  submitAutomaticDraft,
+  submitDraft,
+  type AutomaticDraftCommit,
+  type DraftActor,
+} from "./drafts";
 
-export interface GenerateSignalDraftOptions {
+interface GenerateSignalDraftBaseOptions {
   channel: Channel;
   persona?: Persona;
   campaign?: Campaign;
@@ -23,15 +28,51 @@ export interface GenerateSignalDraftOptions {
   tokenBudget?: number;
 }
 
+export interface ManualSignalDraftOptions
+  extends GenerateSignalDraftBaseOptions {
+  automation?: undefined;
+}
+
+export interface AutomaticSignalDraftOptions
+  extends GenerateSignalDraftBaseOptions {
+  automation: {
+    key: string;
+    autoApprove: boolean;
+  };
+}
+
+export type GenerateSignalDraftOptions =
+  | ManualSignalDraftOptions
+  | AutomaticSignalDraftOptions;
+
 /**
  * The shared signal→draft pipeline (Sprint 9): resolve context with the signal
  * injected (+ persona/campaign overlays + evidence), generate, store, and submit
  * the draft into review (`pending_review`). Used by the signals route and by the
  * Sprint 28 automation orchestrator so both share one brain-resolved path.
  *
- * Always returns a draft at `pending_review`; the caller decides what happens next
- * (a human approves it, or scheduled-auto auto-approves it through the gate).
+ * Manual callers receive a draft at `pending_review`. Automation callers use
+ * the deterministic commit path, which may approve the winning insert in the
+ * same transaction and reports whether this invocation created it.
  */
+export function generateSignalDraft(
+  db: Db,
+  llm: LlmGateway,
+  evidence: EvidenceStore,
+  workspace: { id: string; name: string },
+  signal: Signal,
+  opts: AutomaticSignalDraftOptions,
+  actor: DraftActor,
+): Promise<AutomaticDraftCommit>;
+export function generateSignalDraft(
+  db: Db,
+  llm: LlmGateway,
+  evidence: EvidenceStore,
+  workspace: { id: string; name: string },
+  signal: Signal,
+  opts: ManualSignalDraftOptions,
+  actor: DraftActor,
+): Promise<Draft>;
 export async function generateSignalDraft(
   db: Db,
   llm: LlmGateway,
@@ -40,7 +81,7 @@ export async function generateSignalDraft(
   signal: Signal,
   opts: GenerateSignalDraftOptions,
   actor: DraftActor,
-): Promise<Draft> {
+): Promise<Draft | AutomaticDraftCommit> {
   const evidenceResolution = await retrieveEvidence(
     db,
     evidence,
@@ -120,18 +161,25 @@ export async function generateSignalDraft(
     setGenerationReview(db, workspace.id, generation.id, review);
   }
 
-  return submitDraft(
-    db,
-    {
-      workspaceId: workspace.id,
-      sourceGenerationId: generation.id,
-      sourceSignalId: signal.id,
-      campaignId: opts.campaign?.id ?? null,
-      taskType: "signal_response",
-      channel: opts.channel,
-      personaId: opts.persona?.id ?? null,
-      content: result.text,
-    },
-    actor,
-  );
+  const input = {
+    workspaceId: workspace.id,
+    sourceGenerationId: generation.id,
+    sourceSignalId: signal.id,
+    campaignId: opts.campaign?.id ?? null,
+    taskType: "signal_response" as const,
+    channel: opts.channel,
+    personaId: opts.persona?.id ?? null,
+    content: result.text,
+  };
+  return opts.automation
+    ? submitAutomaticDraft(
+        db,
+        {
+          ...input,
+          automationKey: opts.automation.key,
+          autoApprove: opts.automation.autoApprove,
+        },
+        actor,
+      )
+    : submitDraft(db, input, actor);
 }
