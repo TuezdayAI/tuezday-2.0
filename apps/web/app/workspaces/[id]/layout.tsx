@@ -21,6 +21,7 @@ import { CountBadge, GuideDot } from "@/src/components/ui/badge";
 import { Button } from "@/src/components/ui/button";
 import { TopBar } from "@/src/components/top-bar";
 import { Toaster } from "@/src/components/ui/toast";
+import { Copilot } from "@/src/components/copilot/copilot";
 
 const EMPTY_CAPABILITIES: WorkspaceCapabilities = {
   hasAds: false,
@@ -87,6 +88,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
   const [capabilities, setCapabilities] = useState<WorkspaceCapabilities | null>(null);
   const [userLabel, setUserLabel] = useState<string | null>(null);
   const [nextActionView, setNextActionView] = useState<NextActionView | null>(null);
+  const [copilotOpen, setCopilotOpen] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -270,6 +272,15 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
         </nav>
 
         <div className="ws-sidebar-foot">
+          <Button
+            type="button"
+            variant="secondary"
+            size="compact"
+            leadingIcon={<Icon name="brain" size="compact" />}
+            onClick={() => setCopilotOpen(true)}
+          >
+            Ask copilot
+          </Button>
           <Link href="/">{"<-"} All workspaces</Link>
           {userLabel && (
             <div className="ws-user">
@@ -291,6 +302,7 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
       </div>
       <UpgradeModal />
       <Toaster />
+      <Copilot workspaceId={id} open={copilotOpen} onClose={() => setCopilotOpen(false)} />
     </div>
   );
 }

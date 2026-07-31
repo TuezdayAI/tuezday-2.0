@@ -77,6 +77,16 @@ export class StaleExternalActionError extends Error {
 
 export interface ExternalActionRuntime {
   propose(command: ExternalActionCommand, actor: ExternalActionActor): Promise<ExternalActionSubmission>;
+  /**
+   * Like `propose`, but always parks the action at `authorization_required` for
+   * a human to authorize — it never auto-dispatches, even under an autonomous
+   * policy. Used by the copilot (Sprint 42 P2) so a proposed action can never
+   * send itself; the normal authorize gate still applies.
+   */
+  proposeForReview(
+    command: ExternalActionCommand,
+    actor: ExternalActionActor,
+  ): Promise<ExternalActionSubmission>;
   authorize(
     actionId: string,
     workspaceId: string,
@@ -242,6 +252,12 @@ export function createExternalActionRuntime({
     command: ExternalActionCommand,
     actor: ExternalActionActor,
     supersedesActionId: string | null,
+    // When true, always park the action at `authorization_required` for a human
+    // to clear — never auto-authorize/dispatch, regardless of effective policy.
+    // Copilot-initiated proposals (Sprint 42 P2) use this: the in-chat confirm
+    // is a request to *propose*, never to send. The normal authorize gate still
+    // applies on top.
+    forceReview = false,
   ): Promise<ExternalActionSubmission> {
     const intent: ExternalActionIntent = {
       subject: command.subject,
@@ -293,7 +309,7 @@ export function createExternalActionRuntime({
       });
       return submission(action);
     }
-    if (policy.effective === "human_required") {
+    if (forceReview || policy.effective === "human_required") {
       action = transitionExternalAction(db, action.workspaceId, action.id, "authorization_required");
       return submission(action);
     }
@@ -306,6 +322,10 @@ export function createExternalActionRuntime({
   return {
     propose(command, actor) {
       return proposeWithLineage(command, actor, null);
+    },
+
+    proposeForReview(command, actor) {
+      return proposeWithLineage(command, actor, null, true);
     },
 
     async authorize(actionId, workspaceId, actor) {
