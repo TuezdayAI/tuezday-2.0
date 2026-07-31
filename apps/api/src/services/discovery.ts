@@ -65,6 +65,7 @@ import {
   type DiscoveryPage,
   type DiscoveryPageReader,
 } from "../discovery/paging";
+import { ProviderCapabilityError } from "../discovery/provider-errors";
 import type { LlmGateway } from "../llm/gateway";
 import { BoundedJsonError } from "../connectors/bounded-json";
 import {
@@ -1356,6 +1357,12 @@ function safeExecutionFailure(
     return {
       code: "permission_required",
       persisted: `permission_required: ${error.message}`.slice(0, 500),
+    };
+  }
+  if (error instanceof ProviderCapabilityError) {
+    return {
+      code: error.code,
+      persisted: `${error.code}: ${error.message}`.slice(0, 500),
     };
   }
   if (error instanceof DiscoveryReferenceNotFoundError) {

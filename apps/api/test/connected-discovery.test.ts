@@ -257,7 +257,7 @@ describe("connected provider pagination", () => {
       providerKey: "linkedin",
       source: paginationSource("linkedin", {
         mode: "account_timeline",
-        handle: "urn:li:person:123",
+        handle: "urn:li:organization:123",
       }),
       pathPrefix: "/rest/posts",
       response: {
@@ -1210,11 +1210,91 @@ describe("connected discovery (Sprint 46)", () => {
   // -------------------------------------------------------------------------
 
   describe("permission-gated providers", () => {
+    it("resolves a plain LinkedIn company handle before fetching its posts", async () => {
+      const connectionId = insertConnection("linkedin");
+      await createSource({
+        type: "linkedin",
+        config: { mode: "account_timeline", handle: "@Acme" },
+        connectionId,
+      });
+      proxyHandler = (path) => {
+        if (path.startsWith("/rest/organizations")) {
+          return {
+            status: 200,
+            json: {
+              elements: [{ id: 73, vanityName: "Acme" }],
+            },
+          };
+        }
+        if (path.startsWith("/rest/posts")) {
+          return {
+            status: 200,
+            json: {
+              elements: [
+                {
+                  id: "urn:li:share:73",
+                  commentary: "Company update",
+                },
+              ],
+            },
+          };
+        }
+        return undefined;
+      };
+
+      const run = await runDiscoveryRoute();
+
+      expect(run.sources[0]).toMatchObject({ fetched: 1, new: 1 });
+      expect(proxyCalls.map((call) => call.path.split("?")[0])).toEqual([
+        "/rest/organizations",
+        "/rest/posts",
+      ]);
+      expect(proxyCalls[1]!.path).toContain(
+        `author=${encodeURIComponent("urn:li:organization:73")}`,
+      );
+      expect(proxyCalls[0]!.headers?.["LinkedIn-Version"]).toBe("202607");
+      expect(proxyCalls[1]!.headers?.["LinkedIn-Version"]).toBe("202607");
+    });
+
+    it("fails an unresolvable LinkedIn handle without member or posts fallback", async () => {
+      const connectionId = insertConnection("linkedin");
+      const source = await createSource({
+        type: "linkedin",
+        config: {
+          mode: "account_timeline",
+          handle: "missing-company",
+        },
+        connectionId,
+      });
+      proxyHandler = (path) =>
+        path.startsWith("/rest/organizations")
+          ? { status: 200, json: { elements: [] } }
+          : undefined;
+
+      const run = await runDiscoveryRoute();
+
+      expect(run.sources[0]!.error).toContain("target_unresolvable");
+      expect(sourceRow(source.id).lastError).toContain(
+        "target_unresolvable",
+      );
+      expect(proxyCalls.map((call) => call.path)).toHaveLength(1);
+      expect(proxyCalls[0]!.path).toContain("/rest/organizations");
+      expect(proxyCalls.some((call) => call.path === "/v2/userinfo")).toBe(
+        false,
+      );
+      expect(
+        proxyCalls.some((call) => call.path.startsWith("/rest/posts")),
+      ).toBe(false);
+    });
+
     it("marks only the LinkedIn source as permission_required while others succeed", async () => {
       const connectionId = insertConnection("linkedin");
       const linkedin = await createSource({
         type: "linkedin",
-        config: { mode: "account_timeline", handle: "urn:li:person:ME" },
+        config: {
+          mode: "account_timeline",
+          handle: "urn:li:organization:73",
+        },
         connectionId,
       });
       const rss = await createSource({ type: "rss", config: { feedUrl: "https://ok.dev/f.xml" } });

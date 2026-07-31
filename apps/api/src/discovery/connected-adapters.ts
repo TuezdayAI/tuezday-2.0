@@ -7,6 +7,7 @@ import type {
   DiscoveryTarget,
   DiscoveryTargetCheckpoint,
 } from "./paging";
+import { resolveLinkedInOrganizationUrn } from "./provider-account-resolvers";
 
 /**
  * Connected discovery adapters (Sprint 46): fetch external posts through the
@@ -290,10 +291,6 @@ interface LinkedInPostsResponse {
     total?: number;
   };
 }
-interface LinkedInUserInfo {
-  sub?: string;
-}
-
 // ---------------------------------------------------------------------------
 // Instagram (Graph API): Business Discovery for professional competitor
 // accounts and hashtag recent-media — both gated on Meta app review and a
@@ -534,24 +531,23 @@ async function fetchLinkedInPage(
     permissionMessage: LINKEDIN_PERMISSION,
     cursorRequested: Boolean(token),
   };
-  let author =
-    (input.target.externalId?.startsWith("urn:")
-      ? input.target.externalId
-      : undefined) ??
-    (input.target.handle?.trim().startsWith("urn:")
-      ? input.target.handle.trim()
-      : undefined) ??
-    (config.handle?.trim().startsWith("urn:")
-      ? config.handle.trim()
-      : undefined);
-  if (!author) {
-    const userinfo = (await getJson(input, "/v2/userinfo", {
-      ...opts,
-      cursorRequested: false,
-    })) as LinkedInUserInfo;
-    if (!userinfo.sub) throw new PermissionRequiredError(LINKEDIN_PERMISSION);
-    author = `urn:li:person:${userinfo.sub}`;
-  }
+  const explicitTarget =
+    input.target.externalId?.trim() ||
+    input.target.handle?.trim() ||
+    config.handle?.trim() ||
+    "";
+  const author = await resolveLinkedInOrganizationUrn({
+    target: explicitTarget,
+    async get(path) {
+      return {
+        status: 200,
+        json: await getJson(input, path, {
+          ...opts,
+          cursorRequested: false,
+        }),
+      };
+    },
+  });
 
   const count = pageSize(input);
   const json = (await getJson(
