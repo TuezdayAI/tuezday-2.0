@@ -210,14 +210,6 @@ async function fetchPodcast(config: DiscoverySourceConfig, safeFetch: SafeFetchS
   return parseFeed(await fetchFeedText(config.feedUrl, safeFetch));
 }
 
-async function fetchGoogleTrends(config: DiscoverySourceConfig, safeFetch: SafeFetchService) {
-  const geo = (config.geo?.trim() || "US").toUpperCase();
-  const url = `https://trends.google.com/trends/trendingsearches/daily/rss?geo=${encodeURIComponent(geo)}`;
-  const items = parseFeed(await fetchFeedText(url, safeFetch));
-  // Trends items can lack a guid/link; fall back to the title so they dedupe.
-  return items.map((i) => ({ ...i, externalId: i.externalId || i.title }));
-}
-
 async function fetchFundingNews(config: DiscoverySourceConfig, safeFetch: SafeFetchService) {
   const query = config.query?.trim();
   if (!query) throw new Error("Funding-news source has no query configured.");
@@ -249,10 +241,9 @@ export async function fetchSourceItems(
       return fetchYoutube(config, safeFetch);
     case "podcast":
       return fetchPodcast(config, safeFetch);
-    case "google_trends":
-      return fetchGoogleTrends(config, safeFetch);
     case "funding_news":
       return fetchFundingNews(config, safeFetch);
+    case "google_trends":
     case "x":
     case "linkedin":
     case "instagram":
@@ -325,7 +316,6 @@ export function isLiveSourceType(type: DiscoverySourceType): boolean {
     type === "hacker_news" ||
     type === "youtube" ||
     type === "podcast" ||
-    type === "google_trends" ||
     type === "funding_news"
   );
 }

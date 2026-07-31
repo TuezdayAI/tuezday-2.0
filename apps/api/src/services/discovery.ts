@@ -14,6 +14,7 @@ import {
 } from "drizzle-orm";
 import {
   createDiscoverySourceInputSchema,
+  isReservedDiscoverySourceType,
   type CreateDiscoverySourceInput,
   type DiscoveredItem,
   type DiscoveredItemMatch,
@@ -245,6 +246,15 @@ export class DiscoverySourceConnectionError extends Error {
   }
 }
 
+export class DiscoverySourceReservedError extends Error {
+  readonly code = "source_reserved";
+
+  constructor(type: DiscoverySourceType) {
+    super(`${type} is reserved and has no production provider.`);
+    this.name = "DiscoverySourceReservedError";
+  }
+}
+
 function validateSourceConnection(
   db: Db,
   workspaceId: string,
@@ -339,6 +349,9 @@ export function createDiscoverySource(
   workspaceId: string,
   input: CreateDiscoverySourceInput,
 ): DiscoverySource {
+  if (isReservedDiscoverySourceType(input.type)) {
+    throw new DiscoverySourceReservedError(input.type);
+  }
   const connectionId = input.connectionId ?? null;
   validateSourceConnection(db, workspaceId, input.type, input.config, connectionId);
   requireSourceTrackedAccounts(db, workspaceId, input.type, input.config);
@@ -413,6 +426,13 @@ export function deriveDiscoverySourceRuntimeState(
   type: DiscoverySourceType,
   connectionId: string | null,
 ): Pick<DiscoverySourceRow, "status" | "lastError" | "backoffUntil"> {
+  if (isReservedDiscoverySourceType(type)) {
+    return {
+      status: "reserved",
+      lastError: "source_reserved",
+      backoffUntil: null,
+    };
+  }
   return {
     status: connectionId || isLiveSourceType(type) ? "active" : "needs_api_key",
     lastError: null,
@@ -428,6 +448,12 @@ export function updateDiscoverySource(
 ): DiscoverySource | undefined {
   const existing = getDiscoverySource(db, workspaceId, sourceId);
   if (!existing) return undefined;
+  if (
+    isReservedDiscoverySourceType(existing.type) &&
+    input.enabled === true
+  ) {
+    throw new DiscoverySourceReservedError(existing.type);
+  }
   const transition = validateDiscoverySourceTransition(existing, input);
   const nextConnectionId = transition.connectionId ?? null;
   validateSourceConnection(

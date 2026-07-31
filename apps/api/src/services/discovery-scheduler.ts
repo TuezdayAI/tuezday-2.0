@@ -213,6 +213,7 @@ export async function runDiscoveryScheduler(
           ).filter(
             (source) =>
               source.enabled &&
+              source.status !== "reserved" &&
               (source.status !== "needs_api_key" ||
                 (source.type === "intent" &&
                   deps.intentProvider.isConfigured())),

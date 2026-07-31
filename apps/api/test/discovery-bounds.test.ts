@@ -364,6 +364,30 @@ describe("bounded leased discovery scheduler", () => {
     vi.useRealTimers();
   });
 
+  it("never enqueues a reserved source even when it is enabled", async () => {
+    const db = createTestDb();
+    seedWorkspace(db);
+    seedSource(db, { id: "reserved-trends", type: "google_trends" });
+    db.update(discoverySources)
+      .set({ status: "reserved", enabled: true })
+      .where(eq(discoverySources.id, "reserved-trends"))
+      .run();
+    let pageCalls = 0;
+
+    const result = await runDiscoveryScheduler(
+      dependencies(db, async ({ target }) => {
+        pageCalls += 1;
+        return page(target.key);
+      }),
+      { workspaceId: "workspace-1" },
+    );
+
+    expect(result.queued).toBe(0);
+    expect(result.processed).toBe(0);
+    expect(pageCalls).toBe(0);
+    expect(db.select().from(discoveryJobs).all()).toEqual([]);
+  });
+
   it("returns busy for overlap and makes zero calls from the losing tick", async () => {
     const db = createTestDb();
     seedWorkspace(db);

@@ -2180,8 +2180,27 @@ export const DISCOVERY_SOURCE_TYPES = [
 ] as const;
 export type DiscoverySourceType = (typeof DISCOVERY_SOURCE_TYPES)[number];
 
-export const DISCOVERY_SOURCE_STATUSES = ["active", "needs_api_key", "error"] as const;
+export const DISCOVERY_SOURCE_STATUSES = [
+  "active",
+  "needs_api_key",
+  "reserved",
+  "error",
+] as const;
 export type DiscoverySourceStatus = (typeof DISCOVERY_SOURCE_STATUSES)[number];
+
+export const RESERVED_DISCOVERY_SOURCE_TYPES = [
+  "google_trends",
+] as const satisfies readonly DiscoverySourceType[];
+
+const RESERVED_DISCOVERY_SOURCE_TYPE_SET = new Set<DiscoverySourceType>(
+  RESERVED_DISCOVERY_SOURCE_TYPES,
+);
+
+export function isReservedDiscoverySourceType(
+  type: DiscoverySourceType,
+): boolean {
+  return RESERVED_DISCOVERY_SOURCE_TYPE_SET.has(type);
+}
 
 // Connected sourcing (Sprint 46): how a source listens. Keyless sources leave
 // `mode` unset; connected sources pick a provider-supported mode (X: query /

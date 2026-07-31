@@ -21,6 +21,7 @@ import {
 } from "../safe-fetch";
 import {
   DiscoverySourceConnectionError,
+  DiscoverySourceReservedError,
   ItemNotTriagableError,
   MatchingNotReadyError,
   acceptDiscoveredItem,
@@ -104,6 +105,12 @@ export function registerDiscoveryRoutes(
         if (err instanceof DiscoverySourceConnectionError) {
           return reply.status(400).send({ error: err.code, message: err.message });
         }
+        if (err instanceof DiscoverySourceReservedError) {
+          return reply.status(409).send({
+            error: err.code,
+            message: err.message,
+          });
+        }
         if (err instanceof DiscoveryReferenceNotFoundError) {
           return reply.status(404).send({ error: "related_object_not_found" });
         }
@@ -170,6 +177,12 @@ export function registerDiscoveryRoutes(
         }
         if (err instanceof DiscoverySourceConnectionError) {
           return reply.status(400).send({ error: err.code, message: err.message });
+        }
+        if (err instanceof DiscoverySourceReservedError) {
+          return reply.status(409).send({
+            error: err.code,
+            message: err.message,
+          });
         }
         if (err instanceof DiscoveryReferenceNotFoundError) {
           return reply.status(404).send({ error: "related_object_not_found" });

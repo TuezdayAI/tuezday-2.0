@@ -18,6 +18,7 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
   DISCOVERY_SOURCE_TYPES,
+  isReservedDiscoverySourceType,
   TRACKED_SOCIAL_PLATFORMS,
   type Campaign,
   type Connection,
@@ -49,7 +50,7 @@ const TYPE_SHORT_LABELS: Record<DiscoverySourceType, string> = {
   hacker_news: "Hacker News",
   youtube: "YouTube",
   podcast: "Podcast",
-  google_trends: "Trends",
+  google_trends: "Trends · reserved",
   funding_news: "Funding",
   x: "X",
   linkedin: "LinkedIn",
@@ -78,7 +79,7 @@ const TYPE_LABELS: Record<DiscoverySourceType, string> = {
   hacker_news: "Hacker News",
   youtube: "YouTube channel",
   podcast: "Podcast",
-  google_trends: "Google Trends",
+  google_trends: "Google Trends — reserved",
   funding_news: "Funding news",
   x: "X (connected or API key)",
   linkedin: "LinkedIn (connected or API key)",
@@ -260,6 +261,7 @@ export default function DiscoveryPage() {
 
   function submitForm(e: React.FormEvent) {
     e.preventDefault();
+    if (isReservedDiscoverySourceType(newType)) return;
     const config: Record<string, string | undefined> = {};
     const accountTarget: Record<string, string | undefined> = trackedAccountId
       ? { trackedAccountId }
@@ -474,6 +476,7 @@ export default function DiscoveryPage() {
     if (s.status === "error" && s.lastError === "connection_disconnected")
       return { label: "needs connection", tone: "rejected" };
     if (s.status === "error") return { label: "error", tone: "rejected" };
+    if (s.status === "reserved") return { label: "reserved", tone: "edited" };
     if (s.status === "needs_api_key") return { label: "needs API key", tone: "edited" };
     if (s.backoffUntil && s.backoffUntil > Date.now())
       return { label: "backing off", tone: "edited" };
@@ -537,7 +540,11 @@ export default function DiscoveryPage() {
                   }}
                 >
                   {DISCOVERY_SOURCE_TYPES.map((t) => (
-                    <option key={t} value={t}>
+                    <option
+                      key={t}
+                      value={t}
+                      disabled={isReservedDiscoverySourceType(t)}
+                    >
                       {TYPE_LABELS[t]}
                     </option>
                   ))}
@@ -692,10 +699,9 @@ export default function DiscoveryPage() {
                 </label>
               )}
               {newType === "google_trends" && (
-                <label>
-                  Geo (optional)
-                  <Input value={geo} onChange={(e) => setGeo(e.target.value)} placeholder="US" />
-                </label>
+                <p className="meta">
+                  Google Trends is reserved while the official API remains limited access.
+                </p>
               )}
               {newType === "funding_news" && (
                 <label>
@@ -710,7 +716,11 @@ export default function DiscoveryPage() {
               <Button
                 variant="primary"
                 type="submit"
-                disabled={busy || (newType === "instagram" && !connectionId)}
+                disabled={
+                  busy ||
+                  isReservedDiscoverySourceType(newType) ||
+                  (newType === "instagram" && !connectionId)
+                }
               >
                 Add
               </Button>
@@ -808,9 +818,11 @@ export default function DiscoveryPage() {
                   </div>
                   {s.lastError && <p className="error-inline">{s.lastError}</p>}
                   <div className="rating-row" style={{ marginTop: 8 }}>
-                    <Button variant="secondary" size="compact" onClick={() => toggleSource(s)}>
-                      {s.enabled ? "Disable" : "Enable"}
-                    </Button>
+                    {s.status !== "reserved" && (
+                      <Button variant="secondary" size="compact" onClick={() => toggleSource(s)}>
+                        {s.enabled ? "Disable" : "Enable"}
+                      </Button>
+                    )}
                     <Button variant="danger" size="compact" onClick={() => removeSource(s)}>
                       Delete
                     </Button>

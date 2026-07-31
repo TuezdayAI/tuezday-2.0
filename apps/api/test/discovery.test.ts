@@ -194,6 +194,60 @@ describe("discovery API", () => {
   }
 
   describe("sources", () => {
+    it("rejects Google Trends creation and activation as reserved", async () => {
+      const created = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/discovery/sources`,
+        payload: {
+          type: "google_trends",
+          config: { geo: "US" },
+        },
+      });
+      expect(created.statusCode).toBe(409);
+      expect(created.json()).toMatchObject({ error: "source_reserved" });
+
+      const sourceId = "11111111-1111-4111-8111-111111111111";
+      db.insert(discoverySources)
+        .values({
+          id: sourceId,
+          workspaceId,
+          type: "google_trends",
+          name: "Legacy Trends",
+          configJson: JSON.stringify({ geo: "US" }),
+          enabled: false,
+          status: "reserved",
+          lastError: "source_reserved",
+          lastFetchedAt: null,
+          connectionId: null,
+          cursorJson: "{}",
+          backoffUntil: null,
+          lastAttemptedAt: null,
+          executionVersion: 1,
+          createdAt: 1,
+        })
+        .run();
+
+      const activated = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/discovery/sources/${sourceId}`,
+        payload: { enabled: true },
+      });
+      expect(activated.statusCode).toBe(409);
+      expect(activated.json()).toMatchObject({ error: "source_reserved" });
+
+      const renamed = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/discovery/sources/${sourceId}`,
+        payload: { name: "Archived Trends" },
+      });
+      expect(renamed.statusCode).toBe(200);
+      expect(renamed.json()).toMatchObject({
+        name: "Archived Trends",
+        status: "reserved",
+        enabled: false,
+      });
+    });
+
     it("creates a live rss source as active", async () => {
       const source = await addRssSource();
       expect(discoverySourceSchema.safeParse(source).success).toBe(true);
