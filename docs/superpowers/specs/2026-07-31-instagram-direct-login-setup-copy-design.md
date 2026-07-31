@@ -1,6 +1,6 @@
 # Instagram Direct Login Setup Copy Design
 
-**Date:** 2026-07-31  
+**Date:** 2026-07-31
 **Branch:** `sprint-50-provider-repair-dedupe`
 
 ## Problem
@@ -45,4 +45,3 @@ schema, or other provider instructions will change.
 5. The regression test and web typecheck pass.
 6. The restarted web app returns HTTP 200 and `/health` reports the API and
    database as healthy.
-
