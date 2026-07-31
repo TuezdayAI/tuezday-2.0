@@ -67,6 +67,7 @@ import {
   type DiscoveryPageReader,
 } from "../discovery/paging";
 import { ProviderCapabilityError } from "../discovery/provider-errors";
+import { deleteDiscoverySourcePreservingDuplicates } from "./discovery-dedupe";
 import type { LlmGateway } from "../llm/gateway";
 import { BoundedJsonError } from "../connectors/bounded-json";
 import {
@@ -529,17 +530,11 @@ export function updateDiscoverySource(
 }
 
 export function deleteDiscoverySource(db: Db, workspaceId: string, sourceId: string): boolean {
-  if (!getDiscoverySource(db, workspaceId, sourceId)) return false;
-  db
-    .delete(discoverySources)
-    .where(
-      and(
-        eq(discoverySources.workspaceId, workspaceId),
-        eq(discoverySources.id, sourceId),
-      ),
-    )
-    .run();
-  return true;
+  return deleteDiscoverySourcePreservingDuplicates(
+    db,
+    workspaceId,
+    sourceId,
+  );
 }
 
 // ---------------------------------------------------------------------------

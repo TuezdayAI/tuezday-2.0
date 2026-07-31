@@ -85,6 +85,7 @@ import { registerPublicApiRoutes } from "./routes/public-api";
 import { backfillExternalActionPolicies } from "./services/external-action-backfill";
 import { createExternalActionAdapters } from "./services/external-action-adapters";
 import { createExternalActionRuntime } from "./services/external-action-coordinator";
+import { repairDanglingDuplicateGroups } from "./services/discovery-dedupe";
 import type { DiscoveryOperatorEvent } from "./services/discovery-scheduler";
 import {
   DEFAULT_DISCOVERY_POLICY,
@@ -184,6 +185,7 @@ export async function buildApp({
   const effectiveShutdownSignal =
     shutdownSignal ?? ownedShutdown!.signal;
   backfillExternalActionPolicies(db);
+  repairDanglingDuplicateGroups(db);
   const externalActionRuntime = createExternalActionRuntime({
     db,
     adapters: createExternalActionAdapters(db, connectors, fetcher, outboundEmail, gmail),

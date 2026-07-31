@@ -321,7 +321,12 @@ export default function DiscoveryPage() {
   }
 
   async function removeSource(source: DiscoverySource) {
-    if (!confirm(`Delete source "${source.name}"? Its discovered items go with it.`)) return;
+    if (
+      !confirm(
+        `Delete source "${source.name}"? Stories also seen through another source will be preserved.`,
+      )
+    )
+      return;
     await apiFetch(`/workspaces/${id}/discovery/sources/${source.id}`, {
       method: "DELETE",
     });
