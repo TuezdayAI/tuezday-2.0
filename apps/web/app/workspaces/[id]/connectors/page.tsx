@@ -96,10 +96,12 @@ const OAUTH_APP_HINTS: Record<string, React.ReactNode> = {
   ),
   instagram: (
     <>
-      Create a Facebook app at developers.facebook.com with the Instagram Graph API (publishing
-      needs an Instagram Business/Creator account on a Facebook Page) and callback uri{" "}
-      <code>http://localhost:3050/oauth/callback</code>, then set INSTAGRAM_CLIENT_ID and
-      INSTAGRAM_CLIENT_SECRET (the Facebook app id/secret) in the root .env and restart the API.
+      Create a Meta developer app with “Instagram API with Instagram Login” for an Instagram
+      Business/Creator account. Register callback uri{" "}
+      <code>http://localhost:3050/oauth/callback</code>, request the{" "}
+      <code>instagram_business_basic</code> and{" "}
+      <code>instagram_business_content_publish</code> scopes, then set INSTAGRAM_CLIENT_ID and
+      INSTAGRAM_CLIENT_SECRET in the root .env and restart the API.
     </>
   ),
   gmail: (
