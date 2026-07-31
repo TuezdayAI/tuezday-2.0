@@ -3026,20 +3026,18 @@ export const CONNECTOR_PROVIDERS: readonly ConnectorProvider[] = [
     oauthScopes: "tweet.read,tweet.write,users.read,dm.read,dm.write,offline.access,list.read",
   },
   {
-    // Instagram content publishing runs through the Facebook Graph API and
-    // needs an Instagram Business/Creator account linked to a Facebook Page,
-    // plus a Facebook app with instagram_content_publish approved. Creds are
-    // the Facebook app's INSTAGRAM_CLIENT_ID / INSTAGRAM_CLIENT_SECRET.
-    // testPath hits /me to verify identity; Sprint 26 does the broadcast post.
+    // Direct Instagram Login for professional Business/Creator accounts.
+    // OAuth completion binds the returned account id and username so every
+    // later read/write is scoped to that one account without Facebook Pages.
     key: "instagram",
     label: "Instagram",
-    nangoProvider: "facebook",
+    nangoProvider: "instagram",
     authMode: "oauth",
     categories: ["social"],
-    baseUrl: "https://graph.facebook.com",
-    testPath: "/v23.0/me",
+    baseUrl: "https://graph.instagram.com",
+    testPath: "/me?fields=id,user_id,username,name,account_type",
     oauthScopes:
-      "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement,business_management",
+      "instagram_business_basic,instagram_business_content_publish",
   },
   {
     // Sprint 47: the outreach mailbox. OAuth popup via Nango like the social
@@ -3155,6 +3153,7 @@ export const connectionSchema = z.object({
   config: z.object({
     baseUrl: z.string().optional(),
     testPath: z.string().optional(),
+    authArchitecture: z.literal("instagram_login").optional(),
   }),
   contentProfile: connectionContentProfileSchema,
   displayName: z.string(),

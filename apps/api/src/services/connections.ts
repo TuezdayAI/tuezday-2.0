@@ -14,6 +14,7 @@ import type { Db } from "../db";
 import { connections, type ConnectionRow } from "../db/schema";
 import type { ConnectorFabric, ImportCredentials } from "../connectors/fabric";
 import { operatorFlagEnabled } from "../connectors/provider-config";
+import { ProviderCapabilityError } from "../discovery/provider-errors";
 
 export function providerByKey(key: string): ConnectorProvider | undefined {
   return CONNECTOR_PROVIDERS.find((p) => p.key === key);
@@ -132,7 +133,7 @@ const OAUTH_ENV: Record<string, { id: string; secret: string }> = {
   // set in the root .env; until then it stays needs_oauth_app, like Reddit.
   linkedin: { id: "LINKEDIN_CLIENT_ID", secret: "LINKEDIN_CLIENT_SECRET" },
   twitter: { id: "TWITTER_CLIENT_ID", secret: "TWITTER_CLIENT_SECRET" },
-  instagram: { id: "INSTAGRAM_CLIENT_ID", secret: "INSTAGRAM_CLIENT_SECRET" }, // Facebook app id/secret
+  instagram: { id: "INSTAGRAM_CLIENT_ID", secret: "INSTAGRAM_CLIENT_SECRET" },
   // Sprint 47 outreach mailbox: a GCP OAuth app with the Gmail scopes.
   gmail: { id: "GMAIL_CLIENT_ID", secret: "GMAIL_CLIENT_SECRET" },
 };
@@ -203,6 +204,84 @@ export function registerOAuthConnection(
   };
   db.insert(connections).values(row).run();
   return rowToConnection(row);
+}
+
+interface InstagramIdentity {
+  id?: string;
+  user_id?: string;
+  username?: string;
+  name?: string;
+}
+
+/** Bind the one professional account returned by direct Instagram Login. */
+export async function bindInstagramOAuthIdentity(
+  db: Db,
+  fabric: ConnectorFabric,
+  connection: Connection,
+): Promise<Connection> {
+  const provider = providerByKey("instagram")!;
+  const response = await fabric.proxyJson(
+    "GET",
+    "/me?fields=id,user_id,username,name,account_type",
+    connection.nangoConnectionId,
+    integrationKeyFor(provider),
+    { baseUrlOverride: "https://graph.instagram.com" },
+  );
+  const identity = (response.json ?? {}) as InstagramIdentity;
+  const accountId = identity.user_id?.trim() || identity.id?.trim();
+  const username = identity.username?.trim().replace(/^@+/, "");
+  if (
+    response.status < 200 ||
+    response.status >= 300 ||
+    !accountId ||
+    !username
+  ) {
+    const now = Date.now();
+    db.update(connections)
+      .set({
+        status: "error",
+        lastError: "reconnect_required",
+        lastCheckedAt: now,
+        updatedAt: now,
+      })
+      .where(
+        and(
+          eq(connections.workspaceId, connection.workspaceId),
+          eq(connections.id, connection.id),
+        ),
+      )
+      .run();
+    throw new ProviderCapabilityError(
+      "reconnect_required",
+      "Instagram Login did not return a professional account identity.",
+    );
+  }
+
+  const now = Date.now();
+  db.update(connections)
+    .set({
+      configJson: JSON.stringify({
+        ...connection.config,
+        authArchitecture: "instagram_login",
+      }),
+      displayName: identity.name?.trim() || `@${username}`,
+      externalAccountId: accountId,
+      externalAccountName: identity.name?.trim() || username,
+      externalAccountHandle: username.toLowerCase(),
+      externalAccountUrl: `https://www.instagram.com/${username}/`,
+      status: "connected",
+      lastCheckedAt: now,
+      lastError: null,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(connections.workspaceId, connection.workspaceId),
+        eq(connections.id, connection.id),
+      ),
+    )
+    .run();
+  return getConnection(db, connection.workspaceId, connection.id)!;
 }
 
 /**

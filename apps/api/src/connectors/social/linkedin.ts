@@ -15,6 +15,8 @@ const LINKEDIN_API = "https://api.linkedin.com";
 export interface SocialAdapterConfig {
   nangoConnectionId: string;
   integrationKey: string;
+  externalAccountId?: string | null;
+  externalAccountHandle?: string | null;
 }
 
 interface UserInfoResponse {

@@ -36,11 +36,11 @@ const SOCIAL = [
   {
     key: "instagram",
     label: "Instagram",
-    nangoProvider: "facebook",
+    nangoProvider: "instagram",
     idEnv: "INSTAGRAM_CLIENT_ID",
     secretEnv: "INSTAGRAM_CLIENT_SECRET",
     scopes:
-      "instagram_basic,instagram_content_publish,pages_show_list,pages_read_engagement,business_management",
+      "instagram_business_basic,instagram_business_content_publish",
   },
 ] as const;
 
@@ -136,7 +136,19 @@ function fakeFabric(state: FabricState): ConnectorFabric {
     async proxyGet() {
       return { status: state.proxyStatus, bodySnippet: '{"sub":"member-123"}' };
     },
-    async proxyJson() {
+    async proxyJson(_method, path) {
+      if (path.startsWith("/me?fields=id,user_id,username,name,account_type")) {
+        return {
+          status: state.proxyStatus,
+          json: {
+            id: "ig-direct-42",
+            user_id: "ig-direct-42",
+            username: "tuezday",
+            name: "Tuezday",
+            account_type: "BUSINESS",
+          },
+        };
+      }
       return { status: state.proxyStatus, json: { ok: true } };
     },
   };
@@ -304,6 +316,19 @@ describe("connect social API", () => {
         expect(row.status).toBe("connected");
         expect(row.lastCheckedAt).toBeTruthy();
       }
+    });
+
+    it("binds the direct Instagram professional account at OAuth completion", async () => {
+      stubSocialEnv();
+      const connection = await connect("instagram");
+
+      expect(connection).toMatchObject({
+        providerKey: "instagram",
+        status: "connected",
+        externalAccountId: "ig-direct-42",
+        externalAccountHandle: "tuezday",
+        config: { authArchitecture: "instagram_login" },
+      });
     });
 
     it("keeps multiple OAuth accounts for the same social provider", async () => {

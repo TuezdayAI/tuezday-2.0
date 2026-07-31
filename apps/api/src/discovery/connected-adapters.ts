@@ -8,6 +8,7 @@ import type {
   DiscoveryTargetCheckpoint,
 } from "./paging";
 import { resolveLinkedInOrganizationUrn } from "./provider-account-resolvers";
+import { ProviderCapabilityError } from "./provider-errors";
 
 /**
  * Connected discovery adapters (Sprint 46): fetch external posts through the
@@ -292,19 +293,13 @@ interface LinkedInPostsResponse {
   };
 }
 // ---------------------------------------------------------------------------
-// Instagram (Graph API): Business Discovery for professional competitor
-// accounts and hashtag recent-media — both gated on Meta app review and a
-// linked IG Business/Creator account. Missing access is a permission error,
-// never fake empty results.
+// Direct Instagram Login can read only the connected professional account's
+// own media. It does not expose competitor Business Discovery or hashtags.
 // ---------------------------------------------------------------------------
 
-const GRAPH_BASE = "https://graph.facebook.com";
-const GRAPH_V = "v23.0";
-const INSTAGRAM_PERMISSION = "Instagram professional account or app review required";
+const INSTAGRAM_GRAPH_BASE = "https://graph.instagram.com";
+const INSTAGRAM_PERMISSION = "Instagram professional account access required";
 
-interface IgAccountsResponse {
-  data?: Array<{ instagram_business_account?: { id?: string } }>;
-}
 interface IgMedia {
   id?: string;
   caption?: string;
@@ -312,17 +307,6 @@ interface IgMedia {
   timestamp?: string;
   like_count?: number;
   comments_count?: number;
-}
-interface IgBusinessDiscoveryResponse {
-  business_discovery?: {
-    media?: {
-      data?: IgMedia[];
-      paging?: { cursors?: { after?: string } };
-    };
-  };
-}
-interface IgHashtagSearchResponse {
-  data?: Array<{ id?: string }>;
 }
 interface IgMediaListResponse {
   data?: IgMedia[];
@@ -582,109 +566,72 @@ async function fetchLinkedInPage(
   };
 }
 
-async function instagramUserId(
-  input: ConnectedProviderPageInput,
-  opts: ProxyOpts,
-): Promise<string> {
-  const accounts = (await getJson(
-    input,
-    `/${GRAPH_V}/me/accounts?fields=instagram_business_account{id}`,
-    {
-      ...opts,
-      cursorRequested: false,
-    },
-  )) as IgAccountsResponse;
-  const igUserId = (accounts.data ?? [])
-    .map((page) => page.instagram_business_account?.id)
-    .find(Boolean);
-  if (!igUserId) {
-    throw new PermissionRequiredError(
-      `${INSTAGRAM_PERMISSION} (no IG Business account is linked to this Facebook login)`,
-    );
-  }
-  return igUserId;
-}
-
 async function fetchInstagramPage(
   input: ConnectedProviderPageInput,
 ): Promise<ProviderPageResult> {
   const { config } = input.source;
+  if (input.connection.config.authArchitecture !== "instagram_login") {
+    throw new ProviderCapabilityError(
+      "reconnect_required",
+      "Reconnect Instagram with direct Instagram Login.",
+    );
+  }
+  if (config.mode === "hashtag") {
+    throw new ProviderCapabilityError(
+      "unsupported_mode",
+      "Instagram Login does not support hashtag discovery.",
+    );
+  }
+  if (config.mode !== "account_timeline") {
+    throw new ProviderCapabilityError(
+      "unsupported_mode",
+      `Instagram sources do not support mode "${String(config.mode)}".`,
+    );
+  }
+  const requested = input.target.handle
+    ?.trim()
+    .replace(/^@+/, "")
+    .toLowerCase();
+  const connected = input.connection.externalAccountHandle
+    ?.trim()
+    .replace(/^@+/, "")
+    .toLowerCase();
+  const accountId = input.connection.externalAccountId?.trim();
+  if (!connected || !accountId) {
+    throw new ProviderCapabilityError(
+      "reconnect_required",
+      "Reconnect Instagram to bind its professional account.",
+    );
+  }
+  if (requested !== connected) {
+    throw new ProviderCapabilityError(
+      "unsupported_target",
+      "Instagram Login can read only the connected account's own media.",
+    );
+  }
+
   const token = providerToken(input);
   const opts: ProxyOpts = {
-    baseUrl: GRAPH_BASE,
+    baseUrl: INSTAGRAM_GRAPH_BASE,
     permissionMessage: INSTAGRAM_PERMISSION,
     permissionOn400: true,
     cursorRequested: Boolean(token),
   };
-  const igUserId = await instagramUserId(input, opts);
   const limit = pageSize(input);
-
-  if (config.mode === "hashtag") {
-    const hashtag = config.hashtag?.trim().replace(/^#/, "");
-    if (!hashtag) {
-      throw new Error(
-        "Instagram hashtag source has no hashtag configured.",
-      );
-    }
-    const search = (await getJson(
-      input,
-      `/${GRAPH_V}/ig_hashtag_search?user_id=${igUserId}` +
-        `&q=${encodeURIComponent(hashtag)}`,
-      {
-        ...opts,
-        cursorRequested: false,
-      },
-    )) as IgHashtagSearchResponse;
-    const hashtagId = search.data?.[0]?.id;
-    if (!hashtagId) return { items: [], nextToken: null };
-    let path =
-      `/${GRAPH_V}/${hashtagId}/recent_media?user_id=${igUserId}` +
-      `&fields=id,caption,permalink,timestamp&limit=${limit}`;
-    path = appendQuery(path, "after", token);
-    const media = (await getJson(input, path, opts)) as IgMediaListResponse;
-    return {
-      items: igItems(
-        media.data ?? [],
-        `#${hashtag} on Instagram`,
-      ),
-      nextToken: media.paging?.cursors?.after?.trim() || null,
-    };
-  }
-
-  if (config.mode === "account_timeline") {
-    const handle = input.target.handle?.trim().replace(/^@+/, "");
-    if (!handle) {
-      throw new Error(
-        "Instagram account source has no handle configured.",
-      );
-    }
-    const mediaCursor = token
-      ? `.after(${token})`
-      : "";
-    const fields =
-      `business_discovery.username(${handle})` +
-      `{media${mediaCursor}.limit(${limit})` +
-      "{id,caption,permalink,timestamp,like_count,comments_count}}";
-    const path =
-      `/${GRAPH_V}/${igUserId}?fields=${encodeURIComponent(fields)}`;
-    const json = (await getJson(
-      input,
-      path,
-      opts,
-    )) as IgBusinessDiscoveryResponse;
-    const media = json.business_discovery?.media;
-    return {
-      items: igItems(
-        media?.data ?? [],
-        `@${handle} on Instagram`,
-      ),
-      nextToken: media?.paging?.cursors?.after?.trim() || null,
-    };
-  }
-
-  throw new Error(
-    `Instagram sources do not support mode "${config.mode}".`,
-  );
+  let path =
+    `/${accountId}/media` +
+    "?fields=id,caption,permalink,timestamp,like_count,comments_count" +
+    `&limit=${limit}`;
+  path = appendQuery(path, "after", token);
+  const media = (await getJson(
+    input,
+    path,
+    opts,
+  )) as IgMediaListResponse;
+  return {
+    items: igItems(media.data ?? [], `@${connected} on Instagram`),
+    nextToken: media.paging?.cursors?.after?.trim() || null,
+  };
 }
 
 async function fetchConnectedProviderPage(

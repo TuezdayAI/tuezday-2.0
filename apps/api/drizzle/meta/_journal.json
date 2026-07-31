@@ -400,6 +400,13 @@
       "when": 1785490200000,
       "tag": "0056_sprint_50_google_trends_reserved",
       "breakpoints": true
+    },
+    {
+      "idx": 57,
+      "version": "6",
+      "when": 1785490800000,
+      "tag": "0057_sprint_50_instagram_login",
+      "breakpoints": true
     }
   ]
 }

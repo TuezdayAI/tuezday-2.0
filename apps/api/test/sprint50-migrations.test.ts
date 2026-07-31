@@ -124,4 +124,110 @@ describe("Sprint 50 migrations", () => {
       heartbeat_at: null,
     });
   });
+
+  it("requires legacy Facebook-backed Instagram connections to reconnect", () => {
+    const sqlite = databaseThrough("0056");
+    sqlite
+      .prepare(
+        "INSERT INTO workspaces (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)",
+      )
+      .run("workspace-1", "Workspace", 1, 1);
+    sqlite
+      .prepare(
+        `INSERT INTO connections (
+          id, workspace_id, provider_key, nango_connection_id, config_json,
+          status, last_checked_at, last_error, created_at, display_name,
+          updated_at, content_profile_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "legacy-instagram",
+        "workspace-1",
+        "instagram",
+        "nango-legacy-instagram",
+        "{}",
+        "connected",
+        1,
+        null,
+        1,
+        "Instagram",
+        1,
+        "{}",
+      );
+    sqlite
+      .prepare(
+        `INSERT INTO discovery_sources (
+          id, workspace_id, type, name, config_json, enabled, status,
+          last_error, last_fetched_at, connection_id, cursor_json,
+          backoff_until, last_attempted_at, execution_version, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "instagram-source",
+        "workspace-1",
+        "instagram",
+        "Instagram",
+        '{"mode":"account_timeline","handle":"tuezday"}',
+        1,
+        "active",
+        null,
+        null,
+        "legacy-instagram",
+        "{}",
+        null,
+        null,
+        1,
+        1,
+      );
+    sqlite
+      .prepare(
+        `INSERT INTO discovery_jobs (
+          id, workspace_id, source_id, status, attempt, locked_at,
+          source_execution_version, lease_owner, lease_version,
+          lease_expires_at, heartbeat_at, started_at, finished_at,
+          fetched_count, new_count, error, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "instagram-job",
+        "workspace-1",
+        "instagram-source",
+        "queued",
+        0,
+        null,
+        1,
+        null,
+        0,
+        null,
+        null,
+        null,
+        null,
+        0,
+        0,
+        null,
+        1,
+      );
+
+    applySqlFile(sqlite, "0057_sprint_50_instagram_login.sql");
+
+    expect(
+      sqlite
+        .prepare(
+          "SELECT status, last_error FROM connections WHERE id = ?",
+        )
+        .get("legacy-instagram"),
+    ).toEqual({ status: "error", last_error: "reconnect_required" });
+    expect(
+      sqlite
+        .prepare(
+          "SELECT status, last_error FROM discovery_sources WHERE id = ?",
+        )
+        .get("instagram-source"),
+    ).toEqual({ status: "error", last_error: "reconnect_required" });
+    expect(
+      sqlite
+        .prepare("SELECT status, error FROM discovery_jobs WHERE id = ?")
+        .get("instagram-job"),
+    ).toEqual({ status: "skipped", error: "reconnect_required" });
+  });
 });

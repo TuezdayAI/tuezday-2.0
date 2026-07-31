@@ -131,7 +131,6 @@ export default function DiscoveryPage() {
   const [mode, setMode] = useState<DiscoverySourceMode | "">("");
   const [handle, setHandle] = useState("");
   const [listId, setListId] = useState("");
-  const [hashtag, setHashtag] = useState("");
   const [trackedAccountId, setTrackedAccountId] = useState("");
 
   // tracked-accounts form
@@ -213,7 +212,6 @@ export default function DiscoveryPage() {
       setMode("");
       setHandle("");
       setListId("");
-      setHashtag("");
       setTrackedAccountId("");
       await load();
     } catch (err) {
@@ -236,12 +234,13 @@ export default function DiscoveryPage() {
   }
 
   // Effective listen mode while the form is open. X defaults to search; a
-  // connected LinkedIn source only supports account timelines; Instagram
-  // defaults to account posts.
+  // connected LinkedIn source only supports account timelines.
   const xMode: DiscoverySourceMode = mode === "" ? "query" : mode;
-  const igMode: DiscoverySourceMode = mode === "" ? "account_timeline" : mode;
 
   const matchingConnections = connectionsForType(newType);
+  const selectedConnection = matchingConnections.find(
+    (connection) => connection.id === connectionId,
+  );
   const showConnectionPicker = Boolean(SOURCE_PROVIDERS[newType]);
   const instagramUnconnectable = newType === "instagram" && matchingConnections.length === 0;
   const showQueryField =
@@ -256,8 +255,7 @@ export default function DiscoveryPage() {
     (newType === "linkedin" && !connectionId);
   const showAccountTarget =
     (newType === "x" && Boolean(connectionId) && xMode === "account_timeline") ||
-    (newType === "linkedin" && Boolean(connectionId)) ||
-    (newType === "instagram" && igMode === "account_timeline");
+    (newType === "linkedin" && Boolean(connectionId));
 
   function submitForm(e: React.FormEvent) {
     e.preventDefault();
@@ -299,9 +297,9 @@ export default function DiscoveryPage() {
       }
     }
     if (newType === "instagram") {
-      config.mode = igMode;
-      if (igMode === "account_timeline") Object.assign(config, accountTarget);
-      if (igMode === "hashtag") config.hashtag = hashtag.trim();
+      config.mode = "account_timeline";
+      config.handle =
+        selectedConnection?.externalAccountHandle?.trim() || undefined;
     }
     if (newType === "youtube") config.channelId = channelId.trim();
     if (newType === "google_trends" && geo.trim()) config.geo = geo.trim();
@@ -592,20 +590,15 @@ export default function DiscoveryPage() {
                   </Select>
                 </label>
               )}
-              {newType === "instagram" && (
-                <label>
-                  Listen for
-                  <Select
-                    value={igMode}
-                    onChange={(e) => {
-                      setMode(e.target.value as DiscoverySourceMode);
-                      setTrackedAccountId("");
-                    }}
-                  >
-                    <option value="account_timeline">Account posts</option>
-                    <option value="hashtag">Hashtag</option>
-                  </Select>
-                </label>
+              {newType === "instagram" && connectionId && (
+                <p className="meta">
+                  Direct Instagram Login reads only posts from the connected
+                  account
+                  {selectedConnection?.externalAccountHandle
+                    ? ` @${selectedConnection.externalAccountHandle}`
+                    : ""}
+                  . Competitor and hashtag discovery are not supported.
+                </p>
               )}
               {(newType === "rss" || newType === "podcast") && (
                 <label style={{ flex: 1 }}>
@@ -675,16 +668,6 @@ export default function DiscoveryPage() {
                     value={listId}
                     onChange={(e) => setListId(e.target.value)}
                     placeholder="1234567890"
-                  />
-                </label>
-              )}
-              {newType === "instagram" && igMode === "hashtag" && (
-                <label>
-                  Hashtag
-                  <Input
-                    value={hashtag}
-                    onChange={(e) => setHashtag(e.target.value)}
-                    placeholder="gtmstrategy"
                   />
                 </label>
               )}

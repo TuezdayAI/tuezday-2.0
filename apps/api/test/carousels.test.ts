@@ -83,6 +83,18 @@ function igState(): IgState {
 function handleInstagram(state: IgState, method: string, path: string, opts: unknown): ProxyJsonResult {
   const p = path.split("?")[0]!;
   state.calls.push({ method, path, opts });
+  if (p === "/me") {
+    return {
+      status: 200,
+      json: {
+        id: "ig-1",
+        user_id: "ig-1",
+        username: "tuezday",
+        name: "Tuezday",
+        account_type: "BUSINESS",
+      },
+    };
+  }
   if (p.endsWith("/media_publish")) {
     state.igPublished += 1;
     return { status: 200, json: { id: `ig-media-${state.igPublished}` } };
@@ -91,11 +103,8 @@ function handleInstagram(state: IgState, method: string, path: string, opts: unk
     state.igContainers += 1;
     return { status: 200, json: { id: `ig-container-${state.igContainers}` } };
   }
-  if (p.includes("/me/accounts")) {
-    return { status: 200, json: { data: [{ instagram_business_account: { id: "ig-1" } }] } };
-  }
-  if (p.startsWith("/v23.0/ig-container-")) return { status: 200, json: { status_code: "FINISHED" } };
-  if (p.startsWith("/v23.0/ig-media-")) {
+  if (p.startsWith("/ig-container-")) return { status: 200, json: { status_code: "FINISHED" } };
+  if (p.startsWith("/ig-media-")) {
     return { status: 200, json: { permalink: "https://www.instagram.com/p/abc/" } };
   }
   return { status: 404, json: { error: { message: `no endpoint for ${p}` } } };

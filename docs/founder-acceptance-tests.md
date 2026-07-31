@@ -247,13 +247,13 @@
 > Prereqs (one-time per platform, all using the Nango callback `http://localhost:3050/oauth/callback`):
 > - **LinkedIn** app at linkedin.com/developers/apps with "Sign In with LinkedIn using OpenID Connect" + "Share on LinkedIn"; set `LINKEDIN_CLIENT_ID` / `LINKEDIN_CLIENT_SECRET`.
 > - **X** OAuth 2.0 app at developer.x.com with tweet/users/dm scopes; set `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` (the OAuth 2.0 client id/secret, not the API key/secret).
-> - **Instagram** — a **Facebook** app at developers.facebook.com with the Instagram Graph API; publishing needs an Instagram **Business/Creator** account linked to a Facebook Page + `instagram_content_publish` via App Review; set `INSTAGRAM_CLIENT_ID` / `INSTAGRAM_CLIENT_SECRET` (the Facebook app id/secret).
+> - **Instagram** — a direct Instagram Login app for an Instagram **Business/Creator** account with `instagram_business_basic` and `instagram_business_content_publish`; set `INSTAGRAM_CLIENT_ID` / `INSTAGRAM_CLIENT_SECRET`. This flow does not use Facebook Pages.
 > Restart the API after editing `.env`.
 
 - [ ] `npm run nango:up`; Integrations page → LinkedIn / X / Instagram each show **Connect** (not "needs OAuth app") once their `.env` creds are set; with creds missing they show the per-platform setup hint instead.
 - [ ] **Connect LinkedIn** → OAuth popup → authorize → card shows `connected`; **Test** passes (`/v2/userinfo` identity through the proxy).
 - [ ] **Connect X** → OAuth popup → authorize → `connected`; **Test** passes (`/2/users/me`).
-- [ ] **Connect Instagram** → Facebook OAuth popup → authorize → `connected`; **Test** passes (`/v23.0/me`). (If `instagram_content_publish` isn't approved yet, identity still verifies — publishing is gated until Sprint 26.)
+- [ ] **Connect Instagram** → direct Instagram OAuth popup → authorize → the card shows the bound account handle and `connected`; **Test** passes (`/me?fields=id,user_id,username,name,account_type` on `graph.instagram.com`). A legacy Facebook Login connection instead shows `reconnect_required`.
 - [ ] **Disconnect** one platform → **Reconnect** via the popup → it returns to `connected` (same row revived).
 - [ ] **Reddit** still shows as parked / "needs OAuth app" (its key hasn't been issued) — confirm it wasn't removed.
 - [ ] No posting/DM controls appear yet — that's Sprint 26.
@@ -363,8 +363,9 @@ them — the targeting primitive Sprint 26 sends through.
 > Branch `sprint-26-targeted-launch` (built on Sprint 24 + Sprint 25; merge order
 > 24 → 25 → 26). Prereqs: LinkedIn / X / Instagram connected (Sprint 25) with
 > their creds in `.env`; a segment/list with a few leads, some carrying an X
-> handle. Instagram needs an IG **Business/Creator** account linked to a Page,
-> via the Facebook app (`INSTAGRAM_CLIENT_ID/SECRET`), with `instagram_content_publish`.
+> handle. Instagram needs a direct Instagram Login Business/Creator connection
+> (`INSTAGRAM_CLIENT_ID/SECRET`) with
+> `instagram_business_content_publish`.
 
 - [ ] **Set X handles:** Audience → a lead → **+ X handle** (or edit) → save → the
       handle shows on the lead (the leading `@` is stripped). CSV import with an
