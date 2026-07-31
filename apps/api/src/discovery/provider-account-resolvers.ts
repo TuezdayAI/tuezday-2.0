@@ -9,6 +9,41 @@ interface LinkedInOrganizationsResponse {
   elements?: LinkedInOrganization[];
 }
 
+interface XUserResponse {
+  data?: { id?: string; username?: string };
+}
+
+export interface XUserResolverInput {
+  handle: string;
+  get(path: string): Promise<{ status: number; json: unknown }>;
+}
+
+export async function resolveXUserId(
+  input: XUserResolverInput,
+): Promise<string> {
+  const handle = input.handle
+    .trim()
+    .replace(/^@+/, "")
+    .toLowerCase();
+  if (!/^[a-z0-9_]{1,15}$/.test(handle)) {
+    throw new ProviderCapabilityError(
+      "target_unresolvable",
+      "The X username is invalid.",
+    );
+  }
+  const response = await input.get(
+    `/2/users/by/username/${encodeURIComponent(handle)}`,
+  );
+  const id = (response.json as XUserResponse).data?.id?.trim();
+  if (!id) {
+    throw new ProviderCapabilityError(
+      "target_unresolvable",
+      `X account "@${handle}" could not be resolved.`,
+    );
+  }
+  return id;
+}
+
 export interface LinkedInOrganizationResolverInput {
   target: string;
   get(path: string): Promise<{ status: number; json: unknown }>;

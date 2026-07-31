@@ -140,6 +140,8 @@ export default function DiscoveryPage() {
   const [trackedDisplayName, setTrackedDisplayName] = useState("");
   const [trackedNotes, setTrackedNotes] = useState("");
   const [trackedError, setTrackedError] = useState<string | null>(null);
+  const [resolutionConnectionIds, setResolutionConnectionIds] =
+    useState<Record<string, string>>({});
 
   const [running, setRunning] = useState(false);
   const [runSummary, setRunSummary] = useState<DiscoveryRunSummary | null>(null);
@@ -382,6 +384,43 @@ export default function DiscoveryPage() {
       method: "DELETE",
     });
     await load();
+  }
+
+  async function retryTrackedResolution(account: TrackedSocialAccount) {
+    const compatible = connectionsForType(account.platform);
+    const selected =
+      resolutionConnectionIds[account.id] ?? compatible[0]?.id;
+    if (!selected) return;
+    setBusy(true);
+    setTrackedError(null);
+    try {
+      const res = await apiFetch(
+        `/workspaces/${id}/discovery/tracked-accounts/${account.id}/resolve`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ connectionId: selected }),
+        },
+      );
+      const body = await res.json().catch(() => null);
+      if (!res.ok) {
+        throw new Error(
+          body?.message ?? `API returned ${res.status}`,
+        );
+      }
+      setTracked((current) =>
+        current.map((row) => (row.id === account.id ? body : row)),
+      );
+    } catch (err) {
+      setTrackedError(
+        err instanceof Error
+          ? err.message
+          : "Failed to resolve tracked account",
+      );
+      await load();
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function runNow() {
@@ -928,7 +967,13 @@ export default function DiscoveryPage() {
           <EmptyState description={<>No tracked accounts yet. They are optional — add competitor handles here to reuse them across connected sources.</>} />
         ) : (
           <ul className="section-list">
-            {tracked.map((a) => (
+            {tracked.map((a) => {
+              const compatibleConnections = connectionsForType(a.platform);
+              const resolutionConnectionId =
+                resolutionConnectionIds[a.id] ??
+                compatibleConnections[0]?.id ??
+                "";
+              return (
               <li key={a.id} className={`section-card ${a.enabled ? "" : "excluded"}`}>
                 <div className="section-head">
                   <span className="layer-badge">{PLATFORM_LABELS[a.platform]}</span>
@@ -947,6 +992,37 @@ export default function DiscoveryPage() {
                 {a.notes && <p className="section-reason">{a.notes}</p>}
                 {a.lastError && <p className="error-inline">{a.lastError}</p>}
                 <div className="rating-row" style={{ marginTop: 8 }}>
+                  <Select
+                    aria-label={`Connection for ${trackedHandleLabel(a)}`}
+                    value={resolutionConnectionId}
+                    onChange={(event) =>
+                      setResolutionConnectionIds((current) => ({
+                        ...current,
+                        [a.id]: event.target.value,
+                      }))
+                    }
+                  >
+                    {compatibleConnections.length === 0 && (
+                      <option value="">No compatible connection</option>
+                    )}
+                    {compatibleConnections.map((connection) => (
+                      <option key={connection.id} value={connection.id}>
+                        {connection.displayName}
+                      </option>
+                    ))}
+                  </Select>
+                  <Button
+                    variant="secondary"
+                    size="compact"
+                    disabled={
+                      busy ||
+                      !a.enabled ||
+                      !resolutionConnectionId
+                    }
+                    onClick={() => retryTrackedResolution(a)}
+                  >
+                    {a.lastResolvedAt ? "Retry resolution" : "Resolve"}
+                  </Button>
                   <Button variant="secondary" size="compact" onClick={() => toggleTrackedAccount(a)}>
                     {a.enabled ? "Disable" : "Enable"}
                   </Button>
@@ -959,7 +1035,8 @@ export default function DiscoveryPage() {
                   </Button>
                 </div>
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
       </Card>

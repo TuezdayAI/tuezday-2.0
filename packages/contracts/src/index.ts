@@ -2499,7 +2499,6 @@ export const createTrackedSocialAccountInputSchema = z.object({
   platform: z.enum(TRACKED_SOCIAL_PLATFORMS),
   handle: z.string().trim().min(1).max(100),
   displayName: z.string().trim().max(200).optional(),
-  externalId: z.string().trim().max(200).optional(),
   url: z.string().url().optional(),
   notes: z.string().trim().max(2_000).optional(),
 });
@@ -2510,13 +2509,19 @@ export type CreateTrackedSocialAccountInput = z.infer<
 export const updateTrackedSocialAccountInputSchema = z.object({
   handle: z.string().trim().min(1).max(100).optional(),
   displayName: z.string().trim().max(200).nullable().optional(),
-  externalId: z.string().trim().max(200).nullable().optional(),
   url: z.string().url().nullable().optional(),
   notes: z.string().trim().max(2_000).optional(),
   enabled: z.boolean().optional(),
 });
 export type UpdateTrackedSocialAccountInput = z.infer<
   typeof updateTrackedSocialAccountInputSchema
+>;
+
+export const resolveTrackedSocialAccountInputSchema = z.object({
+  connectionId: z.string().uuid(),
+});
+export type ResolveTrackedSocialAccountInput = z.infer<
+  typeof resolveTrackedSocialAccountInputSchema
 >;
 
 // ---------------------------------------------------------------------------

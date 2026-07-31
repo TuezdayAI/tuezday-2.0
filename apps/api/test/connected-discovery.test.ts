@@ -10,6 +10,7 @@ import {
   discoveredItems,
   discoveryJobs,
   discoverySources,
+  trackedSocialAccounts,
 } from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
 import { RATE_LIMIT_BACKOFF_BASE_MS, listDiscoverySources } from "../src/services/discovery";
@@ -1076,6 +1077,17 @@ describe("connected discovery (Sprint 46)", () => {
       const [item] = await listItems("new");
       expect(item!.externalId).toBe("x:42");
       expect(item!.url).toBe("https://x.com/rivalco/status/42");
+      expect(
+        db
+          .select()
+          .from(trackedSocialAccounts)
+          .where(eq(trackedSocialAccounts.id, tracked.id))
+          .get(),
+      ).toMatchObject({
+        externalId: "u9",
+        lastResolvedAt: expect.any(Number),
+        lastError: null,
+      });
     });
 
     it("backs off exponentially on 429 without erroring the source", async () => {
@@ -1210,9 +1222,17 @@ describe("connected discovery (Sprint 46)", () => {
   describe("permission-gated providers", () => {
     it("resolves a plain LinkedIn company handle before fetching its posts", async () => {
       const connectionId = insertConnection("linkedin");
+      const tracked = await createTrackedAccount(
+        workspaceId,
+        "linkedin",
+        "@Acme",
+      );
       await createSource({
         type: "linkedin",
-        config: { mode: "account_timeline", handle: "@Acme" },
+        config: {
+          mode: "account_timeline",
+          trackedAccountId: tracked.id,
+        },
         connectionId,
       });
       proxyHandler = (path) => {
@@ -1252,6 +1272,17 @@ describe("connected discovery (Sprint 46)", () => {
       );
       expect(proxyCalls[0]!.headers?.["LinkedIn-Version"]).toBe("202607");
       expect(proxyCalls[1]!.headers?.["LinkedIn-Version"]).toBe("202607");
+      expect(
+        db
+          .select()
+          .from(trackedSocialAccounts)
+          .where(eq(trackedSocialAccounts.id, tracked.id))
+          .get(),
+      ).toMatchObject({
+        externalId: "urn:li:organization:73",
+        lastResolvedAt: expect.any(Number),
+        lastError: null,
+      });
     });
 
     it("fails an unresolvable LinkedIn handle without member or posts fallback", async () => {

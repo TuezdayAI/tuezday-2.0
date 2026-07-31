@@ -7,7 +7,10 @@ import type {
   DiscoveryTarget,
   DiscoveryTargetCheckpoint,
 } from "./paging";
-import { resolveLinkedInOrganizationUrn } from "./provider-account-resolvers";
+import {
+  resolveLinkedInOrganizationUrn,
+  resolveXUserId,
+} from "./provider-account-resolvers";
 import { ProviderCapabilityError } from "./provider-errors";
 
 /**
@@ -215,10 +218,6 @@ interface XTweetsResponse {
   includes?: { users?: Array<{ id?: string; username?: string }> };
   meta?: { next_token?: string };
 }
-interface XUserResponse {
-  data?: { id?: string; username?: string };
-}
-
 function xItems(json: XTweetsResponse, fallbackUsername?: string): RawDiscoveredItem[] {
   const usernames = new Map<string, string>();
   for (const user of json.includes?.users ?? []) {
@@ -395,19 +394,16 @@ async function fetchXPage(
     let userId = input.target.externalId?.trim() || null;
     fallbackUsername = handle;
     if (!userId) {
-      const user = (await getJson(
-        input,
-        `/2/users/by/username/${encodeURIComponent(handle)}`,
-        {
-          ...opts,
-          cursorRequested: false,
-        },
-      )) as XUserResponse;
-      if (!user.data?.id) {
-        return { items: [], nextToken: null };
-      }
-      userId = user.data.id;
-      fallbackUsername = user.data.username ?? handle;
+      userId = await resolveXUserId({
+        handle,
+        get: async (path) => ({
+          status: 200,
+          json: await getJson(input, path, {
+            ...opts,
+            cursorRequested: false,
+          }),
+        }),
+      });
     }
     const path = appendQuery(
       `/2/users/${encodeURIComponent(userId)}/tweets?${params}`,

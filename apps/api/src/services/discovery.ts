@@ -68,6 +68,7 @@ import {
 } from "../discovery/paging";
 import { ProviderCapabilityError } from "../discovery/provider-errors";
 import { deleteDiscoverySourcePreservingDuplicates } from "./discovery-dedupe";
+import { resolveTrackedAccountsForSource } from "./tracked-account-resolver";
 import type { LlmGateway } from "../llm/gateway";
 import { BoundedJsonError } from "../connectors/bounded-json";
 import {
@@ -1525,14 +1526,44 @@ export async function runClaimedDiscoverySource(
     );
   }
 
+  let calls = 0;
+  let pages = 0;
+  let bytes = 0;
+  let admittedItems = 0;
+  let insertedItems = 0;
+  let permissionFailures = 0;
   let trackedAccounts: ResolvedTrackedAccount[];
   try {
-    trackedAccounts = requireSourceTrackedAccounts(
+    let referencedAccounts = requireSourceTrackedAccounts(
       deps.db,
       claim.workspaceId,
       initial.type,
       initial.config,
-    ).map((account) => ({
+    );
+    if (initial.connectionId) {
+      const resolutionMetrics = { calls: 0, bytes: 0 };
+      try {
+        referencedAccounts = await resolveTrackedAccountsForSource(
+          { db: deps.db, fabric: deps.fabric },
+          {
+            source: initial,
+            accounts: referencedAccounts,
+            connectionId: initial.connectionId,
+            runtime: {
+              signal,
+              maxCalls: budget.maxCalls,
+              maxBytes: budget.maxBytes,
+              maxResponseBytes: budget.maxResponseBytes,
+              metrics: resolutionMetrics,
+            },
+          },
+        );
+      } finally {
+        calls += resolutionMetrics.calls;
+        bytes += resolutionMetrics.bytes;
+      }
+    }
+    trackedAccounts = referencedAccounts.map((account) => ({
       id: account.id,
       handle: account.handle,
       externalId: account.externalId,
@@ -1558,9 +1589,9 @@ export async function runClaimedDiscoverySource(
       },
       {
         code: failure.code,
-        calls: 0,
+        calls,
         pages: 0,
-        bytes: 0,
+        bytes,
         items: 0,
         continuationPending: false,
         replay: claim.attempt > 1,
@@ -1571,12 +1602,6 @@ export async function runClaimedDiscoverySource(
   const targets = targetsForSource(initial, trackedAccounts);
   let cursor = reconcileTargets(initial.cursorState, targets);
   const pageReader = deps.pageReader ?? defaultDiscoveryPageReader;
-  let calls = 0;
-  let pages = 0;
-  let bytes = 0;
-  let admittedItems = 0;
-  let insertedItems = 0;
-  let permissionFailures = 0;
   const visitedTargets = new Set<string>();
   const completedTargets = new Set<string>();
   const replayedTargets = new Set<string>();

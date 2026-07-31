@@ -171,7 +171,7 @@ export function createTrackedSocialAccount(
     platform: input.platform,
     handle,
     displayName: input.displayName ?? null,
-    externalId: input.externalId ?? null,
+    externalId: null,
     url: input.url ?? null,
     notes: input.notes ?? "",
     enabled: true,
@@ -240,13 +240,10 @@ export function updateTrackedSocialAccount(
     if (clash) throw new DuplicateTrackedAccountError(existing.platform, handle);
   }
 
-  const nextExternalId =
-    input.externalId === undefined ? existing.externalId : input.externalId;
   const nextEnabled = input.enabled ?? existing.enabled;
+  const handleChanged = handle !== existing.handle;
   const executionChanged =
-    handle !== existing.handle ||
-    nextExternalId !== existing.externalId ||
-    nextEnabled !== existing.enabled;
+    handleChanged || nextEnabled !== existing.enabled;
   return db.transaction((tx) => {
     tx.update(trackedSocialAccounts)
       .set({
@@ -255,7 +252,11 @@ export function updateTrackedSocialAccount(
           input.displayName === undefined
             ? existing.displayName
             : input.displayName,
-        externalId: nextExternalId,
+        externalId: handleChanged ? null : existing.externalId,
+        lastResolvedAt: handleChanged
+          ? null
+          : existing.lastResolvedAt,
+        lastError: handleChanged ? null : existing.lastError,
         url: input.url === undefined ? existing.url : input.url,
         notes: input.notes ?? existing.notes,
         enabled: nextEnabled,

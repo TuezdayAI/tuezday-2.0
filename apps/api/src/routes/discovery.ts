@@ -4,6 +4,7 @@ import {
   DISCOVERED_ITEM_STATUSES,
   createDiscoverySourceInputSchema,
   createTrackedSocialAccountInputSchema,
+  resolveTrackedSocialAccountInputSchema,
   updateDiscoverySourceInputSchema,
   updateTrackedSocialAccountInputSchema,
   type DiscoveredItemStatus,
@@ -53,6 +54,12 @@ import {
   updateTrackedSocialAccount,
 } from "../services/tracked-social-accounts";
 import { getWorkspace } from "../services/workspaces";
+import { ProviderCapabilityError } from "../discovery/provider-errors";
+import {
+  TrackedAccountConnectionError,
+  TrackedAccountNotFoundError,
+  resolveTrackedSocialAccount,
+} from "../services/tracked-account-resolver";
 
 function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
   const workspace = getWorkspace(db, id);
@@ -268,6 +275,55 @@ export function registerDiscoveryRoutes(
       const deleted = deleteTrackedSocialAccount(db, request.params.id, request.params.accountId);
       if (!deleted) return reply.status(404).send({ error: "account_not_found" });
       return reply.status(204).send();
+    },
+  );
+
+  app.post<{
+    Params: { id: string; accountId: string };
+  }>(
+    "/workspaces/:id/discovery/tracked-accounts/:accountId/resolve",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const parsed =
+        resolveTrackedSocialAccountInputSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.status(400).send({
+          error: "invalid_input",
+          message: parsed.error.issues
+            .map((issue) => issue.message)
+            .join("; "),
+        });
+      }
+      try {
+        return await resolveTrackedSocialAccount(
+          { db, fabric: connectors },
+          {
+            workspaceId: request.params.id,
+            accountId: request.params.accountId,
+            connectionId: parsed.data.connectionId,
+            force: true,
+          },
+        );
+      } catch (err) {
+        if (err instanceof TrackedAccountNotFoundError) {
+          return reply
+            .status(404)
+            .send({ error: "account_not_found" });
+        }
+        if (err instanceof TrackedAccountConnectionError) {
+          return reply.status(404).send({
+            error: err.code,
+            message: err.message,
+          });
+        }
+        if (err instanceof ProviderCapabilityError) {
+          return reply.status(409).send({
+            error: err.code,
+            message: err.message,
+          });
+        }
+        throw err;
+      }
     },
   );
 
