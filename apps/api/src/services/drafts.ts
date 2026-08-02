@@ -23,6 +23,21 @@ type DraftWriteDb = Pick<DbExecutor, "insert" | "update" | "select">;
 export interface DraftActor {
   userId: string | null;
   label: string;
+  /**
+   * Sprint 52 (D2c) — was this decision made by a person?
+   *
+   * Deliberately explicit and required: it cannot be inferred from `userId`
+   * (the signed email and Telegram approve links carry no user id yet are a
+   * founder pressing a button) and must never be sniffed from `label`, which
+   * is display copy and would break silently when reworded. A new call site
+   * has to state which it is.
+   *
+   * Humans: a signed-in user, the email one-click approver, the Telegram
+   * approver. Not humans: the system/worker actor and the public-API machine
+   * credential. Only a human approval records a content fingerprint, which is
+   * what keeps `autoApprove` and API keys from collapsing the publish gate.
+   */
+  human: boolean;
 }
 
 export class InvalidTransitionError extends Error {
@@ -334,7 +349,13 @@ export function latestHumanApprovalFingerprint(
     // millisecond tie. SQLite's implicit rowid is monotonic with insertion, so
     // it breaks the tie by true insertion order; the `id` column is a random
     // UUID and would order arbitrarily.
-    .orderBy(desc(approvalDecisions.createdAt), sql`rowid desc`)
+    //
+    // Today this tie-break is belt-and-braces: `approved` is terminal in the
+    // contracts state machine (no `edit`/`reject` edge out of it), so a draft
+    // cannot reach a second approve decision through the API. Whoever migrates
+    // this to Postgres may simply drop the rowid term rather than hunt for an
+    // equivalent — unless an un-approve path has been added by then.
+    .orderBy(desc(approvalDecisions.createdAt), sql`${approvalDecisions}.rowid desc`)
     .get();
   return latest?.contentFingerprint ?? null;
 }
@@ -369,12 +390,13 @@ export function applyDraftActionInTransaction(
 
   // Sprint 52: record what a human approved, so a later publish can tell
   // whether the approval still covers the current content. Human approvals
-  // only — a system/auto-approval leaves this null, which is what keeps
-  // `autoApprove` from silently turning `human_required` into autonomous
+  // only (see DraftActor.human) — a system/auto-approval or a public-API
+  // approval leaves this null, which is what keeps `autoApprove` and machine
+  // credentials from silently turning `human_required` into autonomous
   // publishing (D2a). Media comes from the stored row: reconstructing it from
   // the parsed Draft could re-serialize differently and break the match.
   const contentFingerprint =
-    action === "approve" && actor.userId !== null
+    action === "approve" && actor.human
       ? draftApprovalFingerprint({
           id: draft.id,
           content,
@@ -382,7 +404,7 @@ export function applyDraftActionInTransaction(
             db
               .select({ mediaJson: drafts.mediaJson })
               .from(drafts)
-              .where(eq(drafts.id, draft.id))
+              .where(and(eq(drafts.workspaceId, draft.workspaceId), eq(drafts.id, draft.id)))
               .get()?.mediaJson ?? null,
         })
       : null;

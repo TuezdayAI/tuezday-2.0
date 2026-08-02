@@ -83,9 +83,9 @@ describe("unified execution results", () => {
         channel: "linkedin" as never,
         content: "Headline\nBody.",
       },
-      { userId: null, label: "test" },
+      { userId: null, label: "test", human: true },
     );
-    return applyDraftAction(db, draft, "approve", { userId: null, label: "test" }).id;
+    return applyDraftAction(db, draft, "approve", { userId: null, label: "test", human: true }).id;
   }
 
   /** A minimal governing action row so operational FKs can link to it. */

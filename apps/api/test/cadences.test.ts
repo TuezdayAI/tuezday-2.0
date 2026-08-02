@@ -191,9 +191,9 @@ describe("posting cadences", () => {
         channel: (opts.channel ?? "linkedin") as never,
         content: opts.content ?? "Headline of the post\nThe body of the post.",
       },
-      { userId: null, label: "test" },
+      { userId: null, label: "test", human: true },
     );
-    return applyDraftAction(db, draft, "approve", { userId: null, label: "test" }).id;
+    return applyDraftAction(db, draft, "approve", { userId: null, label: "test", human: true }).id;
   }
 
   function cadencePayload(over: Record<string, unknown> = {}) {
@@ -520,7 +520,7 @@ describe("posting cadences", () => {
           channel: "linkedin" as never,
           content: "Pending only",
         },
-        { userId: null, label: "test" },
+        { userId: null, label: "test", human: true },
       ); // not approved
 
       const cadenceId = (await createCadence(cadencePayload({ campaignId, connectionId }))).json().id;

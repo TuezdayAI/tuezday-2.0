@@ -38,7 +38,7 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Automation always acts as the system identity — the gate transition for an
  * auto-approval is attributed to `system` no matter who triggered the run. */
-const SYSTEM_ACTOR: DraftActor = { userId: null, label: "system" };
+const SYSTEM_ACTOR: DraftActor = { userId: null, label: "system", human: false };
 
 // ---------------------------------------------------------------------------
 // Settings (per workspace; mirrors ad_settings)

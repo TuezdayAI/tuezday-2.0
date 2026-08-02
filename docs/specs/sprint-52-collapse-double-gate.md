@@ -15,6 +15,7 @@
 | **D2** | Does approving a draft auto-authorize its publication by default? | **Yes, for `publish` only.** `send`, `reply`, `paid_launch`, `budget_change`, `targeting_change` keep the second gate unconditionally. |
 | **D2a** | Does a system/auto-approved draft (cadence `autoApprove`) satisfy the collapsed gate? | **No — humans only.** Only a human approval collapses Gate 2. Without this, enabling `autoApprove` would silently turn `human_required` into fully autonomous publishing. |
 | **D2b** | How does the collapse appear in the policy editor? | **Built-in default for `publish`.** No new policy rule value. The existing `autonomous` / `human_required` vocabulary is unchanged; for `publish`, `human_required` means "approving the draft authorizes it". The editor states this inline. |
+| **D2c** | Does approving from email / Telegram (a signed one-time link) collapse the gate? | **Yes — trust the token.** Raised by the Task 1–3 review: `actor.userId !== null` silently excluded the mobile and Telegram approve paths, so the feature would not have worked from a phone. The token is single-use, expiring, hash-stored, and delivered to a configured founder channel; the platform already trusts it to *approve* content, and the collapse grants no new power — it removes a redundant second click on a decision already made. **Accepted tradeoff:** someone with access to the founder's email or Telegram can cause a publish without an app login. The public-API actor (`label: "api"`) is a machine credential and stays excluded. |
 
 **Why D2b matters technically:** the effective policy is part of the existing action fingerprint
 (`fingerprintExternalActionIntent`). Adding a third rule value would change the hash input for every
@@ -95,8 +96,13 @@ Reuses `canonicalActionFingerprint` (key-sorted canonicalization + SHA-256). **`
 included deliberately**: approving text and then swapping the image must invalidate the collapse.
 
 Stored on the approval decision row in a new nullable column `content_fingerprint`, written **only
-when the approving actor is human** (`actor.userId !== null`). System approvals leave it `null`,
+when the approving actor is a human**. System and machine (public-API) approvals leave it `null`,
 which is what enforces D2a.
+
+**"Human" must be an explicit property of the actor, not inferred from `userId` or sniffed from the
+label string.** Per D2c the humans are: a signed-in user, the email one-click approver, and the
+Telegram approver. The non-humans are the system actor and the public-API actor. Label-string
+matching is forbidden — it is fragile and would silently break when copy changes.
 
 ### 3.2 The collapse, at propose time
 

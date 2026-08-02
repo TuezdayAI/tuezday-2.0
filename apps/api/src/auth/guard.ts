@@ -24,9 +24,23 @@ declare module "fastify" {
   }
 }
 
-/** drafts/brain services take this slice of the actor for attribution. */
-export function actorOf(request: FastifyRequest): { userId: string | null; label: string } {
-  return { userId: request.actor.userId, label: request.actor.label };
+/**
+ * drafts/brain services take this slice of the actor for attribution.
+ *
+ * `human` (Sprint 52) is derived from `system`, not from `userId`: a request
+ * carrying the worker token is never a person, and everything else on this
+ * path is a signed-in user. Delegated-human paths (the signed email/Telegram
+ * approve links) and the public-API machine credential bypass the auth guard
+ * entirely and declare `human` themselves at their own call sites.
+ */
+export function actorOf(
+  request: FastifyRequest,
+): { userId: string | null; label: string; human: boolean } {
+  return {
+    userId: request.actor.userId,
+    label: request.actor.label,
+    human: !request.actor.system,
+  };
 }
 
 const PUBLIC_ROUTES = new Set([

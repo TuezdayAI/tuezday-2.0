@@ -58,7 +58,7 @@ export function registerPublicApiRoutes(app: TuezdayApp, db: Db): void {
             db,
             draft,
             "approve",
-            { userId: null, label: "api" },
+            { userId: null, label: "api", human: false },
             undefined
           );
           return reply.status(200).send(updated);
@@ -85,7 +85,7 @@ export function registerPublicApiRoutes(app: TuezdayApp, db: Db): void {
             db,
             draft,
             "reject",
-            { userId: null, label: "api" },
+            { userId: null, label: "api", human: false },
             undefined
           );
           return reply.status(200).send(updated);

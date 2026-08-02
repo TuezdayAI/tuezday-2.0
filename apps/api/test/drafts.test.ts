@@ -5,6 +5,8 @@ import type { TuezdayApp } from "../src/app";
 import type { Db } from "../src/db";
 import { approvalDecisions, drafts as draftsTable } from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
+import { mintActionToken } from "../src/notifications/tokens";
+import { createApiKey } from "../src/services/api-keys";
 import { draftApprovalFingerprint } from "../src/services/draft-approval-fingerprint";
 import {
   applyDraftAction,
@@ -21,7 +23,7 @@ const fakeGateway: LlmGateway = {
 };
 
 /** The worker's identity — no user behind it. Sprint 52 D2a: never collapses Gate 2. */
-const SYSTEM_ACTOR = { userId: null, label: "system" };
+const SYSTEM_ACTOR = { userId: null, label: "system", human: false };
 
 describe("approval gate API", () => {
   let app: TuezdayApp;
@@ -367,6 +369,60 @@ describe("approval gate API", () => {
       }
     });
 
+    // D2c: a signed one-time approve link is a human decision. The public API
+    // key is a machine credential and is not.
+    it("the email one-click approve link stores a fingerprint", async () => {
+      const draft = (await submit()).json();
+      const token = mintActionToken(db, workspaceId, draft.id, "approve");
+
+      const res = await app.inject({ method: "GET", url: `/a/${token}` });
+      expect(res.statusCode).toBe(200);
+      expect(getDraft(db, workspaceId, draft.id)?.state).toBe("approved");
+
+      const row = decisionFor(draft.id, "approve");
+      expect(row.actorId).toBeNull();
+      expect(row.contentFingerprint).toBe(
+        draftApprovalFingerprint({ id: draft.id, content: draft.content, mediaJson: null }),
+      );
+    });
+
+    it("the Telegram approve button stores a fingerprint", async () => {
+      const draft = (await submit()).json();
+      const token = mintActionToken(db, workspaceId, draft.id, "approve");
+
+      const res = await app.inject({
+        method: "POST",
+        url: "/telegram/webhook",
+        payload: { callback_query: { id: "cb-1", data: `approve:${token}` } },
+      });
+      expect(res.statusCode).toBe(200);
+      expect(getDraft(db, workspaceId, draft.id)?.state).toBe("approved");
+
+      const row = decisionFor(draft.id, "approve");
+      expect(row.actorId).toBeNull();
+      expect(row.contentFingerprint).toBe(
+        draftApprovalFingerprint({ id: draft.id, content: draft.content, mediaJson: null }),
+      );
+    });
+
+    it("a public-API approve stores no fingerprint — a machine credential is not a human", async () => {
+      const draft = (await submit()).json();
+      const apiKey = createApiKey(db, workspaceId, {
+        name: "drafts",
+        scopes: ["drafts:write"],
+      }).rawKey;
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/v1/drafts/${draft.id}/approve`,
+        headers: { authorization: `Bearer ${apiKey}` },
+      });
+      expect(res.statusCode).toBe(200);
+
+      const row = decisionFor(draft.id, "approve");
+      expect(row.contentFingerprint).toBeNull();
+    });
+
     it("keeps the draft row itself unchanged apart from state and content", async () => {
       const draft = (await submit()).json();
       await act(draft.id, "approve");
@@ -465,8 +521,8 @@ describe("approval gate API", () => {
         .where(eq(draftsTable.id, draft.id))
         .run();
       const reopened = getDraft(db, workspaceId, draft.id)!;
-      const edited = applyDraftAction(db, reopened, "edit", { userId: "u", label: "founder" }, "v2");
-      applyDraftAction(db, edited, "approve", { userId: "u", label: "founder" });
+      const edited = applyDraftAction(db, reopened, "edit", { userId: "u", label: "founder", human: true }, "v2");
+      applyDraftAction(db, edited, "approve", { userId: "u", label: "founder", human: true });
 
       // Force the worst case: both approvals carry an identical createdAt, so
       // only the insertion-order tie-break can pick the right one.

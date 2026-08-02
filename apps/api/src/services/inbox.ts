@@ -50,7 +50,7 @@ import { getWorkspace } from "./workspaces";
 type Fetcher = typeof fetch;
 
 /** Auto-replies are attributed to the system identity, like S28 auto-posts. */
-const SYSTEM_ACTOR: DraftActor = { userId: null, label: "system" };
+const SYSTEM_ACTOR: DraftActor = { userId: null, label: "system", human: false };
 
 const WINDOW_MS: Record<MetricWindow, number> = {
   "24h": 24 * 60 * 60 * 1000,

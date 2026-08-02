@@ -79,7 +79,12 @@ export interface CopilotActionTool {
 const PREVIEW_CHARS = 4_000;
 
 function draftActor(actor: ExternalActionActor): DraftActor {
-  return { userId: actor.userId, label: actor.label };
+  // `ExternalActionActor` is a persisted contracts shape and does not record
+  // humanity, so this conversion fails closed (Sprint 52). Copilot commits only
+  // ever `submit` drafts — they never approve — so nothing here consults it. If
+  // an approve path is ever added, plumb humanity through explicitly rather
+  // than letting it default in.
+  return { userId: actor.userId, label: actor.label, human: false };
 }
 
 /** Resolve a deterministic context bundle for a content draft (no LLM call). */

@@ -236,9 +236,9 @@ describe("social automation", () => {
         channel: channel as never,
         content: "Seeded headline\nbody",
       },
-      { userId: null, label: "test" },
+      { userId: null, label: "test", human: true },
     );
-    return applyDraftAction(db, draft, "approve", { userId: null, label: "test" }).id;
+    return applyDraftAction(db, draft, "approve", { userId: null, label: "test", human: true }).id;
   }
 
   // --- Contracts ------------------------------------------------------------

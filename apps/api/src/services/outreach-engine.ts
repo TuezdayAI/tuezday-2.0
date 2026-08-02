@@ -56,7 +56,7 @@ import {
 } from "./outreach-sequences";
 
 const HOUR_MS = 60 * 60 * 1000;
-const SYSTEM_ACTOR: DraftActor = { userId: null, label: "system" };
+const SYSTEM_ACTOR: DraftActor = { userId: null, label: "system", human: false };
 
 // Blocker codes worth a re-propose on the next tick (transient safety states).
 const RETRYABLE_BLOCKERS = new Set([

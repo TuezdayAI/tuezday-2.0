@@ -30,7 +30,7 @@ import { applyDraftAction, submitDraft } from "../src/services/drafts";
 import { createWorkspace } from "../src/services/workspaces";
 import { createTestDb } from "./helpers";
 
-const actor = { userId: null, label: "Founder" };
+const actor = { userId: null, label: "Founder", human: true };
 
 class FakeProvider implements OutboundEmailProvider {
   send = vi.fn(async (_message: OutboundEmailMessage) => ({

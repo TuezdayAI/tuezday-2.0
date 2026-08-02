@@ -10,6 +10,12 @@ import { canonicalActionFingerprint } from "./external-action-fingerprint";
  *
  * `mediaJson` is included on purpose: approving the text and then swapping the
  * image must invalidate the approval and re-arm the second gate.
+ *
+ * **Pass the raw `media_json` column value — never re-serialize a parsed
+ * `media` array.** `JSON.stringify(draft.media)` typechecks and looks right,
+ * but a round-trip can emit different bytes than what was stored, producing a
+ * hash that never matches the one recorded at approval. Read the drafts row
+ * (`DraftRow.mediaJson`), not the parsed `Draft.media`.
  */
 export function draftApprovalFingerprint(draft: {
   id: string;
