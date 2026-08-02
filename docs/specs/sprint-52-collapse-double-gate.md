@@ -200,12 +200,12 @@ gates; it does not redesign either.
 **Files:** create `apps/api/src/services/draft-approval-fingerprint.ts`;
 test `apps/api/test/draft-approval-fingerprint.test.ts`.
 
-- [ ] Test: same content + same media → identical hash; different content → different hash;
+- [x] Test: same content + same media → identical hash; different content → different hash;
       different `mediaJson` with identical content → **different** hash; `null` vs absent media → stable.
-- [ ] Run; confirm it fails (module missing).
-- [ ] Implement `draftApprovalFingerprint(draft: { id: string; content: string; mediaJson: string | null })`
+- [x] Run; confirm it fails (module missing).
+- [x] Implement `draftApprovalFingerprint(draft: { id: string; content: string; mediaJson: string | null })`
       delegating to `canonicalActionFingerprint`.
-- [ ] Run; green. Commit.
+- [x] Run; green. Commit.
 
 ### Task 2 — Persist the fingerprint at approval (human only)
 
@@ -216,15 +216,15 @@ test `apps/api/test/draft-approval-fingerprint.test.ts`.
 `apps/api/src/services/drafts.ts` (`logDecision`, `applyDraftActionInTransaction`);
 tests in `apps/api/test/drafts.test.ts`.
 
-- [ ] Test: a **human** approve writes a non-null `contentFingerprint` matching
+- [x] Test: a **human** approve writes a non-null `contentFingerprint` matching
       `draftApprovalFingerprint(draft)`; a **system** approve (actor `{userId: null}`, as used by
       `submitAutomaticDraft`, `drafts.ts:212-217`) writes `null`; `edit`/`reject`/`submit`/`resubmit`
       write `null`.
-- [ ] Run; confirm failure.
-- [ ] Add the column, generate the migration (**do not hand-write SQL** — CLAUDE.md), extend the
+- [x] Run; confirm failure.
+- [x] Add the column, generate the migration (**do not hand-write SQL** — CLAUDE.md), extend the
       contracts schema, and set the fingerprint in `logDecision` only when
-      `action === "approve" && actor.userId !== null`.
-- [ ] Run; green. Commit.
+      `action === "approve" && actor.human` (amended from `actor.userId !== null` by D2c — see §3.1).
+- [x] Run; green. Commit.
 
 ### Task 3 — Lookup: "was this exact content approved by a human?"
 
@@ -232,13 +232,14 @@ tests in `apps/api/test/drafts.test.ts`.
 `latestHumanApprovalFingerprint(db, workspaceId, draftId): string | null`);
 tests in `apps/api/test/drafts.test.ts`.
 
-- [ ] Test: returns the fingerprint after a human approve; `null` after a system approve; `null`
+- [x] Test: returns the fingerprint after a human approve; `null` after a system approve; `null`
       when the draft is not currently `approved`; after approve → edit → re-approve, returns the
       **latest** fingerprint (ordered by `createdAt`, not insertion order).
-- [ ] Run; confirm failure.
-- [ ] Implement: newest `approve` row for the draft, scoped to `workspaceId`, returning its
-      `contentFingerprint`.
-- [ ] Run; green. Commit.
+- [x] Run; confirm failure.
+- [x] Implement: newest `approve` row for the draft, scoped to `workspaceId`, returning its
+      `contentFingerprint`. (Task 4 widened this to `humanApprovalCoveringDraft`, which also returns
+      the approver's identity so the collapsed authorization can be attributed to them — §7.)
+- [x] Run; green. Commit.
 
 ### Task 4 — The collapse at propose time (the core change)
 
@@ -262,18 +263,22 @@ tests in `apps/api/test/external-action-publication.test.ts`.
 - [x] Implement the branch. Keep the `autonomous` path untouched.
 - [x] Run; green. Commit.
 
-### Task 5 — Fix the 500 → 409 on a stale publish
+### Task 5 — Fix the dead-end 409 on a stale publish
+
+> The task title originally said "500 → 409". That premise was wrong and §3.3 records the
+> correction: the response was already a 409, but a **bare** one with no `action` body, and the
+> action was left in `authorization_required` with `repropose` unreachable — a permanent dead end.
 
 **Files:** `apps/api/src/services/external-action-coordinator.ts` (`authorize`, `currentFingerprint`,
-`dispatch`); `apps/api/src/routes/external-actions.ts` (`externalActionError`);
+`dispatch`, `repropose`, `run`); `apps/api/src/routes/external-actions.ts` (`externalActionError`);
 tests in `apps/api/test/external-actions.test.ts`.
 
-- [ ] Test: propose a publish action, move the draft out of `approved`, call `authorize` → **409
-      `stale_action`** (today: 500), and the action is left `stale`.
-- [ ] Run; confirm it fails with a 500.
-- [ ] Catch `ExternalActionPreparationError` during revalidation, mark the action `stale`, and raise
+- [x] Test: propose a publish action, move the draft out of `approved`, call `authorize` → **409
+      `stale_action`** carrying the action body, and the action is left `stale`.
+- [x] Run; confirm it fails (bare Conflict, action still `authorization_required`).
+- [x] Catch `ExternalActionPreparationError` during revalidation, mark the action `stale`, and raise
       `StaleExternalActionError` so the existing 409 mapping applies.
-- [ ] Run; green. Commit.
+- [x] Run; green. Commit.
 
 ### Task 6 — Allow withdrawing a collapsed authorization
 
@@ -281,11 +286,14 @@ tests in `apps/api/test/external-actions.test.ts`.
 pre-dispatch); `apps/web/app/workspaces/[id]/review/_components/authorizations-queue.tsx`;
 tests in `apps/api/test/external-actions.test.ts` and the web shell tests.
 
-- [ ] Test: an `authorized` (collapsed, not yet dispatched) publish action can be cancelled, and a
+- [x] Test: an `authorized` (collapsed, not yet dispatched) publish action can be cancelled, and a
       `succeeded` one cannot.
-- [ ] Run; confirm failure.
-- [ ] Implement using the existing legal `authorized → cancelled` transition; surface it in the UI.
-- [ ] Run; green. Commit.
+- [x] Run; confirm failure.
+- [x] Implement using the existing legal `authorized → cancelled` transition; surface it in the UI.
+- [x] Run; green. Commit.
+- [x] **Final review, finding 1:** make the withdrawal *stick* on the cadence path — a cancelled
+      publish action keeps its draft slotted, so the next fill cannot re-collapse and publish it
+      (`services/cadences.ts`). See §7.
 
 ### Task 7 — Make the collapse visible (UI + copy)
 
@@ -304,24 +312,25 @@ tests in `apps/api/test/external-actions.test.ts` and the web shell tests.
 
 ### Task 8 — Verify, document, push
 
-- [ ] Full `npm test` + `npm run typecheck` green.
-- [ ] Update `docs/deferred-improvements.md` if anything was deliberately deferred.
-- [ ] Progress log below updated with what actually happened.
+- [x] Full `npm test` + `npm run typecheck` green.
+- [x] Update `docs/deferred-improvements.md` if anything was deliberately deferred (entries 31–36).
+- [x] Progress log below updated with what actually happened.
+- [x] Deploy-day notes recorded (§8).
 - [ ] Push `sprint-52-collapse-double-gate`. **Do not merge to `main`** — founder merges.
 
 ---
 
 ## 5. Acceptance criteria (from the PRD)
 
-- [ ] Approving a LinkedIn draft publishes it on cadence with **no second click**.
-- [ ] Editing after approval **re-arms** the second gate, and the UI surfaces why.
-- [ ] Spend (`paid_launch`, `budget_change`, `targeting_change`) and messaging (`send`, `reply`)
+- [x] Approving a LinkedIn draft publishes it on cadence with **no second click**.
+- [x] Editing after approval **re-arms** the second gate, and the UI surfaces why.
+- [x] Spend (`paid_launch`, `budget_change`, `targeting_change`) and messaging (`send`, `reply`)
       still require two decisions — proven by regression tests.
-- [ ] Both decisions remain recorded and attributed; "who authorized this publication" has a real
+- [x] Both decisions remain recorded and attributed; "who authorized this publication" has a real
       human answer.
-- [ ] A system-approved draft does **not** collapse the gate (D2a).
-- [ ] The policy editor shows the collapsed default explicitly.
-- [ ] `npm test` and `npm run typecheck` pass.
+- [x] A system-approved draft does **not** collapse the gate (D2a).
+- [x] The policy editor shows the collapsed default explicitly.
+- [x] `npm test` and `npm run typecheck` pass.
 
 ---
 
@@ -340,6 +349,64 @@ tests in `apps/api/test/external-actions.test.ts` and the web shell tests.
 
 ## 7. Progress log
 
+- **2026-08-02 (final whole-branch review — fixes)** — Two findings, both fixed.
+  **(1, Important) A withdrawal did not stick on the cadence path.** `pendingCadenceActions`
+  (`services/cadences.ts`) filtered out `cancelled` actions, so a withdrawn collapsed publish
+  disappeared from `slottedDraftIds`. The draft was still `approved` and still human-fingerprinted,
+  so the next fill re-slotted it, **re-collapsed it to `authorized`, and published it** — no second
+  click, no new human decision. The idempotency key `cadence:<id>:<slot>:<draft>` only deduped the
+  same slot; a different slot is a different key. This was a genuine regression: pre-Sprint-52 the
+  re-slotted action landed in `authorization_required` and sat there unsent, and the UI promises
+  "Withdrawn. Nothing was sent." **Founder decision: make the withdrawal stick.** `cancelled`
+  actions now count toward `slottedDraftIds`, so the withdrawn draft does not return to that cadence
+  unless it is re-queued (intended consequence). **Slot vs draft:** the *slot* is still freed
+  (`takenSlots` unchanged) — the founder refused that post, not that airtime, so a different
+  approved draft may take it, and the withdrawn draft cannot come back for it because it stays in
+  `slottedDraftIds`. That keeps the cadence from freezing while still honoring the "no". `stale`
+  stays excluded from both sets: a stale action is superseded by a `repropose`, not refused.
+  **(2, Minor) `actorOf` failed open.** `human: !request.actor.system` inferred humanity from "not
+  the worker"; it is now established affirmatively by a signed-in user identity, matching the
+  fail-closed conversions in `copilot-actions.ts` and `external-action-adapters.ts`. Zero behavior
+  change today (the guard sets exactly two actors), but a future service token or delegated
+  integration identity arrives as non-human rather than silently collapsing the gate. The
+  delegated-**human** paths (email/Telegram approve links) are unaffected — they bypass the guard
+  and declare `human: true` at their own call sites.
+- **2026-08-02 (Task 8)** — `npm test` 2101 passing across 194 files, `npm run typecheck` clean.
+  Deferred items recorded in `docs/deferred-improvements.md` as entries **31–36**: the text-only
+  withdrawal marker, the two body shapes for `ExternalActionPreparationError`, `run()` stranding not
+  covering `dispatching` (no legal edge exists, so this is correct rather than missing), the
+  in-memory `action` not refreshed after the collapsed-authorize transaction, `logDecision`'s two
+  adjacent trailing optional positionals, and the collapse applying to a fresh `propose` with a
+  different destination (by design — §3.2.1). Deploy-day notes in §8.
+- **2026-08-02 (Tasks 5-6)** — **The spec's premise for Task 5 was wrong, and the truth was worse.**
+  It was never a 500: `ExternalActionPreparationError` carries its own `statusCode`, so Fastify
+  already returned **409** — but a bare `{"statusCode":409,"code":"draft_not_approved",
+  "error":"Conflict"}` with **no `action` body**, so the web client's `body?.error === "stale_action"`
+  branch never fired. And because `authorize()` threw *before* any state change, the action stayed
+  in `authorization_required` and failed identically on every click, with `repropose` unreachable
+  (it requires `stale` or `blocked`) — a permanent dead end, not a transient error. §3.3 records the
+  correction. Implementation found a **fourth** revalidation site not in the plan (`repropose`), and
+  the `run()` stranding path was real. Review confirmed there is no fifth site, that every
+  preparation-error site is a pure DB check (so no transient failure gets mis-marked `stale`), that
+  `succeeded` is genuinely non-cancellable, and that the dispatch/cancel race is safe in both
+  directions. Fix round tightened audit-record accuracy: withdrawal-vs-denial wording, the
+  blocked-action stale message, and a false default reason. A re-review traced all eight call sites
+  of the now-shared `externalActionError` mapping and confirmed it cannot change any other route's
+  response, and that `deny()`'s record is unchanged. Commits `2099820..887325a`, 2094 tests green.
+- **2026-08-02 (Tasks 1-3)** — Foundation: `draftApprovalFingerprint` (content + `mediaJson`, via
+  `canonicalActionFingerprint`), the `approval_decisions.content_fingerprint` column
+  (migration `0060_hot_nekra.sql`) written only on a **human** approve, and the lookup that answers
+  "was this exact content approved by a human?". Review found the sprint's one real design bug:
+  gating the fingerprint on `actor.userId !== null` silently excluded the email one-click and
+  Telegram approve paths, so the feature would not have worked from a phone — the single most likely
+  place a founder approves a post. That produced founder decision **D2c** (trust the signed token)
+  and the rule that **"human" is an explicit actor property**, never sniffed from the label string;
+  §1 and §3.1 were amended and the gate became `actor.human`. Commits `2067325..7c4ca07`, 2069 tests
+  green. Two carries into Task 4, both honored: `automation.test.ts`'s auto-approved-draft fixture
+  was flipped to a `system` actor (it was `human: true` on an automation narrative, exercising the
+  collapse where production would not), and because `ExternalActionActor` cannot express humanity,
+  the collapsed authorization is attributed to the **approver read from the approval decision row**,
+  not to the proposer.
 - **2026-08-02 (Task 7)** — The collapse became legible. The policy editor states, inline on the
   `publish` row under `human_required`, that approving a draft also authorizes its publication and
   that an edit re-arms the gate — no third policy value, per D2b. The approvals queue carries a
@@ -372,3 +439,25 @@ tests in `apps/api/test/external-actions.test.ts` and the web shell tests.
 - **2026-08-02** — Recon complete against `origin/main` @ `7cf4e41` (Sprint 50 merged; baseline
   verified against `origin/main`, not local `main` — the Sprint 51 lesson). Decisions D2/D2a/D2b
   recorded. Plan written and awaiting founder approval. No code written yet.
+
+---
+
+## 8. Deploy-day notes
+
+Nothing here is a code change; these are the things to know when this branch goes out.
+
+- **`NOTIFY_SIGNING_SECRET` matters more now.** `apps/api/src/notifications/tokens.ts:12-13` falls
+  back to `"dev-signing-secret-change-me"` when the env var is unset. Before this sprint, forging an
+  approve token bought an **approval**; after D2c it buys a **publication**, because the email /
+  Telegram approver is a human for collapse purposes. The variable is already in `.env.example` —
+  this is an emphasis, not a new requirement: **confirm it is set to a real secret in the deployed
+  environment before this branch ships.**
+- **In-flight publish actions get a slightly wrong explanation, briefly.** Publish actions already
+  sitting in `authorization_required` when this deploys predate the collapse, so
+  `secondGateExplanation` (`apps/web/lib/external-actions.ts:143-152`) tells the founder the gate
+  "re-armed" for one of three reasons when in fact it was simply never collapsed. **Deliberately not
+  fixed:** it is self-clearing — the copy becomes accurate as soon as that queue drains, and adding
+  a deploy-timestamp carve-out would outlive the problem it solves.
+- **A withdrawn cadence post does not come back.** Cancelling a collapsed publish now keeps the
+  draft slotted against that cadence (final review, finding 1), so re-queuing it is an explicit act.
+  Support answer: "withdraw" means "not on this cadence", not "not this time".

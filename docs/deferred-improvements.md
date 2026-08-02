@@ -306,6 +306,73 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
   LinkedIn organizations who shouldn't need to know what a URN is.
 - **Origin:** Sprint 46.
 
+### 31. The withdrawal marker on a cancelled action is text-only
+- **What we shipped (Sprint 52):** `deny` and `cancel` both end an action at `cancelled`, so the
+  decision record distinguishes a *withdrawal* (an authorization taken back before dispatch) from a
+  *denial* by a marker string in the reason text, which also names the status it was withdrawn from.
+  A founder-typed denial reason that happens to contain the marker string is therefore ambiguous.
+- **The better version:** A persisted prior-status (or decision-kind) column on the decision row, so
+  "withdrawn from `authorized`" is structured data and unspoofable by reason text.
+- **Trigger to revisit:** When the audit trail is read by anything other than a human — an export, a
+  compliance view, or analytics that needs to count withdrawals separately from denials.
+- **Origin:** Sprint 52.
+
+### 32. Two body shapes for one external-action preparation error
+- **What we shipped (Sprint 52):** The shared `externalActionError` mapping nests an
+  `ExternalActionPreparationError`'s `details` under a `details` key, while three route-local
+  handlers spread the same field top-level. Currently harmless — the routes that use each mapping are
+  disjoint, so no single endpoint returns both shapes — but one error class has two wire formats.
+- **The better version:** One mapping for the class: delete the route-local handlers and let every
+  route go through `externalActionError`, with a single documented body shape.
+- **Trigger to revisit:** A client has to branch on the body shape, or a route starts to reach both
+  mappings (which would make the difference observable on one endpoint).
+- **Origin:** Sprint 52.
+
+### 33. `run()` stranding recovery doesn't cover `dispatching`
+- **What we shipped (Sprint 52):** The scheduled-publish `run()` loop marks an action `stale` when
+  its subject no longer prepares, covering `authorized` and `scheduled`. `dispatching` is not
+  covered — identical to the pre-Sprint-52 behavior, and correct today because the state machine has
+  no `dispatching → stale` edge, so there is nothing to transition to.
+- **The better version:** If `dispatching` ever needs a recovery path (a crash mid-dispatch leaving
+  an action parked there), add the edge to the contracts state machine first and then handle it here
+  — not a `stale` transition invented at the call site.
+- **Trigger to revisit:** An action is observed stuck in `dispatching`, or the lifecycle gains a
+  legal edge out of it.
+- **Origin:** Sprint 52.
+
+### 34. The in-memory action isn't refreshed after the collapsed-authorize transaction
+- **What we shipped (Sprint 52):** The collapse writes the decision row and the `authorized` status
+  in one raw `tx.update`, so the local `action` object still reads `status: "proposed"` afterwards.
+  Correct today — only `workspaceId` is read from it after that point, and `dispatch()` re-reads the
+  row from the DB — but a latent trap for the next edit to that block.
+- **The better version:** Have the transaction return the refreshed row (or re-read it) and rebind
+  `action`, so the in-memory object never disagrees with the database.
+- **Trigger to revisit:** Any change that reads more of `action` after the collapse block, or a bug
+  traced to the stale in-memory status.
+- **Origin:** Sprint 52.
+
+### 35. `logDecision` takes two adjacent trailing optional positionals
+- **What we shipped (Sprint 52):** `logDecision` grew a `contentFingerprint` argument next to an
+  existing optional `string | null` positional. Two adjacent same-typed optionals are trivially
+  swappable at a call site and the compiler cannot tell.
+- **The better version:** Collapse the trailing optionals into a named options object.
+- **Trigger to revisit:** A third optional argument, or the first time an argument is passed in the
+  wrong position.
+- **Origin:** Sprint 52.
+
+### 36. The collapse applies to a fresh publish with a different destination
+- **What we shipped (Sprint 52):** The approval fingerprint covers content and media only, so a
+  *fresh* `propose` collapses even when its destination differs from anything the approver saw. This
+  is deliberate (spec §3.2.1): a first proposal's destination is either chosen by a human in the
+  request or configured by a human on the cadence, so the fingerprint is always compared against a
+  human-chosen destination. A **repropose** is excluded precisely because its destination changed
+  underneath a human.
+- **The better version:** If destinations ever stop being human-chosen at propose time — an agent
+  picking the account, or a routing rule reassigning it — the fingerprint would need to cover the
+  destination too, which re-arms Gate 2 whenever routing changes.
+- **Trigger to revisit:** Any path that proposes a publish to a destination no human selected.
+- **Origin:** Sprint 52.
+
 ---
 
 ## Done (upgraded)
