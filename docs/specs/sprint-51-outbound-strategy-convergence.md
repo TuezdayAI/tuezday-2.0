@@ -56,9 +56,14 @@ send path; CSV is a leftover.
 
 ### 2.2 The one genuine gap
 
-Native send requires a **sender identity** — on `main`, a verified Resend sender domain
-(`workspaceEmailSenders`, status `verified`). Without one, `prepareEmailAction` fails
-`sender_unverified` (`external-action-email.ts:239`), and CSV→Smartlead was the only escape hatch.
+Native send requires a **sender identity**, and on the true baseline there are **two**: a verified
+Resend sender domain (`workspaceEmailSenders`, status `verified`) **or** a connected Gmail mailbox
+(`mailboxes`, Sprint 47). With neither, `prepareEmailAction` fails `sender_unverified`
+(`external-action-email.ts`), and CSV→Smartlead was the only escape hatch.
+
+> Readiness is therefore the **union** of the two identities. Treating it as "verified domain only"
+> is a real defect — it tells a mailbox-connected workspace to set up sending when it can already
+> send. See the baseline-correction entries in §6.
 
 The real hole is therefore: **when sending is not configured, the product routes the founder into
 another tool instead of helping them turn sending on.** Fixing that — not deleting a button — is the
@@ -73,14 +78,16 @@ substance of this sprint.
 2. **CSV is export-only.** It remains available for founders who want to run Smartlead themselves,
    but it is never presented as "how you send", never wired into send/dispatch execution, and is
    visually secondary.
-3. **Sending readiness is a first-class UI state.** When no verified sender exists, the email channel
-   offers **"Set up sending"** (→ sender-domain verification), not a CSV download.
+3. **Sending readiness is a first-class UI state.** When neither native identity exists, the email
+   channel offers **"Set up sending"** (→ verify a sender domain, or connect a mailbox), not a CSV
+   download.
 4. **Docs tell the truth.** The OSS boundary rule is retired for email, with the reasoning recorded,
    and a deliverability-posture doc states plainly what Tuezday does and does not do.
 
 **Non-goal:** no changes to the external-action governance model, the approval gate, suppression,
 permission states, or webhook verification. This sprint reframes and converges; it does not
-re-engineer sending. `outreach-engine.ts` is **not on `main`** (later-sprint work) and is out of scope.
+re-engineer sending. `outreach-engine.ts` (standalone outreach sequences) is on the true baseline and
+was checked for CSV/Smartlead send framing — it has none, and its logic is left untouched.
 
 ---
 
@@ -103,8 +110,8 @@ re-engineer sending. `outreach-engine.ts` is **not on `main`** (later-sprint wor
   clearly-labeled secondary "Export copy (optional)".
 - **B2.** Rewrite the self-contradictory copy at `page.tsx:457` — native sending from your own
   verified sender; CSV is an optional export, not the send route.
-- **B3.** **Gap fix:** when no verified sender is configured, show a "Set up sending" prompt linking
-  to sender-domain verification instead of steering the founder to Smartlead.
+- **B3.** **Gap fix:** when neither a verified sender domain nor a connected mailbox exists, show a
+  "Set up sending" prompt linking to sender setup instead of steering the founder to Smartlead.
 
 ### Workstream C — Docs
 - **C1.** `CLAUDE.md` — update the `OutboundExporter` seam description (~:70) and the OSS boundary
@@ -123,7 +130,9 @@ re-engineer sending. `outreach-engine.ts` is **not on `main`** (later-sprint wor
 
 - [ ] A founder can send an approved outbound email **entirely inside Tuezday** — no download, no
       upload — and the decision is recorded as a governed external action.
-- [ ] With no verified sender, the UI offers "Set up sending"; it never implies Smartlead is required.
+- [ ] With neither native identity configured, the UI offers "Set up sending"; a workspace that has
+      either a verified domain **or** a connected mailbox is treated as ready. It never implies
+      Smartlead is required.
 - [ ] CSV export still works, is labeled optional, and is invoked by **no** send/dispatch path.
 - [ ] `CLAUDE.md` and `oss-integration-recommendations.md` no longer contradict the shipped code.
 - [ ] `docs/deliverability-posture.md` exists and is linked from the OSS doc.
@@ -158,8 +167,56 @@ re-engineer sending. `outreach-engine.ts` is **not on `main`** (later-sprint wor
   baseline — in particular the B3 readiness rule (mailbox OR verified sender) and the
   deliverability-posture doc's tracking claim.
 
-- **Verified capability gap (`unsubscribe`).** `createUnsubscribeToken`
-  (`outbound-email/unsubscribe.ts`) is referenced only by tests — no send path injects an
-  unsubscribe link and there is no `List-Unsubscribe` header. Sending on a customer's domain
-  without an unsubscribe affordance relies on the founder writing one into the copy. Recorded here
-  rather than silently claimed as shipped; needs a follow-up decision.
+- **2026-08-02 — BASELINE CORRECTION APPLIED.** Branch rebased onto `origin/main` (`1a657c7`); the
+  branch is now exactly one commit ahead of the true `main`. Only the two web files conflicted
+  (`outbound/page.tsx`, `connectors/page.tsx`); API and docs merged cleanly. Resolutions:
+
+  - **Readiness is now the union of both native send identities.** `senderReady` was
+    `sender?.status === "verified"`, which would have told every Gmail-mailbox workspace to
+    "set up sending" when it could already send. It is now
+    `domainVerified || mailboxReady` (`page.tsx`), with the Sending card reporting which identity is
+    live ("verified sender" / "mailbox connected") and the setup copy offering both routes.
+  - The per-draft mailbox picker and "Send from mailbox" controls from `origin/main` are preserved
+    alongside the new "Set up sending" CTA; they compose (the CTA only renders when neither identity
+    exists, in which case there are no mailboxes to pick).
+  - `PROVIDER_PROMISE` keeps `gmail` from `origin/main` and takes Sprint 51's export-only wording
+    for `smartlead`/`instantly`.
+
+  **Verified green on the true baseline:** `npm run typecheck` clean across all workspaces;
+  `npm test` → **186 files, 1988 tests passing**. (The previously-reported web typecheck error was a
+  stale gitignored `.next` artifact, not a real defect; it clears on a fresh build.)
+
+- **Corrected on rebase — the two "capability gaps" were artifacts of the stale tree.** Both are in
+  fact fully wired on the true baseline, and the deliverability-posture doc was rewritten to match:
+  - **Unsubscribe is injected on every send** — `external-action-email.ts` mints a signed token and
+    URL per send, appends plain-text and HTML footers, and hard-blocks with
+    `unsubscribe_unconfigured` when `EMAIL_UNSUBSCRIBE_SECRET` is absent (recorded in-code as a
+    founder decision, "from send #1").
+  - **Open/click tracking exists** — `outbound-email/tracking.ts` with signed open/click tokens,
+    link rewriting and an open pixel, opt-in per outreach sequence (`trackOpens`/`trackClicks`).
+
+  This is the clearest argument for the baseline discipline: a doc written against a stale tree was
+  accurate about that tree and wrong about the product.
+
+- **2026-08-02 — compliance finding, raised by the posture re-verification. Needs a founder
+  decision; deliberately NOT fixed in this sprint.**
+
+  The unsubscribe footer, the postal address, and the `unsubscribe_unconfigured` hard guard are on
+  the **Gmail/mailbox path only** (`gmailBlocker`, `composeGmailBody` in `external-action-email.ts`).
+  The **Resend path transmits the action-authorized body verbatim** (`provider!.send({ text:
+  payload.text })`, `html` always null) — so launch, outbound, and PR sends over Resend carry **no
+  unsubscribe link and no postal address** unless the founder wrote them into the copy. Neither path
+  sets a `List-Unsubscribe` header.
+
+  This matters more now than it did last week: Sprint 51 makes native sending *the* path and removes
+  the CSV detour, so the Resend path will carry more real volume. Cold email without an unsubscribe
+  affordance is a CAN-SPAM exposure and a deliverability risk.
+
+  Not fixed here because this sprint's remit is "reframe and converge, do not re-engineer sending" —
+  adding footer composition to the Resend path changes send semantics and deserves its own tests.
+  **Recommended follow-up sprint:** bring the Resend path to parity with the Gmail path (footer,
+  postal address, `unsubscribe_unconfigured` guard) and add `List-Unsubscribe` to both.
+
+  Other verified gaps recorded in `docs/deliverability-posture.md`: Gmail sends stop at `accepted`
+  with no provider delivery/bounce event (bounce detection there is the LLM reply classifier); and
+  the per-mailbox sending window is enforced at outreach dispatch, not in the send guard.
