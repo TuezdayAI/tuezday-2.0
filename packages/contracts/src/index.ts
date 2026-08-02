@@ -1792,6 +1792,16 @@ export const authorizeExternalActionInputSchema = z.object({}).strict();
 export const denyExternalActionInputSchema = z.object({
   reason: z.string().trim().min(1).max(1_000).nullable().optional(),
 });
+/**
+ * Withdrawing an authorization that was already granted — the collapsed publish
+ * gate (Sprint 52) authorizes at propose time, so such an action never sits in
+ * the queue for `deny` to reach. Legality is the contracts state machine's call:
+ * anything with an edge to `cancelled` can still be withdrawn, and `succeeded`
+ * has none.
+ */
+export const cancelExternalActionInputSchema = z.object({
+  reason: z.string().trim().min(1).max(1_000).nullable().optional(),
+});
 export const reproposeExternalActionInputSchema = z.object({
   idempotencyKey: z.string().trim().min(1).max(300),
 });

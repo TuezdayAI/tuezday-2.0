@@ -36,6 +36,9 @@ import { eq } from "drizzle-orm";
 export const COLLAPSED_FROM_DRAFT_APPROVAL =
   "Authorized by the draft approval — the approved content is unchanged.";
 
+/** Why an already-authorized action never went out, when no reason was given. */
+export const WITHDRAWN_BEFORE_DISPATCH = "Withdrawn before it was dispatched.";
+
 export interface ExternalActionIntent {
   subject: ExternalActionSubject;
   context: ExternalActionContext;
@@ -99,6 +102,19 @@ export interface ExternalActionRuntime {
     actor: ExternalActionActor,
   ): Promise<ExternalActionSubmission>;
   deny(
+    actionId: string,
+    workspaceId: string,
+    actor: ExternalActionActor,
+    reason: string | null,
+  ): Promise<ExternalActionSubmission>;
+  /**
+   * Withdraw an action that was already authorized, before it leaves the
+   * building. `deny` answers a request sitting in the authorization queue; a
+   * collapsed publish (Sprint 52) never sits there, so this is the only way to
+   * stop one. Legal for anything the contracts state machine still lets reach
+   * `cancelled` — never for `succeeded`, which has no such edge.
+   */
+  cancel(
     actionId: string,
     workspaceId: string,
     actor: ExternalActionActor,
@@ -296,6 +312,48 @@ export function createExternalActionRuntime({
     return submission(action);
   }
 
+  /**
+   * The one way an action reaches `cancelled`: a decision on the record and the
+   * status change committed together, so the audit trail can never claim a
+   * refusal that did not take effect. Shared by `deny` (answering a queued
+   * request) and `cancel` (withdrawing an authorization already granted) —
+   * different questions, identical durable consequence.
+   */
+  async function recordCancellation(
+    actionId: string,
+    workspaceId: string,
+    actor: ExternalActionActor,
+    reason: string | null,
+  ): Promise<ExternalActionSubmission> {
+    const action = getExternalAction(db, workspaceId, actionId);
+    if (!action) throw new ExternalActionNotFoundError();
+    if (!canTransitionExternalAction(action.status, "cancelled")) {
+      throw new InvalidExternalActionTransitionError(action.status, "cancelled");
+    }
+    const now = Date.now();
+    db.transaction((tx) => {
+      tx.insert(externalActionDecisions)
+        .values({
+          id: randomUUID(),
+          workspaceId,
+          actionId,
+          decision: "deny",
+          reason,
+          actorUserId: actor.userId,
+          actorLabel: actor.label,
+          subjectFingerprint: action.fingerprint,
+          policySnapshotJson: JSON.stringify(action.policy),
+          createdAt: now,
+        })
+        .run();
+      tx.update(externalActions)
+        .set({ status: "cancelled", completedAt: now, updatedAt: now })
+        .where(eq(externalActions.id, actionId))
+        .run();
+    });
+    return submission(getExternalAction(db, workspaceId, actionId)!);
+  }
+
   async function proposeWithLineage(
     command: ExternalActionCommand,
     actor: ExternalActionActor,
@@ -480,34 +538,12 @@ export function createExternalActionRuntime({
       return dispatch(actionId, workspaceId);
     },
 
-    async deny(actionId, workspaceId, actor, reason) {
-      const action = getExternalAction(db, workspaceId, actionId);
-      if (!action) throw new ExternalActionNotFoundError();
-      if (!canTransitionExternalAction(action.status, "cancelled")) {
-        throw new InvalidExternalActionTransitionError(action.status, "cancelled");
-      }
-      const now = Date.now();
-      db.transaction((tx) => {
-        tx.insert(externalActionDecisions)
-          .values({
-            id: randomUUID(),
-            workspaceId,
-            actionId,
-            decision: "deny",
-            reason,
-            actorUserId: actor.userId,
-            actorLabel: actor.label,
-            subjectFingerprint: action.fingerprint,
-            policySnapshotJson: JSON.stringify(action.policy),
-            createdAt: now,
-          })
-          .run();
-        tx.update(externalActions)
-          .set({ status: "cancelled", completedAt: now, updatedAt: now })
-          .where(eq(externalActions.id, actionId))
-          .run();
-      });
-      return submission(getExternalAction(db, workspaceId, actionId)!);
+    deny(actionId, workspaceId, actor, reason) {
+      return recordCancellation(actionId, workspaceId, actor, reason);
+    },
+
+    cancel(actionId, workspaceId, actor, reason) {
+      return recordCancellation(actionId, workspaceId, actor, reason ?? WITHDRAWN_BEFORE_DISPATCH);
     },
 
     async repropose(actionId, workspaceId, idempotencyKey, actor) {

@@ -13,13 +13,19 @@ import { canonicalActionFingerprint } from "../src/services/external-action-fing
 import {
   ExternalActionIdempotencyConflictError,
   StaleExternalActionError,
+  WITHDRAWN_BEFORE_DISPATCH,
   createExternalActionRuntime,
   type ExternalActionAdapter,
   type ExternalActionCommand,
   type ExternalActionIntent,
 } from "../src/services/external-action-coordinator";
 import { ExternalActionPreparationError } from "../src/services/external-action-preparation";
-import { getExternalAction, getExternalActionDetail } from "../src/services/external-actions";
+import {
+  InvalidExternalActionTransitionError,
+  getExternalAction,
+  getExternalActionDetail,
+  transitionExternalAction,
+} from "../src/services/external-actions";
 import { ensureWorkspaceActionPolicies } from "../src/services/external-action-backfill";
 import {
   listExternalActionPolicies,
@@ -437,6 +443,81 @@ describe("external action lifecycle", () => {
         runtime.repropose(queued.action.id, workspaceId, "publish:retry", ACTOR),
       ).rejects.toBeInstanceOf(StaleExternalActionError);
       expect(getExternalAction(db, workspaceId, queued.action.id)?.status).toBe("stale");
+    });
+  });
+
+  // Sprint 52 Task 6 — a collapsed publish action never sits in the
+  // authorization queue, so `deny` (a queue verb) is not the way to stop it.
+  // Withdrawing an authorization that was already granted is its own act, and
+  // it stays possible right up to the moment the action leaves the building.
+  describe("withdrawing an authorization before dispatch", () => {
+    it("cancels an authorized action that has not dispatched, and records who did it", async () => {
+      const input = command(workspaceId);
+      const fake = fakeAdapter(input);
+      const runtime = createExternalActionRuntime({ db, adapters: { publish: fake.adapter } });
+      const queued = await runtime.propose(input, ACTOR);
+      // The collapsed shape: authorized without ever entering the queue.
+      transitionExternalAction(db, workspaceId, queued.action.id, "authorized", {
+        authorizedAt: Date.now(),
+      });
+
+      const cancelled = await runtime.cancel(
+        queued.action.id,
+        workspaceId,
+        ACTOR,
+        "Changed my mind",
+      );
+      expect(cancelled.action.status).toBe("cancelled");
+      expect(cancelled.action.completedAt).not.toBeNull();
+      expect(fake.execute).not.toHaveBeenCalled();
+
+      const decisions = getExternalActionDetail(db, workspaceId, queued.action.id)!.decisions;
+      expect(decisions).toHaveLength(1);
+      expect(decisions[0]).toMatchObject({
+        decision: "deny",
+        reason: "Changed my mind",
+        actor: ACTOR,
+      });
+    });
+
+    it("cancels a scheduled action so the runner never reaches its slot", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-07-14T10:00:00Z"));
+      try {
+        setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
+        const dueAt = Date.now() + 60_000;
+        const input = command(workspaceId, { requestedFor: dueAt });
+        const fake = fakeAdapter(input);
+        const runtime = createExternalActionRuntime({ db, adapters: { publish: fake.adapter } });
+        const scheduled = await runtime.propose(input, ACTOR);
+        expect(scheduled.action.status).toBe("scheduled");
+
+        const cancelled = await runtime.cancel(scheduled.action.id, workspaceId, ACTOR, null);
+        expect(cancelled.action.status).toBe("cancelled");
+        expect(getExternalActionDetail(db, workspaceId, scheduled.action.id)!.decisions[0]?.reason)
+          .toBe(WITHDRAWN_BEFORE_DISPATCH);
+
+        vi.setSystemTime(dueAt + 1);
+        expect(await runtime.run(workspaceId)).toEqual([]);
+        expect(fake.execute).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("refuses to cancel an action that already left the building", async () => {
+      setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
+      const input = command(workspaceId);
+      const fake = fakeAdapter(input);
+      const runtime = createExternalActionRuntime({ db, adapters: { publish: fake.adapter } });
+      const done = await runtime.propose(input, ACTOR);
+      expect(done.action.status).toBe("succeeded");
+
+      await expect(
+        runtime.cancel(done.action.id, workspaceId, ACTOR, null),
+      ).rejects.toBeInstanceOf(InvalidExternalActionTransitionError);
+      expect(getExternalAction(db, workspaceId, done.action.id)?.status).toBe("succeeded");
+      expect(getExternalActionDetail(db, workspaceId, done.action.id)?.decisions).toEqual([]);
     });
   });
 });

@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import {
   authorizeExternalActionInputSchema,
+  cancelExternalActionInputSchema,
   denyExternalActionInputSchema,
   externalActionListFiltersSchema,
   reproposeExternalActionInputSchema,
@@ -95,6 +96,29 @@ export function registerExternalActionRoutes(
       if (!parsed.success) return invalid(reply, parsed.error.issues);
       try {
         return await runtime.deny(
+          request.params.actionId,
+          request.params.id,
+          actorOf(request),
+          parsed.data.reason ?? null,
+        );
+      } catch (error) {
+        return externalActionError(error, reply);
+      }
+    },
+  );
+
+  // Withdraw an authorization already granted, before the action dispatches.
+  // A collapsed publish (Sprint 52) is authorized at propose time and never
+  // reaches the queue, so `deny` cannot stop it — this can, right up until the
+  // action leaves the building.
+  app.post<{ Params: { id: string; actionId: string } }>(
+    "/workspaces/:id/external-actions/:actionId/cancel",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const parsed = cancelExternalActionInputSchema.safeParse(request.body ?? {});
+      if (!parsed.success) return invalid(reply, parsed.error.issues);
+      try {
+        return await runtime.cancel(
           request.params.actionId,
           request.params.id,
           actorOf(request),

@@ -498,6 +498,52 @@ describe("external-action publication boundary", () => {
       expect(decision.actorLabel).toBe("Founder (via Mobile Notification)");
     });
 
+    // Sprint 52 Task 6 — the collapse skips the authorization queue, so `deny`
+    // (a queue verb) can never reach the action. Withdrawing it before its slot
+    // is the only way to stop it.
+    it("withdraws a collapsed publication before its scheduled slot", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-07-14T10:00:00Z"));
+      const id = seedPendingDraft();
+      await approve(id);
+      const dueAt = Date.now() + 60_000;
+      const first = await publishDraft(id, { scheduledFor: dueAt });
+      expect(first.json().action.status).toBe("scheduled");
+      const actionId = first.json().action.id as string;
+
+      const cancelled = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/external-actions/${actionId}/cancel`,
+        payload: { reason: "Wrong week for this one" },
+      });
+      expect(cancelled.statusCode).toBe(200);
+      expect(externalActionSubmissionSchema.parse(cancelled.json()).action.status).toBe("cancelled");
+      expect(decisionsFor(actionId).map((decision) => decision.reason)).toContain(
+        "Wrong week for this one",
+      );
+
+      vi.setSystemTime(dueAt + 1);
+      await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
+      expect(posts).toHaveLength(0);
+      expect(db.select().from(publications).all()).toEqual([]);
+    });
+
+    it("refuses to withdraw a collapsed publication that already went out", async () => {
+      const id = seedPendingDraft();
+      await approve(id);
+      const published = await publishDraft(id);
+      expect(published.json().action.status).toBe("succeeded");
+      expect(posts).toHaveLength(1);
+
+      const cancelled = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/external-actions/${published.json().action.id}/cancel`,
+        payload: {},
+      });
+      expect(cancelled.statusCode).toBe(409);
+      expect(cancelled.json().error).toBe("conflict");
+    });
+
     it("never collapses a repropose — a stale action changed something the approval cannot see", async () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(new Date("2026-07-14T10:00:00Z"));

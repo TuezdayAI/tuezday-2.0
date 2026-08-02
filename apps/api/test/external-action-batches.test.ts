@@ -152,6 +152,7 @@ function runtimeWithAuthorize(
     propose: vi.fn(),
     proposeForReview: vi.fn(),
     deny: vi.fn(),
+    cancel: vi.fn(),
     repropose: vi.fn(),
     run: vi.fn(),
   };
