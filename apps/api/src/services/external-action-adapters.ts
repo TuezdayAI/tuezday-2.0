@@ -55,6 +55,7 @@ import type {
   ExternalActionIntent,
 } from "./external-action-coordinator";
 import { canonicalActionFingerprint } from "./external-action-fingerprint";
+import { ExternalActionPreparationError } from "./external-action-preparation";
 import { countTerminalExternalActionsForSubject } from "./external-actions";
 import { getDraft } from "./drafts";
 import {
@@ -89,17 +90,7 @@ const publishActionPayloadSchema = publishDraftInputSchema
 
 type PublishActionPayload = z.infer<typeof publishActionPayloadSchema>;
 
-export class ExternalActionPreparationError extends Error {
-  constructor(
-    public readonly code: string,
-    message: string,
-    public readonly statusCode: 400 | 404 | 409,
-    public readonly details?: unknown,
-  ) {
-    super(message);
-    this.name = "ExternalActionPreparationError";
-  }
-}
+export { ExternalActionPreparationError } from "./external-action-preparation";
 
 function publishIntent(
   db: Db,

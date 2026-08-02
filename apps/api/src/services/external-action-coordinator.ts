@@ -19,6 +19,7 @@ import { externalActionDecisions, externalActions } from "../db/schema";
 import { humanApprovalCoveringDraft } from "./drafts";
 import { canonicalActionFingerprint } from "./external-action-fingerprint";
 import { resolveExternalActionPolicy } from "./external-action-policy";
+import { ExternalActionPreparationError } from "./external-action-preparation";
 import {
   InvalidExternalActionTransitionError,
   findExternalActionByIdempotencyKey,
@@ -174,17 +175,53 @@ export function createExternalActionRuntime({
   adapters: ExternalActionAdapterRegistry;
   analytics?: AnalyticsSink;
 }): ExternalActionRuntime {
+  /**
+   * Revalidation has two failure modes and they mean the same thing.
+   *
+   * The adapter can return a *different* intent (the fingerprint no longer
+   * matches), or it can refuse to build one at all — `publishIntent` throws
+   * `ExternalActionPreparationError` when the draft left `approved`, the
+   * connection was deleted, or the persona lost its routing. Both say "what was
+   * proposed no longer holds", so both must resolve to `stale`. Letting the
+   * preparation error escape instead reported a bare conflict to the founder
+   * and left the action sitting in the queue, re-failing on every click
+   * (Sprint 52 §3.3). A `revalidated: false` result is that refusal; anything
+   * else still throws, because an unknown fault must not be laundered into
+   * staleness.
+   */
+  type Revalidation =
+    | {
+        revalidated: true;
+        intent: ExternalActionIntent;
+        policy: EffectiveExternalActionPolicy;
+        value: string;
+      }
+    | { revalidated: false };
+
   async function currentFingerprint(
     action: ExternalAction,
     adapter: ExternalActionAdapter,
-  ): Promise<{ intent: ExternalActionIntent; policy: EffectiveExternalActionPolicy; value: string }> {
-    const intent = await adapter.revalidate(action, getExternalActionPayload(db, action.id));
+  ): Promise<Revalidation> {
+    let intent: ExternalActionIntent;
+    try {
+      intent = await adapter.revalidate(action, getExternalActionPayload(db, action.id));
+    } catch (error) {
+      if (error instanceof ExternalActionPreparationError) return { revalidated: false };
+      throw error;
+    }
     const policy = policyFor(db, action.workspaceId, action.kind, intent.context);
     return {
+      revalidated: true,
       intent,
       policy,
       value: fingerprintExternalActionIntent(action.workspaceId, action.kind, intent, policy),
     };
+  }
+
+  /** True when the action is no longer what was proposed — either revalidation
+   * refused it, or it revalidated to a different fingerprint. */
+  function diverged(action: ExternalAction, current: Revalidation): boolean {
+    return !current.revalidated || current.value !== action.fingerprint;
   }
 
   function stale(action: ExternalAction): ExternalAction {
@@ -211,8 +248,14 @@ export function createExternalActionRuntime({
     }
 
     const current = await currentFingerprint(action, adapter);
-    if (current.value !== action.fingerprint) {
-      return submission(stale(action));
+    if (diverged(action, current)) {
+      // `dispatching` has no edge to `stale` — an in-flight attempt with an
+      // unknown outcome must not be rewritten underneath itself. Leave it for
+      // the durable adapter to resolve rather than throwing an illegal
+      // transition out of the runner.
+      return submission(
+        canTransitionExternalAction(action.status, "stale") ? stale(action) : action,
+      );
     }
 
     const payload = getExternalActionPayload(db, action.id);
@@ -403,7 +446,7 @@ export function createExternalActionRuntime({
       const adapter = adapters[action.kind];
       if (!adapter) throw new InvalidExternalActionTransitionError(action.status, "blocked");
       const current = await currentFingerprint(action, adapter);
-      if (current.value !== action.fingerprint) throw new StaleExternalActionError(stale(action));
+      if (diverged(action, current)) throw new StaleExternalActionError(stale(action));
 
       const now = Date.now();
       db.transaction((tx) => {
@@ -474,15 +517,29 @@ export function createExternalActionRuntime({
         throw new InvalidExternalActionTransitionError(action.status, "proposed");
       }
       const adapter = adapters[action.kind];
-      const intent = adapter
-        ? await adapter.revalidate(action, getExternalActionPayload(db, action.id))
-        : {
-            subject: action.subject,
-            context: action.context,
-            payload: getExternalActionPayload(db, action.id),
-            requestedFor: action.requestedFor,
-            links: { draftId: action.subject.kind === "draft" ? action.subject.id : null },
-          };
+      let intent: ExternalActionIntent;
+      if (adapter) {
+        try {
+          intent = await adapter.revalidate(action, getExternalActionPayload(db, action.id));
+        } catch (error) {
+          // "Re-propose with the current content" cannot rebuild an intent the
+          // world no longer supports. The action is already terminal, so there
+          // is nothing to re-mark — report the same staleness the founder is
+          // looking at (409) rather than a bare conflict.
+          if (error instanceof ExternalActionPreparationError) {
+            throw new StaleExternalActionError(action);
+          }
+          throw error;
+        }
+      } else {
+        intent = {
+          subject: action.subject,
+          context: action.context,
+          payload: getExternalActionPayload(db, action.id),
+          requestedFor: action.requestedFor,
+          links: { draftId: action.subject.kind === "draft" ? action.subject.id : null },
+        };
+      }
       return proposeWithLineage(
         {
           workspaceId,

@@ -265,6 +265,30 @@ describe("external-action publication boundary", () => {
     expect(posts).toHaveLength(0);
   });
 
+  // Sprint 52 Task 5 — `approved` is terminal in the approval state machine, so
+  // a draft only leaves it out-of-band (a repair script, a future un-approve
+  // path, a restored backup). When it does, `publishIntent` refuses to rebuild
+  // the intent at all. That is staleness, not a server fault: 409, not 500.
+  it("answers 409 stale_action when the draft is no longer publishable at authorize", async () => {
+    const queued = await publish();
+    expect(queued.json().action.status).toBe("authorization_required");
+    db.update(drafts)
+      .set({ state: "pending_review", updatedAt: Date.now() })
+      .where(eq(drafts.id, draftId))
+      .run();
+
+    const authorized = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/external-actions/${queued.json().action.id}/authorize`,
+      payload: {},
+    });
+    expect(authorized.statusCode).toBe(409);
+    expect(authorized.json().error).toBe("stale_action");
+    expect(authorized.json().action.status).toBe("stale");
+    expect(posts).toHaveLength(0);
+    expect(db.select().from(publications).all()).toEqual([]);
+  });
+
   it("keeps a future authorized action receipt-free until the runner reaches its due time", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-07-14T10:00:00Z"));

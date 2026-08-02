@@ -18,6 +18,7 @@ import {
   type ExternalActionCommand,
   type ExternalActionIntent,
 } from "../src/services/external-action-coordinator";
+import { ExternalActionPreparationError } from "../src/services/external-action-preparation";
 import { getExternalAction, getExternalActionDetail } from "../src/services/external-actions";
 import { ensureWorkspaceActionPolicies } from "../src/services/external-action-backfill";
 import {
@@ -98,9 +99,11 @@ function fakeAdapter(initial: ExternalActionCommand) {
   };
   let blocker: ExternalActionBlocker | null = null;
   let result = execution();
+  let revalidateError: Error | null = null;
   const execute = vi.fn(async () => result);
   const adapter: ExternalActionAdapter = {
     async revalidate() {
+      if (revalidateError) throw revalidateError;
       return current;
     },
     async guard() {
@@ -116,6 +119,11 @@ function fakeAdapter(initial: ExternalActionCommand) {
     },
     setBlocker(next: ExternalActionBlocker | null) {
       blocker = next;
+    },
+    /** Revalidation refuses outright — the draft left `approved`, the
+     * connection vanished — rather than returning a different intent. */
+    setRevalidateError(next: Error | null) {
+      revalidateError = next;
     },
     setResult(next: ExternalActionExecutionRef) {
       result = next;
@@ -348,5 +356,87 @@ describe("external action lifecycle", () => {
     );
     expect(unsupported.action.status).toBe("blocked");
     expect(unsupported.action.blocker?.code).toBe("adapter_unavailable");
+  });
+
+  // Sprint 52 Task 5 — revalidation can refuse outright (the draft left
+  // `approved`, the connection was deleted) instead of returning a different
+  // intent. That is the same fact as a fingerprint mismatch — what was proposed
+  // no longer holds — so every revalidation site must land on `stale`, never
+  // leak the preparation error to an HTTP caller as a 500.
+  describe("revalidation that refuses outright", () => {
+    const refusal = () =>
+      new ExternalActionPreparationError(
+        "draft_not_approved",
+        "Only approved drafts can be published — run it through Review first.",
+        409,
+      );
+
+    it("stales the action at authorize and raises the 409-mapped stale error", async () => {
+      const input = command(workspaceId);
+      const fake = fakeAdapter(input);
+      const runtime = createExternalActionRuntime({ db, adapters: { publish: fake.adapter } });
+      const queued = await runtime.propose(input, ACTOR);
+      expect(queued.action.status).toBe("authorization_required");
+
+      fake.setRevalidateError(refusal());
+      await expect(runtime.authorize(queued.action.id, workspaceId, ACTOR)).rejects.toBeInstanceOf(
+        StaleExternalActionError,
+      );
+      const durable = getExternalAction(db, workspaceId, queued.action.id);
+      expect(durable?.status).toBe("stale");
+      expect(durable?.blocker?.code).toBe("subject_changed");
+      expect(fake.execute).not.toHaveBeenCalled();
+      // No authorization was granted, so nothing false is on the record.
+      expect(getExternalActionDetail(db, workspaceId, queued.action.id)?.decisions).toEqual([]);
+    });
+
+    it("stales at propose time instead of throwing out of the dispatching branch", async () => {
+      setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
+      const input = command(workspaceId);
+      const fake = fakeAdapter(input);
+      fake.setRevalidateError(refusal());
+      const runtime = createExternalActionRuntime({ db, adapters: { publish: fake.adapter } });
+
+      const proposed = await runtime.propose(input, ACTOR);
+      expect(proposed.action.status).toBe("stale");
+      expect(fake.execute).not.toHaveBeenCalled();
+    });
+
+    it("stales a scheduled action on the next run rather than stranding it", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-07-14T10:00:00Z"));
+      try {
+        setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
+        const dueAt = Date.now() + 60_000;
+        const input = command(workspaceId, { requestedFor: dueAt });
+        const fake = fakeAdapter(input);
+        const runtime = createExternalActionRuntime({ db, adapters: { publish: fake.adapter } });
+        expect((await runtime.propose(input, ACTOR)).action.status).toBe("scheduled");
+
+        fake.setRevalidateError(refusal());
+        vi.setSystemTime(dueAt + 1);
+        const run = await runtime.run(workspaceId);
+        expect(run[0]?.action.status).toBe("stale");
+        expect(fake.execute).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("refuses a repropose whose subject can no longer be prepared", async () => {
+      const input = command(workspaceId);
+      const fake = fakeAdapter(input);
+      const runtime = createExternalActionRuntime({ db, adapters: { publish: fake.adapter } });
+      const queued = await runtime.propose(input, ACTOR);
+      fake.setRevalidateError(refusal());
+      await expect(runtime.authorize(queued.action.id, workspaceId, ACTOR)).rejects.toBeInstanceOf(
+        StaleExternalActionError,
+      );
+
+      await expect(
+        runtime.repropose(queued.action.id, workspaceId, "publish:retry", ACTOR),
+      ).rejects.toBeInstanceOf(StaleExternalActionError);
+      expect(getExternalAction(db, workspaceId, queued.action.id)?.status).toBe("stale");
+    });
   });
 });
