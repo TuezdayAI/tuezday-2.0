@@ -140,6 +140,28 @@ row (Gate 2). **Governance is preserved, not weakened.**
 acceptance test: approve a LinkedIn draft once, and it publishes on cadence with no second click.
 If the draft was auto-approved by the system, no human fingerprint exists → no collapse → Gate 2.
 
+### 3.2.1 Deliberate exclusions from the collapse
+
+Three cases look like they should collapse and must not:
+
+- **Reproposals of a stale action.** An action goes `stale` because the subject, destination,
+  timing, context, or effective policy changed. The approval fingerprint covers only content and
+  media, so it is **structurally blind to whatever caused the staleness**. Before Sprint 52,
+  `repropose` landed in `authorization_required` and the founder re-confirmed the change; collapsing
+  it would make a button labelled "put it back in the queue" publish instead. Reproposals are
+  excluded from the collapse.
+- **Copilot `proposeForReview` (`forceReview`).** Sprint 42's guarantee is that a copilot-originated
+  publish is always reviewed. The collapse honors it.
+- **System and public-API approvals.** Per D2a/D2c — enforced by the absence of a fingerprint, not
+  by a check that could be forgotten.
+
+### 3.2.2 Accepted behavior change
+
+A collapsed cadence action calls `dispatch()` at fill time, so `adapter.guard` (connection health,
+already-published, daily caps) now runs **at fill time rather than hours later at the scheduled
+slot**. A fill can therefore produce `blocked` where it previously produced `authorization_required`.
+This is earlier and more honest failure reporting, and is accepted rather than worked around.
+
 ### 3.3 Two defects fixed in the same sprint
 
 - **500 that should be a 409.** If a draft leaves `approved` after its publish action is proposed,
