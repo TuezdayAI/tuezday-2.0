@@ -254,8 +254,8 @@ export function deleteCadence(db: Db, workspaceId: string, cadenceId: string): b
 // Matching + fill
 // ---------------------------------------------------------------------------
 
-/** Draft ids already attached to a publication for this cadence (any status). */
-function pendingCadenceActions(db: Db, workspaceId: string, cadenceId: string) {
+/** Every publish action this cadence has created, in any status. */
+function cadenceActions(db: Db, workspaceId: string, cadenceId: string) {
   return db
     .select()
     .from(externalActions)
@@ -265,10 +265,27 @@ function pendingCadenceActions(db: Db, workspaceId: string, cadenceId: string) {
       action: rowToExternalAction(row),
       payload: JSON.parse(row.payloadJson) as { cadenceId?: string | null; draftId?: string },
     }))
-    .filter(({ payload }) => payload.cadenceId === cadenceId)
-    .filter(({ action }) => action.status !== "cancelled" && action.status !== "stale");
+    .filter(({ payload }) => payload.cadenceId === cadenceId);
 }
 
+/** This cadence's actions that are still on their way out of the building. */
+function pendingCadenceActions(db: Db, workspaceId: string, cadenceId: string) {
+  return cadenceActions(db, workspaceId, cadenceId).filter(
+    ({ action }) => action.status !== "cancelled" && action.status !== "stale",
+  );
+}
+
+/**
+ * Draft ids this cadence must not pick up again.
+ *
+ * `cancelled` actions count (Sprint 52 review). A collapsed publish is
+ * authorized without a second click, so withdrawing it is the only human "no"
+ * available — and if the next fill re-slotted the same draft it would collapse
+ * again and publish, making the withdrawal meaningless. Consequence, and it is
+ * intended: a withdrawn draft does not return to this cadence unless it is
+ * re-queued. `stale` actions are still excluded — they are superseded by a
+ * `repropose`, not refused.
+ */
 function slottedDraftIds(db: Db, workspaceId: string, cadenceId: string): Set<string> {
   const ids = new Set(
     db
@@ -278,13 +295,21 @@ function slottedDraftIds(db: Db, workspaceId: string, cadenceId: string): Set<st
       .all()
       .map((r) => r.draftId),
   );
-  for (const { payload } of pendingCadenceActions(db, workspaceId, cadenceId)) {
+  for (const { action, payload } of cadenceActions(db, workspaceId, cadenceId)) {
+    if (action.status === "stale") continue;
     if (payload.draftId) ids.add(payload.draftId);
   }
   return ids;
 }
 
-/** Slot times already occupied by a publication for this cadence (any status). */
+/**
+ * Slot times already occupied by a publication for this cadence.
+ *
+ * A withdrawn (`cancelled`) action *frees* its slot, unlike `slottedDraftIds`
+ * above: the founder refused that post, not that airtime, so a different
+ * approved draft may take the slot. The withdrawn draft cannot come back for
+ * it, because it stays in `slottedDraftIds`.
+ */
 function takenSlots(db: Db, workspaceId: string, cadenceId: string): Set<number> {
   const slots = new Set(
     db

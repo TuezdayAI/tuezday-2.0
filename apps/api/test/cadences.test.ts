@@ -728,6 +728,71 @@ describe("posting cadences", () => {
     expect(state.posts[0]).toMatchObject({ sr: "test", title: "Cadence post title" });
   });
 
+  // Sprint 52 review, finding 1 — a withdrawal has to stick. The collapsed
+  // cadence action is authorized without a second click, so cancelling it is
+  // the *only* human "no". If the next fill re-slotted the same draft it would
+  // re-collapse and publish, and the withdrawal would have meant nothing.
+  it("does not re-slot a draft whose collapsed cadence action was withdrawn", async () => {
+    const connectionId = await connectReddit();
+    const campaignId = await createCampaign();
+    const withdrawnDraftId = seedApprovedDraft({
+      campaignId,
+      channel: "linkedin",
+      content: "Withdrawn post title\nBody text.",
+    });
+
+    const cadenceId = (
+      await createCadence(
+        cadencePayload({
+          campaignId,
+          connectionId,
+          daysOfWeek: [1],
+          timeOfDay: "08:05",
+          timezone: "UTC",
+        }),
+      )
+    ).json().id;
+    const fillUrl = `/workspaces/${workspaceId}/cadences/${cadenceId}/fill`;
+    expect((await app.inject({ method: "POST", url: fillUrl })).json().filled).toBe(1);
+
+    const collapsed = (await listPublishActions())[0]!;
+    expect(collapsed.status).toBe("scheduled");
+
+    const cancelled = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/external-actions/${collapsed.id}/cancel`,
+      payload: { reason: "Changed my mind" },
+    });
+    expect(cancelled.statusCode).toBe(200);
+    expect(cancelled.json().action.status).toBe("cancelled");
+
+    // Past the withdrawn slot: the next fill sees fresh open slots.
+    vi.setSystemTime(new Date(MONDAY_8AM_UTC.getTime() + 60 * 60 * 1000));
+    expect((await app.inject({ method: "POST", url: fillUrl })).json().filled).toBe(0);
+
+    const afterRefill = await listPublishActions();
+    expect(afterRefill).toHaveLength(1);
+    expect(afterRefill[0]!.status).toBe("cancelled");
+
+    // Nothing left to dispatch, so nothing is published.
+    vi.setSystemTime(new Date(MONDAY_8AM_UTC.getTime() + 8 * DAY_MS));
+    await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
+    expect(state.posts).toEqual([]);
+
+    // …but the cadence is not frozen: a different approved draft still fills.
+    vi.setSystemTime(new Date(MONDAY_8AM_UTC.getTime() + 60 * 60 * 1000));
+    const nextDraftId = seedApprovedDraft({
+      campaignId,
+      channel: "linkedin",
+      content: "Next post title\nBody text.",
+    });
+    expect((await app.inject({ method: "POST", url: fillUrl })).json().filled).toBe(1);
+    const live = (await listPublishActions()).filter((a) => a.status !== "cancelled");
+    expect(live).toHaveLength(1);
+    expect(live[0]!.subject.id).toBe(nextDraftId);
+    expect(live[0]!.subject.id).not.toBe(withdrawnDraftId);
+  });
+
   it("deleting a cadence cancels its still-scheduled posts", async () => {
     const connectionId = await connectReddit();
     const campaignId = await createCampaign();
