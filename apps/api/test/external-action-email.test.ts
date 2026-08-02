@@ -160,6 +160,17 @@ describe("governed email external actions", () => {
     });
   });
 
+  // Sprint 52 (D2): only `publish` collapses into the draft approval. The
+  // draft behind this send was approved by a human in beforeEach, and a send
+  // still has to be authorized separately.
+  it("keeps the second gate for a send behind a human-approved draft", async () => {
+    const proposed = await runtime().propose(command("email/second-gate"), actor);
+    expect(proposed.action.kind).toBe("send");
+    expect(proposed.action.status).toBe("authorization_required");
+    expect(proposed.action.authorizedAt).toBeNull();
+    expect(provider.send).not.toHaveBeenCalled();
+  });
+
   it("blocks unverified senders and unknown recipient permission", async () => {
     db.update(workspaceEmailSenders).set({ status: "pending" }).where(eq(workspaceEmailSenders.workspaceId, workspaceId)).run();
     const unverified = await runtime().propose(command(), actor);

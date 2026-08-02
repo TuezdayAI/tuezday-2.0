@@ -11,7 +11,7 @@ import { draftApprovalFingerprint } from "../src/services/draft-approval-fingerp
 import {
   applyDraftAction,
   getDraft,
-  latestHumanApprovalFingerprint,
+  humanApprovalCoveringDraft,
   submitAutomaticDraft,
 } from "../src/services/drafts";
 import { buildAuthedApp, createTestDb } from "./helpers";
@@ -452,14 +452,46 @@ describe("approval gate API", () => {
 
   // Sprint 52: "was this exact content approved by a human, and does that
   // approval still stand?" — the lookup a later publish consults.
-  describe("latestHumanApprovalFingerprint", () => {
-    it("returns the fingerprint of a human approval", async () => {
+  describe("humanApprovalCoveringDraft", () => {
+    it("returns the fingerprint and the approver of a human approval", async () => {
       const draft = (await submit()).json();
       await act(draft.id, "approve");
 
-      expect(latestHumanApprovalFingerprint(db, workspaceId, draft.id)).toBe(
-        draftApprovalFingerprint({ id: draft.id, content: draft.content, mediaJson: null }),
-      );
+      expect(humanApprovalCoveringDraft(db, workspaceId, draft.id)).toEqual({
+        fingerprint: draftApprovalFingerprint({
+          id: draft.id,
+          content: draft.content,
+          mediaJson: null,
+        }),
+        // The signed-in founder — the identity a collapsed publish is
+        // attributed to, so "who authorized this?" has a human answer.
+        actor: expect.any(String),
+        actorId: expect.any(String),
+      });
+    });
+
+    it("returns null once the content changed after the approval", async () => {
+      const draft = (await submit()).json();
+      await act(draft.id, "approve");
+      // `approved` has no edit edge, so drift is written directly — exactly
+      // what the fingerprint exists to catch.
+      db.update(draftsTable)
+        .set({ content: "Rewritten after approval" })
+        .where(eq(draftsTable.id, draft.id))
+        .run();
+
+      expect(humanApprovalCoveringDraft(db, workspaceId, draft.id)).toBeNull();
+    });
+
+    it("returns null once only the media changed after the approval", async () => {
+      const draft = (await submit()).json();
+      await act(draft.id, "approve");
+      db.update(draftsTable)
+        .set({ mediaJson: JSON.stringify([{ url: "https://cdn.test/b.png", type: "image" }]) })
+        .where(eq(draftsTable.id, draft.id))
+        .run();
+
+      expect(humanApprovalCoveringDraft(db, workspaceId, draft.id)).toBeNull();
     });
 
     it("returns null for a system approval (D2a)", async () => {
@@ -478,23 +510,23 @@ describe("approval gate API", () => {
         SYSTEM_ACTOR,
       );
       expect(commit.draft.state).toBe("approved");
-      expect(latestHumanApprovalFingerprint(db, workspaceId, commit.draft.id)).toBeNull();
+      expect(humanApprovalCoveringDraft(db, workspaceId, commit.draft.id)).toBeNull();
     });
 
     it("returns null while the draft is still pending review", async () => {
       const draft = (await submit()).json();
-      expect(latestHumanApprovalFingerprint(db, workspaceId, draft.id)).toBeNull();
+      expect(humanApprovalCoveringDraft(db, workspaceId, draft.id)).toBeNull();
     });
 
     it("returns null for a rejected draft", async () => {
       const draft = (await submit()).json();
       await act(draft.id, "reject");
-      expect(latestHumanApprovalFingerprint(db, workspaceId, draft.id)).toBeNull();
+      expect(humanApprovalCoveringDraft(db, workspaceId, draft.id)).toBeNull();
     });
 
     it("returns null for an unknown draft", () => {
       expect(
-        latestHumanApprovalFingerprint(db, workspaceId, "7c9e6679-7425-40de-944b-e07fc1f90ae7"),
+        humanApprovalCoveringDraft(db, workspaceId, "7c9e6679-7425-40de-944b-e07fc1f90ae7"),
       ).toBeNull();
     });
 
@@ -504,13 +536,13 @@ describe("approval gate API", () => {
       const otherWorkspaceId = (
         await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Elsewhere" } })
       ).json().id;
-      expect(latestHumanApprovalFingerprint(db, otherWorkspaceId, draft.id)).toBeNull();
+      expect(humanApprovalCoveringDraft(db, otherWorkspaceId, draft.id)).toBeNull();
     });
 
     it("returns the newest approval when a draft is approved more than once", async () => {
       const draft = (await submit()).json();
       await act(draft.id, "approve");
-      const first = latestHumanApprovalFingerprint(db, workspaceId, draft.id);
+      const first = humanApprovalCoveringDraft(db, workspaceId, draft.id);
 
       // The approval state machine has no edge out of `approved` today, so
       // re-open the draft directly to exercise the lookup's ordering. Both
@@ -531,9 +563,9 @@ describe("approval gate API", () => {
         .where(eq(approvalDecisions.draftId, draft.id))
         .run();
 
-      const latest = latestHumanApprovalFingerprint(db, workspaceId, draft.id);
-      expect(latest).not.toBe(first);
-      expect(latest).toBe(
+      const latest = humanApprovalCoveringDraft(db, workspaceId, draft.id);
+      expect(latest?.fingerprint).not.toBe(first?.fingerprint);
+      expect(latest?.fingerprint).toBe(
         draftApprovalFingerprint({ id: draft.id, content: "v2", mediaJson: null }),
       );
     });

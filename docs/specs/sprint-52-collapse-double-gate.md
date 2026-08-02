@@ -214,21 +214,22 @@ tests in `apps/api/test/drafts.test.ts`.
 **Files:** `apps/api/src/services/external-action-coordinator.ts` (the policy fork at `:288-295`);
 tests in `apps/api/test/external-action-publication.test.ts`.
 
-- [ ] Test (the headline acceptance): workspace policy `human_required`; a human approves a draft;
+- [x] Test (the headline acceptance): workspace policy `human_required`; a human approves a draft;
       proposing the publish action returns status **`authorized`** (not `authorization_required`),
       an `externalActionDecisions` row exists with `decision: "authorize"`, the reason naming the
       collapse, and the actor being the **approving human** — and it dispatches.
-- [ ] Test (gate re-arms): approve → edit the draft → propose → **`authorization_required`**.
-- [ ] Test (media re-arms): approve → change `mediaJson` only → propose → **`authorization_required`**.
-- [ ] Test (D2a safety): a **system**-approved draft under `human_required` → **`authorization_required`**.
-- [ ] Test (cadence): human-approved draft proposed by the system actor via the cadence path →
-      collapses and publishes with no second click.
-- [ ] Test (regression, the five other kinds): under `human_required`, `send`, `reply`,
+- [x] Test (gate re-arms): approve → edit the draft → propose → **`authorization_required`**.
+- [x] Test (media re-arms): approve → change `mediaJson` only → propose → **`authorization_required`**.
+- [x] Test (D2a safety): a **system**-approved draft under `human_required` → **`authorization_required`**.
+- [x] Test (D2c): a draft approved through the email one-click link collapses.
+- [x] Test (cadence): human-approved draft proposed by the system actor via the cadence path →
+      collapses and publishes with no second click (`cadences.test.ts`).
+- [x] Test (regression, the five other kinds): under `human_required`, `send`, `reply`,
       `paid_launch`, `budget_change`, `targeting_change` still land in `authorization_required`.
       Extend the existing `external-action-{email,messaging,paid-launch,budget-change,targeting-change}.test.ts`.
-- [ ] Run; confirm failures.
-- [ ] Implement the branch. Keep the `autonomous` path untouched.
-- [ ] Run; green. Commit.
+- [x] Run; confirm failures.
+- [x] Implement the branch. Keep the `autonomous` path untouched.
+- [x] Run; green. Commit.
 
 ### Task 5 — Fix the 500 → 409 on a stale publish
 
@@ -307,6 +308,14 @@ tests in `apps/api/test/external-actions.test.ts` and the web shell tests.
 
 ## 7. Progress log
 
+- **2026-08-02 (Task 4)** — The collapse landed in `proposeWithLineage`. Task 3's
+  `latestHumanApprovalFingerprint` became `humanApprovalCoveringDraft(db, workspaceId, draftId)`,
+  which returns `{ fingerprint, actor, actorId }` — the approver's identity travels with the
+  fingerprint so the collapsed authorize decision is attributed to the human who approved, and the
+  fingerprint comparison stays next to the raw `media_json` read. Copilot proposals (`forceReview`)
+  never collapse. Cadence suites were re-pointed: human-approved seeds now assert the collapsed
+  path, and two tests seed a `system` approval to keep covering the still-armed second gate (D2a).
+  `automation.test.ts`'s auto-campaign seed now approves as `system`, matching its narrative.
 - **2026-08-02** — Recon complete against `origin/main` @ `7cf4e41` (Sprint 50 merged; baseline
   verified against `origin/main`, not local `main` — the Sprint 51 lesson). Decisions D2/D2a/D2b
   recorded. Plan written and awaiting founder approval. No code written yet.

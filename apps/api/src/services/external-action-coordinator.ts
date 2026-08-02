@@ -16,6 +16,7 @@ import { NoopSink } from "../analytics/sink";
 import { track } from "../analytics/track";
 import type { Db } from "../db";
 import { externalActionDecisions, externalActions } from "../db/schema";
+import { humanApprovalCoveringDraft } from "./drafts";
 import { canonicalActionFingerprint } from "./external-action-fingerprint";
 import { resolveExternalActionPolicy } from "./external-action-policy";
 import {
@@ -29,6 +30,10 @@ import {
   transitionExternalAction,
 } from "./external-actions";
 import { eq } from "drizzle-orm";
+
+/** Why a publish action was authorized without a second click (Sprint 52). */
+export const COLLAPSED_FROM_DRAFT_APPROVAL =
+  "Authorized by the draft approval — the approved content is unchanged.";
 
 export interface ExternalActionIntent {
   subject: ExternalActionSubject;
@@ -310,8 +315,51 @@ export function createExternalActionRuntime({
       return submission(action);
     }
     if (forceReview || policy.effective === "human_required") {
-      action = transitionExternalAction(db, action.workspaceId, action.id, "authorization_required");
-      return submission(action);
+      // Sprint 52 (D2) — the collapsed publish gate. Approving a draft is the
+      // decision "this may go out"; for `publish` it also authorizes the
+      // publication, so a founder clicks once instead of twice. It applies
+      // only when a human approved (D2a/D2c: a system or public-API approval
+      // records no fingerprint) and the approved content still stands, so
+      // editing after approval re-arms this gate. The five other kinds keep
+      // their second gate unconditionally, and a copilot proposal
+      // (`forceReview`) is never allowed to send itself.
+      const draftId = intent.links?.draftId ?? null;
+      const approval =
+        !forceReview && action.kind === "publish" && draftId
+          ? humanApprovalCoveringDraft(db, action.workspaceId, draftId)
+          : null;
+      if (!approval) {
+        action = transitionExternalAction(
+          db,
+          action.workspaceId,
+          action.id,
+          "authorization_required",
+        );
+        return submission(action);
+      }
+
+      // Both gates stay on the record, and the authorization is attributed to
+      // the human who approved the draft — not to the proposer, which for the
+      // cadence path is the system actor.
+      const collapsedAt = Date.now();
+      db.insert(externalActionDecisions)
+        .values({
+          id: randomUUID(),
+          workspaceId: action.workspaceId,
+          actionId: action.id,
+          decision: "authorize",
+          reason: COLLAPSED_FROM_DRAFT_APPROVAL,
+          actorUserId: approval.actorId,
+          actorLabel: approval.actor,
+          subjectFingerprint: action.fingerprint,
+          policySnapshotJson: JSON.stringify(action.policy),
+          createdAt: collapsedAt,
+        })
+        .run();
+      action = transitionExternalAction(db, action.workspaceId, action.id, "authorized", {
+        authorizedAt: collapsedAt,
+      });
+      return dispatch(action.id, action.workspaceId);
     }
     action = transitionExternalAction(db, action.workspaceId, action.id, "authorized", {
       authorizedAt: Date.now(),

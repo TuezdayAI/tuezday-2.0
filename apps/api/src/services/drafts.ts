@@ -311,24 +311,39 @@ export function listDecisions(db: Db, draftId: string): ApprovalDecision[] {
 }
 
 /**
- * The fingerprint of the content a **human** most recently approved for this
- * draft, or null when the approval cannot authorize anything on its own
- * (Sprint 52).
+ * The human approval that still covers a draft's **current** content, or null
+ * when no such approval exists (Sprint 52).
  *
  * Null means one of: the draft is not currently `approved`; it has never been
- * approved; or the newest approval was made by the system actor, which never
- * records a fingerprint (D2a).
+ * approved; the newest approval was made by the system or a machine
+ * credential, which never records a fingerprint (D2a); or the content or media
+ * changed since that approval, so the fingerprints no longer match.
  *
- * The caller compares the result against `draftApprovalFingerprint(draft)` —
- * a mismatch means the content changed after approval.
+ * The identity comes back with the fingerprint because the caller needs to
+ * attribute the authorization it collapses to the person who approved — the
+ * proposer is frequently the system actor (cadence), and "who authorized this
+ * publication?" must still have a human answer.
+ *
+ * The comparison lives here, not in the caller: it has to be made against the
+ * draft's raw `media_json` column, and re-serializing a parsed `media` array
+ * instead would typecheck while silently never matching.
  */
-export function latestHumanApprovalFingerprint(
+export interface CoveringHumanApproval {
+  /** sha256 of exactly the content that was approved, and still stands. */
+  fingerprint: string;
+  /** Display label recorded on the approval decision, e.g. "founder". */
+  actor: string;
+  /** The approver's user id; null for the email/Telegram one-click links. */
+  actorId: string | null;
+}
+
+export function humanApprovalCoveringDraft(
   db: Db,
   workspaceId: string,
   draftId: string,
-): string | null {
+): CoveringHumanApproval | null {
   const draft = db
-    .select({ state: drafts.state })
+    .select({ state: drafts.state, content: drafts.content, mediaJson: drafts.mediaJson })
     .from(drafts)
     .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)))
     .get();
@@ -336,7 +351,11 @@ export function latestHumanApprovalFingerprint(
 
   const approveAction: ApprovalAction = "approve";
   const latest = db
-    .select({ contentFingerprint: approvalDecisions.contentFingerprint })
+    .select({
+      contentFingerprint: approvalDecisions.contentFingerprint,
+      actor: approvalDecisions.actor,
+      actorId: approvalDecisions.actorId,
+    })
     .from(approvalDecisions)
     .where(
       and(
@@ -357,7 +376,19 @@ export function latestHumanApprovalFingerprint(
     // equivalent — unless an un-approve path has been added by then.
     .orderBy(desc(approvalDecisions.createdAt), sql`${approvalDecisions}.rowid desc`)
     .get();
-  return latest?.contentFingerprint ?? null;
+  if (!latest?.contentFingerprint) return null;
+
+  const current = draftApprovalFingerprint({
+    id: draftId,
+    content: draft.content,
+    mediaJson: draft.mediaJson,
+  });
+  if (current !== latest.contentFingerprint) return null;
+  return {
+    fingerprint: latest.contentFingerprint,
+    actor: latest.actor,
+    actorId: latest.actorId,
+  };
 }
 
 /**

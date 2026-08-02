@@ -217,7 +217,13 @@ describe("governed Meta budget changes", () => {
   it("proposes an exact provider snapshot, deduplicates, and updates once after authorization", async () => {
     const proposed = await propose(750);
     expect(proposed.statusCode).toBe(202);
-    expect(proposed.json().action).toMatchObject({ kind: "budget_change", status: "authorization_required" });
+    // Sprint 52 (D2): spend always keeps its own gate — the approve-collapses-
+    // authorization default is `publish`-only.
+    expect(proposed.json().action).toMatchObject({
+      kind: "budget_change",
+      status: "authorization_required",
+      authorizedAt: null,
+    });
     const row = db.select().from(externalActions).where(eq(externalActions.id, proposed.json().action.id)).get()!;
     expect(JSON.parse(row.payloadJson)).toMatchObject({
       beforeDailyBudgetCents: 500,

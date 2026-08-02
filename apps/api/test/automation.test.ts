@@ -224,7 +224,21 @@ describe("social automation", () => {
     return res;
   }
 
-  function seedApprovedDraft(campaignId: string, channel = "linkedin"): string {
+  /**
+   * A draft already sitting in the approved queue. `approvedBy` decides which
+   * publish path a cadence then takes (Sprint 52): only a human approval
+   * collapses the publish authorization, so auto-drafted narratives must seed
+   * a system approval or they would exercise a path automation never takes.
+   */
+  function seedApprovedDraft(
+    campaignId: string,
+    channel = "linkedin",
+    approvedBy: "human" | "system" = "human",
+  ): string {
+    const approver =
+      approvedBy === "system"
+        ? { userId: null, label: "system", human: false }
+        : { userId: null, label: "test", human: true };
     const draft = submitDraft(
       db,
       {
@@ -236,9 +250,9 @@ describe("social automation", () => {
         channel: channel as never,
         content: "Seeded headline\nbody",
       },
-      { userId: null, label: "test", human: true },
+      approver,
     );
-    return applyDraftAction(db, draft, "approve", { userId: null, label: "test", human: true }).id;
+    return applyDraftAction(db, draft, "approve", approver).id;
   }
 
   // --- Contracts ------------------------------------------------------------
@@ -655,7 +669,7 @@ describe("social automation", () => {
     await setAutomation(autoCampaign, "scheduled_auto");
 
     // Seed an approved auto-draft + cadence, fill once (switch off) → 1 scheduled.
-    seedApprovedDraft(autoCampaign);
+    seedApprovedDraft(autoCampaign, "linkedin", "system");
     const autoCadence = (await createCadence({ campaignId: autoCampaign, connectionId })).json();
     const firstFill = await app.inject({
       method: "POST",

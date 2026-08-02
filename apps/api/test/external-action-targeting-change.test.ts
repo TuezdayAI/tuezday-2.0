@@ -238,9 +238,12 @@ describe("governed Meta targeting changes", () => {
   it("normalizes the proposal and persists confirmed provider targeting", async () => {
     const proposed = await propose({ countries: ["us", "DE", "US"], ageMin: 25, ageMax: 54 });
     expect(proposed.statusCode).toBe(202);
+    // Sprint 52 (D2): spend always keeps its own gate — the approve-collapses-
+    // authorization default is `publish`-only.
     expect(proposed.json().action).toMatchObject({
       kind: "targeting_change",
       status: "authorization_required",
+      authorizedAt: null,
     });
     const row = db
       .select()
