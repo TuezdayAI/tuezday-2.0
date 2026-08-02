@@ -68,6 +68,12 @@ const STATUS_FILTER_LABELS: Record<string, string> = {
  */
 const WITHDRAWABLE_STATUSES: ExternalActionStatus[] = ["authorized", "scheduled"];
 
+/**
+ * This list is the gate, not the state machine: `cancelled` is also reachable
+ * from `blocked`, `failed` and the queue states, which have their own verbs on
+ * this surface (re-propose, deny). `canTransitionExternalAction` is the final
+ * check so no hand-rolled rule can outlive a change to the contracts machine.
+ */
 function withdrawable(action: ExternalAction): boolean {
   return (
     WITHDRAWABLE_STATUSES.includes(action.status) &&

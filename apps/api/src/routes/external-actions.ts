@@ -14,6 +14,7 @@ import {
   StaleExternalActionError,
   type ExternalActionRuntime,
 } from "../services/external-action-coordinator";
+import { ExternalActionPreparationError } from "../services/external-action-preparation";
 import {
   InvalidExternalActionTransitionError,
   getExternalActionDetail,
@@ -46,6 +47,15 @@ export function externalActionError(error: unknown, reply: FastifyReply) {
     error instanceof ExternalActionIdempotencyConflictError
   ) {
     return reply.status(409).send({ error: "conflict", message: error.message });
+  }
+  // The intent could not be rebuilt from the current world. The error already
+  // carries the true cause and its own status; without this it fell through to
+  // Fastify, which honours `statusCode` but answers with a bare `Conflict` and
+  // no explanation of what actually stopped the action.
+  if (error instanceof ExternalActionPreparationError) {
+    return reply
+      .status(error.statusCode)
+      .send({ error: error.code, message: error.message, details: error.details });
   }
   throw error;
 }

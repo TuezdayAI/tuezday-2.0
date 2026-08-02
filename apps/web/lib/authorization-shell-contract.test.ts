@@ -65,8 +65,12 @@ describe("authorization queue shell contract", () => {
   // can still stop it is the pre-dispatch window on the Scheduled filter.
   it("offers a withdrawal for an authorized action that has not dispatched", () => {
     // The pre-dispatch window, and only it — `succeeded` is never in the list.
-    expect(queueSource).toContain('WITHDRAWABLE_STATUSES: ExternalActionStatus[] = ["authorized", "scheduled"]');
-    // Legality comes from the contracts state machine, never a hand-rolled rule.
+    // This hardcoded list is the real gate: the state machine also permits
+    // `cancelled` from `blocked`, `failed` and the queue states, which this
+    // surface deliberately does not offer a withdrawal for.
+    expect(queueSource).toContain("WITHDRAWABLE_STATUSES");
+    expect(queueSource).toMatch(/WITHDRAWABLE_STATUSES[^=]*=\s*\["authorized", "scheduled"\]/);
+    // The contracts state machine still has the final say on legality.
     expect(queueSource).toContain('canTransitionExternalAction(action.status, "cancelled")');
     expect(queueSource).toContain("withdrawable(selected)");
     expect(queueSource).toContain('decide(selected.id, "cancel")');

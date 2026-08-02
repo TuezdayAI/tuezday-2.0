@@ -444,6 +444,29 @@ describe("external action lifecycle", () => {
       ).rejects.toBeInstanceOf(StaleExternalActionError);
       expect(getExternalAction(db, workspaceId, queued.action.id)?.status).toBe("stale");
     });
+
+    it("does not call a blocked action stale when its repropose cannot be prepared", async () => {
+      setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
+      const input = command(workspaceId);
+      const fake = fakeAdapter(input);
+      fake.setBlocker({ code: "connection_unhealthy", message: "Reconnect it.", retryable: true });
+      const runtime = createExternalActionRuntime({ db, adapters: { publish: fake.adapter } });
+      const blocked = await runtime.propose(input, ACTOR);
+      expect(blocked.action.status).toBe("blocked");
+
+      // `repropose` accepts `blocked` as well as `stale`. A blocked action that
+      // can no longer be prepared has not gone stale, and saying so would tell
+      // the founder the content changed when a guardrail is what stopped it.
+      fake.setRevalidateError(refusal());
+      const failure = await runtime
+        .repropose(blocked.action.id, workspaceId, "publish:retry", ACTOR)
+        .catch((error: unknown) => error);
+      expect(failure).toBeInstanceOf(ExternalActionPreparationError);
+      expect(failure).not.toBeInstanceOf(StaleExternalActionError);
+      expect((failure as ExternalActionPreparationError).code).toBe("draft_not_approved");
+      // Still blocked — `blocked → proposed` stays open once the cause is fixed.
+      expect(getExternalAction(db, workspaceId, blocked.action.id)?.status).toBe("blocked");
+    });
   });
 
   // Sprint 52 Task 6 — a collapsed publish action never sits in the
@@ -473,11 +496,57 @@ describe("external action lifecycle", () => {
 
       const decisions = getExternalActionDetail(db, workspaceId, queued.action.id)!.decisions;
       expect(decisions).toHaveLength(1);
-      expect(decisions[0]).toMatchObject({
-        decision: "deny",
-        reason: "Changed my mind",
-        actor: ACTOR,
+      expect(decisions[0]).toMatchObject({ decision: "deny", actor: ACTOR });
+      // The founder's own words survive…
+      expect(decisions[0]?.reason).toContain("Changed my mind");
+      // …without displacing the marker, which is the only thing that says this
+      // was a withdrawal rather than a denial once the action reads `cancelled`.
+      expect(decisions[0]?.reason).toContain(WITHDRAWN_BEFORE_DISPATCH);
+    });
+
+    it("keeps a withdrawal distinguishable from a denial that gives the same reason", async () => {
+      const runtime = createExternalActionRuntime({
+        db,
+        adapters: { publish: fakeAdapter(command(workspaceId)).adapter },
       });
+      const sameWords = "Wrong week for this one";
+
+      const toDeny = await runtime.propose(command(workspaceId), ACTOR);
+      await runtime.deny(toDeny.action.id, workspaceId, ACTOR, sameWords);
+
+      const toWithdraw = await runtime.propose(command(workspaceId), ACTOR);
+      transitionExternalAction(db, workspaceId, toWithdraw.action.id, "authorized", {
+        authorizedAt: Date.now(),
+      });
+      await runtime.cancel(toWithdraw.action.id, workspaceId, ACTOR, sameWords);
+
+      // Both end `cancelled` with `decision: "deny"`, so the persisted reason is
+      // the whole of the difference. A denial is never dressed up as one.
+      const denial = getExternalActionDetail(db, workspaceId, toDeny.action.id)!.decisions[0]!;
+      const withdrawal = getExternalActionDetail(db, workspaceId, toWithdraw.action.id)!
+        .decisions[0]!;
+      expect(denial.reason).toBe(sameWords);
+      expect(withdrawal.reason).not.toBe(denial.reason);
+      expect(withdrawal.reason).toContain(WITHDRAWN_BEFORE_DISPATCH);
+    });
+
+    it("never records 'before it was dispatched' against something that dispatched", async () => {
+      setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
+      const input = command(workspaceId);
+      const fake = fakeAdapter(input);
+      fake.setResult(execution("Provider unavailable"));
+      const runtime = createExternalActionRuntime({ db, adapters: { publish: fake.adapter } });
+      const failed = await runtime.propose(input, ACTOR);
+      expect(failed.action.status).toBe("failed");
+
+      // No UI offers this, but the API allows it — `failed → cancelled` is a
+      // legal edge — and a reason on the record must not be a lie.
+      const cancelled = await runtime.cancel(failed.action.id, workspaceId, ACTOR, null);
+      expect(cancelled.action.status).toBe("cancelled");
+      const reason = getExternalActionDetail(db, workspaceId, failed.action.id)!.decisions[0]
+        ?.reason;
+      expect(reason).not.toContain(WITHDRAWN_BEFORE_DISPATCH);
+      expect(reason).toContain("failed");
     });
 
     it("cancels a scheduled action so the runner never reaches its slot", async () => {

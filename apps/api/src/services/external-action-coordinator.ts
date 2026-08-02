@@ -8,6 +8,7 @@ import {
   type ExternalActionContext,
   type ExternalActionExecutionRef,
   type ExternalActionKind,
+  type ExternalActionStatus,
   type ExternalActionSubmission,
   type ExternalActionSubject,
 } from "@tuezday/contracts";
@@ -36,8 +37,32 @@ import { eq } from "drizzle-orm";
 export const COLLAPSED_FROM_DRAFT_APPROVAL =
   "Authorized by the draft approval — the approved content is unchanged.";
 
-/** Why an already-authorized action never went out, when no reason was given. */
+/** Why an already-authorized action never went out. */
 export const WITHDRAWN_BEFORE_DISPATCH = "Withdrawn before it was dispatched.";
+
+/**
+ * A withdrawal and a denial both end `cancelled` and both record
+ * `decision: "deny"` (the decision vocabulary is fixed), so the persisted reason
+ * is the *only* thing that can still tell them apart. The marker is therefore
+ * always recorded and a founder-supplied reason is appended to it, never
+ * substituted for it — otherwise explaining yourself would erase the
+ * distinction exactly when the record is most worth reading.
+ *
+ * It also names the status the action was withdrawn *from*. `cancel` is legal
+ * wherever the state machine allows `cancelled`, which includes `failed` and
+ * `blocked` — claiming "before it was dispatched" against an action that did
+ * dispatch would put a falsehood in the governance record.
+ */
+export function withdrawalReason(
+  from: ExternalActionStatus,
+  reason: string | null,
+): string {
+  const marker =
+    from === "authorized" || from === "scheduled"
+      ? WITHDRAWN_BEFORE_DISPATCH
+      : `Withdrawn while ${from.replaceAll("_", " ")}.`;
+  return reason ? `${marker} ${reason}` : marker;
+}
 
 export interface ExternalActionIntent {
   subject: ExternalActionSubject;
@@ -323,13 +348,16 @@ export function createExternalActionRuntime({
     actionId: string,
     workspaceId: string,
     actor: ExternalActionActor,
-    reason: string | null,
+    // Built from the action, because the reason a withdrawal records depends on
+    // the status it is withdrawing from — which only this function has read.
+    reasonFor: (action: ExternalAction) => string | null,
   ): Promise<ExternalActionSubmission> {
     const action = getExternalAction(db, workspaceId, actionId);
     if (!action) throw new ExternalActionNotFoundError();
     if (!canTransitionExternalAction(action.status, "cancelled")) {
       throw new InvalidExternalActionTransitionError(action.status, "cancelled");
     }
+    const reason = reasonFor(action);
     const now = Date.now();
     db.transaction((tx) => {
       tx.insert(externalActionDecisions)
@@ -539,11 +567,13 @@ export function createExternalActionRuntime({
     },
 
     deny(actionId, workspaceId, actor, reason) {
-      return recordCancellation(actionId, workspaceId, actor, reason);
+      return recordCancellation(actionId, workspaceId, actor, () => reason);
     },
 
     cancel(actionId, workspaceId, actor, reason) {
-      return recordCancellation(actionId, workspaceId, actor, reason ?? WITHDRAWN_BEFORE_DISPATCH);
+      return recordCancellation(actionId, workspaceId, actor, (action) =>
+        withdrawalReason(action.status, reason),
+      );
     },
 
     async repropose(actionId, workspaceId, idempotencyKey, actor) {
@@ -559,11 +589,16 @@ export function createExternalActionRuntime({
           intent = await adapter.revalidate(action, getExternalActionPayload(db, action.id));
         } catch (error) {
           // "Re-propose with the current content" cannot rebuild an intent the
-          // world no longer supports. The action is already terminal, so there
-          // is nothing to re-mark — report the same staleness the founder is
-          // looking at (409) rather than a bare conflict.
+          // world no longer supports. Nothing is re-marked: a `stale` action is
+          // already stale, and a `blocked` one keeps its `blocked → proposed`
+          // edge open for when the guardrail behind it is cleared.
+          //
+          // Only the stale case reports staleness. Telling a founder looking at
+          // a blocked action that "the content changed since it was proposed"
+          // would name the wrong cause; the preparation error already carries
+          // the true one, and the route maps it at its own status.
           if (error instanceof ExternalActionPreparationError) {
-            throw new StaleExternalActionError(action);
+            if (action.status === "stale") throw new StaleExternalActionError(action);
           }
           throw error;
         }

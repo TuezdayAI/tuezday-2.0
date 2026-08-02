@@ -164,11 +164,20 @@ This is earlier and more honest failure reporting, and is accepted rather than w
 
 ### 3.3 Two defects fixed in the same sprint
 
-- **500 that should be a 409.** If a draft leaves `approved` after its publish action is proposed,
-  `authorize()` → `currentFingerprint()` → `publishIntent()` throws
-  `ExternalActionPreparationError`. `authorize()` does not catch it and `externalActionError()`
-  (`routes/external-actions.ts:35-49`) does not map it, so the founder gets a **500** instead of the
-  intended `409 stale_action`. The collapse increases traffic through this path — fix it here.
+- **A dead-end 409 (not a 500 — this spec's original claim was wrong).** If a draft leaves `approved`
+  after its publish action is proposed, `authorize()` → `currentFingerprint()` → `publishIntent()`
+  throws `ExternalActionPreparationError`. Verified during implementation: that error carries its own
+  `statusCode`, so Fastify already returned **409** — but as a bare
+  `{"statusCode":409,"code":"draft_not_approved","error":"Conflict"}` with **no `action` body**, so
+  the web client's `body?.error === "stale_action"` branch never fired. Worse, `authorize()` threw
+  *before* any state change, leaving the action in `authorization_required` to fail identically on
+  every click, with `repropose` unreachable (it requires `stale` or `blocked`). A permanent dead end,
+  not a transient 500.
+
+  **Reachability note:** `approved` is terminal in the approval state machine, so the literal
+  "draft un-approved" scenario only occurs out-of-band. The fix earns its keep through the other
+  preparation-error causes that *are* reachable in normal use — connection deleted, persona
+  un-routed, draft deleted. The collapse increases traffic through this path.
 - **No way to withdraw a collapsed authorization.** A collapsed action never appears in the
   authorization queue, so there is currently no UI to stop it before dispatch.
   `authorized → cancelled` is already legal (contracts `:2562`); expose it.

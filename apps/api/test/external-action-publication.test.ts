@@ -18,7 +18,10 @@ import {
 } from "../src/services/external-action-adapters";
 import { getExternalActionPayload } from "../src/services/external-actions";
 import { resolveExternalActionPolicy } from "../src/services/external-action-policy";
-import { fingerprintExternalActionIntent } from "../src/services/external-action-coordinator";
+import {
+  WITHDRAWN_BEFORE_DISPATCH,
+  fingerprintExternalActionIntent,
+} from "../src/services/external-action-coordinator";
 import { getDraft, submitAutomaticDraft } from "../src/services/drafts";
 import { mintActionToken } from "../src/notifications/tokens";
 import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
@@ -289,6 +292,30 @@ describe("external-action publication boundary", () => {
     expect(db.select().from(publications).all()).toEqual([]);
   });
 
+  it("reports why a blocked action cannot be re-proposed instead of calling it stale", async () => {
+    await putActionPolicy(app, workspaceId, "workspace", workspaceId, { publish: "autonomous" });
+    db.update(connections)
+      .set({ status: "disconnected", updatedAt: Date.now() })
+      .where(eq(connections.id, connectionId))
+      .run();
+    const blocked = await publish();
+    expect(blocked.json().action.status).toBe("blocked");
+
+    db.update(drafts)
+      .set({ state: "pending_review", updatedAt: Date.now() })
+      .where(eq(drafts.id, draftId))
+      .run();
+    const reproposed = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/external-actions/${blocked.json().action.id}/repropose`,
+      payload: { idempotencyKey: "publish:test:retry" },
+    });
+    expect(reproposed.statusCode).toBe(409);
+    // The real cause, not "the content changed since it was proposed".
+    expect(reproposed.json().error).toBe("draft_not_approved");
+    expect(reproposed.json().message).toContain("Review");
+  });
+
   it("keeps a future authorized action receipt-free until the runner reaches its due time", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-07-14T10:00:00Z"));
@@ -518,9 +545,12 @@ describe("external-action publication boundary", () => {
       });
       expect(cancelled.statusCode).toBe(200);
       expect(externalActionSubmissionSchema.parse(cancelled.json()).action.status).toBe("cancelled");
-      expect(decisionsFor(actionId).map((decision) => decision.reason)).toContain(
-        "Wrong week for this one",
-      );
+      // The founder's reason, kept behind the marker that says this was a
+      // withdrawal of an authorization already granted — not a denial.
+      const withdrawal = decisionsFor(actionId).at(-1)!;
+      expect(withdrawal.decision).toBe("deny");
+      expect(withdrawal.reason).toContain("Wrong week for this one");
+      expect(withdrawal.reason).toContain(WITHDRAWN_BEFORE_DISPATCH);
 
       vi.setSystemTime(dueAt + 1);
       await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
