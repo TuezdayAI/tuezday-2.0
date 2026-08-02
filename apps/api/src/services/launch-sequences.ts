@@ -688,8 +688,9 @@ async function advanceRecipient(
   // every mode — the mode only governs auto-approval, not whether an approved
   // step is proposed); only scheduled_auto enforces guardrails (a human already
   // vetted the others). A human_required policy leaves the action queued in
-  // Review while the recipient waits here. Native email uses the same durable
-  // action boundary and keeps CSV as recovery only.
+  // Review while the recipient waits here. Email sends natively through this
+  // same durable external-action boundary — there is no second send route
+  // (the CSV export is a manual download, never a send or fallback path).
   if (draftRow(ctx.db, cur.draftId)?.state === "approved" && cur.status === "pending") {
     if (recipient.channel === "x" || recipient.channel === "email") {
       const d = recipient.channel === "x"

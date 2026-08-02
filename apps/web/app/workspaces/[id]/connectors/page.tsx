@@ -59,8 +59,8 @@ const PROVIDER_PROMISE: Record<string, string> = {
   freshsales: "Pull contacts in as leads; approved emails flow back as notes",
   pipedrive: "Pull contacts in as leads; approved emails flow back as notes",
   hubspot: "Pull contacts in as leads; approved emails flow back as notes",
-  smartlead: "Send approved sequences from your own warmed sender",
-  instantly: "Send approved sequences from your own warmed sender",
+  smartlead: "Optional: export approved sequences if you run your own sending tool",
+  instantly: "Optional: export approved sequences if you run your own sending tool",
   gmail: "Send outreach from your real mailbox; replies land back in the inbox",
   slack: "Get review pings where the team already lives",
   custom: "Proxy any API through the connector service",
@@ -762,7 +762,8 @@ export default function ConnectorsPage() {
       )}
       {error && workspace && <p className="error">{error}</p>}
 
-      <section className={styles.group}>
+      {/* Anchor target for "Set up sending" links (Sprint 51 §B3). */}
+      <section id="email-sender" className={styles.group}>
         <div className={styles.groupHead}>
           <h2 className={styles.groupTitle}>Verified email sender</h2>
           <span className={styles.groupUnlocks}>

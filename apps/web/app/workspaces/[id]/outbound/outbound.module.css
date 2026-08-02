@@ -50,6 +50,61 @@
   font-size: 13px;
 }
 
+/* Sending readiness (Sprint 51) — native send is the path; CSV is a copy. */
+.sendingPanel {
+  display: grid;
+  gap: 12px;
+}
+
+.sendingNote {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.setupSending {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--status-attention-wash);
+}
+
+.setupSendingCopy {
+  flex: 1 1 320px;
+  margin: 0;
+  color: var(--status-attention-ink);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.setupHint {
+  margin: 0;
+  color: var(--status-attention-ink);
+  font-size: 12px;
+}
+
+.exportRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-soft);
+}
+
+.exportHint {
+  flex: 1 1 260px;
+  color: var(--ink-3);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
 .draftId {
   overflow: hidden;
   color: var(--ink-3);

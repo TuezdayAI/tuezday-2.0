@@ -116,7 +116,13 @@ export interface BuildAppOptions {
   connectors?: ConnectorFabric;
   /** Intent-signal provider (Sprint 31); defaults to the inert NullIntentProvider. */
   intent?: IntentProvider;
-  /** Outbound-email exporter (Sprint 26); defaults to a Smartlead/Instantly CSV. */
+  /**
+   * Manual data-export format for approved outbound email (Sprint 26; reframed
+   * in Sprint 51). This is an export affordance only — it is never a send path
+   * and never a routing choice. Native email delivery owns sending (governed
+   * `send` external actions from a verified workspace sender); this exporter
+   * exists solely so a founder can download their own approved copy.
+   */
   exporter?: OutboundExporter;
   /** Transactional mailer (Sprint 27); defaults to Resend, else a console logger. */
   mailer?: Mailer;

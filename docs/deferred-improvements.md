@@ -11,20 +11,6 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
 
 ## Open
 
-### 1. Email send = CSV export, not a live API push
-- **What we shipped (Sprint 26):** Approved per-recipient email messages are exported as a
-  Smartlead/Instantly-ready CSV (personalized body as a custom variable). The founder uploads the CSV
-  into Smartlead/Instantly to actually send. This sits behind an `OutboundExporter` interface so the
-  launch domain never learns how email leaves Tuezday.
-- **The better version:** A real API push — using the already-registered `smartlead` / `instantly`
-  outbound providers, create the sending campaign and upload the leads + personalized fields via API,
-  one click, no manual CSV step. A second `OutboundExporter` implementation; the launch domain is
-  untouched.
-- **Trigger to revisit:** When manual CSV upload becomes the bottleneck — i.e., real users running
-  launches regularly, or a paying customer asks for one-click send.
-- **Origin:** Sprint 26 (Targeted campaign launch). Boundary held: we still never build
-  deliverability/warmup infra ourselves.
-
 ### 2. Launch generation is synchronous (one LLM call per recipient, inline)
 - **What we shipped (Sprint 26):** `generateLaunch` loops the audience and calls the LLM once per
   recipient (email + X DM) plus once per broadcast channel, all inside the request — the same shape
@@ -140,13 +126,15 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
 - **Origin:** Sprint 29.
 
 ### 16. Email reply detection is out of scope (email sequences stop manually)
-- **What we shipped (Sprint 29 + 30):** The inbox covers social comments + X DMs. Outbound email is
-  CSV-exported to Smartlead/Instantly — there is no inbound-mail channel, so email replies aren't
-  detected. Sprint 30's stop-on-reply is therefore **automatic for X DMs** (via the inbox) and
-  **manual for email** (a Stop button per recipient / per launch / paste a suppression list of emails).
-  Nothing is faked — we never invent an email reply signal we cannot observe.
-- **The better version:** An inbound-mail integration (Smartlead/Instantly reply webhook or IMAP) so
-  email replies land in the same inbox and stop the chain automatically, like X DMs do.
+- **What we shipped (Sprint 29 + 30):** The inbox covers social comments + X DMs. There is no
+  inbound-mail channel, so email replies aren't detected. Sprint 30's stop-on-reply is therefore
+  **automatic for X DMs** (via the inbox) and **manual for email** (a Stop button per recipient / per
+  launch / paste a suppression list of emails). Nothing is faked — we never invent an email reply
+  signal we cannot observe. (Sprint 51 made sending native; delivery webhooks report sent/delivered/
+  bounced/complained/failed only, never replies, so this gap is unchanged.)
+- **The better version:** An inbound-mail integration (IMAP or a provider inbound-mail webhook on the
+  workspace's own verified domain) so email replies land in the same inbox and stop the chain
+  automatically, like X DMs do.
 - **Trigger to revisit:** When real email sequences run at volume and clicking Stop per replied
   recipient becomes painful — build inbound-mail ingest as its own slice, then flip email stop-on-reply
   to automatic.
@@ -159,16 +147,6 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
 - **Trigger to revisit:** If replies and posts need separate budgets, or the UTC boundary surprises a
   customer (see also #9).
 - **Origin:** Sprint 29.
-
-### 18. Email sequence steps still require a manual CSV export per batch
-- **What we shipped (Sprint 30):** Even in `scheduled_auto`, the engine auto-generates + auto-approves
-  each email step, but the **send** is the founder's manual CSV export → upload to Smartlead/Instantly
-  (the deliverability boundary we never cross — ties to #1). The next step's delay clock starts at the
-  export (real send) moment, so the engine never gets ahead of actual sends.
-- **The better version:** The one-click API push from #1 — approved email steps post straight into the
-  Smartlead/Instantly campaign, no manual CSV per batch; the engine learns the send time from the API.
-- **Trigger to revisit:** Same as #1 — when manual CSV upload per step becomes the bottleneck.
-- **Origin:** Sprint 30.
 
 ### 19. The sequence engine advances synchronously on the worker tick
 - **What we shipped (Sprint 30):** `runSequences` walks every active recipient inline on each
@@ -310,6 +288,26 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
 
 ## Done (upgraded)
 
+### 1. Email send = CSV export, not a live API push — **closed by Sprint 51**
+- **What we shipped (Sprint 26):** Approved per-recipient email messages are exported as a
+  Smartlead/Instantly-ready CSV (personalized body as a custom variable). The founder uploads the CSV
+  into Smartlead/Instantly to actually send. This sits behind an `OutboundExporter` interface so the
+  launch domain never learns how email leaves Tuezday.
+- **The better version (as envisioned):** A real API push — using the already-registered `smartlead` /
+  `instantly` outbound providers, create the sending campaign and upload the leads + personalized
+  fields via API, one click, no manual CSV step.
+- **Closed (Sprint 51, branch `sprint-51-outbound-strategy-convergence`, 2026-08-02):** Resolved by
+  **native sending, not the Smartlead API push.** The better version turned out to be owning the send
+  path rather than automating the hand-off to someone else's: an approved message is dispatched as a
+  governed `send` external action from the workspace's own verified sender (Sprints 27, 47–50 built
+  the stack; Sprint 51 made it the only send path). The manual CSV upload is gone entirely — no
+  download, no upload, no second tool. The exporter survives as an **optional manual data export** for
+  founders who want to run Smartlead themselves; no send or dispatch path calls it. The
+  "never build deliverability/warmup infra" boundary that produced this compromise is retired for
+  email; warmup, IP pools, and reputation arbitrage stay out of scope
+  (`docs/deliverability-posture.md`, `oss-integration-recommendations.md` §11).
+- **Origin:** Sprint 26 (Targeted campaign launch).
+
 ### 11. No relevance triage — every signal fans out to every automated campaign's channels — **closed by Sprint 45**
 - **What we shipped (Sprint 28):** A new signal generates a draft for each channel of every active
   automated campaign, with no scoring of which signal actually fits which campaign/persona.
@@ -323,3 +321,17 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
   manually-created ones (auto-matched at `POST /signals`; an explicit persona/campaign pick is a
   single score-100 match with no LLM call).
 - **Origin:** Sprint 28.
+
+### 18. Email sequence steps still require a manual CSV export per batch — **closed by Sprint 51**
+- **What we shipped (Sprint 30):** Even in `scheduled_auto`, the engine auto-generates + auto-approves
+  each email step, but the **send** is the founder's manual CSV export → upload to Smartlead/Instantly
+  (the deliverability boundary we never cross — ties to #1). The next step's delay clock starts at the
+  export (real send) moment, so the engine never gets ahead of actual sends.
+- **The better version (as envisioned):** The one-click API push from #1 — approved email steps post
+  straight into the Smartlead/Instantly campaign; the engine learns the send time from the API.
+- **Closed (Sprint 51, branch `sprint-51-outbound-strategy-convergence`, 2026-08-02):** Closed with #1
+  by **native sending**, not a Smartlead API push. Each due email step sends in-product as its own
+  governed `send` external action, so there is no per-batch CSV and no manual upload between steps,
+  and the delay clock keys off a real recorded send rather than an export the founder had to remember
+  to perform. Email reply detection is unaffected and still open (#16).
+- **Origin:** Sprint 30.

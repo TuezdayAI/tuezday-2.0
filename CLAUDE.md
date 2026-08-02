@@ -67,7 +67,7 @@ Key seams (integrations live behind these interfaces — never let provider code
 - **Connectors** — `connectors/fabric.ts` (`ConnectorFabric`) with `connectors/nango.ts`; concrete providers under `connectors/{ads,crm,social}` (Meta ads, Freshsales CRM, Reddit social).
 - **Discovery** — `discovery/adapters.ts` takes an injected `Fetcher` so tests feed fixtures instead of real HTTP.
 - **Mailer** — `mail/mailer.ts` (`Mailer`) with a Resend-backed impl; console fallback in dev/tests.
-- **OutboundExporter** — `outbound/exporter.ts` (`OutboundExporter`) produces export files for Smartlead/Instantly; CSV by default.
+- **OutboundExporter** — `outbound/exporter.ts` (`OutboundExporter`) is an **optional manual data export** (CSV by default) for founders who want to run their own sending tool. It is **not a send path**. Email delivery is native and governed: an approved message is dispatched as a durable `send` external action from the workspace's verified sender. No send/dispatch path may call this interface.
 
 ## Auth model
 
@@ -128,7 +128,7 @@ Integrate behind service/API boundaries (never fork into core):
 | CRM | Customer's HubSpot/Salesforce/Pipedrive | Twenty as OSS demo fallback; Tuezday is not a CRM |
 | Lifecycle messaging | Dittofeed | later scope |
 | Analytics | PostHog (product/web), Superset (internal BI) | customer dashboard stays native |
-| Outbound sending | Smartlead/Instantly | never build deliverability/warmup infra |
+| Outbound sending (email, X DM) | Native | Rule retired for email at Sprint 51 — Tuezday owns the send path: verified sender domains, suppression, recipient permission, unsubscribe, verified delivery webhooks. Still no warmup / IP-pool / reputation work. Smartlead/Instantly only as an optional manual CSV export. See `docs/deliverability-posture.md` |
 
 Defer: Graphiti (temporal graph) and Mem0 — only after RAG is useful. Avoid as core: Dify, n8n, Postiz (reference only, AGPL).
 

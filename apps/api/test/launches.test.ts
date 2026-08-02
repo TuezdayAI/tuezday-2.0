@@ -597,12 +597,14 @@ describe("targeted launch API", () => {
     });
     expect(duplicate.json().submissions[0].action.id).toBe(submission.action.id);
     expect(emailProvider.send).toHaveBeenCalledTimes(1);
-    const recovery = await app.inject({
+    // The export is a download, not a send route: a natively-sent message drops
+    // out of it entirely.
+    const exported = await app.inject({
       method: "GET",
       url: `/workspaces/${workspaceId}/launches/${launchId}/export.csv`,
     });
-    expect(recovery.statusCode).toBe(200);
-    expect(recovery.body.trim().split("\n")).toHaveLength(1);
+    expect(exported.statusCode).toBe(200);
+    expect(exported.body.trim().split("\n")).toHaveLength(1);
   });
 
   it("reproposes a blocked manual email after recipient permission is allowed", async () => {

@@ -316,11 +316,12 @@ describe("outbound API", () => {
       expect(duplicate.json().action.id).toBe(send.json().action.id);
       expect(emailProvider.send).toHaveBeenCalledTimes(1);
 
-      const recovery = await app.inject({
+      // The CSV is an export-only affordance: a natively-sent draft is omitted.
+      const exported = await app.inject({
         method: "GET",
         url: `/workspaces/${workspaceId}/outbound/export.csv`,
       });
-      expect(recovery.body).not.toContain("asha@acme.io");
+      expect(exported.body).not.toContain("asha@acme.io");
     });
 
     it("rejects a draft that is not approved", async () => {
