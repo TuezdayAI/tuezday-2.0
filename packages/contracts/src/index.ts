@@ -2669,6 +2669,10 @@ export const approvalDecisionSchema = z.object({
   fromState: z.enum(APPROVAL_STATES),
   toState: z.enum(APPROVAL_STATES),
   contentSnapshot: z.string().nullable(),
+  // Sprint 52: sha256 of exactly what a human approved (draft id + content +
+  // media). Null for every non-approve action and for system approvals — only
+  // a human approval can authorize publication without a second click.
+  contentFingerprint: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   actor: z.string(),
   // Nullable: decisions logged before auth existed (Sprint 19), or by the worker.
   actorId: z.string().uuid().nullable(),

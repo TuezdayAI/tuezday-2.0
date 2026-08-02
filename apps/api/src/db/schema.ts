@@ -311,6 +311,10 @@ export const approvalDecisions = sqliteTable("approval_decisions", {
   fromState: text("from_state").notNull(),
   toState: text("to_state").notNull(),
   contentSnapshot: text("content_snapshot"),
+  // Sprint 52: sha256 of exactly what was approved (draft id + content + media).
+  // Written ONLY for `approve` decisions made by a human actor — a null here is
+  // what stops a system/auto-approval from collapsing the publish gate.
+  contentFingerprint: text("content_fingerprint"),
   actor: text("actor").notNull(),
   // Nullable: decisions logged before auth existed, or by the system actor.
   actorId: text("actor_id"),

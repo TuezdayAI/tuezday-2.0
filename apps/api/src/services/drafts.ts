@@ -13,8 +13,11 @@ import {
 } from "@tuezday/contracts";
 import type { Db, DbExecutor } from "../db";
 import { approvalDecisions, drafts, generations, type DraftRow } from "../db/schema";
+import { draftApprovalFingerprint } from "./draft-approval-fingerprint";
 
-type DraftWriteDb = Pick<DbExecutor, "insert" | "update">;
+// `select` is needed alongside the writes so an approval can read the draft's
+// stored mediaJson to fingerprint it, without widening the public Draft type.
+type DraftWriteDb = Pick<DbExecutor, "insert" | "update" | "select">;
 
 /** Who performed a draft action — a user, or the worker's system identity. */
 export interface DraftActor {
@@ -54,6 +57,11 @@ function logDecision(
   fromState: ApprovalState,
   toState: ApprovalState,
   contentSnapshot: string | null = null,
+  /**
+   * Sprint 52 — sha256 of exactly what was approved. Callers pass this only
+   * for a human `approve`; everything else leaves it null.
+   */
+  contentFingerprint: string | null = null,
 ): void {
   db.insert(approvalDecisions)
     .values({
@@ -64,6 +72,7 @@ function logDecision(
       fromState,
       toState,
       contentSnapshot,
+      contentFingerprint,
       actor: actor.label,
       actorId: actor.userId,
       createdAt: Date.now(),
@@ -313,10 +322,40 @@ export function applyDraftActionInTransaction(
 
   const now = Date.now();
   const content = action === "edit" && newContent !== undefined ? newContent : draft.content;
+
+  // Sprint 52: record what a human approved, so a later publish can tell
+  // whether the approval still covers the current content. Human approvals
+  // only — a system/auto-approval leaves this null, which is what keeps
+  // `autoApprove` from silently turning `human_required` into autonomous
+  // publishing (D2a). Media comes from the stored row: reconstructing it from
+  // the parsed Draft could re-serialize differently and break the match.
+  const contentFingerprint =
+    action === "approve" && actor.userId !== null
+      ? draftApprovalFingerprint({
+          id: draft.id,
+          content,
+          mediaJson:
+            db
+              .select({ mediaJson: drafts.mediaJson })
+              .from(drafts)
+              .where(eq(drafts.id, draft.id))
+              .get()?.mediaJson ?? null,
+        })
+      : null;
+
   db.update(drafts)
     .set({ state: toState, content, updatedAt: now })
     .where(eq(drafts.id, draft.id))
     .run();
-  logDecision(db, draft, actor, action, draft.state, toState, action === "edit" ? content : null);
+  logDecision(
+    db,
+    draft,
+    actor,
+    action,
+    draft.state,
+    toState,
+    action === "edit" ? content : null,
+    contentFingerprint,
+  );
   return { ...draft, state: toState, content, updatedAt: now };
 }
