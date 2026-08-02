@@ -44,6 +44,15 @@
   font-weight: 600;
 }
 
+/* Spans the whole row so the explanation reads under its own control. */
+.policyNote {
+  grid-column: 1 / -1;
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
 .policySave {
   margin-top: 14px;
 }

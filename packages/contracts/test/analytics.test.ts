@@ -16,6 +16,7 @@ describe("analytics contracts", () => {
       "review.revision_requested",
       "review.content_decided",
       "review.action_authorized",
+      "review.action_authorized_collapsed",
       "calendar.item_scheduled",
       "execution.result_viewed",
     ]);

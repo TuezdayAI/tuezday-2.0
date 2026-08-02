@@ -5336,6 +5336,10 @@ export const ANALYTICS_EVENTS = [
   "review.revision_requested",
   "review.content_decided",
   "review.action_authorized",
+  // Sprint 52: a publish authorized by the earlier draft approval, with no
+  // click to attribute. Kept distinct so `review.action_authorized` keeps
+  // meaning "a human clicked Authorize"; total authorizations is the sum.
+  "review.action_authorized_collapsed",
   "calendar.item_scheduled",
   "execution.result_viewed",
 ] as const;

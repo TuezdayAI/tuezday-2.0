@@ -79,6 +79,20 @@ describe("authorization queue shell contract", () => {
     expect(queueSource).toContain('authorized: "Authorized"');
   });
 
+  // Sprint 52 — a publish sitting in this queue means the draft approval did
+  // not carry through. The founder should be able to tell why they are being
+  // asked twice.
+  it("says why a second decision is still being asked for", () => {
+    expect(queueSource).toContain("secondGateExplanation");
+    expect(queueSource).toContain("secondGate && ");
+  });
+
+  it("names when an authorization was granted without a missing preposition", () => {
+    expect(queueSource).toContain("Already authorized");
+    expect(queueSource).toMatch(/` on \$\{new Date\(selected\.authorizedAt\)\.toLocaleString\(\)\}`/);
+    expect(queueSource).toContain("You can still take that back until it dispatches.");
+  });
+
   it("uses the canonical ready, attention, and blocked result tokens", () => {
     expect(queueStyles).toContain("--status-ready-ink");
     expect(queueStyles).toContain("--status-attention-ink");

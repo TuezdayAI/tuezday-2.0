@@ -506,6 +506,19 @@ export function createExternalActionRuntime({
           .where(eq(externalActions.id, collapsedActionId))
           .run();
       });
+      // There is no click to attribute here, but there *is* an authorization,
+      // and it belongs to the human who approved the draft. Without this the
+      // funnel would read the collapse as authorizations disappearing. It is a
+      // distinct event so `review.action_authorized` keeps meaning "someone
+      // pressed Authorize"; total authorizations is the sum of the two.
+      if (approval.actorId) {
+        track(db, analytics, {
+          event: "review.action_authorized_collapsed",
+          distinctId: approval.actorId,
+          workspaceId: action.workspaceId,
+          properties: { action_id: collapsedActionId, action_kind: action.kind },
+        });
+      }
       return dispatch(collapsedActionId, action.workspaceId);
     }
     action = transitionExternalAction(db, action.workspaceId, action.id, "authorized", {

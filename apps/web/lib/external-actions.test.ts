@@ -10,6 +10,7 @@ import {
   filterActions,
   impactSummary,
   policyExplanation,
+  secondGateExplanation,
   targetingChangeDiff,
 } from "./external-actions";
 
@@ -115,6 +116,31 @@ describe("external action view model", () => {
     );
     expect(autonomous).toContain("autonomous");
     expect(autonomous).toContain("Workspace default");
+  });
+
+  // Sprint 52 — only two of the three answers are derivable from the action.
+  it("explains a re-armed second gate only as far as the action can prove it", () => {
+    // Nothing to explain unless the action is actually asking.
+    expect(secondGateExplanation(action({ status: "authorized" }))).toBeNull();
+    expect(secondGateExplanation(action({ status: "succeeded" }))).toBeNull();
+
+    // Derivable: a re-proposal, which never collapses.
+    const reproposal = secondGateExplanation(action({ supersedesActionId: "a0" }))!;
+    expect(reproposal).toContain("replaces an earlier action that went stale");
+    expect(reproposal).toContain("rather than the content you approved");
+
+    // Derivable: the five kinds that keep the second gate unconditionally.
+    expect(secondGateExplanation(action({ kind: "send" }))).toBe(
+      "Send always needs its own authorization, even once the content is approved.",
+    );
+    expect(secondGateExplanation(action({ kind: "budget_change" }))).toContain("Budget change");
+
+    // Not derivable: which of the collapse conditions failed. The copy names
+    // the possible causes and asserts none of them.
+    const publish = secondGateExplanation(action())!;
+    expect(publish).toContain("changed after approval");
+    expect(publish).toContain("Tuezday approved the draft on its own");
+    expect(publish).toContain("proposed from chat");
   });
 
   it("summarizes exactly what goes out where and when", () => {

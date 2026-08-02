@@ -143,6 +143,18 @@ export function ActionPolicy({ workspaceId }: { workspaceId: string }) {
                       status={effectivePolicyWorkflowStatus(effective.policy.effective)}
                     />
                   )}
+                  {/* Sprint 52 (D2b) — no third policy value exists. This states
+                      what "Human required" already means for Publish, so the
+                      collapsed default is a visible choice, not hidden behavior. */}
+                  {kind === "publish" && draft[kind] === "human_required" && (
+                    <p className={styles.policyNote}>
+                      For posts, human required means one decision, not two: approving a draft on
+                      Review also authorizes its publication, so nothing waits on the
+                      Authorizations tab. Editing the post — or swapping its image — after you
+                      approve it re-arms that second gate. A draft Tuezday approved on its own
+                      never collapses it; only your own approval counts.
+                    </p>
+                  )}
                 </div>
               );
             })}

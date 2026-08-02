@@ -29,6 +29,7 @@ import {
   externalActionWorkflowStatus,
   impactSummary,
   policyExplanation,
+  secondGateExplanation,
 } from "@/lib/external-actions";
 import { campaignFilterName, reviewHref } from "@/lib/review-workspace";
 import { EmptyState } from "@/src/components/empty-state";
@@ -392,6 +393,7 @@ export function AuthorizationsQueue({
   }
 
   const selected = detail?.action ?? null;
+  const secondGate = selected ? secondGateExplanation(selected) : null;
   const selectedIds = selectedAuthorizationIds(actions, selection);
   const batchSummary = batchDetail ? authorizationBatchSummary(batchDetail) : null;
   const activeCampaignName = campaign ? campaignFilterName(campaigns, campaign) : null;
@@ -619,6 +621,10 @@ export function AuthorizationsQueue({
               <section aria-label="Policy" className={styles.region}>
                 <h3>Policy</h3>
                 <p>{policyExplanation(selected)}</p>
+                {/* Sprint 52 — a publish sitting here means the draft approval
+                    did not carry through. Say what the action can actually
+                    prove, and no more. */}
+                {secondGate && <p className="meta">{secondGate}</p>}
               </section>
 
               {selected.blocker && (
@@ -699,9 +705,9 @@ export function AuthorizationsQueue({
               {withdrawable(selected) && (
                 <div className={styles.decisionRow}>
                   <p className="meta">
-                    Already authorized{selected.authorizedAt ? " " : ""}
+                    Already authorized
                     {selected.authorizedAt
-                      ? new Date(selected.authorizedAt).toLocaleString()
+                      ? ` on ${new Date(selected.authorizedAt).toLocaleString()}`
                       : ""}
                     . You can still take that back until it dispatches.
                   </p>

@@ -76,6 +76,20 @@ describe("action policy controls source contract", () => {
     expect(campaignControl).toMatch(/permission/i);
   });
 
+  // Sprint 52 (D2b) — the collapsed publish gate is a built-in meaning of
+  // `human_required`, not a third policy value. The editor has to say so, or
+  // the default is hidden behavior.
+  it("explains what human required means for publish, without adding a policy value", () => {
+    expect(workspaceControl).toContain('kind === "publish"');
+    expect(workspaceControl).toContain('draft[kind] === "human_required"');
+    expect(workspaceControl).toContain("approving a draft on");
+    expect(workspaceControl).toContain("also authorizes its publication");
+    expect(workspaceControl).toMatch(/re-arms that second gate/);
+    expect(workspaceControl).toMatch(/only your own approval counts/);
+    // Still exactly two options — no `collapsed`/`auto` rule was invented.
+    expect(workspaceControl).not.toMatch(/<option value="(?!human_required|autonomous)/);
+  });
+
   it("is mounted on the automation page and the campaign overview", () => {
     expect(automationPage).toContain("<ActionPolicy");
     expect(campaignOverview).toContain("<CampaignActionPolicy");

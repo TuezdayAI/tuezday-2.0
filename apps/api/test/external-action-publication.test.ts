@@ -3,6 +3,7 @@ import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { externalActionSubmissionSchema } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
+import type { AnalyticsEventInput } from "../src/analytics/sink";
 import type { ConnectorFabric } from "../src/connectors/fabric";
 import type { Db } from "../src/db";
 import {
@@ -78,12 +79,18 @@ describe("external-action publication boundary", () => {
   let draftId: string;
   let posts: Array<Record<string, string>>;
   let fail: { value: boolean };
+  let captured: AnalyticsEventInput[];
 
   beforeEach(async () => {
     db = createTestDb();
     posts = [];
     fail = { value: false };
-    app = await buildAuthedApp({ db, connectors: publicationFabric(posts, fail) });
+    captured = [];
+    app = await buildAuthedApp({
+      db,
+      connectors: publicationFabric(posts, fail),
+      analytics: { capture: (event) => void captured.push(event) },
+    });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Publisher" } })
     ).json().id;
@@ -448,6 +455,30 @@ describe("external-action publication boundary", () => {
         url: `/workspaces/${workspaceId}/external-actions?status=authorization_required`,
       });
       expect(queue.json().actions).toEqual([]);
+    });
+
+    // Sprint 52 Task 7e — the collapsed path has no click to attribute, but it
+    // is still an authorization. Without its own event the funnel would read
+    // publishes migrating to the collapse as authorizations vanishing.
+    it("records a distinct analytics event for a collapsed authorization", async () => {
+      const id = seedPendingDraft();
+      await approve(id);
+      const published = await publishDraft(id);
+      expect(published.json().action.status).toBe("succeeded");
+
+      const approval = approvalOf(id);
+      expect(
+        captured.filter((event) => event.event === "review.action_authorized_collapsed"),
+      ).toEqual([
+        {
+          event: "review.action_authorized_collapsed",
+          distinctId: approval.actorId,
+          workspaceId,
+          properties: { action_id: published.json().action.id, action_kind: "publish" },
+        },
+      ]);
+      // The clicked-authorization metric keeps meaning exactly what it did.
+      expect(captured.some((event) => event.event === "review.action_authorized")).toBe(false);
     });
 
     it("re-arms the second gate when the content changed after approval", async () => {

@@ -337,6 +337,17 @@ export function ApprovalsQueue({
 
   return (
     <>
+      {/* Sprint 52 — the collapsed publish gate, stated where the decision is
+          taken. Deliberately general: this queue holds drafts, and a draft does
+          not yet carry the action kind or the resolved policy that decide
+          whether its approval also authorizes it. Promising per card would
+          mean guessing. */}
+      <p className="subtitle">
+        Approving a post also authorizes it to publish — you are not asked a second time. If you
+        edit it after approving, it comes back for a separate authorization. Emails, replies, and
+        anything that spends money always need that second decision on the Authorizations tab.
+      </p>
+
       <Tabs
         tabs={filters.map((state) => ({
           key: state,

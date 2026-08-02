@@ -293,13 +293,14 @@ tests in `apps/api/test/external-actions.test.ts` and the web shell tests.
 `apps/web/app/workspaces/[id]/review/_components/approvals-queue.tsx`;
 `apps/web/app/workspaces/[id]/review/page.tsx`; existing web shell tests.
 
-- [ ] Policy editor: for the `publish` row under `human_required`, state inline that approving a
+- [x] Policy editor: for the `publish` row under `human_required`, state inline that approving a
       draft authorizes its publication, and that editing after approval re-arms the second gate.
       **A visible choice, not hidden behavior** (PRD requirement).
-- [ ] Approvals queue: the approve button communicates that, for publish, approving also authorizes.
-- [ ] Where an action *did* re-arm Gate 2, show the reason ("draft changed after approval").
-- [ ] Keep using the contracts helpers (`canTransition`) — no hand-rolled state logic.
-- [ ] `npx vitest run --project @tuezday/web`; green. Commit.
+- [x] Approvals queue: the approve button communicates that, for publish, approving also authorizes.
+- [x] Where an action *did* re-arm Gate 2, show the reason ("draft changed after approval").
+- [x] Keep using the contracts helpers (`canTransition`) — no hand-rolled state logic.
+- [x] Analytics: a collapsed authorization emits `review.action_authorized_collapsed`.
+- [x] `npx vitest run --project @tuezday/web`; green. Commit.
 
 ### Task 8 — Verify, document, push
 
@@ -339,6 +340,27 @@ tests in `apps/api/test/external-actions.test.ts` and the web shell tests.
 
 ## 7. Progress log
 
+- **2026-08-02 (Task 7)** — The collapse became legible. The policy editor states, inline on the
+  `publish` row under `human_required`, that approving a draft also authorizes its publication and
+  that an edit re-arms the gate — no third policy value, per D2b. The approvals queue carries a
+  standing note rather than a per-card promise: a `Draft` carries neither the action kind nor the
+  resolved policy, so promising "this will publish" on a specific card would be a guess (an email
+  draft becomes a `send`, which never collapses). New helper `secondGateExplanation` in
+  `apps/web/lib/external-actions.ts` explains a re-armed Gate 2 from the action alone. **What the
+  API can prove:** `supersedesActionId` identifies a re-proposal, and `kind` identifies the five
+  kinds that always keep the gate. **What it cannot:** for a first-time `publish` sitting in
+  `authorization_required`, nothing on the action distinguishes "content changed after approval"
+  from "system-approved" from "copilot `forceReview`" — the approval fingerprint, the approving
+  actor, and the `forceReview` flag are all on records the authorizations surface does not read
+  (and must not: its shell contract forbids `/drafts/`). The copy therefore names the three
+  possible causes and asserts none of them. Analytics (7e): the collapsed path now emits a
+  **distinct** `review.action_authorized_collapsed`, attributed to the approving human, rather than
+  reusing `review.action_authorized` — that event keeps meaning "someone pressed Authorize", and
+  total authorizations is the sum of the two. Known gap: the D2c approvers (`routes/notifications.ts`
+  registers them `{ userId: null, human: true }`) collapse correctly and record their decision row,
+  but carry no analytics `distinctId`, so phone/Telegram approvals are absent from the funnel —
+  `authorize()` has the same constraint today. Also fixed the missing preposition in the withdrawal
+  copy ("Already authorized on <date>").
 - **2026-08-02 (Task 4)** — The collapse landed in `proposeWithLineage`. Task 3's
   `latestHumanApprovalFingerprint` became `humanApprovalCoveringDraft(db, workspaceId, draftId)`,
   which returns `{ fingerprint, actor, actorId }` — the approver's identity travels with the
