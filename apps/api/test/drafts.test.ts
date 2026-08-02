@@ -6,7 +6,12 @@ import type { Db } from "../src/db";
 import { approvalDecisions, drafts as draftsTable } from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
 import { draftApprovalFingerprint } from "../src/services/draft-approval-fingerprint";
-import { getDraft, submitAutomaticDraft } from "../src/services/drafts";
+import {
+  applyDraftAction,
+  getDraft,
+  latestHumanApprovalFingerprint,
+  submitAutomaticDraft,
+} from "../src/services/drafts";
 import { buildAuthedApp, createTestDb } from "./helpers";
 
 const fakeGateway: LlmGateway = {
@@ -386,6 +391,95 @@ describe("approval gate API", () => {
         .all();
       expect(scoped).toHaveLength(1);
       expect(scoped[0]?.contentFingerprint).toMatch(/^[a-f0-9]{64}$/);
+    });
+  });
+
+  // Sprint 52: "was this exact content approved by a human, and does that
+  // approval still stand?" — the lookup a later publish consults.
+  describe("latestHumanApprovalFingerprint", () => {
+    it("returns the fingerprint of a human approval", async () => {
+      const draft = (await submit()).json();
+      await act(draft.id, "approve");
+
+      expect(latestHumanApprovalFingerprint(db, workspaceId, draft.id)).toBe(
+        draftApprovalFingerprint({ id: draft.id, content: draft.content, mediaJson: null }),
+      );
+    });
+
+    it("returns null for a system approval (D2a)", async () => {
+      const commit = submitAutomaticDraft(
+        db,
+        {
+          workspaceId,
+          sourceGenerationId: generationId,
+          taskType: "signal_response",
+          channel: "linkedin",
+          personaId: null,
+          content: "Auto-drafted post text.",
+          automationKey: `automation:v1:${workspaceId}:lookup`,
+          autoApprove: true,
+        },
+        SYSTEM_ACTOR,
+      );
+      expect(commit.draft.state).toBe("approved");
+      expect(latestHumanApprovalFingerprint(db, workspaceId, commit.draft.id)).toBeNull();
+    });
+
+    it("returns null while the draft is still pending review", async () => {
+      const draft = (await submit()).json();
+      expect(latestHumanApprovalFingerprint(db, workspaceId, draft.id)).toBeNull();
+    });
+
+    it("returns null for a rejected draft", async () => {
+      const draft = (await submit()).json();
+      await act(draft.id, "reject");
+      expect(latestHumanApprovalFingerprint(db, workspaceId, draft.id)).toBeNull();
+    });
+
+    it("returns null for an unknown draft", () => {
+      expect(
+        latestHumanApprovalFingerprint(db, workspaceId, "7c9e6679-7425-40de-944b-e07fc1f90ae7"),
+      ).toBeNull();
+    });
+
+    it("returns null for a draft in another workspace", async () => {
+      const draft = (await submit()).json();
+      await act(draft.id, "approve");
+      const otherWorkspaceId = (
+        await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Elsewhere" } })
+      ).json().id;
+      expect(latestHumanApprovalFingerprint(db, otherWorkspaceId, draft.id)).toBeNull();
+    });
+
+    it("returns the newest approval when a draft is approved more than once", async () => {
+      const draft = (await submit()).json();
+      await act(draft.id, "approve");
+      const first = latestHumanApprovalFingerprint(db, workspaceId, draft.id);
+
+      // The approval state machine has no edge out of `approved` today, so
+      // re-open the draft directly to exercise the lookup's ordering. Both
+      // approvals land in the same millisecond, which is exactly the tie the
+      // lookup has to break deterministically.
+      db.update(draftsTable)
+        .set({ state: "edited" })
+        .where(eq(draftsTable.id, draft.id))
+        .run();
+      const reopened = getDraft(db, workspaceId, draft.id)!;
+      const edited = applyDraftAction(db, reopened, "edit", { userId: "u", label: "founder" }, "v2");
+      applyDraftAction(db, edited, "approve", { userId: "u", label: "founder" });
+
+      // Force the worst case: both approvals carry an identical createdAt, so
+      // only the insertion-order tie-break can pick the right one.
+      db.update(approvalDecisions)
+        .set({ createdAt: 1_700_000_000_000 })
+        .where(eq(approvalDecisions.draftId, draft.id))
+        .run();
+
+      const latest = latestHumanApprovalFingerprint(db, workspaceId, draft.id);
+      expect(latest).not.toBe(first);
+      expect(latest).toBe(
+        draftApprovalFingerprint({ id: draft.id, content: "v2", mediaJson: null }),
+      );
     });
   });
 });

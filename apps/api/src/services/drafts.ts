@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import {
   transitionTo,
   type ApprovalAction,
@@ -293,6 +293,50 @@ export function listDecisions(db: Db, draftId: string): ApprovalDecision[] {
       fromState: row.fromState as ApprovalState,
       toState: row.toState as ApprovalState,
     }));
+}
+
+/**
+ * The fingerprint of the content a **human** most recently approved for this
+ * draft, or null when the approval cannot authorize anything on its own
+ * (Sprint 52).
+ *
+ * Null means one of: the draft is not currently `approved`; it has never been
+ * approved; or the newest approval was made by the system actor, which never
+ * records a fingerprint (D2a).
+ *
+ * The caller compares the result against `draftApprovalFingerprint(draft)` —
+ * a mismatch means the content changed after approval.
+ */
+export function latestHumanApprovalFingerprint(
+  db: Db,
+  workspaceId: string,
+  draftId: string,
+): string | null {
+  const draft = db
+    .select({ state: drafts.state })
+    .from(drafts)
+    .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)))
+    .get();
+  if (draft?.state !== "approved") return null;
+
+  const approveAction: ApprovalAction = "approve";
+  const latest = db
+    .select({ contentFingerprint: approvalDecisions.contentFingerprint })
+    .from(approvalDecisions)
+    .where(
+      and(
+        eq(approvalDecisions.workspaceId, workspaceId),
+        eq(approvalDecisions.draftId, draftId),
+        eq(approvalDecisions.action, approveAction),
+      ),
+    )
+    // createdAt is millisecond resolution, so two approvals logged in the same
+    // millisecond tie. SQLite's implicit rowid is monotonic with insertion, so
+    // it breaks the tie by true insertion order; the `id` column is a random
+    // UUID and would order arbitrarily.
+    .orderBy(desc(approvalDecisions.createdAt), sql`rowid desc`)
+    .get();
+  return latest?.contentFingerprint ?? null;
 }
 
 /**
