@@ -473,5 +473,40 @@ describe("external-action publication boundary", () => {
       expect(decision.actorUserId).toBeNull();
       expect(decision.actorLabel).toBe("Founder (via Mobile Notification)");
     });
+
+    it("never collapses a repropose — a stale action changed something the approval cannot see", async () => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date("2026-07-14T10:00:00Z"));
+      const id = seedPendingDraft();
+      await approve(id);
+
+      const dueAt = Date.now() + 60_000;
+      const first = await publishDraft(id, { scheduledFor: dueAt });
+      expect(first.statusCode).toBe(201);
+      expect(first.json().action.status).toBe("scheduled"); // collapsed, awaiting its slot
+
+      // The destination changes — exactly the class of change the approval
+      // fingerprint (content + media only) is blind to.
+      db.update(connections)
+        .set({ displayName: "A different Reddit account", updatedAt: Date.now() })
+        .where(eq(connections.id, connectionId))
+        .run();
+      vi.setSystemTime(dueAt + 1);
+      const run = await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
+      expect(run.json().actions[0].action.status).toBe("stale");
+      expect(posts).toHaveLength(0);
+
+      // Reproposing puts the changed destination back in front of a human.
+      const reproposed = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/external-actions/${first.json().action.id}/repropose`,
+        payload: { idempotencyKey: `publish:collapse:${id}:corrected` },
+      });
+      expect(reproposed.statusCode).toBe(200);
+      expect(reproposed.json().action.status).toBe("authorization_required");
+      expect(reproposed.json().action.supersedesActionId).toBe(first.json().action.id);
+      expect(decisionsFor(reproposed.json().action.id)).toEqual([]);
+      expect(posts).toHaveLength(0);
+    });
   });
 });

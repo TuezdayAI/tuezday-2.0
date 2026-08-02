@@ -323,11 +323,22 @@ export function createExternalActionRuntime({
       // editing after approval re-arms this gate. The five other kinds keep
       // their second gate unconditionally, and a copilot proposal
       // (`forceReview`) is never allowed to send itself.
+      //
+      // A repropose (`supersedesActionId`) never collapses. Its predecessor
+      // went stale because the subject, destination, timing, context or
+      // effective policy changed — precisely what the approval fingerprint,
+      // which covers content and media only, cannot see. Putting a corrected
+      // action back in the queue must ask a human about the change.
       const draftId = intent.links?.draftId ?? null;
-      const approval =
-        !forceReview && action.kind === "publish" && draftId
-          ? humanApprovalCoveringDraft(db, action.workspaceId, draftId)
-          : null;
+      const collapsible =
+        !forceReview &&
+        supersedesActionId === null &&
+        action.kind === "publish" &&
+        draftId !== null &&
+        canTransitionExternalAction(action.status, "authorized");
+      const approval = collapsible
+        ? humanApprovalCoveringDraft(db, action.workspaceId, draftId!)
+        : null;
       if (!approval) {
         action = transitionExternalAction(
           db,
@@ -340,26 +351,33 @@ export function createExternalActionRuntime({
 
       // Both gates stay on the record, and the authorization is attributed to
       // the human who approved the draft — not to the proposer, which for the
-      // cadence path is the system actor.
+      // cadence path is the system actor. Decision and status move together,
+      // as in `authorize()`: a decision row asserting "authorized by <human>"
+      // against an action still sitting at `proposed` would be a false
+      // governance record. `dispatch()` stays outside the transaction.
       const collapsedAt = Date.now();
-      db.insert(externalActionDecisions)
-        .values({
-          id: randomUUID(),
-          workspaceId: action.workspaceId,
-          actionId: action.id,
-          decision: "authorize",
-          reason: COLLAPSED_FROM_DRAFT_APPROVAL,
-          actorUserId: approval.actorId,
-          actorLabel: approval.actor,
-          subjectFingerprint: action.fingerprint,
-          policySnapshotJson: JSON.stringify(action.policy),
-          createdAt: collapsedAt,
-        })
-        .run();
-      action = transitionExternalAction(db, action.workspaceId, action.id, "authorized", {
-        authorizedAt: collapsedAt,
+      const collapsedActionId = action.id;
+      db.transaction((tx) => {
+        tx.insert(externalActionDecisions)
+          .values({
+            id: randomUUID(),
+            workspaceId: action.workspaceId,
+            actionId: collapsedActionId,
+            decision: "authorize",
+            reason: COLLAPSED_FROM_DRAFT_APPROVAL,
+            actorUserId: approval.actorId,
+            actorLabel: approval.actor,
+            subjectFingerprint: action.fingerprint,
+            policySnapshotJson: JSON.stringify(action.policy),
+            createdAt: collapsedAt,
+          })
+          .run();
+        tx.update(externalActions)
+          .set({ status: "authorized", authorizedAt: collapsedAt, updatedAt: collapsedAt })
+          .where(eq(externalActions.id, collapsedActionId))
+          .run();
       });
-      return dispatch(action.id, action.workspaceId);
+      return dispatch(collapsedActionId, action.workspaceId);
     }
     action = transitionExternalAction(db, action.workspaceId, action.id, "authorized", {
       authorizedAt: Date.now(),
