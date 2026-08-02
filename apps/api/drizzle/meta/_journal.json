@@ -428,6 +428,13 @@
       "when": 1785658189642,
       "tag": "0060_hot_nekra",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "6",
+      "when": 1785673466843,
+      "tag": "0061_cultured_lady_ursula",
+      "breakpoints": true
     }
   ]
 }

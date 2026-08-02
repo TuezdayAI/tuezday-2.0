@@ -33,7 +33,7 @@ import {
 } from "../src/services/external-action-policy";
 import { createTestDb } from "./helpers";
 
-const ACTOR = { userId: null, label: "Founder" };
+const ACTOR = { userId: null, label: "Founder", human: true };
 
 function setWorkspacePolicies(
   db: Db,
@@ -250,9 +250,9 @@ describe("external action lifecycle", () => {
       adapters: { publish: fake.adapter },
       analytics,
     });
-    const queued = await runtime.propose(input, { userId, label: "Founder" });
+    const queued = await runtime.propose(input, { userId, label: "Founder", human: true });
 
-    await runtime.authorize(queued.action.id, workspaceId, { userId, label: "Founder" });
+    await runtime.authorize(queued.action.id, workspaceId, { userId, label: "Founder", human: true });
 
     expect(capture).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -496,7 +496,15 @@ describe("external action lifecycle", () => {
 
       const decisions = getExternalActionDetail(db, workspaceId, queued.action.id)!.decisions;
       expect(decisions).toHaveLength(1);
-      expect(decisions[0]).toMatchObject({ decision: "deny", actor: ACTOR });
+      // The projected actor is the persisted identity; humanity is recorded on
+      // the row (see the cadence tests) but is not part of the wire shape.
+      expect(decisions[0]).toMatchObject({
+        decision: "deny",
+        actor: { userId: ACTOR.userId, label: ACTOR.label },
+      });
+      expect(
+        db.select().from(externalActionDecisions).all().map((d) => d.actorHuman),
+      ).toEqual([true]);
       // The founder's own words survive…
       expect(decisions[0]?.reason).toContain("Changed my mind");
       // …without displacing the marker, which is the only thing that says this

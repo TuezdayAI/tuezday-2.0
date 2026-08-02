@@ -64,6 +64,22 @@ export function withdrawalReason(
   return reason ? `${marker} ${reason}` : marker;
 }
 
+/**
+ * Who is driving a runtime entry point, with humanity stated rather than
+ * guessed (Sprint 52 follow-up, mirroring `DraftActor.human`).
+ *
+ * It cannot be derived from `userId`: the signed email/Telegram approve links
+ * are people with no user id, and the worker is a machine with none either.
+ * The persisted decision row keeps the flag, because "did a person refuse
+ * this?" is a governance question that outlives the request — a cadence uses
+ * exactly that to tell a founder's withdrawal from the automation kill switch
+ * cancelling in bulk. Non-human is the safe default for any new caller: it
+ * never collapses a gate and never makes a stop permanent.
+ */
+export interface ExternalActionRuntimeActor extends ExternalActionActor {
+  human: boolean;
+}
+
 export interface ExternalActionIntent {
   subject: ExternalActionSubject;
   context: ExternalActionContext;
@@ -110,7 +126,10 @@ export class StaleExternalActionError extends Error {
 }
 
 export interface ExternalActionRuntime {
-  propose(command: ExternalActionCommand, actor: ExternalActionActor): Promise<ExternalActionSubmission>;
+  propose(
+    command: ExternalActionCommand,
+    actor: ExternalActionRuntimeActor,
+  ): Promise<ExternalActionSubmission>;
   /**
    * Like `propose`, but always parks the action at `authorization_required` for
    * a human to authorize — it never auto-dispatches, even under an autonomous
@@ -119,17 +138,17 @@ export interface ExternalActionRuntime {
    */
   proposeForReview(
     command: ExternalActionCommand,
-    actor: ExternalActionActor,
+    actor: ExternalActionRuntimeActor,
   ): Promise<ExternalActionSubmission>;
   authorize(
     actionId: string,
     workspaceId: string,
-    actor: ExternalActionActor,
+    actor: ExternalActionRuntimeActor,
   ): Promise<ExternalActionSubmission>;
   deny(
     actionId: string,
     workspaceId: string,
-    actor: ExternalActionActor,
+    actor: ExternalActionRuntimeActor,
     reason: string | null,
   ): Promise<ExternalActionSubmission>;
   /**
@@ -142,14 +161,14 @@ export interface ExternalActionRuntime {
   cancel(
     actionId: string,
     workspaceId: string,
-    actor: ExternalActionActor,
+    actor: ExternalActionRuntimeActor,
     reason: string | null,
   ): Promise<ExternalActionSubmission>;
   repropose(
     actionId: string,
     workspaceId: string,
     idempotencyKey: string,
-    actor: ExternalActionActor,
+    actor: ExternalActionRuntimeActor,
   ): Promise<ExternalActionSubmission>;
   run(workspaceId: string): Promise<ExternalActionSubmission[]>;
 }
@@ -347,7 +366,7 @@ export function createExternalActionRuntime({
   async function recordCancellation(
     actionId: string,
     workspaceId: string,
-    actor: ExternalActionActor,
+    actor: ExternalActionRuntimeActor,
     // Built from the action, because the reason a withdrawal records depends on
     // the status it is withdrawing from — which only this function has read.
     reasonFor: (action: ExternalAction) => string | null,
@@ -369,6 +388,7 @@ export function createExternalActionRuntime({
           reason,
           actorUserId: actor.userId,
           actorLabel: actor.label,
+          actorHuman: actor.human,
           subjectFingerprint: action.fingerprint,
           policySnapshotJson: JSON.stringify(action.policy),
           createdAt: now,
@@ -384,7 +404,7 @@ export function createExternalActionRuntime({
 
   async function proposeWithLineage(
     command: ExternalActionCommand,
-    actor: ExternalActionActor,
+    actor: ExternalActionRuntimeActor,
     supersedesActionId: string | null,
     // When true, always park the action at `authorization_required` for a human
     // to clear — never auto-authorize/dispatch, regardless of effective policy.
@@ -495,6 +515,8 @@ export function createExternalActionRuntime({
             decision: "authorize",
             reason: COLLAPSED_FROM_DRAFT_APPROVAL,
             actorUserId: approval.actorId,
+            // `humanApprovalCoveringDraft` returns only human approvals.
+            actorHuman: true,
             actorLabel: approval.actor,
             subjectFingerprint: action.fingerprint,
             policySnapshotJson: JSON.stringify(action.policy),
@@ -558,6 +580,7 @@ export function createExternalActionRuntime({
             reason: null,
             actorUserId: actor.userId,
             actorLabel: actor.label,
+            actorHuman: actor.human,
             subjectFingerprint: action.fingerprint,
             policySnapshotJson: JSON.stringify(action.policy),
             createdAt: now,

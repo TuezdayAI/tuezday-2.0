@@ -44,6 +44,8 @@ export interface CopilotDeps {
 export interface CopilotActor {
   userId: string | null;
   label: string;
+  /** Whether a person is behind this turn — stated, never inferred (Sprint 52). */
+  human: boolean;
 }
 
 const MAX_ITERS = 6;
@@ -402,6 +404,7 @@ export async function commitCopilotProposal(
     const result = await tool.commit(actionCtx, pending.args, {
       userId: actor.userId,
       label: actor.label,
+      human: actor.human,
     });
     appendMessage(db, workspaceId, sessionId, {
       role: "assistant",

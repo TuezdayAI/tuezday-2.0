@@ -24,9 +24,25 @@ import { getCampaign } from "./campaigns";
 import { getConnection } from "./connections";
 import { listDrafts } from "./drafts";
 import { preparePublicationAction } from "./external-action-adapters";
-import type { ExternalActionRuntime } from "./external-action-coordinator";
-import { rowToExternalAction, transitionExternalAction } from "./external-actions";
+import type {
+  ExternalActionRuntime,
+  ExternalActionRuntimeActor,
+} from "./external-action-coordinator";
+import {
+  humanRefusedActionIds,
+  insertExternalActionDecision,
+  rowToExternalAction,
+  transitionExternalAction,
+} from "./external-actions";
 import { listCadencePublications } from "./publications";
+
+/** Cadence fills and the cadence's own bulk cancellations are the system's. */
+const SYSTEM_ACTOR: ExternalActionRuntimeActor = { userId: null, label: "system", human: false };
+
+/** Why a pending cadence post was cancelled without anyone deciding about it. */
+export const KILL_SWITCH_STOP_REASON =
+  "Stopped by the social automation kill switch. Not a decision about this post — turning the kill switch off returns the draft to the queue.";
+export const CADENCE_DELETED_REASON = "The posting cadence was deleted.";
 
 /** How far ahead a fill looks for open slots. */
 export const CADENCE_HORIZON_DAYS = 14;
@@ -243,7 +259,7 @@ export function deleteCadence(db: Db, workspaceId: string, cadenceId: string): b
     .set({ cadenceId: null })
     .where(eq(publications.cadenceId, cadenceId))
     .run();
-  cancelPendingActionsForCadence(db, workspaceId, cadenceId);
+  cancelPendingActionsForCadence(db, workspaceId, cadenceId, CADENCE_DELETED_REASON);
   db.delete(postingCadences)
     .where(and(eq(postingCadences.workspaceId, workspaceId), eq(postingCadences.id, cadenceId)))
     .run();
@@ -278,13 +294,20 @@ function pendingCadenceActions(db: Db, workspaceId: string, cadenceId: string) {
 /**
  * Draft ids this cadence must not pick up again.
  *
- * `cancelled` actions count (Sprint 52 review). A collapsed publish is
- * authorized without a second click, so withdrawing it is the only human "no"
- * available — and if the next fill re-slotted the same draft it would collapse
- * again and publish, making the withdrawal meaningless. Consequence, and it is
- * intended: a withdrawn draft does not return to this cadence unless it is
- * re-queued. `stale` actions are still excluded — they are superseded by a
- * `repropose`, not refused.
+ * A `cancelled` action counts only when a *person* refused it (Sprint 52
+ * review, narrowed by its follow-up). A collapsed publish is authorized without
+ * a second click, so withdrawing it is the only human "no" available — and if
+ * the next fill re-slotted the same draft it would collapse again and publish,
+ * making the withdrawal meaningless. Consequence, and it is intended: a
+ * withdrawn draft does not return to this cadence unless it is re-queued.
+ *
+ * A cancellation the *system* made is a different statement. The automation
+ * kill switch cancels this cadence's pending posts in bulk to stop the queue
+ * now; it says nothing about any particular draft, and it is meant to be
+ * reversible. Counting those here would let one flip of an emergency stop
+ * permanently orphan every draft it touched, so they are excluded and become
+ * eligible again once the stop is lifted. `stale` actions are excluded for
+ * their own reason — superseded by a `repropose`, not refused.
  */
 function slottedDraftIds(db: Db, workspaceId: string, cadenceId: string): Set<string> {
   const ids = new Set(
@@ -295,8 +318,15 @@ function slottedDraftIds(db: Db, workspaceId: string, cadenceId: string): Set<st
       .all()
       .map((r) => r.draftId),
   );
-  for (const { action, payload } of cadenceActions(db, workspaceId, cadenceId)) {
+  const actions = cadenceActions(db, workspaceId, cadenceId);
+  const humanRefused = humanRefusedActionIds(
+    db,
+    workspaceId,
+    actions.filter(({ action }) => action.status === "cancelled").map(({ action }) => action.id),
+  );
+  for (const { action, payload } of actions) {
     if (action.status === "stale") continue;
+    if (action.status === "cancelled" && !humanRefused.has(action.id)) continue;
     if (payload.draftId) ids.add(payload.draftId);
   }
   return ids;
@@ -361,7 +391,12 @@ export async function fillCadence(
   if (isAuto && settings!.killSwitch) {
     // The kill switch is a hard stop: slot nothing and clear this cadence's
     // pending auto-posts so flipping it stops the queue.
-    cancelScheduledPublicationsForCadence(db, workspaceId, cadence.id);
+    cancelScheduledPublicationsForCadence(
+      db,
+      workspaceId,
+      cadence.id,
+      KILL_SWITCH_STOP_REASON,
+    );
     return { filled: 0 };
   }
 
@@ -403,7 +438,7 @@ export async function fillCadence(
         automated: isAuto,
       },
     );
-    await runtime.propose(command, { userId: null, label: "system" });
+    await runtime.propose(command, SYSTEM_ACTOR);
     filled += 1;
   }
   return { filled };
@@ -415,6 +450,7 @@ function cancelScheduledPublicationsForCadence(
   db: Db,
   workspaceId: string,
   cadenceId: string,
+  reason: string,
 ): void {
   db.delete(publications)
     .where(
@@ -425,14 +461,35 @@ function cancelScheduledPublicationsForCadence(
       ),
     )
     .run();
-  cancelPendingActionsForCadence(db, workspaceId, cadenceId);
+  cancelPendingActionsForCadence(db, workspaceId, cadenceId, reason);
 }
 
-function cancelPendingActionsForCadence(db: Db, workspaceId: string, cadenceId: string): void {
+/**
+ * Cancel this cadence's still-pending publish actions on the system's behalf.
+ *
+ * Each cancellation is recorded as a decision, in the same transaction as the
+ * status change, for the reason `recordCancellation` gives: an action that ends
+ * `cancelled` with no decision behind it is a refusal nobody made. It is
+ * attributed to the system with `human: false`, which is also what tells a
+ * later fill that this stop was not a founder's "no" — the kill switch is
+ * reversible and a withdrawal is not.
+ */
+function cancelPendingActionsForCadence(
+  db: Db,
+  workspaceId: string,
+  cadenceId: string,
+  reason: string,
+): void {
   for (const { action } of pendingCadenceActions(db, workspaceId, cadenceId)) {
     if (!canTransitionExternalAction(action.status, "cancelled")) continue;
-    transitionExternalAction(db, workspaceId, action.id, "cancelled", {
-      completedAt: Date.now(),
+    // These two helpers take `Db`, so they run on the connection rather than on
+    // the `tx` handle — same connection, so they are inside this transaction and
+    // roll back together (verified).
+    db.transaction(() => {
+      insertExternalActionDecision(db, action, "deny", SYSTEM_ACTOR, reason);
+      transitionExternalAction(db, workspaceId, action.id, "cancelled", {
+        completedAt: Date.now(),
+      });
     });
   }
 }

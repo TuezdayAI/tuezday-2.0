@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { eq } from "drizzle-orm";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   AUTOMATION_MODES,
@@ -10,7 +11,7 @@ import {
 import type { TuezdayApp } from "../src/app";
 import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric";
 import type { Db } from "../src/db";
-import { taskLeases } from "../src/db/schema";
+import { externalActionDecisions, taskLeases } from "../src/db/schema";
 import type { EvidenceStore } from "../src/evidence/store";
 import type { LlmGateway } from "../src/llm/gateway";
 import { runAutomationWithLease } from "../src/services/automation";
@@ -697,6 +698,68 @@ describe("social automation", () => {
       url: `/workspaces/${workspaceId}/cadences/${manualCadence.id}/fill`,
     });
     expect(manualFill.json().filled).toBe(1);
+  });
+
+  // Sprint 52 follow-up — the kill switch is a *reversible* emergency stop. It
+  // cancels this cadence's pending publish actions, and Sprint 52 made a
+  // `cancelled` action keep its draft out of the cadence so a human withdrawal
+  // sticks. A system stop is not a human "no": turning the switch back off must
+  // return those drafts to the queue, or the emergency stop would quietly
+  // orphan every draft it touched.
+  it("turning the kill switch back off re-queues the drafts it stopped", async () => {
+    const connectionId = await connectReddit();
+    const campaignId = await createCampaign(["linkedin"], "Auto");
+    await setAutomation(campaignId, "scheduled_auto");
+    const draftId = seedApprovedDraft(campaignId);
+    const cadence = (await createCadence({ campaignId, connectionId })).json();
+    const fillUrl = `/workspaces/${workspaceId}/cadences/${cadence.id}/fill`;
+    expect((await app.inject({ method: "POST", url: fillUrl })).json().filled).toBe(1);
+
+    async function publishActions() {
+      const res = await app.inject({
+        method: "GET",
+        url: `/workspaces/${workspaceId}/external-actions?kind=publish&limit=200`,
+      });
+      return res.json().actions as Array<Record<string, any>>;
+    }
+    expect((await publishActions()).map((a) => a.status)).toEqual(["scheduled"]);
+
+    // Emergency stop: the next fill slots nothing and cancels the pending post.
+    await app.inject({
+      method: "PATCH",
+      url: `/workspaces/${workspaceId}/automation/settings`,
+      payload: { killSwitch: true },
+    });
+    expect((await app.inject({ method: "POST", url: fillUrl })).json().filled).toBe(0);
+    const stopped = await publishActions();
+    expect(stopped.map((a) => a.status)).toEqual(["cancelled"]);
+
+    // The stop is on the record, and it is on the record as the system's — an
+    // action that ends `cancelled` with nobody behind it is a refusal nobody
+    // made, and that flag is what keeps this reversible.
+    const decisions = db
+      .select()
+      .from(externalActionDecisions)
+      .where(eq(externalActionDecisions.actionId, stopped[0]!.id))
+      .all()
+      .filter((row) => row.decision === "deny");
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({ actorHuman: false, actorLabel: "system" });
+    expect(decisions[0]!.reason).toContain("kill switch");
+
+    // All clear. Past the stopped slot (09:00 America/New_York = 13:00 UTC), so
+    // the next fill is looking at fresh airtime, not re-using the stopped slot.
+    await app.inject({
+      method: "PATCH",
+      url: `/workspaces/${workspaceId}/automation/settings`,
+      payload: { killSwitch: false },
+    });
+    vi.setSystemTime(new Date(MONDAY_8AM_UTC.getTime() + 6 * 60 * 60 * 1000));
+
+    expect((await app.inject({ method: "POST", url: fillUrl })).json().filled).toBe(1);
+    const live = (await publishActions()).filter((a) => a.status !== "cancelled");
+    expect(live).toHaveLength(1);
+    expect(live[0]!.subject.id).toBe(draftId);
   });
 
   // Two Monday cadences at 09:00 and 10:00 put two slots on the same UTC day

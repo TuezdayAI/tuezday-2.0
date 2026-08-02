@@ -349,6 +349,27 @@ tests in `apps/api/test/external-actions.test.ts` and the web shell tests.
 
 ## 7. Progress log
 
+- **2026-08-02 (post-review regression fix — the kill switch was left irreversible)** — Making a
+  withdrawal stick (previous entry) counted *every* `cancelled` action toward `slottedDraftIds`, and
+  the social-automation kill switch cancels through the same helper
+  (`cancelScheduledPublicationsForCadence` → `cancelPendingActionsForCadence`). Flipping it on and
+  off therefore orphaned every draft it had stopped: verified as auto campaign → `filled = 1` →
+  kill switch on → cancel → kill switch off → re-fill `filled = 0`. The cadence was not starved
+  (newly approved drafts still filled), but a reversible emergency stop had become partly permanent,
+  and no test covered resume. **Fix: distinguish a human refusal from a system one at the point of
+  cancellation.** `external_action_decisions` gains `actor_human` (`drizzle/0061`, existing rows
+  default `true` — every decision predating the column came from the human-only routes, and "a human
+  said no" is the safe reading of an ambiguous refusal); runtime entry points take
+  `ExternalActionRuntimeActor` (`ExternalActionActor & { human }`), mirroring `DraftActor.human`.
+  `slottedDraftIds` now counts a `cancelled` action only when `humanRefusedActionIds` finds a
+  human `deny` decision on it. **Rejected discriminators:** the reason text (a founder types anything
+  into `withdrawalReason`'s suffix) and `actorUserId !== null` (the email/Telegram approve links are
+  humans with no user id — `routes/notifications.ts` — so identity presence is not humanity, which is
+  exactly why `human` is an explicit property). Kill-switch and cadence-deletion cancellations now
+  also write a decision row attributed to `system`, closing a gap where an action could end
+  `cancelled` with no record of who refused it. Two tests guard the pair: kill-switch resume
+  (`automation.test.ts`) and the unchanged withdrawal guard (`cadences.test.ts`), each verified to
+  fail under the other's rule.
 - **2026-08-02 (final whole-branch review — fixes)** — Two findings, both fixed.
   **(1, Important) A withdrawal did not stick on the cadence path.** `pendingCadenceActions`
   (`services/cadences.ts`) filtered out `cancelled` actions, so a withdrawn collapsed publish
@@ -458,6 +479,20 @@ Nothing here is a code change; these are the things to know when this branch goe
   "re-armed" for one of three reasons when in fact it was simply never collapsed. **Deliberately not
   fixed:** it is self-clearing — the copy becomes accurate as soon as that queue drains, and adding
   a deploy-timestamp carve-out would outlive the problem it solves.
-- **A withdrawn cadence post does not come back.** Cancelling a collapsed publish now keeps the
-  draft slotted against that cadence (final review, finding 1), so re-queuing it is an explicit act.
-  Support answer: "withdraw" means "not on this cadence", not "not this time".
+- **A withdrawn cadence post does not come back — but only a *human* withdrawal is final.**
+  Cancelling a collapsed publish keeps that draft slotted against that cadence (final review,
+  finding 1), so re-queuing it is an explicit act. Support answer: "withdraw" means "not on this
+  cadence", not "not this time".
+
+  A cancellation the **system** made says nothing about the draft and is fully reversible. The
+  social-automation **kill switch** cancels a cadence's pending posts through the same path, and
+  turning it back off returns every draft it stopped to the queue — the emergency stop stays an
+  emergency stop, not a one-way door. Same for a cadence deletion, where the point is moot.
+
+  What separates the two is `external_action_decisions.actor_human`, recorded on the decision at the
+  moment of cancellation — not the free-text reason (a founder types anything there) and not the
+  `cancelled` status (both paths produce it). Kill-switch and deletion cancellations now write a
+  decision row attributed to `system`, which they previously did not write at all: before this, an
+  action could end `cancelled` with no record of who refused it. Existing decision rows migrate to
+  `actor_human = true` (`drizzle/0061`), which is correct — every decision written before the column
+  existed came from the human-only authorize/deny/cancel routes.

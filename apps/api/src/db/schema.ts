@@ -1201,6 +1201,15 @@ export const externalActionDecisions = sqliteTable(
     reason: text("reason"),
     actorUserId: text("actor_user_id").references(() => users.id, { onDelete: "set null" }),
     actorLabel: text("actor_label").notNull(),
+    // Sprint 52 follow-up: was this decision made by a person? Never inferred
+    // from `actorUserId` — the delegated approve links are humans with no user
+    // id, and the worker is a non-human with none either. A cadence reads this
+    // to tell a founder's withdrawal (final for that draft) from a system stop
+    // such as the automation kill switch (reversible). Existing rows default to
+    // true because every decision written before this column existed came from
+    // the human-only authorize/deny/cancel routes, and because "a human said
+    // no" is the safe reading of an ambiguous refusal.
+    actorHuman: integer("actor_human", { mode: "boolean" }).notNull().default(true),
     subjectFingerprint: text("subject_fingerprint").notNull(),
     policySnapshotJson: text("policy_snapshot_json").notNull(),
     createdAt: integer("created_at").notNull(),

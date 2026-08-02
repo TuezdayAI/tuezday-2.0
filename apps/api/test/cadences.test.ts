@@ -766,6 +766,17 @@ describe("posting cadences", () => {
     expect(cancelled.statusCode).toBe(200);
     expect(cancelled.json().action.status).toBe("cancelled");
 
+    // What makes this stick is the recorded humanity of the refusal — not the
+    // founder's free-text reason, which can say anything, and not the
+    // `cancelled` status, which the kill switch also produces.
+    const refusal = db
+      .select()
+      .from(externalActionDecisions)
+      .where(eq(externalActionDecisions.actionId, collapsed.id))
+      .all()
+      .find((row) => row.decision === "deny")!;
+    expect(refusal.actorHuman).toBe(true);
+
     // Past the withdrawn slot: the next fill sees fresh open slots.
     vi.setSystemTime(new Date(MONDAY_8AM_UTC.getTime() + 60 * 60 * 1000));
     expect((await app.inject({ method: "POST", url: fillUrl })).json().filled).toBe(0);

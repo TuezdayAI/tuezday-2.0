@@ -23,6 +23,7 @@ import {
 import {
   StaleExternalActionError,
   type ExternalActionRuntime,
+  type ExternalActionRuntimeActor,
 } from "./external-action-coordinator";
 import { rowToExternalAction } from "./external-actions";
 
@@ -216,7 +217,7 @@ export function createAuthorizationBatchPreview(
   db: Db,
   workspaceId: string,
   input: CreateAuthorizationBatchInput,
-  actor: ExternalActionActor,
+  actor: ExternalActionRuntimeActor,
 ): AuthorizationBatchDetail {
   const existing = db
     .select({ id: externalActionBatches.id })
@@ -329,7 +330,7 @@ export async function runAuthorizationBatch(
   runtime: ExternalActionRuntime,
   workspaceId: string,
   batchId: string,
-  actor: ExternalActionActor,
+  actor: ExternalActionRuntimeActor,
 ): Promise<AuthorizationBatchDetail> {
   const initial = getAuthorizationBatchDetail(db, workspaceId, batchId);
   if (!initial) throw new AuthorizationBatchNotFoundError();
