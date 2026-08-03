@@ -4,7 +4,10 @@
 > **Closes:** Atlas conflict #5 (split ads governance)
 > **PRD:** `prd-agentic-platform.md` §4, Sprint 54
 > **Size:** L · **Risk:** Medium (touches live-spend paths; migration is deliberately conservative)
-> **Status:** Plan awaiting founder approval — no code written yet.
+> **Status:** Delivered on `sprint-54-ads-governance-spine` — Tasks 1–7 complete. `npm test`
+> (199 files / 2184 tests) and `npm run typecheck` green. Awaiting founder review and merge
+> (after Sprints 52 and 53). **Decision D4a was amended during implementation** — see §3.0 for the
+> evidence that forced it. See §7 for what actually happened, task by task.
 
 ---
 
@@ -276,4 +279,55 @@ buttons ~:744-828); relevant `apps/web/lib` shell tests.
 - **2026-08-02** — Recon complete against the Sprint 53 working tree. Key correction to the PRD's
   premise: there is no parallel launch path left; what remains split is a pre-condition gate and a
   duplicate decision log. Decisions D4a–D4d recorded. Plan written, awaiting founder approval.
-  No code written yet.
+
+- **2026-08-02 — Task 1** (`6ea315f`). Unified the blocker vocabulary on **`kill_switch_on`** — the
+  spelling `checkSpendGuardrails` and eight other services already emit; `budget_change` /
+  `targeting_change` were translating *away* from the codebase's own convention. No UI change needed:
+  `apps/web` treats blocker codes as opaque. `Entitlements.adSpendCapCents` marked `reserved` per D4d.
+
+- **2026-08-02 — Task 3** (`820a3dc`). New optional `ExternalActionAdapter.guardAtProposal`, called in
+  `proposeWithLineage` after insert and **before both** the `human_required` branch and the autonomous
+  dispatch → `proposed → blocked`. No lifecycle contract change, and **no authorization decision is
+  ever written** for a refused launch. `dispatch`'s existing `guard` retained as the backstop.
+  `platformStatus → isSpending → checkSpendGuardrails` verified end to end by the new cap test.
+
+- **2026-08-02 — D4a AMENDED** (`615df42`). See §3.0. Task 2's prototype of the preferred design
+  proved it disqualifying: `paid_launch` resolves to `autonomous` under `scheduled_auto` and
+  `proposeWithLineage:546` dispatches immediately, so proposing at submit would **spend money at
+  Submit, before approval**. Independently, `EXTERNAL_ACTION_DECISIONS` has no `submit`/`revise`
+  vocabulary. Founder chose: delete the false row, scope the rest honestly.
+
+- **2026-08-02 — Task 2** (`66c92da`). Deleted the synthetic `launch` decision row from
+  `performLaunch`, and its now-dead `actor` parameter (signature only — the resume/error path is
+  byte-identical), which removes the `human: false` fabrication at the call site.
+  **`"launch"` was deliberately KEPT in the read vocabulary**: historical rows since Sprint 20
+  contain it and `adLaunchDecisionSchema` validates on read, so dropping it would leave the contract
+  unable to describe existing data. Writers are narrowed to `AD_LAUNCH_ACTIONS` instead.
+
+- **2026-08-02 — Task 6** (`cc624d8`). Two records made legible and neither one lies about the other.
+  The page **never** puts a person's name beside "authorized" — under an autonomous policy it names
+  the policy and links out for authorship. Retired `launch` rows render annotated rather than as a
+  spend authorization. D4c's limitation is stated in the UI verbatim. Also relabelled
+  **"Approve spend" → "Approve setup"**; that button never authorized spend.
+
+- **2026-08-02 — Task 4** (`efb8c8b`). `adLaunchTransitionTo` and `AD_LAUNCH_TRANSITIONS` deleted;
+  grep finds no callers (three explanatory comments only). Chose a **reduced `status`** over an
+  `editable` flag: `status` cannot go away regardless (`approved` gates `preparePaidLaunchAction`,
+  `launched` feeds `isSpending`, DELETE refuses `launched`), so a flag would have been *additive* —
+  a second, desyncable source of truth on a live-spend path, plus a backfill, retiring nothing.
+  The surviving editability rule is one predicate, `isAdLaunchEditable`.
+
+- **2026-08-02 — Task 5** (`ad1a1b5`). Rewrote the test that encoded the conflict. **Old guarantee:**
+  a denial leaves the setup trail and status alone — i.e. merely that the two logs are independent,
+  which read as the defect. **New guarantee:** the same separation stated positively from both sides —
+  the refusal is recorded exactly once in the spend log (real action, `actorHuman`, reason persisted),
+  the setup trail neither gains a row nor loses its approval, and reproposing creates a new action
+  without erasing or duplicating the refusal. No production change was needed.
+  Also found that the neighbouring kill-switch test had **silently lost its distinguishing power**
+  after Task 3 — old and new code paths produced identical assertions — and gave it
+  `authorizedAt === null`, which the old dispatch-time path would have failed.
+
+- **2026-08-02 — Task 7.** `CLAUDE.md`'s instruction to use `adLaunchTransitionTo` corrected (it was
+  stale the moment Task 4 landed). Deferred improvements #40–#42 recorded: resume and the kill switch
+  still change spend with no decision row (D4c), `adSpendCapCents` reserved but unenforced (D4d), and
+  spend authorship being two clicks from the launch. Verified: 199 files / 2184 tests, typecheck clean.

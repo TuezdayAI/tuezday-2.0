@@ -429,6 +429,40 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
   mismatch it fixes. Read the journal's `idx`, never the file count.
 - **Origin:** Pre-existing (around Sprint 25); found and left alone in Sprint 53.
 
+### 40. Spend can still change without a decision row (resume + kill switch) — **deferred from Sprint 54**
+- **What we shipped (Sprint 54):** The *initial* ad launch is fully governed: spend guardrails refuse
+  at proposal (`proposed → blocked`, before any authorization decision exists), and
+  `external_action_decisions` is the sole record of who authorized that spend. But
+  `POST /workspaces/:id/ads/launches/:launchId/resume` and
+  `PUT /workspaces/:id/ads/settings { killSwitch }` both restart or stop live spend with **no**
+  decision row at all. The UI states this limitation plainly rather than implying full governance.
+- **The better version:** Both become governed external actions, so every spend-affecting control
+  answers "who did this and when". Note the kill switch is an emergency stop — putting it behind an
+  authorization gate may be actively wrong, so it likely needs a different treatment from resume.
+- **Trigger to revisit:** When a customer or an audit asks who restarted a paused campaign, or when
+  a seventh external-action kind is being added for another reason anyway.
+- **Origin:** Sprint 54 (founder decision D4c — scope to the initial launch to keep the sprint at L).
+
+### 41. `Entitlements.adSpendCapCents` is defined but unenforced — **deferred from Sprint 54**
+- **What we shipped (Sprint 54):** The field is marked `reserved` in `packages/contracts` with a
+  comment naming the sprint that will activate it. Nothing reads it. Spend is bounded instead by the
+  per-workspace `ad_settings.daily_cap_cents` guardrail, which is enforced.
+- **The better version:** Wire it into the guardrail alongside the workspace daily cap, so plan tier
+  bounds spend. Requires: a non-zero free-tier cap (it is currently `0`, so enforcing as-is would
+  silently disable ad launching for every free workspace), an ad-spend figure in `getUsage` /
+  `entitlementUsageSchema`, and `TEST_BILLING_GATING` in any covering test — `assertWithinLimit`
+  no-ops under `NODE_ENV=test` without it.
+- **Trigger to revisit:** When ad spend is priced per tier. This is a pricing decision, not a refactor.
+- **Origin:** Sprint 54 (founder decision D4d).
+
+### 42. Spend authorship is two clicks from the launch — **deferred from Sprint 54**
+- **What we shipped (Sprint 54):** The ad-launch page separates "who approved this ad's setup" from
+  "who authorized this spend", and links out to the governing external action for the latter.
+- **The better version:** Surface `proposedBy` and the effective policy inline on the launch, so the
+  founder can read authorship without leaving the page. Needs the launch detail route to carry both.
+- **Trigger to revisit:** When someone asks "who authorized this?" and the link-out is friction.
+- **Origin:** Sprint 54 Task 6.
+
 ---
 
 ## Done (upgraded)
