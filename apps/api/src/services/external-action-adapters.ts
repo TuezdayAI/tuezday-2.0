@@ -1211,6 +1211,24 @@ export function paidLaunchActionAdapter(
       return paidLaunchIntent(db, action.workspaceId, payload.launchId);
     },
 
+    // Sprint 54 (D4b) — the spend guardrails are knowable the moment the launch
+    // is proposed, so they refuse there rather than after someone has clicked
+    // Authorize and a decision row already claims they authorized this spend.
+    // Deliberately narrower than `guard`: only the workspace kill switch and the
+    // committed-budget cap. The connection and already-launched checks are
+    // re-read at dispatch, where they are current.
+    async guardAtProposal(action, rawPayload): Promise<ExternalActionBlocker | null> {
+      const payload = asPaidLaunchPayload(rawPayload);
+      const launch = getAdLaunch(db, action.workspaceId, payload.launchId);
+      // A launch that vanished between preparation and insert is `guard`'s to
+      // report — at proposal there is nothing to bound the spend of.
+      if (!launch) return null;
+      const guardrails = checkSpendGuardrails(db, launch);
+      return guardrails.ok
+        ? null
+        : { code: guardrails.error, message: guardrails.message, retryable: true };
+    },
+
     async guard(action, rawPayload): Promise<ExternalActionBlocker | null> {
       const payload = asPaidLaunchPayload(rawPayload);
       const launch = getAdLaunch(db, action.workspaceId, payload.launchId);

@@ -4,7 +4,7 @@ import { externalActionSubmissionSchema } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
 import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric";
 import type { Db } from "../src/db";
-import { adLaunches, drafts, externalActions } from "../src/db/schema";
+import { adLaunches, drafts, externalActionDecisions, externalActions } from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
 import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
@@ -196,6 +196,18 @@ describe("external-action paid launch boundary", () => {
       payload: {},
     });
 
+  const putSettings = (payload: { dailyCapCents?: number; killSwitch?: boolean }) =>
+    app.inject({ method: "PUT", url: `/workspaces/${workspaceId}/ads/settings`, payload });
+
+  /** Every authorize/deny decision in the workspace's external-action log. */
+  function decisionRows() {
+    return db
+      .select()
+      .from(externalActionDecisions)
+      .where(eq(externalActionDecisions.workspaceId, workspaceId))
+      .all();
+  }
+
   function actionRows() {
     return db.select().from(externalActions).where(eq(externalActions.workspaceId, workspaceId)).all();
   }
@@ -306,6 +318,64 @@ describe("external-action paid launch boundary", () => {
     expect(res.json().action.blocker.code).toBe("kill_switch_on");
     expect(state.campaignPosts).toBe(0);
     expect((await getLaunch(id)).status).toBe("approved");
+  });
+
+  // Sprint 54 Task 3 (D4b) — spend guardrails enforce at proposal, where
+  // `proposed → blocked` is already a legal edge. The default policy in this
+  // file is `human_required`, so without this every breach used to park at
+  // `authorization_required` and only block *after* someone clicked Authorize
+  // — leaving "X authorized this spend" on the record for spend that never
+  // happened. `authorization_required → blocked` is not a legal edge, which is
+  // why proposal, not authorization, is where this belongs.
+  describe("spend guardrails at proposal", () => {
+    it("blocks a kill-switched launch at proposal, with no authorization decision", async () => {
+      expect((await putSettings({ killSwitch: true })).statusCode).toBe(200);
+      const id = await approvedLaunch();
+      const res = await act(id, "launch");
+      expect(res.statusCode).toBe(201);
+      expect(res.json().action.status).toBe("blocked");
+      expect(res.json().action.blocker.code).toBe("kill_switch_on");
+      expect(decisionRows()).toHaveLength(0);
+      expect(state.campaignPosts).toBe(0);
+      expect((await getLaunch(id)).status).toBe("approved");
+    });
+
+    it("blocks a daily-cap breach at proposal, over committed budgets, ignoring paused launches", async () => {
+      expect((await putSettings({ dailyCapCents: 800 })).statusCode).toBe(200);
+      const first = await approvedLaunch();
+      const queued = await act(first, "launch");
+      expect(queued.statusCode).toBe(202);
+      expect((await authorize(queued.json().action.id)).json().action.status).toBe("succeeded");
+      const afterFirst = decisionRows().length;
+
+      // 500 already committed against a cap of 800; another 500 breaches it.
+      const second = await approvedLaunch();
+      const blocked = await act(second, "launch");
+      expect(blocked.statusCode).toBe(201);
+      expect(blocked.json().action.status).toBe("blocked");
+      expect(blocked.json().action.blocker.code).toBe("daily_cap_exceeded");
+      // Nobody was asked to authorize spend the cap had already refused.
+      expect(decisionRows()).toHaveLength(afterFirst);
+
+      // Pausing the first frees its committed budget — the retry reaches the queue.
+      expect((await act(first, "pause")).statusCode).toBe(200);
+      const retried = await act(second, "launch");
+      expect(retried.statusCode).toBe(202);
+      expect(retried.json().action.status).toBe("authorization_required");
+    });
+
+    it("still catches a cap breached between proposal and dispatch", async () => {
+      const id = await approvedLaunch();
+      const queued = await act(id, "launch");
+      expect(queued.statusCode).toBe(202);
+      // The guardrail passed at proposal; the cap moves while it sits queued.
+      expect((await putSettings({ dailyCapCents: 100 })).statusCode).toBe(200);
+      const authorized = await authorize(queued.json().action.id);
+      expect(authorized.statusCode).toBe(200);
+      expect(authorized.json().action.status).toBe("blocked");
+      expect(authorized.json().action.blocker.code).toBe("daily_cap_exceeded");
+      expect(state.campaignPosts).toBe(0);
+    });
   });
 
   it("persists provider failure on both the action and the ad launch, then resumes on retry", async () => {
