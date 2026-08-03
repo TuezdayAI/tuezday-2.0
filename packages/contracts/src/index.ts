@@ -5516,6 +5516,7 @@ export const WORKSPACE_NAV: NavItem[] = [
       { label: "Content Preferences", path: "/brain#content-preferences", summary: "Channel and scoped guidance", tone: "voice", icon: "edit" },
       { label: "Source materials", path: "/evidence", summary: "Proof and evidence", tone: "history", icon: "doc-history" },
       { label: "Advanced context", path: "/resolver", summary: "Inspect what Tuezday will use", tone: "icp", icon: "search" },
+      { label: "Agent inspector", path: "/inspector", summary: "Watch what agents did and why", tone: "system", icon: "info" },
     ],
   },
   {
