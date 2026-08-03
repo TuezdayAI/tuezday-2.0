@@ -310,8 +310,8 @@ accept→signal path or `discovered_items`; opportunities UI; Postgres.
 ## 9. Implementation plan
 
 - **Task 1 — Contracts.** Vocabularies + zod schemas + nav child. (§6)
-- **Task 2 — Schema + migration 0063.** Five tables in `schema.ts`, `npm run
-  db:generate -w apps/api`, rename to `0063_sprint_60_canonical_stories.sql`
+- **Task 2 — Schema + migration 0066.** Five tables in `schema.ts`, `npm run
+  db:generate -w apps/api`, renamed to `0066_sprint_60_canonical_stories.sql`
   + journal tag update, per repo convention.
 - **Task 3 — Service.** `canonical-stories.ts`: record/resolve, enrichment,
   merge, split, backfill, reads. Pure-service tests seeded with drizzle
@@ -371,7 +371,7 @@ accept→signal path or `discovered_items`; opportunities UI; Postgres.
 
 - 2026-08-03 — Spec written; branch forked off `origin/main` (`67da934`).
 - 2026-08-03 — Tasks 1–6 implemented: contracts vocabularies + schemas + nav
-  child; migration `0063_sprint_60_canonical_stories`; `canonical-stories.ts`
+  child; migration `0066_sprint_60_canonical_stories`; `canonical-stories.ts`
   service (record/resolve, enrichment v1, merge, split, backfill, reads);
   shadow wiring in `persistDiscoveryPage` with `afterStoryResolution` fault
   hook; `registerStoryRoutes`; read-only `/stories` web page. `hashUrl`/

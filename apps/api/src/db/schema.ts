@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { blob, check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { blob, check, index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 // Keep this schema Postgres-portable: text ids, integer epoch-ms timestamps,
 // no SQLite-only column tricks. The Postgres swap is planned for Sprint 8.
@@ -1224,6 +1224,50 @@ export const adCampaignMetrics = sqliteTable(
 
 export type AdCampaignMetricRow = typeof adCampaignMetrics.$inferSelect;
 
+// Sprint 55: the unified metric fact table — one row per observed number.
+// Vocabularies (keys, windows, subject types, sources) live in
+// @tuezday/contracts. The grain's unique index is what makes re-recording
+// idempotent: the ads sync restates a rolling window every few hours, so the
+// same (subject, key, window, period) must update in place, never duplicate.
+// `window` semantics differ deliberately (point / cumulative 24h-7d / 1d
+// periodic) — readers classify via metricWindowKind before aggregating.
+export const metrics = sqliteTable(
+  "metrics",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    subjectType: text("subject_type").notNull(),
+    subjectId: text("subject_id").notNull(),
+    metricKey: text("metric_key").notNull(),
+    // Integer only; money is cents in the account currency — no floats in the DB.
+    value: integer("value").notNull(),
+    window: text("window").notNull(),
+    // Inclusive start of the period this value covers. For a publication's
+    // cumulative window this is its publishedAt; for a 1d bucket, the day;
+    // for a point reading, the reading's own instant.
+    periodStart: integer("period_start").notNull(),
+    source: text("source").notNull(),
+    // When we learned the value — genuinely distinct from periodStart.
+    capturedAt: integer("captured_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("metrics_grain").on(
+      t.workspaceId,
+      t.subjectType,
+      t.subjectId,
+      t.metricKey,
+      t.window,
+      t.periodStart,
+    ),
+    index("metrics_workspace_subject").on(t.workspaceId, t.subjectType, t.subjectId),
+  ],
+);
+
+export type MetricRow = typeof metrics.$inferSelect;
+
 // Workspace and scoped governance rules for every external side effect. The
 // vocabulary and precedence live in @tuezday/contracts; these rows preserve
 // the founder's explicit policy choices and their provenance.
@@ -2291,7 +2335,7 @@ export const publicationMetrics = sqliteTable(
     publicationId: text("publication_id")
       .notNull()
       .references(() => publications.id, { onDelete: "cascade" }),
-    // A MetricWindow: "24h" | "7d".
+    // A PublicationMetricWindow: "24h" | "7d".
     window: text("window").notNull(),
     likes: integer("likes"),
     comments: integer("comments"),
@@ -2530,3 +2574,98 @@ export const designTemplates = sqliteTable(
 );
 
 export type DesignTemplateRow = typeof designTemplates.$inferSelect;
+
+// Agent runtime traces (Sprint 56) — every AgentRunner loop is persisted in
+// full: the run row holds the input (system + initial messages) and totals;
+// steps hold everything appended in order (model calls with per-step usage,
+// tool dispatches with arguments and results). The transcript reconstructs
+// without duplication, and the Sprint 57 Agent Inspector renders straight
+// from these rows.
+export const agentRuns = sqliteTable(
+  "agent_runs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    task: text("task").notNull(), // short label, e.g. "proof" / "pipeline:research"
+    createdBy: text("created_by").notNull(), // actor attribution label
+    status: text("status").notNull(), // AGENT_RUN_STATUSES
+    stopReason: text("stop_reason"), // AGENT_STOP_REASONS, set iff done
+    error: text("error"),
+    model: text("model").notNull(),
+    provider: text("provider").notNull(),
+    system: text("system").notNull(),
+    inputMessages: text("input_messages_json").notNull(), // AgentMessage[]
+    outputJson: text("output_json"), // final structured/text output when complete
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    cachedTokens: integer("cached_tokens").notNull().default(0),
+    costCents: real("cost_cents").notNull().default(0),
+    stepCount: integer("step_count").notNull().default(0),
+    startedAt: integer("started_at").notNull(),
+    finishedAt: integer("finished_at"),
+  },
+  (t) => [index("agent_runs_workspace_started").on(t.workspaceId, t.startedAt)],
+);
+
+export type AgentRunRow = typeof agentRuns.$inferSelect;
+
+export const agentRunSteps = sqliteTable(
+  "agent_run_steps",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: "cascade" }),
+    stepIndex: integer("step_index").notNull(),
+    kind: text("kind").notNull(), // AGENT_STEP_KINDS
+    messageJson: text("message_json"), // model_call: the assistant AgentMessage
+    toolName: text("tool_name"),
+    toolCallId: text("tool_call_id"),
+    toolArgsJson: text("tool_args_json"),
+    toolResultJson: text("tool_result_json"),
+    toolError: text("tool_error"),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    cachedTokens: integer("cached_tokens").notNull().default(0),
+    costCents: real("cost_cents").notNull().default(0),
+    durationMs: integer("duration_ms").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("agent_run_steps_run_index").on(t.runId, t.stepIndex)],
+);
+
+export type AgentRunStepRow = typeof agentRunSteps.$inferSelect;
+
+// LLM usage ledger (Sprint 59) — one row per successful model call, written by
+// the meteredLlm gateway proxy (and flat design-daemon events). This is the
+// single budget authority: workspace spend, /billing spend-by-pipeline and the
+// cache-hit-rate metric are all sums over this table. agent_runs keeps its own
+// per-run totals for the Inspector; the runner's calls land here through the
+// metered gateway, never via duplicate writes.
+export const llmUsageEvents = sqliteTable(
+  "llm_usage_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    pipeline: text("pipeline").notNull(), // LLM_PIPELINES
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+    agentRunId: text("agent_run_id"),
+    model: text("model").notNull(),
+    provider: text("provider").notNull(),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    cachedTokens: integer("cached_tokens").notNull().default(0),
+    costCents: real("cost_cents").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("llm_usage_events_workspace_created").on(t.workspaceId, t.createdAt),
+    index("llm_usage_events_workspace_pipeline").on(t.workspaceId, t.pipeline, t.createdAt),
+  ],
+);
+
+export type LlmUsageEventRow = typeof llmUsageEvents.$inferSelect;

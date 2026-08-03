@@ -8,8 +8,10 @@ import { getOrAuthorTemplate } from "../design/templates";
 import { creativeFieldsFrom } from "./ad-launches";
 import { resolveDesignSystem } from "./design-systems";
 import { getDraft, setDraftMedia, type DraftActor } from "./drafts";
-import { assertWithinLimit, getUsage } from "./entitlements";
+import { assertLlmBudget } from "./entitlements";
 import { storeGeneration } from "./generations";
+import { recordLlmUsage } from "./usage-ledger";
+import { DESIGN_RENDER_FLAT_CENTS } from "../llm/pricing";
 
 // Ad image generation (Sprint 41 Part 5): approved meta_ad_creative copy ->
 // resolved design system -> cached ad template -> deterministic 1080x1080
@@ -50,7 +52,7 @@ export async function generateAdImage(
   const { db } = deps;
   const started = Date.now();
 
-  assertWithinLimit(db, workspaceId, "monthlyGenerations", getUsage(db, workspaceId).monthlyGenerations);
+  assertLlmBudget(db, workspaceId);
 
   const draft = getDraft(db, workspaceId, draftId);
   if (!draft) throw new AdImageSourceError("draft_not_found");
@@ -126,6 +128,17 @@ export async function generateAdImage(
     model: "deterministic-render",
     provider: "design-pipeline",
     durationMs: Date.now() - started,
+  });
+  // Flat ledger event: the design daemon's LLM runs outside our gateway, so
+  // ad-image generations stay inside the workspace budget (Sprint 59).
+  recordLlmUsage(db, {
+    workspaceId,
+    pipeline: "design_render",
+    campaignId: draft.campaignId,
+    model: "design-provider",
+    provider: "design-pipeline",
+    usage: { inputTokens: 0, outputTokens: 0, cachedTokens: 0 },
+    costCentsOverride: DESIGN_RENDER_FLAT_CENTS,
   });
 
   const updated = setDraftMedia(db, workspaceId, draftId, [{ url, type: "image" }]);

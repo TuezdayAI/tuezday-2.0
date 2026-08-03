@@ -11,11 +11,13 @@ const fakeLlm: LlmGateway = {
   async generate({ prompt }) {
     const count = Number(/Write (\d+) distinct Meta ad/.exec(prompt)?.[1] ?? 1);
     return {
-      text: Array.from(
-        { length: count },
-        (_, index) =>
-          `Primary text: Angle ${index + 1}.\nHeadline: Headline ${index + 1}\nDescription: Desc`,
-      ).join("\n---\n"),
+      text: JSON.stringify({
+        variants: Array.from({ length: count }, (_, index) => ({
+          primaryText: `Angle ${index + 1}.`,
+          headline: `Headline ${index + 1}`,
+          description: "Desc",
+        })),
+      }),
       model: "fake",
       provider: "fake",
       durationMs: 1,
@@ -260,7 +262,9 @@ describe("governed Meta budget changes", () => {
     });
     const blocked = await authorize(proposed.json().action.id);
     expect(blocked.json().action.status).toBe("blocked");
-    expect(blocked.json().action.blocker.code).toBe("kill_switch");
+    // One spelling across all three ad kinds (Sprint 54 Task 1) — the same
+    // `kill_switch_on` `checkSpendGuardrails` and every other service emits.
+    expect(blocked.json().action.blocker.code).toBe("kill_switch_on");
     expect(state.budgetUpdates).toEqual([]);
   });
 });

@@ -20,19 +20,24 @@ function fakeGateway(): LlmGateway {
       if (prompt.includes("MARKER-UNPARSEABLE")) {
         text = "Sure! Here are some great ad ideas for your campaign.";
       } else if (prompt.includes("MARKER-OVERLIMIT")) {
-        text = `Primary text: Fine.\nHeadline: ${"x".repeat(50)}\nDescription: ok`;
+        text = JSON.stringify({
+          variants: [{ primaryText: "Fine.", headline: "x".repeat(50), description: "ok" }],
+        });
       } else if (prompt.includes("Google responsive search ad")) {
-        const headlines = Array.from({ length: 15 }, (_, i) => `Headline ${i + 1}: H${i + 1}`);
-        const descriptions = Array.from({ length: 4 }, (_, i) => `Description ${i + 1}: D${i + 1}`);
-        text = [...headlines, ...descriptions].join("\n");
+        text = JSON.stringify({
+          headlines: Array.from({ length: 15 }, (_, i) => `H${i + 1}`),
+          descriptions: Array.from({ length: 4 }, (_, i) => `D${i + 1}`),
+        });
       } else {
         const match = /Write (\d+) distinct Meta ad/.exec(prompt);
         const n = match ? Number(match[1]) : 1;
-        text = Array.from(
-          { length: n },
-          (_, i) =>
-            `Primary text: Angle ${i + 1} for the offer.\nHeadline: Headline ${i + 1}\nDescription: Desc ${i + 1}`,
-        ).join("\n---\n");
+        text = JSON.stringify({
+          variants: Array.from({ length: n }, (_, i) => ({
+            primaryText: `Angle ${i + 1} for the offer.`,
+            headline: `Headline ${i + 1}`,
+            description: `Desc ${i + 1}`,
+          })),
+        });
       }
       return { text, model: "fake", provider: "fake", durationMs: 5 };
     },

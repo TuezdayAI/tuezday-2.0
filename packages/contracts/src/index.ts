@@ -4127,8 +4127,9 @@ export type SendTestMailInput = z.infer<typeof sendTestMailInputSchema>;
 // ---------------------------------------------------------------------------
 
 /**
- * Launch approval statuses. `launched` is terminal in the approval machine —
- * runtime platform state (active/paused/disapproved) lives in platformStatus.
+ * Launch setup statuses. `launched` is terminal — runtime platform state
+ * (active/paused/disapproved) lives in platformStatus, and spend governance
+ * lives entirely in the external-action lifecycle (Sprint 54).
  */
 export const AD_LAUNCH_STATUSES = [
   "draft",
@@ -4142,30 +4143,41 @@ export type AdLaunchStatus = (typeof AD_LAUNCH_STATUSES)[number];
 export const AD_LAUNCH_ACTIONS = ["submit", "approve", "reject", "revise"] as const;
 export type AdLaunchAction = (typeof AD_LAUNCH_ACTIONS)[number];
 
-/** Decision-log actions: the machine moves plus the launch trigger itself. */
-export const AD_LAUNCH_DECISION_ACTIONS = [...AD_LAUNCH_ACTIONS, "launch"] as const;
-export type AdLaunchDecisionAction = (typeof AD_LAUNCH_DECISION_ACTIONS)[number];
+/**
+ * The one bespoke launch rule that survives Sprint 54 Task 4 (spec §2.2).
+ *
+ * A launch is editable only while it is a draft; `PATCH .../launches/:id` is
+ * refused otherwise, and `revise` is the only door back. This is an
+ * **editability** rule, not a dispatch state, which is exactly why it could not
+ * fold into the external-action lifecycle: `stale` there is a property of the
+ * *action*, and nothing in that lifecycle says "the subject is editable again".
+ *
+ * It replaces `adLaunchTransitionTo` / `AD_LAUNCH_TRANSITIONS` — a second,
+ * bespoke state machine sitting beside the canonical `transitionTo`. Deriving
+ * editability from the status the launch already carries keeps one source of
+ * truth: a separate `editable` column could disagree with `status`, and would
+ * not have let `status` go anyway (`approved` gates spend in
+ * `preparePaidLaunchAction`, `launched` feeds `isSpending`).
+ */
+export function isAdLaunchEditable(status: AdLaunchStatus): boolean {
+  return status === "draft";
+}
 
 /**
- * The launch state machine — spend is gated on `approved`. `revise` pulls a
- * launch back to draft from anywhere short of launched.
+ * What the setup-approval trail can contain when *read*. Writers emit only
+ * `AD_LAUNCH_ACTIONS` — `"launch"` is **retired** (Sprint 54 Task 2).
+ *
+ * It is kept in the read vocabulary because rows carrying it already exist:
+ * until Sprint 54, `performLaunch` appended a synthetic `approved → launched`
+ * row that looked like a spend authorization but was fabricated (the
+ * transition was never a gate move, and the actor was reconstructed with
+ * `human: false`). Those rows are history and must stay describable — dropping
+ * the verb here would leave the contract unable to parse data that exists.
+ * Nothing writes it any more; spend authorization lives solely in
+ * `external_action_decisions`.
  */
-const AD_LAUNCH_TRANSITIONS: Record<
-  AdLaunchAction,
-  Partial<Record<AdLaunchStatus, AdLaunchStatus>>
-> = {
-  submit: { draft: "pending_review" },
-  approve: { pending_review: "approved" },
-  reject: { pending_review: "rejected" },
-  revise: { pending_review: "draft", rejected: "draft", approved: "draft" },
-};
-
-export function adLaunchTransitionTo(
-  from: AdLaunchStatus,
-  action: AdLaunchAction,
-): AdLaunchStatus | undefined {
-  return AD_LAUNCH_TRANSITIONS[action][from];
-}
+export const AD_LAUNCH_DECISION_ACTIONS = [...AD_LAUNCH_ACTIONS, "launch"] as const;
+export type AdLaunchDecisionAction = (typeof AD_LAUNCH_DECISION_ACTIONS)[number];
 
 /**
  * v1 objectives launch with just a Page + link. Leads/Sales need form/pixel
@@ -4554,15 +4566,19 @@ export const updateInboxItemStatusInputSchema = z.object({
 });
 export type UpdateInboxItemStatusInput = z.infer<typeof updateInboxItemStatusInputSchema>;
 
-/** Engagement snapshot windows after publish. */
-export const METRIC_WINDOWS = ["24h", "7d"] as const;
-export type MetricWindow = (typeof METRIC_WINDOWS)[number];
+/**
+ * Engagement snapshot windows after publish — the capture path's subset of the
+ * unified METRIC_WINDOWS vocabulary (Sprint 55). Kept narrow so a publication
+ * metric row can never claim a window the capture path does not produce.
+ */
+export const PUBLICATION_METRIC_WINDOWS = ["24h", "7d"] as const;
+export type PublicationMetricWindow = (typeof PUBLICATION_METRIC_WINDOWS)[number];
 
 export const publicationMetricSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
   publicationId: z.string().uuid(),
-  window: z.enum(METRIC_WINDOWS),
+  window: z.enum(PUBLICATION_METRIC_WINDOWS),
   likes: z.number().int().nullable(),
   comments: z.number().int().nullable(),
   shares: z.number().int().nullable(),
@@ -5109,20 +5125,30 @@ export type PlanId = (typeof PLAN_IDS)[number];
 export interface Entitlements {
   seats: number;          // -1 = unlimited
   connectors: number;
-  monthlyGenerations: number;
+  /** Rolling-30-day LLM spend budget in cents (Sprint 59, decision D6). -1 = unlimited. */
+  monthlyLlmCents: number;
+  /**
+   * Reserved — declared but deliberately unread (Sprint 54, D4d). Activation
+   * sprint is not scheduled; a pricing sprint must be created before anything
+   * enforces this. The free tier is `0`, so wiring it up as written would
+   * silently disable ad launching for every free workspace — a pricing
+   * decision, not a refactor. The live spend guardrail is the workspace-owned
+   * `adSettings.dailyCapCents` (`services/ad-launches.ts`), which is unrelated
+   * to plan entitlements.
+   */
   adSpendCapCents: number;
 }
 
 export const PLANS: Record<PlanId, { label: string; priceEnv: string | null; entitlements: Entitlements }> = {
-  free:  { label: "Free",  priceEnv: null,                entitlements: { seats: 1,  connectors: 1,  monthlyGenerations: 50,   adSpendCapCents: 0 } },
-  pro:   { label: "Pro",   priceEnv: "STRIPE_PRICE_PRO",  entitlements: { seats: 5,  connectors: 10, monthlyGenerations: 1000, adSpendCapCents: 500_00 } },
-  scale: { label: "Scale", priceEnv: "STRIPE_PRICE_SCALE",entitlements: { seats: -1, connectors: -1, monthlyGenerations: -1,   adSpendCapCents: -1 } },
+  free:  { label: "Free",  priceEnv: null,                entitlements: { seats: 1,  connectors: 1,  monthlyLlmCents: 50,   adSpendCapCents: 0 } },
+  pro:   { label: "Pro",   priceEnv: "STRIPE_PRICE_PRO",  entitlements: { seats: 5,  connectors: 10, monthlyLlmCents: 1000, adSpendCapCents: 500_00 } },
+  scale: { label: "Scale", priceEnv: "STRIPE_PRICE_SCALE",entitlements: { seats: -1, connectors: -1, monthlyLlmCents: -1,   adSpendCapCents: -1 } },
 };
 
 export const entitlementUsageSchema = z.object({
   seats: z.number().int(),
   connectors: z.number().int(),
-  monthlyGenerations: z.number().int(),
+  monthlyLlmCents: z.number(),
 });
 export type EntitlementUsage = z.infer<typeof entitlementUsageSchema>;
 
@@ -5146,6 +5172,66 @@ export function usageMeter(used: number, limit: number): UsageMeterView {
   const raw = (used / limit) * 100;
   return { percent: Math.min(100, Math.round(raw)), state: raw >= 80 ? "near" : "ok" };
 }
+
+// ---------------------------------------------------------------------------
+// Model routing, usage ledger & workspace spend (Sprint 59)
+// ---------------------------------------------------------------------------
+
+/** Model tiers a call site may declare; the gateway resolves tier -> model from config. */
+export const MODEL_TIERS = ["cheap", "frontier"] as const;
+export type ModelTier = (typeof MODEL_TIERS)[number];
+
+/** Every LLM-burning surface, as attributed in the llm_usage_events ledger. */
+export const LLM_PIPELINES = [
+  "generation",
+  "angles",
+  "review",
+  "revision",
+  "outbound_draft",
+  "pr_pitch",
+  "press_kit",
+  "ad_creative",
+  "signal_draft",
+  "engagement_reply",
+  "launch",
+  "launch_sequence",
+  "outreach_step",
+  "copilot",
+  "copilot_action",
+  "signal_matching",
+  "discovery_matching",
+  "mailbox_classification",
+  "outline_summaries",
+  "source_suggestions",
+  "brand_profile",
+  "brain_autodraft",
+  "learning_synthesis",
+  "design_render",
+  "agent_run",
+] as const;
+export type LlmPipeline = (typeof LLM_PIPELINES)[number];
+
+export const pipelineSpendSchema = z.object({
+  pipeline: z.enum(LLM_PIPELINES),
+  calls: z.number().int(),
+  inputTokens: z.number().int(),
+  outputTokens: z.number().int(),
+  cachedTokens: z.number().int(),
+  costCents: z.number(),
+});
+export type PipelineSpend = z.infer<typeof pipelineSpendSchema>;
+
+/** The `spend` block on GET /workspaces/:id/billing. */
+export const workspaceSpendSchema = z.object({
+  periodStart: z.string(),
+  budgetCents: z.number(), // -1 = unlimited
+  spentCents: z.number(),
+  state: z.enum(["ok", "near", "over", "unlimited"]),
+  /** sum(cachedTokens) / sum(inputTokens) over the window; null when no input tokens. */
+  cacheHitRate: z.number().nullable(),
+  byPipeline: z.array(pipelineSpendSchema),
+});
+export type WorkspaceSpend = z.infer<typeof workspaceSpendSchema>;
 
 // GTM insights (Sprint 34) — read-only response schemas for native insights.
 // No new enums; reuses CHANNELS, APPROVAL_STATES, OUTPUT_RATINGS, BRAIN_DOC_TYPES.
@@ -5714,6 +5800,7 @@ export const WORKSPACE_NAV: NavItem[] = [
       { label: "Content Preferences", path: "/brain#content-preferences", summary: "Channel and scoped guidance", tone: "voice", icon: "edit" },
       { label: "Source materials", path: "/evidence", summary: "Proof and evidence", tone: "history", icon: "doc-history" },
       { label: "Advanced context", path: "/resolver", summary: "Inspect what Tuezday will use", tone: "icp", icon: "search" },
+      { label: "Agent inspector", path: "/inspector", summary: "Watch what agents did and why", tone: "system", icon: "info" },
     ],
   },
   {
@@ -6652,3 +6739,409 @@ export const confirmChatProposalInputSchema = z.object({
   decision: z.enum(["confirm", "discard"]),
 });
 export type ConfirmChatProposalInput = z.infer<typeof confirmChatProposalInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Agent runtime (Sprint 56 — Gateway v2 & AgentRunner)
+//
+// Vocabulary for bounded, tool-using, fully-traced agent loops. The gateway
+// makes single model calls; the AgentRunner (apps/api/src/agents) drives the
+// loop and persists every step. These schemas validate persisted transcripts
+// and become the Agent Inspector API contract in Sprint 57.
+// ---------------------------------------------------------------------------
+
+/** Why an agent run stopped. Every finished run records exactly one. */
+export const AGENT_STOP_REASONS = [
+  "complete",
+  "max_steps",
+  "max_tokens",
+  "timeout",
+  "needs_human",
+  "error",
+] as const;
+export type AgentStopReason = (typeof AGENT_STOP_REASONS)[number];
+
+/** Run lifecycle: `stop_reason` is set iff the run is done. */
+export const AGENT_RUN_STATUSES = ["running", "done"] as const;
+export type AgentRunStatus = (typeof AGENT_RUN_STATUSES)[number];
+
+/** Transcript roles. The system prompt is NOT a message — it travels as a
+ * separate stable prefix so providers can cache it (Sprint 59). */
+export const AGENT_MESSAGE_ROLES = ["user", "assistant", "tool"] as const;
+export type AgentMessageRole = (typeof AGENT_MESSAGE_ROLES)[number];
+
+/** Persisted step kinds: one model invocation, or one tool dispatch. */
+export const AGENT_STEP_KINDS = ["model_call", "tool_call"] as const;
+export type AgentStepKind = (typeof AGENT_STEP_KINDS)[number];
+
+/** A tool invocation requested by the model. Ids are minted by the gateway
+ * (providers like Gemini do not supply them) and are unique within a run. */
+export const agentToolCallSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  /** Parsed JSON arguments as the model produced them — validated by the
+   * tool's own input schema at dispatch time, not here. */
+  arguments: z.unknown(),
+});
+export type AgentToolCall = z.infer<typeof agentToolCallSchema>;
+
+/** One transcript message. Assistant messages may carry tool calls; tool
+ * messages carry the result of exactly one call (linked by toolCallId). */
+export const agentMessageSchema = z.object({
+  role: z.enum(AGENT_MESSAGE_ROLES),
+  content: z.string(),
+  toolCalls: z.array(agentToolCallSchema).optional(),
+  toolCallId: z.string().optional(),
+  toolName: z.string().optional(),
+});
+export type AgentMessage = z.infer<typeof agentMessageSchema>;
+
+/** Token + cost accounting, recorded per model-call step and totalled per
+ * run. costCents is telemetry-grade (REAL); Sprint 59 hardens it into
+ * entitlements. */
+export const agentUsageSchema = z.object({
+  inputTokens: z.number().int().min(0),
+  outputTokens: z.number().int().min(0),
+  cachedTokens: z.number().int().min(0),
+  costCents: z.number().min(0),
+});
+export type AgentUsage = z.infer<typeof agentUsageSchema>;
+
+// ---------------------------------------------------------------------------
+// Internal tool registry (Sprint 57)
+//
+// The registry (apps/api/src/agents/registry.ts) exposes platform
+// capabilities as model-callable tools. Two access tiers only: `read` tools
+// are unrestricted inside the workspace (the same membership rule that
+// scopes HTTP routes); `propose` tools never execute — they mint a gated
+// item and return its id (none ship until Phase L). There is deliberately
+// no "execute" tier.
+// ---------------------------------------------------------------------------
+
+export const TOOL_ACCESS_LEVELS = ["read", "propose"] as const;
+export type ToolAccessLevel = (typeof TOOL_ACCESS_LEVELS)[number];
+
+/** The Sprint 57 read-tool surface. The registry registers exactly this set;
+ * tests assert registry and contracts stay in lockstep. */
+export const AGENT_TOOL_NAMES = [
+  "search_evidence",
+  "get_brain_section",
+  "get_campaign_plan",
+  "list_recent_publications_with_metrics",
+  "find_similar_approved_drafts",
+  "find_instructive_rejections",
+  "get_persona",
+  "list_channel_guardrails",
+  "search_discovery_items",
+  "get_prior_posts_on_topic",
+  "safe_fetch_url",
+] as const;
+export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];
+
+/** Content profiles `safe_fetch_url` accepts — mirrors the Sprint 48
+ * safe-fetch policy's MIME allowlists (apps/api/src/safe-fetch/policy.ts,
+ * which predates this vocabulary; the tool asserts the two stay equal). */
+export const SAFE_FETCH_PROFILES = ["feed", "json", "website"] as const;
+
+/**
+ * Per-tool input schemas — the single definition each registry tool
+ * validates against and derives its model-facing JSON Schema from.
+ * Cross-field rules (e.g. get_brain_section needing sectionId OR query)
+ * are enforced in the tool's run() and returned to the model as
+ * instructive error data, keeping these schemas plain objects the
+ * JSON-Schema deriver can walk.
+ */
+export const toolInputSchemas = {
+  search_evidence: z.object({
+    query: z.string().min(1).max(500),
+    limit: z.number().int().min(1).max(10).optional(),
+  }),
+  get_brain_section: z.object({
+    docType: z.enum(BRAIN_DOC_TYPES).optional(),
+    sectionId: z.string().min(1).optional(),
+    query: z.string().min(1).max(500).optional(),
+  }),
+  get_campaign_plan: z.object({
+    campaignId: z.string().min(1),
+  }),
+  list_recent_publications_with_metrics: z.object({
+    limit: z.number().int().min(1).max(10).optional(),
+    channel: z.enum(CHANNELS).optional(),
+    campaignId: z.string().min(1).optional(),
+  }),
+  find_similar_approved_drafts: z.object({
+    query: z.string().min(1).max(500),
+    taskType: z.enum(TASK_TYPES).optional(),
+    channel: z.enum(CHANNELS).optional(),
+    limit: z.number().int().min(1).max(5).optional(),
+  }),
+  find_instructive_rejections: z.object({
+    query: z.string().min(1).max(500).optional(),
+    taskType: z.enum(TASK_TYPES).optional(),
+    channel: z.enum(CHANNELS).optional(),
+    limit: z.number().int().min(1).max(5).optional(),
+  }),
+  get_persona: z.object({
+    personaId: z.string().min(1),
+  }),
+  list_channel_guardrails: z.object({
+    channel: z.enum(CHANNELS).optional(),
+  }),
+  search_discovery_items: z.object({
+    query: z.string().min(1).max(500).optional(),
+    status: z.enum(DISCOVERED_ITEM_STATUSES).optional(),
+    limit: z.number().int().min(1).max(10).optional(),
+  }),
+  get_prior_posts_on_topic: z.object({
+    topic: z.string().min(1).max(500),
+    channel: z.enum(CHANNELS).optional(),
+    limit: z.number().int().min(1).max(5).optional(),
+  }),
+  safe_fetch_url: z.object({
+    url: z.string().url(),
+    profile: z.enum(SAFE_FETCH_PROFILES).optional(),
+  }),
+} as const satisfies Record<AgentToolName, z.ZodType<Record<string, unknown>>>;
+
+// ---------------------------------------------------------------------------
+// Agent Inspector API (Sprint 57)
+//
+// Wire contract for /workspaces/:id/agent-runs — a straight read of the
+// Sprint 56 agent_runs / agent_run_steps rows with JSON columns parsed
+// server-side. Timestamps are epoch ms integers, per API convention.
+// ---------------------------------------------------------------------------
+
+export const agentRunSummarySchema = z.object({
+  id: z.string().min(1),
+  workspaceId: z.string().min(1),
+  task: z.string(),
+  createdBy: z.string(),
+  status: z.enum(AGENT_RUN_STATUSES),
+  stopReason: z.enum(AGENT_STOP_REASONS).nullable(),
+  error: z.string().nullable(),
+  model: z.string(),
+  provider: z.string(),
+  usage: agentUsageSchema,
+  stepCount: z.number().int().min(0),
+  startedAt: z.number().int(),
+  finishedAt: z.number().int().nullable(),
+});
+export type AgentRunSummary = z.infer<typeof agentRunSummarySchema>;
+
+export const agentRunStepSchema = z.object({
+  id: z.string().min(1),
+  stepIndex: z.number().int().min(0),
+  kind: z.enum(AGENT_STEP_KINDS),
+  /** model_call: the assistant message (text and/or tool calls). */
+  message: agentMessageSchema.nullable(),
+  toolName: z.string().nullable(),
+  toolCallId: z.string().nullable(),
+  toolArgs: z.unknown(),
+  toolResult: z.unknown(),
+  toolError: z.string().nullable(),
+  usage: agentUsageSchema,
+  durationMs: z.number().int().min(0),
+  createdAt: z.number().int(),
+});
+export type AgentRunStep = z.infer<typeof agentRunStepSchema>;
+
+export const agentRunDetailSchema = agentRunSummarySchema.extend({
+  system: z.string(),
+  inputMessages: z.array(agentMessageSchema),
+  output: z.unknown(),
+  steps: z.array(agentRunStepSchema),
+});
+export type AgentRunDetail = z.infer<typeof agentRunDetailSchema>;
+
+/** Trigger a proof run over the read-tool registry (Inspector ignition). */
+export const proofAgentRunInputSchema = z.object({
+  question: z.string().min(1).max(2000),
+});
+export type ProofAgentRunInput = z.infer<typeof proofAgentRunInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Structured LLM outputs (Sprint 58)
+//
+// The response schemas generateStructured validates against — one per service
+// that needs structure from the model. Shapes mirror what the prompts already
+// asked for pre-58, so migrated call sites persist identical outcomes.
+// Tolerance policy: schemas assert shape and type; domain clamps (score 0-100,
+// reason length, top-5 matches, RSA field counts) stay in the services —
+// an over-long or out-of-range value is trimmed/flagged there, not rejected
+// here. brandProfileSchema (Sprint 36.2, above) is the tenth response schema.
+// ---------------------------------------------------------------------------
+
+/** One persona×campaign routing candidate in a scoring response. */
+export const matchingResponseMatchSchema = z.object({
+  personaId: z.string().nullish(),
+  campaignId: z.string().nullish(),
+  score: z.number(),
+  reason: z.string().optional(),
+});
+export type MatchingResponseMatch = z.infer<typeof matchingResponseMatchSchema>;
+
+/** One scored item in a discovery/signal matching response. */
+export const matchingResponseEntrySchema = z.object({
+  index: z.number().int(),
+  score: z.number(),
+  /** Optional top-level fallback reason when `matches` is empty. */
+  reason: z.string().optional(),
+  matches: z.array(matchingResponseMatchSchema),
+});
+export type MatchingResponseEntry = z.infer<typeof matchingResponseEntrySchema>;
+
+export const matchingResponseSchema = z.array(matchingResponseEntrySchema);
+export type MatchingResponse = z.infer<typeof matchingResponseSchema>;
+
+/** Inbox reply classification: one label per batched item. */
+export const emailReplyClassificationResponseSchema = z.array(
+  z.object({
+    index: z.number().int(),
+    label: z.enum(EMAIL_REPLY_LABELS),
+  }),
+);
+export type EmailReplyClassificationResponse = z.infer<
+  typeof emailReplyClassificationResponseSchema
+>;
+
+/** Brain-proposed discovery sources — only the keyless trio is proposable. */
+export const sourceProposalsResponseSchema = z.array(
+  z.object({
+    type: z.enum(["google_news", "reddit", "rss"]),
+    name: z.string(),
+    config: z.object({
+      feedUrl: z.string().optional(),
+      query: z.string().optional(),
+      subreddit: z.string().optional(),
+    }),
+    reason: z.string().optional(),
+  }),
+);
+export type SourceProposalsResponse = z.infer<typeof sourceProposalsResponseSchema>;
+
+/** One reviewer pass (brand voice / channel fit): score + concrete issues. */
+export const reviewCheckResponseSchema = z.object({
+  score: z.number(),
+  issues: z.array(z.string()),
+});
+export type ReviewCheckResponse = z.infer<typeof reviewCheckResponseSchema>;
+
+/** Angle-first generation: N distinct one-sentence angles, strongest first. */
+export const anglesResponseSchema = z.array(z.string());
+export type AnglesResponse = z.infer<typeof anglesResponseSchema>;
+
+/** Meta ad generation: N complete variants. */
+export const metaAdVariantsResponseSchema = z.object({
+  variants: z.array(
+    z.object({
+      primaryText: z.string(),
+      headline: z.string(),
+      description: z.string(),
+    }),
+  ),
+});
+export type MetaAdVariantsResponse = z.infer<typeof metaAdVariantsResponseSchema>;
+
+/** Google RSA generation: one asset set (counts validated as violations). */
+export const googleRsaResponseSchema = z.object({
+  headlines: z.array(z.string()),
+  descriptions: z.array(z.string()),
+});
+export type GoogleRsaResponse = z.infer<typeof googleRsaResponseSchema>;
+
+/** Outline enrichment: one one-line summary per 1-based section index. */
+export const outlineSummariesResponseSchema = z.array(
+  z.object({
+    index: z.number().int(),
+    summary: z.string(),
+  }),
+);
+export type OutlineSummariesResponse = z.infer<typeof outlineSummariesResponseSchema>;
+
+/** Brain auto-draft: one doc's markdown body. */
+export const brainDocDraftResponseSchema = z.object({
+  content: z.string(),
+});
+export type BrainDocDraftResponse = z.infer<typeof brainDocDraftResponseSchema>;
+
+// ---------------------------------------------------------------------------
+// Unified metric model (Sprint 55) — one fact table for every observed number.
+//
+// Three legacy stores measured time three different ways: a manual reading at
+// an instant, a cumulative snapshot at 24h/7d of age, and a per-day bucket.
+// These vocabularies make the differences explicit instead of implied, and the
+// classifier below is the load-bearing guard: cumulative and periodic values
+// must never be summed together. (`insights` violates that rule today —
+// spec §2.3 — and carries the one commented escape hatch while it migrates.)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every metric key, defined once. No `replies`: it is derivable from
+ * `inboxItems` at any moment, so storing it as a fact would create a snapshot
+ * that silently goes stale — two answers to one question.
+ */
+export const METRIC_KEYS = [
+  "impressions",
+  "clicks",
+  "likes",
+  "comments",
+  "shares",
+  "engagements",
+  "conversions",
+  "spend",
+] as const;
+export type MetricKey = (typeof METRIC_KEYS)[number];
+
+/**
+ * point = a reading at capturedAt, covering no defined period (manual entry).
+ * 24h/7d = CUMULATIVE since the subject went live, observed at >= that age.
+ * 1d = that calendar day's total, periodStart = the day.
+ */
+export const METRIC_WINDOWS = ["point", "24h", "7d", "1d"] as const;
+export type MetricWindow = (typeof METRIC_WINDOWS)[number];
+
+/** No lane/sequence — nothing writes them. Subject-less manual rows are channel-level readings. */
+export const METRIC_SUBJECT_TYPES = ["publication", "campaign", "ad_campaign", "channel"] as const;
+export type MetricSubjectType = (typeof METRIC_SUBJECT_TYPES)[number];
+
+/** No `derived` — nothing derives in Sprint 55. `imported` covers the ads CSV path. */
+export const METRIC_SOURCES = ["manual", "captured", "synced", "imported"] as const;
+export type MetricSource = (typeof METRIC_SOURCES)[number];
+
+export type MetricWindowKindValue = "cumulative" | "periodic" | "point";
+
+/**
+ * Classify a window so a reader cannot mix incompatible time semantics by
+ * accident. Throws on unknown input rather than guessing — a wrong
+ * classification here silently corrupts every aggregate built on it.
+ */
+export function metricWindowKind(window: MetricWindow): MetricWindowKindValue {
+  switch (window) {
+    case "24h":
+    case "7d":
+      return "cumulative";
+    case "1d":
+      return "periodic";
+    case "point":
+      return "point";
+    default: {
+      const exhaustive: never = window;
+      throw new Error(`Unknown metric window: ${String(exhaustive)}`);
+    }
+  }
+}
+
+/** One observed number. `value` is an integer; money is cents, never floats. */
+export const metricSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  subjectType: z.enum(METRIC_SUBJECT_TYPES),
+  subjectId: z.string().min(1),
+  metricKey: z.enum(METRIC_KEYS),
+  value: z.number().int(),
+  window: z.enum(METRIC_WINDOWS),
+  periodStart: z.number().int(),
+  source: z.enum(METRIC_SOURCES),
+  capturedAt: z.number().int(),
+  createdAt: z.number().int(),
+});
+export type Metric = z.infer<typeof metricSchema>;

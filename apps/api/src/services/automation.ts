@@ -24,6 +24,7 @@ import {
 import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
 import { listAutomatedCampaigns } from "./campaigns";
+import { llmBudgetExhausted } from "./entitlements";
 import {
   automaticDraftKey,
   type DraftActor,
@@ -315,12 +316,22 @@ export async function runAutomation(
   const personasById = new Map(listPersonas(db, workspaceId).map((p) => [p.id, p]));
   const results: AutomationCampaignResult[] = [];
 
+  // Budget degradation (Sprint 59): an over-budget workspace generates nothing
+  // this tick; unmatched work stays pending and a later tick resumes once the
+  // rolling spend frees up or the plan changes. Structured refusal, no throw.
+  const budgetExhausted = llmBudgetExhausted(db, workspaceId);
+
   for (const campaign of campaigns) {
     const base = {
       campaignId: campaign.id,
       campaignName: campaign.name,
       mode: campaign.automationMode,
     };
+
+    if (budgetExhausted) {
+      results.push({ ...base, generated: 0, autoApproved: 0, skipped: 0, blocked: "llm_budget_exhausted" });
+      continue;
+    }
 
     // The kill switch halts auto-posting only (scheduled_auto); human-in-the-loop
     // still drafts to the gate, where a human is the control.

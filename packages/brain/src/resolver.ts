@@ -117,24 +117,30 @@ export function composeAdCreativeInstruction(
   variantCount?: number,
 ): string {
   const format = AD_CREATIVE_FORMATS[taskType];
-  const fieldLines = format.fields.map((f) => {
-    const occurrences =
-      f.maxCount > 1
-        ? `${f.label} 1: through ${f.label} ${f.maxCount}: (${f.maxCount} ${f.label.toLowerCase()}s, max ${f.maxChars} characters each)`
-        : `${f.label}: (max ${f.maxChars} characters)`;
-    return occurrences;
-  });
-  const count = variantCount ?? format.variantCount?.default;
-  const opening = format.variantCount
-    ? `Task: Write ${count} distinct ${format.label} variants grounded in the context above, each taking a different angle on the campaign's offer. Each variant uses exactly these labeled lines:`
-    : `Task: Write one ${format.label} asset set grounded in the context above, as labeled lines (each headline must stand alone — Google mixes them in any order):`;
-  const separator = format.variantCount
-    ? " Separate variants with a line containing only ---."
-    : "";
+  const limit = (key: string) => format.fields.find((f) => f.key === key)!;
+  if (format.variantCount) {
+    const count = variantCount ?? format.variantCount.default;
+    return (
+      `Task: Write ${count} distinct ${format.label} variants grounded in the context above, ` +
+      "each taking a different angle on the campaign's offer. Respond with ONLY a JSON object:\n" +
+      `{"variants": [{"primaryText": "<max ${limit("primary_text").maxChars} characters>", ` +
+      `"headline": "<max ${limit("headline").maxChars} characters>", ` +
+      `"description": "<max ${limit("description").maxChars} characters>"}]}\n` +
+      `Exactly ${count} entries in "variants". The character limits are hard platform limits - ` +
+      "count characters and never exceed them. No preamble or commentary."
+    );
+  }
+  const headline = limit("headline");
+  const description = limit("description");
   return (
-    `${opening}\n${fieldLines.join("\n")}\n` +
-    `The character limits are hard platform limits - count characters and never exceed them.${separator} ` +
-    `Return only the labeled lines${format.variantCount ? " and separators" : ""} - no preamble, numbering, or commentary.`
+    `Task: Write one ${format.label} asset set grounded in the context above ` +
+    "(each headline must stand alone — Google mixes them in any order). " +
+    "Respond with ONLY a JSON object:\n" +
+    `{"headlines": ["<max ${headline.maxChars} characters each>"], ` +
+    `"descriptions": ["<max ${description.maxChars} characters each>"]}\n` +
+    `Provide ${headline.minCount}-${headline.maxCount} headlines and ` +
+    `${description.minCount}-${description.maxCount} descriptions. The character limits are ` +
+    "hard platform limits - count characters and never exceed them. No preamble or commentary."
   );
 }
 
@@ -155,8 +161,7 @@ export function composeAngleInstruction(
     `Task: Before drafting, propose ${count} genuinely DISTINCT angles for a ${taskType} on the ` +
     `${channel} channel, grounded in the context above. Each angle is ONE sentence naming the hook ` +
     "or lens — not the full draft. List the strongest angle FIRST. " +
-    `Return EXACTLY ${count} lines, each prefixed with 'ANGLE: ' and nothing else — no preamble, ` +
-    "numbering, or commentary."
+    `Respond with ONLY a JSON array of exactly ${count} strings — no preamble or commentary.`
   );
 }
 
@@ -165,10 +170,10 @@ export function composeBrandVoiceReviewInstruction(): string {
   return (
     "Task: You are a brand-voice editor. Judge ONLY how well the draft under review above matches " +
     "this company's voice, soul, and positioning as given in the context. Ignore length and channel " +
-    "formatting — that is a separate review. Respond in EXACTLY this format and nothing else:\n" +
-    "SCORE: <integer 0-100, where 100 is a perfect voice match>\n" +
-    "ISSUES:\n- <one specific, actionable voice problem>\n" +
-    "(If there are no issues, write '- none'. List at most 5 issues.)"
+    "formatting — that is a separate review. Respond with ONLY a JSON object and nothing else:\n" +
+    '{"score": <integer 0-100, where 100 is a perfect voice match>, ' +
+    '"issues": ["<one specific, actionable voice problem>"]}\n' +
+    "(If there are no issues, use an empty issues array. List at most 5 issues.)"
   );
 }
 
@@ -177,11 +182,11 @@ export function composeChannelFitReviewInstruction(channel: Channel): string {
   return (
     `Task: You are a channel editor for the ${channel} channel. Judge ONLY how well the draft under ` +
     "review above fits the channel guidance above — length, format, hook, tone, and conventions. " +
-    "Ignore brand-voice nuance — that is a separate review. Respond in EXACTLY this format and " +
+    "Ignore brand-voice nuance — that is a separate review. Respond with ONLY a JSON object and " +
     "nothing else:\n" +
-    "SCORE: <integer 0-100, where 100 is a perfect fit>\n" +
-    "ISSUES:\n- <one specific, actionable channel-fit problem>\n" +
-    "(If there are no issues, write '- none'. List at most 5 issues.)"
+    '{"score": <integer 0-100, where 100 is a perfect fit>, ' +
+    '"issues": ["<one specific, actionable channel-fit problem>"]}\n' +
+    "(If there are no issues, use an empty issues array. List at most 5 issues.)"
   );
 }
 

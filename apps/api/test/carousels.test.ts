@@ -4,7 +4,8 @@ import { randomUUID } from "node:crypto";
 import type { TuezdayApp } from "../src/app";
 import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric";
 import type { Db } from "../src/db";
-import { generations } from "../src/db/schema";
+import { generations, llmUsageEvents } from "../src/db/schema";
+import { recordLlmUsage } from "../src/services/usage-ledger";
 import type { AuthorTemplateInput, DesignProvider } from "../src/design/provider";
 import type { RenderInput } from "../src/design/render";
 import type { AssetStorage } from "../src/design/storage";
@@ -361,44 +362,26 @@ describe("carousel pipeline (Sprint 41 Part 4)", () => {
       void source; // first workspace's draft unused past setup
     });
 
-    it("gates on the plan's monthlyGenerations and returns the standard upgrade shape", async () => {
+    it("gates on the plan's LLM budget and returns the standard upgrade shape", async () => {
       vi.stubEnv("TEST_BILLING_GATING", "1");
       const source = await approvedSourceDraft(CONTENT);
 
-      // Fill the free plan's included generations to the brim.
-      const limit = PLANS.free.entitlements.monthlyGenerations;
-      const now = Date.now();
-      for (let i = 0; i < limit; i++) {
-        db.insert(generations)
-          .values({
-            id: randomUUID(),
-            workspaceId,
-            taskType: "linkedin_post",
-            channel: "linkedin",
-            personaId: null,
-            campaignId: null,
-            leadId: null,
-            mediaContactId: null,
-            prompt: "x",
-            sectionsJson: "[]",
-            output: "x",
-            model: "fake",
-            provider: "fake",
-            durationMs: 1,
-            rating: null,
-            ratedAt: null,
-            reviewJson: null,
-            createdAt: now,
-          })
-          .run();
-      }
+      // Fill the free plan's entire budget with one ledger event.
+      recordLlmUsage(db, {
+        workspaceId,
+        pipeline: "generation",
+        model: "unknown-model",
+        provider: "fake",
+        usage: { inputTokens: 0, outputTokens: 0, cachedTokens: 0 },
+        costCentsOverride: PLANS.free.entitlements.monthlyLlmCents,
+      });
 
       const res = await generateCarousel(source.id);
       expect(res.statusCode).toBe(402);
-      expect(res.json()).toMatchObject({ error: "upgrade_required", key: "monthlyGenerations" });
+      expect(res.json()).toMatchObject({ error: "upgrade_required", key: "monthlyLlmCents" });
     });
 
-    it("a successful run draws down exactly one generation", async () => {
+    it("a successful run draws down exactly one generation and one flat ledger event", async () => {
       const source = await approvedSourceDraft(CONTENT);
       const count = () =>
         db.select().from(generations).all().filter((g) => g.workspaceId === workspaceId).length;
@@ -413,6 +396,14 @@ describe("carousel pipeline (Sprint 41 Part 4)", () => {
         .at(-1)!;
       expect(recorded.taskType).toBe("instagram_carousel");
       expect(recorded.provider).toBe("design-pipeline");
+      // Sprint 59: the design daemon's LLM is metered as a flat-cost event.
+      const event = db
+        .select()
+        .from(llmUsageEvents)
+        .all()
+        .filter((e) => e.workspaceId === workspaceId)
+        .at(-1)!;
+      expect(event).toMatchObject({ pipeline: "design_render", costCents: 1 });
     });
   });
 

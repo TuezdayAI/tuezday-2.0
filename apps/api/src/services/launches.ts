@@ -30,6 +30,7 @@ import {
 } from "../db/schema";
 import type { EvidenceStore } from "../evidence/store";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
 import { getAudienceDetail, loadPeople } from "./audiences";
 import { getBrain } from "./brain";
 import { getCampaign } from "./campaigns";
@@ -355,7 +356,11 @@ export async function generateLaunch(
         tokenBudget: input.tokenBudget,
       });
       try {
-        const result = await llm.generate({ prompt: resolved.prompt });
+        const result = await meteredLlm(llm, db, {
+          workspaceId,
+          pipeline: "launch",
+          campaignId: launchRow.campaignId ?? null,
+        }).generate({ prompt: resolved.prompt });
         const generation = storeGeneration(db, {
           workspaceId,
           taskType: gen.taskType,

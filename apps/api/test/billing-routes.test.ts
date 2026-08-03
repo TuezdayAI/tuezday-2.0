@@ -69,8 +69,15 @@ describe("billing routes (Task 5)", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json()).toMatchObject({
       plan: "free",
-      entitlements: { seats: 1, connectors: 1, monthlyGenerations: 50 },
-      usage: { seats: 1, connectors: 0, monthlyGenerations: 0 },
+      entitlements: { seats: 1, connectors: 1, monthlyLlmCents: 50 },
+      usage: { seats: 1, connectors: 0, monthlyLlmCents: 0 },
+      spend: {
+        budgetCents: 50,
+        spentCents: 0,
+        state: "ok",
+        cacheHitRate: null,
+        byPipeline: [],
+      },
     });
   });
 

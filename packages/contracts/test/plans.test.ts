@@ -5,6 +5,12 @@ describe("Pricing Plans & Entitlements", () => {
   it("defines free plan entitlements correctly", () => {
     expect(PLANS.free.entitlements.seats).toBe(1);
     expect(PLANS.free.entitlements.connectors).toBe(1);
+    expect(PLANS.free.entitlements.monthlyLlmCents).toBe(50);
+  });
+
+  it("denominates the LLM budget in cents with -1 as unlimited (D6)", () => {
+    expect(PLANS.pro.entitlements.monthlyLlmCents).toBe(1000);
+    expect(PLANS.scale.entitlements.monthlyLlmCents).toBe(-1);
   });
 
   it("includes pro in PLAN_IDS", () => {

@@ -73,7 +73,7 @@ function markerLlm(opts?: { throwWhenPromptContains?: string }): {
         }
         const title = prompt.match(/"([^"]+)" brain document/)?.[1] ?? "unknown";
         return {
-          text: `  Drafted ${title} doc grounded in the material.  `,
+          text: JSON.stringify({ content: `  Drafted ${title} doc grounded in the material.  ` }),
           model: "stub",
           provider: "stub",
           durationMs: 1,

@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { createSignalInputSchema, draftSignalRequestSchema } from "@tuezday/contracts";
 import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
+import { assertLlmBudget } from "../services/entitlements";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { campaignExecutionError, getCampaign } from "../services/campaigns";
 import type { EvidenceStore } from "../evidence/store";
@@ -89,6 +90,7 @@ export function registerSignalRoutes(
       }
 
       try {
+        assertLlmBudget(db, request.params.id);
         const draft = await generateSignalDraft(
           db,
           llm,

@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { adLaunchTransitionTo, createAdLaunchInputSchema } from "@tuezday/contracts";
+import {
+  AD_LAUNCH_ACTIONS,
+  AD_LAUNCH_STATUSES,
+  type AdLaunchAction,
+  type AdLaunchStatus,
+  createAdLaunchInputSchema,
+  isAdLaunchEditable,
+} from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
+import { nextGateState } from "../src/services/ad-launches";
 import { type ConnectorFabric, type ProxyJsonResult } from "../src/connectors/fabric";
 import { MetaAdsAdapter } from "../src/connectors/ads/meta";
 import type { LlmGateway } from "../src/llm/gateway";
@@ -12,17 +20,20 @@ function fakeGateway(): LlmGateway {
     async generate({ prompt }) {
       let text: string;
       if (prompt.includes("Google responsive search ad")) {
-        const headlines = Array.from({ length: 3 }, (_, i) => `Headline ${i + 1}: H${i + 1}`);
-        const descriptions = Array.from({ length: 2 }, (_, i) => `Description ${i + 1}: D${i + 1}`);
-        text = [...headlines, ...descriptions].join("\n");
+        text = JSON.stringify({
+          headlines: Array.from({ length: 3 }, (_, i) => `H${i + 1}`),
+          descriptions: Array.from({ length: 2 }, (_, i) => `D${i + 1}`),
+        });
       } else {
         const match = /Write (\d+) distinct Meta ad/.exec(prompt);
         const n = match ? Number(match[1]) : 1;
-        text = Array.from(
-          { length: n },
-          (_, i) =>
-            `Primary text: Angle ${i + 1} for the offer.\nHeadline: Headline ${i + 1}\nDescription: Desc ${i + 1}`,
-        ).join("\n---\n");
+        text = JSON.stringify({
+          variants: Array.from({ length: n }, (_, i) => ({
+            primaryText: `Angle ${i + 1} for the offer.`,
+            headline: `Headline ${i + 1}`,
+            description: `Desc ${i + 1}`,
+          })),
+        });
       }
       return { text, model: "fake", provider: "fake", durationMs: 5 };
     },
@@ -273,18 +284,17 @@ function webhookFetcher(received: ReceivedHook[]): typeof fetch {
 // ---------------------------------------------------------------------------
 
 describe("ad launch contracts (Sprint 20)", () => {
-  it("encodes the launch state machine", () => {
-    expect(adLaunchTransitionTo("draft", "submit")).toBe("pending_review");
-    expect(adLaunchTransitionTo("pending_review", "approve")).toBe("approved");
-    expect(adLaunchTransitionTo("pending_review", "reject")).toBe("rejected");
-    expect(adLaunchTransitionTo("pending_review", "revise")).toBe("draft");
-    expect(adLaunchTransitionTo("rejected", "revise")).toBe("draft");
-    // An approved launch can be pulled back until it launches.
-    expect(adLaunchTransitionTo("approved", "revise")).toBe("draft");
-    // Illegal moves.
-    expect(adLaunchTransitionTo("draft", "approve")).toBeUndefined();
-    expect(adLaunchTransitionTo("approved", "approve")).toBeUndefined();
-    expect(adLaunchTransitionTo("launched", "revise")).toBeUndefined();
+  // Sprint 54 Task 4 — `adLaunchTransitionTo` and its 4x5 transition table are
+  // gone; the gate's preconditions now live in `applyLaunchAction`, next to the
+  // rest of the launch's business logic, and are exercised through the routes
+  // ("walks the state machine…", "supports reject and revise…", "409s illegal
+  // transitions", "locks and reopens editing across the whole gate"). What
+  // remains in contracts is the single rule that outlives the machine.
+  it("states the editability rule and nothing more", () => {
+    expect(isAdLaunchEditable("draft")).toBe(true);
+    for (const status of ["pending_review", "approved", "rejected", "launched"] as const) {
+      expect(isAdLaunchEditable(status)).toBe(false);
+    }
   });
 
   it("bounds the launch input", () => {
@@ -316,6 +326,41 @@ describe("ad launch contracts (Sprint 20)", () => {
     const lower = createAdLaunchInputSchema.safeParse({ ...valid, countries: ["us", "de"] });
     expect(lower.success).toBe(true);
     if (lower.success) expect(lower.data.countries).toEqual(["US", "DE"]);
+  });
+});
+
+// Sprint 54 final review (M-5) — the gate's preconditions are stated as
+// positive allow-lists, so a status added later is refused until someone
+// states its edges. This characterization test pins them against the 4x5
+// `AD_LAUNCH_TRANSITIONS` table Task 4 deleted (recovered from git history,
+// not from memory), edge for edge.
+describe("the setup gate's preconditions (Sprint 54)", () => {
+  /** Verbatim `AD_LAUNCH_TRANSITIONS`, as it stood before Task 4 removed it. */
+  const RETIRED_TABLE: Record<AdLaunchAction, Partial<Record<AdLaunchStatus, AdLaunchStatus>>> = {
+    submit: { draft: "pending_review" },
+    approve: { pending_review: "approved" },
+    reject: { pending_review: "rejected" },
+    revise: { pending_review: "draft", rejected: "draft", approved: "draft" },
+  };
+
+  it("reproduces the retired transition table, edge for edge", () => {
+    for (const action of AD_LAUNCH_ACTIONS) {
+      for (const status of AD_LAUNCH_STATUSES) {
+        // The status/action pair rides along so a failure names the edge.
+        expect({ action, status, to: nextGateState(status, action) }).toEqual({
+          action,
+          status,
+          to: RETIRED_TABLE[action][status],
+        });
+      }
+    }
+  });
+
+  it("refuses every verb from a status it has never heard of", () => {
+    const unknown = "paused" as AdLaunchStatus;
+    for (const action of AD_LAUNCH_ACTIONS) {
+      expect({ action, to: nextGateState(unknown, action) }).toEqual({ action, to: undefined });
+    }
   });
 });
 
@@ -545,6 +590,48 @@ describe("ads execution API (Sprint 20)", () => {
       expect(locked.json().error).toBe("not_editable");
     });
 
+    // Sprint 54 Task 4 — the one bespoke rule that survives retiring the launch
+    // state machine (spec §2.2). `revise` is not a dispatch state; it is the
+    // only way a locked launch becomes editable again, and the external-action
+    // lifecycle has no concept for it (`stale` is a property of the action, not
+    // of the subject). So the guarantee is pinned end to end here: editable
+    // exactly in `draft`, locked everywhere else, and `revise` the door back.
+    it("locks and reopens editing across the whole gate", async () => {
+      const patch = (launchId: string, name: string) =>
+        app.inject({
+          method: "PATCH",
+          url: `/workspaces/${workspaceId}/ads/launches/${launchId}`,
+          payload: { name },
+        });
+      const id = (await createLaunch()).json().id;
+      expect((await patch(id, "Draft edit")).statusCode).toBe(200);
+
+      await act(id, "submit");
+      expect((await patch(id, "Under review")).statusCode).toBe(409);
+      await act(id, "reject");
+      expect((await patch(id, "Rejected")).statusCode).toBe(409);
+
+      // Revise is the door back to editable — from rejected, and from approved.
+      expect((await act(id, "revise")).json().status).toBe("draft");
+      expect((await patch(id, "Reopened")).statusCode).toBe(200);
+      await act(id, "submit");
+      await act(id, "approve");
+      expect((await patch(id, "Approved")).statusCode).toBe(409);
+      expect((await act(id, "revise")).json().status).toBe("draft");
+      expect((await patch(id, "Reopened again")).statusCode).toBe(200);
+
+      // Once it has spent, nothing reopens it.
+      const live = await approvedLaunch();
+      expect((await act(live, "launch")).statusCode).toBe(201);
+      expect((await getLaunch(live)).status).toBe("launched");
+      const reviseLaunched = await act(live, "revise");
+      expect(reviseLaunched.statusCode).toBe(409);
+      expect(reviseLaunched.json().error).toBe("invalid_transition");
+      const editLaunched = await patch(live, "Too late");
+      expect(editLaunched.statusCode).toBe(409);
+      expect(editLaunched.json().error).toBe("not_editable");
+    });
+
     it("deletes anything unlaunched, never a launched campaign", async () => {
       const id = (await createLaunch()).json().id;
       expect(
@@ -662,10 +749,17 @@ describe("ads execution API (Sprint 20)", () => {
       expect(state.statusFlips).toEqual([{ campaignId: "cmp_1", status: "ACTIVE" }]);
       expect(state.calls[state.calls.length - 1]).toBe("POST /v23.0/cmp_1");
 
-      // The decision log records who pulled the trigger.
+      // The setup-approval trail records who approved this ad's setup — and
+      // only that. It used to append a synthetic `approved -> launched`
+      // "launch" row that looked like a spend authorization but was fabricated
+      // (Sprint 54 Task 2). "Who authorized this spend?" is answered by the
+      // external-action log alone; the launch links to it.
       const detail = await getLaunch(id);
       const actions = detail.decisions.map((d: { action: string }) => d.action);
-      expect(actions).toEqual(["submit", "approve", "launch"]);
+      expect(actions).toEqual(["submit", "approve"]);
+      expect(detail.status).toBe("launched");
+      expect(detail.launchedAt).toBeTruthy();
+      expect(detail.externalActionId).toBeTruthy();
 
       // The event fired.
       expect(received.filter((h) => h.eventType === "ad.launched")).toHaveLength(1);

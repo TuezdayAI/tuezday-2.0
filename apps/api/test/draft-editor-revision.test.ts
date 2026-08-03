@@ -4,11 +4,11 @@ import { eq } from "drizzle-orm";
 import type { TuezdayApp } from "../src/app";
 import type { AnalyticsEventInput } from "../src/analytics/sink";
 import type { Db } from "../src/db";
-import { drafts, generations } from "../src/db/schema";
+import { drafts, llmUsageEvents } from "../src/db/schema";
 import type { EvidenceStore } from "../src/evidence/store";
 import { GatewayError, type LlmGateway } from "../src/llm/gateway";
 import { completeTurn, createRunningTurn } from "../src/services/draft-revisions";
-import { getUsage } from "../src/services/entitlements";
+import { recordLlmUsage } from "../src/services/usage-ledger";
 import { buildAuthedApp, createTestDb } from "./helpers";
 
 function deferred<T>() {
@@ -67,7 +67,13 @@ describe("conversational draft revision API", () => {
           llmEntered.resolve();
           return llmRelease.promise;
         }
-        return { text: "Sharper copy", model: "fake-model", provider: "fake", durationMs: 5 };
+        return {
+          text: "Sharper copy",
+          model: "fake-model",
+          provider: "fake",
+          durationMs: 5,
+          usage: { inputTokens: 120, outputTokens: 12, cachedTokens: 0 },
+        };
       },
     };
     db = createTestDb();
@@ -138,8 +144,11 @@ describe("conversational draft revision API", () => {
     ).json();
   }
 
+  const ledgerEvents = () =>
+    db.select().from(llmUsageEvents).all().filter((e) => e.workspaceId === workspaceId);
+
   it("revises with current context and records the canonical edit decision", async () => {
-    const beforeUsage = getUsage(db, workspaceId).monthlyGenerations;
+    const beforeEvents = ledgerEvents().length;
     const response = await revise();
     expect(response.statusCode).toBe(200);
     expect(response.json().draft).toMatchObject({ state: "edited", content: "Sharper copy" });
@@ -156,7 +165,9 @@ describe("conversational draft revision API", () => {
     expect(context.contextSections.length).toBeGreaterThan(0);
     expect(context.contextSections.find((section: { key: string }) => section.key === "evidence"))
       .toMatchObject({ included: false, reason: expect.stringContaining("no evidence") });
-    expect(getUsage(db, workspaceId).monthlyGenerations).toBe(beforeUsage + 1);
+    const events = ledgerEvents();
+    expect(events).toHaveLength(beforeEvents + 1);
+    expect(events.at(-1)).toMatchObject({ pipeline: "revision", inputTokens: 120, outputTokens: 12 });
     expect(captured.filter((event) => event.event === "review.revision_requested"))
       .toHaveLength(1);
   });
@@ -218,7 +229,7 @@ describe("conversational draft revision API", () => {
   });
 
   it("records provider failure without changing content or usage", async () => {
-    const beforeUsage = getUsage(db, workspaceId).monthlyGenerations;
+    const beforeEvents = ledgerEvents().length;
     mode = "failure";
     const response = await revise();
     expect(response.statusCode).toBe(502);
@@ -226,7 +237,7 @@ describe("conversational draft revision API", () => {
     const context = await editor();
     expect(context.draft.content).toBe("Original copy");
     expect(context.turns.at(-1)).toMatchObject({ status: "failed", error: "provider down" });
-    expect(getUsage(db, workspaceId).monthlyGenerations).toBe(beforeUsage);
+    expect(ledgerEvents()).toHaveLength(beforeEvents); // a throw never bills
   });
 
   it("treats an empty provider result as a failed turn", async () => {
@@ -278,28 +289,21 @@ describe("conversational draft revision API", () => {
     expect(prompts[0]).toContain("Lead with the customer proof point.");
   });
 
-  it("returns 402 before calling the provider when monthly generation usage is exhausted", async () => {
+  it("returns 402 before calling the provider when the LLM budget is exhausted", async () => {
     const previous = process.env.TEST_BILLING_GATING;
     process.env.TEST_BILLING_GATING = "1";
-    for (let index = 0; index < 50; index += 1) {
-      db.insert(generations).values({
-        id: randomUUID(),
-        workspaceId,
-        taskType: "linkedin_post",
-        channel: "linkedin",
-        prompt: "metered",
-        sectionsJson: "[]",
-        output: "copy",
-        model: "fake-model",
-        provider: "fake",
-        durationMs: 1,
-        createdAt: Date.now(),
-      }).run();
-    }
+    recordLlmUsage(db, {
+      workspaceId,
+      pipeline: "generation",
+      model: "unknown-model",
+      provider: "fake",
+      usage: { inputTokens: 0, outputTokens: 0, cachedTokens: 0 },
+      costCentsOverride: 50, // the free plan's entire budget
+    });
     const response = await revise();
     process.env.TEST_BILLING_GATING = previous;
     expect(response.statusCode).toBe(402);
-    expect(response.json()).toMatchObject({ error: "upgrade_required", key: "monthlyGenerations" });
+    expect(response.json()).toMatchObject({ error: "upgrade_required", key: "monthlyLlmCents" });
     expect(prompts).toHaveLength(0);
   });
 

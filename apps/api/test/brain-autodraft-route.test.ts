@@ -40,7 +40,9 @@ const echoLlm: LlmGateway = {
   async generate({ prompt }) {
     const m = /drafting the "([^"]+)"/.exec(prompt);
     return {
-      text: `## ${m?.[1] ?? "Doc"}\n\nDrafted from the verified profile for Hexalog.`,
+      text: JSON.stringify({
+        content: `## ${m?.[1] ?? "Doc"}\n\nDrafted from the verified profile for Hexalog.`,
+      }),
       model: "fake",
       provider: "fake",
       durationMs: 1,

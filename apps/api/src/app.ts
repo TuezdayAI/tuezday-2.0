@@ -7,6 +7,7 @@ import { sql } from "drizzle-orm";
 import type { AnalyticsSink } from "./analytics/sink";
 import { createAnalyticsSink } from "./analytics/sink";
 import { registerAuthGuard } from "./auth/guard";
+import { EntitlementError } from "./services/entitlements";
 import type { ConnectorFabric } from "./connectors/fabric";
 import { NangoFabric } from "./connectors/nango";
 import { assertProviderConfiguration } from "./connectors/provider-config";
@@ -31,6 +32,7 @@ import { registerAdCreativeRoutes } from "./routes/ad-creatives";
 import { registerAdImageRoutes } from "./routes/ad-images";
 import { registerAdLaunchRoutes } from "./routes/ad-launches";
 import { registerAdsRoutes } from "./routes/ads";
+import { registerAgentRunRoutes } from "./routes/agent-runs";
 import { registerAudienceRoutes } from "./routes/audiences";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerAutomationRoutes } from "./routes/automation";
@@ -85,6 +87,7 @@ import { registerNotificationRoutes } from "./routes/notifications";
 import { registerApiKeyRoutes } from "./routes/api-keys";
 import { registerPublicApiRoutes } from "./routes/public-api";
 import { backfillMissingCampaignPlans } from "./services/campaign-plan-backfill";
+import { backfillMetrics } from "./services/metrics-backfill";
 import { backfillExternalActionPolicies } from "./services/external-action-backfill";
 import { createExternalActionAdapters } from "./services/external-action-adapters";
 import { createExternalActionRuntime } from "./services/external-action-coordinator";
@@ -213,6 +216,10 @@ export async function buildApp({
     );
   }
   repairDanglingDuplicateGroups(db);
+  // Sprint 55: sweep the three legacy metric stores into the unified fact
+  // table. Runs after the dual-write shipped, so it is insert-if-absent and
+  // can never overwrite a fresher dual-written value with a staler legacy one.
+  backfillMetrics(db);
   const externalActionRuntime = createExternalActionRuntime({
     db,
     adapters: createExternalActionAdapters(db, connectors, fetcher, outboundEmail, gmail),
@@ -239,6 +246,16 @@ export async function buildApp({
     field: "rawBody",
     global: false, // only populated for routes that ask for it
     encoding: "utf8",
+  });
+
+  // Plan-limit convention (Sprint 59): an uncaught EntitlementError anywhere
+  // is the standard 402 upgrade_required shape, so new budget gates need no
+  // per-route catch. Existing per-route catches stay and win where present.
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof EntitlementError) {
+      return reply.status(402).send({ error: "upgrade_required", key: error.key, limit: error.limit });
+    }
+    throw error; // fall through to Fastify's default handling
   });
 
   // Must come before any routes: every route registered after this needs a
@@ -286,6 +303,7 @@ export async function buildApp({
   registerNotificationRoutes(app, db, mailer, fetcher);
   registerSignalRoutes(app, db, llm, evidence);
   registerChatRoutes(app, db, llm, evidence, externalActionRuntime);
+  registerAgentRunRoutes(app, db, { llm, evidence, safeFetch: guardedFetch });
   registerDiscoveryRoutes(
     app,
     db,

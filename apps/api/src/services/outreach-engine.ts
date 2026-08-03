@@ -29,6 +29,8 @@ import {
 } from "../db/schema";
 import type { EvidenceStore } from "../evidence/store";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
+import { llmBudgetExhausted } from "./entitlements";
 import { loadPeople, resolveAudienceMembers } from "./audiences";
 import { getBrain } from "./brain";
 import { getCampaign } from "./campaigns";
@@ -451,7 +453,11 @@ async function generateOutreachStep(
       evidenceExclusionReason: evidenceResolution.exclusionReason,
       taskInstruction,
     });
-    const result = await ctx.llm.generate({ prompt: resolved.prompt });
+    const result = await meteredLlm(ctx.llm, ctx.db, {
+      workspaceId: seq.workspaceId,
+      pipeline: "outreach_step",
+      campaignId: seq.campaignId ?? null,
+    }).generate({ prompt: resolved.prompt });
     const generation = storeGeneration(ctx.db, {
       workspaceId: seq.workspaceId,
       taskType: "outbound_email",
@@ -779,9 +785,14 @@ export async function runOutreach(
     .where(and(eq(outreachSequences.workspaceId, workspaceId), eq(outreachSequences.status, "active")))
     .all();
 
+  // Budget degradation (Sprint 59): enrolling costs nothing, but advancing a
+  // step generates. Due steps keep their nextDueAt and resume on a later tick.
+  const budgetExhausted = llmBudgetExhausted(db, workspaceId);
+
   for (const seq of activeSequences) {
     enrollSequence(ctx, seq, nowMs, acc);
     if (seq.automationMode === "manual") continue; // enroll only; founder holds
+    if (budgetExhausted) continue;
 
     const steps = listSteps(db, seq.id);
     if (steps.length === 0) continue;

@@ -22,6 +22,10 @@ import {
 } from "../db/schema";
 import { createTestDb } from "../../test/helpers";
 import { getCampaignInsights, getWorkspaceInsights } from "./insights";
+// Sprint 55: fixtures seed the legacy stores directly; insights now reads the
+// unified fact table, which production fills via dual-write + boot backfill.
+// Backfilling here mirrors that path.
+import { backfillMetrics } from "./metrics-backfill";
 
 function insertCampaign(db: Db, workspaceId: string, id: string, name: string) {
   db.insert(workspaces).values({ id: workspaceId, name: "W", createdAt: Date.now(), updatedAt: Date.now() }).onConflictDoNothing().run();
@@ -55,6 +59,7 @@ describe("insights.service", () => {
     insertCampaign(db, wsId, cId, "Empty");
 
     const campaign = { id: cId, workspaceId: wsId, name: "Empty", status: "active" } as any;
+    backfillMetrics(db);
     const insights = getCampaignInsights(db, campaign);
 
     expect(insights.campaign.id).toBe(cId);
@@ -149,6 +154,9 @@ describe("insights.service", () => {
         target: "profile",
         title: "P1",
         status: "published",
+        // A real publish receipt always stamps publishedAt; the Sprint 55
+        // backfill (correctly) refuses to anchor a cumulative window without it.
+        publishedAt: Date.now(),
         scheduledFor: Date.now(),
         createdAt: Date.now(),
         updatedAt: Date.now(),
@@ -225,6 +233,7 @@ describe("insights.service", () => {
       .run();
 
     const campaign = { id: cId, workspaceId: wsId, name: "Full", status: "active" } as any;
+    backfillMetrics(db);
     const insights = getCampaignInsights(db, campaign);
 
     expect(insights.paid?.totals.spendCents).toBe(1500);
@@ -264,6 +273,7 @@ describe("insights.service", () => {
       .values({ id: randomUUID(), workspaceId: wsId, channel: "linkedin", content: "X", createdAt: Date.now(), updatedAt: Date.now() })
       .run();
 
+    backfillMetrics(db);
     const insights = getWorkspaceInsights(db, wsId);
     expect(insights.campaigns).toHaveLength(1);
     expect(insights.brain.docs.find(d => d.type === "soul")?.filled).toBe(true);

@@ -17,16 +17,19 @@ import {
   personas,
   type DiscoveredItemRow,
 } from "../db/schema";
+import { matchingResponseSchema, type MatchingResponseEntry } from "@tuezday/contracts";
 import type { LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
+import { generateStructured, StructuredOutputError } from "../llm/structured";
+import { llmBudgetExhausted } from "./entitlements";
 import {
   brainDigest,
   buildMatchingContext,
   buildMatchingPrompt,
   clampScore,
-  parseEntryMatches,
-  parseJsonArray,
   replaceItemMatches,
   revalidateSignalMatches,
+  sanitizeEntryMatches,
 } from "./matching";
 import { DATABASE_NOW_MS } from "./task-leases";
 import { getWorkspace } from "./workspaces";
@@ -281,7 +284,7 @@ class MatchingFenceError extends Error {}
 function commitMatchingResult(
   db: Db,
   claim: MatchingClaim,
-  entry: Record<string, unknown>,
+  entry: MatchingResponseEntry,
   context: ReturnType<typeof buildMatchingContext>,
 ): boolean {
   try {
@@ -317,23 +320,19 @@ function commitMatchingResult(
       const matches = revalidateSignalMatches(
         tx,
         claim.workspaceId,
-        parseEntryMatches(entry, context),
+        sanitizeEntryMatches(entry, context),
       );
       const best = matches[0];
       replaceItemMatches(tx, claim.workspaceId, claim.itemId, matches);
       const updated = tx
         .update(discoveredItems)
         .set({
-          score: clampScore(entry.score as number),
+          score: clampScore(entry.score),
           // Sprint 53 (D3b): the item's suggested persona/campaign are no longer
           // stored. They are projected from the top-scoring row written by
           // replaceItemMatches above (see projectSuggestedRouting in
           // services/matching.ts). scoreReason stays a real stored column.
-          scoreReason: best
-            ? best.reason
-            : typeof entry.reason === "string"
-              ? entry.reason.slice(0, 500)
-              : null,
+          scoreReason: best ? best.reason : entry.reason?.slice(0, 500) ?? null,
           scoredAt: Date.now(),
           matchingState: "ready",
           matchingLeaseOwner: null,
@@ -391,6 +390,15 @@ export async function runMatchingBatch(
     if (workspaceClaims.length === 0) continue;
     const workspace = getWorkspace(deps.db, workspaceId);
     if (!workspace) continue;
+    // Budget degradation (Sprint 59): over-budget workspaces skip scoring;
+    // items go back to retryable and a later tick picks them up once spend
+    // rolls out of the window or the plan changes. Never a mid-run failure.
+    if (llmBudgetExhausted(deps.db, workspaceId)) {
+      for (const { claim } of workspaceClaims) {
+        if (markRetryable(deps.db, claim, "llm_budget_exhausted")) retryableErrors += 1;
+      }
+      continue;
+    }
     const context = buildMatchingContext(deps.db, workspaceId);
     const itemsBlock = workspaceClaims
       .map(
@@ -435,67 +443,42 @@ export async function runMatchingBatch(
       leaseLost.signal,
     ]);
 
-    let entries: unknown[] | null;
+    let entries: MatchingResponseEntry[];
     try {
-      const response = await deps.llm.generate({
+      const metered = meteredLlm(deps.llm, deps.db, {
+        workspaceId,
+        pipeline: "discovery_matching",
+      });
+      const response = await generateStructured(metered, matchingResponseSchema, {
         prompt,
         signal: effectiveSignal,
+        tier: "cheap",
       });
-      entries = parseJsonArray(response.text);
-    } catch {
-      const code = effectiveSignal.aborted
-        ? errorCode(effectiveSignal)
-        : "matching_gateway_failed";
+      entries = response.value;
+    } catch (error) {
+      // A response that failed schema validation even after the repair retry
+      // is retryable data trouble; aborts and gateway trouble keep their codes.
+      const code =
+        error instanceof StructuredOutputError
+          ? "matching_malformed_response"
+          : effectiveSignal.aborted
+            ? errorCode(effectiveSignal)
+            : "matching_gateway_failed";
       for (const { claim } of workspaceClaims) {
         if (markRetryable(deps.db, claim, code)) {
           retryableErrors += 1;
         }
       }
-      stopped = true;
-      if (heartbeat) clearTimeout(heartbeat);
       continue;
     } finally {
       stopped = true;
       if (heartbeat) clearTimeout(heartbeat);
     }
 
-    if (!entries) {
-      for (const { claim } of workspaceClaims) {
-        if (
-          markRetryable(
-            deps.db,
-            claim,
-            "matching_malformed_response",
-          )
-        ) {
-          retryableErrors += 1;
-        }
-      }
-      continue;
-    }
-
     for (const [index, { claim }] of workspaceClaims.entries()) {
-      const raw = entries.find(
-        (candidate) =>
-          typeof candidate === "object" &&
-          candidate !== null &&
-          (candidate as Record<string, unknown>).index === index,
-      );
-      if (typeof raw !== "object" || raw === null) {
+      const entry = entries.find((candidate) => candidate.index === index);
+      if (!entry) {
         if (markRetryable(deps.db, claim, "matching_missing_result")) {
-          retryableErrors += 1;
-        }
-        continue;
-      }
-      const entry = raw as Record<string, unknown>;
-      if (typeof entry.score !== "number") {
-        if (
-          markRetryable(
-            deps.db,
-            claim,
-            "matching_malformed_result",
-          )
-        ) {
           retryableErrors += 1;
         }
         continue;
