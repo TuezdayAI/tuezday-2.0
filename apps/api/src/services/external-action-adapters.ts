@@ -1461,7 +1461,10 @@ export function budgetChangeActionAdapter(
       });
       if (!guardrails.ok) {
         return {
-          code: guardrails.error === "kill_switch_on" ? "kill_switch" : guardrails.error,
+          // Sprint 54 Task 1 — one blocker spelling across all three ad kinds.
+          // This used to rewrite `kill_switch_on` to `kill_switch`, so the same
+          // guardrail answered "who stopped this?" with two different codes.
+          code: guardrails.error,
           message: guardrails.message,
           retryable: true,
         };
@@ -1690,7 +1693,10 @@ export function targetingChangeActionAdapter(
       const guardrails = checkSpendGuardrails(db, launch);
       if (!guardrails.ok) {
         return {
-          code: guardrails.error === "kill_switch_on" ? "kill_switch" : guardrails.error,
+          // Sprint 54 Task 1 — one blocker spelling across all three ad kinds.
+          // This used to rewrite `kill_switch_on` to `kill_switch`, so the same
+          // guardrail answered "who stopped this?" with two different codes.
+          code: guardrails.error,
           message: guardrails.message,
           retryable: true,
         };

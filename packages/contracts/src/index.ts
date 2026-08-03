@@ -4952,6 +4952,15 @@ export interface Entitlements {
   seats: number;          // -1 = unlimited
   connectors: number;
   monthlyGenerations: number;
+  /**
+   * Reserved — declared but deliberately unread (Sprint 54, D4d). Activation
+   * sprint is not scheduled; a pricing sprint must be created before anything
+   * enforces this. The free tier is `0`, so wiring it up as written would
+   * silently disable ad launching for every free workspace — a pricing
+   * decision, not a refactor. The live spend guardrail is the workspace-owned
+   * `adSettings.dailyCapCents` (`services/ad-launches.ts`), which is unrelated
+   * to plan entitlements.
+   */
   adSpendCapCents: number;
 }
 
