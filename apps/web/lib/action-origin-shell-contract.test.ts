@@ -40,9 +40,38 @@ describe("action origin surfaces source contract", () => {
     expect(launchesPage).toContain("EmailSendStatus");
   });
 
-  it("ad launches keep the spend approval gate and surface the governing action", () => {
+  it("ad launches keep the setup approval gate and surface the governing action", () => {
     expect(adLaunchesPage).toContain("Submit for approval");
-    expect(adLaunchesPage).toContain("Approve spend");
+    // The gate approves the ad's setup; it does not authorize the spend.
+    expect(adLaunchesPage).toContain("Approve setup");
+    expect(adLaunchesPage).not.toContain("Approve spend");
     expect(adLaunchesPage).toContain("externalActionId");
+  });
+
+  it("ad launches keep setup approval and spend authorization as two records", () => {
+    expect(adLaunchesPage).toContain("Setup approvals");
+    expect(adLaunchesPage).toContain("who approved this ad's setup");
+    expect(adLaunchesPage).toContain("Spend authorization");
+    expect(adLaunchesPage).toContain("who authorized this spend");
+    expect(adLaunchesPage).toContain("Open the spend authorization");
+  });
+
+  it("ad launches never claim a person authorized an autonomous launch", () => {
+    expect(adLaunchesPage).toContain("no person authorizes it");
+    expect(adLaunchesPage).toContain("the policy does, and the action records who proposed it");
+  });
+
+  it("ad launches render retired launch rows as history, not as authorizations", () => {
+    expect(adLaunchesPage).toContain("SETUP_DECISION_LABELS");
+    expect(adLaunchesPage).toContain('decision.action === "launch"');
+    expect(adLaunchesPage).toContain("Historical row");
+    expect(adLaunchesPage).toContain("never recorded who authorized the spend");
+  });
+
+  it("ad launches say guardrails refuse at proposal and do not overclaim governance", () => {
+    expect(adLaunchesPage).toContain("refused when it is proposed");
+    expect(adLaunchesPage).toContain("before anyone is asked to authorize it");
+    expect(adLaunchesPage).toContain("change spend without recording a decision");
+    expect(adLaunchesPage).not.toContain("nothing goes live without a green light");
   });
 });

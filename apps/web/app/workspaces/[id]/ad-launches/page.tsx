@@ -15,6 +15,7 @@ import {
   parseAdCreative,
   type AdLaunch,
   type AdLaunchDecision,
+  type AdLaunchDecisionAction,
   type AdLaunchObjective,
   type AdLaunchStatus,
   type Campaign,
@@ -99,6 +100,20 @@ const STATUS_LABELS: Record<AdLaunchStatus, string> = {
   approved: "Approved",
   rejected: "Rejected",
   launched: "Launched",
+};
+
+/**
+ * The setup-approval trail answers "who approved this ad's setup?" — a separate
+ * question from "who authorized this spend?", which the external-action record
+ * answers. `launch` is retired (Sprint 54): nothing writes it any more, but
+ * historical rows carry it and must still render — never as an authorization.
+ */
+const SETUP_DECISION_LABELS: Record<AdLaunchDecisionAction, string> = {
+  submit: "Submitted for approval",
+  approve: "Setup approved",
+  reject: "Setup rejected",
+  revise: "Sent back to draft",
+  launch: "Launched",
 };
 
 function money(cents: number, currency = "USD"): string {
@@ -470,7 +485,7 @@ export default function AdLaunchesPage() {
     <>
       <PageHeader
         title="Launch ads"
-        subtitle="Assemble a campaign from an approved creative, send it through the approval gate, then launch it on Meta. Spend is gated and capped — nothing goes live without a green light."
+        subtitle="Assemble a campaign from an approved creative, approve its setup, then launch it on Meta. Two separate records are kept: who approved this ad's setup, and who authorized this spend."
       />
 
       {note && <p className="section-reason">{note}</p>}
@@ -524,6 +539,15 @@ export default function AdLaunchesPage() {
             style={{ width: `${meterPct}%`, background: meterPct >= 100 ? "#d23f57" : undefined }}
           />
         </div>
+        <p className={styles.guardrailNote}>
+          A launch that trips the kill switch, or that would push committed spend past this cap, is
+          refused when it is proposed — before anyone is asked to authorize it. Nothing is
+          authorized and no spend starts.
+        </p>
+        <p className={styles.guardrailNote}>
+          Only the initial launch is authorized on the record. Turning this kill switch on or off,
+          and pausing or resuming a live campaign, change spend without recording a decision.
+        </p>
       </Card>
 
       <Card>
@@ -728,18 +752,38 @@ export default function AdLaunchesPage() {
                       <span>{submissionNote(submission)}</span>
                       <Link href={actionAuthorizationHref(submission.action)}>View action</Link>
                     </div>
-                  ) : launch.externalActionId ? (
-                    <p className={styles.actionStatus}>
-                      <Link
-                        href={reviewHref(id, {
-                          tab: "authorizations",
-                          action: launch.externalActionId,
-                        })}
-                      >
-                        View governing action
-                      </Link>
+                  ) : (
+                    <div className={styles.spendRecord}>
+                      <span>
+                        <strong>Spend authorization</strong> — who authorized this spend.
+                      </span>
+                      {launch.externalActionId ? (
+                        <>
+                          <span>
+                            Kept on the governing action, not in the setup approvals below. If that
+                            action ran under an autonomous policy then no person authorizes it —
+                            the policy does, and the action records who proposed it.
+                          </span>
+                          <Link
+                            href={reviewHref(id, {
+                              tab: "authorizations",
+                              action: launch.externalActionId,
+                            })}
+                          >
+                            Open the spend authorization
+                          </Link>
+                        </>
+                      ) : (
+                        <span>Nothing has been authorized to spend on this launch yet.</span>
+                      )}
+                    </div>
+                  )}
+                  {submission?.action.status === "blocked" && (
+                    <p className={styles.spendRecord}>
+                      Refused when it was proposed — before anyone was asked to authorize it. No
+                      authorization was recorded and no spend started.
                     </p>
-                  ) : null}
+                  )}
 
                   <div className="editor-actions">
                     {launch.status === "draft" && (
@@ -760,7 +804,7 @@ export default function AdLaunchesPage() {
                     {launch.status === "pending_review" && (
                       <>
                         <Button variant="primary" disabled={busy} onClick={() => act(launch, "approve")}>
-                          Approve spend
+                          Approve setup
                         </Button>
                         <Button
                           variant="secondary"
@@ -846,7 +890,7 @@ export default function AdLaunchesPage() {
                       </>
                     )}
                     <Button variant="tertiary" size="compact" onClick={() => toggleDetail(launch.id)}>
-                      {d ? "Hide log" : "Decision log"}
+                      {d ? "Hide setup approvals" : "Setup approvals"}
                     </Button>
                   </div>
 
@@ -1018,19 +1062,36 @@ export default function AdLaunchesPage() {
                   })()}
 
                   {d && (
-                    <ul className="draft-chain">
-                      {d.decisions.length === 0 ? (
-                        <li className="meta">No decisions yet.</li>
-                      ) : (
-                        d.decisions.map((decision) => (
-                          <li key={decision.id}>
-                            <span className="meta">{new Date(decision.createdAt).toLocaleString()}</span>{" "}
-                            — <strong>{decision.action}</strong> by {decision.actor} (
-                            {decision.fromState} → {decision.toState})
-                          </li>
-                        ))
-                      )}
-                    </ul>
+                    <section className={styles.setupTrail} aria-label="Setup approvals">
+                      <h4>Setup approvals</h4>
+                      <p>
+                        Who approved this ad's setup — submitted, approved, rejected, sent back to
+                        draft. This is not the spend record; who authorized this spend is kept on
+                        the governing action.
+                      </p>
+                      <ul className="draft-chain">
+                        {d.decisions.length === 0 ? (
+                          <li className="meta">No setup decisions yet.</li>
+                        ) : (
+                          d.decisions.map((decision) => (
+                            <li key={decision.id}>
+                              <span className="meta">
+                                {new Date(decision.createdAt).toLocaleString()}
+                              </span>{" "}
+                              — <strong>{SETUP_DECISION_LABELS[decision.action]}</strong> by{" "}
+                              {decision.actor} ({decision.fromState} → {decision.toState})
+                              {decision.action === "launch" && (
+                                <span className={styles.retiredRow}>
+                                  Historical row, written automatically when the launch went out.
+                                  It never recorded who authorized the spend, and nothing writes it
+                                  any more.
+                                </span>
+                              )}
+                            </li>
+                          ))
+                        )}
+                      </ul>
+                    </section>
                   )}
                 </li>
               );
