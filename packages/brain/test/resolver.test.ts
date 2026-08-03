@@ -1,8 +1,11 @@
+import { PLAN_SECTION_TOKEN_CAP } from "@tuezday/contracts";
 import { describe, expect, it } from "vitest";
 import {
   CHANNEL_GUIDANCE_DEFAULTS,
   TASK_INSTRUCTIONS,
   composeAngleInstruction,
+  composeCampaignPlanSection,
+  composeCompactCampaignPlanSection,
   composeBrandVoiceReviewInstruction,
   composeChannelFitReviewInstruction,
   composePrPitchInstruction,
@@ -58,7 +61,7 @@ describe("built-in defaults", () => {
 });
 
 describe("resolveContext", () => {
-  it("orders sections org -> channel -> campaign -> persona -> signal -> task", () => {
+  it("orders sections org -> channel -> campaign -> campaign_plan -> persona -> signal -> task", () => {
     const result = resolveContext(baseInput());
     expect(result.sections.map((s) => s.key)).toEqual([
       "org:soul",
@@ -68,6 +71,7 @@ describe("resolveContext", () => {
       "org:now",
       "channel",
       "campaign",
+      "campaign_plan",
       "persona",
       "lead",
       "media_contact",
@@ -94,11 +98,14 @@ describe("resolveContext", () => {
     expect(history.reason).toMatch(/empty/i);
   });
 
-  it("always marks the campaign slot excluded this sprint", () => {
+  it("excludes the campaign slot when no campaign is in scope", () => {
     const result = resolveContext(baseInput());
     const campaign = result.sections.find((s) => s.key === "campaign")!;
     expect(campaign.included).toBe(false);
-    expect(campaign.reason).toMatch(/campaign/i);
+    expect(campaign.reason).toMatch(/no campaign selected/i);
+    // Sprint 53: the Sprint-8-era "campaigns arrive in a later slice" is gone —
+    // campaigns arrived nine sprints later and the string had been lying since.
+    expect(campaign.reason).not.toMatch(/later slice/i);
   });
 
   it("excludes the persona section when no persona is given", () => {
@@ -228,6 +235,7 @@ describe("resolveContext", () => {
       "org:now",
       "channel",
       "campaign",
+      "campaign_plan",
       "persona",
       "lead",
       "media_contact",
@@ -274,6 +282,7 @@ describe("resolveContext", () => {
       "org:now",
       "channel",
       "campaign",
+      "campaign_plan",
       "persona",
       "lead",
       "media_contact",
@@ -814,5 +823,195 @@ describe("scoped guidance & persona topics (Sprint 44)", () => {
     expect(result.zoomQuery).toContain("churn for agencies");
     // The topics actually drive zoom: the pricing section scores in.
     expect(result.sections.some((s) => s.key === "zoom:history:pricing-experiment")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sprint 53: the campaign plan section — the curated plan revision finally
+// reaches the prompt, immediately after the campaign overlay.
+// ---------------------------------------------------------------------------
+
+describe("campaign plan section (Sprint 53)", () => {
+  const plan = {
+    revision: 4,
+    objective: "Win 25 design-partner logos for the agentic GTM tier.",
+    kpi: "25 signed design partners by 30 September.",
+    timeframe: "Q3 2026.",
+    pillars: ["GTM amnesia is the real problem", "Agents need a brain, not a prompt"],
+    offers: ["Free 30-day design-partner slot"],
+    ctas: ["Book a 20-minute teardown"],
+    guidance: "Never promise a roadmap date. Speak to founders, not marketers.",
+  };
+
+  it("places the plan immediately after campaign and before persona, tier 1 and included", () => {
+    const result = resolveContext(
+      baseInput({
+        campaign: { name: "Design partners", overlay: "Keep it founder-to-founder." },
+        campaignPlan: plan,
+      }),
+    );
+    const keys = result.sections.map((s) => s.key);
+    expect(keys.indexOf("campaign_plan")).toBe(keys.indexOf("campaign") + 1);
+    expect(keys.indexOf("campaign_plan")).toBe(keys.indexOf("persona") - 1);
+
+    const section = result.sections.find((s) => s.key === "campaign_plan")!;
+    expect(section.layer).toBe("plan");
+    expect(section.tier).toBe(1);
+    expect(section.included).toBe(true);
+    expect(section.content.length).toBeGreaterThan(0);
+    expect(section.tokens).toBe(estimateTokens(section.content));
+    expect(section.content).toContain("Win 25 design-partner logos");
+    expect(section.content).toContain("GTM amnesia is the real problem");
+    // And it actually reaches the prompt.
+    expect(result.prompt).toContain("25 signed design partners by 30 September.");
+  });
+
+  it("is present but excluded with a reason when the campaign has no plan", () => {
+    const result = resolveContext(
+      baseInput({ campaign: { name: "Design partners", overlay: "Founder-to-founder." } }),
+    );
+    const section = result.sections.find((s) => s.key === "campaign_plan")!;
+    expect(section.included).toBe(false);
+    expect(section.content).toBe("");
+    expect(section.tokens).toBe(0);
+    expect(section.reason).toMatch(/plan/i);
+    expect(result.prompt).not.toContain("Campaign plan");
+  });
+
+  it("is present but excluded when there is no campaign at all", () => {
+    const section = resolveContext(baseInput()).sections.find((s) => s.key === "campaign_plan")!;
+    expect(section.included).toBe(false);
+    expect(section.tokens).toBe(0);
+    expect(section.reason).toMatch(/no campaign/i);
+  });
+
+  it("caps a maximal plan while composing, and says so in the reason", () => {
+    const result = resolveContext(
+      baseInput({
+        campaign: { name: "Big", overlay: "" },
+        campaignPlan: {
+          ...plan,
+          guidance: "g".repeat(10_000),
+          pillars: Array.from({ length: 20 }, (_, i) => `pillar ${i} ${"p".repeat(190)}`),
+        },
+      }),
+    );
+    const section = result.sections.find((s) => s.key === "campaign_plan")!;
+    expect(section.tokens).toBeLessThanOrEqual(PLAN_SECTION_TOKEN_CAP);
+    expect(section.reason).toMatch(/truncat/i);
+    expect(section.reason).toMatch(/guidance/i);
+  });
+
+  it("demotes the plan to its compact form before shipping overBudget (ladder rung 4)", () => {
+    const campaign = { name: "Big", overlay: "" };
+    const campaignPlan = { ...plan, guidance: "Ship weekly proof, never promises. ".repeat(60) };
+    const generous = resolveContext(baseInput({ campaign, campaignPlan, tokenBudget: 100_000 }));
+    const planTokens = generous.sections.find((s) => s.key === "campaign_plan")!.tokens;
+    const compactTokens = composeCompactCampaignPlanSection(campaignPlan).tokens;
+    expect(compactTokens).toBeLessThan(planTokens);
+
+    // A budget that only fits once the plan is compacted.
+    const budget = generous.includedTokens - Math.ceil((planTokens - compactTokens) / 2);
+    const tight = resolveContext(baseInput({ campaign, campaignPlan, tokenBudget: budget }));
+    const section = tight.sections.find((s) => s.key === "campaign_plan")!;
+    expect(section.included).toBe(true);
+    expect(section.tokens).toBe(compactTokens);
+    expect(section.content).toContain("Win 25 design-partner logos");
+    expect(section.content).not.toContain("Ship weekly proof");
+    expect(section.reason).toMatch(/token budget/i);
+    expect(tight.overBudget).toBe(false);
+  });
+
+  /**
+   * Sprint 53 review (M5) — the regime where rung 4 is a **no-op**, documented
+   * rather than left implied.
+   *
+   * The rung only fires when the compact composition is smaller than the full
+   * one. For a genuinely maximal plan — one whose *first* priority field alone
+   * overruns the cap — both compositions saturate `PLAN_SECTION_TOKEN_CAP` and
+   * the rung has nothing to give back. That is fine, and is why the cap, not
+   * the ladder, is what actually bounds this section: the cap applies
+   * unconditionally, before any budget arithmetic. The ladder is the recovery
+   * for mid-sized plans that fit under the cap but not under the budget.
+   */
+  it("is a no-op at the cap boundary, where the cap alone bounds the section", () => {
+    const campaign = { name: "Big", overlay: "" };
+    // The objective alone exceeds the cap, so every composition that keeps the
+    // objective — full and compact both do — lands exactly on it.
+    const campaignPlan = { ...plan, objective: "o".repeat(PLAN_SECTION_TOKEN_CAP * 8) };
+    const full = composeCampaignPlanSection(campaignPlan);
+    const compact = composeCompactCampaignPlanSection(campaignPlan);
+    expect(full.tokens).toBe(PLAN_SECTION_TOKEN_CAP);
+    expect(compact.tokens).toBe(PLAN_SECTION_TOKEN_CAP);
+    expect(full.truncated && compact.truncated).toBe(true);
+
+    const tight = resolveContext(baseInput({ campaign, campaignPlan, tokenBudget: 500 }));
+    const section = tight.sections.find((s) => s.key === "campaign_plan")!;
+    // Rung 4 leaves it exactly as composed — no demotion note in the reason.
+    expect(section.tokens).toBe(PLAN_SECTION_TOKEN_CAP);
+    expect(section.content).toBe(full.content);
+    expect(section.reason).not.toMatch(/demoted to the compact plan/i);
+    // And the bundle says so honestly instead of pretending it recovered.
+    expect(tight.overBudget).toBe(true);
+  });
+
+  it("still flags overBudget when even the compact plan does not fit", () => {
+    const result = resolveContext(
+      baseInput({
+        campaign: { name: "Big", overlay: "" },
+        campaignPlan: plan,
+        tokenBudget: 50,
+      }),
+    );
+    const section = result.sections.find((s) => s.key === "campaign_plan")!;
+    expect(section.included).toBe(true);
+    expect(result.overBudget).toBe(true);
+  });
+
+  it("stays deterministic with a plan attached", () => {
+    const input = baseInput({
+      campaign: { name: "Design partners", overlay: "Founder-to-founder." },
+      campaignPlan: plan,
+      tokenBudget: 6000,
+    });
+    expect(resolveContext(input)).toEqual(resolveContext(input));
+  });
+
+  // Sprint 53 Task 4: the API composes the campaign row's legacy structured
+  // strategy into the overlay only when there is no active plan revision, and
+  // flags it. The resolver's job is to make that visible on both sections.
+  describe("the legacy-strategy fallback is named in the trace", () => {
+    const fallbackCampaign = {
+      name: "Design partners",
+      overlay: "Objective: Row objective\n\nFounder-to-founder.",
+      legacyStrategyFallback: true,
+    };
+
+    it("names the fallback on the campaign section", () => {
+      const result = resolveContext(baseInput({ campaign: fallbackCampaign }));
+      const campaign = result.sections.find((s) => s.key === "campaign")!;
+      expect(campaign.included).toBe(true);
+      expect(campaign.reason).toMatch(/fallback/i);
+      expect(campaign.reason).toMatch(/no active plan revision/i);
+    });
+
+    it("names the fallback on the excluded plan section, so the loss is explained", () => {
+      const result = resolveContext(baseInput({ campaign: fallbackCampaign }));
+      const section = result.sections.find((s) => s.key === "campaign_plan")!;
+      expect(section.included).toBe(false);
+      expect(section.reason).toMatch(/no active plan revision/i);
+      expect(section.reason).toMatch(/fallback|campaign section/i);
+    });
+
+    it("says nothing about a fallback when the campaign is plain instruction", () => {
+      const result = resolveContext(
+        baseInput({ campaign: { name: "Design partners", overlay: "Founder-to-founder." } }),
+      );
+      const campaign = result.sections.find((s) => s.key === "campaign")!;
+      expect(campaign.reason).not.toMatch(/fallback/i);
+      expect(
+        result.sections.find((s) => s.key === "campaign_plan")!.reason,
+      ).not.toMatch(/fallback/i);
+    });
   });
 });

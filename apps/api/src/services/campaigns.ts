@@ -10,7 +10,8 @@ import type {
   UpdateCampaignAutomationInput,
   UpsertCampaignInput,
 } from "@tuezday/contracts";
-import type { ResolveCampaign } from "@tuezday/brain";
+import { composeCampaignPlanSection } from "@tuezday/brain";
+import type { ResolveCampaign, ResolveCampaignPlan } from "@tuezday/brain";
 import type { Db, DbExecutor } from "../db";
 import {
   campaigns,
@@ -243,11 +244,38 @@ export function listAutomatedCampaigns(db: Db, workspaceId: string): Campaign[] 
 }
 
 /**
- * Compose the campaign's resolver overlay from its structured fields plus the
- * free-form overlay. Deterministic; empty fields are omitted so the context
- * stays clean while the campaign is still being filled in.
+ * The campaign's resolver overlay: **the free text alone** (Sprint 53, D3a).
+ *
+ * This used to concatenate the campaign row's structured columns (`Objective:`,
+ * `KPI:`, `Timeframe:`, `Audience:`, `Messaging pillars:`) and *then* append the
+ * free text, which made the row a third home for campaign strategy alongside
+ * `campaign_plan_revisions` and the plan form. The plan wins; the overlay is now
+ * "additional instruction" and nothing else.
+ *
+ * Deliberately plan-blind — the fallback for a plan-less campaign lives in
+ * `composeResolveCampaign`, where the plan is in scope.
  */
 export function composeCampaignOverlay(campaign: Campaign): string {
+  return campaign.overlay.trim();
+}
+
+/**
+ * The campaign row's legacy structured strategy block, composed exactly as
+ * `composeCampaignOverlay` used to compose it (minus the free text).
+ *
+ * **Fallback only.** Sprint 53 moved campaign strategy to the active plan
+ * revision, but a campaign can genuinely have no active revision: nothing in
+ * campaign *creation* mints a plan, and `backfillMissingCampaignPlans` runs at
+ * boot, so every campaign created since the last boot is plan-less — as is any
+ * campaign whose activation failed validation (a lane pointing at a
+ * disconnected connection) and kept a draft-only plan.
+ *
+ * Dropping the block unconditionally would silently strip objective/KPI/
+ * timeframe/audience/pillars from those campaigns' prompts. A second
+ * composition path that exists only while a plan is missing, and that announces
+ * itself in the trace, is the cheaper failure.
+ */
+export function composeLegacyCampaignStrategy(campaign: Campaign): string {
   const parts: string[] = [];
   if (campaign.objective) parts.push(`Objective: ${campaign.objective}`);
   if (campaign.kpi) parts.push(`KPI: ${campaign.kpi}`);
@@ -255,18 +283,35 @@ export function composeCampaignOverlay(campaign: Campaign): string {
   if (campaign.audience) parts.push(`Audience: ${campaign.audience}`);
   if (campaign.pillars.length > 0)
     parts.push(`Messaging pillars:\n${campaign.pillars.map((p) => `- ${p}`).join("\n")}`);
-  if (campaign.overlay.trim()) parts.push(campaign.overlay.trim());
   return parts.join("\n\n");
 }
 
 /**
- * The campaign as the resolver takes it (Sprint 43): the composed overlay plus
- * the structured objective/pillars, which feed the Tier-3 zoom query.
+ * The campaign as the resolver takes it.
+ *
+ * `overlay` is the free-text instruction (Sprint 53); `objective`/`pillars`
+ * still ride along because `composeZoomQuery` (`packages/brain/src/zoom.ts`)
+ * is a separate consumer of them and must not regress.
+ *
+ * Pass the campaign's **active** plan — the same value the call site hands to
+ * `resolveContext` as `campaignPlan`, from `campaignPlanInput`. When the plan
+ * would compose to an empty section (absent, or activated with no content), the
+ * legacy structured block is prepended and `legacyStrategyFallback` is set so
+ * the resolver can name the degradation in the trace. Emptiness is measured
+ * with the resolver's own composer, so the two can never disagree about whether
+ * a plan carries strategy.
  */
-export function composeResolveCampaign(campaign: Campaign): ResolveCampaign {
+export function composeResolveCampaign(
+  campaign: Campaign,
+  plan?: ResolveCampaignPlan,
+): ResolveCampaign {
+  const instruction = composeCampaignOverlay(campaign);
+  const planCarriesStrategy = composeCampaignPlanSection(plan).content.length > 0;
+  const legacy = planCarriesStrategy ? "" : composeLegacyCampaignStrategy(campaign);
   return {
     name: campaign.name,
-    overlay: composeCampaignOverlay(campaign),
+    overlay: legacy ? [legacy, instruction].filter(Boolean).join("\n\n") : instruction,
+    legacyStrategyFallback: legacy.length > 0,
     objective: campaign.objective || undefined,
     pillars: campaign.pillars.length > 0 ? campaign.pillars : undefined,
   };

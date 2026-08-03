@@ -1060,6 +1060,9 @@ export default function DiscoveryPage() {
         ) : (
           <ul className="section-list">
             {inboxList.visible.map((item) => {
+              // Sprint 53: read-only fields, derived from the item's top-scoring match
+              // rather than stored columns. They stay on the payload; nothing
+              // here writes them back.
               const persona = personaName(item.suggestedPersonaId);
               const campaign = campaignName(item.suggestedCampaignId);
               const source = sources.find((s) => s.id === item.sourceId);

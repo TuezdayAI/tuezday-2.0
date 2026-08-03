@@ -281,7 +281,8 @@ exhausted (a test that over-calls is a bug).
   (`agentStep`/`agentStepStream` on `LlmGateway`, Gemini implementation with function calling,
   constrained JSON output and SSE streaming, `FallbackGateway` passthrough); `ScriptedGateway`
   testing contract; `llm/pricing.ts` cost accounting; `agent_runs`/`agent_run_steps` tables
-  (migration `0062_daily_eternals.sql`); `AgentRunner` with bounds, tool dispatch,
+  (migration `0064_sprint_56_gateway_v2_agent_runner.sql` after reconciliation with Sprints 53–55);
+  `AgentRunner` with bounds, tool dispatch,
   `NeedsHumanSignal`, streaming events and full persistence; `search_evidence` proof tool.
   25 new tests (`agent-runner.test.ts` 16, `agent-gateway.test.ts` 9). Full suite green:
   2136/2136 across 197 files; typecheck clean. Awaiting founder review/merge.

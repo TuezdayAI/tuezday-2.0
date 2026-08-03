@@ -95,6 +95,7 @@ import {
   listItemMatches,
   listItemMatchesForItems,
   listSignalMatches,
+  projectSuggestedRouting,
   revalidateSignalMatches,
 } from "./matching";
 import { listPersonas } from "./personas";
@@ -561,6 +562,8 @@ function rowToItem(
     status: row.status as DiscoveredItemStatus,
     matchingState: row.matchingState as DiscoveryMatchingState,
     matches,
+    // Sprint 53: routing is projected from the top match, not read off the row.
+    ...projectSuggestedRouting(matches),
     duplicateCount,
   };
 }
@@ -766,30 +769,16 @@ export function acceptDiscoveredItem(
         asc(discoveredItemMatches.createdAt),
       )
       .all();
-    const references = [...itemMatches];
-    if (
-      (item.suggestedPersonaId || item.suggestedCampaignId) &&
-      !references.some(
-        (match) =>
-          match.personaId === item.suggestedPersonaId &&
-          match.campaignId === item.suggestedCampaignId,
-      )
-    ) {
-      references.push({
-        personaId: item.suggestedPersonaId,
-        campaignId: item.suggestedCampaignId,
-        score: item.score ?? 0,
-        reason: item.scoreReason ?? "",
-      });
-    }
-    requireCurrentMatchReferences(tx, workspaceId, references);
+    // Sprint 53: the item's routing *is* its match rows. `item.suggested*` is a
+    // projection of `itemMatches` (join-filtered to live personas/campaigns), so
+    // there is nothing left to synthesize — validating the raw rows validates
+    // the projection too, and any dangling row still blocks acceptance.
+    requireCurrentMatchReferences(tx, workspaceId, itemMatches);
 
     const signalInput = {
       content: item.summary ? `${item.title}\n\n${item.summary}` : item.title,
       source: SIGNAL_SOURCE_BY_TYPE[source.type],
       sourceUrl: item.url || undefined,
-      suggestedPersonaId: item.suggestedPersonaId ?? undefined,
-      suggestedCampaignId: item.suggestedCampaignId ?? undefined,
     };
     const signalRow = insertSignalRow(tx, workspaceId, signalInput);
     hooks?.afterSignalInsert?.();
@@ -822,6 +811,7 @@ export function acceptDiscoveredItem(
       item: {
         ...item,
         matches: signal.matches,
+        ...projectSuggestedRouting(signal.matches),
         status: "accepted",
         signalId: signal.id,
         matchingState: "frozen",

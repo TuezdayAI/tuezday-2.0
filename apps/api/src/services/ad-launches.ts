@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import {
-  adLaunchTransitionTo,
+  isAdLaunchEditable,
   parseAdCreative,
   type AdLaunch,
   type AdLaunchAction,
@@ -204,11 +204,28 @@ export function deleteLaunch(db: Db, launchId: string): void {
   db.delete(adLaunches).where(eq(adLaunches.id, launchId)).run();
 }
 
-export function logLaunchDecision(
+/**
+ * The **setup-approval** trail — not spend governance (Sprint 54 Task 2).
+ *
+ * This answers one question: *who approved this ad's setup?* It records the
+ * four gate verbs (`submit`/`approve`/`reject`/`revise`), which are
+ * pre-conditions on editability and readiness, and nothing else.
+ *
+ * *Who authorized this spend?* is a different question with a different,
+ * single answer: the external-action decision log
+ * (`external_action_decisions`, written by the coordinator's authorize/deny
+ * paths against the `paid_launch` action that `adLaunches.externalActionId`
+ * points at). `performLaunch` used to append a synthetic `approved → launched`
+ * row here too, which read like a spend authorization but was fabricated — the
+ * transition never happened as a gate move and the actor was reconstructed
+ * with `human: false`. It is gone; do not reintroduce a launch/authorization
+ * verb into this table.
+ */
+export function recordSetupGateDecision(
   db: Db,
   launch: { id: string; workspaceId: string },
   actor: DraftActor,
-  action: AdLaunchDecisionAction,
+  action: AdLaunchAction,
   fromState: AdLaunchStatus,
   toState: AdLaunchStatus,
 ): void {
@@ -227,7 +244,13 @@ export function logLaunchDecision(
     .run();
 }
 
-export function listLaunchDecisions(db: Db, launchId: string): AdLaunchDecision[] {
+/**
+ * Read the setup-approval trail, oldest first. Rows written before Sprint 54
+ * may still carry the retired `launch` verb with a synthetic
+ * `approved → launched` transition; they are history and are surfaced as such,
+ * never as an answer to who authorized spend.
+ */
+export function listSetupGateDecisions(db: Db, launchId: string): AdLaunchDecision[] {
   return db
     .select()
     .from(adLaunchDecisions)
@@ -242,6 +265,38 @@ export function listLaunchDecisions(db: Db, launchId: string): AdLaunchDecision[
     }));
 }
 
+/**
+ * Where each setup-gate verb leaves the launch, or `undefined` when it does not
+ * apply. Sprint 54 Task 4 replaced `adLaunchTransitionTo` — a second bespoke
+ * state machine exported from contracts beside the canonical `transitionTo` —
+ * with these four preconditions, stated where the rest of the launch's business
+ * logic already lives. The only rule with reach beyond this function is
+ * editability (`isAdLaunchEditable`), which the PATCH route enforces too.
+ */
+export function nextGateState(
+  status: AdLaunchStatus,
+  action: AdLaunchAction,
+): AdLaunchStatus | undefined {
+  switch (action) {
+    // Hand an editable draft over for review; it stops being editable.
+    case "submit":
+      return isAdLaunchEditable(status) ? "pending_review" : undefined;
+    case "approve":
+      return status === "pending_review" ? "approved" : undefined;
+    case "reject":
+      return status === "pending_review" ? "rejected" : undefined;
+    // The door back to editable, from the three states the gate can park a
+    // launch in. Stated as an allow-list rather than "anything that is not
+    // launched or already editable": the two agree across today's five
+    // statuses, but the negative form would make `revise` legal from a sixth
+    // the day it is added. Reopening a launch for editing is not a default.
+    case "revise":
+      return status === "pending_review" || status === "rejected" || status === "approved"
+        ? "draft"
+        : undefined;
+  }
+}
+
 /** Apply a gate action; throws InvalidLaunchTransitionError when illegal. */
 export function applyLaunchAction(
   db: Db,
@@ -249,13 +304,13 @@ export function applyLaunchAction(
   action: AdLaunchAction,
   actor: DraftActor,
 ): AdLaunch {
-  const toState = adLaunchTransitionTo(launch.status, action);
+  const toState = nextGateState(launch.status, action);
   if (!toState) throw new InvalidLaunchTransitionError(launch.status, action);
   db.update(adLaunches)
     .set({ status: toState, updatedAt: Date.now() })
     .where(eq(adLaunches.id, launch.id))
     .run();
-  logLaunchDecision(db, launch, actor, action, launch.status, toState);
+  recordSetupGateDecision(db, launch, actor, action, launch.status, toState);
   return { ...launch, status: toState };
 }
 
@@ -360,6 +415,13 @@ function persist(db: Db, launchId: string, set: Partial<AdLaunchRow>): void {
  * then activate the campaign. Each external id is persisted as it lands, so
  * a failed launch keeps its progress and a retry resumes instead of
  * duplicating objects. Adapter failures set lastError and rethrow.
+ *
+ * It takes no actor (Sprint 54 Task 2). It used to, purely to attribute a
+ * synthetic `approved → launched` row in the setup-approval trail — an actor
+ * the caller had to reconstruct as non-human because the persisted proposer
+ * does not record humanity. Who authorized this spend is answered by the
+ * external-action decision log against `launch.externalActionId`, so there is
+ * nothing here left to attribute.
  */
 export async function performLaunch(
   db: Db,
@@ -367,7 +429,6 @@ export async function performLaunch(
   launch: AdLaunch,
   externalAccountId: string,
   creative: LaunchCreativeFields,
-  actor: DraftActor,
   /** The creative draft's rendered image URL (Sprint 41 Part 5), if any. */
   imageUrl?: string | null,
 ): Promise<AdLaunch> {
@@ -445,7 +506,9 @@ export async function performLaunch(
     adCampaignId,
     lastError: null,
   });
-  logLaunchDecision(db, launch, actor, "launch", "approved", "launched");
+  // No decision row is written here. The launch record itself carries "it
+  // launched" (`status`, `launchedAt`, `externalActionId`), and the action it
+  // links to carries who authorized the spend.
   return getLaunch(db, launch.workspaceId, launch.id)!;
 }
 
