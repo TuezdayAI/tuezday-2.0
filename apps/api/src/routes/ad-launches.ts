@@ -24,7 +24,7 @@ import {
   getLaunchWithContext,
   isSpending,
   InvalidLaunchTransitionError,
-  listLaunchDecisions,
+  listSetupGateDecisions,
   listLaunches,
   listSpendingLaunches,
   recordLaunchError,
@@ -211,7 +211,9 @@ export function registerAdLaunchRoutes(
       if (!workspaceOr404(db, request.params.id, reply)) return reply;
       const launch = getLaunchWithContext(db, request.params.id, request.params.launchId);
       if (!launch) return reply.status(404).send({ error: "launch_not_found" });
-      return { ...launch, decisions: listLaunchDecisions(db, launch.id) };
+      // The setup-approval trail ("who approved this ad's setup?"). Spend
+      // authorization lives on the linked external action, not here.
+      return { ...launch, decisions: listSetupGateDecisions(db, launch.id) };
     },
   );
 

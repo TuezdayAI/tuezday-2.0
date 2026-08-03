@@ -3984,7 +3984,19 @@ export type AdLaunchStatus = (typeof AD_LAUNCH_STATUSES)[number];
 export const AD_LAUNCH_ACTIONS = ["submit", "approve", "reject", "revise"] as const;
 export type AdLaunchAction = (typeof AD_LAUNCH_ACTIONS)[number];
 
-/** Decision-log actions: the machine moves plus the launch trigger itself. */
+/**
+ * What the setup-approval trail can contain when *read*. Writers emit only
+ * `AD_LAUNCH_ACTIONS` — `"launch"` is **retired** (Sprint 54 Task 2).
+ *
+ * It is kept in the read vocabulary because rows carrying it already exist:
+ * until Sprint 54, `performLaunch` appended a synthetic `approved → launched`
+ * row that looked like a spend authorization but was fabricated (the
+ * transition was never a gate move, and the actor was reconstructed with
+ * `human: false`). Those rows are history and must stay describable — dropping
+ * the verb here would leave the contract unable to parse data that exists.
+ * Nothing writes it any more; spend authorization lives solely in
+ * `external_action_decisions`.
+ */
 export const AD_LAUNCH_DECISION_ACTIONS = [...AD_LAUNCH_ACTIONS, "launch"] as const;
 export type AdLaunchDecisionAction = (typeof AD_LAUNCH_DECISION_ACTIONS)[number];
 

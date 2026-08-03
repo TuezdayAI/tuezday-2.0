@@ -662,10 +662,17 @@ describe("ads execution API (Sprint 20)", () => {
       expect(state.statusFlips).toEqual([{ campaignId: "cmp_1", status: "ACTIVE" }]);
       expect(state.calls[state.calls.length - 1]).toBe("POST /v23.0/cmp_1");
 
-      // The decision log records who pulled the trigger.
+      // The setup-approval trail records who approved this ad's setup — and
+      // only that. It used to append a synthetic `approved -> launched`
+      // "launch" row that looked like a spend authorization but was fabricated
+      // (Sprint 54 Task 2). "Who authorized this spend?" is answered by the
+      // external-action log alone; the launch links to it.
       const detail = await getLaunch(id);
       const actions = detail.decisions.map((d: { action: string }) => d.action);
-      expect(actions).toEqual(["submit", "approve", "launch"]);
+      expect(actions).toEqual(["submit", "approve"]);
+      expect(detail.status).toBe("launched");
+      expect(detail.launchedAt).toBeTruthy();
+      expect(detail.externalActionId).toBeTruthy();
 
       // The event fired.
       expect(received.filter((h) => h.eventType === "ad.launched")).toHaveLength(1);

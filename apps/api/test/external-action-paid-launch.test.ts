@@ -262,13 +262,45 @@ describe("external-action paid launch boundary", () => {
     expect(launch.decisions.map((d: { action: string }) => d.action)).toEqual([
       "submit",
       "approve",
-      "launch",
     ]);
 
     expect((await authorize(submission.action.id)).statusCode).toBe(409);
     const again = await act(id, "launch");
     expect(again.statusCode).toBe(409);
     expect(again.json().error).toBe("already_launched");
+  });
+
+  // Sprint 54 Task 2 — the two logs answer different questions, and only one of
+  // them answers the money question. `ad_launch_decisions` is the setup-approval
+  // trail ("who approved this ad's setup?"); `external_action_decisions` is the
+  // spend-authorization record ("who authorized this spend?"). What was deleted
+  // is `performLaunch`'s synthetic `approved -> launched` row, which claimed the
+  // second answer while carrying a fabricated transition and `human: false`.
+  it("records the spend authorization only in the external-action log", async () => {
+    const id = await approvedLaunch();
+    const queued = await act(id, "launch");
+    const actionId = queued.json().action.id;
+    expect((await authorize(actionId)).json().action.status).toBe("succeeded");
+
+    const launch = await getLaunch(id);
+    // The setup trail stops at the gate. No synthetic launch row.
+    expect(launch.decisions.map((d: { action: string }) => d.action)).toEqual([
+      "submit",
+      "approve",
+    ]);
+    expect(launch.decisions.some((d: { toState: string }) => d.toState === "launched")).toBe(false);
+
+    // Exactly one authorization, against the real action, by a real person.
+    const authorizations = decisionRows().filter((r) => r.decision === "authorize");
+    expect(authorizations).toHaveLength(1);
+    expect(authorizations[0]).toMatchObject({ actionId, actorHuman: true });
+    expect(authorizations[0]!.actorUserId).toBeTruthy();
+
+    // Nothing user-facing lost information: the launch record still carries
+    // "it launched" on its own, and links to the action that authorized it.
+    expect(launch.status).toBe("launched");
+    expect(launch.launchedAt).toBeTruthy();
+    expect(launch.externalActionId).toBe(actionId);
   });
 
   it("marks the queued launch stale when the creative changes", async () => {

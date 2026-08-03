@@ -1297,10 +1297,6 @@ export function paidLaunchActionAdapter(
           launch,
           payload.externalAccountId,
           payload.creative,
-          // Rebuilt from the persisted proposer, which does not record humanity
-          // (Sprint 52). performLaunch uses this for launch-decision attribution
-          // only — it never approves a draft — so it fails closed as non-human.
-          { userId: action.proposedBy.userId, label: action.proposedBy.label, human: false },
           payload.imageUrl,
         );
         await emitEvent(db, fetcher, action.workspaceId, "ad.launched", {
