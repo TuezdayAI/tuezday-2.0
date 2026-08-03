@@ -319,24 +319,61 @@ describe("external-action paid launch boundary", () => {
     expect(state.campaignPosts).toBe(0);
   });
 
-  it("denies without touching the launch's approval history", async () => {
+  // Sprint 54 Task 5 — this test used to be named "denies without touching the
+  // launch's approval history", and it asserted only that the two logs stayed
+  // independent: the setup trail and the launch status unchanged by a denial.
+  // Written that way, independence looked like the *defect* — two logs, two
+  // rival answers to "who authorized this spend". Under D4a' it is the
+  // intended shape, because the logs answer different questions, so the
+  // guarantee is now stated positively and from both sides: the refusal is
+  // recorded exactly once, in the log that owns the money question, and the
+  // setup trail neither gains a row nor loses its approval.
+  it("records a spend refusal once, in the spend log, and leaves setup approval standing", async () => {
     const id = await approvedLaunch();
     const queued = await act(id, "launch");
+    const actionId = queued.json().action.id;
     const denied = await app.inject({
       method: "POST",
-      url: `/workspaces/${workspaceId}/external-actions/${queued.json().action.id}/deny`,
+      url: `/workspaces/${workspaceId}/external-actions/${actionId}/deny`,
       payload: { reason: "Budget freeze" },
     });
     expect(denied.statusCode).toBe(200);
     expect(denied.json().action.status).toBe("cancelled");
+
+    // Exactly one refusal, against the real action, by a real person, with the
+    // founder's reason on the record. This is the whole answer to "who refused
+    // this spend?" — there is no second place to look.
+    const denials = decisionRows().filter((r) => r.decision === "deny");
+    expect(denials).toHaveLength(1);
+    expect(denials[0]).toMatchObject({ actionId, actorHuman: true });
+    expect(denials[0]!.actorUserId).toBeTruthy();
+    expect(denials[0]!.reason).toContain("Budget freeze");
+
+    // The setup trail answers a different question — "who approved this ad's
+    // setup?" — so a spend refusal writes nothing into it, and does not revoke
+    // the setup approval that is already there.
     const launch = await getLaunch(id);
     expect(launch.status).toBe("approved");
     expect(launch.decisions.map((d: { action: string }) => d.action)).toEqual(["submit", "approve"]);
-    // The launch can be proposed again after the denial.
-    expect((await act(id, "launch")).statusCode).toBe(202);
+
+    // Refusing the spend does not condemn the ad: it can be put up again, as a
+    // new action. The refusal stays exactly one row — reproposing neither
+    // erases it nor duplicates it.
+    const again = await act(id, "launch");
+    expect(again.statusCode).toBe(202);
+    expect(again.json().action.id).not.toBe(actionId);
+    expect(decisionRows().filter((r) => r.decision === "deny")).toHaveLength(1);
   });
 
-  it("keeps the kill switch as an autonomous guardrail", async () => {
+  // Sprint 54 Task 5 — still true, still the real path, but it now proves more
+  // than it used to. Before Task 3 an autonomous proposal went
+  // `proposed -> authorized -> dispatching`, and only the dispatch-time `guard`
+  // caught the kill switch. Now `guardAtProposal` catches it first, so
+  // `authorizedAt` stays null: autonomy never gets to the point of claiming an
+  // authorization for spend the kill switch had already refused. The dispatch
+  // guard remains the backstop, pinned separately by "still catches a cap
+  // breached between proposal and dispatch".
+  it("blocks a kill-switched launch before autonomy can authorize it", async () => {
     await setAutonomous();
     await app.inject({
       method: "PUT",
@@ -348,6 +385,8 @@ describe("external-action paid launch boundary", () => {
     expect(res.statusCode).toBe(201);
     expect(res.json().action.status).toBe("blocked");
     expect(res.json().action.blocker.code).toBe("kill_switch_on");
+    expect(res.json().action.authorizedAt).toBeNull();
+    expect(decisionRows()).toHaveLength(0);
     expect(state.campaignPosts).toBe(0);
     expect((await getLaunch(id)).status).toBe("approved");
   });
