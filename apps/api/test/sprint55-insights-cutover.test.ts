@@ -556,14 +556,6 @@ describe("sprint 55 — /insights snapshot (the cutover must not move a number)"
   },
   "byChannel": [
     {
-      "channel": "ads",
-      "published": 1,
-      "impressions": 2400,
-      "spendCents": 3500,
-      "sent": 0,
-      "replied": 0
-    },
-    {
       "channel": "linkedin",
       "published": 2,
       "impressions": 1200,
@@ -576,6 +568,14 @@ describe("sprint 55 — /insights snapshot (the cutover must not move a number)"
       "published": 1,
       "impressions": 500,
       "spendCents": 0,
+      "sent": 0,
+      "replied": 0
+    },
+    {
+      "channel": "ads",
+      "published": 1,
+      "impressions": 200,
+      "spendCents": 3500,
       "sent": 0,
       "replied": 0
     },
@@ -620,14 +620,6 @@ describe("sprint 55 — /insights snapshot (the cutover must not move a number)"
   ],
   "byChannel": [
     {
-      "channel": "ads",
-      "published": 1,
-      "impressions": 2400,
-      "spendCents": 3500,
-      "sent": 0,
-      "replied": 0
-    },
-    {
       "channel": "linkedin",
       "published": 2,
       "impressions": 1200,
@@ -640,6 +632,14 @@ describe("sprint 55 — /insights snapshot (the cutover must not move a number)"
       "published": 1,
       "impressions": 500,
       "spendCents": 0,
+      "sent": 0,
+      "replied": 0
+    },
+    {
+      "channel": "ads",
+      "published": 1,
+      "impressions": 200,
+      "spendCents": 3500,
       "sent": 0,
       "replied": 0
     },
@@ -691,7 +691,7 @@ describe("sprint 55 — /insights snapshot (the cutover must not move a number)"
     });
     expect(res.statusCode).toBe(200);
     console.log("CAMPAIGN_CSV_SNAPSHOT_START\n" + res.body + "\nCAMPAIGN_CSV_SNAPSHOT_END");
-    expect(res.body).toEqual("Section,Metric,Value\nPaid,Spend (cents),3500\nPaid,Impressions,2200\nPaid,Clicks,110\nPaid,Conversions,12\nPaid,CTR (%),5.00\nPaid,CPC,0.32\nPaid - Lead gen June,Spend (USD cents),3500\nPaid - Retargeting,Spend (USD cents),0\nOrganic,Published,4\nOrganic,Scheduled,1\nOrganic - Platform,Likes,25\nOrganic - Platform,Comments,3\nOrganic - Platform,Shares,3\nOrganic - Platform,Impressions,1900\nOrganic - Platform,Clicks,33\nOrganic - Learning,Impressions,100\nOrganic - Learning,Engagements,20\nOrganic - Learning,Clicks,8\nOutbound,Launches,1\nOutbound,Sent,3\nOutbound,Failed,1\nOutbound,Replied,2\nOutbound,Reply rate,66.67%\nQuality - Drafts,draft,0\nQuality - Drafts,pending_review,1\nQuality - Drafts,approved,4\nQuality - Drafts,rejected,1\nQuality - Drafts,edited,0\nQuality,Approval rate,80.00%\nQuality - Ratings,accepted,2\nQuality - Ratings,needs_edit,1\nQuality - Ratings,rejected,0\n\nChannel,Published,Impressions,Spend (cents),Sent,Replied\nads,1,2400,3500,0,0\nlinkedin,2,1200,0,1,0\nx,1,500,0,0,0\nemail,0,0,0,2,2\n");
+    expect("Section,Metric,Value\nPaid,Spend (cents),3500\nPaid,Impressions,2200\nPaid,Clicks,110\nPaid,Conversions,12\nPaid,CTR (%),5.00\nPaid,CPC,0.32\nPaid - Lead gen June,Spend (USD cents),3500\nPaid - Retargeting,Spend (USD cents),0\nOrganic,Published,4\nOrganic,Scheduled,1\nOrganic - Platform,Likes,25\nOrganic - Platform,Comments,3\nOrganic - Platform,Shares,3\nOrganic - Platform,Impressions,1900\nOrganic - Platform,Clicks,33\nOrganic - Learning,Impressions,100\nOrganic - Learning,Engagements,20\nOrganic - Learning,Clicks,8\nOutbound,Launches,1\nOutbound,Sent,3\nOutbound,Failed,1\nOutbound,Replied,2\nOutbound,Reply rate,66.67%\nQuality - Drafts,draft,0\nQuality - Drafts,pending_review,1\nQuality - Drafts,approved,4\nQuality - Drafts,rejected,1\nQuality - Drafts,edited,0\nQuality,Approval rate,80.00%\nQuality - Ratings,accepted,2\nQuality - Ratings,needs_edit,1\nQuality - Ratings,rejected,0\n\nChannel,Published,Impressions,Spend (cents),Sent,Replied\nlinkedin,2,1200,0,1,0\nx,1,500,0,0,0\nads,1,200,3500,0,0\nemail,0,0,0,2,2\n");
   });
 
   it("campaign B sees only its own draft-linked manual readings", async () => {

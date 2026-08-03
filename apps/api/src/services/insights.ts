@@ -248,18 +248,14 @@ export function getCampaignInsights(db: Db, campaign: Campaign): CampaignInsight
     if (impressions) ensureChannel(pub.channel).impressions += impressions;
   }
 
-  // Paid by channel (ads channel).
-  //
-  // ⚠️ LEGACY MIXING — the one sanctioned escape hatch from spec §2.3's rule
-  // that cumulative and periodic values are never summed together. The
-  // `impressions` cell for the "ads" channel adds an all-time sum of periodic
-  // 1d paid buckets onto prorated cumulative organic snapshots. This
-  // faithfully reproduces the pre-Sprint-55 output (the Task 5 snapshot pins
-  // it); Task 5b removes it in its own commit, where the before/after is
-  // visible in isolation. Do not copy this pattern — use metricWindowKind.
+  // Paid by channel (ads channel). Spend only — paid IMPRESSIONS are an
+  // all-time sum of periodic 1d buckets and may not be added to the organic
+  // cumulative impressions in this column (spec §2.3; metricWindowKind).
+  // They remain fully visible in the `paid` pane, under their own semantics.
+  // Sprint 55b(2) removed the last sanctioned mixing; there is no escape
+  // hatch left anywhere.
   if (adMetrics) {
     ensureChannel("ads").spendCents += adMetrics.totals.spendCents;
-    ensureChannel("ads").impressions += adMetrics.totals.impressions;
   }
 
   // Outbound by channel
