@@ -737,3 +737,41 @@ describe("sprint 55 — insights reads one table", () => {
     expect(body).toContain("metrics");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Acceptance: "a new metric source is one writer, not a new schema."
+// A hypothetical new integration records facts through the same recordMetrics
+// call every existing writer uses — no new table, no migration, no insights
+// change — and its numbers flow to /insights immediately.
+// ---------------------------------------------------------------------------
+import { recordMetrics } from "../src/services/metrics";
+
+describe("sprint 55 — a new metric source is one writer", () => {
+  it("facts recorded by a brand-new source flow to /insights with no schema change", async () => {
+    // Pretend a new YouTube integration captured a publication's cumulative
+    // 24h numbers. It is "one writer": a single recordMetrics call.
+    const written = recordMetrics(db, workspaceId, [
+      {
+        subjectType: "publication",
+        subjectId: "pub-2",
+        metricKey: "likes",
+        value: 1000,
+        window: "24h",
+        periodStart: T_PUBLISHED,
+        source: "captured",
+        capturedAt: T_CAPTURED_24H,
+      },
+    ]);
+    expect(written).toBe(1);
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/workspaces/${workspaceId}/campaigns/${CAMPAIGN_A}/insights`,
+    });
+    expect(res.statusCode).toBe(200);
+    // pub-2 had likes 4 at 24h in the fixture; the new source's 1000 upserts
+    // that grain, and the platform totals reflect it with zero schema changes.
+    const likes = res.json().organic.platform.likes;
+    expect(likes).toBeGreaterThanOrEqual(1000);
+  });
+});

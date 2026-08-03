@@ -463,6 +463,37 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
 - **Trigger to revisit:** When someone asks "who authorized this?" and the link-out is friction.
 - **Origin:** Sprint 54 Task 6.
 
+### 43. The legacy metric stores remain after the fact-table cutover — **deferred from Sprint 55**
+- **What we shipped (Sprint 55):** One `metrics` fact table; all three legacy stores dual-write into
+  it and `/insights` reads only it. The legacy tables keep their writers (rollback safety) and stay
+  in place.
+- **The better version:** Retire the legacy writers and drop `publication_metrics` and
+  `ad_campaign_metrics` after a release of parity. **`engagement_metrics` is NOT droppable**: an
+  all-null row carries no metric values at all — it exists for its `description`/`notes`, which feed
+  the learning-synthesis prompt verbatim. Dropping it requires first modelling that prose.
+- **Trigger to revisit:** One release with the dual-write live and no parity gaps reported.
+- **Origin:** Sprint 55 (spec §2.4).
+
+### 44. Platform totals are latest-known-cumulative, not per-window — **deferred from Sprint 55**
+- **What we shipped (Sprint 55b):** `/insights` platform totals sum each publication's latest
+  cumulative snapshot (7d when present, else 24h) — a coherent observed-to-date figure, but its
+  per-post observation age varies, so it drifts upward as posts age past 7d. Documented in code.
+- **The better version:** Report 24h and 7d figures separately so the founder can see early
+  velocity vs. settled totals. Changes `campaignInsightsSchema` (a contracts change) and every
+  consumer including the public API and MCP.
+- **Trigger to revisit:** When someone asks why an old post's impressions "grew" without new traffic.
+- **Origin:** Sprint 55 Task 5b(3).
+
+### 45. `engagements` vs its components are never reconciled — **deferred from Sprint 55**
+- **What we shipped (Sprint 55):** Manual entry records `engagements`; platform capture records
+  `likes`/`comments`/`shares`. Each source writes what it observed; nothing derives one from the
+  other (deriving would invent a number no source reported).
+- **The better version:** A read-path derivation in exactly one place (insights), summing components
+  where `engagements` is absent, clearly labelled as derived.
+- **Trigger to revisit:** When a founder asks why the learning pane's engagements and the platform
+  pane's likes+comments+shares don't add up.
+- **Origin:** Sprint 55 spec §2.2.
+
 ---
 
 ## Done (upgraded)

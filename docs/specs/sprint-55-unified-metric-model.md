@@ -4,7 +4,10 @@
 > **Closes:** Atlas conflict #8 (four metric stores)
 > **PRD:** `prd-agentic-platform.md` §4, Sprint 55
 > **Size:** L · **Risk:** Medium (migration + every insights reader moves)
-> **Status:** Plan awaiting founder approval — no code written yet.
+> **Status:** Delivered on `sprint-55-unified-metric-model` — Tasks 1–7 complete, including the
+> Task 5b numeric corrections (founder decision: fix the numbers, surface what changed).
+> `npm test` and `npm run typecheck` green. Awaiting founder review and merge (after 52, 53, 54).
+> See §6 for what actually happened, task by task.
 
 ---
 
@@ -225,12 +228,19 @@ never conflated with it.
 
 ## 4. Acceptance criteria
 
-- [ ] `/insights` reads one table.
-- [ ] A new metric source is one writer, not a new schema — proven by a test.
-- [ ] Cumulative and periodic values cannot be summed together by accident.
-- [ ] Backfill is idempotent and preserves each store's real time semantics.
-- [ ] Legacy tables still readable; nothing dropped this sprint.
-- [ ] `npm test` and `npm run typecheck` pass.
+- [x] `/insights` reads one table — enforced by a source-scan guard (insights.ts references none of
+      the three legacy stores; the paid read is fact-backed). The one scoped exception is `replies`,
+      derived live from `inboxItems` by design (§2.2).
+- [x] A new metric source is one writer, not a new schema — proven by an executable test: a
+      fictitious new source records facts through `recordMetrics` and they flow to `/insights` with
+      zero schema changes.
+- [x] Cumulative and periodic values cannot be summed together by accident — `metricWindowKind`
+      guards every reader, and Task 5b(2) removed the last sanctioned mixing. No escape hatch
+      remains.
+- [x] Backfill is idempotent and preserves each store's real time semantics — including the
+      insert-if-absent race guard (a stale legacy value never clobbers a fresher dual-written one).
+- [x] Legacy tables still readable; nothing dropped this sprint. Writers untouched (dual-write).
+- [x] `npm test` and `npm run typecheck` pass (205 files / 2211 tests at push).
 
 ---
 
@@ -251,6 +261,46 @@ never conflated with it.
 ---
 
 ## 6. Progress log
+
+- **2026-08-03 — Tasks 2–4** (`44e2984`, `207e473`, `3c5611a`) — implemented by the controller
+  directly (repeated server-side API failures killed four agent dispatches; nothing was lost).
+  Vocabulary + classifier + `metrics` table (migration `0063`); dual-write in all three legacy
+  writers; boot-time insert-if-absent backfill with the race guard proven by test. The pre-existing
+  `METRIC_WINDOWS` (the capture path's `["24h","7d"]`) was renamed `PUBLICATION_METRIC_WINDOWS` so
+  the unified vocabulary owns the general name and a publication row can never claim a window the
+  capture path does not produce.
+
+- **2026-08-03 — Task 5** (`140946c`) — the cutover, pinned by a byte-for-byte snapshot (campaign +
+  workspace JSON and the CSV export) captured against the legacy implementation and passing
+  unchanged after the reads moved. The agent that started this task found a real gap before writing
+  code: campaign-scoped `learningTotals` joins the legacy store through drafts, a linkage
+  channel-subject facts do not carry. Resolved by activating the reserved `campaign` subject type —
+  a draft-linked manual reading now also records a campaign-subject copy, resolved at write/backfill
+  time (the observation was made while the draft belonged to that campaign; later reassignment does
+  not rewrite history). `getCampaignAdMetrics` is fact-backed (moving the campaign overview and
+  ad-creatives readers too); `getAdsReport` deliberately stays legacy; `learningStats.metricsCount`
+  stays a legacy row-count (it counts founder entries, and all-null prose rows produce no facts).
+  Known edge recorded: an all-null 7d snapshot no longer suppresses real 24h data.
+
+- **2026-08-03 — Task 5b** (`c4f4318`, `d615798`, `b0e9cec`) — the founder-approved numeric
+  corrections, one commit each with before/after in the message:
+  1. **Actual-channel attribution.** Organic impressions land on each publication's own channel
+     instead of a post-count proration. On the pinned fixture: linkedin 950→1200, x 475→500, ads
+     2675→2400; the column now sums exactly to the platform total (the ±1/channel rounding drift is
+     gone).
+  2. **The ads cell stops mixing.** The all-time paid impressions sum leaves the organic column
+     (ads 2400→200); paid impressions remain fully reported in the `paid` pane. The §2.3 escape
+     hatch is deleted — no sanctioned mixing exists anywhere.
+  3. **Latest-known-cumulative named.** The platform totals are each post's latest cumulative
+     snapshot (7d else 24h) — coherent, but the observation age varies per post and the figure
+     drifts upward as posts age past 7d. A per-window split changes the API shape → deferred.
+  4. **Point readings excluded on purpose.** Manual readings never enter the Channels column (point
+     may not be summed with cumulative); stated as a decision instead of an accident.
+  These changes reach the dashboard, both CSV exports, `GET /api/v1/insights` and the MCP
+  `fetch-insights` tool.
+
+- **2026-08-03 — Task 6** — the second acceptance criterion made executable: a new source records
+  through `recordMetrics` and its numbers flow to `/insights` with no schema change.
 
 - **2026-08-02 — Task 1 complete (verification only; no production code).** Eight assumptions
   checked against code. **Q8 answered YES:** `/insights` genuinely mixes incompatible semantics in
