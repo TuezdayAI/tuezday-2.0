@@ -538,6 +538,195 @@ export const discoveredItems = sqliteTable(
 
 export type DiscoveredItemRow = typeof discoveredItems.$inferSelect;
 
+// ---------------------------------------------------------------------------
+// Canonical stories & source occurrences (Sprint 60, design §8.1–8.4).
+// Shadow intelligence layer beside discovered-items triage: immutable
+// occurrences resolve by exact identity keys into canonical stories with
+// reversible membership and versioned enrichment.
+// ---------------------------------------------------------------------------
+
+export const discoverySourceOccurrences = sqliteTable(
+  "discovery_source_occurrences",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    // Deliberately no FK: occurrences are the immutable historical record and
+    // must survive source deletion; the type/name snapshot below stays valid.
+    sourceId: text("source_id").notNull(),
+    sourceType: text("source_type").notNull(),
+    sourceName: text("source_name").notNull(),
+    // discovery_jobs row of the fetch attempt (no FK — jobs cascade with their
+    // source). Null for rows synthesized by the backfill.
+    fetchRunId: text("fetch_run_id"),
+    providerExternalId: text("provider_external_id").notNull(),
+    title: text("title").notNull(),
+    url: text("url").notNull(),
+    excerpt: text("excerpt").notNull().default(""),
+    // Adapters don't emit authors yet; the column exists so future adapters
+    // need no migration.
+    author: text("author"),
+    providerPublishedAt: integer("provider_published_at"),
+    observedAt: integer("observed_at").notNull(),
+    // hashUrl / hashContent from services/discovery.ts — same normalizers as
+    // discovered_items so the shadow layer and Sprint 45 dedupe agree.
+    normalizedUrlKey: text("normalized_url_key"),
+    contentFingerprint: text("content_fingerprint").notNull(),
+    // Bounded provider snapshot. Never holds fields needed for joins,
+    // filtering, or uniqueness (TAP-19 invariant).
+    rawMetadataJson: text("raw_metadata_json").notNull().default("{}"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("discovery_source_occurrences_source_external").on(
+      t.sourceId,
+      t.providerExternalId,
+    ),
+    index("discovery_source_occurrences_workspace_observed").on(
+      t.workspaceId,
+      t.observedAt,
+    ),
+  ],
+);
+
+export type DiscoverySourceOccurrenceRow =
+  typeof discoverySourceOccurrences.$inferSelect;
+
+export const canonicalExternalStories = sqliteTable(
+  "canonical_external_stories",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("active"),
+    // Founding occurrence's URL/title/fingerprint — stable; later variants
+    // live in enrichment payloads, not here.
+    canonicalUrl: text("canonical_url").notNull(),
+    title: text("title").notNull(),
+    contentFingerprint: text("content_fingerprint").notNull(),
+    firstObservedAt: integer("first_observed_at").notNull(),
+    lastObservedAt: integer("last_observed_at").notNull(),
+    currentEnrichmentVersion: integer("current_enrichment_version")
+      .notNull()
+      .default(0),
+    // Set when this story was archived by a manual merge (self-reference; no
+    // FK to keep the initial CREATE simple and the pointer historical).
+    mergedIntoStoryId: text("merged_into_story_id"),
+    archivedAt: integer("archived_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    index("canonical_stories_workspace_status").on(
+      t.workspaceId,
+      t.status,
+      t.lastObservedAt,
+    ),
+  ],
+);
+
+export type CanonicalExternalStoryRow =
+  typeof canonicalExternalStories.$inferSelect;
+
+// Exact identity child table (design §8.2): several keys may identify one
+// story; a key belongs to exactly one story per workspace.
+export const canonicalStoryKeys = sqliteTable(
+  "canonical_story_keys",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    storyId: text("story_id")
+      .notNull()
+      .references(() => canonicalExternalStories.id, { onDelete: "cascade" }),
+    keyKind: text("key_kind").notNull(),
+    keyHash: text("key_hash").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("canonical_story_keys_identity").on(
+      t.workspaceId,
+      t.keyKind,
+      t.keyHash,
+    ),
+    index("canonical_story_keys_story").on(t.storyId),
+  ],
+);
+
+export type CanonicalStoryKeyRow = typeof canonicalStoryKeys.$inferSelect;
+
+// Reversible membership (design §8.3). Rows are never deleted: a merge or
+// split closes the active row (detachedAt) and writes a new one.
+export const storyOccurrences = sqliteTable(
+  "story_occurrences",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    storyId: text("story_id")
+      .notNull()
+      .references(() => canonicalExternalStories.id, { onDelete: "cascade" }),
+    occurrenceId: text("occurrence_id")
+      .notNull()
+      .references(() => discoverySourceOccurrences.id, { onDelete: "cascade" }),
+    relationshipKind: text("relationship_kind").notNull(),
+    confidence: integer("confidence").notNull(),
+    matcherVersion: integer("matcher_version").notNull().default(1),
+    attachedAt: integer("attached_at").notNull(),
+    // Null = the system resolver; set for manual merge/split attaches.
+    attachedByUserId: text("attached_by_user_id"),
+    attachReason: text("attach_reason"),
+    detachedAt: integer("detached_at"),
+    detachedByUserId: text("detached_by_user_id"),
+    detachReason: text("detach_reason"),
+  },
+  (t) => [
+    // Exactly one active membership per occurrence.
+    uniqueIndex("story_occurrences_one_active")
+      .on(t.occurrenceId)
+      .where(sql`${t.detachedAt} IS NULL`),
+    index("story_occurrences_story").on(t.storyId, t.detachedAt),
+  ],
+);
+
+export type StoryOccurrenceRow = typeof storyOccurrences.$inferSelect;
+
+// Immutable, versioned enrichment output (design §8.4). storyFingerprint
+// covers the active membership's content, so unchanged membership re-runs
+// are no-ops and membership changes append rather than overwrite.
+export const storyEnrichments = sqliteTable(
+  "story_enrichments",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    storyId: text("story_id")
+      .notNull()
+      .references(() => canonicalExternalStories.id, { onDelete: "cascade" }),
+    storyFingerprint: text("story_fingerprint").notNull(),
+    enricherVersion: integer("enricher_version").notNull(),
+    // Distinct sources among active members — a real column because quality
+    // gates filter on it; the JSON payload is display/snapshot data only.
+    corroborationCount: integer("corroboration_count").notNull(),
+    payloadJson: text("payload_json").notNull().default("{}"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("story_enrichments_identity").on(
+      t.storyId,
+      t.storyFingerprint,
+      t.enricherVersion,
+    ),
+  ],
+);
+
+export type StoryEnrichmentRow = typeof storyEnrichments.$inferSelect;
+
 export const campaigns = sqliteTable("campaigns", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id")

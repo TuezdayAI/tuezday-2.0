@@ -442,6 +442,13 @@
       "when": 1785673467843,
       "tag": "0062_sprint_53_derived_signal_routing",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "6",
+      "when": 1785772217648,
+      "tag": "0063_sprint_60_canonical_stories",
+      "breakpoints": true
     }
   ]
 }

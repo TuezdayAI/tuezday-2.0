@@ -1,4 +1,6 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
+import { hashContent, hashUrl } from "./discovery-hashing";
+import { recordOccurrenceAndResolve } from "./canonical-stories";
 import {
   and,
   asc,
@@ -880,41 +882,9 @@ export interface DiscoveryRunResult {
 // Cross-source dedup hashing (Sprint 45)
 // ---------------------------------------------------------------------------
 
-const TRACKING_PARAM = /^(utm_[^=]*|fbclid|gclid|ref)(=|$)/;
-
-function sha256(input: string): string {
-  return createHash("sha256").update(input).digest("hex");
-}
-
-/**
- * Hash of the normalized URL: protocol, `www.`, fragment, trailing slash and
- * known tracking params (`utm_*`, `fbclid`, `gclid`, `ref`) stripped. Null
- * when the item has no URL.
- */
-export function hashUrl(url: string): string | null {
-  const trimmed = url.trim().toLowerCase();
-  if (!trimmed) return null;
-  let u = trimmed.replace(/^https?:\/\//, "").replace(/^www\./, "");
-  const fragmentAt = u.indexOf("#");
-  if (fragmentAt !== -1) u = u.slice(0, fragmentAt);
-  const queryAt = u.indexOf("?");
-  let path = queryAt === -1 ? u : u.slice(0, queryAt);
-  path = path.replace(/\/+$/, "");
-  const params =
-    queryAt === -1
-      ? []
-      : u
-          .slice(queryAt + 1)
-          .split("&")
-          .filter((p) => p && !TRACKING_PARAM.test(p));
-  return sha256(params.length > 0 ? `${path}?${params.join("&")}` : path);
-}
-
-/** Hash of the whitespace/case-normalized title + first 300 chars of summary. */
-export function hashContent(title: string, summary: string): string {
-  const normalize = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
-  return sha256(`${normalize(title)}\n${normalize(summary.slice(0, 300))}`);
-}
+// Sprint 60: the normalizers live in discovery-hashing.ts so the canonical
+// story layer shares them; re-exported here for existing consumers.
+export { hashContent, hashUrl } from "./discovery-hashing";
 
 /**
  * The oldest canonical (non-duplicate) workspace item sharing this URL or
@@ -1090,6 +1060,8 @@ function sourceClaimIsLive(
 
 export interface DiscoveryCheckpointHooks {
   afterOccurrenceInsert?(index: number): void;
+  /** Sprint 60: after the shadow canonical-story resolution for one item. */
+  afterStoryResolution?(index: number): void;
   afterCanonicalization?(): void;
   beforeCursorUpdate?(): void;
 }
@@ -1214,6 +1186,31 @@ export function persistDiscoveryPage(
           .returning({ id: discoveredItems.id })
           .get();
         hooks?.afterOccurrenceInsert?.(index);
+
+        // Sprint 60 shadow layer: record the immutable occurrence and resolve
+        // it into a canonical story in the same transaction. Runs for every
+        // item — including re-fetches and Sprint 45 duplicates — because
+        // repeated observation is corroboration, not noise; the occurrence
+        // unique key makes true re-deliveries a no-op.
+        recordOccurrenceAndResolve(tx, {
+          workspaceId: claim.workspaceId,
+          source: {
+            id: source.id,
+            type: currentSourceRow.type,
+            name: currentSourceRow.name,
+          },
+          fetchRunId: claim.id,
+          item: {
+            externalId: item.externalId,
+            title: item.title,
+            url: item.url,
+            summary: item.summary,
+            publishedAt: item.publishedAt,
+          },
+          observedAt: checkpointAt,
+        });
+        hooks?.afterStoryResolution?.(index);
+
         if (!insertedRow) continue;
 
         const canonical = findCanonicalItem(

@@ -275,17 +275,22 @@ describe("Sprint 53 migrations", () => {
     expect(afterSecond).toEqual(afterFirst);
   });
 
-  it("is registered in the drizzle journal as the next migration", () => {
+  it("is registered consistently in the drizzle journal", () => {
     const journal = JSON.parse(
       readFileSync(path.join(migrationsDir, "meta", "_journal.json"), "utf8"),
     ) as { entries: Array<{ idx: number; tag: string; version: string; breakpoints: boolean }> };
-    const last = journal.entries[journal.entries.length - 1]!;
+    // Later sprints append migrations, so find the entry by tag rather than
+    // asserting it is last (Sprint 60 relaxation).
+    const entry = journal.entries.find(
+      (e) => e.tag === SPRINT_53_MIGRATION.replace(/\.sql$/, ""),
+    )!;
 
-    expect(last.tag).toBe(SPRINT_53_MIGRATION.replace(/\.sql$/, ""));
-    expect(last.version).toBe("6");
-    expect(last.breakpoints).toBe(true);
-    expect(last.idx).toBe(journal.entries.length - 1);
-    // Every idx is unique and the tag's numeric prefix agrees with it.
+    expect(entry).toBeDefined();
+    expect(entry.version).toBe("6");
+    expect(entry.breakpoints).toBe(true);
+    // The tag's numeric prefix agrees with its idx.
+    expect(entry.tag.startsWith(String(entry.idx).padStart(4, "0"))).toBe(true);
+    // Every idx is unique.
     expect(new Set(journal.entries.map((e) => e.idx)).size).toBe(
       journal.entries.length,
     );

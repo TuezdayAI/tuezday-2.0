@@ -2577,6 +2577,164 @@ export type ResolveTrackedSocialAccountInput = z.infer<
 >;
 
 // ---------------------------------------------------------------------------
+// Canonical stories & source occurrences (Sprint 60, design §8.1–8.4)
+//
+// The durable intelligence layer behind discovery: immutable source
+// occurrences resolve — by exact identity keys only — into workspace-owned
+// canonical stories with reversible occurrence membership and versioned
+// enrichment. Runs in shadow beside discovered-items triage; `signals` stay
+// the manual-input seam.
+// ---------------------------------------------------------------------------
+
+export const STORY_STATUSES = ["active", "archived"] as const;
+export type StoryStatus = (typeof STORY_STATUSES)[number];
+
+// How an occurrence relates to its story. `redirect` is reserved: adapters do
+// not surface post-redirect final URLs yet, so nothing emits it in Sprint 60.
+export const STORY_OCCURRENCE_RELATIONSHIP_KINDS = [
+  "exact",
+  "redirect",
+  "provider",
+  "similarity",
+  "manual",
+] as const;
+export type StoryOccurrenceRelationshipKind =
+  (typeof STORY_OCCURRENCE_RELATIONSHIP_KINDS)[number];
+
+// Exact identity keys. Resolution priority: provider_id > normalized_url >
+// content_fingerprint. Conflicting keys never auto-merge stories.
+export const STORY_KEY_KINDS = [
+  "provider_id",
+  "normalized_url",
+  "content_fingerprint",
+] as const;
+export type StoryKeyKind = (typeof STORY_KEY_KINDS)[number];
+
+/** Exact-key resolver generation stamped on memberships it creates. */
+export const STORY_MATCHER_VERSION = 1;
+/** Deterministic (no-LLM) enricher generation. */
+export const STORY_ENRICHER_VERSION = 1;
+
+export const storyOccurrenceRelationshipSchema = z.object({
+  kind: z.enum(STORY_OCCURRENCE_RELATIONSHIP_KINDS),
+  confidence: z.number().int().min(0).max(100),
+  matcherVersion: z.number().int(),
+  attachedAt: z.number().int(),
+  /** Null when the system resolver attached it. */
+  attachedByUserId: z.string().uuid().nullable(),
+  attachReason: z.string().nullable(),
+  /** Set when the membership was closed by a merge or split; rows persist. */
+  detachedAt: z.number().int().nullable(),
+  detachedByUserId: z.string().uuid().nullable(),
+  detachReason: z.string().nullable(),
+});
+export type StoryOccurrenceRelationship = z.infer<
+  typeof storyOccurrenceRelationshipSchema
+>;
+
+export const storyOccurrenceSchema = z.object({
+  id: z.string().uuid(),
+  /** No FK — occurrences survive source deletion; the snapshot below stays. */
+  sourceId: z.string().uuid(),
+  sourceType: z.enum(DISCOVERY_SOURCE_TYPES),
+  sourceName: z.string(),
+  /** discovery_jobs row of the fetch attempt; null for backfilled rows. */
+  fetchRunId: z.string().uuid().nullable(),
+  providerExternalId: z.string(),
+  title: z.string(),
+  url: z.string(),
+  excerpt: z.string(),
+  author: z.string().nullable(),
+  providerPublishedAt: z.number().int().nullable(),
+  observedAt: z.number().int(),
+  relationship: storyOccurrenceRelationshipSchema,
+});
+export type StoryOccurrence = z.infer<typeof storyOccurrenceSchema>;
+
+export const canonicalStorySchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  status: z.enum(STORY_STATUSES),
+  canonicalUrl: z.string(),
+  title: z.string(),
+  firstObservedAt: z.number().int(),
+  lastObservedAt: z.number().int(),
+  currentEnrichmentVersion: z.number().int(),
+  /** Set when this story was archived by a manual merge. */
+  mergedIntoStoryId: z.string().uuid().nullable(),
+  /** Active memberships. */
+  occurrenceCount: z.number().int(),
+  /** Distinct sources among active memberships. */
+  corroborationCount: z.number().int(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type CanonicalStory = z.infer<typeof canonicalStorySchema>;
+
+export const storyEnrichmentPayloadSchema = z.object({
+  occurrenceCount: z.number().int(),
+  distinctSourceTypes: z.array(z.string()),
+  earliestObservedAt: z.number().int().nullable(),
+  latestObservedAt: z.number().int().nullable(),
+  titleVariants: z.array(z.string()).max(5),
+});
+export type StoryEnrichmentPayload = z.infer<
+  typeof storyEnrichmentPayloadSchema
+>;
+
+export const storyEnrichmentSchema = z.object({
+  id: z.string().uuid(),
+  storyId: z.string().uuid(),
+  storyFingerprint: z.string(),
+  enricherVersion: z.number().int(),
+  corroborationCount: z.number().int(),
+  payload: storyEnrichmentPayloadSchema,
+  createdAt: z.number().int(),
+});
+export type StoryEnrichment = z.infer<typeof storyEnrichmentSchema>;
+
+export const storyDetailSchema = z.object({
+  story: canonicalStorySchema,
+  /** Active memberships, oldest observation first. */
+  occurrences: z.array(storyOccurrenceSchema),
+  /** Closed memberships — merge/split history, never deleted. */
+  history: z.array(storyOccurrenceSchema),
+  /** Latest enrichment for the current membership fingerprint. */
+  enrichment: storyEnrichmentSchema.nullable(),
+});
+export type StoryDetail = z.infer<typeof storyDetailSchema>;
+
+export const listStoriesResponseSchema = z.object({
+  stories: z.array(canonicalStorySchema),
+  total: z.number().int(),
+});
+export type ListStoriesResponse = z.infer<typeof listStoriesResponseSchema>;
+
+export const updateStoryInputSchema = z.object({
+  status: z.enum(STORY_STATUSES),
+});
+export type UpdateStoryInput = z.infer<typeof updateStoryInputSchema>;
+
+export const mergeStoryInputSchema = z.object({
+  intoStoryId: z.string().uuid(),
+  reason: z.string().trim().min(1).max(500),
+});
+export type MergeStoryInput = z.infer<typeof mergeStoryInputSchema>;
+
+export const splitOccurrenceInputSchema = z.object({
+  reason: z.string().trim().min(1).max(500),
+});
+export type SplitOccurrenceInput = z.infer<typeof splitOccurrenceInputSchema>;
+
+export const storyBackfillResultSchema = z.object({
+  scanned: z.number().int(),
+  occurrencesCreated: z.number().int(),
+  storiesCreated: z.number().int(),
+  membershipsCreated: z.number().int(),
+});
+export type StoryBackfillResult = z.infer<typeof storyBackfillResultSchema>;
+
+// ---------------------------------------------------------------------------
 // Evidence corpus (RAG behind the Brain Gateway boundary)
 // ---------------------------------------------------------------------------
 
@@ -5496,6 +5654,11 @@ export const WORKSPACE_NAV: NavItem[] = [
     tone: "signal",
     icon: "discover",
     section: "grow",
+    children: [
+      { label: "Signal inbox", path: "/discovery", summary: "Triage discovered items", tone: "signal", icon: "discover" },
+      // Sprint 60: canonical stories — the shadow intelligence layer.
+      { label: "Stories", path: "/stories", summary: "Canonical stories across sources", tone: "signal", icon: "blog" },
+    ],
   },
   {
     label: "Audience",

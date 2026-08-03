@@ -5,8 +5,17 @@ describe("navEntryForPath", () => {
   it("resolves the workspace root to Home", () => {
     expect(navEntryForPath(WORKSPACE_NAV, "")).toMatchObject({ label: "Home", icon: "home" });
   });
-  it("resolves a group path to the group", () => {
-    expect(navEntryForPath(WORKSPACE_NAV, "/discovery")).toMatchObject({ label: "Discover" });
+  it("resolves a group path to its same-path child (child beats group)", () => {
+    // Sprint 60 gave Discover children; like "Campaign home" under Campaigns,
+    // the child sharing the group's path wins and carries parentLabel.
+    expect(navEntryForPath(WORKSPACE_NAV, "/discovery")).toMatchObject({
+      label: "Signal inbox",
+      parentLabel: "Discover",
+    });
+    expect(navEntryForPath(WORKSPACE_NAV, "/stories")).toMatchObject({
+      label: "Stories",
+      parentLabel: "Discover",
+    });
   });
   it("resolves Calendar as a primary surface", () => {
     expect(navEntryForPath(WORKSPACE_NAV, "/calendar")).toMatchObject({
