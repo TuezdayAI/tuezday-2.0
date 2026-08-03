@@ -260,7 +260,9 @@ describe("governed Meta budget changes", () => {
     });
     const blocked = await authorize(proposed.json().action.id);
     expect(blocked.json().action.status).toBe("blocked");
-    expect(blocked.json().action.blocker.code).toBe("kill_switch");
+    // One spelling across all three ad kinds (Sprint 54 Task 1) — the same
+    // `kill_switch_on` `checkSpendGuardrails` and every other service emits.
+    expect(blocked.json().action.blocker.code).toBe("kill_switch_on");
     expect(state.budgetUpdates).toEqual([]);
   });
 });

@@ -15,6 +15,8 @@ import { CampaignPlanForm } from "./campaign-plan-form";
 import styles from "../campaign-workspace.module.css";
 
 interface CampaignPlanHistoryProps {
+  workspaceId: string;
+  campaignId: string;
   revisions: CampaignPlanDetail[];
   currentPlanRevisionId: string | null;
   audiences: Audience[];
@@ -29,6 +31,8 @@ function timestamp(value: number | null): string {
 }
 
 export function CampaignPlanHistory({
+  workspaceId,
+  campaignId,
   revisions,
   currentPlanRevisionId,
   audiences,
@@ -69,6 +73,8 @@ export function CampaignPlanHistory({
             <span>Channel configuration is copied from the active revision.</span>
           </div>
           <CampaignPlanForm
+            workspaceId={workspaceId}
+            campaignId={campaignId}
             initial={current?.plan ?? null}
             audiences={audiences}
             busy={busy}

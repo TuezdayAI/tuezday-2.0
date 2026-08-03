@@ -36,7 +36,7 @@ import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { getAudienceDetail, loadPeople } from "./audiences";
 import { getSocialAutomationSettings, utcDayBounds } from "./automation";
 import { getBrain } from "./brain";
-import { composeResolveCampaign, getCampaign } from "./campaigns";
+import { getCampaign } from "./campaigns";
 import {
   deriveSendIdempotencyKey,
   prepareSendAction,
@@ -49,7 +49,7 @@ import {
 import { checkEmailRecipientSafety } from "./email-recipient-safety";
 import { getExternalAction } from "./external-actions";
 import { resolveChannelGuidance } from "./guidance";
-import { selectiveContextInputs } from "./resolve-input";
+import { campaignResolveInputs, selectiveContextInputs } from "./resolve-input";
 import { listConnections } from "./connections";
 import { applyDraftAction, submitDraft, type DraftActor } from "./drafts";
 import { retrieveEvidence } from "./evidence";
@@ -346,7 +346,7 @@ async function generateStepMessage(
   const campaign = launch.campaignId ? getCampaign(ctx.db, launch.workspaceId, launch.campaignId) : undefined;
   const persona = launch.personaId ? getPersona(ctx.db, launch.workspaceId, launch.personaId) : undefined;
   const personaArg = persona ? toResolvePersona(persona) : undefined;
-  const campaignArg = campaign ? composeResolveCampaign(campaign) : undefined;
+  const campaignArgs = campaignResolveInputs(ctx.db, launch.workspaceId, campaign);
   const person = ctx.pool.get(`${recipient.recipientType}:${recipient.recipientId}`);
 
   const useFollowup = step.stepNumber > 1 || step.instruction.trim().length > 0;
@@ -417,7 +417,7 @@ async function generateStepMessage(
         scope: channelGuidance.scopeLabel,
       },
       persona: personaArg,
-      campaign: campaignArg,
+      ...campaignArgs,
       account: resolveDraftAccount(ctx.db, launch.workspaceId, {
         personaId: launch.personaId,
         channel: gen.channel,

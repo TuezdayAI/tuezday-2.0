@@ -48,8 +48,8 @@ function promoteCanonicalBeforeDelete(
       summary: canonical.summary,
       publishedAt: canonical.publishedAt,
       score: canonical.score,
-      suggestedPersonaId: canonical.suggestedPersonaId,
-      suggestedCampaignId: canonical.suggestedCampaignId,
+      // Sprint 53: routing rides on the match rows repointed above, so there is
+      // no suggested* pair left to copy across the collapse.
       scoreReason: canonical.scoreReason,
       status: canonical.status,
       signalId: canonical.signalId,

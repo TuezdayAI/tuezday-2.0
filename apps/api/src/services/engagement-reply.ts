@@ -4,14 +4,13 @@ import type { Db } from "../db";
 import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
 import { getBrain } from "./brain";
-import { composeResolveCampaign } from "./campaigns";
 import { submitDraft, type DraftActor } from "./drafts";
 import { retrieveEvidence } from "./evidence";
 import { storeGeneration } from "./generations";
 import { resolveChannelGuidance } from "./guidance";
 import { toResolvePersona } from "./personas";
 import { resolveDraftAccount } from "./resolve-account";
-import { selectiveContextInputs } from "./resolve-input";
+import { campaignResolveInputs, selectiveContextInputs } from "./resolve-input";
 
 export interface GenerateReplyContext {
   /** Our original post/DM that drew this reply, when known. */
@@ -66,7 +65,7 @@ export async function generateEngagementReply(
     channel: item.channel,
     channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
     persona: ctx.persona ? toResolvePersona(ctx.persona) : undefined,
-    campaign: ctx.campaign ? composeResolveCampaign(ctx.campaign) : undefined,
+    ...campaignResolveInputs(db, workspace.id, ctx.campaign),
     // The reply publishes from the same account the inbound item arrived on.
     account: resolveDraftAccount(db, workspace.id, {
       channel: item.channel,

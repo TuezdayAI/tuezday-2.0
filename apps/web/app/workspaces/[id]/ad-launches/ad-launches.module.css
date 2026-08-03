@@ -25,6 +25,52 @@
   font-weight: 650;
 }
 
+/* "Who authorized this spend" — kept visually distinct from the setup trail. */
+.spendRecord {
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.spendRecord strong {
+  color: var(--text);
+}
+
+.spendRecord a {
+  color: var(--accent-deep);
+  font-weight: 650;
+}
+
+/* "Who approved this ad's setup" — the archived gate trail. */
+.setupTrail {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-sunk);
+}
+
+.setupTrail h4 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.setupTrail p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.retiredRow {
+  display: block;
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .mutationPanel {
   margin-top: 16px;
   padding: 20px;

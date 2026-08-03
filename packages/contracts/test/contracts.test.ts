@@ -109,7 +109,9 @@ import {
   DEFAULT_REVIEW_FLAG_THRESHOLD,
   type ReviewCheckResult,
   rateGenerationInputSchema,
+  resolvePreviewRequestSchema,
   resolveRequestSchema,
+  CAMPAIGN_OVERLAY_MAX_CHARS,
   updateBrainDocInputSchema,
   updateConnectionInputSchema,
   upsertCampaignInputSchema,
@@ -586,6 +588,48 @@ describe("resolveRequestSchema", () => {
       tokenBudget: 100,
     });
     expect(result.success).toBe(false);
+  });
+
+  // Sprint 53 Task 5: the plan-form preview needs an unsaved revision resolved.
+  // It rides on a superset schema so /resolve is the only route that accepts an
+  // inline plan, and the draft is validated by the stored revision's own schema
+  // so the preview surface can never widen a limit.
+  it("keeps the inline plan draft off the base schema", () => {
+    const parsed = resolveRequestSchema.parse({
+      taskType: "linkedin_post",
+      channel: "linkedin",
+      campaignPlanDraft: { objective: "x", startAt: null, endAt: null },
+    });
+    expect(parsed).not.toHaveProperty("campaignPlanDraft");
+  });
+});
+
+describe("resolvePreviewRequestSchema", () => {
+  const base = { taskType: "linkedin_post", channel: "linkedin" } as const;
+  const draft = { objective: "Own the phrase", startAt: null, endAt: null };
+
+  it("still accepts every plain resolve request", () => {
+    expect(resolvePreviewRequestSchema.safeParse(base).success).toBe(true);
+  });
+
+  it("accepts an inline plan draft and defaults its unset fields", () => {
+    const result = resolvePreviewRequestSchema.parse({ ...base, campaignPlanDraft: draft });
+    expect(result.campaignPlanDraft?.objective).toBe("Own the phrase");
+    expect(result.campaignPlanDraft?.pillars).toEqual([]);
+  });
+
+  it("cannot widen the stored revision's limits", () => {
+    for (const bad of [
+      { ...draft, objective: "x".repeat(1_001) },
+      { ...draft, pillars: Array.from({ length: 21 }, (_, i) => `p${i}`) },
+      { ...draft, pillars: ["x".repeat(201)] },
+      { ...draft, guidance: "x".repeat(CAMPAIGN_OVERLAY_MAX_CHARS + 1) },
+      { ...draft, startAt: 2, endAt: 1 },
+    ]) {
+      expect(
+        resolvePreviewRequestSchema.safeParse({ ...base, campaignPlanDraft: bad }).success,
+      ).toBe(false);
+    }
   });
 });
 

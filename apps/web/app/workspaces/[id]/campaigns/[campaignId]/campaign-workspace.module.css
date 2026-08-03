@@ -93,6 +93,16 @@
 .audienceChoices p { margin: 0; color: var(--muted); font-size: 12px; }
 .formActions { display: flex; align-items: center; gap: 8px; }
 
+/* Sprint 53: the resolved-context preview for the revision being edited. */
+.planPreview { display: grid; gap: 12px; padding: 15px; border: 1px solid var(--line-soft); border-radius: var(--radius); background: var(--panel-2); }
+.previewHeading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+.previewHeading h4 { margin: 3px 0 0; font-family: var(--font-display); font-size: 15px; }
+.previewHeading > span { max-width: 320px; color: var(--muted); font-size: 11px; text-align: right; }
+.previewControls { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
+.previewControls label { min-width: 160px; }
+.previewPrompt { margin-top: 10px; }
+.previewPrompt summary { color: var(--muted); cursor: pointer; font-size: 11px; font-weight: 650; }
+
 .activationIssues { padding: 13px 15px; border: 1px solid var(--status-blocked); border-radius: var(--radius); background: var(--status-blocked-wash); color: var(--status-blocked-ink); }
 .activationIssues > div { display: flex; align-items: center; gap: 7px; }
 .activationIssues ul { margin: 8px 0 0 24px; padding: 0; font-size: 12px; }
@@ -175,7 +185,8 @@
   .resultMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .resultMetrics div:nth-child(3) { border-left: 0; border-top: 1px solid var(--line-soft); }
   .resultMetrics div:nth-child(4) { border-top: 1px solid var(--line-soft); }
-  .sectionHeading, .editorHeading, .revisionHeader, .lanePoliciesHeading { align-items: flex-start; flex-direction: column; }
+  .sectionHeading, .editorHeading, .revisionHeader, .lanePoliciesHeading, .previewHeading { align-items: flex-start; flex-direction: column; }
+  .previewHeading > span { max-width: none; text-align: left; }
   .lanePoliciesHeading > p { text-align: left; }
   .formColumns, .formColumnsThree { grid-template-columns: 1fr; }
   .revisionFacts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
