@@ -39,6 +39,8 @@ export const searchEvidenceTool: Tool<Input, unknown> = {
       kind: chunk.kind,
       text: compactText(chunk.text, CHUNK_CHARS),
       score: Number(chunk.score.toFixed(3)),
+      // Provenance — the copilot builds its evidence citations from this.
+      documentId: chunk.documentId,
     }));
     return { results };
   },

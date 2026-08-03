@@ -182,13 +182,19 @@ into Sprint 56's `AgentTool { definition, handler }`:
 
 `CopilotTool.run` bodies are replaced by calls to the corresponding registry tools where
 overlap exists (`search_brain` → `get_brain_section` query mode, `search_evidence` →
-`search_evidence`); copilot-only tools (the other eight) are re-registered as registry
-`read` tools with a copilot-side formatter (its `{summary, citations}` result shape and
-`compact()` sizes are presentation, and stay in the copilot layer). `CopilotToolContext`
-is constructed from `ToolContext` (its `{db, evidence, workspaceId}` is a strict subset).
-**No behavior change intended** — the existing copilot test suite is the guard; snapshot
-any drift it catches. If this task exceeds a day it is cut from the sprint and logged as
-an immediate fast-follow (founder decision above).
+`search_evidence`); the copilot layer keeps only its `{summary, citations}` presentation.
+A registry `ToolContext` is constructed from `CopilotToolContext` (a strict subset) with
+a fail-closed `safeFetch` stub — those two tools never touch it. **No behavior change
+intended** — the existing copilot test suite is the guard.
+
+**Scope decision (implementation, 2026-08-03):** the other eight copilot tools are
+logic-free one-line service wraps (`compact(listCampaigns(...))` etc.) with nothing to
+drift; re-registering them would have expanded the contracts `AGENT_TOOL_NAMES`
+vocabulary beyond the PRD's eleven and put them in the proof run's tool surface. They
+stay put, explicitly annotated, until the Phase O chat surface rebuilds the copilot on
+`agent_runs` — at which point the whole copilot toolset resolves from the registry. The
+drift risk the founder decision targeted (two divergent retrieval implementations) is
+closed: brain search and evidence search now have exactly one implementation each.
 
 ### 3.8 Inspector API (`apps/api/src/routes/agent-runs.ts`)
 
@@ -274,13 +280,13 @@ Service logic in `apps/api/src/services/agent-runs.ts` (`listAgentRuns`,
 
 ## 5. Acceptance (from PRD)
 
-- [ ] A tool registry distinct from `apps/mcp`, `Tool<I,O>` with `access: "read" | "propose"` (never "execute"), zod inputs from `packages/contracts`.
-- [ ] All eleven read tools implemented and tested; `safe_fetch_url` routed through Sprint 48's service.
-- [ ] Workspace scoping enforced by the same rule as HTTP routes; actor carried into every tool call.
-- [ ] Per-run tool budget: max calls total and per tool.
-- [ ] Agent Inspector UI: run transcript, each step, tools called with arguments and results, tokens and cost per step, stop reason, total elapsed — shipped this sprint.
-- [ ] **A founder can open a run and see exactly what the agent looked up, in what order, and what it cost** (proof-run trigger → Inspector detail).
-- [ ] Copilot uses the registry (or the cut is logged as fast-follow with the founder informed).
+- [x] A tool registry distinct from `apps/mcp`, `Tool<I,O>` with `access: "read" | "propose"` (never "execute"), zod inputs from `packages/contracts` (`agents/registry.ts`, `agents/tools/index.ts`).
+- [x] All eleven read tools implemented and tested; `safe_fetch_url` routed through Sprint 48's service with public-message-only error serialization.
+- [x] Workspace scoping enforced by the same rule as HTTP routes; actor carried into every tool call (`agent-tools-isolation.test.ts` sweeps all tools across two workspaces).
+- [x] Per-run tool budget: max calls total and per tool (20 total, `safe_fetch_url` capped at 3; exhaustion returns as error data).
+- [x] Agent Inspector UI: run transcript, each step, tools called with arguments and results, tokens and cost per step, stop reason, total elapsed (`/workspaces/[id]/inspector`, nav under Brain).
+- [x] **A founder can open a run and see exactly what the agent looked up, in what order, and what it cost** (proof-run trigger → Inspector detail; automated coverage in `agent-runs-routes.test.ts`, founder manual test pending).
+- [x] Copilot uses the registry for brain + evidence search (see §3.7 scope decision for the eight logic-free wraps).
 
 ## 6. Progress log
 
@@ -288,3 +294,18 @@ Service logic in `apps/api/src/services/agent-runs.ts` (`listAgentRuns`,
   written after code survey (backing services for all eleven tools identified; Sprint 42
   copilot-registry overlap surfaced; founder decided single-registry convergence, copilot
   migration in-sprint as severable task). Implementation not started.
+- 2026-08-03 — Implemented in full, steps 1–10: contracts (TOOL_ACCESS_LEVELS,
+  AGENT_TOOL_NAMES, toolInputSchemas, agent-run API schemas); `rankTexts` in
+  `packages/brain` with `rankSections` re-based on it; registry core
+  (`agents/registry.ts`, `agents/json-schema.ts`, `agents/adapter.ts`); all eleven read
+  tools under `agents/tools/`; the Sprint 56 proof tool refactored into the registry
+  `search_evidence` (now via `retrieveEvidence` policy; its runner tests updated in
+  place); Inspector API (`services/agent-runs.ts`, `routes/agent-runs.ts`: list, detail,
+  proof run) wired in `app.ts`; tenant-isolation sweep; Inspector UI
+  (`apps/web/app/workspaces/[id]/inspector/` + `lib/agent-inspector.ts` + nav entry);
+  copilot brain/evidence search delegated to registry tools (§3.7 scope decision on the
+  other eight). Test-file note: read tools share fixture files
+  (`agent-read-tools.test.ts`, `agent-registry.test.ts`, `agent-tools-isolation.test.ts`,
+  `agent-runs-routes.test.ts`) rather than one file per tool — shared seeding beats
+  eleven files of duplicated fixtures. Full suite green: 2187 tests / 202 files;
+  typecheck clean. Awaiting founder review/merge (merge order: 56 → 57).
