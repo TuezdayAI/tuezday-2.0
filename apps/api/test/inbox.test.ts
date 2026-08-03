@@ -16,7 +16,9 @@ import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric"
 import type { Db } from "../src/db";
 import type { LlmGateway } from "../src/llm/gateway";
 import { applyDraftAction, listDecisions, submitDraft } from "../src/services/drafts";
+import { eq } from "drizzle-orm";
 import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
+import { metrics as metricsTable } from "../src/db/schema";
 
 const fakeLlm: LlmGateway = {
   async generate() {
@@ -338,6 +340,20 @@ describe("engagement & reply inbox", () => {
     expect(mine.metrics).toHaveLength(1);
     expect(mine.metrics[0]).toMatchObject({ window: "24h", likes: 12, comments: 3 });
     expect(publicationMetricSchema.safeParse(mine.metrics[0]).success).toBe(true);
+
+    // Sprint 55 dual-write: the capture also lands cumulative facts in the
+    // unified metrics table — publication subject, periodStart = publishedAt,
+    // one row per observed metric (impressions was not observed → no row).
+    const facts = db
+      .select()
+      .from(metricsTable)
+      .where(eq(metricsTable.subjectId, pub.id))
+      .all();
+    expect(facts.map((f) => f.metricKey).sort()).toEqual(["comments", "likes"]);
+    for (const f of facts) {
+      expect(f).toMatchObject({ subjectType: "publication", window: "24h", source: "captured" });
+      expect(f.periodStart).toBe(mine.publishedAt);
+    }
 
     // Past 7d: the 7d snapshot lands; 24h is not re-captured.
     vi.setSystemTime(new Date(MONDAY_8AM_UTC.getTime() + 7 * DAY_MS + 60_000));

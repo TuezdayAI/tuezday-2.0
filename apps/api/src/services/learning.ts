@@ -11,6 +11,7 @@ import type {
   TaskType,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
+import { recordMetrics } from "./metrics";
 import {
   drafts,
   engagementMetrics,
@@ -179,6 +180,31 @@ export function createMetric(db: Db, workspaceId: string, input: CreateMetricInp
     createdAt: now,
   };
   db.insert(engagementMetrics).values(row).run();
+  // Sprint 55 dual-write: land the observed numbers in the unified fact table.
+  // Subject is the channel — a manual reading is a channel-level observation
+  // (the optional draft link stays on the legacy row, which is never dropped:
+  // its description/notes feed the learning-synthesis prompt). Null values
+  // record nothing; absence is not zero.
+  recordMetrics(
+    db,
+    workspaceId,
+    (
+      [
+        ["impressions", row.impressions],
+        ["engagements", row.engagements],
+        ["clicks", row.clicks],
+      ] as const
+    ).map(([metricKey, value]) => ({
+      subjectType: "channel" as const,
+      subjectId: row.channel,
+      metricKey,
+      value,
+      window: "point" as const,
+      periodStart: row.recordedAt,
+      source: "manual" as const,
+      capturedAt: row.recordedAt,
+    })),
+  );
   return rowToMetric(row);
 }
 

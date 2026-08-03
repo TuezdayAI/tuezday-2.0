@@ -15,6 +15,7 @@ import {
   type SocialAutomationSettings,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
+import { recordMetrics } from "./metrics";
 import {
   drafts,
   emailDeliveries,
@@ -503,6 +504,31 @@ async function refreshEngagement(
               createdAt: nowMs,
             })
             .run();
+          // Sprint 55 dual-write: cumulative facts into the unified table.
+          // periodStart is the publication's publishedAt — the window measures
+          // cumulative totals since going live, observed at >= 24h/7d of age.
+          recordMetrics(
+            db,
+            workspace.id,
+            (
+              [
+                ["likes", eng.likes],
+                ["comments", eng.comments],
+                ["shares", eng.shares],
+                ["impressions", eng.impressions],
+                ["clicks", eng.clicks],
+              ] as const
+            ).map(([metricKey, value]) => ({
+              subjectType: "publication" as const,
+              subjectId: pub.id,
+              metricKey,
+              value,
+              window,
+              periodStart: pub.publishedAt!,
+              source: "captured" as const,
+              capturedAt: nowMs,
+            })),
+          );
           metricsCaptured += 1;
         } catch {
           // A post whose metrics can't be read this tick is retried next tick.

@@ -10,6 +10,9 @@ import { DEFAULT_CONVERSION_ACTIONS, MetaAdsAdapter } from "../src/connectors/ad
 import { NangoFabric } from "../src/connectors/nango";
 import type { LlmGateway } from "../src/llm/gateway";
 import { buildAuthedApp, createTestDb } from "./helpers";
+import type { Db } from "../src/db";
+import { metrics } from "../src/db/schema";
+import { eq } from "drizzle-orm";
 
 const fakeLlm: LlmGateway = {
   async generate() {
@@ -357,6 +360,7 @@ function webhookFetcher(received: ReceivedHook[]): typeof fetch {
 describe("Ads reporting API", () => {
   let app: TuezdayApp;
   let workspaceId: string;
+  let db: Db;
   let state: FabricState;
   let received: ReceivedHook[];
 
@@ -380,8 +384,9 @@ describe("Ads reporting API", () => {
       }),
     );
     received = [];
+    db = createTestDb();
     app = await buildAuthedApp({
-      db: createTestDb(),
+      db,
       llm: fakeLlm,
       connectors: fakeFabric(state),
       fetcher: webhookFetcher(received),
@@ -524,6 +529,18 @@ describe("Ads reporting API", () => {
       expect(leadGen.adCampaign.account.currency).toBe("USD");
 
       expect(received.filter((h) => h.eventType === "ads.synced")).toHaveLength(1);
+
+      // Sprint 55 dual-write: the connected sync also lands 1d facts in the
+      // unified metrics table, with source "synced".
+      const facts = db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId)).all();
+      expect(facts.length).toBeGreaterThan(0);
+      for (const f of facts) {
+        expect(f.subjectType).toBe("ad_campaign");
+        expect(f.window).toBe("1d");
+        expect(f.source).toBe("synced");
+      }
+      const spendFacts = facts.filter((f) => f.metricKey === "spend");
+      expect(spendFacts.map((f) => f.value).reduce((a, b) => a + b, 0)).toBe(3234 + 550);
     });
 
     it("re-sync is idempotent and restated values update rows without re-emitting on no change", async () => {

@@ -10,6 +10,7 @@ import type {
 } from "@tuezday/contracts";
 import { CONNECTOR_PROVIDERS } from "@tuezday/contracts";
 import type { Db } from "../db";
+import { recordMetrics } from "./metrics";
 import {
   adAccounts,
   adCampaignMetrics,
@@ -249,6 +250,39 @@ function upsertMetrics(
       updated++;
     }
   }
+
+  // Sprint 55 dual-write: land every restated day in the unified fact table.
+  // 1d periodic buckets keyed on the day (UTC midnight), so a re-sync of the
+  // same day updates in place — Meta restates a rolling window every sync.
+  // "csv" rows are an import, not a live provider sync.
+  const factSource = source === "csv" ? ("imported" as const) : ("synced" as const);
+  const capturedAt = now;
+  for (const record of records) {
+    const campaign = campaignByExternalId.get(record.externalCampaignId)!;
+    const periodStart = Date.parse(`${record.date}T00:00:00.000Z`);
+    recordMetrics(
+      db,
+      workspaceId,
+      (
+        [
+          ["spend", record.spendCents],
+          ["impressions", record.impressions],
+          ["clicks", record.clicks],
+          ["conversions", record.conversions],
+        ] as const
+      ).map(([metricKey, value]) => ({
+        subjectType: "ad_campaign" as const,
+        subjectId: campaign.id,
+        metricKey,
+        value,
+        window: "1d" as const,
+        periodStart,
+        source: factSource,
+        capturedAt,
+      })),
+    );
+  }
+
   return { campaigns: seenCampaigns.size, rows: records.length, created, updated };
 }
 
