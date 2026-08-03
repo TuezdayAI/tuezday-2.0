@@ -28,7 +28,7 @@ Four stores, verified in code:
 
 | Store | Subject | Time semantics | Metrics (as **columns**) | Written by |
 |---|---|---|---|---|
-| `engagementMetrics` (`schema.ts:807`) | `draftId` — **nullable, no FK** — plus a free-text `channel` | `recordedAt`: a **point reading**, no window | `impressions`, `engagements`, `clicks` | manual entry |
+| `engagementMetrics` (`schema.ts:807`) | `draftId` — **nullable, no FK** — plus `channel`, a closed `CHANNELS` enum | `recordedAt`: a **point reading**, no window | `impressions`, `engagements`, `clicks` | manual entry |
 | `publicationMetrics` (`schema.ts:2095`) | `publicationId` (FK, cascade) | `window` (`"24h"` \| `"7d"`) + `capturedAt`; **unique on (publicationId, window)** → a **cumulative snapshot** at that age | `likes`, `comments`, `shares`, `impressions`, `clicks` | platform capture |
 | `adCampaignMetrics` (`schema.ts:1012`) | `adCampaignId` (FK, cascade) | `date` `YYYY-MM-DD`; **unique on (adCampaignId, date)** → a **daily bucket** | `spendCents`, `impressions`, `clicks`, `conversions` | provider sync (`services/ads.ts`) |
 | `insights` (`services/insights.ts`) | — | aggregates the other three on the fly | — | — |
@@ -37,10 +37,17 @@ Four stores, verified in code:
 `clicks` appear in all three but mean *point reading*, *cumulative-at-24h*, and *that day's total*
 respectively. Summing them today would be wrong, and nothing stops a future reader from doing it.
 
-**Known readers** (each is a migration site): `services/insights.ts`, `services/learning.ts`,
-`services/inbox.ts`, `services/ads.ts`, `services/copilot-tools.ts`, `services/next-action.ts`,
-`services/outreach-funnel.ts`, plus `apps/web` — the workspace home, `/insights`, `/outreach`, the
-campaigns list, and campaign overview.
+**Readers — corrected by Task 1** (each is a Task 5 migration site). Confirmed:
+`services/insights.ts`, `services/learning.ts`, `services/inbox.ts` (writer *and* reader),
+`services/ads.ts`, `services/copilot-tools.ts`. **Removed** (read none of the three tables):
+`next-action.ts`, `outreach-funnel.ts`. **Missed by the first draft and added:**
+`services/publications.ts`, `services/campaigns.ts`, `services/ad-creatives.ts`, and — critically —
+**`routes/public-api.ts` (`GET /api/v1/insights`)** and **`apps/mcp` (`fetch-insights`)**.
+
+> **The blast radius is customer-facing.** The same `getWorkspaceInsights` output is served to the
+> dashboard, two CSV exports, the campaign overview, the **public API**, the **MCP tool**, and three
+> copilot tools. A silent numeric change here changes what a customer's API returns and what the
+> copilot tells the founder.
 
 ---
 
@@ -51,61 +58,79 @@ campaigns list, and campaign overview.
 ```
 metrics(
   id, workspace_id,
-  subject_type,        -- publication | campaign | lane | ad_campaign | sequence | draft
+  subject_type,        -- publication | campaign | ad_campaign | channel
   subject_id,
   metric_key,          -- from the contracts vocabulary (§2.2)
   value,               -- integer; money in cents, never floats
-  window,              -- from the window vocabulary (§2.3)
+  window,              -- point | 24h | 7d | 1d  (§2.3)
   period_start,        -- inclusive; the period this value covers
-  source,              -- manual | captured | synced | derived
+  source,              -- manual | captured | synced | imported
   captured_at,         -- when we learned it
   created_at
 )
 ```
 
-**Grain: one row per `(workspace, subject_type, subject_id, metric_key, window, period_start)`** —
-enforced by a unique index, which is what makes re-sync idempotent (an upsert, matching how both
-existing unique indexes already behave).
+**Grain: one row per `(workspace, subject_type, subject_id, metric_key, window, period_start)`**,
+enforced by a unique index. `value` is an integer; money is cents.
 
-`value` is an integer. Money is cents (`spend` carries cents, as `spendCents` does today). No floats
-in the DB, per the existing convention.
+**Corrections from Task 1 — the original draft was wrong on four counts:**
+
+- **`channel` is a subject type.** `engagementMetrics.draftId` is nullable and the UI produces
+  subject-less rows on its default path. Their only subject information is `channel`, which is a
+  closed `CHANNELS` enum in contracts — so `subject_type: "channel"`, `subject_id`: the channel name.
+  Rejected: `workspace` (throws away the channel and collides every channel onto one grain) and
+  refusing the rows (the UI advertises them as supported; the backfill would silently drop real
+  founder-entered data).
+- **`lane` and `sequence` are dropped** from `subject_type` — nothing writes them.
+- **A null metric produces NO fact row.** All three of `impressions`/`engagements`/`clicks` are
+  optional and nullable. **Absence is not zero**, and conflating them would invent data.
+- **`source` gains `imported`** (`adCampaignMetrics.source` already stores `"csv"`) and **loses
+  `derived`** — nothing derives in this sprint.
 
 ### 2.2 Metric vocabulary (`packages/contracts`, defined once — the existing enum rule)
 
-`impressions`, `clicks`, `likes`, `comments`, `shares`, `engagements`, `conversions`, `spend`,
-`replies`.
+`impressions`, `clicks`, `likes`, `comments`, `shares`, `engagements`, `conversions`, `spend`.
 
-**The one real semantic decision — `engagements`.** Manual entry records a single `engagements`
-number; platform capture records `likes`/`comments`/`shares` separately. They are the same concept at
-different granularity. **Recommendation: store what each source actually observed, and derive nothing
-on write.** A manual row writes `engagements`; a captured row writes `likes`, `comments`, `shares`.
-`insights` may sum the components when `engagements` is absent, and that derivation lives in one
-place, in the read path, where it can be inspected. Writing a derived `engagements` row would create
-a number no source ever reported and make double-counting easy.
+**`replies` is REMOVED from the vocabulary.** Task 1 established it is not a stored observation at
+all — it is computed on the fly from `inboxItems` (`insights.ts:180-202`, `outreach-funnel.ts:38-45`)
+and is always current. Storing it as a fact would create a snapshot that goes stale the moment an
+inbox item arrives, giving two answers to one question — the exact defect this sprint removes. *If a
+connector ever reports a platform reply count, that number is a genuine fact and earns the key back.*
+
+**`engagements` vs `likes`/`comments`/`shares`:** each source writes what it actually observed —
+manual writes `engagements`, capture writes the three components. **Nothing derives one from the
+other today**, so adding a read-path derivation would be a behaviour change and is **deferred out of
+Sprint 55**.
 
 ### 2.3 Window vocabulary — the load-bearing part
 
-The three stores disagree about time, so `window` must be explicit rather than implied:
-
-| `window` | Meaning | Source today |
+| `window` | Meaning | Source |
 |---|---|---|
-| `point` | a reading taken at `captured_at`, covering no defined period | `engagementMetrics` |
-| `24h` / `7d` | **cumulative** total since the subject went live, observed at that age | `publicationMetrics` |
+| `point` | a reading at `captured_at`, covering no defined period | `engagementMetrics` |
+| `24h` / `7d` | **cumulative** since the subject went live, observed at **at least** that age | `publicationMetrics` |
 | `1d` | that calendar day's total, `period_start` = the day | `adCampaignMetrics` |
 
-**`cumulative` and `per-period` values must never be summed together.** That is the defect this table
-could institutionalise if `window` were dropped or fudged. The contracts layer should make the
-distinction queryable (e.g. a helper that classifies a window as cumulative or periodic), so a reader
-cannot mix them by accident.
+`period_start` (for a publication, its `publishedAt`) and `captured_at` are genuinely different
+instants; both are kept.
 
-### 2.4 Migration strategy
+> **⚠️ The no-mixing rule is already violated in production.** `insights.ts:229` and `:236` add
+> prorated cumulative organic impressions and an all-time sum of daily paid buckets into the *same*
+> displayed cell. Task 2's classifier guards every **new** reader; Task 5 carries a **single,
+> explicitly commented escape hatch** that reproduces the legacy mixing. Without saying this out
+> loud, Task 5 could not both use the classifier and pass its own snapshot test.
 
-- **Backfill** all three stores into `metrics`, preserving their real semantics per §2.3.
-- **Existing tables keep their writers for now** and additionally write to `metrics` (dual-write), so
-  a rollback loses nothing. `insights` reads **only** `metrics`.
-- **Do not drop the old tables in this sprint.** They stay readable for one release, per the PRD.
-  Physical removal is a follow-up, recorded as a deferred item — consistent with how Sprint 53 handled
-  the legacy signal columns, and because SQLite `DROP COLUMN`/table-recreate is avoided in this repo.
+### 2.4 Migration strategy — dual-write BEFORE backfill
+
+**Order matters and Task 1 corrected it.** Dual-write ships first; the backfill runs second and is
+**insert-if-absent, never clobber-on-conflict** — because the ads sync restates a rolling 28-day
+window every 6 hours, so a clobbering backfill could overwrite fresher synced values with staler ones.
+
+- Existing tables keep their writers and additionally write `metrics`. `insights` reads only `metrics`.
+- **Nothing is dropped this sprint.** And `engagement_metrics` can **never** be fully replaced: an
+  all-null row carries no metric values at all, existing purely for its `description`/`notes`, and
+  `notes` is read verbatim into the learning-synthesis prompt (`learning.ts:276`). The deferred
+  "drop the legacy tables" item is narrowed accordingly.
+
 
 ### 2.5 Out of scope
 
@@ -156,15 +181,35 @@ dropping the old tables.
 - [ ] Tests: writing through each existing path produces the correct `metrics` row **and** the legacy
       row. Rollback safety is the point — do not remove the legacy writes in this sprint.
 
-### Task 5 — `insights` reads only `metrics`
-- [ ] Rewrite the aggregation against the fact table. **Snapshot the current `/insights` output
-      first** and assert the new implementation matches it — this is the regression guard that makes
-      the cutover safe. Where output legitimately changes, say why.
-- [ ] The `engagements`-vs-components derivation (§2.2) lives here, in one place.
+### Task 5 — `insights` reads only `metrics` (faithful cutover — **no number moves**)
+- [ ] **Snapshot the current `/insights` output first**, then reimplement the aggregation against
+      `metrics` so the snapshot passes **byte-for-byte** — including the proration, the prefer-7d
+      fallback, the `ads`-cell merge, and the exclusion of `point` readings. This is a storage change
+      only; **no displayed number moves.**
+- [ ] Carry the §2.3 escape hatch as a single, explicitly commented exception, so the classifier can
+      guard new readers while Task 5 reproduces the legacy mixing.
+- [ ] Migrate the public API and MCP readers too — they serve the same aggregation.
 - [ ] Migrate the other readers found in Task 1 (`learning.ts`, `copilot-tools.ts`, `next-action.ts`,
       `outreach-funnel.ts`, and the web pages).
 - [ ] **Acceptance: `/insights` reads one table** — assert no insights code path touches the three
       legacy tables.
+
+### Task 5b — Fix the mixings, each on its own, on top of a passing snapshot
+**Founder decision: fix the numbers and report what changed.** Task 1 confirmed `/insights` really
+does mix incompatible semantics. But fixing during the storage cutover would make a genuine
+regression indistinguishable from an intentional correction — so the fix is **sequenced after** it,
+never conflated with it.
+- [ ] One commit per mixing, each with a before/after of the affected figure:
+      **(a)** cumulative organic + all-time paid summed in the same `ads` cell;
+      **(b)** 24h and 7d cumulative values summed together (a figure that silently changes as
+      publications age past 7d);
+      **(c)** organic impressions prorated by *published-post count* rather than attributed to each
+      publication's actual channel — which is already known at `insights.ts:86` and being discarded;
+      **(d)** per-channel `Math.round` drift, so the column does not sum to the total shown elsewhere.
+- [ ] Also record the fifth, by omission: manual `point` readings never reach the channel table.
+- [ ] Each commit states the direction of the change. **(c)** can move a channel either way; **(a)**
+      moves the `ads` cell down.
+- [ ] Because this changes the **public API and MCP** output, note it plainly in the sprint summary.
 
 ### Task 6 — Prove the second acceptance criterion
 - [ ] **"A new metric source is one writer, not a new schema."** Add a test that records a metric from
@@ -199,10 +244,24 @@ dropping the old tables.
 | Backfill races the worker if a store is written on a schedule | Task 1 confirms; backfill must be idempotent and tolerate in-flight writes |
 | Dual-write drifts between legacy and `metrics` | Accepted for one release — that is what makes rollback safe. Tests assert both are written |
 | Scope creep into dropping tables | §2.5 — explicitly out of scope, recorded as a deferred item |
+| **A numeric change reaches the public API and MCP, not just the dashboard** | Task 5 moves no number at all; Task 5b changes them deliberately, one at a time, each documented |
+| Backfill overwrites fresher synced values | §2.4 — dual-write first, backfill is insert-if-absent; ads restates a rolling 28-day window every 6 hours |
+| `engagement_metrics` assumed droppable | It is not — all-null rows carry only prose that feeds the learning prompt. Deferred item narrowed |
 
 ---
 
 ## 6. Progress log
+
+- **2026-08-02 — Task 1 complete (verification only; no production code).** Eight assumptions
+  checked against code. **Q8 answered YES:** `/insights` genuinely mixes incompatible semantics in
+  the Channels **Impressions** column — four distinct mixings plus one omission, detailed in Task 5b.
+  §2 was corrected on four counts (`channel` as a subject type, `lane`/`sequence` dropped, null ≠
+  zero, `source` vocabulary), `replies` was removed from the vocabulary entirely (it is derivable,
+  not observed), the migration order was **reversed** to dual-write-then-backfill, and the reader
+  list was both over- and under-inclusive. Full detail in
+  `.superpowers/sdd/sprint-55-unified-metric-model/task-1-report.md`.
+  *(The Task 1 agent died mid-write from an API error after producing its report; the controller
+  folded the findings into this spec.)*
 
 - **2026-08-02** — Plan written from a fast schema-level recon (the three store definitions, the
   reader list, and the journal's max `idx` = 62). **§2 rests on assumptions Task 1 must verify before
