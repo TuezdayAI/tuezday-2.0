@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import {
-  resolveRequestSchema,
+  resolvePreviewRequestSchema,
   upsertPersonaInputSchema,
   upsertPersonaSocialAccountInputSchema,
 } from "@tuezday/contracts";
@@ -8,7 +8,7 @@ import { resolveContext, type BrainContents } from "@tuezday/brain";
 import type { Db } from "../db";
 import { getBrain } from "../services/brain";
 import { campaignExecutionError, composeResolveCampaign, getCampaign } from "../services/campaigns";
-import { campaignPlanInput, selectiveContextInputs } from "../services/resolve-input";
+import { campaignPlanPreviewInput, selectiveContextInputs } from "../services/resolve-input";
 import { retrieveEvidence } from "../services/evidence";
 import { resolveChannelGuidance } from "../services/guidance";
 import type { EvidenceStore } from "../evidence/store";
@@ -168,7 +168,9 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
   app.post<{ Params: { id: string } }>("/workspaces/:id/resolve", async (request, reply) => {
     const workspace = workspaceOr404(db, request.params.id, reply);
     if (!workspace) return reply;
-    const parsed = resolveRequestSchema.safeParse(request.body);
+    // The preview superset: /resolve is the only route that accepts an inline
+    // plan draft (Sprint 53 Task 5). It reads and composes; it never persists.
+    const parsed = resolvePreviewRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({
         error: "invalid_input",
@@ -209,7 +211,12 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
       campaignId: parsed.data.campaignId ?? null,
     });
 
-    const planInput = campaignPlanInput(db, request.params.id, campaign?.id);
+    const planInput = campaignPlanPreviewInput(
+      db,
+      request.params.id,
+      campaign?.id,
+      parsed.data.campaignPlanDraft,
+    );
     return resolveContext({
       workspaceName: workspace.name,
       docs: contents,

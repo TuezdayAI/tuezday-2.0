@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { PLAN_SECTION_TOKEN_CAP } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
 import { buildAuthedApp, createTestDb } from "./helpers";
 
@@ -374,6 +375,208 @@ describe("resolve API", () => {
       expect(campaign.included).toBe(false);
       expect(campaign.content).toBe("");
       expect(campaign.reason).toMatch(/no additional instruction/i);
+    });
+  });
+
+  // Sprint 53 Task 5 — the plan form's "what the LLM will see" preview. The
+  // founder is typing an unsaved revision, so /resolve accepts the draft inline
+  // and composes it *instead of* the stored active plan, without persisting it.
+  describe("unsaved plan draft preview (Sprint 53 Task 5)", () => {
+    const DRAFT = {
+      objective: "Draft objective — still being typed",
+      kpi: "Draft KPI — still being typed",
+      timeframe: "Q4",
+      startAt: null,
+      endAt: null,
+      audienceIds: [],
+      pillars: ["Draft pillar — still being typed"],
+      offers: [],
+      ctas: [],
+      guidance: "Draft guidance — still being typed",
+    };
+
+    async function plannedCampaign(): Promise<string> {
+      const created = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns`,
+        payload: { name: "Preview me" },
+      });
+      const campaignId = created.json().id;
+      const revision = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions`,
+        payload: {
+          startAt: null,
+          endAt: null,
+          objective: "Active objective — already saved",
+          pillars: ["Active pillar — already saved"],
+        },
+      });
+      expect(revision.statusCode).toBe(201);
+      const activated = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions/${revision.json().id}/activate`,
+      });
+      expect(activated.statusCode).toBe(200);
+      return campaignId;
+    }
+
+    it("composes the inline draft instead of the stored active plan", async () => {
+      const campaignId = await plannedCampaign();
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/resolve`,
+        payload: {
+          taskType: "linkedin_post",
+          channel: "linkedin",
+          campaignId,
+          campaignPlanDraft: DRAFT,
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const bundle = res.json();
+      const section = bundle.sections.find((s: { key: string }) => s.key === "campaign_plan");
+      expect(section.included).toBe(true);
+      expect(section.content).toContain("Draft objective — still being typed");
+      expect(section.content).toContain("Draft pillar — still being typed");
+      expect(section.content).not.toContain("Active objective — already saved");
+      // The draft is unsaved, so it has no revision number to name.
+      expect(section.title).toBe("Campaign plan");
+      // …and it reaches the prompt, which is the whole point of the preview.
+      expect(bundle.prompt).toContain("Draft guidance — still being typed");
+      expect(bundle.prompt).not.toContain("Active pillar — already saved");
+    });
+
+    it("never persists the preview — the active plan is untouched afterwards", async () => {
+      const campaignId = await plannedCampaign();
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/resolve`,
+        payload: {
+          taskType: "linkedin_post",
+          channel: "linkedin",
+          campaignId,
+          campaignPlanDraft: DRAFT,
+        },
+      });
+
+      const after = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/resolve`,
+        payload: { taskType: "linkedin_post", channel: "linkedin", campaignId },
+      });
+      const section = after
+        .json()
+        .sections.find((s: { key: string }) => s.key === "campaign_plan");
+      expect(section.title).toBe("Campaign plan (revision 1)");
+      expect(section.content).toContain("Active objective — already saved");
+      expect(section.content).not.toContain("Draft objective — still being typed");
+
+      const workspaceView = await app.inject({
+        method: "GET",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/workspace`,
+      });
+      expect(workspaceView.json().revisions).toHaveLength(1);
+    });
+
+    it("rejects a draft that breaks the stored revision's own limits", async () => {
+      const campaignId = await plannedCampaign();
+      for (const bad of [
+        { ...DRAFT, pillars: Array.from({ length: 21 }, (_, i) => `pillar ${i}`) },
+        { ...DRAFT, pillars: ["x".repeat(201)] },
+        { ...DRAFT, objective: "x".repeat(1_001) },
+        { ...DRAFT, guidance: "x".repeat(10_001) },
+        { ...DRAFT, startAt: 2_000, endAt: 1_000 },
+      ]) {
+        const res = await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/resolve`,
+          payload: {
+            taskType: "linkedin_post",
+            channel: "linkedin",
+            campaignId,
+            campaignPlanDraft: bad,
+          },
+        });
+        expect(res.statusCode).toBe(400);
+        expect(res.json().error).toBe("invalid_input");
+      }
+    });
+
+    it("still caps a maximal draft at the plan token cap", async () => {
+      const campaignId = await plannedCampaign();
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/resolve`,
+        payload: {
+          taskType: "linkedin_post",
+          channel: "linkedin",
+          campaignId,
+          campaignPlanDraft: {
+            ...DRAFT,
+            pillars: Array.from({ length: 20 }, (_, i) => `${i}`.padEnd(200, "p")),
+            guidance: "g".repeat(10_000),
+          },
+        },
+      });
+      expect(res.statusCode).toBe(200);
+      const section = res
+        .json()
+        .sections.find((s: { key: string }) => s.key === "campaign_plan");
+      expect(section.tokens).toBeLessThanOrEqual(PLAN_SECTION_TOKEN_CAP);
+      expect(section.reason).toMatch(/truncated/i);
+    });
+
+    it("ignores a draft when no campaign is in scope", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/resolve`,
+        payload: { taskType: "linkedin_post", channel: "linkedin", campaignPlanDraft: DRAFT },
+      });
+      expect(res.statusCode).toBe(200);
+      const section = res
+        .json()
+        .sections.find((s: { key: string }) => s.key === "campaign_plan");
+      expect(section.included).toBe(false);
+      expect(section.reason).toMatch(/no campaign selected/i);
+    });
+
+    it("previews the campaign section without its legacy fallback once the draft carries strategy", async () => {
+      const created = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns`,
+        payload: {
+          name: "Planless but drafting",
+          objective: "Row objective — legacy column",
+          overlay: "Additional instruction: no em dashes.",
+        },
+      });
+      const campaignId = created.json().id;
+
+      const before = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/resolve`,
+        payload: { taskType: "linkedin_post", channel: "linkedin", campaignId },
+      });
+      expect(
+        before.json().sections.find((s: { key: string }) => s.key === "campaign").reason,
+      ).toMatch(/fallback/i);
+
+      const after = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/resolve`,
+        payload: {
+          taskType: "linkedin_post",
+          channel: "linkedin",
+          campaignId,
+          campaignPlanDraft: DRAFT,
+        },
+      });
+      const campaign = after
+        .json()
+        .sections.find((s: { key: string }) => s.key === "campaign");
+      expect(campaign.reason).not.toMatch(/fallback/i);
+      expect(campaign.content).toBe("Additional instruction: no em dashes.");
     });
   });
 });

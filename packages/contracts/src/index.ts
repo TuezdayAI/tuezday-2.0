@@ -1956,6 +1956,33 @@ export type CreateCampaignPlanRevisionInput = z.infer<
   typeof createCampaignPlanRevisionInputSchema
 >;
 
+/**
+ * `POST /workspaces/:id/resolve` only (Sprint 53 Task 5). The campaign plan
+ * form previews what the LLM will see for the revision **being edited**, which
+ * is unsaved React state — there is no row to point a `planRevisionId` at — so
+ * the draft is sent inline and composed in place of the stored active plan.
+ *
+ * Three properties keep that safe on a route that composes prompts:
+ *
+ * 1. It is a **superset** of `resolveRequestSchema`, declared here rather than
+ *    on the base, so the generation routes (`generateRequestSchema`,
+ *    `generateAnglesInputSchema`) can never accept an inline plan — only the
+ *    read-only, non-persisting inspector route can.
+ * 2. The draft is `createCampaignPlanRevisionInputSchema` verbatim — the exact
+ *    schema a *stored* revision is created through — so every field cap
+ *    (objective 1k, pillars 20×200, guidance `CAMPAIGN_OVERLAY_MAX_CHARS`, the
+ *    start/end window rule) applies identically. A preview cannot widen a limit.
+ * 3. `PLAN_SECTION_TOKEN_CAP` still governs composition downstream, so even a
+ *    maximal valid draft is truncated exactly as a stored one would be.
+ *
+ * It is declared here, not beside `resolveRequestSchema`, because the plan field
+ * schemas are defined further down the file.
+ */
+export const resolvePreviewRequestSchema = resolveRequestSchema.extend({
+  campaignPlanDraft: createCampaignPlanRevisionInputSchema.optional(),
+});
+export type ResolvePreviewRequest = z.infer<typeof resolvePreviewRequestSchema>;
+
 export const campaignLaneSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),

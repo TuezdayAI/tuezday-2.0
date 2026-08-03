@@ -316,6 +316,8 @@ export default function CampaignWorkspacePage() {
 
       {activeTab === "plan" && (
         <CampaignPlanHistory
+          workspaceId={id}
+          campaignId={campaignId}
           revisions={planWorkspace.revisions}
           currentPlanRevisionId={planWorkspace.currentPlanRevisionId}
           audiences={audiences}
