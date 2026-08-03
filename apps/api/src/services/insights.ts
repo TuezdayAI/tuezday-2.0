@@ -110,6 +110,12 @@ export function getCampaignInsights(db: Db, campaign: Campaign): CampaignInsight
   // read applied to snapshot rows. Cumulative windows are summed with
   // cumulative only; the classifier's rule holds here.
   const platformTotals = { likes: 0, comments: 0, shares: 0, impressions: 0, clicks: 0 };
+  // Sprint 55b: per-publication impressions, attributed to the publication's
+  // ACTUAL channel. The pre-55b read prorated the workspace total across
+  // channels by published-post count (with per-channel rounding drift), even
+  // though each publication's channel was already known — the information was
+  // in hand and being discarded.
+  const impressionsByPublication = new Map<string, number>();
   if (pubIds.length > 0) {
     const factRows = db
       .select()
@@ -130,6 +136,12 @@ export function getCampaignInsights(db: Db, campaign: Campaign): CampaignInsight
       if (row.window !== wanted) continue;
       if (row.metricKey in platformTotals) {
         platformTotals[row.metricKey as keyof typeof platformTotals] += row.value;
+      }
+      if (row.metricKey === "impressions") {
+        impressionsByPublication.set(
+          row.subjectId,
+          (impressionsByPublication.get(row.subjectId) ?? 0) + row.value,
+        );
       }
     }
   }
@@ -227,15 +239,13 @@ export function getCampaignInsights(db: Db, campaign: Campaign): CampaignInsight
     ensureChannel(ch).published += count;
   }
 
-  // Platform impressions by channel (from publication channel)
-  // We approximate: attribute all platform impressions to the channels that have publications
-  // For a more granular view, we'd need per-publication-per-channel metrics
-  // v1: attribute all platform impressions proportionally if multiple channels exist
-  if (publishedCount > 0) {
-    for (const [ch, count] of publishedChannels) {
-      const share = count / publishedCount;
-      ensureChannel(ch).impressions += Math.round(platformTotals.impressions * share);
-    }
+  // Platform impressions by channel — each publication's own cumulative
+  // impressions land on its own channel (Sprint 55b). No proration, no
+  // rounding: the per-channel column now sums exactly to the platform total.
+  for (const pub of pubRows) {
+    if (pub.status !== "published") continue;
+    const impressions = impressionsByPublication.get(pub.publicationId);
+    if (impressions) ensureChannel(pub.channel).impressions += impressions;
   }
 
   // Paid by channel (ads channel).

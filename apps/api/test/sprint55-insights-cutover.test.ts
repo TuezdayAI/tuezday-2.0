@@ -5,9 +5,10 @@
  * level, JSON and CSV) against realistic fixtures BEFORE the reads move from
  * the three legacy stores (engagement_metrics, publication_metrics,
  * ad_campaign_metrics) to the unified `metrics` fact table. The pinned
- * literals below were captured against the legacy implementation and MUST NOT
- * be edited during the cutover: Task 5 is a storage change only — no displayed
- * number moves. The four known semantic mixings (spec §2.3 / Task 5b) are
+ * literals below were captured against the legacy implementation and were not
+ * edited during the Task 5 cutover (storage change only — no number moved).
+ * Task 5b then fixed the four semantic mixings deliberately, one commit each,
+ * re-pinning the affected cells with the before/after recorded in each commit. The four known semantic mixings (spec §2.3 / Task 5b) are
  * reproduced faithfully and fixed later, each in its own commit.
  *
  * Fixtures deliberately cover every aggregation edge the legacy code has:
@@ -557,7 +558,7 @@ describe("sprint 55 — /insights snapshot (the cutover must not move a number)"
     {
       "channel": "ads",
       "published": 1,
-      "impressions": 2675,
+      "impressions": 2400,
       "spendCents": 3500,
       "sent": 0,
       "replied": 0
@@ -565,7 +566,7 @@ describe("sprint 55 — /insights snapshot (the cutover must not move a number)"
     {
       "channel": "linkedin",
       "published": 2,
-      "impressions": 950,
+      "impressions": 1200,
       "spendCents": 0,
       "sent": 1,
       "replied": 0
@@ -573,7 +574,7 @@ describe("sprint 55 — /insights snapshot (the cutover must not move a number)"
     {
       "channel": "x",
       "published": 1,
-      "impressions": 475,
+      "impressions": 500,
       "spendCents": 0,
       "sent": 0,
       "replied": 0
@@ -621,7 +622,7 @@ describe("sprint 55 — /insights snapshot (the cutover must not move a number)"
     {
       "channel": "ads",
       "published": 1,
-      "impressions": 2675,
+      "impressions": 2400,
       "spendCents": 3500,
       "sent": 0,
       "replied": 0
@@ -629,7 +630,7 @@ describe("sprint 55 — /insights snapshot (the cutover must not move a number)"
     {
       "channel": "linkedin",
       "published": 2,
-      "impressions": 950,
+      "impressions": 1200,
       "spendCents": 0,
       "sent": 1,
       "replied": 0
@@ -637,7 +638,7 @@ describe("sprint 55 — /insights snapshot (the cutover must not move a number)"
     {
       "channel": "x",
       "published": 1,
-      "impressions": 475,
+      "impressions": 500,
       "spendCents": 0,
       "sent": 0,
       "replied": 0
@@ -690,7 +691,7 @@ describe("sprint 55 — /insights snapshot (the cutover must not move a number)"
     });
     expect(res.statusCode).toBe(200);
     console.log("CAMPAIGN_CSV_SNAPSHOT_START\n" + res.body + "\nCAMPAIGN_CSV_SNAPSHOT_END");
-    expect(res.body).toEqual("Section,Metric,Value\nPaid,Spend (cents),3500\nPaid,Impressions,2200\nPaid,Clicks,110\nPaid,Conversions,12\nPaid,CTR (%),5.00\nPaid,CPC,0.32\nPaid - Lead gen June,Spend (USD cents),3500\nPaid - Retargeting,Spend (USD cents),0\nOrganic,Published,4\nOrganic,Scheduled,1\nOrganic - Platform,Likes,25\nOrganic - Platform,Comments,3\nOrganic - Platform,Shares,3\nOrganic - Platform,Impressions,1900\nOrganic - Platform,Clicks,33\nOrganic - Learning,Impressions,100\nOrganic - Learning,Engagements,20\nOrganic - Learning,Clicks,8\nOutbound,Launches,1\nOutbound,Sent,3\nOutbound,Failed,1\nOutbound,Replied,2\nOutbound,Reply rate,66.67%\nQuality - Drafts,draft,0\nQuality - Drafts,pending_review,1\nQuality - Drafts,approved,4\nQuality - Drafts,rejected,1\nQuality - Drafts,edited,0\nQuality,Approval rate,80.00%\nQuality - Ratings,accepted,2\nQuality - Ratings,needs_edit,1\nQuality - Ratings,rejected,0\n\nChannel,Published,Impressions,Spend (cents),Sent,Replied\nads,1,2675,3500,0,0\nlinkedin,2,950,0,1,0\nx,1,475,0,0,0\nemail,0,0,0,2,2\n");
+    expect(res.body).toEqual("Section,Metric,Value\nPaid,Spend (cents),3500\nPaid,Impressions,2200\nPaid,Clicks,110\nPaid,Conversions,12\nPaid,CTR (%),5.00\nPaid,CPC,0.32\nPaid - Lead gen June,Spend (USD cents),3500\nPaid - Retargeting,Spend (USD cents),0\nOrganic,Published,4\nOrganic,Scheduled,1\nOrganic - Platform,Likes,25\nOrganic - Platform,Comments,3\nOrganic - Platform,Shares,3\nOrganic - Platform,Impressions,1900\nOrganic - Platform,Clicks,33\nOrganic - Learning,Impressions,100\nOrganic - Learning,Engagements,20\nOrganic - Learning,Clicks,8\nOutbound,Launches,1\nOutbound,Sent,3\nOutbound,Failed,1\nOutbound,Replied,2\nOutbound,Reply rate,66.67%\nQuality - Drafts,draft,0\nQuality - Drafts,pending_review,1\nQuality - Drafts,approved,4\nQuality - Drafts,rejected,1\nQuality - Drafts,edited,0\nQuality,Approval rate,80.00%\nQuality - Ratings,accepted,2\nQuality - Ratings,needs_edit,1\nQuality - Ratings,rejected,0\n\nChannel,Published,Impressions,Spend (cents),Sent,Replied\nads,1,2400,3500,0,0\nlinkedin,2,1200,0,1,0\nx,1,500,0,0,0\nemail,0,0,0,2,2\n");
   });
 
   it("campaign B sees only its own draft-linked manual readings", async () => {
