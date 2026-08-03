@@ -58,10 +58,23 @@ export function registerStoryRoutes(app: FastifyInstance, db: Db): void {
     if (status !== undefined && !STORY_STATUSES.includes(status as StoryStatus)) {
       return reply.status(400).send({ error: "invalid_input", message: "unknown status" });
     }
+    const parsedLimit = limit === undefined ? undefined : Number(limit);
+    const parsedOffset = offset === undefined ? undefined : Number(offset);
+    if (
+      (parsedLimit !== undefined &&
+        (!Number.isInteger(parsedLimit) || parsedLimit < 1)) ||
+      (parsedOffset !== undefined &&
+        (!Number.isInteger(parsedOffset) || parsedOffset < 0))
+    ) {
+      return reply.status(400).send({
+        error: "invalid_input",
+        message: "limit must be a positive integer and offset a non-negative integer",
+      });
+    }
     return listStories(db, request.params.id, {
       status: status as StoryStatus | undefined,
-      limit: limit === undefined ? undefined : Number(limit),
-      offset: offset === undefined ? undefined : Number(offset),
+      limit: parsedLimit,
+      offset: parsedOffset,
     });
   });
 

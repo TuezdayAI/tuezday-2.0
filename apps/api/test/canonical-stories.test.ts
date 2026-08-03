@@ -365,6 +365,19 @@ describe("canonical stories (Sprint 60)", () => {
     expect((await listStoriesHttp("?status=active")).total).toBe(2);
   });
 
+  it.each(["limit=not-a-number", "offset=1.5"])(
+    "rejects an invalid story-list pagination query: %s",
+    async (query) => {
+      const response = await app.inject({
+        method: "GET",
+        url: `/workspaces/${workspaceId}/stories?${query}`,
+      });
+
+      expect(response.statusCode).toBe(400);
+      expect(response.json()).toMatchObject({ error: "invalid_input" });
+    },
+  );
+
   it("rejects self-merge and merge into an archived story", async () => {
     await addRssSource("https://feeds.example.com/a.xml");
     await run();

@@ -388,3 +388,9 @@ accept→signal path or `discovered_items`; opportunities UI; Postgres.
   Committed and pushed `sprint-60-canonical-stories`; awaiting founder review.
   Merge note: unmerged sprint 56–59 branches also add migrations at index
   0063+ — whichever merges second renumbers its migration.
+- 2026-08-03 — Continuation audit hardened story-list pagination: malformed
+  or fractional `limit`/`offset` query values now return `400 invalid_input`
+  instead of reaching SQLite. Added regression coverage and re-verified the
+  Sprint 60, discovery checkpoint, migration-order, and navigation suites.
+  Full verification: `npm test -- --reporter=dot` 2199/2199 green and
+  `npm run typecheck` clean.
