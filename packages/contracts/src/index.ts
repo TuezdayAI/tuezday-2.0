@@ -6520,3 +6520,155 @@ export const agentUsageSchema = z.object({
   costCents: z.number().min(0),
 });
 export type AgentUsage = z.infer<typeof agentUsageSchema>;
+
+// ---------------------------------------------------------------------------
+// Internal tool registry (Sprint 57)
+//
+// The registry (apps/api/src/agents/registry.ts) exposes platform
+// capabilities as model-callable tools. Two access tiers only: `read` tools
+// are unrestricted inside the workspace (the same membership rule that
+// scopes HTTP routes); `propose` tools never execute — they mint a gated
+// item and return its id (none ship until Phase L). There is deliberately
+// no "execute" tier.
+// ---------------------------------------------------------------------------
+
+export const TOOL_ACCESS_LEVELS = ["read", "propose"] as const;
+export type ToolAccessLevel = (typeof TOOL_ACCESS_LEVELS)[number];
+
+/** The Sprint 57 read-tool surface. The registry registers exactly this set;
+ * tests assert registry and contracts stay in lockstep. */
+export const AGENT_TOOL_NAMES = [
+  "search_evidence",
+  "get_brain_section",
+  "get_campaign_plan",
+  "list_recent_publications_with_metrics",
+  "find_similar_approved_drafts",
+  "find_instructive_rejections",
+  "get_persona",
+  "list_channel_guardrails",
+  "search_discovery_items",
+  "get_prior_posts_on_topic",
+  "safe_fetch_url",
+] as const;
+export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];
+
+/** Content profiles `safe_fetch_url` accepts — mirrors the Sprint 48
+ * safe-fetch policy's MIME allowlists (apps/api/src/safe-fetch/policy.ts,
+ * which predates this vocabulary; the tool asserts the two stay equal). */
+export const SAFE_FETCH_PROFILES = ["feed", "json", "website"] as const;
+
+/**
+ * Per-tool input schemas — the single definition each registry tool
+ * validates against and derives its model-facing JSON Schema from.
+ * Cross-field rules (e.g. get_brain_section needing sectionId OR query)
+ * are enforced in the tool's run() and returned to the model as
+ * instructive error data, keeping these schemas plain objects the
+ * JSON-Schema deriver can walk.
+ */
+export const toolInputSchemas = {
+  search_evidence: z.object({
+    query: z.string().min(1).max(500),
+    limit: z.number().int().min(1).max(10).optional(),
+  }),
+  get_brain_section: z.object({
+    docType: z.enum(BRAIN_DOC_TYPES).optional(),
+    sectionId: z.string().min(1).optional(),
+    query: z.string().min(1).max(500).optional(),
+  }),
+  get_campaign_plan: z.object({
+    campaignId: z.string().min(1),
+  }),
+  list_recent_publications_with_metrics: z.object({
+    limit: z.number().int().min(1).max(10).optional(),
+    channel: z.enum(CHANNELS).optional(),
+    campaignId: z.string().min(1).optional(),
+  }),
+  find_similar_approved_drafts: z.object({
+    query: z.string().min(1).max(500),
+    taskType: z.enum(TASK_TYPES).optional(),
+    channel: z.enum(CHANNELS).optional(),
+    limit: z.number().int().min(1).max(5).optional(),
+  }),
+  find_instructive_rejections: z.object({
+    query: z.string().min(1).max(500).optional(),
+    taskType: z.enum(TASK_TYPES).optional(),
+    channel: z.enum(CHANNELS).optional(),
+    limit: z.number().int().min(1).max(5).optional(),
+  }),
+  get_persona: z.object({
+    personaId: z.string().min(1),
+  }),
+  list_channel_guardrails: z.object({
+    channel: z.enum(CHANNELS).optional(),
+  }),
+  search_discovery_items: z.object({
+    query: z.string().min(1).max(500).optional(),
+    status: z.enum(DISCOVERED_ITEM_STATUSES).optional(),
+    limit: z.number().int().min(1).max(10).optional(),
+  }),
+  get_prior_posts_on_topic: z.object({
+    topic: z.string().min(1).max(500),
+    channel: z.enum(CHANNELS).optional(),
+    limit: z.number().int().min(1).max(5).optional(),
+  }),
+  safe_fetch_url: z.object({
+    url: z.string().url(),
+    profile: z.enum(SAFE_FETCH_PROFILES).optional(),
+  }),
+} as const satisfies Record<AgentToolName, z.ZodType<Record<string, unknown>>>;
+
+// ---------------------------------------------------------------------------
+// Agent Inspector API (Sprint 57)
+//
+// Wire contract for /workspaces/:id/agent-runs — a straight read of the
+// Sprint 56 agent_runs / agent_run_steps rows with JSON columns parsed
+// server-side. Timestamps are epoch ms integers, per API convention.
+// ---------------------------------------------------------------------------
+
+export const agentRunSummarySchema = z.object({
+  id: z.string().min(1),
+  workspaceId: z.string().min(1),
+  task: z.string(),
+  createdBy: z.string(),
+  status: z.enum(AGENT_RUN_STATUSES),
+  stopReason: z.enum(AGENT_STOP_REASONS).nullable(),
+  error: z.string().nullable(),
+  model: z.string(),
+  provider: z.string(),
+  usage: agentUsageSchema,
+  stepCount: z.number().int().min(0),
+  startedAt: z.number().int(),
+  finishedAt: z.number().int().nullable(),
+});
+export type AgentRunSummary = z.infer<typeof agentRunSummarySchema>;
+
+export const agentRunStepSchema = z.object({
+  id: z.string().min(1),
+  stepIndex: z.number().int().min(0),
+  kind: z.enum(AGENT_STEP_KINDS),
+  /** model_call: the assistant message (text and/or tool calls). */
+  message: agentMessageSchema.nullable(),
+  toolName: z.string().nullable(),
+  toolCallId: z.string().nullable(),
+  toolArgs: z.unknown(),
+  toolResult: z.unknown(),
+  toolError: z.string().nullable(),
+  usage: agentUsageSchema,
+  durationMs: z.number().int().min(0),
+  createdAt: z.number().int(),
+});
+export type AgentRunStep = z.infer<typeof agentRunStepSchema>;
+
+export const agentRunDetailSchema = agentRunSummarySchema.extend({
+  system: z.string(),
+  inputMessages: z.array(agentMessageSchema),
+  output: z.unknown(),
+  steps: z.array(agentRunStepSchema),
+});
+export type AgentRunDetail = z.infer<typeof agentRunDetailSchema>;
+
+/** Trigger a proof run over the read-tool registry (Inspector ignition). */
+export const proofAgentRunInputSchema = z.object({
+  question: z.string().min(1).max(2000),
+});
+export type ProofAgentRunInput = z.infer<typeof proofAgentRunInputSchema>;

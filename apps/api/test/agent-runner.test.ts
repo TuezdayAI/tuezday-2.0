@@ -17,6 +17,8 @@ import {
   type AgentRunParams,
   type AgentTool,
 } from "../src/agents/runner";
+import { toAgentTools } from "../src/agents/adapter";
+import { DEFAULT_TOOL_BUDGET, type ToolContext } from "../src/agents/registry";
 import { searchEvidenceTool } from "../src/agents/tools/search-evidence";
 import { createTestDb } from "./helpers";
 
@@ -399,6 +401,20 @@ describe("search_evidence proof tool", () => {
     }
   }
 
+  // Sprint 57: the proof tool became a registry Tool — wrap it the way
+  // production does (toAgentTools) to get the runner-facing AgentTool.
+  function evidenceAgentTool(db: Db, store: EvidenceStore): AgentTool {
+    const ctx: ToolContext = {
+      db,
+      evidence: store,
+      safeFetch: null as unknown as ToolContext["safeFetch"],
+      workspaceId: WORKSPACE_ID,
+      actor: { userId: "founder", label: "Founder" },
+      budget: DEFAULT_TOOL_BUDGET,
+    };
+    return toAgentTools([searchEvidenceTool], ctx)[0]!;
+  }
+
   async function seededEvidence() {
     const db = createTestDb();
     db.insert(workspaces)
@@ -438,7 +454,7 @@ describe("search_evidence proof tool", () => {
     const runner = new AgentRunner(db, gateway);
 
     const result = await runner.run(
-      baseParams({ tools: [searchEvidenceTool(db, store, WORKSPACE_ID)] }),
+      baseParams({ tools: [evidenceAgentTool(db, store)] }),
     );
 
     expect(result.stopReason).toBe("complete");
@@ -457,17 +473,18 @@ describe("search_evidence proof tool", () => {
       .values({ id: WORKSPACE_ID, name: "Agents", createdAt: 1, updatedAt: 1 })
       .run();
     const store = new FakeEvidenceStore();
-    const tool = searchEvidenceTool(db, store, WORKSPACE_ID);
+    const tool = evidenceAgentTool(db, store);
 
     const outcome = (await tool.handler({ query: "anything" })) as { results: unknown[] };
 
     expect(outcome.results).toEqual([]);
   });
 
-  it("rejects malformed arguments via its input schema", async () => {
+  it("returns malformed arguments as error data via its input schema", async () => {
     const { db, store } = await seededEvidence();
-    const tool = searchEvidenceTool(db, store, WORKSPACE_ID);
+    const tool = evidenceAgentTool(db, store);
 
-    await expect(tool.handler({ limit: 3 })).rejects.toThrow();
+    const outcome = (await tool.handler({ limit: 3 })) as { error: string };
+    expect(outcome.error).toBe("invalid_arguments");
   });
 });

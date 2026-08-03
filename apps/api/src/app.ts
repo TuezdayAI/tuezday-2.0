@@ -31,6 +31,7 @@ import { registerAdCreativeRoutes } from "./routes/ad-creatives";
 import { registerAdImageRoutes } from "./routes/ad-images";
 import { registerAdLaunchRoutes } from "./routes/ad-launches";
 import { registerAdsRoutes } from "./routes/ads";
+import { registerAgentRunRoutes } from "./routes/agent-runs";
 import { registerAudienceRoutes } from "./routes/audiences";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerAutomationRoutes } from "./routes/automation";
@@ -266,6 +267,7 @@ export async function buildApp({
   registerNotificationRoutes(app, db, mailer, fetcher);
   registerSignalRoutes(app, db, llm, evidence);
   registerChatRoutes(app, db, llm, evidence, externalActionRuntime);
+  registerAgentRunRoutes(app, db, { llm, evidence, safeFetch: guardedFetch });
   registerDiscoveryRoutes(
     app,
     db,

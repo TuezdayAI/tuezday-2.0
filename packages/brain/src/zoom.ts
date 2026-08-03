@@ -92,16 +92,29 @@ export interface RankedSection extends ZoomCandidate {
 const K1 = 1.2;
 const B = 0.75;
 
-/**
- * BM25-rank candidate sections against the query. All candidates form one
- * corpus (shared IDF across docs). Returns only positive-scoring sections,
- * descending score; ties break by candidate (document) order.
- */
-export function rankSections(query: string, candidates: ZoomCandidate[]): RankedSection[] {
-  const queryTerms = [...new Set(tokenize(query))];
-  if (queryTerms.length === 0 || candidates.length === 0) return [];
+/** A text any caller wants BM25-ranked. `id` is opaque and returned as-is. */
+export interface RankableText {
+  id: string;
+  text: string;
+}
 
-  const docs = candidates.map((c) => tokenize(c.section.body));
+export interface RankedText {
+  id: string;
+  /** BM25 score against the query (> 0: at least one term matched). */
+  score: number;
+}
+
+/**
+ * BM25-rank arbitrary texts against a query (Sprint 57 generalization of the
+ * Sprint 43 section ranker — same constants, same semantics). All texts form
+ * one corpus (shared IDF). Returns only positive-scoring texts, descending
+ * score; ties break by input order.
+ */
+export function rankTexts(query: string, texts: RankableText[]): RankedText[] {
+  const queryTerms = [...new Set(tokenize(query))];
+  if (queryTerms.length === 0 || texts.length === 0) return [];
+
+  const docs = texts.map((t) => tokenize(t.text));
   const docLengths = docs.map((d) => d.length);
   const avgLength = docLengths.reduce((a, b) => a + b, 0) / docs.length || 1;
 
@@ -116,7 +129,7 @@ export function rankSections(query: string, candidates: ZoomCandidate[]): Ranked
   }
 
   const n = docs.length;
-  const scored = candidates.map((candidate, i) => {
+  const scored = texts.map((text, i) => {
     let score = 0;
     for (const term of queryTerms) {
       const df = docFreq.get(term)!;
@@ -127,11 +140,24 @@ export function rankSections(query: string, candidates: ZoomCandidate[]): Ranked
       const denom = tf + K1 * (1 - B + (B * docLengths[i]!) / avgLength);
       score += idf * ((tf * (K1 + 1)) / denom);
     }
-    return { ...candidate, score, index: i };
+    return { id: text.id, score, index: i };
   });
 
   return scored
     .filter((s) => s.score > 0)
     .sort((a, b) => b.score - a.score || a.index - b.index)
     .map(({ index: _index, ...rest }) => rest);
+}
+
+/**
+ * BM25-rank candidate sections against the query. All candidates form one
+ * corpus (shared IDF across docs). Returns only positive-scoring sections,
+ * descending score; ties break by candidate (document) order.
+ */
+export function rankSections(query: string, candidates: ZoomCandidate[]): RankedSection[] {
+  const ranked = rankTexts(
+    query,
+    candidates.map((c, i) => ({ id: String(i), text: c.section.body })),
+  );
+  return ranked.map(({ id, score }) => ({ ...candidates[Number(id)]!, score }));
 }

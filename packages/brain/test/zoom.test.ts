@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseDocSections } from "../src/sections";
-import { composeZoomQuery, rankSections, tokenize, type ZoomCandidate } from "../src/zoom";
+import { composeZoomQuery, rankSections, rankTexts, tokenize, type ZoomCandidate } from "../src/zoom";
 
 function candidatesFrom(doc: string): ZoomCandidate[] {
   return parseDocSections(doc).map((section) => ({ docType: "history" as const, section }));
@@ -46,6 +46,41 @@ describe("rankSections", () => {
     expect(rankSections("quantum blockchain", candidatesFrom(HISTORY))).toEqual([]);
     expect(rankSections("the and of", candidatesFrom(HISTORY))).toEqual([]);
     expect(rankSections("pricing", [])).toEqual([]);
+  });
+});
+
+describe("rankTexts", () => {
+  const TEXTS = [
+    { id: "dash", text: "We shipped weekly reporting dashboards in March. Agencies loved the export." },
+    { id: "pricing", text: "We tested usage-based pricing in April. Churn dropped for small agencies." },
+    { id: "talk", text: "The founder spoke at SaaSCon about onboarding." },
+  ];
+
+  it("returns ids ranked by relevance, positive scores only", () => {
+    const ranked = rankTexts("usage based pricing churn", TEXTS);
+    expect(ranked[0]!.id).toBe("pricing");
+    expect(ranked.every((r) => r.score > 0)).toBe(true);
+    expect(ranked.some((r) => r.id === "talk")).toBe(false);
+  });
+
+  it("breaks ties by input order and is deterministic", () => {
+    const texts = [
+      { id: "b-first", text: "same words here" },
+      { id: "a-second", text: "same words here" },
+    ];
+    expect(rankTexts("same words", texts).map((r) => r.id)).toEqual(["b-first", "a-second"]);
+  });
+
+  it("returns [] on stopword-only queries, no matches, or empty corpus", () => {
+    expect(rankTexts("the and of", TEXTS)).toEqual([]);
+    expect(rankTexts("quantum blockchain", TEXTS)).toEqual([]);
+    expect(rankTexts("pricing", [])).toEqual([]);
+  });
+
+  it("backs rankSections without changing its behavior", () => {
+    const ranked = rankSections("usage based pricing churn", candidatesFrom(HISTORY));
+    expect(ranked[0]!.section.id).toBe("pricing-experiment");
+    expect(ranked[0]!.docType).toBe("history");
   });
 });
 
