@@ -653,15 +653,53 @@ describe("discovery API", () => {
       expect(signal.source).toBe("rss");
       expect(signal.content).toContain(top.title);
       expect(signal.sourceUrl).toBe(top.url);
-      // the campaign/persona mapping is carried onto the signal for the draft
-      expect(signal.suggestedPersonaId).toBe(top.suggestedPersonaId);
-      expect(signal.suggestedCampaignId).toBe(top.suggestedCampaignId);
+      // the item's routing is carried onto the signal as real match rows, and
+      // both sides project the same top match (Sprint 53)
+      expect(signal.matches[0]).toMatchObject({
+        personaId: personaRef.id,
+        campaignId: campaignRef.id,
+      });
+      expect(signal.suggestedPersonaId).toBe(personaRef.id);
+      expect(signal.suggestedCampaignId).toBe(campaignRef.id);
+      expect(top.suggestedPersonaId).toBe(personaRef.id);
+      expect(top.suggestedCampaignId).toBe(campaignRef.id);
 
       // it shows up in the Sprint 6 signal inbox
       const signals = (
         await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/signals` })
       ).json();
       expect(signals.some((s: { id: string }) => s.id === signal.id)).toBe(true);
+    });
+
+    // Sprint 53: Task 7 will null the legacy columns for real. Prove the accept
+    // path routes from the item's match rows and never reads those columns.
+    it("accepting routes from the item's matches, not the legacy columns", async () => {
+      await addRssSource();
+      await run();
+      const [top] = await items();
+      db.update(discoveredItems)
+        .set({ suggestedPersonaId: null, suggestedCampaignId: null })
+        .where(eq(discoveredItems.id, top.id))
+        .run();
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/discovery/items/${top.id}/accept`,
+      });
+
+      expect(res.statusCode).toBe(200);
+      const { item, signal } = res.json();
+      expect(item.suggestedPersonaId).toBe(personaRef.id);
+      expect(item.suggestedCampaignId).toBe(campaignRef.id);
+      expect(signal.suggestedPersonaId).toBe(personaRef.id);
+      expect(signal.suggestedCampaignId).toBe(campaignRef.id);
+      expect(signal.matches[0]).toMatchObject({
+        personaId: personaRef.id,
+        campaignId: campaignRef.id,
+      });
+      const stored = db.select().from(signals).where(eq(signals.id, signal.id)).get()!;
+      expect(stored.suggestedPersonaId).toBeNull();
+      expect(stored.suggestedCampaignId).toBeNull();
     });
 
     it("refuses double-accept with 409", async () => {

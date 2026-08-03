@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { test, expect, beforeAll, afterAll } from "vitest";
 import { eq } from "drizzle-orm";
+import { signalSchema } from "@tuezday/contracts";
 import { buildAuthedApp, createTestDb } from "./helpers";
 import type { Db } from "../src/db";
 import { signalMatches, signals, workspaces } from "../src/db/schema";
@@ -133,6 +134,84 @@ test.each(["persona", "campaign", "both"] as const)(
     }
   },
 );
+
+// Sprint 53 (D3b): the public idea endpoint used to persist the legacy columns
+// with no backing match row at all. It now routes through the explicit-intent
+// path, so the same request body produces a real score-100 match — and the
+// response contract callers see is unchanged.
+test("ideas endpoint turns explicit routing into a real score-100 match", async () => {
+  const isolatedDb = createTestDb();
+  const isolatedApp = await buildAuthedApp({ db: isolatedDb });
+  try {
+    const workspaceId = (
+      await isolatedApp.inject({
+        method: "POST",
+        url: "/workspaces",
+        payload: { name: "Ideas Routing Workspace" },
+      })
+    ).json().id as string;
+    const persona = (
+      await isolatedApp.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/personas`,
+        payload: { name: "Field CTO" },
+      })
+    ).json();
+    const campaign = (
+      await isolatedApp.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns`,
+        payload: { name: "Launch", objective: "Win fintech VPs", personaIds: [persona.id] },
+      })
+    ).json();
+    const key = createApiKey(isolatedDb, workspaceId, {
+      name: "routing-ideas",
+      scopes: ["ideas:write"],
+    }).rawKey;
+
+    const res = await isolatedApp.inject({
+      method: "POST",
+      url: "/api/v1/ideas",
+      headers: { authorization: `Bearer ${key}` },
+      payload: {
+        content: "Partner-submitted idea with routing",
+        source: "other",
+        suggestedPersonaId: persona.id,
+        suggestedCampaignId: campaign.id,
+      },
+    });
+
+    expect(res.statusCode).toBe(201);
+    const signal = res.json();
+    expect(signalSchema.safeParse(signal).success).toBe(true);
+    expect(signal.suggestedPersonaId).toBe(persona.id);
+    expect(signal.suggestedCampaignId).toBe(campaign.id);
+    expect(signal.matches).toHaveLength(1);
+    expect(signal.matches[0]).toMatchObject({
+      personaId: persona.id,
+      campaignId: campaign.id,
+      score: 100,
+    });
+
+    const rows = isolatedDb
+      .select()
+      .from(signalMatches)
+      .where(eq(signalMatches.signalId, signal.id))
+      .all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      personaId: persona.id,
+      campaignId: campaign.id,
+      score: 100,
+    });
+
+    const stored = isolatedDb.select().from(signals).where(eq(signals.id, signal.id)).get()!;
+    expect(stored.suggestedPersonaId).toBeNull();
+    expect(stored.suggestedCampaignId).toBeNull();
+  } finally {
+    await isolatedApp.close();
+  }
+});
 
 test("drafts endpoint requires drafts:read", async () => {
   const res = await app.inject({

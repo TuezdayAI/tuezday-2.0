@@ -16,6 +16,7 @@ import {
   judgeSignalMatches,
   listSignalMatches,
   listSignalMatchesForSignals,
+  projectSuggestedRouting,
   revalidateSignalMatches,
   type ParsedMatch,
 } from "./matching";
@@ -23,7 +24,14 @@ import { getCampaign } from "./campaigns";
 import { getPersona } from "./personas";
 
 function rowToSignal(row: SignalRow, matches: DiscoveredItemMatch[]): Signal {
-  return { ...row, source: row.source as SignalSource, matches };
+  // Sprint 53: the suggested* pair is derived from the top match, never read
+  // off the row. The columns survive only until Task 7 nulls them.
+  return {
+    ...row,
+    source: row.source as SignalSource,
+    matches,
+    ...projectSuggestedRouting(matches),
+  };
 }
 
 export class SignalReferenceNotFoundError extends Error {
@@ -63,23 +71,51 @@ export function insertSignalRow(
     content: input.content,
     source: input.source,
     sourceUrl: input.sourceUrl ?? null,
-    suggestedPersonaId: input.suggestedPersonaId ?? null,
-    suggestedCampaignId: input.suggestedCampaignId ?? null,
+    // Sprint 53: routing lives in signal_matches. Explicit intent on the input
+    // becomes a score-100 match (see explicitIntentMatches); these columns are
+    // never written again and reads project them from matches[0].
+    suggestedPersonaId: null,
+    suggestedCampaignId: null,
     createdAt: Date.now(),
   };
   db.insert(signals).values(row).run();
   return row;
 }
 
+/** True when the caller named a persona and/or campaign: trusted human intent. */
+function hasExplicitRouting(input: CreateSignalInput): boolean {
+  return Boolean(input.suggestedPersonaId || input.suggestedCampaignId);
+}
+
+/**
+ * Explicit routing, expressed the only way routing is stored: one score-100
+ * match. References are validated by `resolveSignalReferences` beforehand, so
+ * the match is trusted without a revalidation pass.
+ */
+function explicitIntentMatches(input: CreateSignalInput): ParsedMatch[] {
+  if (!hasExplicitRouting(input)) return [];
+  return [
+    {
+      personaId: input.suggestedPersonaId ?? null,
+      campaignId: input.suggestedCampaignId ?? null,
+      score: 100,
+      reason: "Set explicitly at signal creation.",
+    },
+  ];
+}
+
+/**
+ * Create a signal without LLM matching (the public API path). Explicit routing
+ * still lands as a real score-100 match row rather than as standalone columns.
+ */
 export function createSignal(db: Db, workspaceId: string, input: CreateSignalInput): Signal {
   resolveSignalReferences(db, workspaceId, input);
-  return rowToSignal(insertSignalRow(db, workspaceId, input), []);
+  return persistSignalCreation(db, workspaceId, input, explicitIntentMatches(input));
 }
 
 export interface SignalCreationHooks {
   afterSignalInsert?(): void;
   afterMatchInsert?(index: number): void;
-  afterProjectionUpdate?(): void;
   beforeReturn?(): void;
 }
 
@@ -104,10 +140,9 @@ export function persistSignalCreation(
   hooks?: SignalCreationHooks,
 ): Signal {
   return db.transaction((tx) => {
-    const matchesToPersist =
-      input.suggestedPersonaId || input.suggestedCampaignId
-        ? matches
-        : revalidateSignalMatches(tx, workspaceId, matches);
+    const matchesToPersist = hasExplicitRouting(input)
+      ? matches
+      : revalidateSignalMatches(tx, workspaceId, matches);
     const row = insertSignalRow(tx, workspaceId, input);
     hooks?.afterSignalInsert?.();
 
@@ -116,18 +151,8 @@ export function persistSignalCreation(
       hooks?.afterMatchInsert?.(index);
     });
 
-    const best = matchesToPersist[0];
-    if (best) {
-      tx.update(signals)
-        .set({
-          suggestedPersonaId: best.personaId,
-          suggestedCampaignId: best.campaignId,
-        })
-        .where(and(eq(signals.workspaceId, workspaceId), eq(signals.id, row.id)))
-        .run();
-      hooks?.afterProjectionUpdate?.();
-    }
-
+    // No projection write: the suggested* pair is computed on read from the
+    // rows just inserted.
     const created = readSignal(tx, workspaceId, row.id);
     if (!created) throw new Error("Signal creation did not produce a readable row.");
     hooks?.beforeReturn?.();
@@ -151,14 +176,9 @@ export async function createSignalWithMatching(
 ): Promise<Signal> {
   resolveSignalReferences(db, workspaceId, input);
   let matches: ParsedMatch[];
-  if (input.suggestedPersonaId || input.suggestedCampaignId) {
+  if (hasExplicitRouting(input)) {
     // Explicit human intent wins outright — one high-confidence match, no LLM call.
-    matches = [{
-      personaId: input.suggestedPersonaId ?? null,
-      campaignId: input.suggestedCampaignId ?? null,
-      score: 100,
-      reason: "Set explicitly at signal creation.",
-    }];
+    matches = explicitIntentMatches(input);
   } else {
     try {
       matches = await judgeSignalMatches(db, llm, workspaceId, input.content);

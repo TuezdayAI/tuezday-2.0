@@ -31,7 +31,7 @@ import type { EvidenceStore } from "../evidence/store";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { loadPeople, resolveAudienceMembers } from "./audiences";
 import { getBrain } from "./brain";
-import { composeResolveCampaign, getCampaign } from "./campaigns";
+import { getCampaign } from "./campaigns";
 import { applyDraftAction, submitDraft, type DraftActor } from "./drafts";
 import { deriveEmailSendIdempotencyKey, prepareEmailAction } from "./external-action-email";
 import type { ExternalActionRuntime } from "./external-action-coordinator";
@@ -46,7 +46,7 @@ import { notifyReplyOutcome } from "./notifications";
 import { logPositiveReplyTask } from "./crm";
 import { getPersona, toResolvePersona } from "./personas";
 import { resolveDraftAccount } from "./resolve-account";
-import { selectiveContextInputs } from "./resolve-input";
+import { campaignResolveInputs, selectiveContextInputs } from "./resolve-input";
 import { getWorkspace } from "./workspaces";
 import {
   connectedPoolMailboxIds,
@@ -438,7 +438,7 @@ async function generateOutreachStep(
         scope: channelGuidance.scopeLabel,
       },
       persona: persona ? toResolvePersona(persona) : undefined,
-      campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+      ...campaignResolveInputs(ctx.db, seq.workspaceId, campaign),
       account: resolveDraftAccount(ctx.db, seq.workspaceId, { personaId: seq.personaId, channel: "email" }),
       lead: {
         name: person?.name ?? enrollment.recipientEmail,

@@ -17,6 +17,7 @@ import {
   resolveContext,
   type BrainContents,
   type ResolveCampaign,
+  type ResolveCampaignPlan,
   type ResolvePersona,
 } from "@tuezday/brain";
 import type { GuidanceSource } from "@tuezday/contracts";
@@ -38,6 +39,8 @@ export interface ReviewContext {
   channelGuidance?: { content: string; source: GuidanceSource };
   persona?: ResolvePersona;
   campaign?: ResolveCampaign;
+  /** Sprint 53: the campaign's active plan revision, loaded by the caller (the resolver never touches the DB). */
+  campaignPlan?: ResolveCampaignPlan;
   /** Sprint 43 selective-context inputs — reviewers resolve in brief mode. */
   matrix?: ResolvedTaskDocMatrix;
   outlines?: Partial<Record<BrainDocType, DocOutline>>;
@@ -91,6 +94,7 @@ async function runCheck(
     channelGuidance: ctx.channelGuidance,
     persona: ctx.persona,
     campaign: ctx.campaign,
+    campaignPlan: ctx.campaignPlan,
     matrix: ctx.matrix,
     outlines: ctx.outlines,
     resolveMode: "brief",

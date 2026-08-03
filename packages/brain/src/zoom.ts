@@ -1,4 +1,5 @@
 import type { BrainDocType } from "@tuezday/contracts";
+import type { ResolveCampaignPlan } from "./campaign-plan-section";
 import type { DocSection } from "./sections";
 import type {
   ResolveAccount,
@@ -36,6 +37,13 @@ export function tokenize(text: string): string[] {
 /**
  * Compose the Tier-3 retrieval query from everything the task descriptor
  * already knows before drafting. Deterministic; shown verbatim in the trace.
+ *
+ * Sprint 53 review (I2): the campaign's objective and pillars come from the
+ * **active plan** whenever it states them, and only fall back to the
+ * `campaigns.*` row columns when it does not. The prompt states the plan's
+ * strategy, so retrieving evidence against the row's would fetch support for an
+ * objective the model was never given — the row columns are frozen for a
+ * planned campaign, so the two diverge the first time the plan is edited.
  */
 export function composeZoomQuery(input: {
   taskType: string;
@@ -43,6 +51,7 @@ export function composeZoomQuery(input: {
   persona?: ResolvePersona;
   account?: ResolveAccount;
   campaign?: ResolveCampaign;
+  campaignPlan?: ResolveCampaignPlan;
   signal?: ResolveSignal;
   lead?: ResolveLead;
   mediaContact?: ResolveMediaContact;
@@ -56,8 +65,12 @@ export function composeZoomQuery(input: {
   if (input.account?.topics?.length) parts.push(input.account.topics.join(" "));
   if (input.campaign) {
     parts.push(input.campaign.name);
-    if (input.campaign.objective?.trim()) parts.push(input.campaign.objective.trim());
-    if (input.campaign.pillars?.length) parts.push(input.campaign.pillars.join(" "));
+    // Plan first, row second — same authority order the prompt uses.
+    const objective = input.campaignPlan?.objective?.trim() || input.campaign.objective?.trim();
+    if (objective) parts.push(objective);
+    const planPillars = (input.campaignPlan?.pillars ?? []).filter((p) => p.trim());
+    const pillars = planPillars.length ? planPillars : (input.campaign.pillars ?? []);
+    if (pillars.length) parts.push(pillars.join(" "));
   }
   if (input.signal) parts.push(input.signal.content);
   if (input.lead) {
