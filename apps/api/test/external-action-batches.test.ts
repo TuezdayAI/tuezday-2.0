@@ -26,7 +26,7 @@ import {
 import { getExternalAction } from "../src/services/external-actions";
 import { buildAuthedApp, createTestDb } from "./helpers";
 
-const ACTOR = { userId: null, label: "Founder" };
+const ACTOR = { userId: null, label: "Founder", human: true };
 
 function seedWorkspace(db: Db, name = "Batch Lab"): string {
   const id = randomUUID();
@@ -152,6 +152,7 @@ function runtimeWithAuthorize(
     propose: vi.fn(),
     proposeForReview: vi.fn(),
     deny: vi.fn(),
+    cancel: vi.fn(),
     repropose: vi.fn(),
     run: vi.fn(),
   };

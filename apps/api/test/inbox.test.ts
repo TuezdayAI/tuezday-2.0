@@ -195,9 +195,9 @@ describe("engagement & reply inbox", () => {
         channel: "linkedin",
         content: "Our original post body.",
       },
-      { userId: null, label: "test" },
+      { userId: null, label: "test", human: true },
     );
-    return applyDraftAction(db, draft, "approve", { userId: null, label: "test" }).id;
+    return applyDraftAction(db, draft, "approve", { userId: null, label: "test", human: true }).id;
   }
 
   /** Publish an approved draft to Reddit (post-now) and return its receipt. */

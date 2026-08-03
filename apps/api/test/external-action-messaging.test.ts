@@ -385,7 +385,10 @@ describe("external-action messaging boundary", () => {
     expect(queued.statusCode).toBe(202);
     const submission = externalActionSubmissionSchema.parse(queued.json());
     expect(submission.action.kind).toBe("reply");
+    // Sprint 52 (D2): the reply draft was approved by a human above, and a
+    // `reply` still waits for its own authorization — only `publish` collapses.
     expect(submission.action.status).toBe("authorization_required");
+    expect(submission.action.authorizedAt).toBeNull();
     expect(submission.action.subject.kind).toBe("inbox_item");
     expect(state.postedReplies).toHaveLength(0);
 
@@ -486,7 +489,10 @@ describe("external-action messaging boundary", () => {
     expect(submissions).toHaveLength(1);
     const submission = externalActionSubmissionSchema.parse(submissions[0]);
     expect(submission.action.kind).toBe("send");
+    // Sprint 52 (D2): human-approved launch drafts, and a `send` still needs
+    // its own authorization.
     expect(submission.action.status).toBe("authorization_required");
+    expect(submission.action.authorizedAt).toBeNull();
     expect(submission.action.subject.kind).toBe("launch_message");
     expect(state.linkedInPosts).toBe(0);
     expect(db.select().from(publications).all()).toHaveLength(0);

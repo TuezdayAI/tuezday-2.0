@@ -136,7 +136,7 @@ describe("workspace priorities projection", () => {
         channel: "linkedin",
         content: "Pending body.",
       },
-      { userId: null, label: "test" },
+      { userId: null, label: "test", human: true },
     ).id;
   }
 
@@ -166,9 +166,9 @@ describe("workspace priorities projection", () => {
         channel: "linkedin",
         content: "Published body.",
       },
-      { userId: null, label: "test" },
+      { userId: null, label: "test", human: true },
     );
-    applyDraftAction(db, draft, "approve", { userId: null, label: "test" });
+    applyDraftAction(db, draft, "approve", { userId: null, label: "test", human: true });
     const id = randomUUID();
     db.insert(publications)
       .values({
@@ -358,7 +358,7 @@ describe("workspace priorities projection", () => {
         channel: "linkedin",
         content: "Response draft.",
       },
-      { userId: null, label: "test" },
+      { userId: null, label: "test", human: true },
     );
 
     vi.setSystemTime(new Date(T0 - 25 * HOUR));
@@ -499,9 +499,9 @@ describe("workspace priorities projection", () => {
           channel: "linkedin",
           content: `Scheduled body ${suffix}.`,
         },
-        { userId: null, label: "test" },
+        { userId: null, label: "test", human: true },
       );
-      applyDraftAction(db, draft, "approve", { userId: null, label: "test" });
+      applyDraftAction(db, draft, "approve", { userId: null, label: "test", human: true });
       db.insert(publications)
         .values({
           id: randomUUID(),

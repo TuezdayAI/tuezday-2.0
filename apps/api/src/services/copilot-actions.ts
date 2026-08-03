@@ -20,6 +20,7 @@ import { resolveExternalActionPolicy } from "./external-action-policy";
 import type {
   ExternalActionCommand,
   ExternalActionRuntime,
+  ExternalActionRuntimeActor,
 } from "./external-action-coordinator";
 import { getWorkspace } from "./workspaces";
 
@@ -72,14 +73,20 @@ export interface CopilotActionTool {
   commit(
     ctx: CopilotActionContext,
     payload: Record<string, unknown>,
-    actor: ExternalActionActor,
+    actor: ExternalActionRuntimeActor,
   ): Promise<CopilotCommitResult>;
 }
 
 const PREVIEW_CHARS = 4_000;
 
-function draftActor(actor: ExternalActionActor): DraftActor {
-  return { userId: actor.userId, label: actor.label };
+function draftActor(actor: ExternalActionRuntimeActor): DraftActor {
+  // Deliberately not `actor.human`: this conversion fails closed (Sprint 52).
+  // A copilot commit is a person talking to a tool, not a person reading a
+  // draft, so it must not be able to stand in for an approval. Copilot commits
+  // only ever `submit` drafts — they never approve — so nothing here consults
+  // it today. If an approve path is ever added, decide humanity there
+  // deliberately rather than letting the caller's flag flow in.
+  return { userId: actor.userId, label: actor.label, human: false };
 }
 
 /** Resolve a deterministic context bundle for a content draft (no LLM call). */

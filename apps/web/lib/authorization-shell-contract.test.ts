@@ -60,6 +60,39 @@ describe("authorization queue shell contract", () => {
     expect(queueSource).toMatch(/external-action-batches\/\$\{batchDetail\.batch\.id\}\/authorize/);
   });
 
+  // Sprint 52 — a collapsed publish action is authorized at propose time and
+  // never enters the authorization_required queue, so the only place a founder
+  // can still stop it is the pre-dispatch window on the Scheduled filter.
+  it("offers a withdrawal for an authorized action that has not dispatched", () => {
+    // The pre-dispatch window, and only it — `succeeded` is never in the list.
+    // This hardcoded list is the real gate: the state machine also permits
+    // `cancelled` from `blocked`, `failed` and the queue states, which this
+    // surface deliberately does not offer a withdrawal for.
+    expect(queueSource).toContain("WITHDRAWABLE_STATUSES");
+    expect(queueSource).toMatch(/WITHDRAWABLE_STATUSES[^=]*=\s*\["authorized", "scheduled"\]/);
+    // The contracts state machine still has the final say on legality.
+    expect(queueSource).toContain('canTransitionExternalAction(action.status, "cancelled")');
+    expect(queueSource).toContain("withdrawable(selected)");
+    expect(queueSource).toContain('decide(selected.id, "cancel")');
+    expect(queueSource).toContain("Withdraw authorization");
+    // Reachable: an authorized action that has not dispatched has its own filter.
+    expect(queueSource).toContain('authorized: "Authorized"');
+  });
+
+  // Sprint 52 — a publish sitting in this queue means the draft approval did
+  // not carry through. The founder should be able to tell why they are being
+  // asked twice.
+  it("says why a second decision is still being asked for", () => {
+    expect(queueSource).toContain("secondGateExplanation");
+    expect(queueSource).toContain("secondGate && ");
+  });
+
+  it("names when an authorization was granted without a missing preposition", () => {
+    expect(queueSource).toContain("Already authorized");
+    expect(queueSource).toMatch(/` on \$\{new Date\(selected\.authorizedAt\)\.toLocaleString\(\)\}`/);
+    expect(queueSource).toContain("You can still take that back until it dispatches.");
+  });
+
   it("uses the canonical ready, attention, and blocked result tokens", () => {
     expect(queueStyles).toContain("--status-ready-ink");
     expect(queueStyles).toContain("--status-attention-ink");

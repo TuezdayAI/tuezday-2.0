@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, or } from "drizzle-orm";
+import { and, desc, eq, inArray, or } from "drizzle-orm";
 import {
   canTransitionExternalAction,
   type EffectiveExternalActionPolicy,
@@ -242,6 +242,40 @@ export function getExternalActionDetail(
   return { action, decisions };
 }
 
+/**
+ * Action ids in `actionIds` that a person refused — denied in the
+ * authorization queue, or withdrawn after the gate collapsed.
+ *
+ * The question is "did a human say no to this?", never "is it cancelled?": the
+ * automation kill switch and a cadence deletion also cancel, and those are
+ * system stops that must not outlive the condition that caused them. Answered
+ * from the persisted `actorHuman` on the decision, not from the reason text (a
+ * founder types anything there) or from `actorUserId` (the delegated approve
+ * links are humans without one).
+ */
+export function humanRefusedActionIds(
+  db: Db,
+  workspaceId: string,
+  actionIds: string[],
+): Set<string> {
+  if (actionIds.length === 0) return new Set();
+  return new Set(
+    db
+      .select({ actionId: externalActionDecisions.actionId })
+      .from(externalActionDecisions)
+      .where(
+        and(
+          eq(externalActionDecisions.workspaceId, workspaceId),
+          eq(externalActionDecisions.decision, "deny"),
+          eq(externalActionDecisions.actorHuman, true),
+          inArray(externalActionDecisions.actionId, actionIds),
+        ),
+      )
+      .all()
+      .map((r) => r.actionId),
+  );
+}
+
 export function transitionExternalAction(
   db: Db,
   workspaceId: string,
@@ -292,7 +326,7 @@ export function insertExternalActionDecision(
   db: Db,
   action: ExternalAction,
   decision: ExternalActionDecisionValue,
-  actor: ExternalActionActor,
+  actor: ExternalActionActor & { human: boolean },
   reason: string | null,
 ): void {
   db.insert(externalActionDecisions)
@@ -304,6 +338,7 @@ export function insertExternalActionDecision(
       reason,
       actorUserId: actor.userId,
       actorLabel: actor.label,
+      actorHuman: actor.human,
       subjectFingerprint: action.fingerprint,
       policySnapshotJson: JSON.stringify(action.policy),
       createdAt: Date.now(),

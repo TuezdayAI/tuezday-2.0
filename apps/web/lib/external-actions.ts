@@ -127,6 +127,30 @@ export function policyExplanation(action: ExternalAction): string {
   return [effective, ...contributions].join(" ");
 }
 
+/**
+ * Sprint 52 — why this action is still asking, when approving a post normally
+ * settles it.
+ *
+ * Only two of the three answers are derivable from what the API returns on an
+ * action. A re-proposal is marked by `supersedesActionId`, and the five
+ * non-`publish` kinds keep their second gate unconditionally. For a first-time
+ * `publish` the collapse simply did not apply, and the action carries no field
+ * saying which cause it was — the stored approval fingerprint, the approving
+ * actor, and the copilot `forceReview` flag all live on records this surface
+ * does not read. So the copy names the possible causes rather than asserting
+ * one it cannot know.
+ */
+export function secondGateExplanation(action: ExternalAction): string | null {
+  if (action.status !== "authorization_required") return null;
+  if (action.supersedesActionId !== null) {
+    return "This replaces an earlier action that went stale. What changed may be the destination, the timing, or the policy rather than the content you approved, so a re-proposal always comes back for a decision.";
+  }
+  if (action.kind !== "publish") {
+    return `${actionKindLabel(action.kind)} always needs its own authorization, even once the content is approved.`;
+  }
+  return "Approving a post normally authorizes its publication. This one is still asking, which happens when the post or its image changed after approval, when Tuezday approved the draft on its own rather than you, or when it was proposed from chat for review.";
+}
+
 export function actionTimingLabel(action: ExternalAction): string {
   return action.requestedFor === null
     ? "Immediately once authorized"

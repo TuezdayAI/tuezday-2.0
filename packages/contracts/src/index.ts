@@ -1792,6 +1792,16 @@ export const authorizeExternalActionInputSchema = z.object({}).strict();
 export const denyExternalActionInputSchema = z.object({
   reason: z.string().trim().min(1).max(1_000).nullable().optional(),
 });
+/**
+ * Withdrawing an authorization that was already granted — the collapsed publish
+ * gate (Sprint 52) authorizes at propose time, so such an action never sits in
+ * the queue for `deny` to reach. Legality is the contracts state machine's call:
+ * anything with an edge to `cancelled` can still be withdrawn, and `succeeded`
+ * has none.
+ */
+export const cancelExternalActionInputSchema = z.object({
+  reason: z.string().trim().min(1).max(1_000).nullable().optional(),
+});
 export const reproposeExternalActionInputSchema = z.object({
   idempotencyKey: z.string().trim().min(1).max(300),
 });
@@ -2669,6 +2679,10 @@ export const approvalDecisionSchema = z.object({
   fromState: z.enum(APPROVAL_STATES),
   toState: z.enum(APPROVAL_STATES),
   contentSnapshot: z.string().nullable(),
+  // Sprint 52: sha256 of exactly what a human approved (draft id + content +
+  // media). Null for every non-approve action and for system approvals — only
+  // a human approval can authorize publication without a second click.
+  contentFingerprint: z.string().regex(/^[a-f0-9]{64}$/).nullable(),
   actor: z.string(),
   // Nullable: decisions logged before auth existed (Sprint 19), or by the worker.
   actorId: z.string().uuid().nullable(),
@@ -5322,6 +5336,10 @@ export const ANALYTICS_EVENTS = [
   "review.revision_requested",
   "review.content_decided",
   "review.action_authorized",
+  // Sprint 52: a publish authorized by the earlier draft approval, with no
+  // click to attribute. Kept distinct so `review.action_authorized` keeps
+  // meaning "a human clicked Authorize"; total authorizations is the sum.
+  "review.action_authorized_collapsed",
   "calendar.item_scheduled",
   "execution.result_viewed",
 ] as const;

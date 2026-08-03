@@ -10,7 +10,7 @@ import {
 import type { TuezdayApp } from "../src/app";
 import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric";
 import type { Db } from "../src/db";
-import { publications } from "../src/db/schema";
+import { approvalDecisions, externalActionDecisions, publications } from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
 import { applyDraftAction, submitDraft } from "../src/services/drafts";
 import { buildAuthedApp, createTestDb } from "./helpers";
@@ -174,12 +174,23 @@ describe("posting cadences", () => {
     return res.json();
   }
 
+  /**
+   * A draft queued for a cadence. `approvedBy` decides which publish path the
+   * cadence then takes (Sprint 52): a human approval collapses the second gate
+   * (the action is authorized at fill time), while a system/auto approval
+   * leaves the action waiting at `authorization_required` (D2a).
+   */
   function seedApprovedDraft(opts: {
     campaignId?: string | null;
     channel?: string;
     personaId?: string | null;
     content?: string;
+    approvedBy?: "human" | "system";
   }): string {
+    const approver =
+      opts.approvedBy === "system"
+        ? { userId: null, label: "system", human: false }
+        : { userId: null, label: "test", human: true };
     const draft = submitDraft(
       db,
       {
@@ -191,9 +202,9 @@ describe("posting cadences", () => {
         channel: (opts.channel ?? "linkedin") as never,
         content: opts.content ?? "Headline of the post\nThe body of the post.",
       },
-      { userId: null, label: "test" },
+      approver,
     );
-    return applyDraftAction(db, draft, "approve", { userId: null, label: "test" }).id;
+    return applyDraftAction(db, draft, "approve", approver).id;
   }
 
   function cadencePayload(over: Record<string, unknown> = {}) {
@@ -401,13 +412,10 @@ describe("posting cadences", () => {
       url: `/workspaces/${workspaceId}/cadences/${cadenceId}/fill`,
     });
     expect(fill.json().filled).toBe(1);
+    // Sprint 52: the human approval already authorized it, so it is scheduled
+    // for its slot straight out of the fill.
     const action = (await listPublishActions())[0]!;
-    const authorized = await app.inject({
-      method: "POST",
-      url: `/workspaces/${workspaceId}/external-actions/${action.id}/authorize`,
-      payload: {},
-    });
-    expect(authorized.json().action.status).toBe("scheduled");
+    expect(action.status).toBe("scheduled");
     vi.setSystemTime(new Date(action.requestedFor + 1));
     await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
 
@@ -448,7 +456,9 @@ describe("posting cadences", () => {
   it("projects a timed action on the calendar only until its receipt exists", async () => {
     const connectionId = await connectReddit();
     const campaignId = await createCampaign("Summer Launch");
-    seedApprovedDraft({ campaignId, channel: "linkedin" });
+    // Auto-approved, so the second gate stays armed (Sprint 52 D2a) and this
+    // test still walks the queued → authorized → receipt projection.
+    seedApprovedDraft({ campaignId, channel: "linkedin", approvedBy: "system" });
     const cadenceId = (await createCadence(cadencePayload({ campaignId, connectionId }))).json().id;
     await app.inject({
       method: "POST",
@@ -520,7 +530,7 @@ describe("posting cadences", () => {
           channel: "linkedin" as never,
           content: "Pending only",
         },
-        { userId: null, label: "test" },
+        { userId: null, label: "test", human: true },
       ); // not approved
 
       const cadenceId = (await createCadence(cadencePayload({ campaignId, connectionId }))).json().id;
@@ -533,7 +543,9 @@ describe("posting cadences", () => {
       const actions = await listPublishActions();
       expect(actions).toHaveLength(3);
       for (const action of actions) {
-        expect(action.status).toBe("authorization_required");
+        // Human-approved drafts: authorized at fill and parked on their slot
+        // (Sprint 52). The slot bookkeeping is the same either way.
+        expect(action.status).toBe("scheduled");
         expect(action.idempotencyKey).toContain(`cadence:${cadenceId}:`);
         expect(action.requestedFor).toBeGreaterThan(Date.now());
         expect(new Date(action.requestedFor).getUTCHours()).toBe(13);
@@ -586,7 +598,14 @@ describe("posting cadences", () => {
   it("a filled slot publishes when due via publish/run", async () => {
     const connectionId = await connectReddit();
     const campaignId = await createCampaign();
-    seedApprovedDraft({ campaignId, channel: "linkedin", content: "Cadence post title\nBody text." });
+    // Auto-approved, so this stays the explicitly-authorized path (Sprint 52
+    // D2a). The collapsed one-click path is covered by its own test below.
+    seedApprovedDraft({
+      campaignId,
+      channel: "linkedin",
+      content: "Cadence post title\nBody text.",
+      approvedBy: "system",
+    });
 
     // A Monday slot five minutes out, in UTC for easy math.
     const cadenceId = (
@@ -633,14 +652,168 @@ describe("posting cadences", () => {
     expect(state.posts[0]).toMatchObject({ sr: "test", title: "Cadence post title" });
   });
 
+  // Sprint 52 — the PRD's headline: approve a post once, and the cadence
+  // publishes it with no second click. The cadence proposes as the system
+  // actor, but the authorization derives from the earlier human approval.
+  it("publishes a human-approved draft on cadence without a second click", async () => {
+    const connectionId = await connectReddit();
+    const campaignId = await createCampaign();
+    const draftId = seedApprovedDraft({
+      campaignId,
+      channel: "linkedin",
+      content: "Cadence post title\nBody text.",
+    });
+
+    const cadenceId = (
+      await createCadence(
+        cadencePayload({
+          campaignId,
+          connectionId,
+          daysOfWeek: [1],
+          timeOfDay: "08:05",
+          timezone: "UTC",
+        }),
+      )
+    ).json().id;
+    expect(
+      (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/cadences/${cadenceId}/fill`,
+        })
+      ).json().filled,
+    ).toBe(1);
+
+    // Filled and already authorized — scheduled for its slot, not queued.
+    const action = (await listPublishActions())[0]!;
+    expect(action.status).toBe("scheduled");
+    expect(action.authorizedAt).not.toBeNull();
+    expect(action.proposedBy.label).toBe("system");
+    expect(
+      (
+        await app.inject({
+          method: "GET",
+          url: `/workspaces/${workspaceId}/external-actions?status=authorization_required`,
+        })
+      ).json().actions,
+    ).toEqual([]);
+
+    // …and the authorization is attributed to the human who approved, not to
+    // the system actor that proposed it.
+    const approval = db
+      .select()
+      .from(approvalDecisions)
+      .where(eq(approvalDecisions.draftId, draftId))
+      .all()
+      .find((row) => row.action === "approve")!;
+    const decisions = db
+      .select()
+      .from(externalActionDecisions)
+      .where(eq(externalActionDecisions.actionId, action.id))
+      .all();
+    expect(decisions).toHaveLength(1);
+    expect(decisions[0]).toMatchObject({
+      decision: "authorize",
+      actorLabel: approval.actor,
+      actorUserId: approval.actorId,
+    });
+
+    vi.setSystemTime(new Date(MONDAY_8AM_UTC.getTime() + 10 * 60 * 1000));
+    const run = await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
+    expect(run.json().actions).toEqual([
+      expect.objectContaining({
+        action: expect.objectContaining({ id: action.id, status: "succeeded" }),
+      }),
+    ]);
+    expect(state.posts[0]).toMatchObject({ sr: "test", title: "Cadence post title" });
+  });
+
+  // Sprint 52 review, finding 1 — a withdrawal has to stick. The collapsed
+  // cadence action is authorized without a second click, so cancelling it is
+  // the *only* human "no". If the next fill re-slotted the same draft it would
+  // re-collapse and publish, and the withdrawal would have meant nothing.
+  it("does not re-slot a draft whose collapsed cadence action was withdrawn", async () => {
+    const connectionId = await connectReddit();
+    const campaignId = await createCampaign();
+    const withdrawnDraftId = seedApprovedDraft({
+      campaignId,
+      channel: "linkedin",
+      content: "Withdrawn post title\nBody text.",
+    });
+
+    const cadenceId = (
+      await createCadence(
+        cadencePayload({
+          campaignId,
+          connectionId,
+          daysOfWeek: [1],
+          timeOfDay: "08:05",
+          timezone: "UTC",
+        }),
+      )
+    ).json().id;
+    const fillUrl = `/workspaces/${workspaceId}/cadences/${cadenceId}/fill`;
+    expect((await app.inject({ method: "POST", url: fillUrl })).json().filled).toBe(1);
+
+    const collapsed = (await listPublishActions())[0]!;
+    expect(collapsed.status).toBe("scheduled");
+
+    const cancelled = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/external-actions/${collapsed.id}/cancel`,
+      payload: { reason: "Changed my mind" },
+    });
+    expect(cancelled.statusCode).toBe(200);
+    expect(cancelled.json().action.status).toBe("cancelled");
+
+    // What makes this stick is the recorded humanity of the refusal — not the
+    // founder's free-text reason, which can say anything, and not the
+    // `cancelled` status, which the kill switch also produces.
+    const refusal = db
+      .select()
+      .from(externalActionDecisions)
+      .where(eq(externalActionDecisions.actionId, collapsed.id))
+      .all()
+      .find((row) => row.decision === "deny")!;
+    expect(refusal.actorHuman).toBe(true);
+
+    // Past the withdrawn slot: the next fill sees fresh open slots.
+    vi.setSystemTime(new Date(MONDAY_8AM_UTC.getTime() + 60 * 60 * 1000));
+    expect((await app.inject({ method: "POST", url: fillUrl })).json().filled).toBe(0);
+
+    const afterRefill = await listPublishActions();
+    expect(afterRefill).toHaveLength(1);
+    expect(afterRefill[0]!.status).toBe("cancelled");
+
+    // Nothing left to dispatch, so nothing is published.
+    vi.setSystemTime(new Date(MONDAY_8AM_UTC.getTime() + 8 * DAY_MS));
+    await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
+    expect(state.posts).toEqual([]);
+
+    // …but the cadence is not frozen: a different approved draft still fills.
+    vi.setSystemTime(new Date(MONDAY_8AM_UTC.getTime() + 60 * 60 * 1000));
+    const nextDraftId = seedApprovedDraft({
+      campaignId,
+      channel: "linkedin",
+      content: "Next post title\nBody text.",
+    });
+    expect((await app.inject({ method: "POST", url: fillUrl })).json().filled).toBe(1);
+    const live = (await listPublishActions()).filter((a) => a.status !== "cancelled");
+    expect(live).toHaveLength(1);
+    expect(live[0]!.subject.id).toBe(nextDraftId);
+    expect(live[0]!.subject.id).not.toBe(withdrawnDraftId);
+  });
+
   it("deleting a cadence cancels its still-scheduled posts", async () => {
     const connectionId = await connectReddit();
     const campaignId = await createCampaign();
     seedApprovedDraft({ campaignId, channel: "linkedin" });
     const cadenceId = (await createCadence(cadencePayload({ campaignId, connectionId }))).json().id;
     await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/cadences/${cadenceId}/fill` });
+    // Collapsed at fill (Sprint 52), so deleting the cadence has to stop an
+    // already-authorized post, not only a queued one.
     const action = (await listPublishActions())[0]!;
-    expect(action.status).toBe("authorization_required");
+    expect(action.status).toBe("scheduled");
 
     await app.inject({ method: "DELETE", url: `/workspaces/${workspaceId}/cadences/${cadenceId}` });
     const detail = await app.inject({

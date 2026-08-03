@@ -223,7 +223,10 @@ describe("external-action paid launch boundary", () => {
     expect(queued.statusCode).toBe(202);
     const submission = externalActionSubmissionSchema.parse(queued.json());
     expect(submission.action.kind).toBe("paid_launch");
+    // Sprint 52 (D2): spend always keeps its own gate — the approve-collapses-
+    // authorization default is `publish`-only.
     expect(submission.action.status).toBe("authorization_required");
+    expect(submission.action.authorizedAt).toBeNull();
     expect(submission.action.subject.kind).toBe("ad_launch");
     expect(state.campaignPosts).toBe(0);
 

@@ -38,7 +38,10 @@ import {
   deriveSendIdempotencyKey,
   prepareSendAction,
 } from "./external-action-adapters";
-import type { ExternalActionRuntime } from "./external-action-coordinator";
+import type {
+  ExternalActionRuntime,
+  ExternalActionRuntimeActor,
+} from "./external-action-coordinator";
 import { getExternalAction } from "./external-actions";
 import {
   deriveEmailSendIdempotencyKey,
@@ -575,7 +578,7 @@ export async function dispatchChannel(
   launchId: string,
   channel: LaunchChannel,
   input: DispatchChannelInput,
-  actor: ExternalActionActor,
+  actor: ExternalActionRuntimeActor,
 ): Promise<DispatchResult> {
   const launchRow = getLaunchRow(db, workspaceId, launchId);
   if (!launchRow) return { ok: false, error: "launch_not_found" };

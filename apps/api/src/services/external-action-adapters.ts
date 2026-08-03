@@ -55,6 +55,7 @@ import type {
   ExternalActionIntent,
 } from "./external-action-coordinator";
 import { canonicalActionFingerprint } from "./external-action-fingerprint";
+import { ExternalActionPreparationError } from "./external-action-preparation";
 import { countTerminalExternalActionsForSubject } from "./external-actions";
 import { getDraft } from "./drafts";
 import {
@@ -89,17 +90,7 @@ const publishActionPayloadSchema = publishDraftInputSchema
 
 type PublishActionPayload = z.infer<typeof publishActionPayloadSchema>;
 
-export class ExternalActionPreparationError extends Error {
-  constructor(
-    public readonly code: string,
-    message: string,
-    public readonly statusCode: 400 | 404 | 409,
-    public readonly details?: unknown,
-  ) {
-    super(message);
-    this.name = "ExternalActionPreparationError";
-  }
-}
+export { ExternalActionPreparationError } from "./external-action-preparation";
 
 function publishIntent(
   db: Db,
@@ -1288,7 +1279,10 @@ export function paidLaunchActionAdapter(
           launch,
           payload.externalAccountId,
           payload.creative,
-          { userId: action.proposedBy.userId, label: action.proposedBy.label },
+          // Rebuilt from the persisted proposer, which does not record humanity
+          // (Sprint 52). performLaunch uses this for launch-decision attribution
+          // only — it never approves a draft — so it fails closed as non-human.
+          { userId: action.proposedBy.userId, label: action.proposedBy.label, human: false },
           payload.imageUrl,
         );
         await emitEvent(db, fetcher, action.workspaceId, "ad.launched", {

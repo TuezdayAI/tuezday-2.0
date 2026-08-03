@@ -62,7 +62,7 @@ const HOUR_MS = 60 * 60 * 1000;
 
 /** Sequence advance always acts as the system identity — generation + the
  * auto-approval in scheduled_auto are attributed to `system`, like Sprint 28/29. */
-const SYSTEM_ACTOR: DraftActor = { userId: null, label: "system" };
+const SYSTEM_ACTOR: DraftActor = { userId: null, label: "system", human: false };
 
 /** Each sequenced channel maps to a task type + resolver channel (personalized). */
 const SEQUENCE_GEN: Record<SequenceChannel, { taskType: TaskType; channel: Channel }> = {

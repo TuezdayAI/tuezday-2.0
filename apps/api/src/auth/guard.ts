@@ -24,9 +24,27 @@ declare module "fastify" {
   }
 }
 
-/** drafts/brain services take this slice of the actor for attribution. */
-export function actorOf(request: FastifyRequest): { userId: string | null; label: string } {
-  return { userId: request.actor.userId, label: request.actor.label };
+/**
+ * drafts/brain services take this slice of the actor for attribution.
+ *
+ * `human` (Sprint 52) fails closed: it is established affirmatively by a
+ * signed-in user identity, never inferred from "not the worker". A future
+ * guard actor that is neither the worker nor a person — a service token, a
+ * delegated integration identity — therefore arrives as non-human and cannot
+ * collapse the publish gate by accident; humanity would have to be plumbed
+ * through deliberately. This changes nothing today: the guard sets exactly two
+ * actors, the system actor (null `userId`) and a session user (non-null), so
+ * this agrees with the previous `!system` derivation on both.
+ *
+ * Delegated-human paths (the signed email/Telegram approve links) and the
+ * public-API machine credential bypass the auth guard entirely and declare
+ * `human` themselves at their own call sites.
+ */
+export function actorOf(
+  request: FastifyRequest,
+): { userId: string | null; label: string; human: boolean } {
+  const { userId, label, system } = request.actor;
+  return { userId, label, human: userId !== null && !system };
 }
 
 const PUBLIC_ROUTES = new Set([

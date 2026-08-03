@@ -44,6 +44,20 @@ describe("review workspace shell contract", () => {
     expect(queueSource).toContain("queueNeighbors");
   });
 
+  // Sprint 52 — approving a post also authorizes its publication. This queue
+  // holds drafts, which carry neither the action kind nor the resolved policy,
+  // so the copy stays general rather than promising per card.
+  it("states the collapsed publish gate where the approval decision is taken", () => {
+    expect(queueSource).toContain("Approving a post also authorizes it to publish");
+    expect(queueSource).toContain("it comes back for a separate authorization");
+    expect(queueSource).toContain("always need that second decision");
+    // No per-draft promise: the queue never claims a specific draft will publish.
+    expect(queueSource).not.toMatch(/This draft will publish/i);
+    expect(queueSource).not.toMatch(/toast\("Approved and published/);
+    // The approval verbs still route through the contracts state machine.
+    expect(queueSource).toContain('canTransition(draft.state, "approve")');
+  });
+
   it("mounts both queue surfaces from the review shell", () => {
     expect(reviewPage).toContain("ApprovalsQueue");
     expect(reviewPage).toContain("InboxQueue");

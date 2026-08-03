@@ -578,7 +578,7 @@ describe("personas API", () => {
         { id: workspaceId, name: "Personable" },
         item,
         {},
-        { userId: null, label: "test" },
+        { userId: null, label: "test", human: true },
       );
       expect(draft.taskType).toBe("engagement_reply");
 

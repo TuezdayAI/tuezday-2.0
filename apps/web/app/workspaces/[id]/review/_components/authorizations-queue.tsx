@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   EXTERNAL_ACTION_KINDS,
+  canTransitionExternalAction,
   type AuthorizationBatchDetail,
   type AuthorizationBatchSelection,
   type AuthorizationBatchItem,
@@ -28,6 +29,7 @@ import {
   externalActionWorkflowStatus,
   impactSummary,
   policyExplanation,
+  secondGateExplanation,
 } from "@/lib/external-actions";
 import { campaignFilterName, reviewHref } from "@/lib/review-workspace";
 import { EmptyState } from "@/src/components/empty-state";
@@ -41,6 +43,7 @@ type StatusFilter = ExternalActionStatus | "all";
 /** The lifecycle states worth queueing for a human, in filter order. */
 const STATUS_FILTERS: StatusFilter[] = [
   "authorization_required",
+  "authorized",
   "blocked",
   "stale",
   "failed",
@@ -50,12 +53,34 @@ const STATUS_FILTERS: StatusFilter[] = [
 
 const STATUS_FILTER_LABELS: Record<string, string> = {
   authorization_required: "Needs authorization",
+  authorized: "Authorized",
   blocked: "Blocked",
   stale: "Stale",
   failed: "Failed",
   scheduled: "Scheduled",
   all: "All",
 };
+
+/**
+ * The window in which an authorization can still be taken back. A collapsed
+ * publish (Sprint 52) is authorized the moment its draft was approved and never
+ * appears under "Needs authorization", so these two filters are the only place
+ * a founder can still stop one — after `dispatching` it has left the building.
+ */
+const WITHDRAWABLE_STATUSES: ExternalActionStatus[] = ["authorized", "scheduled"];
+
+/**
+ * This list is the gate, not the state machine: `cancelled` is also reachable
+ * from `blocked`, `failed` and the queue states, which have their own verbs on
+ * this surface (re-propose, deny). `canTransitionExternalAction` is the final
+ * check so no hand-rolled rule can outlive a change to the contracts machine.
+ */
+function withdrawable(action: ExternalAction): boolean {
+  return (
+    WITHDRAWABLE_STATUSES.includes(action.status) &&
+    canTransitionExternalAction(action.status, "cancelled")
+  );
+}
 
 export function AuthorizationsQueue({
   workspaceId: id,
@@ -175,7 +200,7 @@ export function AuthorizationsQueue({
     });
   }
 
-  async function decide(actionId: string, decision: "authorize" | "deny") {
+  async function decide(actionId: string, decision: "authorize" | "deny" | "cancel") {
     setBusy(true);
     setAnnouncement("");
     try {
@@ -183,7 +208,7 @@ export function AuthorizationsQueue({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
-          decision === "deny" ? { reason: denyReason.trim() || null } : {},
+          decision === "authorize" ? {} : { reason: denyReason.trim() || null },
         ),
       });
       const body = await res.json().catch(() => null);
@@ -193,6 +218,11 @@ export function AuthorizationsQueue({
       const next = (body?.action ?? null) as ExternalAction | null;
       if (res.status === 409 && body?.error === "stale_action") {
         setAnnouncement("This action went stale — the content changed since it was proposed.");
+      } else if (res.status === 409) {
+        // It dispatched while the panel was open — the window has closed.
+        setAnnouncement("Too late to withdraw this one — it already went out.");
+      } else if (decision === "cancel") {
+        setAnnouncement("Withdrawn. Nothing was sent.");
       } else if (decision === "deny") {
         setAnnouncement("Denied. Nothing was sent.");
       } else if (next?.status === "succeeded") {
@@ -363,6 +393,7 @@ export function AuthorizationsQueue({
   }
 
   const selected = detail?.action ?? null;
+  const secondGate = selected ? secondGateExplanation(selected) : null;
   const selectedIds = selectedAuthorizationIds(actions, selection);
   const batchSummary = batchDetail ? authorizationBatchSummary(batchDetail) : null;
   const activeCampaignName = campaign ? campaignFilterName(campaigns, campaign) : null;
@@ -590,6 +621,10 @@ export function AuthorizationsQueue({
               <section aria-label="Policy" className={styles.region}>
                 <h3>Policy</h3>
                 <p>{policyExplanation(selected)}</p>
+                {/* Sprint 52 — a publish sitting here means the draft approval
+                    did not carry through. Say what the action can actually
+                    prove, and no more. */}
+                {secondGate && <p className="meta">{secondGate}</p>}
               </section>
 
               {selected.blocker && (
@@ -663,6 +698,33 @@ export function AuthorizationsQueue({
                     onClick={() => decide(selected.id, "deny")}
                   >
                     Deny
+                  </Button>
+                </div>
+              )}
+
+              {withdrawable(selected) && (
+                <div className={styles.decisionRow}>
+                  <p className="meta">
+                    Already authorized
+                    {selected.authorizedAt
+                      ? ` on ${new Date(selected.authorizedAt).toLocaleString()}`
+                      : ""}
+                    . You can still take that back until it dispatches.
+                  </p>
+                  <input
+                    className={styles.reasonInput}
+                    placeholder="Reason (optional)"
+                    value={denyReason}
+                    onChange={(event) => setDenyReason(event.target.value)}
+                    aria-label="Withdrawal reason"
+                  />
+                  <Button
+                    variant="danger"
+                    size="compact"
+                    disabled={busy}
+                    onClick={() => decide(selected.id, "cancel")}
+                  >
+                    {busy ? "Working…" : "Withdraw authorization"}
                   </Button>
                 </div>
               )}

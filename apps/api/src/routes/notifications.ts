@@ -118,7 +118,7 @@ export function registerNotificationRoutes(
         db,
         draft,
         result.action,
-        { userId: null, label: "Founder (via Mobile Notification)" },
+        { userId: null, label: "Founder (via Mobile Notification)", human: true },
         undefined,
       );
       return `<h1>Success!</h1><p>The draft has been ${result.action}d.</p>`;
@@ -155,7 +155,7 @@ export function registerNotificationRoutes(
                 db,
                 draft,
                 action,
-                { userId: null, label: "Founder (via Telegram)" },
+                { userId: null, label: "Founder (via Telegram)", human: true },
                 undefined,
               );
               await answerCallback(fetcher, queryId, `Draft ${action}d!`).catch(() => {});
