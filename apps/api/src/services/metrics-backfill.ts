@@ -3,6 +3,7 @@ import type { Db } from "../db";
 import {
   adCampaignMetrics,
   adCampaigns,
+  drafts,
   engagementMetrics,
   publicationMetrics,
   publications,
@@ -30,20 +31,40 @@ export function backfillMetrics(db: Db): MetricsBackfillSummary {
     if (recordMetricIfAbsent(db, workspaceId, input)) inserted += 1;
   };
 
-  // --- Manual readings (point at recordedAt; channel subject) ---------------
-  for (const row of db.select().from(engagementMetrics).all()) {
+  // --- Manual readings (point at recordedAt; channel subject, plus a
+  // campaign-subject copy when the reading's draft belongs to a campaign —
+  // resolved here at backfill time, matching what the legacy campaign-scoped
+  // read derived through its drafts join) --------------------------------
+  const manualRows = db.select().from(engagementMetrics).all();
+  const manualDraftIds = [...new Set(manualRows.map((r) => r.draftId).filter((d): d is string => !!d))];
+  const campaignByDraftId = new Map(
+    (manualDraftIds.length
+      ? db
+          .select({ id: drafts.id, campaignId: drafts.campaignId })
+          .from(drafts)
+          .where(inArray(drafts.id, manualDraftIds))
+          .all()
+      : []
+    ).map((d) => [d.id, d.campaignId]),
+  );
+  for (const row of manualRows) {
     scanned += 1;
     const base = {
-      subjectType: "channel" as const,
-      subjectId: row.channel,
       window: "point" as const,
       periodStart: row.recordedAt,
       source: "manual" as const,
       capturedAt: row.recordedAt,
     };
-    record(row.workspaceId, { ...base, metricKey: "impressions", value: row.impressions });
-    record(row.workspaceId, { ...base, metricKey: "engagements", value: row.engagements });
-    record(row.workspaceId, { ...base, metricKey: "clicks", value: row.clicks });
+    const subjects: Array<{ subjectType: "channel" | "campaign"; subjectId: string }> = [
+      { subjectType: "channel", subjectId: row.channel },
+    ];
+    const campaignId = row.draftId ? campaignByDraftId.get(row.draftId) : null;
+    if (campaignId) subjects.push({ subjectType: "campaign", subjectId: campaignId });
+    for (const subject of subjects) {
+      record(row.workspaceId, { ...base, ...subject, metricKey: "impressions", value: row.impressions });
+      record(row.workspaceId, { ...base, ...subject, metricKey: "engagements", value: row.engagements });
+      record(row.workspaceId, { ...base, ...subject, metricKey: "clicks", value: row.clicks });
+    }
     // An all-null row backfills to zero facts — it exists for its prose, which
     // stays on the legacy table (never dropped; it feeds the learning prompt).
   }

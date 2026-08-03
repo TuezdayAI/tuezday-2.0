@@ -3,7 +3,7 @@
  * tables — no writes, no new ingestion, no external integration. Composes
  * existing services (getCampaignAdMetrics from ads.ts) with direct DB reads.
  */
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type {
   ApprovalState,
   Campaign,
@@ -18,14 +18,13 @@ import {
   brainDocuments,
   campaigns,
   drafts,
-  engagementMetrics,
   generations,
   guidanceOverrides,
   inboxItems,
   launches,
   launchMessages,
+  metrics,
   personas,
-  publicationMetrics,
   publications,
 } from "../db/schema";
 import { getCampaignAdMetrics } from "./ads";
@@ -105,49 +104,58 @@ export function getCampaignInsights(db: Db, campaign: Campaign): CampaignInsight
     }
   }
 
-  // Platform-polled metrics (Sprint 29) — prefer 7d, fall back to 24h
+  // Platform capture (Sprint 29), read from the unified fact table (Sprint 55).
+  // Per publication: prefer the cumulative 7d window when any 7d fact exists,
+  // else fall back to 24h — the same prefer-7d-else-24h selection the legacy
+  // read applied to snapshot rows. Cumulative windows are summed with
+  // cumulative only; the classifier's rule holds here.
   const platformTotals = { likes: 0, comments: 0, shares: 0, impressions: 0, clicks: 0 };
   if (pubIds.length > 0) {
-    // Fetch all publication_metrics rows for these publications
-    const pmRows = db
+    const factRows = db
       .select()
-      .from(publicationMetrics)
-      .where(sql`${publicationMetrics.publicationId} IN (${sql.join(pubIds.map((id) => sql`${id}`), sql`, `)})`)
+      .from(metrics)
+      .where(
+        and(
+          eq(metrics.workspaceId, wid),
+          eq(metrics.subjectType, "publication"),
+          inArray(metrics.subjectId, pubIds),
+        ),
+      )
       .all();
-    // Group by publicationId, prefer 7d
-    const byPub = new Map<string, typeof pmRows[0]>();
-    for (const row of pmRows) {
-      const existing = byPub.get(row.publicationId);
-      if (!existing || row.window === "7d") {
-        byPub.set(row.publicationId, row);
+    const has7d = new Set(
+      factRows.filter((r) => r.window === "7d").map((r) => r.subjectId),
+    );
+    for (const row of factRows) {
+      const wanted = has7d.has(row.subjectId) ? "7d" : "24h";
+      if (row.window !== wanted) continue;
+      if (row.metricKey in platformTotals) {
+        platformTotals[row.metricKey as keyof typeof platformTotals] += row.value;
       }
-    }
-    for (const row of byPub.values()) {
-      platformTotals.likes += row.likes ?? 0;
-      platformTotals.comments += row.comments ?? 0;
-      platformTotals.shares += row.shares ?? 0;
-      platformTotals.impressions += row.impressions ?? 0;
-      platformTotals.clicks += row.clicks ?? 0;
     }
   }
 
-  // Learning-loop engagement_metrics (separate from platform)
-  // engagement_metrics links to campaign through draftId → drafts.campaignId
-  const learningRows = db
-    .select({
-      impressions: engagementMetrics.impressions,
-      engagements: engagementMetrics.engagements,
-      clicks: engagementMetrics.clicks,
-    })
-    .from(engagementMetrics)
-    .innerJoin(drafts, eq(engagementMetrics.draftId, drafts.id))
-    .where(and(eq(drafts.workspaceId, wid), eq(drafts.campaignId, cid)))
-    .all();
+  // Manual learning readings, read from the unified fact table: the dual-write
+  // (and backfill) record a campaign-subject copy of every draft-linked manual
+  // reading whose draft belongs to a campaign — the same population the legacy
+  // read reached by joining engagement_metrics through drafts.
   const learningTotals = { impressions: 0, engagements: 0, clicks: 0 };
-  for (const row of learningRows) {
-    learningTotals.impressions += row.impressions ?? 0;
-    learningTotals.engagements += row.engagements ?? 0;
-    learningTotals.clicks += row.clicks ?? 0;
+  const learningFacts = db
+    .select()
+    .from(metrics)
+    .where(
+      and(
+        eq(metrics.workspaceId, wid),
+        eq(metrics.subjectType, "campaign"),
+        eq(metrics.subjectId, cid),
+        eq(metrics.window, "point"),
+        eq(metrics.source, "manual"),
+      ),
+    )
+    .all();
+  for (const row of learningFacts) {
+    if (row.metricKey in learningTotals) {
+      learningTotals[row.metricKey as keyof typeof learningTotals] += row.value;
+    }
   }
 
   // --- Outbound: launches for this campaign ---
@@ -230,7 +238,15 @@ export function getCampaignInsights(db: Db, campaign: Campaign): CampaignInsight
     }
   }
 
-  // Paid by channel (ads channel)
+  // Paid by channel (ads channel).
+  //
+  // ⚠️ LEGACY MIXING — the one sanctioned escape hatch from spec §2.3's rule
+  // that cumulative and periodic values are never summed together. The
+  // `impressions` cell for the "ads" channel adds an all-time sum of periodic
+  // 1d paid buckets onto prorated cumulative organic snapshots. This
+  // faithfully reproduces the pre-Sprint-55 output (the Task 5 snapshot pins
+  // it); Task 5b removes it in its own commit, where the before/after is
+  // visible in isolation. Do not copy this pattern — use metricWindowKind.
   if (adMetrics) {
     ensureChannel("ads").spendCents += adMetrics.totals.spendCents;
     ensureChannel("ads").impressions += adMetrics.totals.impressions;

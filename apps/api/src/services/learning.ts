@@ -185,26 +185,38 @@ export function createMetric(db: Db, workspaceId: string, input: CreateMetricInp
   // (the optional draft link stays on the legacy row, which is never dropped:
   // its description/notes feed the learning-synthesis prompt). Null values
   // record nothing; absence is not zero.
-  recordMetrics(
-    db,
-    workspaceId,
-    (
-      [
-        ["impressions", row.impressions],
-        ["engagements", row.engagements],
-        ["clicks", row.clicks],
-      ] as const
-    ).map(([metricKey, value]) => ({
-      subjectType: "channel" as const,
-      subjectId: row.channel,
+  const observed = [
+    ["impressions", row.impressions],
+    ["engagements", row.engagements],
+    ["clicks", row.clicks],
+  ] as const;
+  const factOf = (subjectType: "channel" | "campaign", subjectId: string) =>
+    observed.map(([metricKey, value]) => ({
+      subjectType,
+      subjectId,
       metricKey,
       value,
       window: "point" as const,
       periodStart: row.recordedAt,
       source: "manual" as const,
       capturedAt: row.recordedAt,
-    })),
-  );
+    }));
+  recordMetrics(db, workspaceId, factOf("channel", row.channel));
+  // When the reading's draft belongs to a campaign, ALSO record campaign-subject
+  // rows — this is what lets campaign-scoped insights read the fact table
+  // instead of joining the legacy store through drafts. The campaign is
+  // resolved at write time: the observation was made while the draft belonged
+  // to this campaign, and a later draft reassignment does not rewrite history.
+  if (row.draftId) {
+    const draft = db
+      .select({ campaignId: drafts.campaignId })
+      .from(drafts)
+      .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, row.draftId)))
+      .get();
+    if (draft?.campaignId) {
+      recordMetrics(db, workspaceId, factOf("campaign", draft.campaignId));
+    }
+  }
   return rowToMetric(row);
 }
 
