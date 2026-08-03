@@ -668,6 +668,9 @@ export default function ContentPage() {
                       size="compact"
                       onClick={() => {
                         setDraftingFor(s.id);
+                        // Sprint 53: read-only fields, derived from the signal's top-scoring match
+                        // rather than stored columns. They seed the form; the
+                        // founder's choice is what actually gets sent.
                         setDraftPersonaId(s.suggestedPersonaId ?? "");
                         setDraftCampaignId(s.suggestedCampaignId ?? "");
                       }}
