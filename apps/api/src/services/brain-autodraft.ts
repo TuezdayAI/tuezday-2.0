@@ -18,6 +18,7 @@ import { BRAIN_DOC_META, scoreDoc, type BrainDocMeta } from "@tuezday/brain";
 import type { Db } from "../db";
 import type { ConnectorFabric } from "../connectors/fabric";
 import type { LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
 import { generateStructured } from "../llm/structured";
 import { getBrain, updateBrainDoc, type BrainView } from "./brain";
 import { getBrandProfileView } from "./brand-profile";
@@ -132,7 +133,10 @@ export async function runBrainAutoDraft(
     socialCorpus = { connected: [], entries: [], corpus: "" };
   }
 
-  const result = await draftBrain(llm, { profile, socialCorpus });
+  const result = await draftBrain(
+    meteredLlm(llm, db, { workspaceId, pipeline: "brain_autodraft" }),
+    { profile, socialCorpus },
+  );
   if (result.insufficient) {
     return { insufficient: true, drafted: [], skipped: [], brain: getBrain(db, workspaceId) };
   }

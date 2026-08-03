@@ -3,6 +3,7 @@ import { resolveContext, type BrainContents } from "@tuezday/brain";
 import type { Db } from "../db";
 import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
 import { getBrain } from "./brain";
 import { composeResolveCampaign } from "./campaigns";
 import { submitDraft, type DraftActor } from "./drafts";
@@ -84,7 +85,11 @@ export async function generateEngagementReply(
     tokenBudget: ctx.tokenBudget,
   });
 
-  const result = await llm.generate({ prompt: resolved.prompt });
+  const result = await meteredLlm(llm, db, {
+    workspaceId: workspace.id,
+    pipeline: "engagement_reply",
+    campaignId: ctx.campaign?.id ?? null,
+  }).generate({ prompt: resolved.prompt });
   const generation = storeGeneration(db, {
     workspaceId: workspace.id,
     taskType: "engagement_reply",

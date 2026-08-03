@@ -1,10 +1,19 @@
 import { describe, expect, test } from "vitest";
 process.env.TEST_BILLING_GATING = "1";
-import { getPlan, getEntitlements, getUsage, assertWithinLimit, EntitlementError } from "../src/services/entitlements";
+import {
+  getPlan,
+  getEntitlements,
+  getUsage,
+  assertWithinLimit,
+  assertLlmBudget,
+  llmBudgetExhausted,
+  EntitlementError,
+} from "../src/services/entitlements";
+import { recordLlmUsage } from "../src/services/usage-ledger";
 import { createTestDb } from "./helpers";
 import { registerAccount } from "../src/services/auth";
 import { createWorkspace } from "../src/services/workspaces";
-import { connections, generations, subscriptions } from "../src/db/schema";
+import { connections, subscriptions } from "../src/db/schema";
 import { randomUUID } from "node:crypto";
 import { addMember } from "../src/services/teams";
 
@@ -18,7 +27,7 @@ describe("entitlements service", () => {
     expect(getEntitlements(db, ws.id).seats).toBe(1);
   });
 
-  test("getUsage counts seats, connectors, and monthlyGenerations", async () => {
+  test("getUsage counts seats, connectors, and rolling LLM spend from the ledger", async () => {
     const db = createTestDb();
     const { user: u1 } = await registerAccount(db, { email: "u1@test.com", password: "pwd", name: "u1" });
     const { user: u2 } = await registerAccount(db, { email: "u2@test.com", password: "pwd", name: "u2" });
@@ -37,24 +46,52 @@ describe("entitlements service", () => {
       updatedAt: Date.now(),
     }).run();
 
-    db.insert(generations).values({
-      id: randomUUID(),
+    recordLlmUsage(db, {
       workspaceId: ws.id,
-      taskType: "linkedin_post",
-      channel: "linkedin",
-      prompt: "test",
-      sectionsJson: "[]",
-      output: "out",
-      model: "gpt-4",
-      provider: "openai",
-      durationMs: 100,
-      createdAt: Date.now(),
-    }).run();
+      pipeline: "generation",
+      model: "unknown-model",
+      provider: "test",
+      usage: { inputTokens: 1000, outputTokens: 500, cachedTokens: 0 },
+      costCentsOverride: 12.5,
+    });
+    recordLlmUsage(db, {
+      workspaceId: ws.id,
+      pipeline: "review",
+      model: "unknown-model",
+      provider: "test",
+      usage: { inputTokens: 100, outputTokens: 50, cachedTokens: 0 },
+      costCentsOverride: 2.5,
+    });
 
     const usage = getUsage(db, ws.id);
     expect(usage.seats).toBe(2);
     expect(usage.connectors).toBe(1);
-    expect(usage.monthlyGenerations).toBe(1);
+    expect(usage.monthlyLlmCents).toBe(15);
+  });
+
+  test("assertLlmBudget throws at the cap; llmBudgetExhausted mirrors it", async () => {
+    const db = createTestDb();
+    const { user } = await registerAccount(db, { email: "budget@test.com", password: "pwd", name: "u" });
+    const ws = await createWorkspace(db, { name: "Test WS" }, user.id);
+
+    // Free plan: 50¢ budget. Under it: fine.
+    expect(llmBudgetExhausted(db, ws.id)).toBe(false);
+    assertLlmBudget(db, ws.id);
+
+    recordLlmUsage(db, {
+      workspaceId: ws.id,
+      pipeline: "generation",
+      model: "unknown-model",
+      provider: "test",
+      usage: { inputTokens: 0, outputTokens: 0, cachedTokens: 0 },
+      costCentsOverride: 50,
+    });
+
+    expect(llmBudgetExhausted(db, ws.id)).toBe(true);
+    expect(() => assertLlmBudget(db, ws.id)).toThrowError(EntitlementError);
+    expect(() => assertLlmBudget(db, ws.id)).toThrowError(
+      "Plan limit reached for monthlyLlmCents (limit 50).",
+    );
   });
 
   test("assertWithinLimit throws EntitlementError at the cap, passes under it", async () => {

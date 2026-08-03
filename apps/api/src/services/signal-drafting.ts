@@ -3,6 +3,7 @@ import { resolveContext, type BrainContents } from "@tuezday/brain";
 import type { Db } from "../db";
 import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
 import { getBrain } from "./brain";
 import { composeResolveCampaign } from "./campaigns";
 import { retrieveEvidence } from "./evidence";
@@ -127,7 +128,11 @@ export async function generateSignalDraft(
     tokenBudget: opts.tokenBudget,
   });
 
-  const result = await llm.generate({ prompt: resolved.prompt });
+  const result = await meteredLlm(llm, db, {
+    workspaceId: workspace.id,
+    pipeline: "signal_draft",
+    campaignId: opts.campaign?.id ?? null,
+  }).generate({ prompt: resolved.prompt });
   const generation = storeGeneration(db, {
     workspaceId: workspace.id,
     taskType: "signal_response",
@@ -144,7 +149,11 @@ export async function generateSignalDraft(
   const settings = getGenerationSettings(db, workspace.id);
   if (settings.reviewEnabled) {
     const review = await runPreReview(
-      llm,
+      meteredLlm(llm, db, {
+        workspaceId: workspace.id,
+        pipeline: "review",
+        campaignId: opts.campaign?.id ?? null,
+      }),
       {
         workspaceName: workspace.name,
         docs: contents,

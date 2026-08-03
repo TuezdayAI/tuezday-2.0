@@ -3,6 +3,21 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
+/** Human copy per entitlement key; the wire key is an internal identifier. */
+const LIMIT_LABELS: Record<string, string> = {
+  seats: "team seats",
+  connectors: "connectors",
+  monthlyLlmCents: "monthly AI budget",
+};
+
+function limitMessage(details: { key?: string; limit?: number } | null): string {
+  if (!details?.limit) return "This action requires an upgrade to a higher plan.";
+  const label = LIMIT_LABELS[details.key ?? ""] ?? details.key;
+  const amount =
+    details.key === "monthlyLlmCents" ? `$${(details.limit / 100).toFixed(2)}` : `${details.limit}`;
+  return `You have reached your ${label} limit (${amount}). Please upgrade to a higher plan to continue.`;
+}
+
 export function UpgradeModal() {
   const [isOpen, setIsOpen] = useState(false);
   const [details, setDetails] = useState<any>(null);
@@ -27,11 +42,7 @@ export function UpgradeModal() {
       <div className="w-full max-w-md rounded-lg bg-white p-6 shadow-xl">
         <h2 className="text-xl font-bold mb-4">Upgrade Required</h2>
         
-        <p className="mb-6 text-gray-600">
-          {details?.limit 
-            ? `You have reached your limit of ${details.limit} for ${details.key}. Please upgrade to a higher plan to continue.`
-            : "This action requires an upgrade to a higher plan."}
-        </p>
+        <p className="mb-6 text-gray-600">{limitMessage(details)}</p>
 
         <div className="flex justify-end gap-3">
           <button 

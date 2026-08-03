@@ -14,6 +14,8 @@ import type { Db } from "../db";
 import { drafts, emailDeliveries } from "../db/schema";
 import type { EvidenceStore } from "../evidence/store";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
+import { assertLlmBudget } from "../services/entitlements";
 import { getBrain } from "../services/brain";
 import { campaignExecutionError, composeResolveCampaign, getCampaign } from "../services/campaigns";
 import { selectiveContextInputs } from "../services/resolve-input";
@@ -188,7 +190,12 @@ export function registerPrRoutes(
       });
 
       try {
-        const result = await llm.generate({ prompt: resolved.prompt });
+        assertLlmBudget(db, request.params.id);
+        const result = await meteredLlm(llm, db, {
+          workspaceId: request.params.id,
+          pipeline: "pr_pitch",
+          campaignId: parsed.data.campaignId ?? null,
+        }).generate({ prompt: resolved.prompt });
         const generation = storeGeneration(db, {
           workspaceId: request.params.id,
           taskType: "pr_pitch",
@@ -204,7 +211,11 @@ export function registerPrRoutes(
         });
         if (settings.reviewEnabled) {
           const review = await runPreReview(
-            llm,
+            meteredLlm(llm, db, {
+              workspaceId: request.params.id,
+              pipeline: "review",
+              campaignId: parsed.data.campaignId ?? null,
+            }),
             {
               workspaceName: workspace.name,
               docs: contents,
@@ -325,7 +336,12 @@ export function registerPrRoutes(
     });
 
     try {
-      const result = await llm.generate({ prompt: resolved.prompt });
+      assertLlmBudget(db, request.params.id);
+      const result = await meteredLlm(llm, db, {
+        workspaceId: request.params.id,
+        pipeline: "press_kit",
+        campaignId: parsed.data.campaignId ?? null,
+      }).generate({ prompt: resolved.prompt });
       const generation = storeGeneration(db, {
         workspaceId: request.params.id,
         taskType: "press_boilerplate",
@@ -341,7 +357,11 @@ export function registerPrRoutes(
       const settings = getGenerationSettings(db, request.params.id);
       if (settings.reviewEnabled) {
         const review = await runPreReview(
-          llm,
+          meteredLlm(llm, db, {
+            workspaceId: request.params.id,
+            pipeline: "review",
+            campaignId: parsed.data.campaignId ?? null,
+          }),
           {
             workspaceName: workspace.name,
             docs: contents,

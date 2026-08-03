@@ -21,6 +21,7 @@ import {
   type NowSynthesisRow,
 } from "../db/schema";
 import type { LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
 import { getBrain, updateBrainDoc, type BrainActor } from "./brain";
 import { getSequenceFunnel } from "./outreach-funnel";
 
@@ -290,7 +291,10 @@ export async function synthesizeNow(
     `Respond in EXACTLY this format (no code fences, no other text):\nPROPOSAL:\n<markdown bullet list of 2-6 concrete learnings, max ~250 words, written so it can be appended to the now doc>\nRATIONALE:\n<one short paragraph explaining what in the data supports these learnings>`,
   ].join("\n\n");
 
-  const result = await llm.generate({ prompt });
+  const result = await meteredLlm(llm, db, {
+    workspaceId,
+    pipeline: "learning_synthesis",
+  }).generate({ prompt });
   const { proposal, rationale } = parseSynthesisResponse(result.text);
 
   const row: NowSynthesisRow = {

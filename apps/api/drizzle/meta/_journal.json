@@ -442,6 +442,13 @@
       "when": 1785734724568,
       "tag": "0062_daily_eternals",
       "breakpoints": true
+    },
+    {
+      "idx": 63,
+      "version": "6",
+      "when": 1785752391843,
+      "tag": "0063_hesitant_jackal",
+      "breakpoints": true
     }
   ]
 }

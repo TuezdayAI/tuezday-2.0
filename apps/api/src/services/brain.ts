@@ -22,6 +22,7 @@ import {
 import type { Db } from "../db";
 import { brainDocumentVersions, brainDocuments } from "../db/schema";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
 import { generateStructured, StructuredOutputError } from "../llm/structured";
 
 const CANONICAL_ORDER = new Map(BRAIN_DOC_TYPES.map((t, i) => [t, i]));
@@ -191,8 +192,10 @@ export async function enrichOutlineSummaries(
 
   let summaries: Map<number, string>;
   try {
-    const result = await generateStructured(llm, outlineSummariesResponseSchema, {
+    const metered = meteredLlm(llm, db, { workspaceId, pipeline: "outline_summaries" });
+    const result = await generateStructured(metered, outlineSummariesResponseSchema, {
       prompt: composeOutlineSummaryPrompt(sections.map((s) => ({ heading: s.heading, body: s.body }))),
+      tier: "cheap",
     });
     summaries = toSummaryMap(result.value, sections.length);
   } catch (err) {

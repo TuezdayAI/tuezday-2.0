@@ -6,6 +6,7 @@ import { AgentRunner } from "../agents/runner";
 import { READ_TOOLS } from "../agents/tools/index";
 import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
+import { meteredLlm } from "../llm/metered";
 import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
 import type { SafeFetchService } from "../safe-fetch/index";
@@ -82,7 +83,12 @@ export function registerAgentRunRoutes(
         actor: { userId: actor.userId, label: actor.label },
         budget: DEFAULT_TOOL_BUDGET,
       };
-      const runner = new AgentRunner(db, deps.llm);
+      // Metered (Sprint 59): every step of the run lands in the usage ledger;
+      // agent_runs keeps its own totals for the Inspector.
+      const runner = new AgentRunner(
+        db,
+        meteredLlm(deps.llm, db, { workspaceId: request.params.id, pipeline: "agent_run" }),
+      );
       const result = await runner.run({
         workspaceId: request.params.id,
         task: "proof",

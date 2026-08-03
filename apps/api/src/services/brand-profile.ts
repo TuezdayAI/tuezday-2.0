@@ -10,6 +10,7 @@ import {
 import type { Db } from "../db";
 import { brandProfiles } from "../db/schema";
 import type { LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
 import { generateStructured, StructuredOutputError } from "../llm/structured";
 import {
   SafeFetchError,
@@ -145,7 +146,10 @@ export async function runBrandProfile(
   try {
     const { corpus } = await scrapeWebsite(websiteUrl, safeFetch);
     upsertRow(db, workspaceId, { status: "extracting", corpusChars: corpus.length });
-    const profile = await extractBrandProfile(llm, corpus);
+    const profile = await extractBrandProfile(
+      meteredLlm(llm, db, { workspaceId, pipeline: "brand_profile" }),
+      corpus,
+    );
     upsertRow(db, workspaceId, { status: "ready", profileJson: JSON.stringify(profile) });
   } catch (err) {
     const message =

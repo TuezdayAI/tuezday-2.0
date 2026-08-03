@@ -1,5 +1,5 @@
 import type { z } from "zod";
-import type { AgentMessage } from "@tuezday/contracts";
+import type { AgentMessage, ModelTier } from "@tuezday/contracts";
 import type { GenerateParams, LlmGateway } from "./gateway";
 import { responseJsonSchemaFor } from "./json-schema";
 
@@ -40,6 +40,8 @@ export interface GenerateStructuredParams {
   prompt: string;
   maxOutputTokens?: number;
   signal?: AbortSignal;
+  /** Model tier (Sprint 59); omitted = "frontier". */
+  tier?: ModelTier;
 }
 
 export interface GenerateStructuredResult<T> {
@@ -196,6 +198,7 @@ function agentStepCall(
       responseSchema,
       maxOutputTokens: params.maxOutputTokens,
       signal: params.signal,
+      tier: params.tier,
     });
     return {
       text: result.message.content,
@@ -222,6 +225,7 @@ function generateCall(llm: LlmGateway, params: GenerateStructuredParams): Transp
     const request: GenerateParams = { prompt };
     if (params.maxOutputTokens !== undefined) request.maxOutputTokens = params.maxOutputTokens;
     if (params.signal !== undefined) request.signal = params.signal;
+    if (params.tier !== undefined) request.tier = params.tier;
     return llm.generate(request);
   };
   return {

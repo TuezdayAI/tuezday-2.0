@@ -2404,3 +2404,35 @@ export const agentRunSteps = sqliteTable(
 );
 
 export type AgentRunStepRow = typeof agentRunSteps.$inferSelect;
+
+// LLM usage ledger (Sprint 59) — one row per successful model call, written by
+// the meteredLlm gateway proxy (and flat design-daemon events). This is the
+// single budget authority: workspace spend, /billing spend-by-pipeline and the
+// cache-hit-rate metric are all sums over this table. agent_runs keeps its own
+// per-run totals for the Inspector; the runner's calls land here through the
+// metered gateway, never via duplicate writes.
+export const llmUsageEvents = sqliteTable(
+  "llm_usage_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    pipeline: text("pipeline").notNull(), // LLM_PIPELINES
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+    agentRunId: text("agent_run_id"),
+    model: text("model").notNull(),
+    provider: text("provider").notNull(),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    cachedTokens: integer("cached_tokens").notNull().default(0),
+    costCents: real("cost_cents").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("llm_usage_events_workspace_created").on(t.workspaceId, t.createdAt),
+    index("llm_usage_events_workspace_pipeline").on(t.workspaceId, t.pipeline, t.createdAt),
+  ],
+);
+
+export type LlmUsageEventRow = typeof llmUsageEvents.$inferSelect;

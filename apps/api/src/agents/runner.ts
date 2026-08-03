@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { eq } from "drizzle-orm";
-import type { AgentMessage, AgentStopReason, AgentToolCall } from "@tuezday/contracts";
+import type { AgentMessage, AgentStopReason, AgentToolCall, ModelTier } from "@tuezday/contracts";
 import type { Db } from "../db/index";
 import { agentRuns, agentRunSteps } from "../db/schema";
 import {
@@ -56,6 +56,9 @@ export interface AgentRunParams {
   maxSteps: number;
   maxTokens: number;
   timeoutMs: number;
+  /** Model tier for every step of this run (Sprint 59); omitted = "frontier".
+   * Sprint 64's pipeline steps declare their tier through this seam. */
+  tier?: ModelTier;
   /** Streaming variant: receive deltas, tool dispatch and step boundaries
    * as they happen. Omit for a single awaited result. */
   onEvent?: (event: AgentRunEvent) => void;
@@ -172,6 +175,7 @@ export class AgentRunner {
         tools: params.tools?.map((t) => t.definition),
         responseSchema: params.responseSchema,
         signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
+        tier: params.tier,
       };
 
       let step: AgentStepResult;

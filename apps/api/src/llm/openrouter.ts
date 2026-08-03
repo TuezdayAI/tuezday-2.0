@@ -4,12 +4,18 @@ import { GatewayError, type GenerateParams, type GenerateResult, type LlmGateway
 // individual extra providers (umbrella Decision 11). Default rides the same
 // model family as the Gemini primary, just via a different pipe.
 const DEFAULT_MODEL = "google/gemini-2.5-flash";
+const DEFAULT_CHEAP_MODEL = "google/gemini-2.5-flash-lite";
 const DEFAULT_MAX_OUTPUT_TOKENS = 2048;
 const ENDPOINT = "https://openrouter.ai/api/v1/chat/completions";
 
 interface OpenRouterResponse {
   model?: string;
   choices?: Array<{ message?: { content?: string } }>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    prompt_tokens_details?: { cached_tokens?: number };
+  };
   error?: { message?: string };
 }
 
@@ -20,12 +26,14 @@ interface OpenRouterResponse {
 export class OpenRouterGateway implements LlmGateway {
   private readonly apiKey: string | undefined;
   public readonly model: string;
+  public readonly cheapModel: string;
   private readonly fetcher: typeof fetch;
 
   // Blank env values fall back to defaults — truthiness, not undefined-checks.
   constructor(apiKey?: string, model?: string, fetcher: typeof fetch = fetch) {
     this.apiKey = (apiKey ?? process.env.OPENROUTER_API_KEY)?.trim() || undefined;
     this.model = (model ?? process.env.OPENROUTER_MODEL)?.trim() || DEFAULT_MODEL;
+    this.cheapModel = process.env.OPENROUTER_MODEL_CHEAP?.trim() || DEFAULT_CHEAP_MODEL;
     this.fetcher = fetcher;
   }
 
@@ -33,6 +41,7 @@ export class OpenRouterGateway implements LlmGateway {
     prompt,
     maxOutputTokens,
     signal,
+    tier,
   }: GenerateParams): Promise<GenerateResult> {
     if (!this.apiKey) {
       throw new GatewayError(
@@ -41,6 +50,7 @@ export class OpenRouterGateway implements LlmGateway {
       );
     }
 
+    const model = tier === "cheap" ? this.cheapModel : this.model;
     const started = Date.now();
     let res: Response;
     try {
@@ -55,7 +65,7 @@ export class OpenRouterGateway implements LlmGateway {
           "X-Title": "Tuezday",
         },
         body: JSON.stringify({
-          model: this.model,
+          model,
           messages: [{ role: "user", content: prompt }],
           max_tokens: maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
         }),
@@ -73,7 +83,7 @@ export class OpenRouterGateway implements LlmGateway {
     if (!res.ok) {
       throw new GatewayError(
         "provider_error",
-        `OpenRouter API returned ${res.status} for model "${this.model}": ${body.error?.message ?? "unknown error"}`,
+        `OpenRouter API returned ${res.status} for model "${model}": ${body.error?.message ?? "unknown error"}`,
       );
     }
 
@@ -84,9 +94,18 @@ export class OpenRouterGateway implements LlmGateway {
 
     return {
       text,
-      model: body.model?.trim() || this.model,
+      model: body.model?.trim() || model,
       provider: "openrouter",
       durationMs: Date.now() - started,
+      ...(body.usage
+        ? {
+            usage: {
+              inputTokens: body.usage.prompt_tokens ?? 0,
+              outputTokens: body.usage.completion_tokens ?? 0,
+              cachedTokens: body.usage.prompt_tokens_details?.cached_tokens ?? 0,
+            },
+          }
+        : {}),
     };
   }
 }

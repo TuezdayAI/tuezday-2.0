@@ -8,7 +8,9 @@ import type { Db } from "../db";
 import { emailDeliveries, inboxItems, mailboxes } from "../db/schema";
 import type { GmailMailboxProvider } from "../outbound-email/gmail";
 import type { LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
 import { generateStructured } from "../llm/structured";
+import { llmBudgetExhausted } from "./entitlements";
 import { getConnection } from "./connections";
 import { inboxItemExists, insertInboxItem } from "./inbox";
 import { listConnectedMailboxes } from "./mailboxes";
@@ -87,15 +89,21 @@ function classificationPrompt(items: NewEmailItem[]): string {
 async function classifyNewItems(
   db: Db,
   llm: LlmGateway,
+  workspaceId: string,
   items: NewEmailItem[],
   nowMs: number,
 ): Promise<number> {
+  // Budget degradation (Sprint 59): items stay unlabeled and the next poll
+  // retries them once budget frees — labeling assists, it never fails the run.
+  if (llmBudgetExhausted(db, workspaceId)) return 0;
+  const metered = meteredLlm(llm, db, { workspaceId, pipeline: "mailbox_classification" });
   let labeled = 0;
   for (let offset = 0; offset < items.length; offset += CLASSIFY_BATCH_SIZE) {
     const batch = items.slice(offset, offset + CLASSIFY_BATCH_SIZE);
     try {
-      const result = await generateStructured(llm, emailReplyClassificationResponseSchema, {
+      const result = await generateStructured(metered, emailReplyClassificationResponseSchema, {
         prompt: classificationPrompt(batch),
+        tier: "cheap",
       });
       for (const entry of result.value) {
         const item = batch[entry.index];
@@ -214,6 +222,6 @@ export async function runMailboxInbox(
     }
   }
 
-  const labeled = await classifyNewItems(db, llm, created, nowMs);
+  const labeled = await classifyNewItems(db, llm, workspaceId, created, nowMs);
   return { mailboxesPolled, messagesSeen, newItems, labeled, ranAt: nowMs };
 }

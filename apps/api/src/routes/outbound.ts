@@ -15,6 +15,8 @@ import type { Db } from "../db";
 import { drafts, emailDeliveries } from "../db/schema";
 import type { EvidenceStore } from "../evidence/store";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
+import { assertLlmBudget } from "../services/entitlements";
 import { getBrain } from "../services/brain";
 import { campaignExecutionError, composeResolveCampaign, getCampaign } from "../services/campaigns";
 import { selectiveContextInputs } from "../services/resolve-input";
@@ -162,6 +164,17 @@ export function registerOutboundRoutes(
       campaignId: parsed.data.campaignId ?? null,
     });
     const selective = selectiveContextInputs(db, request.params.id);
+    assertLlmBudget(db, request.params.id); // 402 before any model call (Sprint 59)
+    const draftLlm = meteredLlm(llm, db, {
+      workspaceId: request.params.id,
+      pipeline: "outbound_draft",
+      campaignId: parsed.data.campaignId ?? null,
+    });
+    const reviewLlm = meteredLlm(llm, db, {
+      workspaceId: request.params.id,
+      pipeline: "review",
+      campaignId: parsed.data.campaignId ?? null,
+    });
     const results = [];
     for (const lead of leadRecords) {
       const resolved = resolveContext({
@@ -184,7 +197,7 @@ export function registerOutboundRoutes(
       });
 
       try {
-        const result = await llm.generate({ prompt: resolved.prompt });
+        const result = await draftLlm.generate({ prompt: resolved.prompt });
         const generation = storeGeneration(db, {
           workspaceId: request.params.id,
           taskType: "outbound_email",
@@ -202,7 +215,7 @@ export function registerOutboundRoutes(
         // is copied onto the draft. Best-effort — never aborts the batch.
         if (settings.reviewEnabled) {
           const review = await runPreReview(
-            llm,
+            reviewLlm,
             {
               workspaceName: workspace.name,
               docs: contents,

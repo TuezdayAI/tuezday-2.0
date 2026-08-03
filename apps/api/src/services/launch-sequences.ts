@@ -33,6 +33,8 @@ import {
 } from "../db/schema";
 import type { EvidenceStore } from "../evidence/store";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
+import { assertLlmBudget, llmBudgetExhausted } from "./entitlements";
 import { getAudienceDetail, loadPeople } from "./audiences";
 import { getSocialAutomationSettings, utcDayBounds } from "./automation";
 import { getBrain } from "./brain";
@@ -433,7 +435,11 @@ async function generateStepMessage(
       evidenceExclusionReason: evidenceResolution.exclusionReason,
       taskInstruction,
     });
-    const result = await ctx.llm.generate({ prompt: resolved.prompt });
+    const result = await meteredLlm(ctx.llm, ctx.db, {
+      workspaceId: launch.workspaceId,
+      pipeline: "launch_sequence",
+      campaignId: launch.campaignId ?? null,
+    }).generate({ prompt: resolved.prompt });
     const generation = storeGeneration(ctx.db, {
       workspaceId: launch.workspaceId,
       taskType: gen.taskType,
@@ -858,6 +864,7 @@ export async function runLaunchSequence(
   const launch = launchRowById(db, workspaceId, launchId);
   if (!launch) return { ok: false, error: "launch_not_found" };
   if (stepRows(db, launchId).length === 0) return { ok: false, error: "no_sequence" };
+  assertLlmBudget(db, workspaceId); // manual run: 402 before any generation (Sprint 59)
   const acc = newAcc();
   const ctx = makeCtx(db, llm, evidence, runtime, workspaceId);
   await runForLaunch(ctx, launch, nowMs, acc);
@@ -885,11 +892,16 @@ export async function runSequences(
     ),
   ];
   const ctx = makeCtx(db, llm, evidence, runtime, workspaceId);
+  // Budget degradation (Sprint 59): advancing generates; due recipients keep
+  // their nextDueAt and resume on a later tick once budget frees.
+  const budgetExhausted = llmBudgetExhausted(db, workspaceId);
   for (const launchId of launchIds) {
     const launch = launchRowById(db, workspaceId, launchId);
     // Manual launches never advance on the worker tick — the founder drives them
     // with an explicit run. HITL + scheduled_auto auto-advance here.
-    if (launch && launch.automationMode !== "manual") await runForLaunch(ctx, launch, nowMs, acc);
+    if (launch && launch.automationMode !== "manual" && !budgetExhausted) {
+      await runForLaunch(ctx, launch, nowMs, acc);
+    }
   }
   return toRunResult(acc, nowMs);
 }

@@ -1,12 +1,15 @@
 // Provider-agnostic LLM gateway. Routes and services depend only on this
 // interface — switching or adding providers must never touch them.
 
-import type { AgentMessage, AgentToolCall } from "@tuezday/contracts";
+import type { AgentMessage, AgentToolCall, ModelTier } from "@tuezday/contracts";
 
 export interface GenerateParams {
   prompt: string;
   maxOutputTokens?: number;
   signal?: AbortSignal;
+  /** Model tier (Sprint 59). Omitted = "frontier", today's model — routing is
+   * configuration: the call site declares the tier, the gateway resolves it. */
+  tier?: ModelTier;
 }
 
 export interface GenerateResult {
@@ -14,6 +17,9 @@ export interface GenerateResult {
   model: string;
   provider: string;
   durationMs: number;
+  /** Token usage when the provider reports it (Sprint 59). Optional so
+   * existing fakes stay valid; absent usage simply goes unmetered. */
+  usage?: AgentStepUsage;
 }
 
 export interface EmbedParams {
@@ -57,6 +63,8 @@ export interface AgentStepParams {
   responseSchema?: JsonSchema;
   maxOutputTokens?: number;
   signal?: AbortSignal;
+  /** Model tier (Sprint 59). Omitted = "frontier". */
+  tier?: ModelTier;
 }
 
 export interface AgentStepUsage {

@@ -17,6 +17,7 @@ import { EVIDENCE_EMBEDDING_DIMENSIONS } from "../evidence/db-store";
 // vs 70s+ (and 503s under load) on gemini-3.5-flash. Sandbox UX needs fast
 // iterations more than frontier quality; override via GEMINI_MODEL if needed.
 const DEFAULT_MODEL = "gemini-2.5-flash";
+const DEFAULT_CHEAP_MODEL = "gemini-2.5-flash-lite";
 const DEFAULT_EMBED_MODEL = "gemini-embedding-001";
 const DEFAULT_MAX_OUTPUT_TOKENS = 2048;
 
@@ -57,20 +58,29 @@ interface GeminiEmbedResponse {
 export class GeminiGateway implements LlmGateway {
   private readonly apiKey: string | undefined;
   public readonly model: string;
+  public readonly cheapModel: string;
   public readonly embedModel: string;
 
   // Blank env values (e.g. an unfilled `GEMINI_MODEL=` line in .env) must
   // fall back to defaults, so use truthiness, not just undefined-checks.
-  constructor(apiKey?: string, model?: string) {
+  constructor(apiKey?: string, model?: string, cheapModel?: string) {
     this.apiKey = (apiKey ?? process.env.GEMINI_API_KEY)?.trim() || undefined;
     this.model = (model ?? process.env.GEMINI_MODEL)?.trim() || DEFAULT_MODEL;
+    this.cheapModel = (cheapModel ?? process.env.GEMINI_MODEL_CHEAP)?.trim() || DEFAULT_CHEAP_MODEL;
     this.embedModel = process.env.GEMINI_EMBED_MODEL?.trim() || DEFAULT_EMBED_MODEL;
+  }
+
+  /** Tier -> model (Sprint 59). Routing is configuration: call sites declare
+   * a tier; which concrete model that means lives here (env-overridable). */
+  private modelFor(tier?: "cheap" | "frontier"): string {
+    return tier === "cheap" ? this.cheapModel : this.model;
   }
 
   async generate({
     prompt,
     maxOutputTokens,
     signal,
+    tier,
   }: GenerateParams): Promise<GenerateResult> {
     if (!this.apiKey) {
       throw new GatewayError(
@@ -79,11 +89,12 @@ export class GeminiGateway implements LlmGateway {
       );
     }
 
+    const model = this.modelFor(tier);
     const started = Date.now();
     let res: Response;
     try {
       res = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${this.model}:generateContent`,
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
         {
           method: "POST",
           headers: {
@@ -94,7 +105,7 @@ export class GeminiGateway implements LlmGateway {
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             generationConfig: {
               maxOutputTokens: maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
-              thinkingConfig: thinkingConfigFor(this.model),
+              thinkingConfig: thinkingConfigFor(model),
             },
           }),
           signal,
@@ -112,7 +123,7 @@ export class GeminiGateway implements LlmGateway {
     if (!res.ok) {
       throw new GatewayError(
         "provider_error",
-        `Gemini API returned ${res.status} for model "${this.model}": ${body.error?.message ?? "unknown error"}`,
+        `Gemini API returned ${res.status} for model "${model}": ${body.error?.message ?? "unknown error"}`,
       );
     }
 
@@ -126,9 +137,10 @@ export class GeminiGateway implements LlmGateway {
 
     return {
       text,
-      model: this.model,
+      model,
       provider: "gemini",
       durationMs: Date.now() - started,
+      usage: usageFrom(body),
     };
   }
 
@@ -138,13 +150,14 @@ export class GeminiGateway implements LlmGateway {
   // -------------------------------------------------------------------------
 
   async agentStep(params: AgentStepParams): Promise<AgentStepResult> {
+    const model = this.modelFor(params.tier);
     const started = Date.now();
-    const res = await this.postAgentRequest(":generateContent", params);
+    const res = await this.postAgentRequest(":generateContent", params, model);
     const body = (await res.json().catch(() => ({}))) as GeminiResponse;
     if (!res.ok) {
       throw new GatewayError(
         "provider_error",
-        `Gemini API returned ${res.status} for model "${this.model}": ${body.error?.message ?? "unknown error"}`,
+        `Gemini API returned ${res.status} for model "${model}": ${body.error?.message ?? "unknown error"}`,
       );
     }
     const parts = body.candidates?.[0]?.content?.parts ?? [];
@@ -155,7 +168,7 @@ export class GeminiGateway implements LlmGateway {
     return {
       message,
       usage: usageFrom(body),
-      model: this.model,
+      model,
       provider: "gemini",
       durationMs: Date.now() - started,
     };
@@ -165,13 +178,14 @@ export class GeminiGateway implements LlmGateway {
     params: AgentStepParams,
     onEvent: (event: AgentStepStreamEvent) => void,
   ): Promise<AgentStepResult> {
+    const model = this.modelFor(params.tier);
     const started = Date.now();
-    const res = await this.postAgentRequest(":streamGenerateContent?alt=sse", params);
+    const res = await this.postAgentRequest(":streamGenerateContent?alt=sse", params, model);
     if (!res.ok || !res.body) {
       const body = (await res.json().catch(() => ({}))) as GeminiResponse;
       throw new GatewayError(
         "provider_error",
-        `Gemini API returned ${res.status} for model "${this.model}": ${body.error?.message ?? "unknown error"}`,
+        `Gemini API returned ${res.status} for model "${model}": ${body.error?.message ?? "unknown error"}`,
       );
     }
 
@@ -228,10 +242,14 @@ export class GeminiGateway implements LlmGateway {
       content: trimmed,
       ...(toolCalls.length ? { toolCalls } : {}),
     };
-    return { message, usage, model: this.model, provider: "gemini", durationMs: Date.now() - started };
+    return { message, usage, model, provider: "gemini", durationMs: Date.now() - started };
   }
 
-  private async postAgentRequest(pathSuffix: string, params: AgentStepParams): Promise<Response> {
+  private async postAgentRequest(
+    pathSuffix: string,
+    params: AgentStepParams,
+    model: string,
+  ): Promise<Response> {
     if (!this.apiKey) {
       throw new GatewayError(
         "missing_api_key",
@@ -240,11 +258,11 @@ export class GeminiGateway implements LlmGateway {
     }
     try {
       return await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${this.model}${pathSuffix}`,
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}${pathSuffix}`,
         {
           method: "POST",
           headers: { "Content-Type": "application/json", "x-goog-api-key": this.apiKey },
-          body: JSON.stringify(this.agentRequestBody(params)),
+          body: JSON.stringify(this.agentRequestBody(params, model)),
           signal: params.signal,
         },
       );
@@ -257,7 +275,7 @@ export class GeminiGateway implements LlmGateway {
     }
   }
 
-  private agentRequestBody(params: AgentStepParams): Record<string, unknown> {
+  private agentRequestBody(params: AgentStepParams, model: string): Record<string, unknown> {
     return {
       // Single-shot structured calls (Sprint 58) pass system: "" — omit the
       // instruction entirely rather than send an empty text part.
@@ -278,7 +296,7 @@ export class GeminiGateway implements LlmGateway {
         : {}),
       generationConfig: {
         maxOutputTokens: params.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
-        thinkingConfig: thinkingConfigFor(this.model),
+        thinkingConfig: thinkingConfigFor(model),
         ...(params.responseSchema
           ? { responseMimeType: "application/json", responseSchema: params.responseSchema }
           : {}),

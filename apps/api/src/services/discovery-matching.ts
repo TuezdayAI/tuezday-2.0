@@ -19,7 +19,9 @@ import {
 } from "../db/schema";
 import { matchingResponseSchema, type MatchingResponseEntry } from "@tuezday/contracts";
 import type { LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
 import { generateStructured, StructuredOutputError } from "../llm/structured";
+import { llmBudgetExhausted } from "./entitlements";
 import {
   brainDigest,
   buildMatchingContext,
@@ -386,6 +388,15 @@ export async function runMatchingBatch(
     if (workspaceClaims.length === 0) continue;
     const workspace = getWorkspace(deps.db, workspaceId);
     if (!workspace) continue;
+    // Budget degradation (Sprint 59): over-budget workspaces skip scoring;
+    // items go back to retryable and a later tick picks them up once spend
+    // rolls out of the window or the plan changes. Never a mid-run failure.
+    if (llmBudgetExhausted(deps.db, workspaceId)) {
+      for (const { claim } of workspaceClaims) {
+        if (markRetryable(deps.db, claim, "llm_budget_exhausted")) retryableErrors += 1;
+      }
+      continue;
+    }
     const context = buildMatchingContext(deps.db, workspaceId);
     const itemsBlock = workspaceClaims
       .map(
@@ -432,9 +443,14 @@ export async function runMatchingBatch(
 
     let entries: MatchingResponseEntry[];
     try {
-      const response = await generateStructured(deps.llm, matchingResponseSchema, {
+      const metered = meteredLlm(deps.llm, deps.db, {
+        workspaceId,
+        pipeline: "discovery_matching",
+      });
+      const response = await generateStructured(metered, matchingResponseSchema, {
         prompt,
         signal: effectiveSignal,
+        tier: "cheap",
       });
       entries = response.value;
     } catch (error) {

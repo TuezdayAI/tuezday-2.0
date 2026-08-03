@@ -35,7 +35,8 @@ import {
   getTurnByRequest,
   listRevisionTurns,
 } from "./draft-revisions";
-import { assertWithinLimit, getUsage } from "./entitlements";
+import { assertLlmBudget } from "./entitlements";
+import { meteredLlm } from "../llm/metered";
 import { retrieveEvidence } from "./evidence";
 import { listExecutionResults } from "./executions";
 import { listExternalActionsForDraft } from "./external-actions";
@@ -345,7 +346,7 @@ export async function reviseDraft(
   if (!transitionTo(draft.state, "edit")) {
     throw new InvalidTransitionError(draft.state, "edit");
   }
-  assertWithinLimit(db, input.workspaceId, "monthlyGenerations", getUsage(db, input.workspaceId).monthlyGenerations);
+  assertLlmBudget(db, input.workspaceId);
 
   const running = createRunningTurn(db, {
     requestId: input.requestId,
@@ -412,7 +413,11 @@ export async function reviseDraft(
       resolved.sections,
       evidenceDocumentLookup(db, input.workspaceId),
     );
-    const result = await llm.generate({
+    const result = await meteredLlm(llm, db, {
+      workspaceId: input.workspaceId,
+      pipeline: "revision",
+      campaignId: draft.campaignId ?? null,
+    }).generate({
       prompt: revisionPrompt(
         resolved.prompt,
         listRevisionTurns(db, input.workspaceId, input.draftId),

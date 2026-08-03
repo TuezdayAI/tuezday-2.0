@@ -9,8 +9,9 @@ import {
 } from "@tuezday/contracts";
 import { composeAngleInstruction, resolveContext, type BrainContents } from "@tuezday/brain";
 import type { Db } from "../db";
-import { assertWithinLimit, EntitlementError, getUsage } from "../services/entitlements";
+import { assertLlmBudget, EntitlementError } from "../services/entitlements";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
 import { StructuredOutputError } from "../llm/structured";
 import { generateAngles } from "../services/angles";
 import { getBrain } from "../services/brain";
@@ -46,7 +47,7 @@ export function registerGenerationRoutes(
     if (!workspace) return reply;
 
     try {
-      assertWithinLimit(db, request.params.id, "monthlyGenerations", getUsage(db, request.params.id).monthlyGenerations);
+      assertLlmBudget(db, request.params.id);
     } catch (err) {
       if (err instanceof EntitlementError) {
         return reply.status(402).send({ error: "upgrade_required", key: err.key, limit: err.limit });
@@ -134,7 +135,7 @@ export function registerGenerationRoutes(
         });
 
         try {
-          assertWithinLimit(db, request.params.id, "monthlyGenerations", getUsage(db, request.params.id).monthlyGenerations);
+          assertLlmBudget(db, request.params.id);
         } catch (err) {
           if (err instanceof EntitlementError) {
             return reply.status(402).send({ error: "upgrade_required", key: err.key, limit: err.limit });
@@ -143,7 +144,12 @@ export function registerGenerationRoutes(
         }
 
         try {
-          const angleResult = await generateAngles(llm, angleResolved, count);
+          const angleLlm = meteredLlm(llm, db, {
+            workspaceId: request.params.id,
+            pipeline: "angles",
+            campaignId: parsed.data.campaignId ?? null,
+          });
+          const angleResult = await generateAngles(angleLlm, angleResolved, count);
           angles = angleResult.angles;
           chosenAngle = angles[0];
         } catch (err) {
@@ -174,7 +180,12 @@ export function registerGenerationRoutes(
         tokenBudget: parsed.data.tokenBudget,
       });
 
-      const result = await llm.generate({ prompt: resolved.prompt });
+      const generateLlm = meteredLlm(llm, db, {
+        workspaceId: request.params.id,
+        pipeline: "generation",
+        campaignId: parsed.data.campaignId ?? null,
+      });
+      const result = await generateLlm.generate({ prompt: resolved.prompt });
       const generation = storeGeneration(db, {
         workspaceId: request.params.id,
         taskType: parsed.data.taskType,
@@ -193,7 +204,11 @@ export function registerGenerationRoutes(
       let review = null;
       if (settings.reviewEnabled) {
         review = await runPreReview(
-          llm,
+          meteredLlm(llm, db, {
+            workspaceId: request.params.id,
+            pipeline: "review",
+            campaignId: parsed.data.campaignId ?? null,
+          }),
           {
             workspaceName: workspace.name,
             docs: contents,
@@ -287,7 +302,13 @@ export function registerGenerationRoutes(
     });
 
     try {
-      const result = await generateAngles(llm, resolved, count);
+      assertLlmBudget(db, request.params.id);
+      const angleLlm = meteredLlm(llm, db, {
+        workspaceId: request.params.id,
+        pipeline: "angles",
+        campaignId: parsed.data.campaignId ?? null,
+      });
+      const result = await generateAngles(angleLlm, resolved, count);
       return reply.status(201).send({ ...result, sections: resolved.sections });
     } catch (err) {
       if (err instanceof GatewayError || err instanceof StructuredOutputError) {

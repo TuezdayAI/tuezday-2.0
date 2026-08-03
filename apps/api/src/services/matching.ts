@@ -22,6 +22,7 @@ import {
   type SignalMatchRow,
 } from "../db/schema";
 import type { LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
 import { generateStructured } from "../llm/structured";
 import { getBrain } from "./brain";
 import { listCampaigns } from "./campaigns";
@@ -542,7 +543,8 @@ export async function judgeSignalMatches(
     ctx,
     itemsBlock: `ITEM 0: ${content.slice(0, SIGNAL_CONTENT_PROMPT_CHARS)}`,
   });
-  const result = await generateStructured(llm, matchingResponseSchema, { prompt });
+  const metered = meteredLlm(llm, db, { workspaceId, pipeline: "signal_matching" });
+  const result = await generateStructured(metered, matchingResponseSchema, { prompt, tier: "cheap" });
   const entry = result.value[0];
   if (!entry) return [];
   return sanitizeEntryMatches(entry, ctx);

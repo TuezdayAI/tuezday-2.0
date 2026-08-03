@@ -16,7 +16,9 @@ import type { Db } from "../db";
 import { drafts } from "../db/schema";
 import type { EvidenceStore } from "../evidence/store";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
 import { generateStructured, StructuredOutputError } from "../llm/structured";
+import { assertLlmBudget } from "../services/entitlements";
 import {
   googleRsaContents,
   listAdCreativeSets,
@@ -132,14 +134,20 @@ export function registerAdCreativeRoutes(
       let variants: string[];
       let generation;
       try {
+        assertLlmBudget(db, request.params.id);
+        const adLlm = meteredLlm(llm, db, {
+          workspaceId: request.params.id,
+          pipeline: "ad_creative",
+          campaignId: campaign.id,
+        });
         if (parsed.data.taskType === "meta_ad_creative") {
-          const result = await generateStructured(llm, metaAdVariantsResponseSchema, {
+          const result = await generateStructured(adLlm, metaAdVariantsResponseSchema, {
             prompt: resolved.prompt,
           });
           variants = metaAdVariantContents(result.value);
           generation = store(variants.join("\n---\n"), result.model, result.provider, result.durationMs);
         } else {
-          const result = await generateStructured(llm, googleRsaResponseSchema, {
+          const result = await generateStructured(adLlm, googleRsaResponseSchema, {
             prompt: resolved.prompt,
           });
           variants = googleRsaContents(result.value);

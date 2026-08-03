@@ -4916,20 +4916,21 @@ export type PlanId = (typeof PLAN_IDS)[number];
 export interface Entitlements {
   seats: number;          // -1 = unlimited
   connectors: number;
-  monthlyGenerations: number;
+  /** Rolling-30-day LLM spend budget in cents (Sprint 59, decision D6). -1 = unlimited. */
+  monthlyLlmCents: number;
   adSpendCapCents: number;
 }
 
 export const PLANS: Record<PlanId, { label: string; priceEnv: string | null; entitlements: Entitlements }> = {
-  free:  { label: "Free",  priceEnv: null,                entitlements: { seats: 1,  connectors: 1,  monthlyGenerations: 50,   adSpendCapCents: 0 } },
-  pro:   { label: "Pro",   priceEnv: "STRIPE_PRICE_PRO",  entitlements: { seats: 5,  connectors: 10, monthlyGenerations: 1000, adSpendCapCents: 500_00 } },
-  scale: { label: "Scale", priceEnv: "STRIPE_PRICE_SCALE",entitlements: { seats: -1, connectors: -1, monthlyGenerations: -1,   adSpendCapCents: -1 } },
+  free:  { label: "Free",  priceEnv: null,                entitlements: { seats: 1,  connectors: 1,  monthlyLlmCents: 50,   adSpendCapCents: 0 } },
+  pro:   { label: "Pro",   priceEnv: "STRIPE_PRICE_PRO",  entitlements: { seats: 5,  connectors: 10, monthlyLlmCents: 1000, adSpendCapCents: 500_00 } },
+  scale: { label: "Scale", priceEnv: "STRIPE_PRICE_SCALE",entitlements: { seats: -1, connectors: -1, monthlyLlmCents: -1,   adSpendCapCents: -1 } },
 };
 
 export const entitlementUsageSchema = z.object({
   seats: z.number().int(),
   connectors: z.number().int(),
-  monthlyGenerations: z.number().int(),
+  monthlyLlmCents: z.number(),
 });
 export type EntitlementUsage = z.infer<typeof entitlementUsageSchema>;
 
@@ -4953,6 +4954,66 @@ export function usageMeter(used: number, limit: number): UsageMeterView {
   const raw = (used / limit) * 100;
   return { percent: Math.min(100, Math.round(raw)), state: raw >= 80 ? "near" : "ok" };
 }
+
+// ---------------------------------------------------------------------------
+// Model routing, usage ledger & workspace spend (Sprint 59)
+// ---------------------------------------------------------------------------
+
+/** Model tiers a call site may declare; the gateway resolves tier -> model from config. */
+export const MODEL_TIERS = ["cheap", "frontier"] as const;
+export type ModelTier = (typeof MODEL_TIERS)[number];
+
+/** Every LLM-burning surface, as attributed in the llm_usage_events ledger. */
+export const LLM_PIPELINES = [
+  "generation",
+  "angles",
+  "review",
+  "revision",
+  "outbound_draft",
+  "pr_pitch",
+  "press_kit",
+  "ad_creative",
+  "signal_draft",
+  "engagement_reply",
+  "launch",
+  "launch_sequence",
+  "outreach_step",
+  "copilot",
+  "copilot_action",
+  "signal_matching",
+  "discovery_matching",
+  "mailbox_classification",
+  "outline_summaries",
+  "source_suggestions",
+  "brand_profile",
+  "brain_autodraft",
+  "learning_synthesis",
+  "design_render",
+  "agent_run",
+] as const;
+export type LlmPipeline = (typeof LLM_PIPELINES)[number];
+
+export const pipelineSpendSchema = z.object({
+  pipeline: z.enum(LLM_PIPELINES),
+  calls: z.number().int(),
+  inputTokens: z.number().int(),
+  outputTokens: z.number().int(),
+  cachedTokens: z.number().int(),
+  costCents: z.number(),
+});
+export type PipelineSpend = z.infer<typeof pipelineSpendSchema>;
+
+/** The `spend` block on GET /workspaces/:id/billing. */
+export const workspaceSpendSchema = z.object({
+  periodStart: z.string(),
+  budgetCents: z.number(), // -1 = unlimited
+  spentCents: z.number(),
+  state: z.enum(["ok", "near", "over", "unlimited"]),
+  /** sum(cachedTokens) / sum(inputTokens) over the window; null when no input tokens. */
+  cacheHitRate: z.number().nullable(),
+  byPipeline: z.array(pipelineSpendSchema),
+});
+export type WorkspaceSpend = z.infer<typeof workspaceSpendSchema>;
 
 // GTM insights (Sprint 34) — read-only response schemas for native insights.
 // No new enums; reuses CHANNELS, APPROVAL_STATES, OUTPUT_RATINGS, BRAIN_DOC_TYPES.

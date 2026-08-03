@@ -13,7 +13,9 @@ import { getOrAuthorTemplate } from "../design/templates";
 import { resolveDesignSystem } from "./design-systems";
 import { getDraft, submitDraft, type DraftActor } from "./drafts";
 import { storeGeneration } from "./generations";
-import { assertWithinLimit, getUsage } from "./entitlements";
+import { assertLlmBudget } from "./entitlements";
+import { recordLlmUsage } from "./usage-ledger";
+import { DESIGN_RENDER_FLAT_CENTS } from "../llm/pricing";
 
 // Carousel pipeline (Sprint 41 Part 4): approved content draft -> archetyped
 // slide copy -> cached template per archetype -> deterministic render ->
@@ -157,7 +159,7 @@ export async function generateCarousel(
   const started = Date.now();
 
   // Entitlement gate (umbrella Decision 10) — the exact seam text generations use.
-  assertWithinLimit(db, workspaceId, "monthlyGenerations", getUsage(db, workspaceId).monthlyGenerations);
+  assertLlmBudget(db, workspaceId);
 
   const source = getDraft(db, workspaceId, draftId);
   if (!source) throw new CarouselSourceError("draft_not_found");
@@ -247,6 +249,17 @@ export async function generateCarousel(
     model: "deterministic-render",
     provider: "design-pipeline",
     durationMs: Date.now() - started,
+  });
+  // The design daemon's LLM runs outside our gateway — meter a flat ledger
+  // event so design generations stay inside the workspace budget (Sprint 59).
+  recordLlmUsage(db, {
+    workspaceId,
+    pipeline: "design_render",
+    campaignId: source.campaignId,
+    model: "design-provider",
+    provider: "design-pipeline",
+    usage: { inputTokens: 0, outputTokens: 0, cachedTokens: 0 },
+    costCentsOverride: DESIGN_RENDER_FLAT_CENTS,
   });
 
   return submitDraft(

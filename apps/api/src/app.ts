@@ -7,6 +7,7 @@ import { sql } from "drizzle-orm";
 import type { AnalyticsSink } from "./analytics/sink";
 import { createAnalyticsSink } from "./analytics/sink";
 import { registerAuthGuard } from "./auth/guard";
+import { EntitlementError } from "./services/entitlements";
 import type { ConnectorFabric } from "./connectors/fabric";
 import { NangoFabric } from "./connectors/nango";
 import { assertProviderConfiguration } from "./connectors/provider-config";
@@ -220,6 +221,16 @@ export async function buildApp({
     field: "rawBody",
     global: false, // only populated for routes that ask for it
     encoding: "utf8",
+  });
+
+  // Plan-limit convention (Sprint 59): an uncaught EntitlementError anywhere
+  // is the standard 402 upgrade_required shape, so new budget gates need no
+  // per-route catch. Existing per-route catches stay and win where present.
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof EntitlementError) {
+      return reply.status(402).send({ error: "upgrade_required", key: error.key, limit: error.limit });
+    }
+    throw error; // fall through to Fastify's default handling
   });
 
   // Must come before any routes: every route registered after this needs a

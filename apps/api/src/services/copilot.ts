@@ -9,6 +9,8 @@ import type {
 import type { Db } from "../db";
 import type { EvidenceStore } from "../evidence/store";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
+import { assertLlmBudget } from "./entitlements";
 import { appendMessage, getPendingProposal, listMessages } from "./chat";
 import { COPILOT_TOOLS, getCopilotTool, type CopilotToolContext } from "./copilot-tools";
 import {
@@ -206,6 +208,11 @@ export async function runCopilotTurn(
 
   appendMessage(db, workspaceId, sessionId, { role: "user", content: userMessage });
 
+  // Budget hard stop (Sprint 59): a copilot turn is up to MAX_ITERS model
+  // calls, gated once before the first. Surfaces as 402 via the app handler.
+  assertLlmBudget(db, workspaceId);
+  const turnLlm = meteredLlm(deps.llm, db, { workspaceId, pipeline: "copilot" });
+
   const actionsEnabled = !!deps.runtime;
   const history = listMessages(db, sessionId);
   const toolCtx: CopilotToolContext = { db, evidence: deps.evidence, workspaceId };
@@ -219,7 +226,7 @@ export async function runCopilotTurn(
 
     let text: string;
     try {
-      const result = await deps.llm.generate({ prompt, maxOutputTokens: 1_024 });
+      const result = await turnLlm.generate({ prompt, maxOutputTokens: 1_024 });
       text = result.text;
     } catch (err) {
       // Gateway failure (missing key / provider error): degrade, never throw.
@@ -256,7 +263,7 @@ export async function runCopilotTurn(
 
       const actionCtx: CopilotActionContext = {
         db,
-        llm: deps.llm,
+        llm: meteredLlm(deps.llm, db, { workspaceId, pipeline: "copilot_action" }),
         evidence: deps.evidence,
         runtime: deps.runtime!,
         workspaceId,
@@ -403,7 +410,7 @@ export async function commitCopilotProposal(
 
   const actionCtx: CopilotActionContext = {
     db,
-    llm: deps.llm,
+    llm: meteredLlm(deps.llm, db, { workspaceId, pipeline: "copilot_action" }),
     evidence: deps.evidence,
     runtime: deps.runtime,
     workspaceId,
