@@ -3969,8 +3969,9 @@ export type SendTestMailInput = z.infer<typeof sendTestMailInputSchema>;
 // ---------------------------------------------------------------------------
 
 /**
- * Launch approval statuses. `launched` is terminal in the approval machine —
- * runtime platform state (active/paused/disapproved) lives in platformStatus.
+ * Launch setup statuses. `launched` is terminal — runtime platform state
+ * (active/paused/disapproved) lives in platformStatus, and spend governance
+ * lives entirely in the external-action lifecycle (Sprint 54).
  */
 export const AD_LAUNCH_STATUSES = [
   "draft",
@@ -3983,6 +3984,26 @@ export type AdLaunchStatus = (typeof AD_LAUNCH_STATUSES)[number];
 
 export const AD_LAUNCH_ACTIONS = ["submit", "approve", "reject", "revise"] as const;
 export type AdLaunchAction = (typeof AD_LAUNCH_ACTIONS)[number];
+
+/**
+ * The one bespoke launch rule that survives Sprint 54 Task 4 (spec §2.2).
+ *
+ * A launch is editable only while it is a draft; `PATCH .../launches/:id` is
+ * refused otherwise, and `revise` is the only door back. This is an
+ * **editability** rule, not a dispatch state, which is exactly why it could not
+ * fold into the external-action lifecycle: `stale` there is a property of the
+ * *action*, and nothing in that lifecycle says "the subject is editable again".
+ *
+ * It replaces `adLaunchTransitionTo` / `AD_LAUNCH_TRANSITIONS` — a second,
+ * bespoke state machine sitting beside the canonical `transitionTo`. Deriving
+ * editability from the status the launch already carries keeps one source of
+ * truth: a separate `editable` column could disagree with `status`, and would
+ * not have let `status` go anyway (`approved` gates spend in
+ * `preparePaidLaunchAction`, `launched` feeds `isSpending`).
+ */
+export function isAdLaunchEditable(status: AdLaunchStatus): boolean {
+  return status === "draft";
+}
 
 /**
  * What the setup-approval trail can contain when *read*. Writers emit only
@@ -3999,27 +4020,6 @@ export type AdLaunchAction = (typeof AD_LAUNCH_ACTIONS)[number];
  */
 export const AD_LAUNCH_DECISION_ACTIONS = [...AD_LAUNCH_ACTIONS, "launch"] as const;
 export type AdLaunchDecisionAction = (typeof AD_LAUNCH_DECISION_ACTIONS)[number];
-
-/**
- * The launch state machine — spend is gated on `approved`. `revise` pulls a
- * launch back to draft from anywhere short of launched.
- */
-const AD_LAUNCH_TRANSITIONS: Record<
-  AdLaunchAction,
-  Partial<Record<AdLaunchStatus, AdLaunchStatus>>
-> = {
-  submit: { draft: "pending_review" },
-  approve: { pending_review: "approved" },
-  reject: { pending_review: "rejected" },
-  revise: { pending_review: "draft", rejected: "draft", approved: "draft" },
-};
-
-export function adLaunchTransitionTo(
-  from: AdLaunchStatus,
-  action: AdLaunchAction,
-): AdLaunchStatus | undefined {
-  return AD_LAUNCH_TRANSITIONS[action][from];
-}
 
 /**
  * v1 objectives launch with just a Page + link. Leads/Sales need form/pixel

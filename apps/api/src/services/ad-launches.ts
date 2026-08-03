@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import {
-  adLaunchTransitionTo,
+  isAdLaunchEditable,
   parseAdCreative,
   type AdLaunch,
   type AdLaunchAction,
@@ -265,6 +265,29 @@ export function listSetupGateDecisions(db: Db, launchId: string): AdLaunchDecisi
     }));
 }
 
+/**
+ * Where each setup-gate verb leaves the launch, or `undefined` when it does not
+ * apply. Sprint 54 Task 4 replaced `adLaunchTransitionTo` — a second bespoke
+ * state machine exported from contracts beside the canonical `transitionTo` —
+ * with these four preconditions, stated where the rest of the launch's business
+ * logic already lives. The only rule with reach beyond this function is
+ * editability (`isAdLaunchEditable`), which the PATCH route enforces too.
+ */
+function nextGateState(status: AdLaunchStatus, action: AdLaunchAction): AdLaunchStatus | undefined {
+  switch (action) {
+    // Hand an editable draft over for review; it stops being editable.
+    case "submit":
+      return isAdLaunchEditable(status) ? "pending_review" : undefined;
+    case "approve":
+      return status === "pending_review" ? "approved" : undefined;
+    case "reject":
+      return status === "pending_review" ? "rejected" : undefined;
+    // The door back to editable — open until the launch has spent, closed after.
+    case "revise":
+      return status === "launched" || isAdLaunchEditable(status) ? undefined : "draft";
+  }
+}
+
 /** Apply a gate action; throws InvalidLaunchTransitionError when illegal. */
 export function applyLaunchAction(
   db: Db,
@@ -272,7 +295,7 @@ export function applyLaunchAction(
   action: AdLaunchAction,
   actor: DraftActor,
 ): AdLaunch {
-  const toState = adLaunchTransitionTo(launch.status, action);
+  const toState = nextGateState(launch.status, action);
   if (!toState) throw new InvalidLaunchTransitionError(launch.status, action);
   db.update(adLaunches)
     .set({ status: toState, updatedAt: Date.now() })

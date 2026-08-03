@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import {
   AD_LAUNCH_ACTIONS,
   createAdLaunchInputSchema,
+  isAdLaunchEditable,
   proposeBudgetChangeInputSchema,
   proposeTargetingChangeInputSchema,
   updateAdLaunchInputSchema,
@@ -253,7 +254,7 @@ export function registerAdLaunchRoutes(
       if (!workspaceOr404(db, request.params.id, reply)) return reply;
       const launch = getLaunch(db, request.params.id, request.params.launchId);
       if (!launch) return reply.status(404).send({ error: "launch_not_found" });
-      if (launch.status !== "draft") {
+      if (!isAdLaunchEditable(launch.status)) {
         return reply.status(409).send({
           error: "not_editable",
           message: "Only a draft launch can be edited — revise it back to draft first.",

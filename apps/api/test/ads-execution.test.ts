@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { adLaunchTransitionTo, createAdLaunchInputSchema } from "@tuezday/contracts";
+import { createAdLaunchInputSchema, isAdLaunchEditable } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
 import { type ConnectorFabric, type ProxyJsonResult } from "../src/connectors/fabric";
 import { MetaAdsAdapter } from "../src/connectors/ads/meta";
@@ -273,18 +273,17 @@ function webhookFetcher(received: ReceivedHook[]): typeof fetch {
 // ---------------------------------------------------------------------------
 
 describe("ad launch contracts (Sprint 20)", () => {
-  it("encodes the launch state machine", () => {
-    expect(adLaunchTransitionTo("draft", "submit")).toBe("pending_review");
-    expect(adLaunchTransitionTo("pending_review", "approve")).toBe("approved");
-    expect(adLaunchTransitionTo("pending_review", "reject")).toBe("rejected");
-    expect(adLaunchTransitionTo("pending_review", "revise")).toBe("draft");
-    expect(adLaunchTransitionTo("rejected", "revise")).toBe("draft");
-    // An approved launch can be pulled back until it launches.
-    expect(adLaunchTransitionTo("approved", "revise")).toBe("draft");
-    // Illegal moves.
-    expect(adLaunchTransitionTo("draft", "approve")).toBeUndefined();
-    expect(adLaunchTransitionTo("approved", "approve")).toBeUndefined();
-    expect(adLaunchTransitionTo("launched", "revise")).toBeUndefined();
+  // Sprint 54 Task 4 — `adLaunchTransitionTo` and its 4x5 transition table are
+  // gone; the gate's preconditions now live in `applyLaunchAction`, next to the
+  // rest of the launch's business logic, and are exercised through the routes
+  // ("walks the state machine…", "supports reject and revise…", "409s illegal
+  // transitions", "locks and reopens editing across the whole gate"). What
+  // remains in contracts is the single rule that outlives the machine.
+  it("states the editability rule and nothing more", () => {
+    expect(isAdLaunchEditable("draft")).toBe(true);
+    for (const status of ["pending_review", "approved", "rejected", "launched"] as const) {
+      expect(isAdLaunchEditable(status)).toBe(false);
+    }
   });
 
   it("bounds the launch input", () => {
@@ -543,6 +542,48 @@ describe("ads execution API (Sprint 20)", () => {
       });
       expect(locked.statusCode).toBe(409);
       expect(locked.json().error).toBe("not_editable");
+    });
+
+    // Sprint 54 Task 4 — the one bespoke rule that survives retiring the launch
+    // state machine (spec §2.2). `revise` is not a dispatch state; it is the
+    // only way a locked launch becomes editable again, and the external-action
+    // lifecycle has no concept for it (`stale` is a property of the action, not
+    // of the subject). So the guarantee is pinned end to end here: editable
+    // exactly in `draft`, locked everywhere else, and `revise` the door back.
+    it("locks and reopens editing across the whole gate", async () => {
+      const patch = (launchId: string, name: string) =>
+        app.inject({
+          method: "PATCH",
+          url: `/workspaces/${workspaceId}/ads/launches/${launchId}`,
+          payload: { name },
+        });
+      const id = (await createLaunch()).json().id;
+      expect((await patch(id, "Draft edit")).statusCode).toBe(200);
+
+      await act(id, "submit");
+      expect((await patch(id, "Under review")).statusCode).toBe(409);
+      await act(id, "reject");
+      expect((await patch(id, "Rejected")).statusCode).toBe(409);
+
+      // Revise is the door back to editable — from rejected, and from approved.
+      expect((await act(id, "revise")).json().status).toBe("draft");
+      expect((await patch(id, "Reopened")).statusCode).toBe(200);
+      await act(id, "submit");
+      await act(id, "approve");
+      expect((await patch(id, "Approved")).statusCode).toBe(409);
+      expect((await act(id, "revise")).json().status).toBe("draft");
+      expect((await patch(id, "Reopened again")).statusCode).toBe(200);
+
+      // Once it has spent, nothing reopens it.
+      const live = await approvedLaunch();
+      expect((await act(live, "launch")).statusCode).toBe(201);
+      expect((await getLaunch(live)).status).toBe("launched");
+      const reviseLaunched = await act(live, "revise");
+      expect(reviseLaunched.statusCode).toBe(409);
+      expect(reviseLaunched.json().error).toBe("invalid_transition");
+      const editLaunched = await patch(live, "Too late");
+      expect(editLaunched.statusCode).toBe(409);
+      expect(editLaunched.json().error).toBe("not_editable");
     });
 
     it("deletes anything unlaunched, never a launched campaign", async () => {
