@@ -670,6 +670,14 @@ export const ZOOM_DOC_TOKEN_CAP = 1_500;
 export const ZOOM_MAX_SECTIONS_PER_DOC = 4;
 /** Brain-editor warning threshold for constitutional docs (they ride every prompt). */
 export const BRAIN_DOC_TOKEN_WARNING = 2_000;
+/**
+ * Hard cap on the campaign-plan context section (Sprint 53). The plan is tier 1
+ * — never cut by the sacrifice ladder's first three steps — and a maximal plan
+ * (10k-char guidance + 20 pillars + 20 offers + 20 CTAs) would otherwise exceed
+ * the whole DEFAULT_TOKEN_BUDGET on its own. Composition stops here and the
+ * section's reason records what was dropped.
+ */
+export const PLAN_SECTION_TOKEN_CAP = 1_200;
 export const MATRIX_CELL_REASON_MAX_CHARS = 300;
 
 export interface TaskDocMatrixCell {
