@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   INBOX_ITEM_KINDS,
   INBOX_ITEM_STATUSES,
-  METRIC_WINDOWS,
+  PUBLICATION_METRIC_WINDOWS,
   TASK_TYPES,
   inboxItemSchema,
   inboxRunResultSchema,
@@ -259,7 +259,7 @@ describe("engagement & reply inbox", () => {
     it("defines the inbox + metric vocabulary and parses the schemas", () => {
       expect(INBOX_ITEM_KINDS).toEqual(["comment", "dm", "email"]);
       expect(INBOX_ITEM_STATUSES).toEqual(["unread", "read", "replied", "dismissed"]);
-      expect(METRIC_WINDOWS).toEqual(["24h", "7d"]);
+      expect(PUBLICATION_METRIC_WINDOWS).toEqual(["24h", "7d"]);
       expect(TASK_TYPES).toContain("engagement_reply");
       expect(updateInboxItemStatusInputSchema.safeParse({ status: "read" }).success).toBe(true);
       expect(updateInboxItemStatusInputSchema.safeParse({ status: "replied" }).success).toBe(false);
