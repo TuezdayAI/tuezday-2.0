@@ -6454,3 +6454,69 @@ export const confirmChatProposalInputSchema = z.object({
   decision: z.enum(["confirm", "discard"]),
 });
 export type ConfirmChatProposalInput = z.infer<typeof confirmChatProposalInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Agent runtime (Sprint 56 — Gateway v2 & AgentRunner)
+//
+// Vocabulary for bounded, tool-using, fully-traced agent loops. The gateway
+// makes single model calls; the AgentRunner (apps/api/src/agents) drives the
+// loop and persists every step. These schemas validate persisted transcripts
+// and become the Agent Inspector API contract in Sprint 57.
+// ---------------------------------------------------------------------------
+
+/** Why an agent run stopped. Every finished run records exactly one. */
+export const AGENT_STOP_REASONS = [
+  "complete",
+  "max_steps",
+  "max_tokens",
+  "timeout",
+  "needs_human",
+  "error",
+] as const;
+export type AgentStopReason = (typeof AGENT_STOP_REASONS)[number];
+
+/** Run lifecycle: `stop_reason` is set iff the run is done. */
+export const AGENT_RUN_STATUSES = ["running", "done"] as const;
+export type AgentRunStatus = (typeof AGENT_RUN_STATUSES)[number];
+
+/** Transcript roles. The system prompt is NOT a message — it travels as a
+ * separate stable prefix so providers can cache it (Sprint 59). */
+export const AGENT_MESSAGE_ROLES = ["user", "assistant", "tool"] as const;
+export type AgentMessageRole = (typeof AGENT_MESSAGE_ROLES)[number];
+
+/** Persisted step kinds: one model invocation, or one tool dispatch. */
+export const AGENT_STEP_KINDS = ["model_call", "tool_call"] as const;
+export type AgentStepKind = (typeof AGENT_STEP_KINDS)[number];
+
+/** A tool invocation requested by the model. Ids are minted by the gateway
+ * (providers like Gemini do not supply them) and are unique within a run. */
+export const agentToolCallSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  /** Parsed JSON arguments as the model produced them — validated by the
+   * tool's own input schema at dispatch time, not here. */
+  arguments: z.unknown(),
+});
+export type AgentToolCall = z.infer<typeof agentToolCallSchema>;
+
+/** One transcript message. Assistant messages may carry tool calls; tool
+ * messages carry the result of exactly one call (linked by toolCallId). */
+export const agentMessageSchema = z.object({
+  role: z.enum(AGENT_MESSAGE_ROLES),
+  content: z.string(),
+  toolCalls: z.array(agentToolCallSchema).optional(),
+  toolCallId: z.string().optional(),
+  toolName: z.string().optional(),
+});
+export type AgentMessage = z.infer<typeof agentMessageSchema>;
+
+/** Token + cost accounting, recorded per model-call step and totalled per
+ * run. costCents is telemetry-grade (REAL); Sprint 59 hardens it into
+ * entitlements. */
+export const agentUsageSchema = z.object({
+  inputTokens: z.number().int().min(0),
+  outputTokens: z.number().int().min(0),
+  cachedTokens: z.number().int().min(0),
+  costCents: z.number().min(0),
+});
+export type AgentUsage = z.infer<typeof agentUsageSchema>;

@@ -1,5 +1,10 @@
+import type { AgentMessage, AgentToolCall } from "@tuezday/contracts";
 import {
   GatewayError,
+  type AgentStepParams,
+  type AgentStepResult,
+  type AgentStepStreamEvent,
+  type AgentStepUsage,
   type EmbedParams,
   type EmbedResult,
   type GenerateParams,
@@ -22,10 +27,21 @@ function thinkingConfigFor(model: string): { thinkingBudget: number } | undefine
   return /^gemini-(2\.5|3)/.test(model) ? { thinkingBudget: 0 } : undefined;
 }
 
+interface GeminiPart {
+  text?: string;
+  functionCall?: { name?: string; args?: unknown };
+}
+
 interface GeminiResponse {
   candidates?: Array<{
-    content?: { parts?: Array<{ text?: string }> };
+    content?: { parts?: GeminiPart[] };
   }>;
+  usageMetadata?: {
+    promptTokenCount?: number;
+    candidatesTokenCount?: number;
+    thoughtsTokenCount?: number;
+    cachedContentTokenCount?: number;
+  };
   error?: { message?: string };
 }
 
@@ -116,6 +132,181 @@ export class GeminiGateway implements LlmGateway {
     };
   }
 
+  // -------------------------------------------------------------------------
+  // Gateway v2 (Sprint 56): one agent model call with history, tools and
+  // constrained JSON output. The loop lives in AgentRunner, not here.
+  // -------------------------------------------------------------------------
+
+  async agentStep(params: AgentStepParams): Promise<AgentStepResult> {
+    const started = Date.now();
+    const res = await this.postAgentRequest(":generateContent", params);
+    const body = (await res.json().catch(() => ({}))) as GeminiResponse;
+    if (!res.ok) {
+      throw new GatewayError(
+        "provider_error",
+        `Gemini API returned ${res.status} for model "${this.model}": ${body.error?.message ?? "unknown error"}`,
+      );
+    }
+    const parts = body.candidates?.[0]?.content?.parts ?? [];
+    const message = this.assistantMessageFrom(parts, { nextCallId: 1 });
+    if (!message.content && !message.toolCalls?.length) {
+      throw new GatewayError("provider_error", "Gemini API returned an empty agent response.");
+    }
+    return {
+      message,
+      usage: usageFrom(body),
+      model: this.model,
+      provider: "gemini",
+      durationMs: Date.now() - started,
+    };
+  }
+
+  async agentStepStream(
+    params: AgentStepParams,
+    onEvent: (event: AgentStepStreamEvent) => void,
+  ): Promise<AgentStepResult> {
+    const started = Date.now();
+    const res = await this.postAgentRequest(":streamGenerateContent?alt=sse", params);
+    if (!res.ok || !res.body) {
+      const body = (await res.json().catch(() => ({}))) as GeminiResponse;
+      throw new GatewayError(
+        "provider_error",
+        `Gemini API returned ${res.status} for model "${this.model}": ${body.error?.message ?? "unknown error"}`,
+      );
+    }
+
+    const idState = { nextCallId: 1 };
+    let text = "";
+    const toolCalls: AgentToolCall[] = [];
+    let usage: AgentStepUsage = { inputTokens: 0, outputTokens: 0, cachedTokens: 0 };
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline: number;
+      while ((newline = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (!line.startsWith("data:")) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === "[DONE]") continue;
+        let chunk: GeminiResponse;
+        try {
+          chunk = JSON.parse(payload) as GeminiResponse;
+        } catch {
+          continue; // partial/keepalive line — not a data chunk
+        }
+        for (const part of chunk.candidates?.[0]?.content?.parts ?? []) {
+          if (part.text) {
+            text += part.text;
+            onEvent({ type: "text_delta", text: part.text });
+          }
+          if (part.functionCall?.name) {
+            const call: AgentToolCall = {
+              id: `call_${idState.nextCallId++}`,
+              name: part.functionCall.name,
+              arguments: part.functionCall.args ?? {},
+            };
+            toolCalls.push(call);
+            onEvent({ type: "tool_call", call });
+          }
+        }
+        if (chunk.usageMetadata) usage = usageFrom(chunk); // cumulative; last wins
+      }
+    }
+
+    const trimmed = text.trim();
+    if (!trimmed && toolCalls.length === 0) {
+      throw new GatewayError("provider_error", "Gemini API returned an empty agent response.");
+    }
+    const message: AgentMessage = {
+      role: "assistant",
+      content: trimmed,
+      ...(toolCalls.length ? { toolCalls } : {}),
+    };
+    return { message, usage, model: this.model, provider: "gemini", durationMs: Date.now() - started };
+  }
+
+  private async postAgentRequest(pathSuffix: string, params: AgentStepParams): Promise<Response> {
+    if (!this.apiKey) {
+      throw new GatewayError(
+        "missing_api_key",
+        "GEMINI_API_KEY is not set. Add it to a .env file in the repo root and restart the dev server.",
+      );
+    }
+    try {
+      return await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${this.model}${pathSuffix}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": this.apiKey },
+          body: JSON.stringify(this.agentRequestBody(params)),
+          signal: params.signal,
+        },
+      );
+    } catch (err) {
+      if (params.signal?.aborted) throw params.signal.reason ?? err;
+      throw new GatewayError(
+        "provider_error",
+        `Could not reach the Gemini API: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }
+
+  private agentRequestBody(params: AgentStepParams): Record<string, unknown> {
+    return {
+      systemInstruction: { parts: [{ text: params.system }] },
+      contents: params.messages.map((m) => toGeminiContent(m)),
+      ...(params.tools?.length
+        ? {
+            tools: [
+              {
+                functionDeclarations: params.tools.map((t) => ({
+                  name: t.name,
+                  description: t.description,
+                  parameters: t.inputSchema,
+                })),
+              },
+            ],
+          }
+        : {}),
+      generationConfig: {
+        maxOutputTokens: params.maxOutputTokens ?? DEFAULT_MAX_OUTPUT_TOKENS,
+        thinkingConfig: thinkingConfigFor(this.model),
+        ...(params.responseSchema
+          ? { responseMimeType: "application/json", responseSchema: params.responseSchema }
+          : {}),
+      },
+    };
+  }
+
+  private assistantMessageFrom(
+    parts: GeminiPart[],
+    idState: { nextCallId: number },
+  ): AgentMessage {
+    const text = parts
+      .map((p) => p.text ?? "")
+      .join("")
+      .trim();
+    // Gemini does not supply call ids — mint them, unique within the response.
+    const toolCalls: AgentToolCall[] = parts.flatMap((p) =>
+      p.functionCall?.name
+        ? [
+            {
+              id: `call_${idState.nextCallId++}`,
+              name: p.functionCall.name,
+              arguments: p.functionCall.args ?? {},
+            },
+          ]
+        : [],
+    );
+    return { role: "assistant", content: text, ...(toolCalls.length ? { toolCalls } : {}) };
+  }
+
   async embed({ texts }: EmbedParams): Promise<EmbedResult> {
     if (!this.apiKey) {
       throw new GatewayError(
@@ -173,4 +364,45 @@ export class GeminiGateway implements LlmGateway {
       dimensions: EVIDENCE_EMBEDDING_DIMENSIONS,
     };
   }
+}
+
+/** Transcript → Gemini contents. Tool results travel as functionResponse
+ * parts on a user turn; Gemini requires the response value to be an object. */
+function toGeminiContent(message: AgentMessage): Record<string, unknown> {
+  if (message.role === "tool") {
+    let response: unknown;
+    try {
+      response = JSON.parse(message.content);
+    } catch {
+      response = message.content;
+    }
+    if (typeof response !== "object" || response === null) {
+      response = { result: response };
+    }
+    return {
+      role: "user",
+      parts: [{ functionResponse: { name: message.toolName ?? "tool", response } }],
+    };
+  }
+  if (message.role === "assistant") {
+    return {
+      role: "model",
+      parts: [
+        ...(message.content ? [{ text: message.content }] : []),
+        ...(message.toolCalls ?? []).map((call) => ({
+          functionCall: { name: call.name, args: call.arguments ?? {} },
+        })),
+      ],
+    };
+  }
+  return { role: "user", parts: [{ text: message.content }] };
+}
+
+function usageFrom(body: GeminiResponse): AgentStepUsage {
+  const meta = body.usageMetadata;
+  return {
+    inputTokens: meta?.promptTokenCount ?? 0,
+    outputTokens: (meta?.candidatesTokenCount ?? 0) + (meta?.thoughtsTokenCount ?? 0),
+    cachedTokens: meta?.cachedContentTokenCount ?? 0,
+  };
 }

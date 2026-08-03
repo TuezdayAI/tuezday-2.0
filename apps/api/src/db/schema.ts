@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { blob, check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { blob, check, index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 // Keep this schema Postgres-portable: text ids, integer epoch-ms timestamps,
 // no SQLite-only column tricks. The Postgres swap is planned for Sprint 8.
@@ -2341,3 +2341,66 @@ export const designTemplates = sqliteTable(
 );
 
 export type DesignTemplateRow = typeof designTemplates.$inferSelect;
+
+// Agent runtime traces (Sprint 56) — every AgentRunner loop is persisted in
+// full: the run row holds the input (system + initial messages) and totals;
+// steps hold everything appended in order (model calls with per-step usage,
+// tool dispatches with arguments and results). The transcript reconstructs
+// without duplication, and the Sprint 57 Agent Inspector renders straight
+// from these rows.
+export const agentRuns = sqliteTable(
+  "agent_runs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    task: text("task").notNull(), // short label, e.g. "proof" / "pipeline:research"
+    createdBy: text("created_by").notNull(), // actor attribution label
+    status: text("status").notNull(), // AGENT_RUN_STATUSES
+    stopReason: text("stop_reason"), // AGENT_STOP_REASONS, set iff done
+    error: text("error"),
+    model: text("model").notNull(),
+    provider: text("provider").notNull(),
+    system: text("system").notNull(),
+    inputMessages: text("input_messages_json").notNull(), // AgentMessage[]
+    outputJson: text("output_json"), // final structured/text output when complete
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    cachedTokens: integer("cached_tokens").notNull().default(0),
+    costCents: real("cost_cents").notNull().default(0),
+    stepCount: integer("step_count").notNull().default(0),
+    startedAt: integer("started_at").notNull(),
+    finishedAt: integer("finished_at"),
+  },
+  (t) => [index("agent_runs_workspace_started").on(t.workspaceId, t.startedAt)],
+);
+
+export type AgentRunRow = typeof agentRuns.$inferSelect;
+
+export const agentRunSteps = sqliteTable(
+  "agent_run_steps",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: "cascade" }),
+    stepIndex: integer("step_index").notNull(),
+    kind: text("kind").notNull(), // AGENT_STEP_KINDS
+    messageJson: text("message_json"), // model_call: the assistant AgentMessage
+    toolName: text("tool_name"),
+    toolCallId: text("tool_call_id"),
+    toolArgsJson: text("tool_args_json"),
+    toolResultJson: text("tool_result_json"),
+    toolError: text("tool_error"),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    cachedTokens: integer("cached_tokens").notNull().default(0),
+    costCents: real("cost_cents").notNull().default(0),
+    durationMs: integer("duration_ms").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("agent_run_steps_run_index").on(t.runId, t.stepIndex)],
+);
+
+export type AgentRunStepRow = typeof agentRunSteps.$inferSelect;
