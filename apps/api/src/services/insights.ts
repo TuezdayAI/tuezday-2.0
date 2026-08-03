@@ -106,9 +106,19 @@ export function getCampaignInsights(db: Db, campaign: Campaign): CampaignInsight
 
   // Platform capture (Sprint 29), read from the unified fact table (Sprint 55).
   // Per publication: prefer the cumulative 7d window when any 7d fact exists,
-  // else fall back to 24h — the same prefer-7d-else-24h selection the legacy
-  // read applied to snapshot rows. Cumulative windows are summed with
-  // cumulative only; the classifier's rule holds here.
+  // else fall back to 24h. Sprint 55b(3): what this sums is each publication's
+  // LATEST KNOWN cumulative total — a coherent "observed to date" quantity
+  // (cumulative + cumulative, which the classifier permits), but note the
+  // observation age varies per post (a young post contributes its 24h figure,
+  // an old one its 7d), so the total drifts upward as posts age past 7d.
+  // Reporting per-window figures separately needs a contracts change and is
+  // recorded as a deferred improvement, not silently done here.
+  //
+  // Sprint 55b(4): manual `point` readings NEVER enter these totals or the
+  // by-channel column — a point reading covers no defined period and may not
+  // be summed with cumulative windows. They are reported in the `learning`
+  // pane under their own semantics. This exclusion is deliberate, not an
+  // oversight.
   const platformTotals = { likes: 0, comments: 0, shares: 0, impressions: 0, clicks: 0 };
   // Sprint 55b: per-publication impressions, attributed to the publication's
   // ACTUAL channel. The pre-55b read prorated the workspace total across
