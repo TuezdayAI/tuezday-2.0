@@ -4,14 +4,13 @@ import type { Db } from "../db";
 import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
 import { getBrain } from "./brain";
-import { composeResolveCampaign } from "./campaigns";
 import { submitDraft, type DraftActor } from "./drafts";
 import { retrieveEvidence } from "./evidence";
 import { storeGeneration } from "./generations";
 import { resolveChannelGuidance } from "./guidance";
 import { toResolvePersona } from "./personas";
 import { resolveDraftAccount } from "./resolve-account";
-import { campaignPlanInput, selectiveContextInputs } from "./resolve-input";
+import { campaignResolveInputs, selectiveContextInputs } from "./resolve-input";
 
 export interface GenerateReplyContext {
   /** Our original post/DM that drew this reply, when known. */
@@ -59,7 +58,6 @@ export async function generateEngagementReply(
   // Sprint 44: scope stays workspace-level here — inbox items don't carry a
   // persona; deriving one from the item's connection is deferred (Sprint 45 ⏸).
   const channelGuidance = resolveChannelGuidance(db, workspace.id, item.channel);
-  const planInput = campaignPlanInput(db, workspace.id, ctx.campaign?.id);
   const resolved = resolveContext({
     workspaceName: workspace.name,
     docs: contents,
@@ -67,8 +65,7 @@ export async function generateEngagementReply(
     channel: item.channel,
     channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
     persona: ctx.persona ? toResolvePersona(ctx.persona) : undefined,
-    campaign: ctx.campaign ? composeResolveCampaign(ctx.campaign, planInput) : undefined,
-    campaignPlan: planInput,
+    ...campaignResolveInputs(db, workspace.id, ctx.campaign),
     // The reply publishes from the same account the inbound item arrived on.
     account: resolveDraftAccount(db, workspace.id, {
       channel: item.channel,

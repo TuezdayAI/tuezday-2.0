@@ -1,14 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PLAN_SECTION_TOKEN_CAP } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
+import type { Db } from "../src/db";
+import { backfillMissingCampaignPlans } from "../src/services/campaign-plan-backfill";
 import { buildAuthedApp, createTestDb } from "./helpers";
 
 describe("resolve API", () => {
   let app: TuezdayApp;
+  let db: Db;
   let workspaceId: string;
 
   beforeEach(async () => {
-    app = await buildAuthedApp({ db: createTestDb() });
+    db = createTestDb();
+    app = await buildAuthedApp({ db });
     const res = await app.inject({
       method: "POST",
       url: "/workspaces",
@@ -375,6 +379,75 @@ describe("resolve API", () => {
       expect(campaign.included).toBe(false);
       expect(campaign.content).toBe("");
       expect(campaign.reason).toMatch(/no additional instruction/i);
+    });
+
+    /**
+     * Sprint 53 review, C1 — the **backfilled** campaign.
+     *
+     * Every other test here hand-builds its plan through the plan routes, so
+     * none of them ever resolved the shape the boot sweep actually produces.
+     * That is exactly how the overlay came to appear in the prompt twice: the
+     * backfill copied `campaigns.overlay` into `plan.guidance`, so the same
+     * bytes shipped as both the campaign section's instruction and the plan
+     * section's "Plan guidance". Every pre-existing campaign becomes this shape
+     * on the next deploy, so it is the case most worth pinning.
+     */
+    describe("a backfilled campaign (Sprint 53 review, C1)", () => {
+      it("carries the overlay into the prompt exactly once", async () => {
+        const campaignId = await createStructuredCampaign("Backfilled");
+        backfillMissingCampaignPlans(db);
+
+        const { bundle, campaign, plan } = await resolve(campaignId);
+
+        // The five strategy columns rehomed to the plan; the free text did not
+        // move — it is still the campaign section's additional instruction.
+        expect(plan.included).toBe(true);
+        expect(plan.content).toContain(ROW.objective);
+        expect(plan.content).toContain(ROW.pillars[0]);
+        expect(campaign.included).toBe(true);
+        expect(campaign.content).toBe(ROW.overlay);
+        expect(campaign.reason).not.toMatch(/fallback/i);
+
+        // The plan never gets a second copy of the overlay …
+        expect(plan.content).not.toContain(ROW.overlay);
+        expect(plan.content).not.toContain("Plan guidance");
+        // … so the model sees the instruction once, not twice.
+        expect(bundle.prompt.split(ROW.overlay).length - 1).toBe(1);
+      });
+
+      it("reflects a post-backfill overlay edit, with the plan still the only strategy", async () => {
+        const campaignId = await createStructuredCampaign("Edited after backfill");
+        backfillMissingCampaignPlans(db);
+
+        const editedOverlay = "Additional instruction: cite a customer every time.";
+        const editedObjective = "Row objective — typed after the backfill";
+        const put = await app.inject({
+          method: "PUT",
+          url: `/workspaces/${workspaceId}/campaigns/${campaignId}`,
+          payload: {
+            ...ROW,
+            name: "Edited after backfill",
+            objective: editedObjective,
+            overlay: editedOverlay,
+          },
+        });
+        expect(put.statusCode).toBe(200);
+
+        // The instruction the founder edited is what the model sees — once, and
+        // the superseded text is gone.
+        const { bundle, campaign, plan } = await resolve(campaignId);
+        expect(campaign.content).toBe(editedOverlay);
+        expect(bundle.prompt).not.toContain(ROW.overlay);
+        expect(bundle.prompt.split(editedOverlay).length - 1).toBe(1);
+
+        // Strategy stays the plan's, by design: once a campaign has a plan the
+        // row's five strategy columns are not a prompt input, which is why the
+        // campaign form renders them read-only in that state
+        // (apps/web/.../campaign-form.tsx). The founder cannot type into a dead
+        // input, so this is a documented authority boundary, not silent drift.
+        expect(plan.content).toContain(ROW.objective);
+        expect(bundle.prompt).not.toContain(editedObjective);
+      });
     });
   });
 

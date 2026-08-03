@@ -71,6 +71,12 @@ describe("campaign plan backfill (Sprint 53)", () => {
       expect(detail!.plan.status).toBe("active");
       expect(detail!.plan.objective).toMatch(/^Objective for /);
       expect(detail!.plan.pillars).toHaveLength(1);
+      // Sprint 53 review, C1: the overlay is **not** copied into the plan. It
+      // never moved — `composeCampaignOverlay` still emits it as the campaign
+      // section's additional instruction — so seeding `guidance` with it put
+      // the same bytes in two sections of every campaign-scoped prompt, and
+      // left a second copy to drift on the next edit.
+      expect(detail!.plan.guidance).toBe("");
     }
   });
 

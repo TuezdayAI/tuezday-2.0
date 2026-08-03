@@ -4,14 +4,13 @@ import type { Db } from "../db";
 import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
 import { getBrain } from "./brain";
-import { composeResolveCampaign } from "./campaigns";
 import { retrieveEvidence } from "./evidence";
 import { getGenerationSettings } from "./generation-settings";
 import { storeGeneration } from "./generations";
 import { resolveChannelGuidance } from "./guidance";
 import { toResolvePersona } from "./personas";
 import { resolveDraftAccount } from "./resolve-account";
-import { campaignPlanInput, selectiveContextInputs } from "./resolve-input";
+import { campaignResolveInputs, selectiveContextInputs } from "./resolve-input";
 import { runPreReview, setGenerationReview } from "./review";
 import {
   submitAutomaticDraft,
@@ -102,8 +101,7 @@ export async function generateSignalDraft(
     campaignId: opts.campaign?.id ?? null,
   });
   const personaInput = opts.persona ? toResolvePersona(opts.persona) : undefined;
-  const planInput = campaignPlanInput(db, workspace.id, opts.campaign?.id);
-  const campaignInput = opts.campaign ? composeResolveCampaign(opts.campaign, planInput) : undefined;
+  const campaignInputs = campaignResolveInputs(db, workspace.id, opts.campaign);
   const selective = selectiveContextInputs(db, workspace.id);
   const resolved = resolveContext({
     workspaceName: workspace.name,
@@ -116,8 +114,7 @@ export async function generateSignalDraft(
       scope: channelGuidance.scopeLabel,
     },
     persona: personaInput,
-    campaign: campaignInput,
-    campaignPlan: planInput,
+    ...campaignInputs,
     account: resolveDraftAccount(db, workspace.id, {
       personaId: opts.persona?.id,
       channel: opts.channel,
@@ -154,8 +151,7 @@ export async function generateSignalDraft(
         channel: opts.channel,
         channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
         persona: personaInput,
-        campaign: campaignInput,
-        campaignPlan: planInput,
+        ...campaignInputs,
         ...selective,
       },
       result.text,

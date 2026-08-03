@@ -1,3 +1,6 @@
+import { readdirSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { campaignSchema } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
@@ -436,6 +439,52 @@ describe("campaigns API", () => {
         expect(resolveCampaign.legacyStrategyFallback).toBe(true);
         expect(resolveCampaign.overlay).toContain(CAMPAIGN_PAYLOAD.objective);
       });
+    });
+  });
+
+  /**
+   * Sprint 53 review (I4) — the invariant, enforced instead of assumed.
+   *
+   * `composeResolveCampaign(campaign, plan)` and `resolveContext`'s
+   * `campaignPlan` must be composed from the **same** plan: the first decides
+   * whether to fold the legacy structured block into the overlay and sets
+   * `legacyStrategyFallback`, the second is what the `campaign_plan` section is
+   * composed from. Give them different plans and the trace contradicts itself.
+   *
+   * Fifteen call sites held that by convention and nothing checked it, so the
+   * pairing now lives in one helper — and this test keeps it there.
+   */
+  describe("the campaign and plan resolver inputs are paired in one place", () => {
+    const SRC = fileURLToPath(new URL("../src", import.meta.url));
+    const PAIRING_MODULE = join(SRC, "services", "resolve-input.ts");
+
+    function tsFiles(dir: string): string[] {
+      return readdirSync(dir).flatMap((entry) => {
+        const path = join(dir, entry);
+        if (statSync(path).isDirectory()) return tsFiles(path);
+        return path.endsWith(".ts") ? [path] : [];
+      });
+    }
+
+    it("has no caller composing the two inputs separately", () => {
+      const offenders = tsFiles(SRC)
+        .filter((path) => path !== PAIRING_MODULE)
+        .filter((path) => {
+          const source = readFileSync(path, "utf8");
+          // A call — not the declaration itself, a type import, or a
+          // doc-comment mention.
+          return (
+            /(?<!function )\bcomposeResolveCampaign\(/.test(source) ||
+            /(?<!function )\bcampaignPlanInput\(/.test(source)
+          );
+        });
+      expect(offenders).toEqual([]);
+    });
+
+    it("keeps that helper the only producer of both", () => {
+      const source = readFileSync(PAIRING_MODULE, "utf8");
+      expect(source).toContain("export function campaignResolveInputs(");
+      expect(source).toContain("export function campaignResolvePreviewInputs(");
     });
   });
 });

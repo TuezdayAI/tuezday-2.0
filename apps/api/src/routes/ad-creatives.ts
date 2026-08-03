@@ -18,7 +18,6 @@ import { listAdCreativeSets, parseGeneratedVariants, withViolations } from "../s
 import { getBrain } from "../services/brain";
 import {
   campaignExecutionError,
-  composeResolveCampaign,
   getCampaign,
   listCampaigns,
 } from "../services/campaigns";
@@ -28,7 +27,7 @@ import { storeGeneration } from "../services/generations";
 import { resolveChannelGuidance } from "../services/guidance";
 import { csvField } from "../services/leads";
 import { getPersona, toResolvePersona } from "../services/personas";
-import { campaignPlanInput, selectiveContextInputs } from "../services/resolve-input";
+import { campaignResolveInputs, selectiveContextInputs } from "../services/resolve-input";
 import { getWorkspace } from "../services/workspaces";
 
 function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
@@ -88,7 +87,6 @@ export function registerAdCreativeRoutes(
         personaId: parsed.data.personaId ?? null,
         campaignId: campaign.id,
       });
-      const planInput = campaignPlanInput(db, request.params.id, campaign.id);
       const resolved = resolveContext({
         workspaceName: workspace.name,
         docs: contents,
@@ -100,8 +98,7 @@ export function registerAdCreativeRoutes(
           scope: channelGuidance.scopeLabel,
         },
         persona: persona ? toResolvePersona(persona) : undefined,
-        campaign: composeResolveCampaign(campaign, planInput),
-        campaignPlan: planInput,
+        ...campaignResolveInputs(db, request.params.id, campaign),
         ...selectiveContextInputs(db, request.params.id),
         evidence: evidenceResolution.evidence,
         evidenceExclusionReason: evidenceResolution.exclusionReason,

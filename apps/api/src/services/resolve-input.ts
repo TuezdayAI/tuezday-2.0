@@ -1,6 +1,7 @@
-import type { ResolveCampaignPlan } from "@tuezday/brain";
+import type { ResolveCampaign, ResolveCampaignPlan } from "@tuezday/brain";
 import type {
   BrainDocType,
+  Campaign,
   CreateCampaignPlanRevisionInput,
   DocOutline,
   ResolvedTaskDocMatrix,
@@ -8,6 +9,7 @@ import type {
 import type { Db } from "../db";
 import { getBrainOutlines } from "./brain";
 import { getCurrentCampaignPlan } from "./campaign-plans";
+import { composeResolveCampaign } from "./campaigns";
 import { resolveTaskDocMatrix } from "./context-matrix";
 
 export interface SelectiveContextInputs {
@@ -81,5 +83,55 @@ export function campaignPlanPreviewInput(
     offers: draft.offers,
     ctas: draft.ctas,
     guidance: draft.guidance,
+  };
+}
+
+/**
+ * The two campaign-shaped `resolveContext` inputs, produced together.
+ *
+ * `composeResolveCampaign(campaign, plan)` and `campaignPlan: plan` must be
+ * given **the same plan**: the former decides whether to fold the legacy
+ * structured block into the overlay and sets `legacyStrategyFallback`, the
+ * latter is what the resolver composes the `campaign_plan` section from. Pass
+ * different values and the trace contradicts itself — a fallback flag beside a
+ * populated plan section, or strategy in neither.
+ *
+ * Sprint 53 review (I4): fifteen call sites held that invariant by convention
+ * and nothing enforced it. Returning both from one function makes them
+ * impossible to diverge — spread it straight into the `resolveContext`
+ * argument (`...campaignResolveInputs(db, workspaceId, campaign)`).
+ */
+export interface CampaignResolveInputs {
+  campaign: ResolveCampaign | undefined;
+  campaignPlan: ResolveCampaignPlan | undefined;
+}
+
+export function campaignResolveInputs(
+  db: Db,
+  workspaceId: string,
+  campaign: Campaign | null | undefined,
+): CampaignResolveInputs {
+  const campaignPlan = campaignPlanInput(db, workspaceId, campaign?.id);
+  return {
+    campaign: campaign ? composeResolveCampaign(campaign, campaignPlan) : undefined,
+    campaignPlan,
+  };
+}
+
+/**
+ * `campaignResolveInputs` for the plan form's preview, where the plan being
+ * composed is the unsaved draft rather than the stored active revision. Same
+ * pairing guarantee: one plan value feeds both outputs.
+ */
+export function campaignResolvePreviewInputs(
+  db: Db,
+  workspaceId: string,
+  campaign: Campaign | null | undefined,
+  draft: CreateCampaignPlanRevisionInput | undefined,
+): CampaignResolveInputs {
+  const campaignPlan = campaignPlanPreviewInput(db, workspaceId, campaign?.id, draft);
+  return {
+    campaign: campaign ? composeResolveCampaign(campaign, campaignPlan) : undefined,
+    campaignPlan,
   };
 }

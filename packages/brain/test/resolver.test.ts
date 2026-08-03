@@ -4,6 +4,7 @@ import {
   CHANNEL_GUIDANCE_DEFAULTS,
   TASK_INSTRUCTIONS,
   composeAngleInstruction,
+  composeCampaignPlanSection,
   composeCompactCampaignPlanSection,
   composeBrandVoiceReviewInstruction,
   composeChannelFitReviewInstruction,
@@ -920,6 +921,39 @@ describe("campaign plan section (Sprint 53)", () => {
     expect(section.content).not.toContain("Ship weekly proof");
     expect(section.reason).toMatch(/token budget/i);
     expect(tight.overBudget).toBe(false);
+  });
+
+  /**
+   * Sprint 53 review (M5) — the regime where rung 4 is a **no-op**, documented
+   * rather than left implied.
+   *
+   * The rung only fires when the compact composition is smaller than the full
+   * one. For a genuinely maximal plan — one whose *first* priority field alone
+   * overruns the cap — both compositions saturate `PLAN_SECTION_TOKEN_CAP` and
+   * the rung has nothing to give back. That is fine, and is why the cap, not
+   * the ladder, is what actually bounds this section: the cap applies
+   * unconditionally, before any budget arithmetic. The ladder is the recovery
+   * for mid-sized plans that fit under the cap but not under the budget.
+   */
+  it("is a no-op at the cap boundary, where the cap alone bounds the section", () => {
+    const campaign = { name: "Big", overlay: "" };
+    // The objective alone exceeds the cap, so every composition that keeps the
+    // objective — full and compact both do — lands exactly on it.
+    const campaignPlan = { ...plan, objective: "o".repeat(PLAN_SECTION_TOKEN_CAP * 8) };
+    const full = composeCampaignPlanSection(campaignPlan);
+    const compact = composeCompactCampaignPlanSection(campaignPlan);
+    expect(full.tokens).toBe(PLAN_SECTION_TOKEN_CAP);
+    expect(compact.tokens).toBe(PLAN_SECTION_TOKEN_CAP);
+    expect(full.truncated && compact.truncated).toBe(true);
+
+    const tight = resolveContext(baseInput({ campaign, campaignPlan, tokenBudget: 500 }));
+    const section = tight.sections.find((s) => s.key === "campaign_plan")!;
+    // Rung 4 leaves it exactly as composed — no demotion note in the reason.
+    expect(section.tokens).toBe(PLAN_SECTION_TOKEN_CAP);
+    expect(section.content).toBe(full.content);
+    expect(section.reason).not.toMatch(/demoted to the compact plan/i);
+    // And the bundle says so honestly instead of pretending it recovered.
+    expect(tight.overBudget).toBe(true);
   });
 
   it("still flags overBudget when even the compact plan does not fit", () => {

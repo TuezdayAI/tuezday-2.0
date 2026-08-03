@@ -20,7 +20,7 @@ import { generations } from "../db/schema";
 import type { LlmGateway } from "../llm/gateway";
 import type { EvidenceStore } from "../evidence/store";
 import { getBrain } from "../services/brain";
-import { composeResolveCampaign, getCampaign } from "../services/campaigns";
+import { getCampaign } from "../services/campaigns";
 import {
   InvalidTransitionError,
   applyDraftAction,
@@ -42,7 +42,7 @@ import { EntitlementError } from "../services/entitlements";
 import { getTurnByRequest } from "../services/draft-revisions";
 import { getGenerationSettings } from "../services/generation-settings";
 import { getPersona, toResolvePersona } from "../services/personas";
-import { campaignPlanInput } from "../services/resolve-input";
+import { campaignResolveInputs } from "../services/resolve-input";
 import { runPreReview, setDraftReview } from "../services/review";
 import { getWorkspace } from "../services/workspaces";
 import type { BrainContents } from "@tuezday/brain";
@@ -123,7 +123,6 @@ export function registerDraftRoutes(
         docs.map((d) => [d.docType, d.content]),
       ) as BrainContents;
       const settings = getGenerationSettings(db, request.params.id);
-      const planInput = campaignPlanInput(db, request.params.id, draft.campaignId);
 
       const review = await runPreReview(
         llm,
@@ -136,8 +135,7 @@ export function registerDraftRoutes(
           // Sprint 53: the shared composer, so the reviewer sees exactly the
           // campaign section the drafter saw — including the legacy-strategy
           // fallback when the campaign has no active plan revision.
-          campaign: campaign ? composeResolveCampaign(campaign, planInput) : undefined,
-          campaignPlan: planInput,
+          ...campaignResolveInputs(db, request.params.id, campaign),
         },
         draft.content,
         settings.flagThreshold,

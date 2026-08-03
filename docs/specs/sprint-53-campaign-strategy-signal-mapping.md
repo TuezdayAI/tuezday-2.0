@@ -4,7 +4,9 @@
 > **Closes:** Atlas conflict #6 (campaign strategy in two places) and #3 (dual signal mapping)
 > **PRD:** `prd-agentic-platform.md` §4, Sprint 53
 > **Size:** L · **Risk:** Medium (resolver change — the trace is persisted and pinned by tests)
-> **Status:** Plan awaiting founder approval — no code written yet.
+> **Status:** Delivered on `sprint-53-campaign-strategy-signal-mapping` — Tasks 1–8 complete, plus one
+> post-review fix round. `npm test` and `npm run typecheck` green. Awaiting founder review and merge
+> (after Sprint 52). See §7 for what actually happened, task by task.
 
 ---
 
@@ -273,13 +275,30 @@ campaign form copy in `apps/web`.
 
 ## 5. Acceptance criteria
 
-- [ ] Editing a campaign plan pillar visibly changes the next generation's resolved context, in the trace.
-- [ ] The plan form shows what the LLM will see for the revision being edited.
-- [ ] No code writes `suggestedPersonaId` / `suggestedCampaignId` as stored columns; reads are derived.
-- [ ] `POST /api/v1/ideas` still accepts both fields and now produces a real backing match.
-- [ ] A campaign with no plan degrades to an excluded-with-reason section, never a crash.
-- [ ] A maximal plan cannot push the bundle over budget without the ladder demoting it first.
-- [ ] `npm test` and `npm run typecheck` pass.
+- [x] Editing a campaign plan pillar visibly changes the next generation's resolved context, in the
+      trace. (`apps/api/test/resolve.test.ts` — the `campaign_plan` section is composed from the
+      active revision and reaches `bundle.prompt`.)
+- [x] The plan form shows what the LLM will see for the revision being edited. (Task 5; the unsaved
+      draft is previewed inline through `/resolve`, not the already-active revision.)
+- [x] No code writes `suggestedPersonaId` / `suggestedCampaignId` as stored columns; reads are
+      derived. (Task 6 killed four write paths; Task 7 removed the vestigial fifth and nulled the
+      columns in migration `0062`.)
+- [x] `POST /api/v1/ideas` still accepts both fields and now produces a real backing match.
+- [x] A campaign with no plan degrades to an excluded-with-reason section, never a crash — and its
+      legacy structured strategy is carried in the `campaign` section as a **named** fallback rather
+      than being silently dropped (Task 4).
+- [x] The plan section is bounded unconditionally by `PLAN_SECTION_TOKEN_CAP` while composing, and a
+      plan that fits the cap but not the budget is demoted to its compact form (objective, KPI,
+      pillars) by ladder rung 4 before the bundle reports `overBudget`.
+
+      > **Corrected (post-review, M5).** This criterion used to read "a maximal plan cannot push the
+      > bundle over budget without the ladder demoting it first", which is false. Rung 4 only fires
+      > when the compact composition is *smaller* than the full one; for a genuinely maximal plan —
+      > one whose first priority field alone overruns the cap — both compositions saturate the cap
+      > and the rung is a no-op, and the bundle honestly reports `overBudget`. The **cap** is what
+      > bounds this section unconditionally; the ladder is the recovery for mid-sized plans. Both
+      > regimes are pinned in `packages/brain/test/resolver.test.ts`.
+- [x] `npm test` and `npm run typecheck` pass.
 
 ---
 
@@ -305,3 +324,90 @@ campaign form copy in `apps/web`.
   campaign/resolver/signal/matching code — only `schema.ts` +4 lines, `automation.ts` +1,
   `public-api.ts` +2). Decisions D3a and D3b recorded. Plan written, awaiting founder approval.
   No code written yet.
+
+- **2026-08-02 — Task 1 (`3070dcf`), plan section composer.** `packages/brain/src/campaign-plan-section.ts`
+  composes the plan in priority order (objective → KPI → timeframe → pillars → offers → CTAs →
+  guidance), capped at `PLAN_SECTION_TOKEN_CAP` (defined in `packages/contracts`), reporting
+  `truncated` and the `omitted` field labels so the trace can never overstate what the model saw.
+  `composeCompactCampaignPlanSection` (objective + KPI + pillars) is the ladder's demotion target.
+
+- **2026-08-02 — Task 2 (`9081ce4`), resolver wiring.** New `plan` `ContextLayer`, new
+  `ResolveInput.campaignPlan`, the `campaign_plan` section pushed immediately after `campaign` and
+  before `persona` (inside the cacheable prefix), tier 1, and the fourth sacrifice-ladder rung.
+  `.layer-plan` added to `apps/web/app/globals.css` — the union has no UI fallback and three
+  surfaces render it. The three pinned key-order assertions were updated to **relative index
+  arithmetic** (`campaign_plan` sits between `campaign` and `persona`) rather than hardcoded
+  indices, which is a stronger guard than the spec asked for.
+
+- **2026-08-02 — Task 6 (`0e2a15d`), signal projection.** `projectSuggestedRouting()` in
+  `services/matching.ts`, applied in `rowToSignal` + `rowToItem`; **zero new queries** (matches were
+  already batch-loaded). Four column write paths killed. The "explicit human intent skips the LLM"
+  branch was factored into `hasExplicitRouting` / `explicitIntentMatches` rather than deleted, and
+  `POST /api/v1/ideas` now gets a real score-100 `signal_matches` row with no route change.
+  The `afterProjectionUpdate` hook was removed.
+  *Bookkeeping anomaly:* this task's eight files were staged by the parallel Track A implementer and
+  ride in Task 2's commit under the wrong message. Content is correct; the history is misleading.
+  Lesson recorded in the ledger: parallel implementers must stage explicit paths, never `-A`.
+
+- **2026-08-02 — Task 7 (`1e9e897`), migration and UI read sites.** The vestigial
+  `discovery-matching.ts` writer removed; `0062_sprint_53_derived_signal_routing.sql` nulls
+  `signals.suggested_*` and `discovered_items.suggested_*` with a plain idempotent `UPDATE` — no
+  `DROP COLUMN`. The migration number is `0062`, not the `0063` the brief guessed: a **pre-existing
+  duplicate `0025` prefix** in the journal explains the 62-entries/max-0061 mismatch. The journal's
+  `idx` sequence itself is correct and monotonic and was deliberately left alone (logged as a
+  deferred improvement).
+
+- **2026-08-03 — Task 3 (`2acbae6`), plumbing and backfill.** `campaignPlanInput(db, workspaceId,
+  campaignId)` in `services/resolve-input.ts`, deliberately not folded into the workspace-scoped
+  `selectiveContextInputs`. **Correction to the spec:** there are **16** `resolveContext` call sites,
+  not 14; 15 receive the plan and `copilot-actions.ts:104` legitimately does not (it resolves with no
+  campaign at all). The backfill is `backfillMissingCampaignPlans(db)` at boot (`app.ts`), keyset-paged
+  and size-independent; its candidate predicate is **"no plan revision at all"**, not "no active plan"
+  — otherwise a campaign whose activation failed would mint a fresh draft on every boot.
+
+- **2026-08-03 — Task 4 (`9412d4f`), overlay re-scope.** `composeCampaignOverlay` is now the free
+  text alone and plan-blind. The legacy structured block moved to `composeLegacyCampaignStrategy`,
+  invoked from `composeResolveCampaign(campaign, plan)` **only when the plan would compose to an
+  empty section** — measured with the resolver's own `composeCampaignPlanSection`, so the API and the
+  resolver can never disagree about whether a plan carries strategy. A new
+  `ResolveCampaign.legacyStrategyFallback` flag (data, not inference) lets the resolver name the
+  degradation on both the `campaign` and the excluded `campaign_plan` section.
+  **Finding that widened the risk:** nothing in campaign *creation* mints a plan and the sweep only
+  runs at boot, so "no active plan" is the state of **every campaign created since the last deploy**,
+  not just failed activations. Dropping the block outright would have stripped strategy from every
+  new campaign on day one. The fallback is therefore steady state, not transitional.
+
+- **2026-08-03 — Task 5 (`bdda27a`), plan-form preview.** `/resolve` accepts an inline
+  `campaignPlanDraft` so the founder previews the **unsaved** revision. Treated as an untrusted input
+  on a prompt-composing route: it is validated through the same schema a stored revision is created
+  through, and `campaignPlanPreviewInput` copies the fields out **one by one** so the body cannot
+  smuggle a field the composer reads but the schema does not govern (notably `revision`, which titles
+  the section — a previewed draft renders as "Campaign plan", never as an activated revision N).
+
+- **2026-08-03 — Task 8 + final whole-branch review fix round.** Verified green, documented, and then
+  fixed what the review found:
+  - **C1 (critical), the sprint's own thesis failed after the backfill.** The backfill seeded
+    `plan.guidance` from `campaigns.overlay`, so right after the boot sweep the overlay appeared
+    **twice** in every campaign-scoped prompt — once as the `campaign` section's additional
+    instruction and again as the plan's `Plan guidance:` — and nothing in any campaign write path
+    ever re-synced the row into the plan, so the plan section froze at boot-time values while the
+    campaign form kept accepting edits. Fixed at the source: the backfill no longer copies the
+    overlay (the overlay never *moved*; only the five strategy columns did), and the campaign form
+    renders objective / KPI / timeframe / audience / pillars **read-only** with a link to the plan
+    once the campaign has an active plan revision — a field the founder can type into that silently
+    does nothing is not an acceptable end state. Pinned by a new test that resolves a **backfilled**
+    campaign (every prior test hand-built its plan, which is why the existing no-duplication guard
+    missed this).
+  - **I2**, the Tier-3 zoom query now takes objective/pillars from the plan when it states them,
+    falling back to the row columns field by field — the prompt states the plan's strategy, so
+    retrieval had been fetching evidence for an objective the model was never given.
+  - **I4**, `campaignResolveInputs(db, workspaceId, campaign)` returns the `campaign` and
+    `campaignPlan` resolver inputs **together**, so the 15 call sites can no longer compose them from
+    different plans (which would produce a `legacyStrategyFallback` flag beside a populated plan
+    section). All 15 converted to spread it.
+  - **M5**, acceptance criterion above corrected — the cap, not the ladder, is the unconditional
+    bound; the no-op regime is now pinned.
+  - **M6**, a failed backfill activation is logged (`app.log.warn`) instead of vanishing; the sweep
+    never retries it, so that campaign sits on the legacy fallback until a human finishes its plan.
+  - **Deferred, recorded in `docs/deferred-improvements.md`:** the physical `suggested_*` column
+    drop, campaign creation minting its plan, and the pre-existing duplicate `0025` journal prefix.

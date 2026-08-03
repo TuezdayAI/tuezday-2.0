@@ -19,7 +19,7 @@ import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
 import { getBrain } from "./brain";
 import { getCurrentCampaignPlan } from "./campaign-plans";
-import { composeResolveCampaign, getCampaign } from "./campaigns";
+import { getCampaign } from "./campaigns";
 import { listConnections, providerByKey } from "./connections";
 import {
   applyDraftActionInTransaction,
@@ -47,7 +47,7 @@ import {
 } from "./persona-social-accounts";
 import { listPublications } from "./publications";
 import { resolveDraftAccount } from "./resolve-account";
-import { campaignPlanInput, selectiveContextInputs } from "./resolve-input";
+import { campaignResolveInputs, selectiveContextInputs } from "./resolve-input";
 import { getSignal } from "./signals";
 import { getWorkspace } from "./workspaces";
 
@@ -385,7 +385,6 @@ export async function reviseDraft(
       personaId: draft.personaId,
       campaignId: draft.campaignId,
     });
-    const planInput = campaignPlanInput(db, input.workspaceId, draft.campaignId);
     const resolved = resolveContext({
       workspaceName: workspace.name,
       docs: contents,
@@ -397,8 +396,7 @@ export async function reviseDraft(
         scope: channelGuidance.scopeLabel,
       },
       persona: persona ? toResolvePersona(persona) : undefined,
-      campaign: campaign ? composeResolveCampaign(campaign, planInput) : undefined,
-      campaignPlan: planInput,
+      ...campaignResolveInputs(db, input.workspaceId, campaign),
       account: resolveDraftAccount(db, input.workspaceId, {
         personaId: draft.personaId,
         channel: draft.channel,

@@ -190,7 +190,21 @@ export async function buildApp({
   // Sprint 53: every campaign must own a plan revision before Task 4 removes
   // the legacy structured block from the campaign overlay. Idempotent — only
   // campaigns with no revision at all are candidates.
-  backfillMissingCampaignPlans(db);
+  const campaignPlanBackfill = backfillMissingCampaignPlans(db);
+  if (campaignPlanBackfill.failed.length > 0) {
+    // The sweep never retries a failure — its candidate predicate is "no plan
+    // revision at all", and a failed activation leaves the draft behind. So a
+    // campaign that lands here stays on the legacy structured fallback until a
+    // human finishes its plan, and this line is the only notice anyone gets.
+    app.log.warn(
+      {
+        failed: campaignPlanBackfill.failed,
+        scanned: campaignPlanBackfill.scanned,
+        planned: campaignPlanBackfill.planned,
+      },
+      `campaign plan backfill: ${campaignPlanBackfill.failed.length} campaign(s) kept a draft-only plan and still resolve with the legacy strategy fallback`,
+    );
+  }
   repairDanglingDuplicateGroups(db);
   const externalActionRuntime = createExternalActionRuntime({
     db,

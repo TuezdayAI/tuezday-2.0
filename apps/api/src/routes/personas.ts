@@ -7,8 +7,8 @@ import {
 import { resolveContext, type BrainContents } from "@tuezday/brain";
 import type { Db } from "../db";
 import { getBrain } from "../services/brain";
-import { campaignExecutionError, composeResolveCampaign, getCampaign } from "../services/campaigns";
-import { campaignPlanPreviewInput, selectiveContextInputs } from "../services/resolve-input";
+import { campaignExecutionError, getCampaign } from "../services/campaigns";
+import { campaignResolvePreviewInputs, selectiveContextInputs } from "../services/resolve-input";
 import { retrieveEvidence } from "../services/evidence";
 import { resolveChannelGuidance } from "../services/guidance";
 import type { EvidenceStore } from "../evidence/store";
@@ -211,12 +211,6 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
       campaignId: parsed.data.campaignId ?? null,
     });
 
-    const planInput = campaignPlanPreviewInput(
-      db,
-      request.params.id,
-      campaign?.id,
-      parsed.data.campaignPlanDraft,
-    );
     return resolveContext({
       workspaceName: workspace.name,
       docs: contents,
@@ -228,8 +222,12 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
         scope: channelGuidance.scopeLabel,
       },
       persona: persona ? toResolvePersona(persona) : undefined,
-      campaign: campaign ? composeResolveCampaign(campaign, planInput) : undefined,
-      campaignPlan: planInput,
+      ...campaignResolvePreviewInputs(
+        db,
+        request.params.id,
+        campaign,
+        parsed.data.campaignPlanDraft,
+      ),
       account: resolveDraftAccount(db, request.params.id, {
         personaId: parsed.data.personaId,
         channel: parsed.data.channel,

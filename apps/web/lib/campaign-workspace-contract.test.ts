@@ -66,6 +66,33 @@ describe("campaign workspace source contract", () => {
     expect(form).toContain('type="button"');
   });
 
+  /**
+   * Sprint 53 review (C1) — no dead inputs.
+   *
+   * Once a campaign has an active plan revision, its row's objective / KPI /
+   * timeframe / audience / pillars stop reaching any prompt: the overlay is
+   * free text and the resolver reads the plan. Leaving those five editable in
+   * the campaign wizard would let the founder type strategy, save it, and have
+   * the model never see it. In that state they are read-only and say where
+   * strategy is actually edited.
+   */
+  it("stops presenting the row's strategy columns as editable once a plan exists", () => {
+    const form = read("app/workspaces/[id]/campaigns/_components/campaign-form.tsx");
+    expect(form).toContain("const planManaged = Boolean(campaign?.currentPlanRevisionId)");
+    // All five, read-only, in whichever wizard step they live.
+    expect(form.match(/readOnly=\{planManaged\}/g)).toHaveLength(5);
+    expect(form.match(/aria-readonly=\{planManaged\}/g)).toHaveLength(5);
+    expect(form).toContain('managedLabel("Objective")');
+    expect(form).toContain('managedLabel("KPI")');
+    expect(form).toContain('managedLabel("Timeframe")');
+    expect(form).toContain('managedLabel("Audience")');
+    expect(form).toContain('managedLabel("Messaging pillars")');
+    // And it points at the place strategy is really edited.
+    expect(form).toContain("?tab=plan");
+    expect(form).toContain("Edit the campaign plan");
+    expect(form).toContain("planManagedNote");
+  });
+
   it("gives the plan form the ids its preview needs", () => {
     const history = read(
       "app/workspaces/[id]/campaigns/[campaignId]/_components/campaign-plan-history.tsx",
