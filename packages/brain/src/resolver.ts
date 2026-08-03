@@ -5,6 +5,7 @@
   DEFAULT_TASK_DOC_MATRIX,
   DEFAULT_TOKEN_BUDGET,
   MATRIX_DOC_TYPES,
+  PLAN_SECTION_TOKEN_CAP,
   TASK_TYPES,
   ZOOM_DOC_TOKEN_CAP,
   ZOOM_MAX_SECTIONS_PER_DOC,
@@ -24,6 +25,11 @@
   type SequenceChannel,
   type TaskType,
 } from "@tuezday/contracts";
+import {
+  composeCampaignPlanSection,
+  composeCompactCampaignPlanSection,
+  type ResolveCampaignPlan,
+} from "./campaign-plan-section";
 import { BRAIN_DOC_META, type BrainContents } from "./index";
 import { PREAMBLE_ID, buildFallbackOutline, parseDocSections, renderOutline } from "./sections";
 import { estimateTokens } from "./tokens";
@@ -215,6 +221,8 @@ export type ContextLayer =
   | "org"
   | "channel"
   | "campaign"
+  /** The curated campaign plan revision (Sprint 53). */
+  | "plan"
   | "persona"
   | "account"
   | "zoom"
@@ -320,6 +328,13 @@ export interface ResolveInput {
   channel: Channel;
   persona?: ResolvePersona;
   campaign?: ResolveCampaign;
+  /**
+   * The campaign's **active plan revision** (Sprint 53) — the curated strategy
+   * the founder edits in the plan form. The API loads it (there is no DB in
+   * here) and passes it alongside `campaign`; omitted or plan-less campaigns
+   * get an excluded section with a reason, never a crash.
+   */
+  campaignPlan?: ResolveCampaignPlan;
   /**
    * The publishing account's content profile (Sprint 44), resolved by the API
    * from the persona's primary connection (or the inbox item's connection).
@@ -601,6 +616,40 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
         ? `Campaign overlay for "${input.campaign!.name}".`
         : "Excluded: no campaign overlay yet (campaigns arrive in a later slice).",
     tokens: estimateTokens(campaignContent),
+    tier: 1,
+  });
+
+  // The curated plan revision (Sprint 53). Sits immediately after the campaign
+  // overlay and before persona, inside the stable cacheable prefix: strategy is
+  // campaign-scoped, so it moves exactly as often as the campaign section does.
+  // Tier 1 — this is what the campaign is actually trying to do.
+  const composedPlan = composeCampaignPlanSection(input.campaignPlan);
+  const planTitle = input.campaignPlan?.revision
+    ? `Campaign plan (revision ${input.campaignPlan.revision})`
+    : "Campaign plan";
+  let planReason: string;
+  if (!composedPlan.content) {
+    planReason = !input.campaign
+      ? "Excluded: no campaign selected, so there is no campaign plan."
+      : input.campaignPlan
+        ? `Excluded: the plan for "${input.campaign.name}" has no content yet.`
+        : `Excluded: campaign "${input.campaign.name}" has no active plan revision.`;
+  } else {
+    planReason = `Campaign plan (tier 1, constitutional): the active plan revision${
+      input.campaign ? ` for "${input.campaign.name}"` : ""
+    } — what this campaign is trying to do and how.`;
+    if (composedPlan.truncated) {
+      planReason += ` Truncated at the ${PLAN_SECTION_TOKEN_CAP}-token plan cap; cut or omitted: ${composedPlan.omitted.join(", ")}.`;
+    }
+  }
+  sections.push({
+    key: "campaign_plan",
+    layer: "plan",
+    title: planTitle,
+    content: composedPlan.content,
+    included: composedPlan.content.length > 0,
+    reason: planReason,
+    tokens: estimateTokens(composedPlan.content),
     tier: 1,
   });
 
@@ -935,6 +984,23 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
     section.mode = "outline";
     section.title = `${plan.meta.title} (outline)`;
     section.reason = `${section.reason} — demoted to outline to fit the token budget (bundle was ${over} tokens over).`;
+  }
+
+  // Ladder step 4 (Sprint 53): the plan is tier 1 and so survives every rung
+  // above, but a full plan can be ~1,200 tokens of an 8,000 budget. Rather than
+  // ship overBudget with the plan intact, demote it to its compact form —
+  // objective + KPI + pillars, the strategy the prompt cannot do without.
+  if (includedTotal() > tokenBudget) {
+    const planSection = sections.find((s) => s.key === "campaign_plan")!;
+    if (planSection.included) {
+      const compact = composeCompactCampaignPlanSection(input.campaignPlan);
+      if (compact.content && compact.tokens < planSection.tokens) {
+        const over = includedTotal() - tokenBudget;
+        planSection.content = compact.content;
+        planSection.tokens = compact.tokens;
+        planSection.reason = `${planSection.reason} — demoted to the compact plan (objective, KPI, pillars) to fit the token budget (bundle was ${over} tokens over); dropped: ${compact.omitted.join(", ")}.`;
+      }
+    }
   }
 
   const includedTokens = includedTotal();

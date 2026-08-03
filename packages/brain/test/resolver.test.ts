@@ -1,8 +1,10 @@
+import { PLAN_SECTION_TOKEN_CAP } from "@tuezday/contracts";
 import { describe, expect, it } from "vitest";
 import {
   CHANNEL_GUIDANCE_DEFAULTS,
   TASK_INSTRUCTIONS,
   composeAngleInstruction,
+  composeCompactCampaignPlanSection,
   composeBrandVoiceReviewInstruction,
   composeChannelFitReviewInstruction,
   composePrPitchInstruction,
@@ -58,7 +60,7 @@ describe("built-in defaults", () => {
 });
 
 describe("resolveContext", () => {
-  it("orders sections org -> channel -> campaign -> persona -> signal -> task", () => {
+  it("orders sections org -> channel -> campaign -> campaign_plan -> persona -> signal -> task", () => {
     const result = resolveContext(baseInput());
     expect(result.sections.map((s) => s.key)).toEqual([
       "org:soul",
@@ -68,6 +70,7 @@ describe("resolveContext", () => {
       "org:now",
       "channel",
       "campaign",
+      "campaign_plan",
       "persona",
       "lead",
       "media_contact",
@@ -228,6 +231,7 @@ describe("resolveContext", () => {
       "org:now",
       "channel",
       "campaign",
+      "campaign_plan",
       "persona",
       "lead",
       "media_contact",
@@ -274,6 +278,7 @@ describe("resolveContext", () => {
       "org:now",
       "channel",
       "campaign",
+      "campaign_plan",
       "persona",
       "lead",
       "media_contact",
@@ -815,5 +820,124 @@ describe("scoped guidance & persona topics (Sprint 44)", () => {
     expect(result.zoomQuery).toContain("churn for agencies");
     // The topics actually drive zoom: the pricing section scores in.
     expect(result.sections.some((s) => s.key === "zoom:history:pricing-experiment")).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Sprint 53: the campaign plan section — the curated plan revision finally
+// reaches the prompt, immediately after the campaign overlay.
+// ---------------------------------------------------------------------------
+
+describe("campaign plan section (Sprint 53)", () => {
+  const plan = {
+    revision: 4,
+    objective: "Win 25 design-partner logos for the agentic GTM tier.",
+    kpi: "25 signed design partners by 30 September.",
+    timeframe: "Q3 2026.",
+    pillars: ["GTM amnesia is the real problem", "Agents need a brain, not a prompt"],
+    offers: ["Free 30-day design-partner slot"],
+    ctas: ["Book a 20-minute teardown"],
+    guidance: "Never promise a roadmap date. Speak to founders, not marketers.",
+  };
+
+  it("places the plan immediately after campaign and before persona, tier 1 and included", () => {
+    const result = resolveContext(
+      baseInput({
+        campaign: { name: "Design partners", overlay: "Keep it founder-to-founder." },
+        campaignPlan: plan,
+      }),
+    );
+    const keys = result.sections.map((s) => s.key);
+    expect(keys.indexOf("campaign_plan")).toBe(keys.indexOf("campaign") + 1);
+    expect(keys.indexOf("campaign_plan")).toBe(keys.indexOf("persona") - 1);
+
+    const section = result.sections.find((s) => s.key === "campaign_plan")!;
+    expect(section.layer).toBe("plan");
+    expect(section.tier).toBe(1);
+    expect(section.included).toBe(true);
+    expect(section.content.length).toBeGreaterThan(0);
+    expect(section.tokens).toBe(estimateTokens(section.content));
+    expect(section.content).toContain("Win 25 design-partner logos");
+    expect(section.content).toContain("GTM amnesia is the real problem");
+    // And it actually reaches the prompt.
+    expect(result.prompt).toContain("25 signed design partners by 30 September.");
+  });
+
+  it("is present but excluded with a reason when the campaign has no plan", () => {
+    const result = resolveContext(
+      baseInput({ campaign: { name: "Design partners", overlay: "Founder-to-founder." } }),
+    );
+    const section = result.sections.find((s) => s.key === "campaign_plan")!;
+    expect(section.included).toBe(false);
+    expect(section.content).toBe("");
+    expect(section.tokens).toBe(0);
+    expect(section.reason).toMatch(/plan/i);
+    expect(result.prompt).not.toContain("Campaign plan");
+  });
+
+  it("is present but excluded when there is no campaign at all", () => {
+    const section = resolveContext(baseInput()).sections.find((s) => s.key === "campaign_plan")!;
+    expect(section.included).toBe(false);
+    expect(section.tokens).toBe(0);
+    expect(section.reason).toMatch(/no campaign/i);
+  });
+
+  it("caps a maximal plan while composing, and says so in the reason", () => {
+    const result = resolveContext(
+      baseInput({
+        campaign: { name: "Big", overlay: "" },
+        campaignPlan: {
+          ...plan,
+          guidance: "g".repeat(10_000),
+          pillars: Array.from({ length: 20 }, (_, i) => `pillar ${i} ${"p".repeat(190)}`),
+        },
+      }),
+    );
+    const section = result.sections.find((s) => s.key === "campaign_plan")!;
+    expect(section.tokens).toBeLessThanOrEqual(PLAN_SECTION_TOKEN_CAP);
+    expect(section.reason).toMatch(/truncat/i);
+    expect(section.reason).toMatch(/guidance/i);
+  });
+
+  it("demotes the plan to its compact form before shipping overBudget (ladder rung 4)", () => {
+    const campaign = { name: "Big", overlay: "" };
+    const campaignPlan = { ...plan, guidance: "Ship weekly proof, never promises. ".repeat(60) };
+    const generous = resolveContext(baseInput({ campaign, campaignPlan, tokenBudget: 100_000 }));
+    const planTokens = generous.sections.find((s) => s.key === "campaign_plan")!.tokens;
+    const compactTokens = composeCompactCampaignPlanSection(campaignPlan).tokens;
+    expect(compactTokens).toBeLessThan(planTokens);
+
+    // A budget that only fits once the plan is compacted.
+    const budget = generous.includedTokens - Math.ceil((planTokens - compactTokens) / 2);
+    const tight = resolveContext(baseInput({ campaign, campaignPlan, tokenBudget: budget }));
+    const section = tight.sections.find((s) => s.key === "campaign_plan")!;
+    expect(section.included).toBe(true);
+    expect(section.tokens).toBe(compactTokens);
+    expect(section.content).toContain("Win 25 design-partner logos");
+    expect(section.content).not.toContain("Ship weekly proof");
+    expect(section.reason).toMatch(/token budget/i);
+    expect(tight.overBudget).toBe(false);
+  });
+
+  it("still flags overBudget when even the compact plan does not fit", () => {
+    const result = resolveContext(
+      baseInput({
+        campaign: { name: "Big", overlay: "" },
+        campaignPlan: plan,
+        tokenBudget: 50,
+      }),
+    );
+    const section = result.sections.find((s) => s.key === "campaign_plan")!;
+    expect(section.included).toBe(true);
+    expect(result.overBudget).toBe(true);
+  });
+
+  it("stays deterministic with a plan attached", () => {
+    const input = baseInput({
+      campaign: { name: "Design partners", overlay: "Founder-to-founder." },
+      campaignPlan: plan,
+      tokenBudget: 6000,
+    });
+    expect(resolveContext(input)).toEqual(resolveContext(input));
   });
 });
