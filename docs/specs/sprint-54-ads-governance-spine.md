@@ -124,24 +124,35 @@ acceptance criterion honestly.
 
 ### 3.1 One decision log for spend, going forward (D4a′)
 
-- `applyLaunchAction` stops writing `ad_launch_decisions` and instead records each gate decision on
-  the external-action decision log, attributed to the acting user.
-- **The gate decisions need an owning action.** `external_action_decisions.action_id` is `NOT NULL`
-  cascading to `external_actions`. Approve/reject/revise happen *before* any `paid_launch` action
-  exists. Resolve this in Task 2 by choosing **one** of:
-  - (a) propose the `paid_launch` action at **submit** time, so the gate decisions hang off a real
-    action that then sits `proposed` until approved; or
-  - (b) keep gate decisions on the launch record (a narrow `ad_launch_gate` audit trail) and put only
-    the **authorization** decision in the external-action log.
+> ⚠️ **This section describes what SHIPPED.** An earlier draft instructed proposing the `paid_launch`
+> action at **submit** time so gate decisions could hang off it. **Do not build that.** `paid_launch`
+> resolves to `autonomous` under `scheduled_auto` (`services/external-action-backfill.ts:21`) and
+> `proposeWithLineage` dispatches immediately, so it would create a live Meta campaign and start
+> spending the moment a founder clicks *Submit for approval*, before anyone approves. §3.0 records
+> the full evidence.
 
-  **(a) is preferred** — it is what makes "one decision log answers who authorized this spend" true —
-  but it changes when the action is created, which shifts the idempotency key and the policy
-  resolution moment. **Task 2 must prototype (a) first and fall back to (b) with a written
-  justification if (a) breaks the idempotency or policy semantics.** Do not decide this from the
-  spec; decide it from the code.
-- `ad_launch_decisions` becomes **read-only**: no writer, table retained, still surfaced in the UI
-  under a "historical" label. No migration fabricates data.
-- `logLaunchDecision` is deleted; `listLaunchDecisions` survives as an archive reader.
+**Two logs, two different questions — both legitimate, and both kept:**
+
+| Log | Question | Writers |
+|---|---|---|
+| `ad_launch_decisions` | *who approved this ad's **setup**?* | `recordSetupGateDecision`, on `submit`/`approve`/`reject`/`revise` |
+| `external_action_decisions` | *who authorized this **spend**?* | the external-action coordinator, on `authorize`/`deny` |
+
+**What changed is one row, not the architecture.** The synthetic `launch` row that `performLaunch`
+used to write — a fabricated `approved → launched` transition claiming `human: false` authorship —
+is deleted. It was the only thing that made the two logs look like rival answers to the spend
+question, and it was a false claim in a spend record.
+
+- `applyLaunchAction` **still writes** `ad_launch_decisions` for the four setup-gate verbs. That is
+  correct: those decisions answer the setup question, and there is no external action to hang them
+  off without spending early.
+- `logLaunchDecision` / `listLaunchDecisions` were **renamed**, not deleted, to
+  `recordSetupGateDecision` / `listSetupGateDecisions`, so the code reads as a setup trail rather
+  than spend governance.
+- `"launch"` stays in the **read** vocabulary (`AD_LAUNCH_DECISION_ACTIONS`): historical rows since
+  Sprint 20 contain it and `adLaunchDecisionSchema` validates on read, so removing it would leave the
+  contract unable to describe existing data. **Writers** are narrowed to `AD_LAUNCH_ACTIONS`.
+- No migration, and nothing fabricates data.
 
 ### 3.2 Guardrails at proposal (D4b)
 
@@ -248,15 +259,20 @@ buttons ~:744-828); relevant `apps/web/lib` shell tests.
 
 ## 5. Acceptance criteria
 
-- [ ] One decision log answers "who authorized this spend" **for the initial launch**, going forward.
-      (Explicitly NOT for `resume` or the kill switch — D4c.)
-- [ ] `adLaunchTransitionTo` has no remaining callers.
-- [ ] Nothing writes `ad_launch_decisions`; historical rows remain readable and are labelled as such.
-- [ ] A kill switch or daily-cap breach blocks a `paid_launch` **at proposal**, with no authorization
+- [x] **One record answers "who authorized this spend"** for the initial launch, going forward: the
+      external-action decision log. Two caveats stated rather than hidden — (i) explicitly NOT for
+      `resume` or the kill switch (D4c, deferred #40); (ii) under an **autonomous** policy there is no
+      decision row at all, and the honest answer is `proposedBy` plus the policy snapshot. The UI says
+      exactly that and never names a person.
+- [x] `adLaunchTransitionTo` has no remaining callers (only explanatory comments).
+- [x] **Nothing writes a `launch`/authorization row into `ad_launch_decisions`.** The four setup-gate
+      verbs still write it — that is the setup trail, and it is correct. Historical `launch` rows
+      remain readable and are labelled as historical, never as a spend authorization.
+- [x] A kill switch or daily-cap breach blocks a `paid_launch` **at proposal**, with no authorization
       decision recorded.
-- [ ] The launch record is still uneditable once it has left the editable state.
-- [ ] Reporting sync is untouched and still feeds `isSpending`.
-- [ ] `npm test` and `npm run typecheck` pass.
+- [x] The launch record is still uneditable once it has left the editable state.
+- [x] Reporting sync is untouched and still feeds `isSpending`.
+- [x] `npm test` (199 files / 2184 tests) and `npm run typecheck` pass.
 
 ---
 
