@@ -88,6 +88,7 @@ export function registerAdCreativeRoutes(
         personaId: parsed.data.personaId ?? null,
         campaignId: campaign.id,
       });
+      const planInput = campaignPlanInput(db, request.params.id, campaign.id);
       const resolved = resolveContext({
         workspaceName: workspace.name,
         docs: contents,
@@ -99,8 +100,8 @@ export function registerAdCreativeRoutes(
           scope: channelGuidance.scopeLabel,
         },
         persona: persona ? toResolvePersona(persona) : undefined,
-        campaign: composeResolveCampaign(campaign),
-        campaignPlan: campaignPlanInput(db, request.params.id, campaign.id),
+        campaign: composeResolveCampaign(campaign, planInput),
+        campaignPlan: planInput,
         ...selectiveContextInputs(db, request.params.id),
         evidence: evidenceResolution.evidence,
         evidenceExclusionReason: evidenceResolution.exclusionReason,

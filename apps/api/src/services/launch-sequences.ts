@@ -346,8 +346,8 @@ async function generateStepMessage(
   const campaign = launch.campaignId ? getCampaign(ctx.db, launch.workspaceId, launch.campaignId) : undefined;
   const persona = launch.personaId ? getPersona(ctx.db, launch.workspaceId, launch.personaId) : undefined;
   const personaArg = persona ? toResolvePersona(persona) : undefined;
-  const campaignArg = campaign ? composeResolveCampaign(campaign) : undefined;
   const planArg = campaignPlanInput(ctx.db, launch.workspaceId, launch.campaignId);
+  const campaignArg = campaign ? composeResolveCampaign(campaign, planArg) : undefined;
   const person = ctx.pool.get(`${recipient.recipientType}:${recipient.recipientId}`);
 
   const useFollowup = step.stepNumber > 1 || step.instruction.trim().length > 0;

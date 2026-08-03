@@ -102,8 +102,8 @@ export async function generateSignalDraft(
     campaignId: opts.campaign?.id ?? null,
   });
   const personaInput = opts.persona ? toResolvePersona(opts.persona) : undefined;
-  const campaignInput = opts.campaign ? composeResolveCampaign(opts.campaign) : undefined;
   const planInput = campaignPlanInput(db, workspace.id, opts.campaign?.id);
+  const campaignInput = opts.campaign ? composeResolveCampaign(opts.campaign, planInput) : undefined;
   const selective = selectiveContextInputs(db, workspace.id);
   const resolved = resolveContext({
     workspaceName: workspace.name,

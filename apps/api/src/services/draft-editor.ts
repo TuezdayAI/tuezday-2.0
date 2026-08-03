@@ -385,6 +385,7 @@ export async function reviseDraft(
       personaId: draft.personaId,
       campaignId: draft.campaignId,
     });
+    const planInput = campaignPlanInput(db, input.workspaceId, draft.campaignId);
     const resolved = resolveContext({
       workspaceName: workspace.name,
       docs: contents,
@@ -396,8 +397,8 @@ export async function reviseDraft(
         scope: channelGuidance.scopeLabel,
       },
       persona: persona ? toResolvePersona(persona) : undefined,
-      campaign: campaign ? composeResolveCampaign(campaign) : undefined,
-      campaignPlan: campaignPlanInput(db, input.workspaceId, draft.campaignId),
+      campaign: campaign ? composeResolveCampaign(campaign, planInput) : undefined,
+      campaignPlan: planInput,
       account: resolveDraftAccount(db, input.workspaceId, {
         personaId: draft.personaId,
         channel: draft.channel,

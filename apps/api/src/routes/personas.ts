@@ -209,6 +209,7 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
       campaignId: parsed.data.campaignId ?? null,
     });
 
+    const planInput = campaignPlanInput(db, request.params.id, campaign?.id);
     return resolveContext({
       workspaceName: workspace.name,
       docs: contents,
@@ -220,8 +221,8 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
         scope: channelGuidance.scopeLabel,
       },
       persona: persona ? toResolvePersona(persona) : undefined,
-      campaign: campaign ? composeResolveCampaign(campaign) : undefined,
-      campaignPlan: campaignPlanInput(db, request.params.id, campaign?.id),
+      campaign: campaign ? composeResolveCampaign(campaign, planInput) : undefined,
+      campaignPlan: planInput,
       account: resolveDraftAccount(db, request.params.id, {
         personaId: parsed.data.personaId,
         channel: parsed.data.channel,

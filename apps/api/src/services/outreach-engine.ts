@@ -427,6 +427,7 @@ async function generateOutreachStep(
       personaId: seq.personaId,
       campaignId: seq.campaignId,
     });
+    const planInput = campaignPlanInput(ctx.db, seq.workspaceId, seq.campaignId);
     const resolved = resolveContext({
       workspaceName: workspace.name,
       docs: contents,
@@ -438,8 +439,8 @@ async function generateOutreachStep(
         scope: channelGuidance.scopeLabel,
       },
       persona: persona ? toResolvePersona(persona) : undefined,
-      campaign: campaign ? composeResolveCampaign(campaign) : undefined,
-      campaignPlan: campaignPlanInput(ctx.db, seq.workspaceId, seq.campaignId),
+      campaign: campaign ? composeResolveCampaign(campaign, planInput) : undefined,
+      campaignPlan: planInput,
       account: resolveDraftAccount(ctx.db, seq.workspaceId, { personaId: seq.personaId, channel: "email" }),
       lead: {
         name: person?.name ?? enrollment.recipientEmail,

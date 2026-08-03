@@ -20,7 +20,7 @@ import { generations } from "../db/schema";
 import type { LlmGateway } from "../llm/gateway";
 import type { EvidenceStore } from "../evidence/store";
 import { getBrain } from "../services/brain";
-import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
+import { composeResolveCampaign, getCampaign } from "../services/campaigns";
 import {
   InvalidTransitionError,
   applyDraftAction,
@@ -123,6 +123,7 @@ export function registerDraftRoutes(
         docs.map((d) => [d.docType, d.content]),
       ) as BrainContents;
       const settings = getGenerationSettings(db, request.params.id);
+      const planInput = campaignPlanInput(db, request.params.id, draft.campaignId);
 
       const review = await runPreReview(
         llm,
@@ -132,10 +133,11 @@ export function registerDraftRoutes(
           taskType: draft.taskType,
           channel: draft.channel,
           persona: persona ? toResolvePersona(persona) : undefined,
-          campaign: campaign
-            ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
-            : undefined,
-          campaignPlan: campaignPlanInput(db, request.params.id, draft.campaignId),
+          // Sprint 53: the shared composer, so the reviewer sees exactly the
+          // campaign section the drafter saw — including the legacy-strategy
+          // fallback when the campaign has no active plan revision.
+          campaign: campaign ? composeResolveCampaign(campaign, planInput) : undefined,
+          campaignPlan: planInput,
         },
         draft.content,
         settings.flagThreshold,

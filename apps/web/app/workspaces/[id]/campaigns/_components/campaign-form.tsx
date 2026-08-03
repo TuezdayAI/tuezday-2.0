@@ -232,11 +232,17 @@ export function CampaignForm({
               </fieldset>
             )}
             <label>
-              <span>Campaign guidance</span>
+              {/*
+                Sprint 53: this field is *additional instruction*, not strategy.
+                Objective / KPI / timeframe / audience / pillars now reach the
+                prompt through the campaign plan, so the copy has to stop
+                inviting founders to restate strategy here.
+              */}
+              <span>Additional instruction</span>
               <Textarea
                 value={form.overlay}
                 onChange={(event) => setForm({ ...form, overlay: event.target.value })}
-                placeholder="What matters for this campaign right now?"
+                placeholder="Anything extra the writer should follow for this campaign — objective, KPI and pillars live in the campaign plan."
                 rows={5}
               />
             </label>

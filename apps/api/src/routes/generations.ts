@@ -97,8 +97,8 @@ export function registerGenerationRoutes(
     const selective = selectiveContextInputs(db, request.params.id);
 
     const personaInput = persona ? toResolvePersona(persona) : undefined;
-    const campaignInput = campaign ? composeResolveCampaign(campaign) : undefined;
     const planInput = campaignPlanInput(db, request.params.id, campaign?.id);
+    const campaignInput = campaign ? composeResolveCampaign(campaign, planInput) : undefined;
     const account = resolveDraftAccount(db, request.params.id, {
       personaId: parsed.data.personaId,
       channel: parsed.data.channel,
@@ -259,6 +259,7 @@ export function registerGenerationRoutes(
       personaId: parsed.data.personaId ?? null,
       campaignId: parsed.data.campaignId ?? null,
     });
+    const planInput = campaignPlanInput(db, request.params.id, campaign?.id);
     const resolved = resolveContext({
       workspaceName: workspace.name,
       docs: contents,
@@ -270,8 +271,8 @@ export function registerGenerationRoutes(
         scope: channelGuidance.scopeLabel,
       },
       persona: persona ? toResolvePersona(persona) : undefined,
-      campaign: campaign ? composeResolveCampaign(campaign) : undefined,
-      campaignPlan: campaignPlanInput(db, request.params.id, campaign?.id),
+      campaign: campaign ? composeResolveCampaign(campaign, planInput) : undefined,
+      campaignPlan: planInput,
       account: resolveDraftAccount(db, request.params.id, {
         personaId: parsed.data.personaId,
         channel: parsed.data.channel,

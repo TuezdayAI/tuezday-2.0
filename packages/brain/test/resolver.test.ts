@@ -97,11 +97,14 @@ describe("resolveContext", () => {
     expect(history.reason).toMatch(/empty/i);
   });
 
-  it("always marks the campaign slot excluded this sprint", () => {
+  it("excludes the campaign slot when no campaign is in scope", () => {
     const result = resolveContext(baseInput());
     const campaign = result.sections.find((s) => s.key === "campaign")!;
     expect(campaign.included).toBe(false);
-    expect(campaign.reason).toMatch(/campaign/i);
+    expect(campaign.reason).toMatch(/no campaign selected/i);
+    // Sprint 53: the Sprint-8-era "campaigns arrive in a later slice" is gone —
+    // campaigns arrived nine sprints later and the string had been lying since.
+    expect(campaign.reason).not.toMatch(/later slice/i);
   });
 
   it("excludes the persona section when no persona is given", () => {
@@ -939,5 +942,43 @@ describe("campaign plan section (Sprint 53)", () => {
       tokenBudget: 6000,
     });
     expect(resolveContext(input)).toEqual(resolveContext(input));
+  });
+
+  // Sprint 53 Task 4: the API composes the campaign row's legacy structured
+  // strategy into the overlay only when there is no active plan revision, and
+  // flags it. The resolver's job is to make that visible on both sections.
+  describe("the legacy-strategy fallback is named in the trace", () => {
+    const fallbackCampaign = {
+      name: "Design partners",
+      overlay: "Objective: Row objective\n\nFounder-to-founder.",
+      legacyStrategyFallback: true,
+    };
+
+    it("names the fallback on the campaign section", () => {
+      const result = resolveContext(baseInput({ campaign: fallbackCampaign }));
+      const campaign = result.sections.find((s) => s.key === "campaign")!;
+      expect(campaign.included).toBe(true);
+      expect(campaign.reason).toMatch(/fallback/i);
+      expect(campaign.reason).toMatch(/no active plan revision/i);
+    });
+
+    it("names the fallback on the excluded plan section, so the loss is explained", () => {
+      const result = resolveContext(baseInput({ campaign: fallbackCampaign }));
+      const section = result.sections.find((s) => s.key === "campaign_plan")!;
+      expect(section.included).toBe(false);
+      expect(section.reason).toMatch(/no active plan revision/i);
+      expect(section.reason).toMatch(/fallback|campaign section/i);
+    });
+
+    it("says nothing about a fallback when the campaign is plain instruction", () => {
+      const result = resolveContext(
+        baseInput({ campaign: { name: "Design partners", overlay: "Founder-to-founder." } }),
+      );
+      const campaign = result.sections.find((s) => s.key === "campaign")!;
+      expect(campaign.reason).not.toMatch(/fallback/i);
+      expect(
+        result.sections.find((s) => s.key === "campaign_plan")!.reason,
+      ).not.toMatch(/fallback/i);
+    });
   });
 });

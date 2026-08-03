@@ -307,8 +307,8 @@ export async function generateLaunch(
   const campaign = launchRow.campaignId ? getCampaign(db, workspaceId, launchRow.campaignId) : undefined;
   const persona = launchRow.personaId ? getPersona(db, workspaceId, launchRow.personaId) : undefined;
   const personaArg = persona ? toResolvePersona(persona) : undefined;
-  const campaignArg = campaign ? composeResolveCampaign(campaign) : undefined;
   const planArg = campaignPlanInput(db, workspaceId, launchRow.campaignId);
+  const campaignArg = campaign ? composeResolveCampaign(campaign, planArg) : undefined;
   const { docs } = getBrain(db, workspaceId);
   const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
   const selective = selectiveContextInputs(db, workspaceId);

@@ -262,7 +262,23 @@ export interface ResolveAccount {
 
 export interface ResolveCampaign {
   name: string;
+  /**
+   * The campaign's free-text **additional instruction** (Sprint 53). Campaign
+   * *strategy* lives in `campaignPlan`, not here.
+   *
+   * Exception: when the campaign has no active plan revision, the API prepends
+   * the campaign row's legacy structured strategy so nothing is silently lost,
+   * and sets `legacyStrategyFallback` so the trace can say so.
+   */
   overlay: string;
+  /**
+   * Sprint 53 fallback flag: `overlay` leads with the campaign row's legacy
+   * structured block (objective/KPI/timeframe/audience/pillars) because there
+   * is no active plan revision to carry it. Purely for the trace — the resolver
+   * names it on both the campaign and the excluded campaign_plan section rather
+   * than letting a campaign quietly change what the model sees.
+   */
+  legacyStrategyFallback?: boolean;
   /** Campaign objective — zoom-query material (Sprint 43). */
   objective?: string;
   /** Campaign content pillars — zoom-query material (Sprint 43). */
@@ -604,17 +620,29 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
     tier: 1,
   });
 
+  // Sprint 53: this section is the campaign's *additional instruction*. Strategy
+  // moved to `campaign_plan` below. The one exception — a campaign with no
+  // active plan revision, whose legacy structured block the API folds back in —
+  // is named here rather than left for a reader to infer from the bytes.
   const campaignContent = input.campaign?.overlay.trim() ?? "";
+  const legacyFallback = campaignContent.length > 0 && input.campaign?.legacyStrategyFallback === true;
+  let campaignReason: string;
+  if (campaignContent.length > 0) {
+    campaignReason = legacyFallback
+      ? `Campaign instruction for "${input.campaign!.name}", led by its legacy structured strategy (objective/KPI/timeframe/audience/pillars) as a fallback: this campaign has no active plan revision. Activate a plan and the strategy moves to the campaign plan section.`
+      : `Campaign overlay for "${input.campaign!.name}".`;
+  } else {
+    campaignReason = input.campaign
+      ? `Excluded: campaign "${input.campaign.name}" has no additional instruction (its strategy lives in the campaign plan).`
+      : "Excluded: no campaign selected.";
+  }
   sections.push({
     key: "campaign",
     layer: "campaign",
     title: input.campaign ? `Campaign: ${input.campaign.name}` : "Campaign",
     content: campaignContent,
     included: campaignContent.length > 0,
-    reason:
-      campaignContent.length > 0
-        ? `Campaign overlay for "${input.campaign!.name}".`
-        : "Excluded: no campaign overlay yet (campaigns arrive in a later slice).",
+    reason: campaignReason,
     tokens: estimateTokens(campaignContent),
     tier: 1,
   });
@@ -632,8 +660,16 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
     planReason = !input.campaign
       ? "Excluded: no campaign selected, so there is no campaign plan."
       : input.campaignPlan
-        ? `Excluded: the plan for "${input.campaign.name}" has no content yet.`
-        : `Excluded: campaign "${input.campaign.name}" has no active plan revision.`;
+        ? `Excluded: the plan for "${input.campaign.name}" has no content yet.${
+            legacyFallback
+              ? " Its legacy structured strategy is carried in the campaign section as a fallback instead."
+              : ""
+          }`
+        : `Excluded: campaign "${input.campaign.name}" has no active plan revision.${
+            legacyFallback
+              ? " Its legacy structured strategy is carried in the campaign section as a fallback instead."
+              : ""
+          }`;
   } else {
     planReason = `Campaign plan (tier 1, constitutional): the active plan revision${
       input.campaign ? ` for "${input.campaign.name}"` : ""

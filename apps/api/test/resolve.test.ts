@@ -237,4 +237,143 @@ describe("resolve API", () => {
       expect(section.content).not.toContain("Pillar the first");
     });
   });
+
+  /**
+   * Sprint 53 Task 4 — strategy and instruction stop overlapping.
+   *
+   * The `campaign` section is the free-text overlay ("additional instruction");
+   * the `campaign_plan` section is the curated strategy. The only exception is
+   * a campaign with no active plan revision, where the legacy structured block
+   * is carried in the campaign section as a **named** fallback so no campaign
+   * silently loses its strategy from prompts.
+   */
+  describe("overlay re-scoping (Sprint 53 Task 4)", () => {
+    const STRUCTURED_LABELS = ["Objective:", "KPI:", "Timeframe:", "Audience:", "Messaging pillars:"];
+    const ROW = {
+      objective: "Row objective — legacy column",
+      kpi: "Row KPI — legacy column",
+      timeframe: "Row timeframe — legacy column",
+      audience: "Row audience — legacy column",
+      pillars: ["Row pillar — legacy column"],
+      overlay: "Additional instruction: no em dashes this month.",
+    };
+
+    async function createStructuredCampaign(name: string): Promise<string> {
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns`,
+        payload: { name, ...ROW },
+      });
+      expect(res.statusCode).toBe(201);
+      return res.json().id;
+    }
+
+    async function activate(campaignId: string, plan: Record<string, unknown>) {
+      const created = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions`,
+        payload: { startAt: null, endAt: null, ...plan },
+      });
+      expect(created.statusCode).toBe(201);
+      const activated = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions/${created.json().id}/activate`,
+      });
+      expect(activated.statusCode).toBe(200);
+    }
+
+    async function resolve(campaignId: string) {
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/resolve`,
+        payload: { taskType: "linkedin_post", channel: "linkedin", campaignId },
+      });
+      expect(res.statusCode).toBe(200);
+      const bundle = res.json();
+      const byKey = (key: string) =>
+        bundle.sections.find((s: { key: string }) => s.key === key) as {
+          key: string;
+          content: string;
+          included: boolean;
+          reason: string;
+        };
+      return { bundle, campaign: byKey("campaign"), plan: byKey("campaign_plan") };
+    }
+
+    it("splits strategy into campaign_plan and instruction into campaign, with no duplication", async () => {
+      const campaignId = await createStructuredCampaign("Split brain");
+      await activate(campaignId, {
+        objective: "Plan objective — the curated one",
+        kpi: "Plan KPI — the curated one",
+        pillars: ["Plan pillar — the curated one"],
+      });
+
+      const { bundle, campaign, plan } = await resolve(campaignId);
+
+      // Instruction only — the structured block is gone.
+      expect(campaign.included).toBe(true);
+      expect(campaign.content).toBe(ROW.overlay);
+      for (const label of STRUCTURED_LABELS) expect(campaign.content).not.toContain(label);
+      expect(campaign.reason).not.toMatch(/fallback/i);
+
+      // Strategy only — and it is the *plan's* strategy, not the row's.
+      expect(plan.included).toBe(true);
+      expect(plan.content).toContain("Plan objective — the curated one");
+      expect(plan.content).toContain("Plan pillar — the curated one");
+
+      // No duplication: nothing the plan says is also in the campaign section,
+      // and the legacy row values reach the prompt nowhere at all.
+      const planLines = plan.content.split("\n").filter((l: string) => l.trim());
+      for (const line of planLines) expect(campaign.content).not.toContain(line);
+      expect(bundle.prompt).not.toContain(ROW.objective);
+      expect(bundle.prompt).not.toContain(ROW.pillars[0]);
+      expect(bundle.prompt.split(ROW.overlay).length - 1).toBe(1);
+    });
+
+    it("falls back to the legacy structured block when there is no active plan, and says so in the trace", async () => {
+      const campaignId = await createStructuredCampaign("Planless");
+
+      const { bundle, campaign, plan } = await resolve(campaignId);
+
+      expect(campaign.included).toBe(true);
+      for (const label of STRUCTURED_LABELS) expect(campaign.content).toContain(label);
+      expect(campaign.content).toContain(ROW.objective);
+      expect(campaign.content).toContain(ROW.overlay);
+      expect(bundle.prompt).toContain(ROW.objective);
+
+      // The trace explains the loss instead of hiding it — on both sections.
+      expect(campaign.reason).toMatch(/fallback/i);
+      expect(campaign.reason).toMatch(/no active plan revision/i);
+      expect(plan.included).toBe(false);
+      expect(plan.reason).toMatch(/no active plan revision/i);
+      expect(plan.reason).toMatch(/fallback/i);
+    });
+
+    it("stops falling back once the plan is activated", async () => {
+      const campaignId = await createStructuredCampaign("Catching up");
+      expect((await resolve(campaignId)).campaign.reason).toMatch(/fallback/i);
+
+      await activate(campaignId, { objective: "Plan objective — the curated one" });
+
+      const { campaign, plan } = await resolve(campaignId);
+      expect(campaign.content).toBe(ROW.overlay);
+      expect(campaign.reason).not.toMatch(/fallback/i);
+      expect(plan.included).toBe(true);
+    });
+
+    it("excludes the campaign section when a planned campaign has no additional instruction", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns`,
+        payload: { name: "Terse", objective: ROW.objective },
+      });
+      const campaignId = res.json().id;
+      await activate(campaignId, { objective: "Plan objective — the curated one" });
+
+      const { campaign } = await resolve(campaignId);
+      expect(campaign.included).toBe(false);
+      expect(campaign.content).toBe("");
+      expect(campaign.reason).toMatch(/no additional instruction/i);
+    });
+  });
 });

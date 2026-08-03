@@ -59,6 +59,7 @@ export async function generateEngagementReply(
   // Sprint 44: scope stays workspace-level here — inbox items don't carry a
   // persona; deriving one from the item's connection is deferred (Sprint 45 ⏸).
   const channelGuidance = resolveChannelGuidance(db, workspace.id, item.channel);
+  const planInput = campaignPlanInput(db, workspace.id, ctx.campaign?.id);
   const resolved = resolveContext({
     workspaceName: workspace.name,
     docs: contents,
@@ -66,8 +67,8 @@ export async function generateEngagementReply(
     channel: item.channel,
     channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
     persona: ctx.persona ? toResolvePersona(ctx.persona) : undefined,
-    campaign: ctx.campaign ? composeResolveCampaign(ctx.campaign) : undefined,
-    campaignPlan: campaignPlanInput(db, workspace.id, ctx.campaign?.id),
+    campaign: ctx.campaign ? composeResolveCampaign(ctx.campaign, planInput) : undefined,
+    campaignPlan: planInput,
     // The reply publishes from the same account the inbound item arrived on.
     account: resolveDraftAccount(db, workspace.id, {
       channel: item.channel,
