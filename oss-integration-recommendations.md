@@ -485,34 +485,71 @@ Verified snapshot on 2026-06-09:
 
 ## 11. Outbound Sending and Deliverability
 
-### Recommendation: do not build sending infra; integrate senders
+> **Amended 2026-08-02 (Sprint 51).** The original recommendation below — "do not build sending
+> infra; integrate senders" — is **retired for email**. Tuezday owns the email send path. Warmup,
+> IP-pool management, and reputation arbitrage remain out of scope. Full statement of what is and is
+> not owned: `docs/deliverability-posture.md`.
 
-Outbound is differentiated at the personalization and orchestration layer, not in SMTP warmup, inbox rotation, bounce handling, or deliverability.
+### Current position (Sprint 51 onward): Tuezday owns the send path for email and X DM
 
-Use Tuezday for:
+Email leaves Tuezday natively — an approved message is dispatched as a governed `send` external
+action from the workspace's own verified sender domain (Resend as transport). X DMs send natively
+through the connector adapter under the same external-action governance. There is one send path per
+channel.
 
-- lead context selection
-- brain-personalized messaging
-- campaign sequencing logic
-- approval and safety
-- reply intelligence
+Why the boundary moved:
 
-Use external systems for:
+- **The native stack was already built.** Sprints 27 and 47–50 shipped sender-domain verification,
+  durable suppression lists, explicit recipient permission states, HMAC-signed unsubscribe tokens,
+  and signature-verified delivery webhooks with immutable per-send snapshots. The rule said not to
+  build that; the product had built it. Keeping the rule meant keeping the docs wrong.
+- **The rule was safety-first, and the native stack is safety-first.** The concern behind the
+  original recommendation was that a young product would spray unsafe mail. The native path blocks
+  on an unverified sender, a suppressed address, an `unknown` permission state, the kill switch
+  (on by default), and the workspace daily cap — before any provider call.
+- **The external detour broke the outbound flow.** Implementing the rule meant `CsvOutboundExporter`:
+  the founder downloaded a CSV of approved messages and manually uploaded it into Smartlead to
+  actually send. A manual off-platform file hand-off sat in the middle of an orchestration product's
+  core loop, and the sequence engine could only guess when a send really happened.
 
-- cold email sending
-- domain warmup
-- inbox rotation
-- deliverability controls
-- unsubscribe/compliance mechanics
+### Explicitly still out of scope
 
-Initial targets:
+Owning the send path is not the same as owning deliverability as a product. Tuezday does **not**
+build, and does not plan to build:
 
-- Smartlead
-- Instantly
+- domain/mailbox warmup
+- IP-pool or shared-pool management
+- sender-reputation arbitrage
+- inbox rotation as a deliverability product
+- bounce-rate gaming
+
+Customers who want those run their own cold-email tool. Smartlead/Instantly remain available for
+exactly that, reached through the **optional manual CSV export** — a data export, never a routing
+decision, and never invoked by any send or dispatch path.
+
+Still external, unchanged:
+
 - Apollo/Clay for lead sourcing/enrichment
 - HubSpot/Salesforce/Pipedrive for CRM writeback
+- Resend as the email transport (a provider behind the `OutboundEmailProvider` seam, not a strategy)
 
-OSS fallback options like Postal can run mail infrastructure, but they do not replace cold outbound deliverability products.
+### Original recommendation (2026-06-09) — superseded for email
+
+> Outbound is differentiated at the personalization and orchestration layer, not in SMTP warmup,
+> inbox rotation, bounce handling, or deliverability.
+>
+> Use Tuezday for: lead context selection, brain-personalized messaging, campaign sequencing logic,
+> approval and safety, reply intelligence.
+>
+> Use external systems for: cold email sending, domain warmup, inbox rotation, deliverability
+> controls, unsubscribe/compliance mechanics. Initial targets: Smartlead, Instantly.
+>
+> OSS fallback options like Postal can run mail infrastructure, but they do not replace cold outbound
+> deliverability products.
+
+Everything in that paragraph still holds except **cold email sending**, **deliverability controls**,
+and **unsubscribe/compliance mechanics**, which are now native. Postal and comparable self-hosted
+mail infra remain unnecessary: Tuezday owns the policy layer, not the MTA.
 
 ---
 
@@ -529,6 +566,7 @@ OSS fallback options like Postal can run mail infrastructure, but they do not re
 | Data sync | Airbyte | Meltano/Singer | Tuezday owns metric model |
 | CRM | Existing customer CRM | Twenty | Tuezday is not a CRM |
 | Lifecycle | Dittofeed | Mautic/Listmonk by use case | Tuezday writes strategy/context |
+| Outbound sending (email, X DM) | Native (Resend transport) | Optional manual CSV export to Smartlead/Instantly | Tuezday owns the send path (S51); no warmup/IP-pool/reputation work — see `docs/deliverability-posture.md` |
 | Product/web analytics | PostHog | Plausible | Tuezday owns GTM dashboard |
 | BI | Superset | Metabase | Internal/admin first |
 | CMS | Payload | Strapi | Only when owned content ships |

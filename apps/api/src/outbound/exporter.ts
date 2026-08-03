@@ -1,11 +1,18 @@
 import { csvField } from "../services/leads";
 
 /**
- * The outbound-email hand-off boundary (Sprint 26). The launch domain never
- * learns how email actually leaves Tuezday — today that's a CSV the founder
- * uploads to Smartlead/Instantly; a future impl pushes via their API (see
- * docs/deferred-improvements.md #1). Swap the implementation behind this
- * interface without touching the launch service.
+ * Manual data export for approved outbound email (Sprint 26; reframed in
+ * Sprint 51).
+ *
+ * This is NOT how Tuezday sends. Email delivery is native and governed: an
+ * approved message is dispatched as a durable `send` external action from the
+ * workspace's verified sender (`services/launches.ts` → `prepareEmailAction`,
+ * and `POST /workspaces/:id/outbound/drafts/:draftId/send`). Nothing in any
+ * send or dispatch path calls this interface.
+ *
+ * What it is: an export-only affordance so a founder who wants to run their
+ * own tooling can download a copy of their approved messages. Downloading the
+ * file is a data export, not a routing decision.
  */
 export interface OutboundRecipientMessage {
   name: string;
@@ -36,8 +43,9 @@ function splitName(name: string): { first: string; last: string } {
 }
 
 /**
- * A Smartlead/Instantly-ready CSV: standard lead columns plus the personalized
- * body as a custom variable column they map to `{{personalized_message}}`.
+ * The default export format: standard lead columns plus the personalized body
+ * as a `personalized_message` column. Shaped so a founder can feed it to
+ * whatever tooling they already run — it is a download, not a send.
  */
 export class CsvOutboundExporter implements OutboundExporter {
   readonly format = "csv";

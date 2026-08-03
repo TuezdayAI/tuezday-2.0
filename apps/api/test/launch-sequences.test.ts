@@ -362,7 +362,7 @@ describe("multi-step sequences", () => {
     expect(emailMessages(d)[0]!.status).toBe("sent");
     expect(emailProvider.send).toHaveBeenCalledTimes(1);
 
-    // CSV remains available as recovery and does not trigger another send.
+    // CSV remains available as a manual export and never sends anything.
     expect((await exportCsv(launchId)).statusCode).toBe(200);
     expect(emailProvider.send).toHaveBeenCalledTimes(1);
 

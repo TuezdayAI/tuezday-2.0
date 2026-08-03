@@ -693,7 +693,7 @@ describe("external-action messaging boundary", () => {
     expect(db.select().from(publications).all()).toHaveLength(0);
   });
 
-  // --- CSV remains a non-governed recovery path -----------------------------------
+  // --- CSV is an export-only download, outside governance because it never sends ---
 
   it("keeps email CSV export outside governance without claiming delivery", async () => {
     const launchId = await generatedLaunch(["email"], [await createLead("Alice")]);

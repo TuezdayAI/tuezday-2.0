@@ -25,6 +25,7 @@ import type {
   Campaign,
   Draft,
   EmailPermissionStatus,
+  EmailSender,
   ExternalActionSubmission,
   Lead,
   MailboxWithUsage,
@@ -100,6 +101,9 @@ export default function OutboundPage() {
   // Sprint 47: connected outreach mailboxes — the Gmail send path.
   const [mailboxes, setMailboxes] = useState<MailboxWithUsage[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // Sending readiness (Sprint 51 §B3). `undefined` = still loading, so the
+  // page never flashes a "set up sending" prompt at a verified workspace.
+  const [sender, setSender] = useState<EmailSender | null | undefined>(undefined);
 
   const [csv, setCsv] = useState("");
   const [importResult, setImportResult] = useState<string | null>(null);
@@ -122,12 +126,13 @@ export default function OutboundPage() {
 
   const load = useCallback(async () => {
     try {
-      const [wsRes, lRes, pRes, cRes, dRes] = await Promise.all([
+      const [wsRes, lRes, pRes, cRes, dRes, sRes] = await Promise.all([
         apiFetch(`/workspaces/${id}`),
         apiFetch(`/workspaces/${id}/leads`),
         apiFetch(`/workspaces/${id}/personas`),
         apiFetch(`/workspaces/${id}/campaigns`),
         apiFetch(`/workspaces/${id}/drafts`),
+        apiFetch(`/workspaces/${id}/email-sender`),
       ]);
       if (!wsRes.ok || !lRes.ok) throw new Error("not found");
       setWorkspace(await wsRes.json());
@@ -146,6 +151,9 @@ export default function OutboundPage() {
       } catch {
         setMailboxes([]);
       }
+      // A workspace with no sender row answers with `null`; anything else is a
+      // configured sender whose status says whether native sending is on.
+      setSender(sRes.ok ? ((await sRes.json()) as EmailSender | null) : null);
       setError(null);
     } catch {
       setError(`Could not load this workspace from ${API_URL}. Is "npm run dev" running?`);
@@ -325,6 +333,14 @@ export default function OutboundPage() {
   const selectedCount = Object.values(selected).filter(Boolean).length;
   const approvedCount = drafts.filter((d) => d.state === "approved").length;
   const selectedDraftCount = Object.values(selectedDrafts).filter(Boolean).length;
+  // Sprint 51: there are two native send identities — a verified sender domain
+  // (Resend) and a connected mailbox (Gmail, Sprint 47). Either one means this
+  // workspace can send from Tuezday, so readiness is the union of the two.
+  const domainVerified = sender?.status === "verified";
+  const mailboxReady = mailboxes.length > 0;
+  // `null` while the sender status is still loading — send controls stay
+  // neutral rather than briefly claiming sending is not set up.
+  const senderReady = sender === undefined ? null : domainVerified || mailboxReady;
 
   if (error && !workspace) {
     return (
@@ -353,18 +369,80 @@ export default function OutboundPage() {
             Send selected from Tuezday ({selectedDraftCount})
           </Button>
         )}
-        {approvedCount > 0 && (
-          <Button
-            type="button"
-            variant="secondary"
-            size="compact"
-            onClick={() => void apiDownload(`/workspaces/${id}/outbound/export.csv`, "outbound.csv")}
-          >
-            <Icon name="external" size="compact" /> Export approved CSV ({approvedCount})
-          </Button>
-        )}
       </TopBarActions>
       {sendSummary && <p className={styles.sendSummary} aria-live="polite">{sendSummary}</p>}
+
+      <Card>
+        <CardHeader
+          title={
+            <span className={styles.cardTitle}>
+              <Icon name="send" size="compact" /> Sending
+            </span>
+          }
+          actions={
+            senderReady === null ? null : domainVerified ? (
+              <Badge tone="approved">verified sender</Badge>
+            ) : mailboxReady ? (
+              <Badge tone="approved">mailbox connected</Badge>
+            ) : (
+              <Badge tone={sender?.status === "failed" ? "rejected" : "pending"}>
+                {sender ? sender.status.replaceAll("_", " ") : "not configured"}
+              </Badge>
+            )
+          }
+        />
+        <div className={styles.sendingPanel} aria-live="polite">
+          {senderReady === null ? (
+            <p className="meta">Checking your sending setup…</p>
+          ) : senderReady ? (
+            <p className={styles.sendingNote}>
+              Tuezday sends approved outbound email natively from{" "}
+              <strong>{domainVerified ? sender?.fromAddress : mailboxes[0]?.address}</strong> —{" "}
+              {domainVerified ? "your own verified sender domain" : "your connected mailbox"}. Drafts
+              clear Review first, and every send is recorded as a governed action. No download, no
+              upload, no other tool in the loop.
+            </p>
+          ) : (
+            <div className={styles.setupSending}>
+              <p className={styles.setupSendingCopy}>
+                <strong>Set up sending to email from Tuezday.</strong> Outbound email goes out from
+                an identity you own, so Tuezday needs either a verified sender domain or a connected
+                mailbox first.{" "}
+                {sender
+                  ? `Verification for ${sender.domain} is ${sender.status} — finish the DNS records to turn sending on.`
+                  : "Verify a sender domain, or connect a mailbox, and approved drafts send straight from Review through the governed action gates."}
+              </p>
+              <ButtonLink
+                variant="primary"
+                size="standard"
+                href={`/workspaces/${id}/connectors#email-sender`}
+              >
+                <Icon name="authorize" size="compact" /> Set up sending
+              </ButtonLink>
+            </div>
+          )}
+
+          {approvedCount > 0 && (
+            <div className={styles.exportRow}>
+              <Button
+                type="button"
+                variant="tertiary"
+                size="compact"
+                onClick={() =>
+                  void apiDownload(`/workspaces/${id}/outbound/export.csv`, "outbound.csv")
+                }
+              >
+                <Icon name="external" size="compact" /> Export approved CSV (optional)
+              </Button>
+              <span className={styles.exportHint}>
+                A data export of {approvedCount} approved draft{approvedCount === 1 ? "" : "s"}, for
+                founders who prefer to run Smartlead or Instantly themselves. It is not how you send
+                from Tuezday.
+              </span>
+            </div>
+          )}
+        </div>
+      </Card>
 
       <Card>
         <CardHeader
@@ -474,12 +552,13 @@ export default function OutboundPage() {
                 ))}
               </ul>
             }
-            title="Send approved sequences from your own sender"
+            title="Send approved sequences from your own verified sender"
             description={
               <>
                 Paste a CSV of leads above — Tuezday drafts outreach in your voice, routes it
-                through Review, and exports approved sequences to Smartlead or Instantly. Your
-                sender keeps deliverability.
+                through Review, and sends approved sequences natively from your own verified sender
+                domain, through the governed action gates. CSV export stays available as an
+                optional copy for founders who prefer to run Smartlead or Instantly themselves.
               </>
             }
             primaryAction={
@@ -559,6 +638,7 @@ export default function OutboundPage() {
                                 lead={lead}
                                 draft={d}
                                 mailboxes={mailboxes}
+                                senderReady={senderReady}
                                 selected={Boolean(selectedDrafts[d.id])}
                                 sending={Boolean(sendingDrafts[d.id])}
                                 submission={sendSubmissions[d.id]}
@@ -644,6 +724,7 @@ function OutboundEmailControls({
   lead,
   draft,
   mailboxes,
+  senderReady,
   selected,
   sending,
   submission,
@@ -656,6 +737,12 @@ function OutboundEmailControls({
   draft: Draft;
   /** Connected outreach mailboxes (Sprint 47) — the Gmail send path. */
   mailboxes: MailboxWithUsage[];
+  /**
+   * Sprint 51: is any native send path available — a verified sender domain or a
+   * connected mailbox? `null` while it loads, so we never flash "Set up sending"
+   * at a workspace that can already send.
+   */
+  senderReady: boolean | null;
   selected: boolean;
   sending: boolean;
   submission?: ExternalActionSubmission;
@@ -700,7 +787,7 @@ function OutboundEmailControls({
           <input
             type="checkbox"
             checked={selected}
-            disabled={permission !== "allowed" || sending}
+            disabled={permission !== "allowed" || sending || senderReady === false}
             onChange={(event) => onSelected(event.target.checked)}
           />
           Select this approved draft
@@ -739,16 +826,31 @@ function OutboundEmailControls({
             )}
           </>
         )}
-        <Button
-          variant={chosenMailbox ? "secondary" : "primary"}
-          size="standard"
-          loading={sending}
-          disabled={permission !== "allowed"}
-          onClick={onSend}
-        >
-          Send from Tuezday
-        </Button>
+        {senderReady === false ? (
+          <ButtonLink
+            variant="primary"
+            size="standard"
+            href={`/workspaces/${workspaceId}/connectors#email-sender`}
+          >
+            <Icon name="authorize" size="compact" /> Set up sending
+          </ButtonLink>
+        ) : (
+          <Button
+            variant={chosenMailbox ? "secondary" : "primary"}
+            size="standard"
+            loading={sending}
+            disabled={permission !== "allowed"}
+            onClick={onSend}
+          >
+            Send from Tuezday
+          </Button>
+        )}
       </div>
+      {senderReady === false && (
+        <p className={styles.setupHint}>
+          Verify a sender domain to send this draft from Tuezday.
+        </p>
+      )}
       {submission && <EmailSendStatus submission={submission} delivery={null} />}
       <span className={styles.draftId}>Draft {draft.id}</span>
     </div>
