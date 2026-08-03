@@ -778,10 +778,17 @@ export default function AdLaunchesPage() {
                       )}
                     </div>
                   )}
+                  {/* A propose call returns `blocked` from two different moments. The
+                      guardrails usually refuse at proposal, before anyone is asked. But
+                      under an autonomous policy the action is authorized and dispatched
+                      inside the same call, so a guard tripping at dispatch also lands
+                      here — with an authorization already on the record. `authorizedAt`
+                      is what tells them apart; neither one ever reached the platform. */}
                   {submission?.action.status === "blocked" && (
                     <p className={styles.spendRecord}>
-                      Refused when it was proposed — before anyone was asked to authorize it. No
-                      authorization was recorded and no spend started.
+                      {submission.action.authorizedAt === null
+                        ? "Refused when it was proposed — before anyone was asked to authorize it. No authorization was recorded and no spend started."
+                        : "Authorized, then refused before it reached the platform — a guardrail caught it at dispatch. The authorization is on the governing action; no spend started."}
                     </p>
                   )}
 
@@ -1078,8 +1085,14 @@ export default function AdLaunchesPage() {
                               <span className="meta">
                                 {new Date(decision.createdAt).toLocaleString()}
                               </span>{" "}
-                              — <strong>{SETUP_DECISION_LABELS[decision.action]}</strong> by{" "}
-                              {decision.actor} ({decision.fromState} → {decision.toState})
+                              — <strong>{SETUP_DECISION_LABELS[decision.action]}</strong>
+                              {/* The retired `launch` row was written automatically; its
+                                  `actor` is a reconstructed label. Naming a person there
+                                  attributes the launch to someone who never authorized it,
+                                  which is the claim this sprint removed. The four gate
+                                  verbs were real human decisions and keep their name. */}
+                              {decision.action !== "launch" && <> by {decision.actor}</>} (
+                              {decision.fromState} → {decision.toState})
                               {decision.action === "launch" && (
                                 <span className={styles.retiredRow}>
                                   Historical row, written automatically when the launch went out.

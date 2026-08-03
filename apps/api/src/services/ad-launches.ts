@@ -273,7 +273,10 @@ export function listSetupGateDecisions(db: Db, launchId: string): AdLaunchDecisi
  * logic already lives. The only rule with reach beyond this function is
  * editability (`isAdLaunchEditable`), which the PATCH route enforces too.
  */
-function nextGateState(status: AdLaunchStatus, action: AdLaunchAction): AdLaunchStatus | undefined {
+export function nextGateState(
+  status: AdLaunchStatus,
+  action: AdLaunchAction,
+): AdLaunchStatus | undefined {
   switch (action) {
     // Hand an editable draft over for review; it stops being editable.
     case "submit":
@@ -282,9 +285,15 @@ function nextGateState(status: AdLaunchStatus, action: AdLaunchAction): AdLaunch
       return status === "pending_review" ? "approved" : undefined;
     case "reject":
       return status === "pending_review" ? "rejected" : undefined;
-    // The door back to editable — open until the launch has spent, closed after.
+    // The door back to editable, from the three states the gate can park a
+    // launch in. Stated as an allow-list rather than "anything that is not
+    // launched or already editable": the two agree across today's five
+    // statuses, but the negative form would make `revise` legal from a sixth
+    // the day it is added. Reopening a launch for editing is not a default.
     case "revise":
-      return status === "launched" || isAdLaunchEditable(status) ? undefined : "draft";
+      return status === "pending_review" || status === "rejected" || status === "approved"
+        ? "draft"
+        : undefined;
   }
 }
 

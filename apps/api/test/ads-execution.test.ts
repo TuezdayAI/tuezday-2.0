@@ -1,6 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createAdLaunchInputSchema, isAdLaunchEditable } from "@tuezday/contracts";
+import {
+  AD_LAUNCH_ACTIONS,
+  AD_LAUNCH_STATUSES,
+  type AdLaunchAction,
+  type AdLaunchStatus,
+  createAdLaunchInputSchema,
+  isAdLaunchEditable,
+} from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
+import { nextGateState } from "../src/services/ad-launches";
 import { type ConnectorFabric, type ProxyJsonResult } from "../src/connectors/fabric";
 import { MetaAdsAdapter } from "../src/connectors/ads/meta";
 import type { LlmGateway } from "../src/llm/gateway";
@@ -315,6 +323,41 @@ describe("ad launch contracts (Sprint 20)", () => {
     const lower = createAdLaunchInputSchema.safeParse({ ...valid, countries: ["us", "de"] });
     expect(lower.success).toBe(true);
     if (lower.success) expect(lower.data.countries).toEqual(["US", "DE"]);
+  });
+});
+
+// Sprint 54 final review (M-5) — the gate's preconditions are stated as
+// positive allow-lists, so a status added later is refused until someone
+// states its edges. This characterization test pins them against the 4x5
+// `AD_LAUNCH_TRANSITIONS` table Task 4 deleted (recovered from git history,
+// not from memory), edge for edge.
+describe("the setup gate's preconditions (Sprint 54)", () => {
+  /** Verbatim `AD_LAUNCH_TRANSITIONS`, as it stood before Task 4 removed it. */
+  const RETIRED_TABLE: Record<AdLaunchAction, Partial<Record<AdLaunchStatus, AdLaunchStatus>>> = {
+    submit: { draft: "pending_review" },
+    approve: { pending_review: "approved" },
+    reject: { pending_review: "rejected" },
+    revise: { pending_review: "draft", rejected: "draft", approved: "draft" },
+  };
+
+  it("reproduces the retired transition table, edge for edge", () => {
+    for (const action of AD_LAUNCH_ACTIONS) {
+      for (const status of AD_LAUNCH_STATUSES) {
+        // The status/action pair rides along so a failure names the edge.
+        expect({ action, status, to: nextGateState(status, action) }).toEqual({
+          action,
+          status,
+          to: RETIRED_TABLE[action][status],
+        });
+      }
+    }
+  });
+
+  it("refuses every verb from a status it has never heard of", () => {
+    const unknown = "paused" as AdLaunchStatus;
+    for (const action of AD_LAUNCH_ACTIONS) {
+      expect({ action, to: nextGateState(unknown, action) }).toEqual({ action, to: undefined });
+    }
   });
 });
 
