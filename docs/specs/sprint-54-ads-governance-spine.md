@@ -28,7 +28,8 @@ number. Off Sprint 53, the next generated migration is `0063`.
 
 | ID | Decision | Answer |
 |---|---|---|
-| **D4a** | The decision-log merge cannot be lossless. How is history handled? | **Freeze the archive, merge forward.** Stop writing `ad_launch_decisions`; every NEW gate decision lands in the external-action decision log. The old table becomes read-only and is still shown in the UI, labelled as historical. No fabricated fingerprints or policy snapshots, no false `actor_human` claims, no idempotency-counter corruption. |
+| **D4a** | The decision-log merge cannot be lossless. How is history handled? | **AMENDED during implementation — see D4a′ below.** Originally: freeze the archive and move new gate decisions into the external-action log. Implementation evidence showed that is not possible. |
+| **D4a′** | *(Amended 2026-08-02, after Task 2 prototyping.)* | **Delete the false row; scope the rest honestly.** The two logs answer genuinely different questions and both should exist. Delete only the **synthetic `launch` row** written at `performLaunch:448` — a fabricated `approved → launched` transition with `human: false` that *looks* like it answers "who authorized this spend" when the real answer already lives in the external-action log. Keep `submit`/`approve`/`reject`/`revise` as an honestly re-scoped **setup-approval** trail. No new table, no migration, no fabricated data. |
 | **D4b** | Where do spend guardrails enforce? | **At proposal time.** `proposed → blocked` is already a legal transition, so no lifecycle contract change. The founder learns about a cap breach immediately instead of after clicking authorize. `dispatch`'s existing guard stays as the backstop. |
 | **D4c** | Are `resume` and the kill switch in scope? | **No — scope to initial launch.** Both remain ungoverned and are recorded as explicit deferred items. Keeps the sprint at L and avoids inventing a seventh action kind. |
 | **D4d** | Enforce `Entitlements.adSpendCapCents`? | **No — leave dead, mark `reserved`.** Free tier is `0`; enforcing it would silently disable ad launching for every free workspace. That is a pricing decision, not a refactor. Marked reserved in contracts naming the sprint that will activate it, following Sprint 50's vocabulary-hygiene pattern. |
@@ -90,7 +91,35 @@ no lifecycle contract change, and the founder is told sooner.
 
 ## 3. Design
 
-### 3.1 One decision log, going forward (D4a)
+### 3.0 Why D4a was amended (implementation evidence)
+
+Task 2 prototyped the preferred option — propose the `paid_launch` action at **submit** time, so gate
+decisions hang off a real action — and it is **disqualifying**:
+
+- `paid_launch` resolves to `autonomous` under `scheduled_auto`
+  (`services/external-action-backfill.ts:21`), and `proposeWithLineage:546` dispatches immediately.
+  **Proposing at submit would spend money at Submit, before anyone approves.**
+- Avoiding that would require writing a decision row against a `proposed` action, which the
+  coordinator explicitly forbids (`external-action-coordinator.ts:502-506`), or making Approve the
+  moment money is spent.
+- Independently, `EXTERNAL_ACTION_DECISIONS` is only `["authorize", "deny"]` — there is no
+  vocabulary for `submit` or `revise`.
+
+**The reframe.** The two logs answer different questions, in the same way Sprint 52 distinguished
+"is this good?" from "may this leave the building?":
+
+| Log | Question it answers |
+|---|---|
+| `ad_launch_decisions` (`submit`/`approve`/`reject`/`revise`) | **who approved this ad's setup?** |
+| `external_action_decisions` (`authorize`/`deny`) | **who authorized this spend?** |
+
+Those are not competing answers, and merging them would destroy a real distinction. The genuine
+defect is the **synthetic `launch` row** — it fabricates a state transition and claims `human: false`
+authorship, and it is the only thing that makes the two logs *look* like rival answers to the spend
+question. Deleting it, and re-scoping the remainder in code and UI as setup approval, satisfies the
+acceptance criterion honestly.
+
+### 3.1 One decision log for spend, going forward (D4a′)
 
 - `applyLaunchAction` stops writing `ad_launch_decisions` and instead records each gate decision on
   the external-action decision log, attributed to the acting user.
