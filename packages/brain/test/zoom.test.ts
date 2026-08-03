@@ -105,6 +105,46 @@ describe("composeZoomQuery", () => {
     expect(query).toContain("Sunday-night report scramble");
   });
 
+  /**
+   * Sprint 53 review (I2). The prompt states the *plan's* objective and
+   * pillars; retrieving against the row's would fetch evidence for an objective
+   * the model never saw. For a planned campaign the row columns are frozen
+   * (the campaign form renders them read-only), so the two diverge the first
+   * time the plan is edited.
+   */
+  it("retrieves against the plan's objective and pillars when a plan states them", () => {
+    const campaign = {
+      name: "Q3 agencies push",
+      overlay: "",
+      objective: "Row objective — stale since the backfill",
+      pillars: ["row pillar"],
+    };
+    const query = composeZoomQuery({
+      taskType: "linkedin_post",
+      channel: "linkedin",
+      campaign,
+      campaignPlan: {
+        objective: "Plan objective — what the prompt actually states",
+        pillars: ["plan pillar one", "plan pillar two"],
+      },
+    });
+    expect(query).toContain("Plan objective — what the prompt actually states");
+    expect(query).toContain("plan pillar one plan pillar two");
+    expect(query).not.toContain("Row objective");
+    expect(query).not.toContain("row pillar");
+
+    // Field by field: a plan that states neither leaves the row's values in
+    // place, so a plan-less or partially-filled campaign never loses recall.
+    const partial = composeZoomQuery({
+      taskType: "linkedin_post",
+      channel: "linkedin",
+      campaign,
+      campaignPlan: { objective: "Plan objective only", pillars: [] },
+    });
+    expect(partial).toContain("Plan objective only");
+    expect(partial).toContain("row pillar");
+  });
+
   it("is deterministic and skips absent fields", () => {
     const a = composeZoomQuery({ taskType: "pr_pitch", channel: "pr" });
     const b = composeZoomQuery({ taskType: "pr_pitch", channel: "pr" });

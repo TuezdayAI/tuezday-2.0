@@ -17,8 +17,8 @@ import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { meteredLlm } from "../llm/metered";
 import { assertLlmBudget } from "../services/entitlements";
 import { getBrain } from "../services/brain";
-import { campaignExecutionError, composeResolveCampaign, getCampaign } from "../services/campaigns";
-import { selectiveContextInputs } from "../services/resolve-input";
+import { campaignExecutionError, getCampaign } from "../services/campaigns";
+import { campaignResolveInputs, selectiveContextInputs } from "../services/resolve-input";
 import { submitDraft } from "../services/drafts";
 import { retrieveEvidence } from "../services/evidence";
 import { getGenerationSettings } from "../services/generation-settings";
@@ -157,6 +157,7 @@ export function registerPrRoutes(
     });
     const settings = getGenerationSettings(db, request.params.id);
     const selective = selectiveContextInputs(db, request.params.id);
+    const campaignInputs = campaignResolveInputs(db, request.params.id, campaign);
 
     const results = [];
     for (const contact of contactRecords) {
@@ -171,7 +172,7 @@ export function registerPrRoutes(
           scope: channelGuidance.scopeLabel,
         },
         persona: persona ? toResolvePersona(persona) : undefined,
-        campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+        ...campaignInputs,
         ...selective,
         mediaContact: {
           name: contact.name,
@@ -223,7 +224,7 @@ export function registerPrRoutes(
               channel: "pr",
               channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
               persona: persona ? toResolvePersona(persona) : undefined,
-              campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+              ...campaignInputs,
               ...selective,
             },
             result.text,
@@ -317,6 +318,7 @@ export function registerPrRoutes(
       campaignId: parsed.data.campaignId ?? null,
     });
     const selective = selectiveContextInputs(db, request.params.id);
+    const campaignInputs = campaignResolveInputs(db, request.params.id, campaign);
     const resolved = resolveContext({
       workspaceName: workspace.name,
       docs: contents,
@@ -328,7 +330,7 @@ export function registerPrRoutes(
         scope: channelGuidance.scopeLabel,
       },
       persona: persona ? toResolvePersona(persona) : undefined,
-      campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+      ...campaignInputs,
       ...selective,
       evidence: evidenceResolution.evidence,
       evidenceExclusionReason: evidenceResolution.exclusionReason,
@@ -369,7 +371,7 @@ export function registerPrRoutes(
             channel: "pr",
             channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
             persona: persona ? toResolvePersona(persona) : undefined,
-            campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+            ...campaignInputs,
             ...selective,
           },
           result.text,

@@ -21,7 +21,7 @@ import type { LlmGateway } from "../llm/gateway";
 import { meteredLlm } from "../llm/metered";
 import type { EvidenceStore } from "../evidence/store";
 import { getBrain } from "../services/brain";
-import { composeCampaignOverlay, getCampaign } from "../services/campaigns";
+import { getCampaign } from "../services/campaigns";
 import {
   InvalidTransitionError,
   applyDraftAction,
@@ -43,6 +43,7 @@ import { EntitlementError } from "../services/entitlements";
 import { getTurnByRequest } from "../services/draft-revisions";
 import { getGenerationSettings } from "../services/generation-settings";
 import { getPersona, toResolvePersona } from "../services/personas";
+import { campaignResolveInputs } from "../services/resolve-input";
 import { runPreReview, setDraftReview } from "../services/review";
 import { getWorkspace } from "../services/workspaces";
 import type { BrainContents } from "@tuezday/brain";
@@ -136,9 +137,10 @@ export function registerDraftRoutes(
           taskType: draft.taskType,
           channel: draft.channel,
           persona: persona ? toResolvePersona(persona) : undefined,
-          campaign: campaign
-            ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
-            : undefined,
+          // Sprint 53: the shared composer, so the reviewer sees exactly the
+          // campaign section the drafter saw — including the legacy-strategy
+          // fallback when the campaign has no active plan revision.
+          ...campaignResolveInputs(db, request.params.id, campaign),
         },
         draft.content,
         settings.flagThreshold,

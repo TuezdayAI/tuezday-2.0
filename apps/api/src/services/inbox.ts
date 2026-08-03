@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt } from "drizzle-orm";
 import {
-  METRIC_WINDOWS,
+  PUBLICATION_METRIC_WINDOWS,
   type Channel,
   type Draft,
   type EmailReplyLabel,
@@ -10,11 +10,12 @@ import {
   type InboxItemStatus,
   type InboxItemWithContext,
   type InboxRunResult,
-  type MetricWindow,
+  type PublicationMetricWindow,
   type PublicationMetric,
   type SocialAutomationSettings,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
+import { recordMetrics } from "./metrics";
 import {
   drafts,
   emailDeliveries,
@@ -53,7 +54,7 @@ type Fetcher = typeof fetch;
 /** Auto-replies are attributed to the system identity, like S28 auto-posts. */
 const SYSTEM_ACTOR: DraftActor = { userId: null, label: "system", human: false };
 
-const WINDOW_MS: Record<MetricWindow, number> = {
+const WINDOW_MS: Record<PublicationMetricWindow, number> = {
   "24h": 24 * 60 * 60 * 1000,
   "7d": 7 * 24 * 60 * 60 * 1000,
 };
@@ -69,7 +70,7 @@ function rowToInboxItem(row: InboxItemRow): InboxItem {
 }
 
 function rowToMetric(row: PublicationMetricRow): PublicationMetric {
-  return { ...row, window: row.window as MetricWindow };
+  return { ...row, window: row.window as PublicationMetricWindow };
 }
 
 // ---------------------------------------------------------------------------
@@ -290,7 +291,7 @@ export function replyContext(db: Db, workspaceId: string, item: InboxItem) {
 // Engagement metrics
 // ---------------------------------------------------------------------------
 
-function metricExists(db: Db, publicationId: string, window: MetricWindow): boolean {
+function metricExists(db: Db, publicationId: string, window: PublicationMetricWindow): boolean {
   return (
     db
       .select({ id: publicationMetrics.id })
@@ -484,7 +485,7 @@ async function refreshEngagement(
     if (!adapter?.fetchEngagement) continue;
     for (const pub of publishedPublications(db, workspace.id, conn.id)) {
       if (!pub.externalId || !pub.publishedAt) continue;
-      for (const window of METRIC_WINDOWS) {
+      for (const window of PUBLICATION_METRIC_WINDOWS) {
         const due = pub.publishedAt + WINDOW_MS[window] <= nowMs;
         if (!due || metricExists(db, pub.id, window)) continue;
         try {
@@ -504,6 +505,31 @@ async function refreshEngagement(
               createdAt: nowMs,
             })
             .run();
+          // Sprint 55 dual-write: cumulative facts into the unified table.
+          // periodStart is the publication's publishedAt — the window measures
+          // cumulative totals since going live, observed at >= 24h/7d of age.
+          recordMetrics(
+            db,
+            workspace.id,
+            (
+              [
+                ["likes", eng.likes],
+                ["comments", eng.comments],
+                ["shares", eng.shares],
+                ["impressions", eng.impressions],
+                ["clicks", eng.clicks],
+              ] as const
+            ).map(([metricKey, value]) => ({
+              subjectType: "publication" as const,
+              subjectId: pub.id,
+              metricKey,
+              value,
+              window,
+              periodStart: pub.publishedAt!,
+              source: "captured" as const,
+              capturedAt: nowMs,
+            })),
+          );
           metricsCaptured += 1;
         } catch {
           // A post whose metrics can't be read this tick is retried next tick.

@@ -18,8 +18,8 @@ import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { meteredLlm } from "../llm/metered";
 import { assertLlmBudget } from "../services/entitlements";
 import { getBrain } from "../services/brain";
-import { campaignExecutionError, composeResolveCampaign, getCampaign } from "../services/campaigns";
-import { selectiveContextInputs } from "../services/resolve-input";
+import { campaignExecutionError, getCampaign } from "../services/campaigns";
+import { campaignResolveInputs, selectiveContextInputs } from "../services/resolve-input";
 import { submitDraft } from "../services/drafts";
 import { retrieveEvidence } from "../services/evidence";
 import { getGenerationSettings } from "../services/generation-settings";
@@ -175,6 +175,7 @@ export function registerOutboundRoutes(
       pipeline: "review",
       campaignId: parsed.data.campaignId ?? null,
     });
+    const campaignInputs = campaignResolveInputs(db, request.params.id, campaign);
     const results = [];
     for (const lead of leadRecords) {
       const resolved = resolveContext({
@@ -188,7 +189,7 @@ export function registerOutboundRoutes(
           scope: channelGuidance.scopeLabel,
         },
         persona: persona ? toResolvePersona(persona) : undefined,
-        campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+        ...campaignInputs,
         lead: { name: lead.name, company: lead.company, role: lead.role, notes: lead.notes },
         ...selective,
         evidence: evidenceResolution.evidence,
@@ -223,7 +224,7 @@ export function registerOutboundRoutes(
               channel: "email",
               channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
               persona: persona ? toResolvePersona(persona) : undefined,
-              campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+              ...campaignInputs,
               ...selective,
             },
             result.text,

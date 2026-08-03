@@ -5,8 +5,10 @@ import { GatewayError, type LlmGateway } from "../src/llm/gateway";
 import { buildAuthedApp, createTestDb } from "./helpers";
 
 /**
- * Fake gateway keyed off markers the tests plant in the campaign objective
- * (the objective reaches the prompt through the composed campaign overlay).
+ * Fake gateway keyed off markers the tests plant in the campaign objective.
+ * Sprint 53: these campaigns have no active plan revision, so the objective
+ * still reaches the prompt — through the legacy-strategy fallback in the
+ * campaign section rather than through `composeCampaignOverlay`.
  */
 function fakeGateway(): LlmGateway {
   return {

@@ -4,7 +4,7 @@ import { externalActionSubmissionSchema } from "@tuezday/contracts";
 import type { TuezdayApp } from "../src/app";
 import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric";
 import type { Db } from "../src/db";
-import { adLaunches, drafts, externalActions } from "../src/db/schema";
+import { adLaunches, drafts, externalActionDecisions, externalActions } from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
 import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
@@ -198,6 +198,18 @@ describe("external-action paid launch boundary", () => {
       payload: {},
     });
 
+  const putSettings = (payload: { dailyCapCents?: number; killSwitch?: boolean }) =>
+    app.inject({ method: "PUT", url: `/workspaces/${workspaceId}/ads/settings`, payload });
+
+  /** Every authorize/deny decision in the workspace's external-action log. */
+  function decisionRows() {
+    return db
+      .select()
+      .from(externalActionDecisions)
+      .where(eq(externalActionDecisions.workspaceId, workspaceId))
+      .all();
+  }
+
   function actionRows() {
     return db.select().from(externalActions).where(eq(externalActions.workspaceId, workspaceId)).all();
   }
@@ -252,13 +264,45 @@ describe("external-action paid launch boundary", () => {
     expect(launch.decisions.map((d: { action: string }) => d.action)).toEqual([
       "submit",
       "approve",
-      "launch",
     ]);
 
     expect((await authorize(submission.action.id)).statusCode).toBe(409);
     const again = await act(id, "launch");
     expect(again.statusCode).toBe(409);
     expect(again.json().error).toBe("already_launched");
+  });
+
+  // Sprint 54 Task 2 — the two logs answer different questions, and only one of
+  // them answers the money question. `ad_launch_decisions` is the setup-approval
+  // trail ("who approved this ad's setup?"); `external_action_decisions` is the
+  // spend-authorization record ("who authorized this spend?"). What was deleted
+  // is `performLaunch`'s synthetic `approved -> launched` row, which claimed the
+  // second answer while carrying a fabricated transition and `human: false`.
+  it("records the spend authorization only in the external-action log", async () => {
+    const id = await approvedLaunch();
+    const queued = await act(id, "launch");
+    const actionId = queued.json().action.id;
+    expect((await authorize(actionId)).json().action.status).toBe("succeeded");
+
+    const launch = await getLaunch(id);
+    // The setup trail stops at the gate. No synthetic launch row.
+    expect(launch.decisions.map((d: { action: string }) => d.action)).toEqual([
+      "submit",
+      "approve",
+    ]);
+    expect(launch.decisions.some((d: { toState: string }) => d.toState === "launched")).toBe(false);
+
+    // Exactly one authorization, against the real action, by a real person.
+    const authorizations = decisionRows().filter((r) => r.decision === "authorize");
+    expect(authorizations).toHaveLength(1);
+    expect(authorizations[0]).toMatchObject({ actionId, actorHuman: true });
+    expect(authorizations[0]!.actorUserId).toBeTruthy();
+
+    // Nothing user-facing lost information: the launch record still carries
+    // "it launched" on its own, and links to the action that authorized it.
+    expect(launch.status).toBe("launched");
+    expect(launch.launchedAt).toBeTruthy();
+    expect(launch.externalActionId).toBe(actionId);
   });
 
   it("marks the queued launch stale when the creative changes", async () => {
@@ -277,24 +321,61 @@ describe("external-action paid launch boundary", () => {
     expect(state.campaignPosts).toBe(0);
   });
 
-  it("denies without touching the launch's approval history", async () => {
+  // Sprint 54 Task 5 — this test used to be named "denies without touching the
+  // launch's approval history", and it asserted only that the two logs stayed
+  // independent: the setup trail and the launch status unchanged by a denial.
+  // Written that way, independence looked like the *defect* — two logs, two
+  // rival answers to "who authorized this spend". Under D4a' it is the
+  // intended shape, because the logs answer different questions, so the
+  // guarantee is now stated positively and from both sides: the refusal is
+  // recorded exactly once, in the log that owns the money question, and the
+  // setup trail neither gains a row nor loses its approval.
+  it("records a spend refusal once, in the spend log, and leaves setup approval standing", async () => {
     const id = await approvedLaunch();
     const queued = await act(id, "launch");
+    const actionId = queued.json().action.id;
     const denied = await app.inject({
       method: "POST",
-      url: `/workspaces/${workspaceId}/external-actions/${queued.json().action.id}/deny`,
+      url: `/workspaces/${workspaceId}/external-actions/${actionId}/deny`,
       payload: { reason: "Budget freeze" },
     });
     expect(denied.statusCode).toBe(200);
     expect(denied.json().action.status).toBe("cancelled");
+
+    // Exactly one refusal, against the real action, by a real person, with the
+    // founder's reason on the record. This is the whole answer to "who refused
+    // this spend?" — there is no second place to look.
+    const denials = decisionRows().filter((r) => r.decision === "deny");
+    expect(denials).toHaveLength(1);
+    expect(denials[0]).toMatchObject({ actionId, actorHuman: true });
+    expect(denials[0]!.actorUserId).toBeTruthy();
+    expect(denials[0]!.reason).toContain("Budget freeze");
+
+    // The setup trail answers a different question — "who approved this ad's
+    // setup?" — so a spend refusal writes nothing into it, and does not revoke
+    // the setup approval that is already there.
     const launch = await getLaunch(id);
     expect(launch.status).toBe("approved");
     expect(launch.decisions.map((d: { action: string }) => d.action)).toEqual(["submit", "approve"]);
-    // The launch can be proposed again after the denial.
-    expect((await act(id, "launch")).statusCode).toBe(202);
+
+    // Refusing the spend does not condemn the ad: it can be put up again, as a
+    // new action. The refusal stays exactly one row — reproposing neither
+    // erases it nor duplicates it.
+    const again = await act(id, "launch");
+    expect(again.statusCode).toBe(202);
+    expect(again.json().action.id).not.toBe(actionId);
+    expect(decisionRows().filter((r) => r.decision === "deny")).toHaveLength(1);
   });
 
-  it("keeps the kill switch as an autonomous guardrail", async () => {
+  // Sprint 54 Task 5 — still true, still the real path, but it now proves more
+  // than it used to. Before Task 3 an autonomous proposal went
+  // `proposed -> authorized -> dispatching`, and only the dispatch-time `guard`
+  // caught the kill switch. Now `guardAtProposal` catches it first, so
+  // `authorizedAt` stays null: autonomy never gets to the point of claiming an
+  // authorization for spend the kill switch had already refused. The dispatch
+  // guard remains the backstop, pinned separately by "still catches a cap
+  // breached between proposal and dispatch".
+  it("blocks a kill-switched launch before autonomy can authorize it", async () => {
     await setAutonomous();
     await app.inject({
       method: "PUT",
@@ -306,8 +387,68 @@ describe("external-action paid launch boundary", () => {
     expect(res.statusCode).toBe(201);
     expect(res.json().action.status).toBe("blocked");
     expect(res.json().action.blocker.code).toBe("kill_switch_on");
+    expect(res.json().action.authorizedAt).toBeNull();
+    expect(decisionRows()).toHaveLength(0);
     expect(state.campaignPosts).toBe(0);
     expect((await getLaunch(id)).status).toBe("approved");
+  });
+
+  // Sprint 54 Task 3 (D4b) — spend guardrails enforce at proposal, where
+  // `proposed → blocked` is already a legal edge. The default policy in this
+  // file is `human_required`, so without this every breach used to park at
+  // `authorization_required` and only block *after* someone clicked Authorize
+  // — leaving "X authorized this spend" on the record for spend that never
+  // happened. `authorization_required → blocked` is not a legal edge, which is
+  // why proposal, not authorization, is where this belongs.
+  describe("spend guardrails at proposal", () => {
+    it("blocks a kill-switched launch at proposal, with no authorization decision", async () => {
+      expect((await putSettings({ killSwitch: true })).statusCode).toBe(200);
+      const id = await approvedLaunch();
+      const res = await act(id, "launch");
+      expect(res.statusCode).toBe(201);
+      expect(res.json().action.status).toBe("blocked");
+      expect(res.json().action.blocker.code).toBe("kill_switch_on");
+      expect(decisionRows()).toHaveLength(0);
+      expect(state.campaignPosts).toBe(0);
+      expect((await getLaunch(id)).status).toBe("approved");
+    });
+
+    it("blocks a daily-cap breach at proposal, over committed budgets, ignoring paused launches", async () => {
+      expect((await putSettings({ dailyCapCents: 800 })).statusCode).toBe(200);
+      const first = await approvedLaunch();
+      const queued = await act(first, "launch");
+      expect(queued.statusCode).toBe(202);
+      expect((await authorize(queued.json().action.id)).json().action.status).toBe("succeeded");
+      const afterFirst = decisionRows().length;
+
+      // 500 already committed against a cap of 800; another 500 breaches it.
+      const second = await approvedLaunch();
+      const blocked = await act(second, "launch");
+      expect(blocked.statusCode).toBe(201);
+      expect(blocked.json().action.status).toBe("blocked");
+      expect(blocked.json().action.blocker.code).toBe("daily_cap_exceeded");
+      // Nobody was asked to authorize spend the cap had already refused.
+      expect(decisionRows()).toHaveLength(afterFirst);
+
+      // Pausing the first frees its committed budget — the retry reaches the queue.
+      expect((await act(first, "pause")).statusCode).toBe(200);
+      const retried = await act(second, "launch");
+      expect(retried.statusCode).toBe(202);
+      expect(retried.json().action.status).toBe("authorization_required");
+    });
+
+    it("still catches a cap breached between proposal and dispatch", async () => {
+      const id = await approvedLaunch();
+      const queued = await act(id, "launch");
+      expect(queued.statusCode).toBe(202);
+      // The guardrail passed at proposal; the cap moves while it sits queued.
+      expect((await putSettings({ dailyCapCents: 100 })).statusCode).toBe(200);
+      const authorized = await authorize(queued.json().action.id);
+      expect(authorized.statusCode).toBe(200);
+      expect(authorized.json().action.status).toBe("blocked");
+      expect(authorized.json().action.blocker.code).toBe("daily_cap_exceeded");
+      expect(state.campaignPosts).toBe(0);
+    });
   });
 
   it("persists provider failure on both the action and the ad launch, then resumes on retry", async () => {

@@ -359,7 +359,8 @@ Every site wraps its gateway in `meteredLlm(...)` with its pipeline;
 - 2026-08-03 — Implemented in full. `tier` on Generate/AgentStep/Structured/RunParams
   with per-call resolution in Gemini + OpenRouter (cheap defaults flash-lite);
   `GenerateResult.usage` on both providers; pricing entries + id normalization +
-  `hasPricing`; `llm_usage_events` (migration `0063_hesitant_jackal.sql`) with
+  `hasPricing`; `llm_usage_events` (migration
+  `0065_sprint_59_model_routing_caching_budgets.sql` after reconciliation with Sprints 53–58) with
   `services/usage-ledger.ts` (record / sum / rollup) and the `meteredLlm` proxy; all
   25 call sites + the AgentRunner route wrapped with pipeline (+campaign) attribution;
   carousels/ad-images meter flat `design_render` events. Entitlements re-denominated

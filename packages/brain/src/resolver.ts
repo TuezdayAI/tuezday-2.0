@@ -5,6 +5,7 @@
   DEFAULT_TASK_DOC_MATRIX,
   DEFAULT_TOKEN_BUDGET,
   MATRIX_DOC_TYPES,
+  PLAN_SECTION_TOKEN_CAP,
   TASK_TYPES,
   ZOOM_DOC_TOKEN_CAP,
   ZOOM_MAX_SECTIONS_PER_DOC,
@@ -24,6 +25,11 @@
   type SequenceChannel,
   type TaskType,
 } from "@tuezday/contracts";
+import {
+  composeCampaignPlanSection,
+  composeCompactCampaignPlanSection,
+  type ResolveCampaignPlan,
+} from "./campaign-plan-section";
 import { BRAIN_DOC_META, type BrainContents } from "./index";
 import { PREAMBLE_ID, buildFallbackOutline, parseDocSections, renderOutline } from "./sections";
 import { estimateTokens } from "./tokens";
@@ -220,6 +226,8 @@ export type ContextLayer =
   | "org"
   | "channel"
   | "campaign"
+  /** The curated campaign plan revision (Sprint 53). */
+  | "plan"
   | "persona"
   | "account"
   | "zoom"
@@ -259,7 +267,23 @@ export interface ResolveAccount {
 
 export interface ResolveCampaign {
   name: string;
+  /**
+   * The campaign's free-text **additional instruction** (Sprint 53). Campaign
+   * *strategy* lives in `campaignPlan`, not here.
+   *
+   * Exception: when the campaign has no active plan revision, the API prepends
+   * the campaign row's legacy structured strategy so nothing is silently lost,
+   * and sets `legacyStrategyFallback` so the trace can say so.
+   */
   overlay: string;
+  /**
+   * Sprint 53 fallback flag: `overlay` leads with the campaign row's legacy
+   * structured block (objective/KPI/timeframe/audience/pillars) because there
+   * is no active plan revision to carry it. Purely for the trace — the resolver
+   * names it on both the campaign and the excluded campaign_plan section rather
+   * than letting a campaign quietly change what the model sees.
+   */
+  legacyStrategyFallback?: boolean;
   /** Campaign objective — zoom-query material (Sprint 43). */
   objective?: string;
   /** Campaign content pillars — zoom-query material (Sprint 43). */
@@ -325,6 +349,13 @@ export interface ResolveInput {
   channel: Channel;
   persona?: ResolvePersona;
   campaign?: ResolveCampaign;
+  /**
+   * The campaign's **active plan revision** (Sprint 53) — the curated strategy
+   * the founder edits in the plan form. The API loads it (there is no DB in
+   * here) and passes it alongside `campaign`; omitted or plan-less campaigns
+   * get an excluded section with a reason, never a crash.
+   */
+  campaignPlan?: ResolveCampaignPlan;
   /**
    * The publishing account's content profile (Sprint 44), resolved by the API
    * from the persona's primary connection (or the inbox item's connection).
@@ -594,18 +625,72 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
     tier: 1,
   });
 
+  // Sprint 53: this section is the campaign's *additional instruction*. Strategy
+  // moved to `campaign_plan` below. The one exception — a campaign with no
+  // active plan revision, whose legacy structured block the API folds back in —
+  // is named here rather than left for a reader to infer from the bytes.
   const campaignContent = input.campaign?.overlay.trim() ?? "";
+  const legacyFallback = campaignContent.length > 0 && input.campaign?.legacyStrategyFallback === true;
+  let campaignReason: string;
+  if (campaignContent.length > 0) {
+    campaignReason = legacyFallback
+      ? `Campaign instruction for "${input.campaign!.name}", led by its legacy structured strategy (objective/KPI/timeframe/audience/pillars) as a fallback: this campaign has no active plan revision. Activate a plan and the strategy moves to the campaign plan section.`
+      : `Campaign overlay for "${input.campaign!.name}".`;
+  } else {
+    campaignReason = input.campaign
+      ? `Excluded: campaign "${input.campaign.name}" has no additional instruction (its strategy lives in the campaign plan).`
+      : "Excluded: no campaign selected.";
+  }
   sections.push({
     key: "campaign",
     layer: "campaign",
     title: input.campaign ? `Campaign: ${input.campaign.name}` : "Campaign",
     content: campaignContent,
     included: campaignContent.length > 0,
-    reason:
-      campaignContent.length > 0
-        ? `Campaign overlay for "${input.campaign!.name}".`
-        : "Excluded: no campaign overlay yet (campaigns arrive in a later slice).",
+    reason: campaignReason,
     tokens: estimateTokens(campaignContent),
+    tier: 1,
+  });
+
+  // The curated plan revision (Sprint 53). Sits immediately after the campaign
+  // overlay and before persona, inside the stable cacheable prefix: strategy is
+  // campaign-scoped, so it moves exactly as often as the campaign section does.
+  // Tier 1 — this is what the campaign is actually trying to do.
+  const composedPlan = composeCampaignPlanSection(input.campaignPlan);
+  const planTitle = input.campaignPlan?.revision
+    ? `Campaign plan (revision ${input.campaignPlan.revision})`
+    : "Campaign plan";
+  let planReason: string;
+  if (!composedPlan.content) {
+    planReason = !input.campaign
+      ? "Excluded: no campaign selected, so there is no campaign plan."
+      : input.campaignPlan
+        ? `Excluded: the plan for "${input.campaign.name}" has no content yet.${
+            legacyFallback
+              ? " Its legacy structured strategy is carried in the campaign section as a fallback instead."
+              : ""
+          }`
+        : `Excluded: campaign "${input.campaign.name}" has no active plan revision.${
+            legacyFallback
+              ? " Its legacy structured strategy is carried in the campaign section as a fallback instead."
+              : ""
+          }`;
+  } else {
+    planReason = `Campaign plan (tier 1, constitutional): the active plan revision${
+      input.campaign ? ` for "${input.campaign.name}"` : ""
+    } — what this campaign is trying to do and how.`;
+    if (composedPlan.truncated) {
+      planReason += ` Truncated at the ${PLAN_SECTION_TOKEN_CAP}-token plan cap; cut or omitted: ${composedPlan.omitted.join(", ")}.`;
+    }
+  }
+  sections.push({
+    key: "campaign_plan",
+    layer: "plan",
+    title: planTitle,
+    content: composedPlan.content,
+    included: composedPlan.content.length > 0,
+    reason: planReason,
+    tokens: estimateTokens(composedPlan.content),
     tier: 1,
   });
 
@@ -940,6 +1025,23 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
     section.mode = "outline";
     section.title = `${plan.meta.title} (outline)`;
     section.reason = `${section.reason} — demoted to outline to fit the token budget (bundle was ${over} tokens over).`;
+  }
+
+  // Ladder step 4 (Sprint 53): the plan is tier 1 and so survives every rung
+  // above, but a full plan can be ~1,200 tokens of an 8,000 budget. Rather than
+  // ship overBudget with the plan intact, demote it to its compact form —
+  // objective + KPI + pillars, the strategy the prompt cannot do without.
+  if (includedTotal() > tokenBudget) {
+    const planSection = sections.find((s) => s.key === "campaign_plan")!;
+    if (planSection.included) {
+      const compact = composeCompactCampaignPlanSection(input.campaignPlan);
+      if (compact.content && compact.tokens < planSection.tokens) {
+        const over = includedTotal() - tokenBudget;
+        planSection.content = compact.content;
+        planSection.tokens = compact.tokens;
+        planSection.reason = `${planSection.reason} — demoted to the compact plan (objective, KPI, pillars) to fit the token budget (bundle was ${over} tokens over); dropped: ${compact.omitted.join(", ")}.`;
+      }
+    }
   }
 
   const includedTokens = includedTotal();

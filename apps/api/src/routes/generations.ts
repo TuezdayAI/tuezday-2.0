@@ -15,7 +15,7 @@ import { meteredLlm } from "../llm/metered";
 import { StructuredOutputError } from "../llm/structured";
 import { generateAngles } from "../services/angles";
 import { getBrain } from "../services/brain";
-import { campaignExecutionError, composeResolveCampaign, getCampaign } from "../services/campaigns";
+import { campaignExecutionError, getCampaign } from "../services/campaigns";
 import { resolveChannelGuidance } from "../services/guidance";
 import { retrieveEvidence } from "../services/evidence";
 import type { EvidenceStore } from "../evidence/store";
@@ -23,7 +23,7 @@ import { getGenerationSettings } from "../services/generation-settings";
 import { listGenerations, rateGeneration, storeGeneration } from "../services/generations";
 import { getPersona, toResolvePersona } from "../services/personas";
 import { resolveDraftAccount } from "../services/resolve-account";
-import { selectiveContextInputs } from "../services/resolve-input";
+import { campaignResolveInputs, selectiveContextInputs } from "../services/resolve-input";
 import { runPreReview, setGenerationReview } from "../services/review";
 import { getWorkspace } from "../services/workspaces";
 
@@ -99,7 +99,9 @@ export function registerGenerationRoutes(
     const selective = selectiveContextInputs(db, request.params.id);
 
     const personaInput = persona ? toResolvePersona(persona) : undefined;
-    const campaignInput = campaign ? composeResolveCampaign(campaign) : undefined;
+    // One helper, so the campaign section and the plan section can never be
+    // composed from different plans (Sprint 53 review, I4).
+    const campaignInputs = campaignResolveInputs(db, request.params.id, campaign);
     const account = resolveDraftAccount(db, request.params.id, {
       personaId: parsed.data.personaId,
       channel: parsed.data.channel,
@@ -125,7 +127,7 @@ export function registerGenerationRoutes(
             scope: channelGuidance.scopeLabel,
           },
           persona: personaInput,
-          campaign: campaignInput,
+          ...campaignInputs,
           account,
           ...selective,
           resolveMode: "brief",
@@ -171,7 +173,7 @@ export function registerGenerationRoutes(
           scope: channelGuidance.scopeLabel,
         },
         persona: personaInput,
-        campaign: campaignInput,
+        ...campaignInputs,
         account,
         ...selective,
         evidence: evidenceResolution.evidence,
@@ -216,7 +218,7 @@ export function registerGenerationRoutes(
             channel: parsed.data.channel,
             channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
             persona: personaInput,
-            campaign: campaignInput,
+            ...campaignInputs,
             ...selective,
           },
           result.text,
@@ -289,7 +291,7 @@ export function registerGenerationRoutes(
         scope: channelGuidance.scopeLabel,
       },
       persona: persona ? toResolvePersona(persona) : undefined,
-      campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+      ...campaignResolveInputs(db, request.params.id, campaign),
       account: resolveDraftAccount(db, request.params.id, {
         personaId: parsed.data.personaId,
         channel: parsed.data.channel,

@@ -33,7 +33,7 @@ import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { meteredLlm } from "../llm/metered";
 import { getAudienceDetail, loadPeople } from "./audiences";
 import { getBrain } from "./brain";
-import { composeResolveCampaign, getCampaign } from "./campaigns";
+import { getCampaign } from "./campaigns";
 import {
   ExternalActionPreparationError,
   deriveSendIdempotencyKey,
@@ -49,7 +49,7 @@ import {
   prepareEmailAction,
 } from "./external-action-email";
 import { resolveChannelGuidance } from "./guidance";
-import { selectiveContextInputs } from "./resolve-input";
+import { campaignResolveInputs, selectiveContextInputs } from "./resolve-input";
 import { listConnections } from "./connections";
 import type { DraftActor } from "./drafts";
 import { submitDraft } from "./drafts";
@@ -308,7 +308,7 @@ export async function generateLaunch(
   const campaign = launchRow.campaignId ? getCampaign(db, workspaceId, launchRow.campaignId) : undefined;
   const persona = launchRow.personaId ? getPersona(db, workspaceId, launchRow.personaId) : undefined;
   const personaArg = persona ? toResolvePersona(persona) : undefined;
-  const campaignArg = campaign ? composeResolveCampaign(campaign) : undefined;
+  const campaignArgs = campaignResolveInputs(db, workspaceId, campaign);
   const { docs } = getBrain(db, workspaceId);
   const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
   const selective = selectiveContextInputs(db, workspaceId);
@@ -347,7 +347,7 @@ export async function generateLaunch(
           scope: channelGuidance.scopeLabel,
         },
         persona: personaArg,
-        campaign: campaignArg,
+        ...campaignArgs,
         account,
         lead: lead ? { name: lead.name, company: lead.company, role: lead.role, notes: "" } : undefined,
         ...selective,

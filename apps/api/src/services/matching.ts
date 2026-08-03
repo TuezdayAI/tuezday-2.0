@@ -46,6 +46,22 @@ export function clampScore(score: number): number {
   return Math.max(0, Math.min(100, Math.round(score)));
 }
 
+/**
+ * Sprint 53: `suggestedPersonaId` / `suggestedCampaignId` are no longer stored
+ * on signals or discovered items — they are a read-only projection of the
+ * top-scoring match. Callers pass the already-loaded, already-ordered match
+ * list (score desc, createdAt asc), so the projection costs no extra query.
+ */
+export function projectSuggestedRouting(
+  matches: ReadonlyArray<Pick<DiscoveredItemMatch, "personaId" | "campaignId">>,
+): { suggestedPersonaId: string | null; suggestedCampaignId: string | null } {
+  const best = matches[0];
+  return {
+    suggestedPersonaId: best?.personaId ?? null,
+    suggestedCampaignId: best?.campaignId ?? null,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Prompt context
 // ---------------------------------------------------------------------------

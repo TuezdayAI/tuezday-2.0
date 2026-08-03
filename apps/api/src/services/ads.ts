@@ -10,12 +10,14 @@ import type {
 } from "@tuezday/contracts";
 import { CONNECTOR_PROVIDERS } from "@tuezday/contracts";
 import type { Db } from "../db";
+import { recordMetrics } from "./metrics";
 import {
   adAccounts,
   adCampaignMetrics,
   adCampaigns,
   campaigns,
   connections,
+  metrics,
   type AdAccountRow,
   type AdCampaignRow,
 } from "../db/schema";
@@ -249,6 +251,39 @@ function upsertMetrics(
       updated++;
     }
   }
+
+  // Sprint 55 dual-write: land every restated day in the unified fact table.
+  // 1d periodic buckets keyed on the day (UTC midnight), so a re-sync of the
+  // same day updates in place — Meta restates a rolling window every sync.
+  // "csv" rows are an import, not a live provider sync.
+  const factSource = source === "csv" ? ("imported" as const) : ("synced" as const);
+  const capturedAt = now;
+  for (const record of records) {
+    const campaign = campaignByExternalId.get(record.externalCampaignId)!;
+    const periodStart = Date.parse(`${record.date}T00:00:00.000Z`);
+    recordMetrics(
+      db,
+      workspaceId,
+      (
+        [
+          ["spend", record.spendCents],
+          ["impressions", record.impressions],
+          ["clicks", record.clicks],
+          ["conversions", record.conversions],
+        ] as const
+      ).map(([metricKey, value]) => ({
+        subjectType: "ad_campaign" as const,
+        subjectId: campaign.id,
+        metricKey,
+        value,
+        window: "1d" as const,
+        periodStart,
+        source: factSource,
+        capturedAt,
+      })),
+    );
+  }
+
   return { campaigns: seenCampaigns.size, rows: records.length, created, updated };
 }
 
@@ -485,15 +520,31 @@ export function getCampaignAdMetrics(db: Db, campaign: Campaign): CampaignAdMetr
     .where(eq(adAccounts.workspaceId, campaign.workspaceId))
     .all();
   const accountById = new Map(accountRows.map((row) => [row.id, row]));
-  const metricRows = db
+  // Sprint 55: paid totals read the unified fact table — ad_campaign-subject
+  // 1d buckets — not the legacy per-day store. Identity (name,
+  // account, currency) still comes from the entity tables above. Summing 1d
+  // buckets is periodic+periodic: no window mixing here.
+  const factRows = db
     .select()
-    .from(adCampaignMetrics)
-    .where(inArray(adCampaignMetrics.adCampaignId, linked.map((row) => row.id)))
+    .from(metrics)
+    .where(
+      and(
+        eq(metrics.workspaceId, campaign.workspaceId),
+        eq(metrics.subjectType, "ad_campaign"),
+        eq(metrics.window, "1d"),
+        inArray(metrics.subjectId, linked.map((row) => row.id)),
+      ),
+    )
     .all();
 
   const byCampaign = new Map<string, AdsReportTotals>();
-  for (const row of metricRows) {
-    byCampaign.set(row.adCampaignId, addTotals(byCampaign.get(row.adCampaignId) ?? ZERO_TOTALS, row));
+  for (const row of factRows) {
+    const totals = { ...(byCampaign.get(row.subjectId) ?? ZERO_TOTALS) };
+    if (row.metricKey === "spend") totals.spendCents += row.value;
+    else if (row.metricKey === "impressions") totals.impressions += row.value;
+    else if (row.metricKey === "clicks") totals.clicks += row.value;
+    else if (row.metricKey === "conversions") totals.conversions += row.value;
+    byCampaign.set(row.subjectId, totals);
   }
   const perCampaign = linked.map((row) => {
     const account = accountById.get(row.adAccountId);

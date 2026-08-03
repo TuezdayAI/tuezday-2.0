@@ -19,7 +19,7 @@ import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
 import { getBrain } from "./brain";
 import { getCurrentCampaignPlan } from "./campaign-plans";
-import { composeResolveCampaign, getCampaign } from "./campaigns";
+import { getCampaign } from "./campaigns";
 import { listConnections, providerByKey } from "./connections";
 import {
   applyDraftActionInTransaction,
@@ -48,7 +48,7 @@ import {
 } from "./persona-social-accounts";
 import { listPublications } from "./publications";
 import { resolveDraftAccount } from "./resolve-account";
-import { selectiveContextInputs } from "./resolve-input";
+import { campaignResolveInputs, selectiveContextInputs } from "./resolve-input";
 import { getSignal } from "./signals";
 import { getWorkspace } from "./workspaces";
 
@@ -397,7 +397,7 @@ export async function reviseDraft(
         scope: channelGuidance.scopeLabel,
       },
       persona: persona ? toResolvePersona(persona) : undefined,
-      campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+      ...campaignResolveInputs(db, input.workspaceId, campaign),
       account: resolveDraftAccount(db, input.workspaceId, {
         personaId: draft.personaId,
         channel: draft.channel,

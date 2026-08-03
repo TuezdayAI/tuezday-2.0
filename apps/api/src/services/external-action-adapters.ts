@@ -1211,6 +1211,24 @@ export function paidLaunchActionAdapter(
       return paidLaunchIntent(db, action.workspaceId, payload.launchId);
     },
 
+    // Sprint 54 (D4b) — the spend guardrails are knowable the moment the launch
+    // is proposed, so they refuse there rather than after someone has clicked
+    // Authorize and a decision row already claims they authorized this spend.
+    // Deliberately narrower than `guard`: only the workspace kill switch and the
+    // committed-budget cap. The connection and already-launched checks are
+    // re-read at dispatch, where they are current.
+    async guardAtProposal(action, rawPayload): Promise<ExternalActionBlocker | null> {
+      const payload = asPaidLaunchPayload(rawPayload);
+      const launch = getAdLaunch(db, action.workspaceId, payload.launchId);
+      // A launch that vanished between preparation and insert is `guard`'s to
+      // report — at proposal there is nothing to bound the spend of.
+      if (!launch) return null;
+      const guardrails = checkSpendGuardrails(db, launch);
+      return guardrails.ok
+        ? null
+        : { code: guardrails.error, message: guardrails.message, retryable: true };
+    },
+
     async guard(action, rawPayload): Promise<ExternalActionBlocker | null> {
       const payload = asPaidLaunchPayload(rawPayload);
       const launch = getAdLaunch(db, action.workspaceId, payload.launchId);
@@ -1279,10 +1297,6 @@ export function paidLaunchActionAdapter(
           launch,
           payload.externalAccountId,
           payload.creative,
-          // Rebuilt from the persisted proposer, which does not record humanity
-          // (Sprint 52). performLaunch uses this for launch-decision attribution
-          // only — it never approves a draft — so it fails closed as non-human.
-          { userId: action.proposedBy.userId, label: action.proposedBy.label, human: false },
           payload.imageUrl,
         );
         await emitEvent(db, fetcher, action.workspaceId, "ad.launched", {
@@ -1461,7 +1475,10 @@ export function budgetChangeActionAdapter(
       });
       if (!guardrails.ok) {
         return {
-          code: guardrails.error === "kill_switch_on" ? "kill_switch" : guardrails.error,
+          // Sprint 54 Task 1 — one blocker spelling across all three ad kinds.
+          // This used to rewrite `kill_switch_on` to `kill_switch`, so the same
+          // guardrail answered "who stopped this?" with two different codes.
+          code: guardrails.error,
           message: guardrails.message,
           retryable: true,
         };
@@ -1690,7 +1707,10 @@ export function targetingChangeActionAdapter(
       const guardrails = checkSpendGuardrails(db, launch);
       if (!guardrails.ok) {
         return {
-          code: guardrails.error === "kill_switch_on" ? "kill_switch" : guardrails.error,
+          // Sprint 54 Task 1 — one blocker spelling across all three ad kinds.
+          // This used to rewrite `kill_switch_on` to `kill_switch`, so the same
+          // guardrail answered "who stopped this?" with two different codes.
+          code: guardrails.error,
           message: guardrails.message,
           retryable: true,
         };

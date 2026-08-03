@@ -263,7 +263,7 @@ export default function AdCreativesPage() {
           }
         />
         {activeCampaigns.length === 0 ? (
-          <EmptyState description={<>Ad creative is generated for a campaign — the campaign overlay drives the offer and
+          <EmptyState description={<>Ad creative is generated for a campaign — the campaign plan drives the offer and
             angle. <Link href={`/workspaces/${id}/campaigns`}>Create a campaign first</Link>.</>} />
         ) : (
           <div className="resolve-controls">
