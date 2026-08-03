@@ -28,7 +28,7 @@ import { storeGeneration } from "../services/generations";
 import { resolveChannelGuidance } from "../services/guidance";
 import { csvField } from "../services/leads";
 import { getPersona, toResolvePersona } from "../services/personas";
-import { selectiveContextInputs } from "../services/resolve-input";
+import { campaignPlanInput, selectiveContextInputs } from "../services/resolve-input";
 import { getWorkspace } from "../services/workspaces";
 
 function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
@@ -100,6 +100,7 @@ export function registerAdCreativeRoutes(
         },
         persona: persona ? toResolvePersona(persona) : undefined,
         campaign: composeResolveCampaign(campaign),
+        campaignPlan: campaignPlanInput(db, request.params.id, campaign.id),
         ...selectiveContextInputs(db, request.params.id),
         evidence: evidenceResolution.evidence,
         evidenceExclusionReason: evidenceResolution.exclusionReason,

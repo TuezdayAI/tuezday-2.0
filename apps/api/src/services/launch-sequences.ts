@@ -49,7 +49,7 @@ import {
 import { checkEmailRecipientSafety } from "./email-recipient-safety";
 import { getExternalAction } from "./external-actions";
 import { resolveChannelGuidance } from "./guidance";
-import { selectiveContextInputs } from "./resolve-input";
+import { campaignPlanInput, selectiveContextInputs } from "./resolve-input";
 import { listConnections } from "./connections";
 import { applyDraftAction, submitDraft, type DraftActor } from "./drafts";
 import { retrieveEvidence } from "./evidence";
@@ -347,6 +347,7 @@ async function generateStepMessage(
   const persona = launch.personaId ? getPersona(ctx.db, launch.workspaceId, launch.personaId) : undefined;
   const personaArg = persona ? toResolvePersona(persona) : undefined;
   const campaignArg = campaign ? composeResolveCampaign(campaign) : undefined;
+  const planArg = campaignPlanInput(ctx.db, launch.workspaceId, launch.campaignId);
   const person = ctx.pool.get(`${recipient.recipientType}:${recipient.recipientId}`);
 
   const useFollowup = step.stepNumber > 1 || step.instruction.trim().length > 0;
@@ -418,6 +419,7 @@ async function generateStepMessage(
       },
       persona: personaArg,
       campaign: campaignArg,
+      campaignPlan: planArg,
       account: resolveDraftAccount(ctx.db, launch.workspaceId, {
         personaId: launch.personaId,
         channel: gen.channel,

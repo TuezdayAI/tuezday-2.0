@@ -83,6 +83,7 @@ import { registerBillingRoutes, registerStripeWebhookRoute } from "./routes/bill
 import { registerNotificationRoutes } from "./routes/notifications";
 import { registerApiKeyRoutes } from "./routes/api-keys";
 import { registerPublicApiRoutes } from "./routes/public-api";
+import { backfillMissingCampaignPlans } from "./services/campaign-plan-backfill";
 import { backfillExternalActionPolicies } from "./services/external-action-backfill";
 import { createExternalActionAdapters } from "./services/external-action-adapters";
 import { createExternalActionRuntime } from "./services/external-action-coordinator";
@@ -186,6 +187,10 @@ export async function buildApp({
   const effectiveShutdownSignal =
     shutdownSignal ?? ownedShutdown!.signal;
   backfillExternalActionPolicies(db);
+  // Sprint 53: every campaign must own a plan revision before Task 4 removes
+  // the legacy structured block from the campaign overlay. Idempotent — only
+  // campaigns with no revision at all are candidates.
+  backfillMissingCampaignPlans(db);
   repairDanglingDuplicateGroups(db);
   const externalActionRuntime = createExternalActionRuntime({
     db,

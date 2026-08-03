@@ -46,7 +46,7 @@ import { notifyReplyOutcome } from "./notifications";
 import { logPositiveReplyTask } from "./crm";
 import { getPersona, toResolvePersona } from "./personas";
 import { resolveDraftAccount } from "./resolve-account";
-import { selectiveContextInputs } from "./resolve-input";
+import { campaignPlanInput, selectiveContextInputs } from "./resolve-input";
 import { getWorkspace } from "./workspaces";
 import {
   connectedPoolMailboxIds,
@@ -439,6 +439,7 @@ async function generateOutreachStep(
       },
       persona: persona ? toResolvePersona(persona) : undefined,
       campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+      campaignPlan: campaignPlanInput(ctx.db, seq.workspaceId, seq.campaignId),
       account: resolveDraftAccount(ctx.db, seq.workspaceId, { personaId: seq.personaId, channel: "email" }),
       lead: {
         name: person?.name ?? enrollment.recipientEmail,

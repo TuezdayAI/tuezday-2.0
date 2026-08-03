@@ -42,6 +42,7 @@ import { EntitlementError } from "../services/entitlements";
 import { getTurnByRequest } from "../services/draft-revisions";
 import { getGenerationSettings } from "../services/generation-settings";
 import { getPersona, toResolvePersona } from "../services/personas";
+import { campaignPlanInput } from "../services/resolve-input";
 import { runPreReview, setDraftReview } from "../services/review";
 import { getWorkspace } from "../services/workspaces";
 import type { BrainContents } from "@tuezday/brain";
@@ -134,6 +135,7 @@ export function registerDraftRoutes(
           campaign: campaign
             ? { name: campaign.name, overlay: composeCampaignOverlay(campaign) }
             : undefined,
+          campaignPlan: campaignPlanInput(db, request.params.id, draft.campaignId),
         },
         draft.content,
         settings.flagThreshold,

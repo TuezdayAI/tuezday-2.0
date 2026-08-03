@@ -16,7 +16,7 @@ import type { EvidenceStore } from "../evidence/store";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { getBrain } from "../services/brain";
 import { campaignExecutionError, composeResolveCampaign, getCampaign } from "../services/campaigns";
-import { selectiveContextInputs } from "../services/resolve-input";
+import { campaignPlanInput, selectiveContextInputs } from "../services/resolve-input";
 import { submitDraft } from "../services/drafts";
 import { retrieveEvidence } from "../services/evidence";
 import { getGenerationSettings } from "../services/generation-settings";
@@ -155,6 +155,7 @@ export function registerPrRoutes(
     });
     const settings = getGenerationSettings(db, request.params.id);
     const selective = selectiveContextInputs(db, request.params.id);
+    const planInput = campaignPlanInput(db, request.params.id, campaign?.id);
 
     const results = [];
     for (const contact of contactRecords) {
@@ -170,6 +171,7 @@ export function registerPrRoutes(
         },
         persona: persona ? toResolvePersona(persona) : undefined,
         campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+        campaignPlan: planInput,
         ...selective,
         mediaContact: {
           name: contact.name,
@@ -213,6 +215,7 @@ export function registerPrRoutes(
               channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
               persona: persona ? toResolvePersona(persona) : undefined,
               campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+              campaignPlan: planInput,
               ...selective,
             },
             result.text,
@@ -306,6 +309,7 @@ export function registerPrRoutes(
       campaignId: parsed.data.campaignId ?? null,
     });
     const selective = selectiveContextInputs(db, request.params.id);
+    const planInput = campaignPlanInput(db, request.params.id, campaign?.id);
     const resolved = resolveContext({
       workspaceName: workspace.name,
       docs: contents,
@@ -318,6 +322,7 @@ export function registerPrRoutes(
       },
       persona: persona ? toResolvePersona(persona) : undefined,
       campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+      campaignPlan: planInput,
       ...selective,
       evidence: evidenceResolution.evidence,
       evidenceExclusionReason: evidenceResolution.exclusionReason,
@@ -350,6 +355,7 @@ export function registerPrRoutes(
             channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
             persona: persona ? toResolvePersona(persona) : undefined,
             campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+            campaignPlan: planInput,
             ...selective,
           },
           result.text,

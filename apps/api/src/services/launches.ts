@@ -48,7 +48,7 @@ import {
   prepareEmailAction,
 } from "./external-action-email";
 import { resolveChannelGuidance } from "./guidance";
-import { selectiveContextInputs } from "./resolve-input";
+import { campaignPlanInput, selectiveContextInputs } from "./resolve-input";
 import { listConnections } from "./connections";
 import type { DraftActor } from "./drafts";
 import { submitDraft } from "./drafts";
@@ -308,6 +308,7 @@ export async function generateLaunch(
   const persona = launchRow.personaId ? getPersona(db, workspaceId, launchRow.personaId) : undefined;
   const personaArg = persona ? toResolvePersona(persona) : undefined;
   const campaignArg = campaign ? composeResolveCampaign(campaign) : undefined;
+  const planArg = campaignPlanInput(db, workspaceId, launchRow.campaignId);
   const { docs } = getBrain(db, workspaceId);
   const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
   const selective = selectiveContextInputs(db, workspaceId);
@@ -347,6 +348,7 @@ export async function generateLaunch(
         },
         persona: personaArg,
         campaign: campaignArg,
+        campaignPlan: planArg,
         account,
         lead: lead ? { name: lead.name, company: lead.company, role: lead.role, notes: "" } : undefined,
         ...selective,

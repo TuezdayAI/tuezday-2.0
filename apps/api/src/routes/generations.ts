@@ -21,7 +21,7 @@ import { getGenerationSettings } from "../services/generation-settings";
 import { listGenerations, rateGeneration, storeGeneration } from "../services/generations";
 import { getPersona, toResolvePersona } from "../services/personas";
 import { resolveDraftAccount } from "../services/resolve-account";
-import { selectiveContextInputs } from "../services/resolve-input";
+import { campaignPlanInput, selectiveContextInputs } from "../services/resolve-input";
 import { runPreReview, setGenerationReview } from "../services/review";
 import { getWorkspace } from "../services/workspaces";
 
@@ -98,6 +98,7 @@ export function registerGenerationRoutes(
 
     const personaInput = persona ? toResolvePersona(persona) : undefined;
     const campaignInput = campaign ? composeResolveCampaign(campaign) : undefined;
+    const planInput = campaignPlanInput(db, request.params.id, campaign?.id);
     const account = resolveDraftAccount(db, request.params.id, {
       personaId: parsed.data.personaId,
       channel: parsed.data.channel,
@@ -124,6 +125,7 @@ export function registerGenerationRoutes(
           },
           persona: personaInput,
           campaign: campaignInput,
+          campaignPlan: planInput,
           account,
           ...selective,
           resolveMode: "brief",
@@ -158,6 +160,7 @@ export function registerGenerationRoutes(
         },
         persona: personaInput,
         campaign: campaignInput,
+        campaignPlan: planInput,
         account,
         ...selective,
         evidence: evidenceResolution.evidence,
@@ -194,6 +197,7 @@ export function registerGenerationRoutes(
             channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
             persona: personaInput,
             campaign: campaignInput,
+            campaignPlan: planInput,
             ...selective,
           },
           result.text,
@@ -267,6 +271,7 @@ export function registerGenerationRoutes(
       },
       persona: persona ? toResolvePersona(persona) : undefined,
       campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+      campaignPlan: campaignPlanInput(db, request.params.id, campaign?.id),
       account: resolveDraftAccount(db, request.params.id, {
         personaId: parsed.data.personaId,
         channel: parsed.data.channel,

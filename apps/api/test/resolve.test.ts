@@ -38,7 +38,13 @@ describe("resolve API", () => {
     });
     expect(res.statusCode).toBe(200);
     const bundle = res.json();
-    expect(bundle.sections.map((s: { key: string }) => s.key)).toEqual([
+    const keys = bundle.sections.map((s: { key: string }) => s.key);
+    // Sprint 53: the plan rides immediately after the campaign overlay and
+    // before persona. Asserted by index arithmetic first, so a future edit of
+    // the pinned list below cannot silently move it.
+    expect(keys.indexOf("campaign_plan")).toBe(keys.indexOf("campaign") + 1);
+    expect(keys.indexOf("campaign_plan")).toBe(keys.indexOf("persona") - 1);
+    expect(keys).toEqual([
       "org:soul",
       "org:icp",
       "org:voice",
@@ -46,6 +52,7 @@ describe("resolve API", () => {
       "org:now",
       "channel",
       "campaign",
+      "campaign_plan",
       "persona",
       "lead",
       "media_contact",
@@ -121,5 +128,113 @@ describe("resolve API", () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().tokenBudget).toBe(500);
+  });
+
+  // Sprint 53 — the resolver reads the curated plan, so the API layer has to
+  // load it. Without this plumbing the section composed in Sprint 53 Task 2 is
+  // inert: it is always present and always excluded.
+  describe("campaign plan (Sprint 53)", () => {
+    async function createCampaign(name: string): Promise<string> {
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns`,
+        payload: { name },
+      });
+      expect(res.statusCode).toBe(201);
+      return res.json().id;
+    }
+
+    async function activatePlan(
+      campaignId: string,
+      plan: { objective?: string; kpi?: string; pillars?: string[]; guidance?: string },
+    ): Promise<void> {
+      const created = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions`,
+        payload: { startAt: null, endAt: null, ...plan },
+      });
+      expect(created.statusCode).toBe(201);
+      const activated = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions/${created.json().id}/activate`,
+      });
+      expect(activated.statusCode).toBe(200);
+    }
+
+    it("populates the campaign_plan section from the active plan revision", async () => {
+      const campaignId = await createCampaign("Category creation");
+      await activatePlan(campaignId, {
+        objective: "Own the phrase GTM amnesia",
+        kpi: "Qualified conversations per week",
+        pillars: ["Memory beats tooling", "Show the trace"],
+        guidance: "Never say synergy.",
+      });
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/resolve`,
+        payload: { taskType: "linkedin_post", channel: "linkedin", campaignId },
+      });
+      expect(res.statusCode).toBe(200);
+      const bundle = res.json();
+      const section = bundle.sections.find((s: { key: string }) => s.key === "campaign_plan");
+      expect(section.included).toBe(true);
+      expect(section.tier).toBe(1);
+      expect(section.tokens).toBeGreaterThan(0);
+      expect(section.title).toBe("Campaign plan (revision 1)");
+      expect(section.content).toContain("Own the phrase GTM amnesia");
+      expect(section.content).toContain("Memory beats tooling");
+      // …and it actually reaches the prompt, not just the trace.
+      expect(bundle.prompt).toContain("Qualified conversations per week");
+      expect(bundle.prompt).toContain("Never say synergy.");
+    });
+
+    it("degrades to an excluded-with-reason section when the campaign has no plan", async () => {
+      const campaignId = await createCampaign("Unplanned");
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/resolve`,
+        payload: { taskType: "linkedin_post", channel: "linkedin", campaignId },
+      });
+      expect(res.statusCode).toBe(200);
+      const section = res
+        .json()
+        .sections.find((s: { key: string }) => s.key === "campaign_plan");
+      expect(section.included).toBe(false);
+      expect(section.tokens).toBe(0);
+      expect(section.reason).toContain("no active plan revision");
+    });
+
+    it("reports no campaign at all rather than crashing", async () => {
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/resolve`,
+        payload: { taskType: "linkedin_post", channel: "linkedin" },
+      });
+      expect(res.statusCode).toBe(200);
+      const section = res
+        .json()
+        .sections.find((s: { key: string }) => s.key === "campaign_plan");
+      expect(section.included).toBe(false);
+      expect(section.reason).toContain("no campaign selected");
+    });
+
+    it("resolves the newly activated revision after the plan is edited", async () => {
+      const campaignId = await createCampaign("Iterating");
+      await activatePlan(campaignId, { objective: "V1", pillars: ["Pillar the first"] });
+      await activatePlan(campaignId, { objective: "V2", pillars: ["Pillar the second"] });
+
+      const res = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/resolve`,
+        payload: { taskType: "linkedin_post", channel: "linkedin", campaignId },
+      });
+      const section = res
+        .json()
+        .sections.find((s: { key: string }) => s.key === "campaign_plan");
+      expect(section.title).toBe("Campaign plan (revision 2)");
+      expect(section.content).toContain("Pillar the second");
+      expect(section.content).not.toContain("Pillar the first");
+    });
   });
 });

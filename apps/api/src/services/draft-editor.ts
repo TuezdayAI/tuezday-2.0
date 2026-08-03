@@ -47,7 +47,7 @@ import {
 } from "./persona-social-accounts";
 import { listPublications } from "./publications";
 import { resolveDraftAccount } from "./resolve-account";
-import { selectiveContextInputs } from "./resolve-input";
+import { campaignPlanInput, selectiveContextInputs } from "./resolve-input";
 import { getSignal } from "./signals";
 import { getWorkspace } from "./workspaces";
 
@@ -397,6 +397,7 @@ export async function reviseDraft(
       },
       persona: persona ? toResolvePersona(persona) : undefined,
       campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+      campaignPlan: campaignPlanInput(db, input.workspaceId, draft.campaignId),
       account: resolveDraftAccount(db, input.workspaceId, {
         personaId: draft.personaId,
         channel: draft.channel,

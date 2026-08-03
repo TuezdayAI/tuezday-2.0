@@ -11,7 +11,7 @@ import { storeGeneration } from "./generations";
 import { resolveChannelGuidance } from "./guidance";
 import { toResolvePersona } from "./personas";
 import { resolveDraftAccount } from "./resolve-account";
-import { selectiveContextInputs } from "./resolve-input";
+import { campaignPlanInput, selectiveContextInputs } from "./resolve-input";
 
 export interface GenerateReplyContext {
   /** Our original post/DM that drew this reply, when known. */
@@ -67,6 +67,7 @@ export async function generateEngagementReply(
     channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
     persona: ctx.persona ? toResolvePersona(ctx.persona) : undefined,
     campaign: ctx.campaign ? composeResolveCampaign(ctx.campaign) : undefined,
+    campaignPlan: campaignPlanInput(db, workspace.id, ctx.campaign?.id),
     // The reply publishes from the same account the inbound item arrived on.
     account: resolveDraftAccount(db, workspace.id, {
       channel: item.channel,

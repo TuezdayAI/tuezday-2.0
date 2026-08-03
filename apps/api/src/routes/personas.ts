@@ -8,7 +8,7 @@ import { resolveContext, type BrainContents } from "@tuezday/brain";
 import type { Db } from "../db";
 import { getBrain } from "../services/brain";
 import { campaignExecutionError, composeResolveCampaign, getCampaign } from "../services/campaigns";
-import { selectiveContextInputs } from "../services/resolve-input";
+import { campaignPlanInput, selectiveContextInputs } from "../services/resolve-input";
 import { retrieveEvidence } from "../services/evidence";
 import { resolveChannelGuidance } from "../services/guidance";
 import type { EvidenceStore } from "../evidence/store";
@@ -221,6 +221,7 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
       },
       persona: persona ? toResolvePersona(persona) : undefined,
       campaign: campaign ? composeResolveCampaign(campaign) : undefined,
+      campaignPlan: campaignPlanInput(db, request.params.id, campaign?.id),
       account: resolveDraftAccount(db, request.params.id, {
         personaId: parsed.data.personaId,
         channel: parsed.data.channel,
