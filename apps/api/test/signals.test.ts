@@ -336,7 +336,9 @@ describe("signals API", () => {
     it.each([
       ["signal insert", "afterSignalInsert", "fault_after_signal"],
       ["match insert", "afterMatchInsert", "fault_after_match"],
-      ["suggested projection", "afterProjectionUpdate", "fault_after_projection"],
+      // Sprint 53 removed the stored-projection write; the last crash point is
+      // now the read-back that precedes the commit.
+      ["read-back", "beforeReturn", "fault_before_return"],
     ] as const)(
       "rolls back every write after a fault following %s",
       async (_phase, hookName, fault) => {
@@ -549,9 +551,17 @@ describe("signals API", () => {
         score: 74,
         reason: "Fits the launch pipeline.",
       });
-      // the best match is patched onto the convenience fields
+      // Sprint 53: the convenience fields are a read-only projection of the
+      // top-scoring match — nothing is stored on the signal row itself.
       expect(signal.suggestedPersonaId).toBe(personaId);
       expect(signal.suggestedCampaignId).toBe(campaignId);
+      const storedRow = db
+        .select()
+        .from(signals)
+        .where(eq(signals.id, signal.id))
+        .get()!;
+      expect(storedRow.suggestedPersonaId).toBeNull();
+      expect(storedRow.suggestedCampaignId).toBeNull();
       // and it is backed by a real signal_matches row
       const rows = db
         .select()
@@ -614,6 +624,92 @@ describe("signals API", () => {
         },
       ]);
       expect(signal.suggestedCampaignId).toBe(campaignId);
+      await matchApp.close();
+    });
+
+    // Sprint 53 (D3b): explicit routing is *input*, never storage. It becomes a
+    // score-100 match row, and every read of the legacy pair is derived from it.
+    it("stores explicit routing as a match row, not as signal columns", async () => {
+      const calls: string[] = [];
+      const { matchApp, db, wsId, personaId, campaignId } = await buildMatchingApp(
+        matchingGateway({ personaId: null, campaignId: null }, calls),
+      );
+      const res = await matchApp.inject({
+        method: "POST",
+        url: `/workspaces/${wsId}/signals`,
+        payload: {
+          content: "Route this one by hand",
+          source: "other",
+          suggestedPersonaId: personaId,
+          suggestedCampaignId: campaignId,
+        },
+      });
+      expect(res.statusCode).toBe(201);
+      expect(calls).toHaveLength(0); // the "skip the LLM" branch still fires
+
+      const signal = res.json();
+      expect(signalSchema.safeParse(signal).success).toBe(true);
+
+      // backed by one real score-100 match row...
+      const rows = db
+        .select()
+        .from(signalMatches)
+        .where(eq(signalMatches.signalId, signal.id))
+        .all();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ personaId, campaignId, score: 100 });
+
+      // ...with nothing written to the legacy columns...
+      const stored = db.select().from(signals).where(eq(signals.id, signal.id)).get()!;
+      expect(stored.suggestedPersonaId).toBeNull();
+      expect(stored.suggestedCampaignId).toBeNull();
+
+      // ...yet both the single read and the list read still project them.
+      expect(signal).toMatchObject({
+        suggestedPersonaId: personaId,
+        suggestedCampaignId: campaignId,
+      });
+      const listed = (
+        await matchApp.inject({ method: "GET", url: `/workspaces/${wsId}/signals` })
+      ).json();
+      expect(listed).toHaveLength(1);
+      expect(listed[0]).toMatchObject({
+        suggestedPersonaId: personaId,
+        suggestedCampaignId: campaignId,
+      });
+      await matchApp.close();
+    });
+
+    it("the projection follows the matches when the top match is removed", async () => {
+      const calls: string[] = [];
+      const { matchApp, db, wsId, personaId, campaignId } = await buildMatchingApp(
+        matchingGateway({ personaId: null, campaignId: null }, calls),
+      );
+      const signal = (
+        await matchApp.inject({
+          method: "POST",
+          url: `/workspaces/${wsId}/signals`,
+          payload: {
+            content: "Routing that later changes",
+            source: "other",
+            suggestedPersonaId: personaId,
+            suggestedCampaignId: campaignId,
+          },
+        })
+      ).json();
+      expect(signal.suggestedPersonaId).toBe(personaId);
+
+      db.delete(signalMatches).where(eq(signalMatches.signalId, signal.id)).run();
+
+      const listed = (
+        await matchApp.inject({ method: "GET", url: `/workspaces/${wsId}/signals` })
+      ).json();
+      expect(listed[0]).toMatchObject({
+        matches: [],
+        suggestedPersonaId: null,
+        suggestedCampaignId: null,
+      });
+      expect(campaignId).toBeTruthy();
       await matchApp.close();
     });
 
