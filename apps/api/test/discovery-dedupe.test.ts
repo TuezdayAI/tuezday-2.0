@@ -1,12 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
 import {
+  campaigns,
   discoveredItemMatches,
   discoveredItems,
   discoverySources,
+  personas,
   workspaces,
   type DiscoveredItemRow,
 } from "../src/db/schema";
+import { getDiscoveredItem } from "../src/services/discovery";
 import {
   deleteDiscoverySourcePreservingDuplicates,
   repairDanglingDuplicateGroups,
@@ -205,6 +208,63 @@ describe("discovery dedupe source deletion", () => {
         .where(eq(discoveredItems.id, "survivor-newer"))
         .get()!.duplicateOfId,
     ).toBe("survivor-oldest");
+  });
+
+  // Sprint 53: the collapse no longer copies the legacy routing columns — it
+  // moves the match rows, and routing is projected from those.
+  it("carries routing across a collapse through the moved match rows", () => {
+    const f = canonicalGroup();
+    f.db
+      .insert(personas)
+      .values({
+        id: "persona-live",
+        workspaceId: f.workspaceId,
+        name: "Field CTO",
+        createdAt: 1,
+        updatedAt: 1,
+      })
+      .run();
+    f.db
+      .insert(campaigns)
+      .values({
+        id: "campaign-live",
+        workspaceId: f.workspaceId,
+        name: "Launch",
+        createdAt: 1,
+        updatedAt: 1,
+      })
+      .run();
+    f.db
+      .update(discoveredItemMatches)
+      .set({ personaId: "persona-live", campaignId: "campaign-live" })
+      .where(eq(discoveredItemMatches.id, "match-a"))
+      .run();
+    // the legacy columns are already gone (as Task 7's migration will leave them)
+    f.db
+      .update(discoveredItems)
+      .set({ suggestedPersonaId: null, suggestedCampaignId: null })
+      .where(eq(discoveredItems.id, "canonical"))
+      .run();
+
+    expect(
+      deleteDiscoverySourcePreservingDuplicates(f.db, f.workspaceId, "source-a"),
+    ).toBe(true);
+
+    const promoted = getDiscoveredItem(f.db, f.workspaceId, "survivor-oldest")!;
+    expect(promoted.matches[0]).toMatchObject({
+      personaId: "persona-live",
+      campaignId: "campaign-live",
+      score: 80,
+    });
+    expect(promoted.suggestedPersonaId).toBe("persona-live");
+    expect(promoted.suggestedCampaignId).toBe("campaign-live");
+    expect(
+      f.db
+        .select()
+        .from(discoveredItems)
+        .where(eq(discoveredItems.id, "survivor-oldest"))
+        .get()!.suggestedPersonaId,
+    ).toBeNull();
   });
 
   it("rolls back promotion and repointing when source deletion faults", () => {

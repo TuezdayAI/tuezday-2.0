@@ -135,7 +135,7 @@ Defer: Graphiti (temporal graph) and Mem0 — only after RAG is useful. Avoid as
 ## Conventions From the Plans
 
 - Enum vocabularies are defined once in `packages/contracts` — approval states (`draft`, `pending_review`, `approved`, `rejected`, `edited`), output ratings (`accepted` / `needs_edit` / `rejected`), brain doc types, task types, channels, workspace roles. Import them; do not redeclare.
-- Approval state transitions must use `transitionTo()` / `canTransition()` from `packages/contracts` — the canonical state machine. Same for `adLaunchTransitionTo()`. Never roll your own transition logic.
+- Approval state transitions must use `transitionTo()` / `canTransition()` from `packages/contracts` — the canonical state machine. External actions (including ad launches) use `canTransitionExternalAction()` / `transitionExternalAction()`. Never roll your own transition logic. (Sprint 54 retired the bespoke `adLaunchTransitionTo()`; an ad launch's remaining setup gate is the single `isAdLaunchEditable` predicate.)
 - Resolver input: workspace, task type, channel, persona, optional campaign → output: ordered context bundle with a trace explaining why each section was included. Context must be readable before any LLM call.
 - Output ratings are stored as training signals that feed the learning loop back into the `now` doc.
 - A prior Tuezday codebase exists elsewhere; salvage concepts (prompt layering, approval statuses, draft state machine, training examples, webhook/event shape) but do not port code wholesale.

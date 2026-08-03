@@ -986,6 +986,11 @@ a.workspace-card:hover {
 .layer-org { color: var(--lavender-ink); background: var(--lavender); }
 .layer-channel { color: var(--mint-ink); background: var(--mint); }
 .layer-campaign { color: var(--peach-ink); background: var(--peach); }
+/* Sprint 53: the curated campaign plan revision. Same family as the campaign
+   overlay — they are siblings, strategy and instruction — with a border to tell
+   them apart at a glance. There is no fallback rule for an unknown layer, so
+   this must exist or the badge renders bare in three surfaces. */
+.layer-plan { color: var(--peach-ink); background: var(--peach); border: 1px solid var(--peach-ink); }
 .layer-persona { color: var(--amber-ink); background: var(--amber); }
 .layer-task { color: var(--rose-ink); background: var(--rose); }
 .layer-zoom { color: var(--c3-deep); background: var(--c3-wash); }

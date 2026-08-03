@@ -325,8 +325,10 @@ function commitMatchingResult(
         .update(discoveredItems)
         .set({
           score: clampScore(entry.score as number),
-          suggestedPersonaId: best?.personaId ?? null,
-          suggestedCampaignId: best?.campaignId ?? null,
+          // Sprint 53 (D3b): the item's suggested persona/campaign are no longer
+          // stored. They are projected from the top-scoring row written by
+          // replaceItemMatches above (see projectSuggestedRouting in
+          // services/matching.ts). scoreReason stays a real stored column.
           scoreReason: best
             ? best.reason
             : typeof entry.reason === "string"

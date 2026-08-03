@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   INBOX_ITEM_KINDS,
   INBOX_ITEM_STATUSES,
-  METRIC_WINDOWS,
+  PUBLICATION_METRIC_WINDOWS,
   TASK_TYPES,
   inboxItemSchema,
   inboxRunResultSchema,
@@ -16,7 +16,9 @@ import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric"
 import type { Db } from "../src/db";
 import type { LlmGateway } from "../src/llm/gateway";
 import { applyDraftAction, listDecisions, submitDraft } from "../src/services/drafts";
+import { eq } from "drizzle-orm";
 import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
+import { metrics as metricsTable } from "../src/db/schema";
 
 const fakeLlm: LlmGateway = {
   async generate() {
@@ -259,7 +261,7 @@ describe("engagement & reply inbox", () => {
     it("defines the inbox + metric vocabulary and parses the schemas", () => {
       expect(INBOX_ITEM_KINDS).toEqual(["comment", "dm", "email"]);
       expect(INBOX_ITEM_STATUSES).toEqual(["unread", "read", "replied", "dismissed"]);
-      expect(METRIC_WINDOWS).toEqual(["24h", "7d"]);
+      expect(PUBLICATION_METRIC_WINDOWS).toEqual(["24h", "7d"]);
       expect(TASK_TYPES).toContain("engagement_reply");
       expect(updateInboxItemStatusInputSchema.safeParse({ status: "read" }).success).toBe(true);
       expect(updateInboxItemStatusInputSchema.safeParse({ status: "replied" }).success).toBe(false);
@@ -338,6 +340,20 @@ describe("engagement & reply inbox", () => {
     expect(mine.metrics).toHaveLength(1);
     expect(mine.metrics[0]).toMatchObject({ window: "24h", likes: 12, comments: 3 });
     expect(publicationMetricSchema.safeParse(mine.metrics[0]).success).toBe(true);
+
+    // Sprint 55 dual-write: the capture also lands cumulative facts in the
+    // unified metrics table — publication subject, periodStart = publishedAt,
+    // one row per observed metric (impressions was not observed → no row).
+    const facts = db
+      .select()
+      .from(metricsTable)
+      .where(eq(metricsTable.subjectId, pub.id))
+      .all();
+    expect(facts.map((f) => f.metricKey).sort()).toEqual(["comments", "likes"]);
+    for (const f of facts) {
+      expect(f).toMatchObject({ subjectType: "publication", window: "24h", source: "captured" });
+      expect(f.periodStart).toBe(mine.publishedAt);
+    }
 
     // Past 7d: the 7d snapshot lands; 24h is not re-captured.
     vi.setSystemTime(new Date(MONDAY_8AM_UTC.getTime() + 7 * DAY_MS + 60_000));

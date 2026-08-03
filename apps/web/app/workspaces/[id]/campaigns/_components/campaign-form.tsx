@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import {
   CHANNELS,
   type Campaign,
@@ -77,6 +78,32 @@ export function CampaignForm({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  /*
+    Sprint 53 review (C1): once a campaign has an **active plan revision**, the
+    row's five strategy columns — objective / KPI / timeframe / audience /
+    pillars — no longer reach any prompt. `composeCampaignOverlay` emits the
+    free text alone and the resolver reads `campaign_plan_revisions` for
+    strategy, so editing them here would save happily and change nothing the
+    model ever sees. A field the founder can type into that silently does
+    nothing is worse than no field, so in that state they are read-only and
+    point at the plan, which is where strategy is actually edited.
+
+    Before a plan exists they are still live: they seed the backfilled plan and
+    feed the legacy structured fallback (`composeLegacyCampaignStrategy`).
+  */
+  const planManaged = Boolean(campaign?.currentPlanRevisionId);
+  const planHref = campaign
+    ? `/workspaces/${workspaceId}/campaigns/${campaign.id}?tab=plan`
+    : "";
+  const planManagedNote = planManaged ? (
+    <p className={styles.planManagedNote}>
+      Strategy is managed by this campaign&rsquo;s plan — objective, KPI, timeframe, audience and
+      pillars below are read-only here and are shown for reference.{" "}
+      <Link href={planHref}>Edit the campaign plan</Link> to change what the writer sees.
+    </p>
+  ) : null;
+  const managedLabel = (label: string) => (planManaged ? `${label} (from the campaign plan)` : label);
+
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     setSaving(true);
@@ -146,30 +173,37 @@ export function CampaignForm({
                 autoFocus
               />
             </label>
+            {planManagedNote}
             <label>
-              <span>Objective</span>
+              <span>{managedLabel("Objective")}</span>
               <Textarea
                 value={form.objective}
                 onChange={(event) => setForm({ ...form, objective: event.target.value })}
                 placeholder="What is this campaign trying to achieve?"
                 rows={3}
+                readOnly={planManaged}
+                aria-readonly={planManaged}
               />
             </label>
             <div className={styles.formColumns}>
               <label>
-                <span>KPI</span>
+                <span>{managedLabel("KPI")}</span>
                 <Input
                   value={form.kpi}
                   onChange={(event) => setForm({ ...form, kpi: event.target.value })}
                   placeholder="20 demo calls booked"
+                  readOnly={planManaged}
+                  aria-readonly={planManaged}
                 />
               </label>
               <label>
-                <span>Timeframe</span>
+                <span>{managedLabel("Timeframe")}</span>
                 <Input
                   value={form.timeframe}
                   onChange={(event) => setForm({ ...form, timeframe: event.target.value })}
                   placeholder="Jul–Sep 2026"
+                  readOnly={planManaged}
+                  aria-readonly={planManaged}
                 />
               </label>
             </div>
@@ -178,22 +212,27 @@ export function CampaignForm({
 
         {step === 2 && (
           <div className={styles.formStack}>
+            {planManagedNote}
             <label>
-              <span>Audience</span>
+              <span>{managedLabel("Audience")}</span>
               <Textarea
                 value={form.audience}
                 onChange={(event) => setForm({ ...form, audience: event.target.value })}
                 placeholder="Who exactly is this for?"
                 rows={3}
+                readOnly={planManaged}
+                aria-readonly={planManaged}
               />
             </label>
             <label>
-              <span>Messaging pillars</span>
+              <span>{managedLabel("Messaging pillars")}</span>
               <Textarea
                 value={form.pillarsText}
                 onChange={(event) => setForm({ ...form, pillarsText: event.target.value })}
                 placeholder="One pillar per line, up to 10"
                 rows={5}
+                readOnly={planManaged}
+                aria-readonly={planManaged}
               />
             </label>
           </div>
@@ -232,11 +271,17 @@ export function CampaignForm({
               </fieldset>
             )}
             <label>
-              <span>Campaign guidance</span>
+              {/*
+                Sprint 53: this field is *additional instruction*, not strategy.
+                Objective / KPI / timeframe / audience / pillars now reach the
+                prompt through the campaign plan, so the copy has to stop
+                inviting founders to restate strategy here.
+              */}
+              <span>Additional instruction</span>
               <Textarea
                 value={form.overlay}
                 onChange={(event) => setForm({ ...form, overlay: event.target.value })}
-                placeholder="What matters for this campaign right now?"
+                placeholder="Anything extra the writer should follow for this campaign — objective, KPI and pillars live in the campaign plan."
                 rows={5}
               />
             </label>

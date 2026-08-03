@@ -276,6 +276,92 @@ describe("selective context (Sprint 43)", () => {
       // The prompt carries the outline, not the padded full text.
       expect(generation.prompt).not.toContain("Deliberate filler prose");
       expect(generation.prompt).toContain("- Marketing agencies");
+      // Sprint 53: the plan section is part of the persisted trace even when
+      // there is no campaign — excluded with a reason, never missing.
+      const plan = generation.sections.find((s: { key: string }) => s.key === "campaign_plan");
+      expect(plan.included).toBe(false);
+      expect(plan.reason).toContain("no campaign selected");
+    });
+
+    // Sprint 53 §5 headline acceptance criterion, end to end.
+    it("persists the campaign plan in the trace, and a plan edit changes the next generation", async () => {
+      await setup();
+      await putDoc("soul", "We exist to end GTM amnesia.");
+      await app.inject({
+        method: "PUT",
+        url: `/workspaces/${workspaceId}/generation-settings`,
+        payload: { reviewEnabled: false },
+      });
+      const campaignId = (
+        await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/campaigns`,
+          payload: { name: "Category creation" },
+        })
+      ).json().id;
+
+      const activatePlan = async (pillar: string) => {
+        const created = await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions`,
+          payload: {
+            objective: "Own the phrase GTM amnesia",
+            startAt: null,
+            endAt: null,
+            pillars: [pillar],
+          },
+        });
+        expect(created.statusCode).toBe(201);
+        const activated = await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/campaigns/${campaignId}/plan/revisions/${created.json().id}/activate`,
+        });
+        expect(activated.statusCode).toBe(200);
+      };
+
+      const generate = async () => {
+        const res = await app.inject({
+          method: "POST",
+          url: `/workspaces/${workspaceId}/generate`,
+          payload: {
+            taskType: "linkedin_post",
+            channel: "linkedin",
+            campaignId,
+            useEvidence: false,
+          },
+        });
+        expect(res.statusCode).toBe(201);
+        return res.json();
+      };
+
+      await activatePlan("Memory beats tooling");
+      const first = await generate();
+      const firstPlan = first.sections.find((s: { key: string }) => s.key === "campaign_plan");
+      expect(firstPlan.included).toBe(true);
+      expect(firstPlan.tier).toBe(1);
+      expect(firstPlan.content).toContain("Memory beats tooling");
+      expect(first.prompt).toContain("Memory beats tooling");
+
+      // Edit the pillar → the very next generation resolves the new one.
+      await activatePlan("The trace is the product");
+      const second = await generate();
+      const secondPlan = second.sections.find((s: { key: string }) => s.key === "campaign_plan");
+      expect(secondPlan.content).toContain("The trace is the product");
+      expect(secondPlan.content).not.toContain("Memory beats tooling");
+      expect(second.prompt).toContain("The trace is the product");
+      expect(second.prompt).not.toContain("Memory beats tooling");
+
+      // And the trace really is persisted, not just returned inline.
+      const stored = await app.inject({
+        method: "GET",
+        url: `/workspaces/${workspaceId}/generations`,
+      });
+      const persisted = stored
+        .json()
+        .find((g: { id: string }) => g.id === second.id)
+        .sections.find((s: { key: string }) => s.key === "campaign_plan");
+      expect(persisted.included).toBe(true);
+      expect(persisted.content).toContain("The trace is the product");
     });
 
     it("runs the angle step as a brief (no zoom, no evidence) and feeds the angle into the draft", async () => {

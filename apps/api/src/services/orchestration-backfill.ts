@@ -127,7 +127,17 @@ export function backfillCampaignControlPlane(
       pillars: campaign.pillars,
       offers: [],
       ctas: [],
-      guidance: campaign.overlay,
+      // Deliberately **not** `campaign.overlay` (Sprint 53 review, C1).
+      //
+      // The backfill exists to rehome the five *strategy* columns — objective,
+      // KPI, timeframe, audience, pillars — which stopped reaching the prompt
+      // when `composeCampaignOverlay` was re-scoped. The free-text overlay did
+      // not move: it is still emitted verbatim as the `campaign` section's
+      // "additional instruction". Copying it into `guidance` as well put the
+      // same bytes in the prompt twice (once per section) the moment the boot
+      // sweep ran, and left a second copy that drifts the first time either the
+      // overlay or the plan is edited.
+      guidance: "",
     },
     { userId: null },
   );
