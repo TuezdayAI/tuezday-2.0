@@ -1035,6 +1035,50 @@ export const adCampaignMetrics = sqliteTable(
 
 export type AdCampaignMetricRow = typeof adCampaignMetrics.$inferSelect;
 
+// Sprint 55: the unified metric fact table — one row per observed number.
+// Vocabularies (keys, windows, subject types, sources) live in
+// @tuezday/contracts. The grain's unique index is what makes re-recording
+// idempotent: the ads sync restates a rolling window every few hours, so the
+// same (subject, key, window, period) must update in place, never duplicate.
+// `window` semantics differ deliberately (point / cumulative 24h-7d / 1d
+// periodic) — readers classify via metricWindowKind before aggregating.
+export const metrics = sqliteTable(
+  "metrics",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    subjectType: text("subject_type").notNull(),
+    subjectId: text("subject_id").notNull(),
+    metricKey: text("metric_key").notNull(),
+    // Integer only; money is cents in the account currency — no floats in the DB.
+    value: integer("value").notNull(),
+    window: text("window").notNull(),
+    // Inclusive start of the period this value covers. For a publication's
+    // cumulative window this is its publishedAt; for a 1d bucket, the day;
+    // for a point reading, the reading's own instant.
+    periodStart: integer("period_start").notNull(),
+    source: text("source").notNull(),
+    // When we learned the value — genuinely distinct from periodStart.
+    capturedAt: integer("captured_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("metrics_grain").on(
+      t.workspaceId,
+      t.subjectType,
+      t.subjectId,
+      t.metricKey,
+      t.window,
+      t.periodStart,
+    ),
+    index("metrics_workspace_subject").on(t.workspaceId, t.subjectType, t.subjectId),
+  ],
+);
+
+export type MetricRow = typeof metrics.$inferSelect;
+
 // Workspace and scoped governance rules for every external side effect. The
 // vocabulary and precedence live in @tuezday/contracts; these rows preserve
 // the founder's explicit policy choices and their provenance.
@@ -2102,7 +2146,7 @@ export const publicationMetrics = sqliteTable(
     publicationId: text("publication_id")
       .notNull()
       .references(() => publications.id, { onDelete: "cascade" }),
-    // A MetricWindow: "24h" | "7d".
+    // A PublicationMetricWindow: "24h" | "7d".
     window: text("window").notNull(),
     likes: integer("likes"),
     comments: integer("comments"),

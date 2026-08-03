@@ -3,7 +3,7 @@
  * tables — no writes, no new ingestion, no external integration. Composes
  * existing services (getCampaignAdMetrics from ads.ts) with direct DB reads.
  */
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 import type {
   ApprovalState,
   Campaign,
@@ -18,14 +18,13 @@ import {
   brainDocuments,
   campaigns,
   drafts,
-  engagementMetrics,
   generations,
   guidanceOverrides,
   inboxItems,
   launches,
   launchMessages,
+  metrics,
   personas,
-  publicationMetrics,
   publications,
 } from "../db/schema";
 import { getCampaignAdMetrics } from "./ads";
@@ -105,49 +104,80 @@ export function getCampaignInsights(db: Db, campaign: Campaign): CampaignInsight
     }
   }
 
-  // Platform-polled metrics (Sprint 29) — prefer 7d, fall back to 24h
+  // Platform capture (Sprint 29), read from the unified fact table (Sprint 55).
+  // Per publication: prefer the cumulative 7d window when any 7d fact exists,
+  // else fall back to 24h. Sprint 55b(3): what this sums is each publication's
+  // LATEST KNOWN cumulative total — a coherent "observed to date" quantity
+  // (cumulative + cumulative, which the classifier permits), but note the
+  // observation age varies per post (a young post contributes its 24h figure,
+  // an old one its 7d), so the total drifts upward as posts age past 7d.
+  // Reporting per-window figures separately needs a contracts change and is
+  // recorded as a deferred improvement, not silently done here.
+  //
+  // Sprint 55b(4): manual `point` readings NEVER enter these totals or the
+  // by-channel column — a point reading covers no defined period and may not
+  // be summed with cumulative windows. They are reported in the `learning`
+  // pane under their own semantics. This exclusion is deliberate, not an
+  // oversight.
   const platformTotals = { likes: 0, comments: 0, shares: 0, impressions: 0, clicks: 0 };
+  // Sprint 55b: per-publication impressions, attributed to the publication's
+  // ACTUAL channel. The pre-55b read prorated the workspace total across
+  // channels by published-post count (with per-channel rounding drift), even
+  // though each publication's channel was already known — the information was
+  // in hand and being discarded.
+  const impressionsByPublication = new Map<string, number>();
   if (pubIds.length > 0) {
-    // Fetch all publication_metrics rows for these publications
-    const pmRows = db
+    const factRows = db
       .select()
-      .from(publicationMetrics)
-      .where(sql`${publicationMetrics.publicationId} IN (${sql.join(pubIds.map((id) => sql`${id}`), sql`, `)})`)
+      .from(metrics)
+      .where(
+        and(
+          eq(metrics.workspaceId, wid),
+          eq(metrics.subjectType, "publication"),
+          inArray(metrics.subjectId, pubIds),
+        ),
+      )
       .all();
-    // Group by publicationId, prefer 7d
-    const byPub = new Map<string, typeof pmRows[0]>();
-    for (const row of pmRows) {
-      const existing = byPub.get(row.publicationId);
-      if (!existing || row.window === "7d") {
-        byPub.set(row.publicationId, row);
+    const has7d = new Set(
+      factRows.filter((r) => r.window === "7d").map((r) => r.subjectId),
+    );
+    for (const row of factRows) {
+      const wanted = has7d.has(row.subjectId) ? "7d" : "24h";
+      if (row.window !== wanted) continue;
+      if (row.metricKey in platformTotals) {
+        platformTotals[row.metricKey as keyof typeof platformTotals] += row.value;
       }
-    }
-    for (const row of byPub.values()) {
-      platformTotals.likes += row.likes ?? 0;
-      platformTotals.comments += row.comments ?? 0;
-      platformTotals.shares += row.shares ?? 0;
-      platformTotals.impressions += row.impressions ?? 0;
-      platformTotals.clicks += row.clicks ?? 0;
+      if (row.metricKey === "impressions") {
+        impressionsByPublication.set(
+          row.subjectId,
+          (impressionsByPublication.get(row.subjectId) ?? 0) + row.value,
+        );
+      }
     }
   }
 
-  // Learning-loop engagement_metrics (separate from platform)
-  // engagement_metrics links to campaign through draftId → drafts.campaignId
-  const learningRows = db
-    .select({
-      impressions: engagementMetrics.impressions,
-      engagements: engagementMetrics.engagements,
-      clicks: engagementMetrics.clicks,
-    })
-    .from(engagementMetrics)
-    .innerJoin(drafts, eq(engagementMetrics.draftId, drafts.id))
-    .where(and(eq(drafts.workspaceId, wid), eq(drafts.campaignId, cid)))
-    .all();
+  // Manual learning readings, read from the unified fact table: the dual-write
+  // (and backfill) record a campaign-subject copy of every draft-linked manual
+  // reading whose draft belongs to a campaign — the same population the legacy
+  // read reached by joining engagement_metrics through drafts.
   const learningTotals = { impressions: 0, engagements: 0, clicks: 0 };
-  for (const row of learningRows) {
-    learningTotals.impressions += row.impressions ?? 0;
-    learningTotals.engagements += row.engagements ?? 0;
-    learningTotals.clicks += row.clicks ?? 0;
+  const learningFacts = db
+    .select()
+    .from(metrics)
+    .where(
+      and(
+        eq(metrics.workspaceId, wid),
+        eq(metrics.subjectType, "campaign"),
+        eq(metrics.subjectId, cid),
+        eq(metrics.window, "point"),
+        eq(metrics.source, "manual"),
+      ),
+    )
+    .all();
+  for (const row of learningFacts) {
+    if (row.metricKey in learningTotals) {
+      learningTotals[row.metricKey as keyof typeof learningTotals] += row.value;
+    }
   }
 
   // --- Outbound: launches for this campaign ---
@@ -219,21 +249,23 @@ export function getCampaignInsights(db: Db, campaign: Campaign): CampaignInsight
     ensureChannel(ch).published += count;
   }
 
-  // Platform impressions by channel (from publication channel)
-  // We approximate: attribute all platform impressions to the channels that have publications
-  // For a more granular view, we'd need per-publication-per-channel metrics
-  // v1: attribute all platform impressions proportionally if multiple channels exist
-  if (publishedCount > 0) {
-    for (const [ch, count] of publishedChannels) {
-      const share = count / publishedCount;
-      ensureChannel(ch).impressions += Math.round(platformTotals.impressions * share);
-    }
+  // Platform impressions by channel — each publication's own cumulative
+  // impressions land on its own channel (Sprint 55b). No proration, no
+  // rounding: the per-channel column now sums exactly to the platform total.
+  for (const pub of pubRows) {
+    if (pub.status !== "published") continue;
+    const impressions = impressionsByPublication.get(pub.publicationId);
+    if (impressions) ensureChannel(pub.channel).impressions += impressions;
   }
 
-  // Paid by channel (ads channel)
+  // Paid by channel (ads channel). Spend only — paid IMPRESSIONS are an
+  // all-time sum of periodic 1d buckets and may not be added to the organic
+  // cumulative impressions in this column (spec §2.3; metricWindowKind).
+  // They remain fully visible in the `paid` pane, under their own semantics.
+  // Sprint 55b(2) removed the last sanctioned mixing; there is no escape
+  // hatch left anywhere.
   if (adMetrics) {
     ensureChannel("ads").spendCents += adMetrics.totals.spendCents;
-    ensureChannel("ads").impressions += adMetrics.totals.impressions;
   }
 
   // Outbound by channel

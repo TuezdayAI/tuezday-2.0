@@ -3969,8 +3969,9 @@ export type SendTestMailInput = z.infer<typeof sendTestMailInputSchema>;
 // ---------------------------------------------------------------------------
 
 /**
- * Launch approval statuses. `launched` is terminal in the approval machine —
- * runtime platform state (active/paused/disapproved) lives in platformStatus.
+ * Launch setup statuses. `launched` is terminal — runtime platform state
+ * (active/paused/disapproved) lives in platformStatus, and spend governance
+ * lives entirely in the external-action lifecycle (Sprint 54).
  */
 export const AD_LAUNCH_STATUSES = [
   "draft",
@@ -3984,30 +3985,41 @@ export type AdLaunchStatus = (typeof AD_LAUNCH_STATUSES)[number];
 export const AD_LAUNCH_ACTIONS = ["submit", "approve", "reject", "revise"] as const;
 export type AdLaunchAction = (typeof AD_LAUNCH_ACTIONS)[number];
 
-/** Decision-log actions: the machine moves plus the launch trigger itself. */
-export const AD_LAUNCH_DECISION_ACTIONS = [...AD_LAUNCH_ACTIONS, "launch"] as const;
-export type AdLaunchDecisionAction = (typeof AD_LAUNCH_DECISION_ACTIONS)[number];
+/**
+ * The one bespoke launch rule that survives Sprint 54 Task 4 (spec §2.2).
+ *
+ * A launch is editable only while it is a draft; `PATCH .../launches/:id` is
+ * refused otherwise, and `revise` is the only door back. This is an
+ * **editability** rule, not a dispatch state, which is exactly why it could not
+ * fold into the external-action lifecycle: `stale` there is a property of the
+ * *action*, and nothing in that lifecycle says "the subject is editable again".
+ *
+ * It replaces `adLaunchTransitionTo` / `AD_LAUNCH_TRANSITIONS` — a second,
+ * bespoke state machine sitting beside the canonical `transitionTo`. Deriving
+ * editability from the status the launch already carries keeps one source of
+ * truth: a separate `editable` column could disagree with `status`, and would
+ * not have let `status` go anyway (`approved` gates spend in
+ * `preparePaidLaunchAction`, `launched` feeds `isSpending`).
+ */
+export function isAdLaunchEditable(status: AdLaunchStatus): boolean {
+  return status === "draft";
+}
 
 /**
- * The launch state machine — spend is gated on `approved`. `revise` pulls a
- * launch back to draft from anywhere short of launched.
+ * What the setup-approval trail can contain when *read*. Writers emit only
+ * `AD_LAUNCH_ACTIONS` — `"launch"` is **retired** (Sprint 54 Task 2).
+ *
+ * It is kept in the read vocabulary because rows carrying it already exist:
+ * until Sprint 54, `performLaunch` appended a synthetic `approved → launched`
+ * row that looked like a spend authorization but was fabricated (the
+ * transition was never a gate move, and the actor was reconstructed with
+ * `human: false`). Those rows are history and must stay describable — dropping
+ * the verb here would leave the contract unable to parse data that exists.
+ * Nothing writes it any more; spend authorization lives solely in
+ * `external_action_decisions`.
  */
-const AD_LAUNCH_TRANSITIONS: Record<
-  AdLaunchAction,
-  Partial<Record<AdLaunchStatus, AdLaunchStatus>>
-> = {
-  submit: { draft: "pending_review" },
-  approve: { pending_review: "approved" },
-  reject: { pending_review: "rejected" },
-  revise: { pending_review: "draft", rejected: "draft", approved: "draft" },
-};
-
-export function adLaunchTransitionTo(
-  from: AdLaunchStatus,
-  action: AdLaunchAction,
-): AdLaunchStatus | undefined {
-  return AD_LAUNCH_TRANSITIONS[action][from];
-}
+export const AD_LAUNCH_DECISION_ACTIONS = [...AD_LAUNCH_ACTIONS, "launch"] as const;
+export type AdLaunchDecisionAction = (typeof AD_LAUNCH_DECISION_ACTIONS)[number];
 
 /**
  * v1 objectives launch with just a Page + link. Leads/Sales need form/pixel
@@ -4396,15 +4408,19 @@ export const updateInboxItemStatusInputSchema = z.object({
 });
 export type UpdateInboxItemStatusInput = z.infer<typeof updateInboxItemStatusInputSchema>;
 
-/** Engagement snapshot windows after publish. */
-export const METRIC_WINDOWS = ["24h", "7d"] as const;
-export type MetricWindow = (typeof METRIC_WINDOWS)[number];
+/**
+ * Engagement snapshot windows after publish — the capture path's subset of the
+ * unified METRIC_WINDOWS vocabulary (Sprint 55). Kept narrow so a publication
+ * metric row can never claim a window the capture path does not produce.
+ */
+export const PUBLICATION_METRIC_WINDOWS = ["24h", "7d"] as const;
+export type PublicationMetricWindow = (typeof PUBLICATION_METRIC_WINDOWS)[number];
 
 export const publicationMetricSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
   publicationId: z.string().uuid(),
-  window: z.enum(METRIC_WINDOWS),
+  window: z.enum(PUBLICATION_METRIC_WINDOWS),
   likes: z.number().int().nullable(),
   comments: z.number().int().nullable(),
   shares: z.number().int().nullable(),
@@ -4952,6 +4968,15 @@ export interface Entitlements {
   seats: number;          // -1 = unlimited
   connectors: number;
   monthlyGenerations: number;
+  /**
+   * Reserved — declared but deliberately unread (Sprint 54, D4d). Activation
+   * sprint is not scheduled; a pricing sprint must be created before anything
+   * enforces this. The free tier is `0`, so wiring it up as written would
+   * silently disable ad launching for every free workspace — a pricing
+   * decision, not a refactor. The live spend guardrail is the workspace-owned
+   * `adSettings.dailyCapCents` (`services/ad-launches.ts`), which is unrelated
+   * to plan entitlements.
+   */
   adSpendCapCents: number;
 }
 
@@ -6489,3 +6514,86 @@ export const confirmChatProposalInputSchema = z.object({
   decision: z.enum(["confirm", "discard"]),
 });
 export type ConfirmChatProposalInput = z.infer<typeof confirmChatProposalInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Unified metric model (Sprint 55) — one fact table for every observed number.
+//
+// Three legacy stores measured time three different ways: a manual reading at
+// an instant, a cumulative snapshot at 24h/7d of age, and a per-day bucket.
+// These vocabularies make the differences explicit instead of implied, and the
+// classifier below is the load-bearing guard: cumulative and periodic values
+// must never be summed together. (`insights` violates that rule today —
+// spec §2.3 — and carries the one commented escape hatch while it migrates.)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every metric key, defined once. No `replies`: it is derivable from
+ * `inboxItems` at any moment, so storing it as a fact would create a snapshot
+ * that silently goes stale — two answers to one question.
+ */
+export const METRIC_KEYS = [
+  "impressions",
+  "clicks",
+  "likes",
+  "comments",
+  "shares",
+  "engagements",
+  "conversions",
+  "spend",
+] as const;
+export type MetricKey = (typeof METRIC_KEYS)[number];
+
+/**
+ * point = a reading at capturedAt, covering no defined period (manual entry).
+ * 24h/7d = CUMULATIVE since the subject went live, observed at >= that age.
+ * 1d = that calendar day's total, periodStart = the day.
+ */
+export const METRIC_WINDOWS = ["point", "24h", "7d", "1d"] as const;
+export type MetricWindow = (typeof METRIC_WINDOWS)[number];
+
+/** No lane/sequence — nothing writes them. Subject-less manual rows are channel-level readings. */
+export const METRIC_SUBJECT_TYPES = ["publication", "campaign", "ad_campaign", "channel"] as const;
+export type MetricSubjectType = (typeof METRIC_SUBJECT_TYPES)[number];
+
+/** No `derived` — nothing derives in Sprint 55. `imported` covers the ads CSV path. */
+export const METRIC_SOURCES = ["manual", "captured", "synced", "imported"] as const;
+export type MetricSource = (typeof METRIC_SOURCES)[number];
+
+export type MetricWindowKindValue = "cumulative" | "periodic" | "point";
+
+/**
+ * Classify a window so a reader cannot mix incompatible time semantics by
+ * accident. Throws on unknown input rather than guessing — a wrong
+ * classification here silently corrupts every aggregate built on it.
+ */
+export function metricWindowKind(window: MetricWindow): MetricWindowKindValue {
+  switch (window) {
+    case "24h":
+    case "7d":
+      return "cumulative";
+    case "1d":
+      return "periodic";
+    case "point":
+      return "point";
+    default: {
+      const exhaustive: never = window;
+      throw new Error(`Unknown metric window: ${String(exhaustive)}`);
+    }
+  }
+}
+
+/** One observed number. `value` is an integer; money is cents, never floats. */
+export const metricSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  subjectType: z.enum(METRIC_SUBJECT_TYPES),
+  subjectId: z.string().min(1),
+  metricKey: z.enum(METRIC_KEYS),
+  value: z.number().int(),
+  window: z.enum(METRIC_WINDOWS),
+  periodStart: z.number().int(),
+  source: z.enum(METRIC_SOURCES),
+  capturedAt: z.number().int(),
+  createdAt: z.number().int(),
+});
+export type Metric = z.infer<typeof metricSchema>;

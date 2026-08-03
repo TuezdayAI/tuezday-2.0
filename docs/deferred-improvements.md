@@ -407,6 +407,71 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
   mismatch it fixes. Read the journal's `idx`, never the file count.
 - **Origin:** Pre-existing (around Sprint 25); found and left alone in Sprint 53.
 
+### 40. Spend can still change without a decision row (resume + kill switch) — **deferred from Sprint 54**
+- **What we shipped (Sprint 54):** The *initial* ad launch is fully governed: spend guardrails refuse
+  at proposal (`proposed → blocked`, before any authorization decision exists), and
+  `external_action_decisions` is the sole record of who authorized that spend. But
+  `POST /workspaces/:id/ads/launches/:launchId/resume` and
+  `PUT /workspaces/:id/ads/settings { killSwitch }` both restart or stop live spend with **no**
+  decision row at all. The UI states this limitation plainly rather than implying full governance.
+- **The better version:** Both become governed external actions, so every spend-affecting control
+  answers "who did this and when". Note the kill switch is an emergency stop — putting it behind an
+  authorization gate may be actively wrong, so it likely needs a different treatment from resume.
+- **Trigger to revisit:** When a customer or an audit asks who restarted a paused campaign, or when
+  a seventh external-action kind is being added for another reason anyway.
+- **Origin:** Sprint 54 (founder decision D4c — scope to the initial launch to keep the sprint at L).
+
+### 41. `Entitlements.adSpendCapCents` is defined but unenforced — **deferred from Sprint 54**
+- **What we shipped (Sprint 54):** The field is marked `reserved` in `packages/contracts` with a
+  comment naming the sprint that will activate it. Nothing reads it. Spend is bounded instead by the
+  per-workspace `ad_settings.daily_cap_cents` guardrail, which is enforced.
+- **The better version:** Wire it into the guardrail alongside the workspace daily cap, so plan tier
+  bounds spend. Requires: a non-zero free-tier cap (it is currently `0`, so enforcing as-is would
+  silently disable ad launching for every free workspace), an ad-spend figure in `getUsage` /
+  `entitlementUsageSchema`, and `TEST_BILLING_GATING` in any covering test — `assertWithinLimit`
+  no-ops under `NODE_ENV=test` without it.
+- **Trigger to revisit:** When ad spend is priced per tier. This is a pricing decision, not a refactor.
+- **Origin:** Sprint 54 (founder decision D4d).
+
+### 42. Spend authorship is two clicks from the launch — **deferred from Sprint 54**
+- **What we shipped (Sprint 54):** The ad-launch page separates "who approved this ad's setup" from
+  "who authorized this spend", and links out to the governing external action for the latter.
+- **The better version:** Surface `proposedBy` and the effective policy inline on the launch, so the
+  founder can read authorship without leaving the page. Needs the launch detail route to carry both.
+- **Trigger to revisit:** When someone asks "who authorized this?" and the link-out is friction.
+- **Origin:** Sprint 54 Task 6.
+
+### 43. The legacy metric stores remain after the fact-table cutover — **deferred from Sprint 55**
+- **What we shipped (Sprint 55):** One `metrics` fact table; all three legacy stores dual-write into
+  it and `/insights` reads only it. The legacy tables keep their writers (rollback safety) and stay
+  in place.
+- **The better version:** Retire the legacy writers and drop `publication_metrics` and
+  `ad_campaign_metrics` after a release of parity. **`engagement_metrics` is NOT droppable**: an
+  all-null row carries no metric values at all — it exists for its `description`/`notes`, which feed
+  the learning-synthesis prompt verbatim. Dropping it requires first modelling that prose.
+- **Trigger to revisit:** One release with the dual-write live and no parity gaps reported.
+- **Origin:** Sprint 55 (spec §2.4).
+
+### 44. Platform totals are latest-known-cumulative, not per-window — **deferred from Sprint 55**
+- **What we shipped (Sprint 55b):** `/insights` platform totals sum each publication's latest
+  cumulative snapshot (7d when present, else 24h) — a coherent observed-to-date figure, but its
+  per-post observation age varies, so it drifts upward as posts age past 7d. Documented in code.
+- **The better version:** Report 24h and 7d figures separately so the founder can see early
+  velocity vs. settled totals. Changes `campaignInsightsSchema` (a contracts change) and every
+  consumer including the public API and MCP.
+- **Trigger to revisit:** When someone asks why an old post's impressions "grew" without new traffic.
+- **Origin:** Sprint 55 Task 5b(3).
+
+### 45. `engagements` vs its components are never reconciled — **deferred from Sprint 55**
+- **What we shipped (Sprint 55):** Manual entry records `engagements`; platform capture records
+  `likes`/`comments`/`shares`. Each source writes what it observed; nothing derives one from the
+  other (deriving would invent a number no source reported).
+- **The better version:** A read-path derivation in exactly one place (insights), summing components
+  where `engagements` is absent, clearly labelled as derived.
+- **Trigger to revisit:** When a founder asks why the learning pane's engagements and the platform
+  pane's likes+comments+shares don't add up.
+- **Origin:** Sprint 55 spec §2.2.
+
 ---
 
 ## Done (upgraded)

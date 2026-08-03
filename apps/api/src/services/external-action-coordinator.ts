@@ -98,6 +98,25 @@ export interface ExternalActionAdapter {
   revalidate(action: ExternalAction, payload: unknown): Promise<ExternalActionIntent>;
   guard(action: ExternalAction, payload: unknown): Promise<ExternalActionBlocker | null>;
   execute(action: ExternalAction, payload: unknown): Promise<ExternalActionExecutionRef>;
+  /**
+   * Optional pre-authorization guard (Sprint 54, D4b).
+   *
+   * `guard` runs inside `dispatch`, which is reached only *after* the action is
+   * `authorized` and *after* the `externalActionDecisions` row is written — so
+   * a guardrail that was always going to refuse still left "X authorized this
+   * spend" on the governance record first. `authorization_required → blocked`
+   * is not a legal edge, so the refusal cannot be moved to the gate; it belongs
+   * at proposal, where `proposed → blocked` already is legal.
+   *
+   * Implement it for the conditions knowable before anyone is asked to
+   * authorize — a workspace kill switch, a committed-budget cap. Conditions
+   * that can only be read at send time stay in `guard`, which keeps running as
+   * the backstop for anything that changes while the action sits in the queue.
+   */
+  guardAtProposal?(
+    action: ExternalAction,
+    payload: unknown,
+  ): Promise<ExternalActionBlocker | null>;
 }
 
 export type ExternalActionAdapterRegistry = Partial<
@@ -456,13 +475,30 @@ export function createExternalActionRuntime({
     });
     if (supersedesActionId) linkExternalActionSuccessor(db, supersedesActionId, action.id);
 
-    if (!adapters[action.kind]) {
+    const adapter = adapters[action.kind];
+    if (!adapter) {
       action = transitionExternalAction(db, action.workspaceId, action.id, "blocked", {
         blocker: unavailableAdapterBlocker(action.kind),
         completedAt: Date.now(),
       });
       return submission(action);
     }
+
+    // Sprint 54 (D4b) — refuse before anyone is asked to authorize. This sits
+    // ahead of both the human_required branch and the autonomous dispatch, so a
+    // blocker here means no decision row is ever written and no adapter is ever
+    // dispatched. `guard` still runs in `dispatch` as the backstop.
+    const proposalBlocker = adapter.guardAtProposal
+      ? await adapter.guardAtProposal(action, intent.payload)
+      : null;
+    if (proposalBlocker) {
+      action = transitionExternalAction(db, action.workspaceId, action.id, "blocked", {
+        blocker: proposalBlocker,
+        completedAt: Date.now(),
+      });
+      return submission(action);
+    }
+
     if (forceReview || policy.effective === "human_required") {
       // Sprint 52 (D2) — the collapsed publish gate. Approving a draft is the
       // decision "this may go out"; for `publish` it also authorizes the

@@ -84,6 +84,7 @@ import { registerNotificationRoutes } from "./routes/notifications";
 import { registerApiKeyRoutes } from "./routes/api-keys";
 import { registerPublicApiRoutes } from "./routes/public-api";
 import { backfillMissingCampaignPlans } from "./services/campaign-plan-backfill";
+import { backfillMetrics } from "./services/metrics-backfill";
 import { backfillExternalActionPolicies } from "./services/external-action-backfill";
 import { createExternalActionAdapters } from "./services/external-action-adapters";
 import { createExternalActionRuntime } from "./services/external-action-coordinator";
@@ -212,6 +213,10 @@ export async function buildApp({
     );
   }
   repairDanglingDuplicateGroups(db);
+  // Sprint 55: sweep the three legacy metric stores into the unified fact
+  // table. Runs after the dual-write shipped, so it is insert-if-absent and
+  // can never overwrite a fresher dual-written value with a staler legacy one.
+  backfillMetrics(db);
   const externalActionRuntime = createExternalActionRuntime({
     db,
     adapters: createExternalActionAdapters(db, connectors, fetcher, outboundEmail, gmail),
