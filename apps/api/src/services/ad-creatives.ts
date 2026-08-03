@@ -1,8 +1,6 @@
 import {
-  AD_CREATIVE_FORMATS,
   AD_CREATIVE_TASK_TYPES,
   formatAdCreative,
-  parseAdCreative,
   validateAdCreative,
   type AdCreativeTaskType,
   type AdCreativeViolation,
@@ -10,7 +8,9 @@ import {
   type Channel,
   type Draft,
   type GenerationReview,
+  type GoogleRsaResponse,
   type LaunchMedia,
+  type MetaAdVariantsResponse,
   type TaskType,
 } from "@tuezday/contracts";
 import { and, asc, eq, inArray } from "drizzle-orm";
@@ -20,30 +20,36 @@ import { getCampaignAdMetrics, type CampaignAdMetrics } from "./ads";
 import { listCampaigns } from "./campaigns";
 
 /**
- * Split one LLM response into canonical variant contents. Formats with a
- * variant count separate variants with `---`; asset-set formats (google_rsa)
- * are one variant per response. Chunks that don't parse are dropped — an
- * empty result means the whole output was unusable (the route turns that
- * into 502 generation_unparseable).
+ * Serialize a structured generation response into canonical variant contents
+ * (Sprint 58 — the model returns schema-constrained JSON, not labeled text).
+ * Blank-only variants are dropped; an empty result means the whole output was
+ * unusable (the route turns that into 502 generation_unparseable). Stored
+ * drafts keep the exact same canonical labeled-text format as before —
+ * `parseAdCreative`/`validateAdCreative` over stored drafts are untouched.
  */
-export function parseGeneratedVariants(taskType: AdCreativeTaskType, output: string): string[] {
-  let text = output.trim();
-  const fence = /^```[a-z]*\r?\n([\s\S]*?)\r?\n```$/i.exec(text);
-  if (fence) text = fence[1]!.trim();
+export function metaAdVariantContents(response: MetaAdVariantsResponse): string[] {
+  return response.variants
+    .filter((v) => (v.primaryText + v.headline + v.description).trim().length > 0)
+    .map((v) =>
+      formatAdCreative("meta_ad_creative", [
+        { key: "primary_text", index: 1, value: v.primaryText.trim() },
+        { key: "headline", index: 1, value: v.headline.trim() },
+        { key: "description", index: 1, value: v.description.trim() },
+      ]),
+    );
+}
 
-  const chunks = AD_CREATIVE_FORMATS[taskType].variantCount
-    ? text.split(/\r?\n\s*-{3,}\s*(?:\r?\n|$)/)
-    : [text];
-
-  const variants: string[] = [];
-  for (const chunk of chunks) {
-    const trimmed = chunk.trim();
-    if (!trimmed) continue;
-    const parsed = parseAdCreative(taskType, trimmed);
-    // Re-serialize so stored drafts use the canonical labels/casing.
-    if (parsed) variants.push(formatAdCreative(taskType, parsed.fields));
-  }
-  return variants;
+/** One asset set = one draft; empty when the model produced no usable lines. */
+export function googleRsaContents(response: GoogleRsaResponse): string[] {
+  const headlines = response.headlines.map((v) => v.trim()).filter(Boolean);
+  const descriptions = response.descriptions.map((v) => v.trim()).filter(Boolean);
+  if (headlines.length === 0 && descriptions.length === 0) return [];
+  return [
+    formatAdCreative("google_rsa", [
+      ...headlines.map((value, i) => ({ key: "headline", index: i + 1, value })),
+      ...descriptions.map((value, i) => ({ key: "description", index: i + 1, value })),
+    ]),
+  ];
 }
 
 export interface AdCreativeSetDraft extends Draft {

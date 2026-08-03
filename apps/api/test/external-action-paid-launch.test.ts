@@ -13,11 +13,13 @@ const fakeLlm: LlmGateway = {
   async generate({ prompt }) {
     const match = /Write (\d+) distinct Meta ad/.exec(prompt);
     const n = match ? Number(match[1]) : 1;
-    const text = Array.from(
-      { length: n },
-      (_, i) =>
-        `Primary text: Angle ${i + 1} for the offer.\nHeadline: Headline ${i + 1}\nDescription: Desc ${i + 1}`,
-    ).join("\n---\n");
+    const text = JSON.stringify({
+      variants: Array.from({ length: n }, (_, i) => ({
+        primaryText: `Angle ${i + 1} for the offer.`,
+        headline: `Headline ${i + 1}`,
+        description: `Desc ${i + 1}`,
+      })),
+    });
     return { text, model: "fake", provider: "fake", durationMs: 1 };
   },
 };

@@ -6,17 +6,20 @@ import { asUser, buildAuthedApp, createTestDb, registerUser } from "./helpers";
 
 /**
  * A gateway for the selective-context slice: answers outline-summary prompts
- * with proper SUMMARY lines, angle prompts with ANGLE lines, everything else
- * with a plain draft (reviewer prompts parse to null scores — harmless).
+ * with the Sprint 58 JSON entries, angle prompts with a JSON array, everything
+ * else with a plain draft (reviewer prompts fail validation → null scores —
+ * harmless).
  */
 function selectiveGateway(): LlmGateway {
   return {
     async generate({ prompt }) {
       let text: string;
-      if (prompt.includes("SUMMARY")) {
-        text = Array.from({ length: 16 }, (_, i) => `SUMMARY ${i + 1}: LLM one-liner ${i + 1}`).join("\n");
-      } else if (prompt.includes("ANGLE: ")) {
-        text = "ANGLE: the pricing angle\nANGLE: the reporting angle\nANGLE: the story angle";
+      if (prompt.includes("table of contents")) {
+        text = JSON.stringify(
+          Array.from({ length: 16 }, (_, i) => ({ index: i + 1, summary: `LLM one-liner ${i + 1}` })),
+        );
+      } else if (prompt.includes("DISTINCT angles")) {
+        text = '["the pricing angle", "the reporting angle", "the story angle"]';
       } else {
         text = "FAKE DRAFT OUTPUT";
       }
@@ -29,7 +32,9 @@ function selectiveGateway(): LlmGateway {
 function summariesFailGateway(): LlmGateway {
   return {
     async generate({ prompt }) {
-      if (prompt.includes("SUMMARY")) throw new GatewayError("provider_error", "summaries down");
+      if (prompt.includes("table of contents")) {
+        throw new GatewayError("provider_error", "summaries down");
+      }
       return { text: "FAKE DRAFT OUTPUT", model: "fake-model", provider: "fake", durationMs: 3 };
     },
   };

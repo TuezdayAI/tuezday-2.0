@@ -10,6 +10,7 @@ import {
 import type { Db } from "../db";
 import { brandProfiles } from "../db/schema";
 import type { LlmGateway } from "../llm/gateway";
+import { generateStructured, StructuredOutputError } from "../llm/structured";
 import {
   SafeFetchError,
   serializeSafeFetchError,
@@ -47,54 +48,27 @@ Respond with ONLY a JSON object — no prose, no markdown fences — matching ex
 }
 Use empty strings for anything the text does not support — do not invent facts.`;
 
-function parseProfileText(text: string): { profile?: BrandProfile; error?: string } {
-  const match = text.match(/\{[\s\S]*\}/);
-  if (!match) return { error: "no JSON object found in the response" };
-  let raw: unknown;
-  try {
-    raw = JSON.parse(match[0]);
-  } catch (err) {
-    return { error: `invalid JSON: ${err instanceof Error ? err.message : String(err)}` };
-  }
-  const parsed = brandProfileSchema.safeParse(raw);
-  if (!parsed.success) {
-    return {
-      error: `schema validation failed: ${parsed.error.issues
-        .map((i) => `${i.path.join(".")}: ${i.message}`)
-        .join("; ")}`,
-    };
-  }
-  return { profile: parsed.data };
-}
-
 /**
- * One extraction call, one repair retry. The repair prompt carries the raw
- * first response plus the exact parse/validation error so the model can fix
- * its own output. Two failures → BrandExtractError.
+ * One extraction call, one repair retry — both owned by generateStructured
+ * (Sprint 58), validated against brandProfileSchema. Two failures →
+ * BrandExtractError carrying the recorded failure class.
  */
 export async function extractBrandProfile(
   llm: LlmGateway,
   corpus: string,
 ): Promise<BrandProfile> {
   const prompt = `${EXTRACT_PROMPT_HEAD}\n\nWEBSITE TEXT:\n${corpus}`;
-  const first = await llm.generate({ prompt });
-  const attempt = parseProfileText(first.text);
-  if (attempt.profile) return attempt.profile;
-
-  const repairPrompt = [
-    EXTRACT_PROMPT_HEAD,
-    `Your previous response could not be used. Error: ${attempt.error}.`,
-    `Previous response:\n${first.text}`,
-    `Return ONLY the corrected JSON object.`,
-    `WEBSITE TEXT:\n${corpus.slice(0, 4000)}`,
-  ].join("\n\n");
-  const second = await llm.generate({ prompt: repairPrompt });
-  const repaired = parseProfileText(second.text);
-  if (repaired.profile) return repaired.profile;
-
-  throw new BrandExtractError(
-    `Brand extraction failed after repair retry: ${repaired.error}`,
-  );
+  try {
+    const result = await generateStructured(llm, brandProfileSchema, { prompt });
+    return result.value;
+  } catch (err) {
+    if (err instanceof StructuredOutputError) {
+      throw new BrandExtractError(
+        `Brand extraction failed after repair retry (${err.failureClass}): ${err.issues.join("; ")}`,
+      );
+    }
+    throw err;
+  }
 }
 
 // ---------------------------------------------------------------------------

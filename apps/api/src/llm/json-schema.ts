@@ -1,26 +1,39 @@
 import { z } from "zod";
-import type { JsonSchema } from "../llm/gateway";
+import type { JsonSchema } from "./gateway";
 
 // ---------------------------------------------------------------------------
-// zod → JSON Schema, for exactly the subset tool inputs use (Sprint 57).
+// zod → JSON Schema, for exactly the subset tool inputs and structured
+// responses use (Sprints 57–58).
 //
 // The repo is on the zod v3 API, which has no native toJSONSchema, and a
-// dependency isn't warranted for eleven flat input schemas. This converter
-// walks object / string / number / boolean / enum / array / optional /
-// default and THROWS on anything else — a tool input using an unsupported
-// construct fails loudly at registration, not silently at call time.
+// dependency isn't warranted for these flat schemas. This converter walks
+// object / string / number / boolean / enum / array / optional / default /
+// nullable and THROWS on anything else — a schema using an unsupported
+// construct fails loudly at composition, not silently at call time.
 //
-// Emitted keywords stay inside the subset the Gemini function-declaration
-// schema is known to accept (type, properties, required, description, enum,
-// items, minimum, maximum). String length/format constraints are deliberately
-// NOT emitted — zod still enforces them at dispatch, where a violation goes
-// back to the model as instructive error data.
+// Emitted keywords stay inside the subset the Gemini function-declaration and
+// response-schema dialects are known to accept (type, properties, required,
+// description, enum, items, minimum, maximum, nullable). String length/format
+// constraints are deliberately NOT emitted — zod still enforces them at
+// validation, where a violation becomes instructive error data.
 // ---------------------------------------------------------------------------
 
+/** Tool-input schemas (Sprint 57): must be object-rooted per function calling. */
 export function jsonSchemaFor(schema: z.ZodTypeAny): JsonSchema {
   const out = convert(schema);
   if (out.type !== "object") {
     throw new Error("jsonSchemaFor: tool input schemas must be zod objects.");
+  }
+  return out;
+}
+
+/** Structured-response schemas (Sprint 58): object- or array-rooted. */
+export function responseJsonSchemaFor(schema: z.ZodTypeAny): JsonSchema {
+  const out = convert(schema);
+  if (out.type !== "object" && out.type !== "array") {
+    throw new Error(
+      "responseJsonSchemaFor: response schemas must be zod objects or arrays.",
+    );
   }
   return out;
 }
@@ -33,6 +46,10 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
 
   if (schema instanceof z.ZodOptional || schema instanceof z.ZodDefault) {
     return described(convert(schema._def.innerType as z.ZodTypeAny));
+  }
+  if (schema instanceof z.ZodNullable) {
+    // OpenAPI-style nullable — the dialect Gemini's responseSchema accepts.
+    return described({ ...convert(schema._def.innerType as z.ZodTypeAny), nullable: true });
   }
   if (schema instanceof z.ZodObject) {
     const properties: Record<string, JsonSchema> = {};
@@ -72,6 +89,6 @@ function convert(schema: z.ZodTypeAny): JsonSchema {
   }
   throw new Error(
     `jsonSchemaFor: unsupported zod construct ${schema._def?.typeName ?? typeof schema} — ` +
-      "tool inputs are limited to object/string/number/boolean/enum/array/optional/default.",
+      "schemas are limited to object/string/number/boolean/enum/array/optional/default/nullable.",
   );
 }

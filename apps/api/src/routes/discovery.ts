@@ -15,6 +15,7 @@ import type { IntentProvider } from "../discovery/intent";
 import type { TrustedFetcher } from "../http";
 import type { LlmGateway } from "../llm/gateway";
 import { GatewayError } from "../llm/gateway";
+import { StructuredOutputError } from "../llm/structured";
 import {
   SafeFetchError,
   serializeSafeFetchError,
@@ -442,7 +443,9 @@ export function registerDiscoveryRoutes(
       try {
         return await suggestDiscoverySources(db, llm, request.params.id, workspace.name);
       } catch (err) {
-        if (err instanceof GatewayError) {
+        // Provider down and post-repair malformed output are both 502s — the
+        // latter used to be a silent empty list (Sprint 58).
+        if (err instanceof GatewayError || err instanceof StructuredOutputError) {
           return reply.status(502).send({ error: "suggestion_failed", message: err.message });
         }
         throw err;

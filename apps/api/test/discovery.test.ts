@@ -115,9 +115,18 @@ function scoringGateway(
       const scores = Array.from({ length: count }, (_, i) => ({
         index: i,
         score: 90 - i * 10,
-        personaId: i === 0 ? personaIdRef.id : null,
-        campaignId: i === 0 ? campaignIdRef.id : null,
         reason: `Relevant because reason ${i}.`,
+        matches:
+          i === 0 && (personaIdRef.id || campaignIdRef.id)
+            ? [
+                {
+                  personaId: personaIdRef.id,
+                  campaignId: campaignIdRef.id,
+                  score: 90 - i * 10,
+                  reason: `Relevant because reason ${i}.`,
+                },
+              ]
+            : [],
       }));
       return { text: JSON.stringify(scores), model: "fake", provider: "fake", durationMs: 3 };
     },
@@ -1349,22 +1358,23 @@ describe("multi-candidate scoring (Sprint 45)", () => {
     expect(top.suggestedCampaignId).toBe(h.campaignA);
   });
 
-  it("falls back to the legacy top-level shape when there is no matches key", async () => {
+  // Sprint 58: the pre-58 legacy top-level shape (no `matches` key) is no
+  // longer parsed — schema validation fails, the repair retry gets the same
+  // garbage, and the item lands in a *typed* retryable state instead of being
+  // silently scored without candidates.
+  it("marks items retryable when the response fails schema validation after repair", async () => {
     h.setResponder(() => [
       { index: 0, score: 77, personaId: h.fieldCto, campaignId: h.campaignA, reason: "Legacy shape." },
     ]);
     await h.addSource();
     await h.run();
-    const top = (await h.items()).find((i) => i.score === 77)!;
-    expect(top.matches).toHaveLength(1);
-    expect(top.matches[0]).toMatchObject({
-      personaId: h.fieldCto,
-      campaignId: h.campaignA,
-      score: 77,
-      reason: "Legacy shape.",
-    });
-    expect(top.suggestedPersonaId).toBe(h.fieldCto);
-    expect(top.suggestedCampaignId).toBe(h.campaignA);
+    const rows = h.db.select().from(discoveredItems).all();
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.matchingState).toBe("retryable_error");
+      expect(row.matchingError).toBe("matching_malformed_response");
+      expect(row.score).toBeNull();
+    }
   });
 
   it("accept copies every candidate onto the new signal", async () => {

@@ -58,7 +58,7 @@ export interface Tool<I = unknown, O = unknown> {
   /** Written for the model, not for docs. */
   description: string;
   /** Single source of truth (packages/contracts toolInputSchemas) — the
-   * model-facing JSON Schema is derived from it (./json-schema.ts). */
+   * model-facing JSON Schema is derived from it (../llm/json-schema.ts). */
   input: z.ZodType<I>;
   access: ToolAccessLevel;
   run(ctx: ToolContext, input: I): Promise<O>;

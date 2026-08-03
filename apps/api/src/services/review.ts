@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import {
   GENERATION_REVIEW_CHECKS,
   isReviewFlagged,
+  reviewCheckResponseSchema,
   type BrainDocType,
   type Channel,
   type DocOutline,
@@ -23,6 +24,7 @@ import type { GuidanceSource } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { drafts, generations } from "../db/schema";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
+import { generateStructured, StructuredOutputError } from "../llm/structured";
 
 /**
  * The brain context a reviewer pass needs. Deliberately omits lead / signal /
@@ -41,31 +43,6 @@ export interface ReviewContext {
   /** Sprint 43 selective-context inputs — reviewers resolve in brief mode. */
   matrix?: ResolvedTaskDocMatrix;
   outlines?: Partial<Record<BrainDocType, DocOutline>>;
-}
-
-/**
- * Parse a reviewer pass's raw text into a score + issues. Best-effort:
- * a missing/garbled SCORE line yields a null score (which never flags).
- */
-export function parseReviewOutput(text: string): { score: number | null; issues: string[] } {
-  const scoreMatch = text.match(/SCORE:\s*(\d{1,3})/i);
-  let score: number | null = null;
-  if (scoreMatch) {
-    const n = Number.parseInt(scoreMatch[1]!, 10);
-    if (Number.isFinite(n)) score = Math.max(0, Math.min(100, n));
-  }
-
-  // Issues = bullet lines after an ISSUES: marker (or anywhere, if no marker).
-  const issuesIdx = text.search(/ISSUES:/i);
-  const issuesBlock = issuesIdx >= 0 ? text.slice(issuesIdx) : text;
-  const issues = issuesBlock
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => /^[-*]\s+/.test(line))
-    .map((line) => line.replace(/^[-*]\s+/, "").trim())
-    .filter((line) => line.length > 0 && line.toLowerCase() !== "none");
-
-  return { score, issues };
 }
 
 function instructionFor(check: GenerationReviewCheck, channel: Channel): string {
@@ -99,20 +76,28 @@ async function runCheck(
   });
 
   try {
-    const result = await llm.generate({ prompt: resolved.prompt });
-    const { score, issues } = parseReviewOutput(result.text);
+    const result = await generateStructured(llm, reviewCheckResponseSchema, {
+      prompt: resolved.prompt,
+    });
     return {
       check,
-      score,
-      issues,
+      score: Math.max(0, Math.min(100, Math.round(result.value.score))),
+      issues: result.value.issues
+        .map((issue) => issue.trim())
+        .filter((issue) => issue.length > 0 && issue.toLowerCase() !== "none")
+        .slice(0, 5),
       prompt: resolved.prompt,
       model: result.model,
       provider: result.provider,
       durationMs: result.durationMs,
     };
   } catch (err) {
-    // Best-effort: a reviewer failure must never block a generation.
-    const message = err instanceof GatewayError ? err.message : String(err);
+    // Best-effort: a reviewer failure — provider down or post-repair
+    // malformed output — must never block a generation.
+    const message =
+      err instanceof GatewayError || err instanceof StructuredOutputError
+        ? err.message
+        : String(err);
     return {
       check,
       score: null,

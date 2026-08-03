@@ -15,6 +15,7 @@ import {
 import {
   createDiscoverySourceInputSchema,
   isReservedDiscoverySourceType,
+  sourceProposalsResponseSchema,
   type CreateDiscoverySourceInput,
   type DiscoveredItem,
   type DiscoveredItemMatch,
@@ -70,6 +71,7 @@ import { ProviderCapabilityError } from "../discovery/provider-errors";
 import { deleteDiscoverySourcePreservingDuplicates } from "./discovery-dedupe";
 import { resolveTrackedAccountsForSource } from "./tracked-account-resolver";
 import type { LlmGateway } from "../llm/gateway";
+import { generateStructured } from "../llm/structured";
 import { BoundedJsonError } from "../connectors/bounded-json";
 import {
   SafeFetchError,
@@ -93,7 +95,6 @@ import {
   listItemMatches,
   listItemMatchesForItems,
   listSignalMatches,
-  parseJsonArray,
   revalidateSignalMatches,
 } from "./matching";
 import { listPersonas } from "./personas";
@@ -1861,30 +1862,15 @@ export async function suggestDiscoverySources(
     `Respond with ONLY a JSON array: [{"type": "...", "name": "<short label>", "config": {...}, "reason": "<why this serves the company/personas>"}]`,
   ].join("\n\n");
 
-  const result = await llm.generate({ prompt });
-  const entries = parseJsonArray(result.text) ?? [];
-  const valid: SourceProposal[] = [];
-  for (const raw of entries.slice(0, 6)) {
-    const entry = raw as Partial<SourceProposal>;
-    if (
-      (entry.type === "google_news" || entry.type === "reddit" || entry.type === "rss") &&
-      entry.config &&
-      typeof entry.name === "string"
-    ) {
-      valid.push({
-        type: entry.type,
-        name: entry.name.slice(0, 200),
-        config: {
-          feedUrl: typeof entry.config.feedUrl === "string" ? entry.config.feedUrl : undefined,
-          query: typeof entry.config.query === "string" ? entry.config.query : undefined,
-          subreddit:
-            typeof entry.config.subreddit === "string"
-              ? entry.config.subreddit.replace(/^r\//, "")
-              : undefined,
-        },
-        reason: typeof entry.reason === "string" ? entry.reason.slice(0, 500) : "",
-      });
-    }
-  }
-  return valid;
+  const result = await generateStructured(llm, sourceProposalsResponseSchema, { prompt });
+  return result.value.slice(0, 6).map((entry) => ({
+    type: entry.type,
+    name: entry.name.slice(0, 200),
+    config: {
+      feedUrl: entry.config.feedUrl,
+      query: entry.config.query,
+      subreddit: entry.config.subreddit?.replace(/^r\//, ""),
+    },
+    reason: entry.reason?.slice(0, 500) ?? "",
+  }));
 }

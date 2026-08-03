@@ -5,18 +5,19 @@ import { buildAuthedApp, createTestDb } from "./helpers";
 
 /**
  * A gateway that branches on the prompt so one fake exercises drafting, the
- * angle step, and both reviewer passes in a single test run:
- *  - an ANGLE: prompt → three angle lines
- *  - a SCORE: prompt (a reviewer pass) → a weak score (42) to exercise flagging
+ * angle step, and both reviewer passes in a single test run (Sprint 58: both
+ * structured steps answer with JSON):
+ *  - an angle prompt → a JSON array of three angles
+ *  - a reviewer prompt → a weak score (42) to exercise flagging
  *  - anything else → a plain draft
  */
-function qualityGateway(scoreText = "SCORE: 42\nISSUES:\n- too generic\n- no hook"): LlmGateway {
+function qualityGateway(scoreText = '{"score": 42, "issues": ["too generic", "no hook"]}'): LlmGateway {
   return {
     async generate({ prompt }) {
       let text: string;
-      if (prompt.includes("ANGLE: ")) {
-        text = "ANGLE: the contrarian take\nANGLE: the data angle\nANGLE: the story angle";
-      } else if (prompt.includes("SCORE:")) {
+      if (prompt.includes("DISTINCT angles")) {
+        text = '["the contrarian take", "the data angle", "the story angle"]';
+      } else if (prompt.includes('"score"')) {
         text = scoreText;
       } else {
         text = "FAKE DRAFT OUTPUT";
@@ -30,7 +31,7 @@ function qualityGateway(scoreText = "SCORE: 42\nISSUES:\n- too generic\n- no hoo
 function reviewFailsGateway(): LlmGateway {
   return {
     async generate({ prompt }) {
-      if (prompt.includes("SCORE:")) throw new GatewayError("provider_error", "reviewer down");
+      if (prompt.includes('"score"')) throw new GatewayError("provider_error", "reviewer down");
       return { text: "FAKE DRAFT OUTPUT", model: "fake-model", provider: "fake", durationMs: 3 };
     },
   };
@@ -127,7 +128,7 @@ describe("generation quality (Sprint 22)", () => {
 
     it("does not flag when scores clear the threshold", async () => {
       await app.close();
-      await setup(qualityGateway("SCORE: 95\nISSUES:\n- none"));
+      await setup(qualityGateway('{"score": 95, "issues": []}'));
       const gen = (await generate()).json();
       expect(gen.review.flagged).toBe(false);
       expect(gen.review.checks[0].score).toBe(95);

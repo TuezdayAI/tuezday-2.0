@@ -3,7 +3,9 @@ import {
   AD_CREATIVE_FORMATS,
   APPROVAL_STATES,
   generateAdCreativesInputSchema,
+  googleRsaResponseSchema,
   isAdCreativeTaskType,
+  metaAdVariantsResponseSchema,
   parseAdCreative,
   type ApprovalState,
 } from "@tuezday/contracts";
@@ -14,7 +16,13 @@ import type { Db } from "../db";
 import { drafts } from "../db/schema";
 import type { EvidenceStore } from "../evidence/store";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
-import { listAdCreativeSets, parseGeneratedVariants, withViolations } from "../services/ad-creatives";
+import { generateStructured, StructuredOutputError } from "../llm/structured";
+import {
+  googleRsaContents,
+  listAdCreativeSets,
+  metaAdVariantContents,
+  withViolations,
+} from "../services/ad-creatives";
 import { getBrain } from "../services/brain";
 import {
   campaignExecutionError,
@@ -107,30 +115,53 @@ export function registerAdCreativeRoutes(
         tokenBudget: parsed.data.tokenBudget,
       });
 
-      let result;
+      const store = (output: string, model: string, provider: string, durationMs: number) =>
+        storeGeneration(db, {
+          workspaceId: request.params.id,
+          taskType: parsed.data.taskType,
+          channel: "ads",
+          personaId: parsed.data.personaId ?? null,
+          campaignId: campaign.id,
+          resolved,
+          output,
+          model,
+          provider,
+          durationMs,
+        });
+
+      let variants: string[];
+      let generation;
       try {
-        result = await llm.generate({ prompt: resolved.prompt });
+        if (parsed.data.taskType === "meta_ad_creative") {
+          const result = await generateStructured(llm, metaAdVariantsResponseSchema, {
+            prompt: resolved.prompt,
+          });
+          variants = metaAdVariantContents(result.value);
+          generation = store(variants.join("\n---\n"), result.model, result.provider, result.durationMs);
+        } else {
+          const result = await generateStructured(llm, googleRsaResponseSchema, {
+            prompt: resolved.prompt,
+          });
+          variants = googleRsaContents(result.value);
+          generation = store(variants.join("\n---\n"), result.model, result.provider, result.durationMs);
+        }
       } catch (err) {
+        if (err instanceof StructuredOutputError) {
+          // Malformed even after the repair retry: store the raw output for
+          // inspection and surface the typed failure (pre-58: silent drop).
+          const failed = store(err.rawText, err.model, err.provider, err.durationMs);
+          return reply.status(502).send({
+            error: "generation_unparseable",
+            message: `The model's output was not in the ${format.label} format. The generation is stored — try again.`,
+            generationId: failed.id,
+          });
+        }
         if (err instanceof GatewayError) {
           return reply.status(502).send({ error: "generation_failed", message: err.message });
         }
         throw err;
       }
 
-      const generation = storeGeneration(db, {
-        workspaceId: request.params.id,
-        taskType: parsed.data.taskType,
-        channel: "ads",
-        personaId: parsed.data.personaId ?? null,
-        campaignId: campaign.id,
-        resolved,
-        output: result.text,
-        model: result.model,
-        provider: result.provider,
-        durationMs: result.durationMs,
-      });
-
-      const variants = parseGeneratedVariants(parsed.data.taskType, result.text);
       if (variants.length === 0) {
         return reply.status(502).send({
           error: "generation_unparseable",

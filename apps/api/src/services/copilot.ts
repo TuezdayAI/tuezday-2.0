@@ -97,7 +97,15 @@ const RESPONSE_INSTRUCTION = [
   "Call a tool only when you still need data you do not already have. When you have enough, give the final answer.",
 ].join("\n");
 
-/** Pull the first JSON object out of a model response; tolerate fences/noise. */
+/**
+ * Pull the first JSON object out of a model response; tolerate fences/noise.
+ *
+ * Sprint 58 exception: this is the ONE surviving free-text parser. The turn
+ * contract here is "EITHER a JSON tool call OR free prose", which no single
+ * response schema can constrain; its real migration is to agentStep function
+ * calling / the AgentRunner in the Phase O chat-surface refactor. Do not add
+ * new callers — every other structured need goes through llm/structured.ts.
+ */
 export function parseJsonObject(text: string): Record<string, unknown> | null {
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) return null;

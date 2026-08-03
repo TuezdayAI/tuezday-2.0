@@ -11,6 +11,7 @@ import { composeAngleInstruction, resolveContext, type BrainContents } from "@tu
 import type { Db } from "../db";
 import { assertWithinLimit, EntitlementError, getUsage } from "../services/entitlements";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
+import { StructuredOutputError } from "../llm/structured";
 import { generateAngles } from "../services/angles";
 import { getBrain } from "../services/brain";
 import { campaignExecutionError, composeResolveCampaign, getCampaign } from "../services/campaigns";
@@ -141,9 +142,16 @@ export function registerGenerationRoutes(
           throw err;
         }
 
-        const angleResult = await generateAngles(llm, angleResolved, count);
-        angles = angleResult.angles;
-        chosenAngle = angles[0];
+        try {
+          const angleResult = await generateAngles(llm, angleResolved, count);
+          angles = angleResult.angles;
+          chosenAngle = angles[0];
+        } catch (err) {
+          // The angle step assists the draft; a post-repair malformed angle
+          // response degrades to drafting without one (pre-58 garbage text
+          // would have become a garbage angle). Gateway failures still abort.
+          if (!(err instanceof StructuredOutputError)) throw err;
+        }
       }
 
       const resolved = resolveContext({
@@ -282,7 +290,7 @@ export function registerGenerationRoutes(
       const result = await generateAngles(llm, resolved, count);
       return reply.status(201).send({ ...result, sections: resolved.sections });
     } catch (err) {
-      if (err instanceof GatewayError) {
+      if (err instanceof GatewayError || err instanceof StructuredOutputError) {
         return reply.status(502).send({ error: "generation_failed", message: err.message });
       }
       throw err;

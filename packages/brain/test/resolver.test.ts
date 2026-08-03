@@ -493,10 +493,9 @@ describe("generation quality sections (Sprint 22)", () => {
     expect(keys.indexOf("review_subject")).toBe(keys.indexOf("task") - 1);
   });
 
-  it("composes an angle instruction naming the count and the ANGLE prefix", () => {
+  it("composes an angle instruction naming the count and the JSON shape", () => {
     const instruction = composeAngleInstruction("linkedin_post", "linkedin", 4);
-    expect(instruction).toContain("ANGLE: ");
-    expect(instruction).toMatch(/EXACTLY 4/);
+    expect(instruction).toMatch(/JSON array of exactly 4 strings/);
     expect(instruction).toMatch(/distinct/i);
   });
 
@@ -505,8 +504,8 @@ describe("generation quality sections (Sprint 22)", () => {
     const fit = composeChannelFitReviewInstruction("linkedin");
     expect(brand).not.toBe(fit);
     for (const instruction of [brand, fit]) {
-      expect(instruction).toContain("SCORE:");
-      expect(instruction).toContain("ISSUES:");
+      expect(instruction).toContain('"score"');
+      expect(instruction).toContain('"issues"');
     }
     expect(brand).toMatch(/voice/i);
     expect(fit).toMatch(/linkedin/i);

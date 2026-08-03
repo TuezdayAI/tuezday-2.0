@@ -6673,3 +6673,108 @@ export const proofAgentRunInputSchema = z.object({
   question: z.string().min(1).max(2000),
 });
 export type ProofAgentRunInput = z.infer<typeof proofAgentRunInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Structured LLM outputs (Sprint 58)
+//
+// The response schemas generateStructured validates against — one per service
+// that needs structure from the model. Shapes mirror what the prompts already
+// asked for pre-58, so migrated call sites persist identical outcomes.
+// Tolerance policy: schemas assert shape and type; domain clamps (score 0-100,
+// reason length, top-5 matches, RSA field counts) stay in the services —
+// an over-long or out-of-range value is trimmed/flagged there, not rejected
+// here. brandProfileSchema (Sprint 36.2, above) is the tenth response schema.
+// ---------------------------------------------------------------------------
+
+/** One persona×campaign routing candidate in a scoring response. */
+export const matchingResponseMatchSchema = z.object({
+  personaId: z.string().nullish(),
+  campaignId: z.string().nullish(),
+  score: z.number(),
+  reason: z.string().optional(),
+});
+export type MatchingResponseMatch = z.infer<typeof matchingResponseMatchSchema>;
+
+/** One scored item in a discovery/signal matching response. */
+export const matchingResponseEntrySchema = z.object({
+  index: z.number().int(),
+  score: z.number(),
+  /** Optional top-level fallback reason when `matches` is empty. */
+  reason: z.string().optional(),
+  matches: z.array(matchingResponseMatchSchema),
+});
+export type MatchingResponseEntry = z.infer<typeof matchingResponseEntrySchema>;
+
+export const matchingResponseSchema = z.array(matchingResponseEntrySchema);
+export type MatchingResponse = z.infer<typeof matchingResponseSchema>;
+
+/** Inbox reply classification: one label per batched item. */
+export const emailReplyClassificationResponseSchema = z.array(
+  z.object({
+    index: z.number().int(),
+    label: z.enum(EMAIL_REPLY_LABELS),
+  }),
+);
+export type EmailReplyClassificationResponse = z.infer<
+  typeof emailReplyClassificationResponseSchema
+>;
+
+/** Brain-proposed discovery sources — only the keyless trio is proposable. */
+export const sourceProposalsResponseSchema = z.array(
+  z.object({
+    type: z.enum(["google_news", "reddit", "rss"]),
+    name: z.string(),
+    config: z.object({
+      feedUrl: z.string().optional(),
+      query: z.string().optional(),
+      subreddit: z.string().optional(),
+    }),
+    reason: z.string().optional(),
+  }),
+);
+export type SourceProposalsResponse = z.infer<typeof sourceProposalsResponseSchema>;
+
+/** One reviewer pass (brand voice / channel fit): score + concrete issues. */
+export const reviewCheckResponseSchema = z.object({
+  score: z.number(),
+  issues: z.array(z.string()),
+});
+export type ReviewCheckResponse = z.infer<typeof reviewCheckResponseSchema>;
+
+/** Angle-first generation: N distinct one-sentence angles, strongest first. */
+export const anglesResponseSchema = z.array(z.string());
+export type AnglesResponse = z.infer<typeof anglesResponseSchema>;
+
+/** Meta ad generation: N complete variants. */
+export const metaAdVariantsResponseSchema = z.object({
+  variants: z.array(
+    z.object({
+      primaryText: z.string(),
+      headline: z.string(),
+      description: z.string(),
+    }),
+  ),
+});
+export type MetaAdVariantsResponse = z.infer<typeof metaAdVariantsResponseSchema>;
+
+/** Google RSA generation: one asset set (counts validated as violations). */
+export const googleRsaResponseSchema = z.object({
+  headlines: z.array(z.string()),
+  descriptions: z.array(z.string()),
+});
+export type GoogleRsaResponse = z.infer<typeof googleRsaResponseSchema>;
+
+/** Outline enrichment: one one-line summary per 1-based section index. */
+export const outlineSummariesResponseSchema = z.array(
+  z.object({
+    index: z.number().int(),
+    summary: z.string(),
+  }),
+);
+export type OutlineSummariesResponse = z.infer<typeof outlineSummariesResponseSchema>;
+
+/** Brain auto-draft: one doc's markdown body. */
+export const brainDocDraftResponseSchema = z.object({
+  content: z.string(),
+});
+export type BrainDocDraftResponse = z.infer<typeof brainDocDraftResponseSchema>;

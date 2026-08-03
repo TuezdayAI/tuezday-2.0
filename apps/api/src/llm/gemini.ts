@@ -259,7 +259,9 @@ export class GeminiGateway implements LlmGateway {
 
   private agentRequestBody(params: AgentStepParams): Record<string, unknown> {
     return {
-      systemInstruction: { parts: [{ text: params.system }] },
+      // Single-shot structured calls (Sprint 58) pass system: "" — omit the
+      // instruction entirely rather than send an empty text part.
+      ...(params.system ? { systemInstruction: { parts: [{ text: params.system }] } } : {}),
       contents: params.messages.map((m) => toGeminiContent(m)),
       ...(params.tools?.length
         ? {

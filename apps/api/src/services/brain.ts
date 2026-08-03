@@ -3,10 +3,12 @@ import { and, desc, eq } from "drizzle-orm";
 import {
   BRAIN_DOC_TYPES,
   docOutlineSchema,
+  outlineSummariesResponseSchema,
   type BrainDocType,
   type BrainDocVersion,
   type BrainDocument,
   type DocOutline,
+  type OutlineSummariesResponse,
 } from "@tuezday/contracts";
 import {
   buildFallbackOutline,
@@ -20,6 +22,7 @@ import {
 import type { Db } from "../db";
 import { brainDocumentVersions, brainDocuments } from "../db/schema";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
+import { generateStructured, StructuredOutputError } from "../llm/structured";
 
 const CANONICAL_ORDER = new Map(BRAIN_DOC_TYPES.map((t, i) => [t, i]));
 
@@ -147,18 +150,19 @@ export function composeOutlineSummaryPrompt(
   return (
     "Task: You maintain a table of contents for a company brain document. For each numbered " +
     "section below, write ONE line (max 20 words) summarizing what the section actually says — " +
-    "concrete and specific, no marketing gloss. Respond with EXACTLY one line per section, " +
-    `formatted 'SUMMARY <n>: <one-line summary>' and nothing else — ${sections.length} lines total.\n\n` +
+    "concrete and specific, no marketing gloss. Respond with ONLY a JSON array, one entry per " +
+    `section: [{"index": <section number>, "summary": "<one-line summary>"}] — ` +
+    `${sections.length} entries total.\n\n` +
     blocks.join("\n\n")
   );
 }
 
-export function parseOutlineSummaries(text: string, count: number): Map<number, string> {
+/** Keep only summaries addressing a real 1-based section index. */
+function toSummaryMap(entries: OutlineSummariesResponse, count: number): Map<number, string> {
   const summaries = new Map<number, string>();
-  for (const match of text.matchAll(/^SUMMARY\s+(\d+)\s*:\s*(.+)$/gim)) {
-    const n = Number(match[1]);
-    const summary = match[2]!.trim();
-    if (n >= 1 && n <= count && summary) summaries.set(n, summary);
+  for (const entry of entries) {
+    const summary = entry.summary.trim();
+    if (entry.index >= 1 && entry.index <= count && summary) summaries.set(entry.index, summary);
   }
   return summaries;
 }
@@ -187,12 +191,13 @@ export async function enrichOutlineSummaries(
 
   let summaries: Map<number, string>;
   try {
-    const result = await llm.generate({
+    const result = await generateStructured(llm, outlineSummariesResponseSchema, {
       prompt: composeOutlineSummaryPrompt(sections.map((s) => ({ heading: s.heading, body: s.body }))),
     });
-    summaries = parseOutlineSummaries(result.text, sections.length);
+    summaries = toSummaryMap(result.value, sections.length);
   } catch (err) {
-    if (err instanceof GatewayError) return doc; // keep fallback summaries
+    // Gateway down or post-repair malformed output: keep fallback summaries.
+    if (err instanceof GatewayError || err instanceof StructuredOutputError) return doc;
     throw err;
   }
   if (summaries.size === 0) return doc;

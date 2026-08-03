@@ -1,4 +1,4 @@
-import { jsonSchemaFor } from "./json-schema";
+import { jsonSchemaFor } from "../llm/json-schema";
 import type { AnyTool, ToolContext } from "./registry";
 import type { AgentTool } from "./runner";
 

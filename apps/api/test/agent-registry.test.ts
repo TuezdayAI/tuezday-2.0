@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import { AGENT_TOOL_NAMES, toolInputSchemas } from "@tuezday/contracts";
 import { toAgentTools } from "../src/agents/adapter";
-import { jsonSchemaFor } from "../src/agents/json-schema";
+import { jsonSchemaFor } from "../src/llm/json-schema";
 import {
   compactText,
   DEFAULT_TOOL_BUDGET,

@@ -1,13 +1,14 @@
 import { and, eq, isNotNull } from "drizzle-orm";
 import {
   EMAIL_REPLY_LABELS,
-  type EmailReplyLabel,
+  emailReplyClassificationResponseSchema,
   type MailboxInboxRunResult,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { emailDeliveries, inboxItems, mailboxes } from "../db/schema";
 import type { GmailMailboxProvider } from "../outbound-email/gmail";
 import type { LlmGateway } from "../llm/gateway";
+import { generateStructured } from "../llm/structured";
 import { getConnection } from "./connections";
 import { inboxItemExists, insertInboxItem } from "./inbox";
 import { listConnectedMailboxes } from "./mailboxes";
@@ -54,19 +55,6 @@ function sentThreadDeliveries(db: Db, workspaceId: string): Map<string, { id: st
   return byThread;
 }
 
-function parseJsonArray(text: string): unknown[] | null {
-  const cleaned = text.trim().replace(/^```(?:json)?\s*/i, "").replace(/```\s*$/, "");
-  const start = cleaned.indexOf("[");
-  const end = cleaned.lastIndexOf("]");
-  if (start < 0 || end <= start) return null;
-  try {
-    const parsed = JSON.parse(cleaned.slice(start, end + 1)) as unknown;
-    return Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
 function classificationPrompt(items: NewEmailItem[]): string {
   const itemsBlock = items
     .map(
@@ -91,8 +79,9 @@ function classificationPrompt(items: NewEmailItem[]): string {
 }
 
 /**
- * Best-effort LLM classification (discovery-scoring shape): one call per batch,
- * parse JSON, and on any failure leave items unlabeled — classification
+ * Best-effort LLM classification (discovery-scoring shape): one structured
+ * call per batch; on any failure — gateway down or post-repair malformed
+ * output — the batch stays unlabeled and the run continues. Classification
  * assists, it never gates or aborts the poll.
  */
 async function classifyNewItems(
@@ -105,19 +94,15 @@ async function classifyNewItems(
   for (let offset = 0; offset < items.length; offset += CLASSIFY_BATCH_SIZE) {
     const batch = items.slice(offset, offset + CLASSIFY_BATCH_SIZE);
     try {
-      const result = await llm.generate({ prompt: classificationPrompt(batch) });
-      const entries = parseJsonArray(result.text);
-      if (!entries) continue; // unparseable output: items stay unlabeled
-      for (const raw of entries) {
-        if (typeof raw !== "object" || raw === null) continue;
-        const entry = raw as Record<string, unknown>;
-        if (typeof entry.index !== "number" || typeof entry.label !== "string") continue;
+      const result = await generateStructured(llm, emailReplyClassificationResponseSchema, {
+        prompt: classificationPrompt(batch),
+      });
+      for (const entry of result.value) {
         const item = batch[entry.index];
         if (!item) continue;
-        if (!(EMAIL_REPLY_LABELS as readonly string[]).includes(entry.label)) continue;
         db.update(inboxItems)
           .set({
-            replyLabel: entry.label as EmailReplyLabel,
+            replyLabel: entry.label,
             replyLabeledAt: nowMs,
             updatedAt: nowMs,
           })
@@ -126,7 +111,7 @@ async function classifyNewItems(
         labeled += 1;
       }
     } catch {
-      // Gateway failure mid-run: this batch stays unlabeled, the run continues.
+      // Gateway or structured-output failure: batch stays unlabeled, run continues.
     }
   }
   return labeled;

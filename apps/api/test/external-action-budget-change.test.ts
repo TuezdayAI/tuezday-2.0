@@ -11,11 +11,13 @@ const fakeLlm: LlmGateway = {
   async generate({ prompt }) {
     const count = Number(/Write (\d+) distinct Meta ad/.exec(prompt)?.[1] ?? 1);
     return {
-      text: Array.from(
-        { length: count },
-        (_, index) =>
-          `Primary text: Angle ${index + 1}.\nHeadline: Headline ${index + 1}\nDescription: Desc`,
-      ).join("\n---\n"),
+      text: JSON.stringify({
+        variants: Array.from({ length: count }, (_, index) => ({
+          primaryText: `Angle ${index + 1}.`,
+          headline: `Headline ${index + 1}`,
+          description: "Desc",
+        })),
+      }),
       model: "fake",
       provider: "fake",
       durationMs: 1,
