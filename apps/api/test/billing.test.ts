@@ -4,8 +4,8 @@ import { buildApp, type TuezdayApp } from "../src/app";
 import { createTestDb } from "./helpers";
 import { registerAccount } from "../src/services/auth";
 import { createWorkspace } from "../src/services/workspaces";
-import { connections, generations } from "../src/db/schema";
-import { randomUUID } from "node:crypto";
+import { connections } from "../src/db/schema";
+import { recordLlmUsage } from "../src/services/usage-ledger";
 
 describe("billing gating (Task 3)", () => {
   let app: TuezdayApp;
@@ -20,34 +20,28 @@ describe("billing gating (Task 3)", () => {
     await app.close();
   });
 
-  test("generations gate (50 per month)", async () => {
+  test("LLM budget gate (free plan: 50¢ rolling 30 days)", async () => {
     const { token, user } = await registerAccount(db, { email: "u@t.com", password: "pwd", name: "u" });
     const ws = await createWorkspace(db, { name: "ws" }, user.id);
 
-    for (let i = 0; i < 50; i++) {
-      db.insert(generations).values({
-        id: randomUUID(),
-        workspaceId: ws.id,
-        taskType: "linkedin_post",
-        channel: "linkedin",
-        prompt: "test",
-        sectionsJson: "[]",
-        output: "out",
-        model: "gpt-4",
-        provider: "openai",
-        durationMs: 100,
-        createdAt: Date.now(),
-      }).run();
-    }
+    // Fill the free plan's whole budget with one ledger event.
+    recordLlmUsage(db, {
+      workspaceId: ws.id,
+      pipeline: "generation",
+      model: "unknown-model",
+      provider: "test",
+      usage: { inputTokens: 0, outputTokens: 0, cachedTokens: 0 },
+      costCentsOverride: 50,
+    });
 
     const res = await app.inject({
       method: "POST",
       url: `/workspaces/${ws.id}/generate`,
       headers: { authorization: `Bearer ${token}` },
-      payload: { taskType: "linkedin_post", channel: "linkedin", prompt: "test 51" },
+      payload: { taskType: "linkedin_post", channel: "linkedin", prompt: "over budget" },
     });
     expect(res.statusCode).toBe(402);
-    expect(res.json()).toEqual({ error: "upgrade_required", key: "monthlyGenerations", limit: 50 });
+    expect(res.json()).toEqual({ error: "upgrade_required", key: "monthlyLlmCents", limit: 50 });
   });
 
   test("connectors gate (1 per workspace)", async () => {

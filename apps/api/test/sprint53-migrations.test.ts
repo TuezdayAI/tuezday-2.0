@@ -289,6 +289,7 @@ describe("Sprint 53 migrations", () => {
     expect(entry.breakpoints).toBe(true);
     expect(entry.idx).toBe(62);
     // Every idx is unique and the tag's numeric prefix agrees with it.
+    expect(entry.tag.startsWith(String(entry.idx).padStart(4, "0"))).toBe(true);
     expect(new Set(journal.entries.map((e) => e.idx)).size).toBe(
       journal.entries.length,
     );

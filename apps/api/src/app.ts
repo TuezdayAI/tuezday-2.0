@@ -7,6 +7,7 @@ import { sql } from "drizzle-orm";
 import type { AnalyticsSink } from "./analytics/sink";
 import { createAnalyticsSink } from "./analytics/sink";
 import { registerAuthGuard } from "./auth/guard";
+import { EntitlementError } from "./services/entitlements";
 import type { ConnectorFabric } from "./connectors/fabric";
 import { NangoFabric } from "./connectors/nango";
 import { assertProviderConfiguration } from "./connectors/provider-config";
@@ -31,6 +32,7 @@ import { registerAdCreativeRoutes } from "./routes/ad-creatives";
 import { registerAdImageRoutes } from "./routes/ad-images";
 import { registerAdLaunchRoutes } from "./routes/ad-launches";
 import { registerAdsRoutes } from "./routes/ads";
+import { registerAgentRunRoutes } from "./routes/agent-runs";
 import { registerAudienceRoutes } from "./routes/audiences";
 import { registerAuthRoutes } from "./routes/auth";
 import { registerAutomationRoutes } from "./routes/automation";
@@ -44,6 +46,7 @@ import { registerConnectorRoutes } from "./routes/connectors";
 import { registerContextMatrixRoutes } from "./routes/context-matrix";
 import { registerCrmRoutes } from "./routes/crm";
 import { registerDiscoveryRoutes } from "./routes/discovery";
+import { registerStoryRoutes } from "./routes/stories";
 import { registerDraftRoutes } from "./routes/drafts";
 import { registerEvidenceRoutes } from "./routes/evidence";
 import { registerExecutionRoutes } from "./routes/executions";
@@ -245,6 +248,16 @@ export async function buildApp({
     encoding: "utf8",
   });
 
+  // Plan-limit convention (Sprint 59): an uncaught EntitlementError anywhere
+  // is the standard 402 upgrade_required shape, so new budget gates need no
+  // per-route catch. Existing per-route catches stay and win where present.
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof EntitlementError) {
+      return reply.status(402).send({ error: "upgrade_required", key: error.key, limit: error.limit });
+    }
+    throw error; // fall through to Fastify's default handling
+  });
+
   // Must come before any routes: every route registered after this needs a
   // session (or the worker token), except the guard's public allowlist.
   registerAuthGuard(app, db, workerToken);
@@ -290,6 +303,7 @@ export async function buildApp({
   registerNotificationRoutes(app, db, mailer, fetcher);
   registerSignalRoutes(app, db, llm, evidence);
   registerChatRoutes(app, db, llm, evidence, externalActionRuntime);
+  registerAgentRunRoutes(app, db, { llm, evidence, safeFetch: guardedFetch });
   registerDiscoveryRoutes(
     app,
     db,
@@ -305,6 +319,7 @@ export async function buildApp({
       log: operatorLog,
     },
   );
+  registerStoryRoutes(app, db);
   registerCampaignRoutes(app, db);
   registerCampaignPlanRoutes(app, db);
   registerAudienceRoutes(app, db);

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { blob, check, index, integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
+import { blob, check, index, integer, primaryKey, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 // Keep this schema Postgres-portable: text ids, integer epoch-ms timestamps,
 // no SQLite-only column tricks. The Postgres swap is planned for Sprint 8.
@@ -537,6 +537,195 @@ export const discoveredItems = sqliteTable(
 );
 
 export type DiscoveredItemRow = typeof discoveredItems.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Canonical stories & source occurrences (Sprint 60, design §8.1–8.4).
+// Shadow intelligence layer beside discovered-items triage: immutable
+// occurrences resolve by exact identity keys into canonical stories with
+// reversible membership and versioned enrichment.
+// ---------------------------------------------------------------------------
+
+export const discoverySourceOccurrences = sqliteTable(
+  "discovery_source_occurrences",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    // Deliberately no FK: occurrences are the immutable historical record and
+    // must survive source deletion; the type/name snapshot below stays valid.
+    sourceId: text("source_id").notNull(),
+    sourceType: text("source_type").notNull(),
+    sourceName: text("source_name").notNull(),
+    // discovery_jobs row of the fetch attempt (no FK — jobs cascade with their
+    // source). Null for rows synthesized by the backfill.
+    fetchRunId: text("fetch_run_id"),
+    providerExternalId: text("provider_external_id").notNull(),
+    title: text("title").notNull(),
+    url: text("url").notNull(),
+    excerpt: text("excerpt").notNull().default(""),
+    // Adapters don't emit authors yet; the column exists so future adapters
+    // need no migration.
+    author: text("author"),
+    providerPublishedAt: integer("provider_published_at"),
+    observedAt: integer("observed_at").notNull(),
+    // hashUrl / hashContent from services/discovery.ts — same normalizers as
+    // discovered_items so the shadow layer and Sprint 45 dedupe agree.
+    normalizedUrlKey: text("normalized_url_key"),
+    contentFingerprint: text("content_fingerprint").notNull(),
+    // Bounded provider snapshot. Never holds fields needed for joins,
+    // filtering, or uniqueness (TAP-19 invariant).
+    rawMetadataJson: text("raw_metadata_json").notNull().default("{}"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("discovery_source_occurrences_source_external").on(
+      t.sourceId,
+      t.providerExternalId,
+    ),
+    index("discovery_source_occurrences_workspace_observed").on(
+      t.workspaceId,
+      t.observedAt,
+    ),
+  ],
+);
+
+export type DiscoverySourceOccurrenceRow =
+  typeof discoverySourceOccurrences.$inferSelect;
+
+export const canonicalExternalStories = sqliteTable(
+  "canonical_external_stories",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("active"),
+    // Founding occurrence's URL/title/fingerprint — stable; later variants
+    // live in enrichment payloads, not here.
+    canonicalUrl: text("canonical_url").notNull(),
+    title: text("title").notNull(),
+    contentFingerprint: text("content_fingerprint").notNull(),
+    firstObservedAt: integer("first_observed_at").notNull(),
+    lastObservedAt: integer("last_observed_at").notNull(),
+    currentEnrichmentVersion: integer("current_enrichment_version")
+      .notNull()
+      .default(0),
+    // Set when this story was archived by a manual merge (self-reference; no
+    // FK to keep the initial CREATE simple and the pointer historical).
+    mergedIntoStoryId: text("merged_into_story_id"),
+    archivedAt: integer("archived_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    index("canonical_stories_workspace_status").on(
+      t.workspaceId,
+      t.status,
+      t.lastObservedAt,
+    ),
+  ],
+);
+
+export type CanonicalExternalStoryRow =
+  typeof canonicalExternalStories.$inferSelect;
+
+// Exact identity child table (design §8.2): several keys may identify one
+// story; a key belongs to exactly one story per workspace.
+export const canonicalStoryKeys = sqliteTable(
+  "canonical_story_keys",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    storyId: text("story_id")
+      .notNull()
+      .references(() => canonicalExternalStories.id, { onDelete: "cascade" }),
+    keyKind: text("key_kind").notNull(),
+    keyHash: text("key_hash").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("canonical_story_keys_identity").on(
+      t.workspaceId,
+      t.keyKind,
+      t.keyHash,
+    ),
+    index("canonical_story_keys_story").on(t.storyId),
+  ],
+);
+
+export type CanonicalStoryKeyRow = typeof canonicalStoryKeys.$inferSelect;
+
+// Reversible membership (design §8.3). Rows are never deleted: a merge or
+// split closes the active row (detachedAt) and writes a new one.
+export const storyOccurrences = sqliteTable(
+  "story_occurrences",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    storyId: text("story_id")
+      .notNull()
+      .references(() => canonicalExternalStories.id, { onDelete: "cascade" }),
+    occurrenceId: text("occurrence_id")
+      .notNull()
+      .references(() => discoverySourceOccurrences.id, { onDelete: "cascade" }),
+    relationshipKind: text("relationship_kind").notNull(),
+    confidence: integer("confidence").notNull(),
+    matcherVersion: integer("matcher_version").notNull().default(1),
+    attachedAt: integer("attached_at").notNull(),
+    // Null = the system resolver; set for manual merge/split attaches.
+    attachedByUserId: text("attached_by_user_id"),
+    attachReason: text("attach_reason"),
+    detachedAt: integer("detached_at"),
+    detachedByUserId: text("detached_by_user_id"),
+    detachReason: text("detach_reason"),
+  },
+  (t) => [
+    // Exactly one active membership per occurrence.
+    uniqueIndex("story_occurrences_one_active")
+      .on(t.occurrenceId)
+      .where(sql`${t.detachedAt} IS NULL`),
+    index("story_occurrences_story").on(t.storyId, t.detachedAt),
+  ],
+);
+
+export type StoryOccurrenceRow = typeof storyOccurrences.$inferSelect;
+
+// Immutable, versioned enrichment output (design §8.4). storyFingerprint
+// covers the active membership's content, so unchanged membership re-runs
+// are no-ops and membership changes append rather than overwrite.
+export const storyEnrichments = sqliteTable(
+  "story_enrichments",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    storyId: text("story_id")
+      .notNull()
+      .references(() => canonicalExternalStories.id, { onDelete: "cascade" }),
+    storyFingerprint: text("story_fingerprint").notNull(),
+    enricherVersion: integer("enricher_version").notNull(),
+    // Distinct sources among active members — a real column because quality
+    // gates filter on it; the JSON payload is display/snapshot data only.
+    corroborationCount: integer("corroboration_count").notNull(),
+    payloadJson: text("payload_json").notNull().default("{}"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("story_enrichments_identity").on(
+      t.storyId,
+      t.storyFingerprint,
+      t.enricherVersion,
+    ),
+  ],
+);
+
+export type StoryEnrichmentRow = typeof storyEnrichments.$inferSelect;
 
 export const campaigns = sqliteTable("campaigns", {
   id: text("id").primaryKey(),
@@ -2385,3 +2574,98 @@ export const designTemplates = sqliteTable(
 );
 
 export type DesignTemplateRow = typeof designTemplates.$inferSelect;
+
+// Agent runtime traces (Sprint 56) — every AgentRunner loop is persisted in
+// full: the run row holds the input (system + initial messages) and totals;
+// steps hold everything appended in order (model calls with per-step usage,
+// tool dispatches with arguments and results). The transcript reconstructs
+// without duplication, and the Sprint 57 Agent Inspector renders straight
+// from these rows.
+export const agentRuns = sqliteTable(
+  "agent_runs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    task: text("task").notNull(), // short label, e.g. "proof" / "pipeline:research"
+    createdBy: text("created_by").notNull(), // actor attribution label
+    status: text("status").notNull(), // AGENT_RUN_STATUSES
+    stopReason: text("stop_reason"), // AGENT_STOP_REASONS, set iff done
+    error: text("error"),
+    model: text("model").notNull(),
+    provider: text("provider").notNull(),
+    system: text("system").notNull(),
+    inputMessages: text("input_messages_json").notNull(), // AgentMessage[]
+    outputJson: text("output_json"), // final structured/text output when complete
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    cachedTokens: integer("cached_tokens").notNull().default(0),
+    costCents: real("cost_cents").notNull().default(0),
+    stepCount: integer("step_count").notNull().default(0),
+    startedAt: integer("started_at").notNull(),
+    finishedAt: integer("finished_at"),
+  },
+  (t) => [index("agent_runs_workspace_started").on(t.workspaceId, t.startedAt)],
+);
+
+export type AgentRunRow = typeof agentRuns.$inferSelect;
+
+export const agentRunSteps = sqliteTable(
+  "agent_run_steps",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => agentRuns.id, { onDelete: "cascade" }),
+    stepIndex: integer("step_index").notNull(),
+    kind: text("kind").notNull(), // AGENT_STEP_KINDS
+    messageJson: text("message_json"), // model_call: the assistant AgentMessage
+    toolName: text("tool_name"),
+    toolCallId: text("tool_call_id"),
+    toolArgsJson: text("tool_args_json"),
+    toolResultJson: text("tool_result_json"),
+    toolError: text("tool_error"),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    cachedTokens: integer("cached_tokens").notNull().default(0),
+    costCents: real("cost_cents").notNull().default(0),
+    durationMs: integer("duration_ms").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("agent_run_steps_run_index").on(t.runId, t.stepIndex)],
+);
+
+export type AgentRunStepRow = typeof agentRunSteps.$inferSelect;
+
+// LLM usage ledger (Sprint 59) — one row per successful model call, written by
+// the meteredLlm gateway proxy (and flat design-daemon events). This is the
+// single budget authority: workspace spend, /billing spend-by-pipeline and the
+// cache-hit-rate metric are all sums over this table. agent_runs keeps its own
+// per-run totals for the Inspector; the runner's calls land here through the
+// metered gateway, never via duplicate writes.
+export const llmUsageEvents = sqliteTable(
+  "llm_usage_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    pipeline: text("pipeline").notNull(), // LLM_PIPELINES
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+    agentRunId: text("agent_run_id"),
+    model: text("model").notNull(),
+    provider: text("provider").notNull(),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    cachedTokens: integer("cached_tokens").notNull().default(0),
+    costCents: real("cost_cents").notNull().default(0),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("llm_usage_events_workspace_created").on(t.workspaceId, t.createdAt),
+    index("llm_usage_events_workspace_pipeline").on(t.workspaceId, t.pipeline, t.createdAt),
+  ],
+);
+
+export type LlmUsageEventRow = typeof llmUsageEvents.$inferSelect;

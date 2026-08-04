@@ -39,6 +39,7 @@ import { getCampaign } from "./campaigns";
 import { getConnection, listConnections, providerByKey } from "./connections";
 import { applyDraftAction, getDraft, type DraftActor } from "./drafts";
 import { generateEngagementReply } from "./engagement-reply";
+import { assertLlmBudget, llmBudgetExhausted } from "./entitlements";
 import { emitEvent } from "./events";
 import {
   deriveReplyIdempotencyKey,
@@ -571,7 +572,11 @@ async function runReplyOrchestrator(
     .all()
     .map(rowToInboxItem);
 
+  // Budget degradation (Sprint 59): items stay unread and a later tick
+  // retries them once the workspace's rolling LLM spend frees up.
+  const budgetExhausted = llmBudgetExhausted(db, workspace.id);
   for (const item of items) {
+    if (budgetExhausted) break;
     const { campaign, persona, post } = replyContext(db, workspace.id, item);
     // Auto-reply only on scheduled_auto campaigns (the founder's per-campaign choice).
     if (!campaign || campaign.automationMode !== "scheduled_auto") continue;
@@ -777,6 +782,7 @@ export async function generateReplyForItem(
     const existing = getDraft(db, workspace.id, item.replyDraftId);
     if (existing) return existing;
   }
+  assertLlmBudget(db, workspace.id); // manual draft: 402 before the model call (Sprint 59)
   const { campaign, persona, post } = replyContext(db, workspace.id, item);
   const draft = await generateEngagementReply(
     db,

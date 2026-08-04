@@ -2,7 +2,15 @@
 
 import { use, useEffect, useState } from "react";
 import { apiFetch } from "@/lib/api";
-import { PLANS, usageMeter, type EntitlementUsage, type Entitlements, type PlanId } from "@tuezday/contracts";
+import {
+  PLANS,
+  usageMeter,
+  type EntitlementUsage,
+  type Entitlements,
+  type PlanId,
+  type WorkspaceSpend,
+} from "@tuezday/contracts";
+import { formatCost, formatTokens } from "@/lib/agent-inspector";
 import { EmptyState } from "@/src/components/empty-state";
 import { TopBarActions } from "@/src/components/top-bar";
 import { Badge } from "@/src/components/ui/badge";
@@ -16,6 +24,19 @@ interface BillingView {
   plan: PlanId;
   entitlements: Entitlements;
   usage: EntitlementUsage;
+  spend: WorkspaceSpend;
+}
+
+/** "$0.13" for cents values, "Unlimited" for -1. */
+function dollars(cents: number): string {
+  if (cents === -1) return "Unlimited";
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
+/** Human labels for pipeline slugs, e.g. "signal_matching" -> "Signal matching". */
+function pipelineLabel(pipeline: string): string {
+  const label = pipeline.replace(/_/g, " ");
+  return label.charAt(0).toUpperCase() + label.slice(1);
 }
 
 /** Display-only price copy; the checkout price always comes from Stripe. */
@@ -114,10 +135,16 @@ export default function BillingPage({ params }: { params: Promise<{ id: string }
               <h3>Usage</h3>
             </div>
             <MeterRow
-              title="Monthly generations"
-              used={data.usage.monthlyGenerations}
-              limit={data.entitlements.monthlyGenerations}
+              title="AI usage (rolling 30 days)"
+              used={data.spend.spentCents}
+              limit={data.spend.budgetCents}
+              format={dollars}
             />
+            {data.spend.state === "near" && (
+              <p className="usage-alert">
+                You have used over 80% of this month&apos;s AI budget. Generation pauses at the cap.
+              </p>
+            )}
             <MeterRow title="Connectors" used={data.usage.connectors} limit={data.entitlements.connectors} />
             <MeterRow title="Seats" used={data.usage.seats} limit={data.entitlements.seats} />
 
@@ -131,13 +158,66 @@ export default function BillingPage({ params }: { params: Promise<{ id: string }
           </>
         )}
       </Card>
+
+      {data && (
+        <Card>
+          <div className={styles.sectionHead}>
+            <Icon name="status-learning" size="compact" className={styles.sectionIcon} />
+            <h2>AI spend by pipeline</h2>
+          </div>
+          <p className="meta">
+            {data.spend.cacheHitRate === null
+              ? "No model calls in this window yet."
+              : `Prompt cache hit rate: ${Math.round(data.spend.cacheHitRate * 100)}% of input tokens served from cache.`}
+          </p>
+          {data.spend.byPipeline.length === 0 ? (
+            <EmptyState description="Spend appears here after the first model call." />
+          ) : (
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: "left" }}>Pipeline</th>
+                  <th style={{ textAlign: "right" }}>Calls</th>
+                  <th style={{ textAlign: "right" }}>Input tokens</th>
+                  <th style={{ textAlign: "right" }}>Cached</th>
+                  <th style={{ textAlign: "right" }}>Output tokens</th>
+                  <th style={{ textAlign: "right" }}>Cost</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.spend.byPipeline.map((row) => (
+                  <tr key={row.pipeline}>
+                    <td>{pipelineLabel(row.pipeline)}</td>
+                    <td style={{ textAlign: "right" }}>{row.calls}</td>
+                    <td style={{ textAlign: "right" }}>{formatTokens(row.inputTokens)}</td>
+                    <td style={{ textAlign: "right" }}>{formatTokens(row.cachedTokens)}</td>
+                    <td style={{ textAlign: "right" }}>{formatTokens(row.outputTokens)}</td>
+                    <td style={{ textAlign: "right" }}>{formatCost(row.costCents)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </Card>
+      )}
     </>
   );
 }
 
-function MeterRow({ title, used, limit }: { title: string; used: number; limit: number }) {
+function MeterRow({
+  title,
+  used,
+  limit,
+  format,
+}: {
+  title: string;
+  used: number;
+  limit: number;
+  format?: (value: number) => string;
+}) {
   const meter = usageMeter(used, limit);
-  const figure = meter.state === "unlimited" ? `${used} / Unlimited` : `${used} / ${limit}`;
+  const fmt = format ?? String;
+  const figure = meter.state === "unlimited" ? `${fmt(used)} / Unlimited` : `${fmt(used)} / ${fmt(limit)}`;
   return (
     <div className={styles.meterRow}>
       <Meter label={title} figure={figure} percent={meter.percent} state={meter.state} />

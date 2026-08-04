@@ -1,5 +1,8 @@
 import {
   GatewayError,
+  type AgentStepParams,
+  type AgentStepResult,
+  type AgentStepStreamEvent,
   type EmbedParams,
   type EmbedResult,
   type GenerateParams,
@@ -39,6 +42,51 @@ export class FallbackGateway implements LlmGateway {
         `All LLM providers failed. Primary: ${primaryError.message} Secondary: ${err.message}`,
       );
     }
+  }
+
+  /**
+   * Agent steps (Sprint 56) follow the embed() pattern: try each provider
+   * that implements the method, degrade on GatewayError, and surface a clear
+   * error when neither supports it. OpenRouter implements the interface in a
+   * later sprint; until then a Gemini-primary deploy just uses Gemini.
+   */
+  async agentStep(params: AgentStepParams): Promise<AgentStepResult> {
+    return this.agentCall((provider) => provider.agentStep?.(params));
+  }
+
+  async agentStepStream(
+    params: AgentStepParams,
+    onEvent: (event: AgentStepStreamEvent) => void,
+  ): Promise<AgentStepResult> {
+    // A provider with agentStep but no streaming still serves the call —
+    // the caller (AgentRunner) treats streaming as an optimization.
+    return this.agentCall(
+      (provider) =>
+        provider.agentStepStream?.(params, onEvent) ?? provider.agentStep?.(params),
+    );
+  }
+
+  private async agentCall(
+    invoke: (provider: LlmGateway) => Promise<AgentStepResult> | undefined,
+  ): Promise<AgentStepResult> {
+    let firstError: GatewayError | undefined;
+    for (const provider of [this.primary, this.secondary]) {
+      const attempt = invoke(provider);
+      if (!attempt) continue;
+      try {
+        return await attempt;
+      } catch (error) {
+        if (!(error instanceof GatewayError)) throw error;
+        firstError ??= error;
+      }
+    }
+    throw (
+      firstError ??
+      new GatewayError(
+        "provider_error",
+        "No configured LLM provider supports agent steps.",
+      )
+    );
   }
 
   async embed(params: EmbedParams): Promise<EmbedResult> {

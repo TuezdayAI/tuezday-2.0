@@ -7,7 +7,10 @@ import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import {
   DISCOVERY_MAX_MATCHES_PER_ITEM,
+  matchingResponseSchema,
   type DiscoveredItemMatch,
+  type MatchingResponseEntry,
+  type MatchingResponseMatch,
 } from "@tuezday/contracts";
 import type { Db, DbExecutor } from "../db";
 import {
@@ -19,6 +22,8 @@ import {
   type SignalMatchRow,
 } from "../db/schema";
 import type { LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
+import { generateStructured } from "../llm/structured";
 import { getBrain } from "./brain";
 import { listCampaigns } from "./campaigns";
 import { listPersonas } from "./personas";
@@ -35,18 +40,6 @@ export function brainDigest(db: Db, workspaceId: string): string {
     .filter((d) => ["soul", "icp", "voice", "now"].includes(d.docType) && d.content.trim())
     .map((d) => `${d.docType.toUpperCase()}: ${d.content.trim().slice(0, DIGEST_CHARS_PER_DOC)}`)
     .join("\n\n");
-}
-
-/** Pull the first JSON array out of a model response; tolerate fences/noise. */
-export function parseJsonArray(text: string): unknown[] | null {
-  const match = text.match(/\[[\s\S]*\]/);
-  if (!match) return null;
-  try {
-    const parsed = JSON.parse(match[0]);
-    return Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
 }
 
 export function clampScore(score: number): number {
@@ -151,7 +144,10 @@ export function buildMatchingPrompt(params: {
 }
 
 // ---------------------------------------------------------------------------
-// Response parsing
+// Response sanitization. Shape is guaranteed upstream by generateStructured +
+// matchingResponseSchema (Sprint 58); what remains here is domain judgment —
+// the model may still cite ids that don't exist or pairings the campaign
+// doesn't allow.
 // ---------------------------------------------------------------------------
 
 export interface ParsedMatch {
@@ -161,7 +157,7 @@ export interface ParsedMatch {
   reason: string;
 }
 
-function toParsedMatch(raw: Record<string, unknown>, ctx: MatchingContext): ParsedMatch | null {
+function toParsedMatch(raw: MatchingResponseMatch, ctx: MatchingContext): ParsedMatch | null {
   const campaignId =
     typeof raw.campaignId === "string" && ctx.campaignIds.has(raw.campaignId)
       ? raw.campaignId
@@ -177,35 +173,25 @@ function toParsedMatch(raw: Record<string, unknown>, ctx: MatchingContext): Pars
   return {
     personaId,
     campaignId,
-    score: typeof raw.score === "number" ? clampScore(raw.score) : 0,
-    reason: typeof raw.reason === "string" ? raw.reason.slice(0, MATCH_REASON_MAX_CHARS) : "",
+    score: clampScore(raw.score),
+    reason: (raw.reason ?? "").slice(0, MATCH_REASON_MAX_CHARS),
   };
 }
 
 /**
- * Defensive parse of one scoring-response entry's candidates. Unknown ids →
- * null (never rejected); a persona outside the campaign's `personaIds` is
- * dropped to null while the campaign match survives; more than
- * `DISCOVERY_MAX_MATCHES_PER_ITEM` entries keep the top-scoring five; a
- * response with no `matches` key falls back to the legacy top-level
- * `personaId`/`campaignId` as a single candidate. Best-scoring first, ties by
- * the model's array order (stable sort).
+ * Sanitize one scoring entry's candidates. Unknown ids → null (never
+ * rejected); a persona outside the campaign's `personaIds` is dropped to null
+ * while the campaign match survives; more than
+ * `DISCOVERY_MAX_MATCHES_PER_ITEM` entries keep the top-scoring five.
+ * Best-scoring first, ties by the model's array order (stable sort).
  */
-export function parseEntryMatches(
-  entry: Record<string, unknown>,
+export function sanitizeEntryMatches(
+  entry: MatchingResponseEntry,
   ctx: MatchingContext,
 ): ParsedMatch[] {
   const candidates: ParsedMatch[] = [];
-  if (Array.isArray(entry.matches)) {
-    for (const raw of entry.matches) {
-      if (typeof raw !== "object" || raw === null) continue;
-      const match = toParsedMatch(raw as Record<string, unknown>, ctx);
-      if (match) candidates.push(match);
-    }
-  } else {
-    // Legacy/partial shape: treat top-level personaId/campaignId as one match
-    // scored by the entry's own (overall) score.
-    const match = toParsedMatch(entry, ctx);
+  for (const raw of entry.matches) {
+    const match = toParsedMatch(raw, ctx);
     if (match) candidates.push(match);
   }
   candidates.sort((a, b) => b.score - a.score);
@@ -555,10 +541,10 @@ export function getBestSignalMatchForCampaign(
 
 /**
  * Judge a single signal against the workspace's personas and campaigns using
- * the exact prompt/parse discovery items get. This phase performs no writes,
+ * the exact prompt/schema discovery items get. This phase performs no writes,
  * so callers can finish the complete persistence step in one transaction.
- * Gateway failures propagate; callers convert them to an empty best-effort
- * result before opening that transaction.
+ * Gateway and StructuredOutputError failures propagate; callers convert them
+ * to an empty best-effort result before opening that transaction.
  */
 export async function judgeSignalMatches(
   db: Db,
@@ -573,10 +559,9 @@ export async function judgeSignalMatches(
     ctx,
     itemsBlock: `ITEM 0: ${content.slice(0, SIGNAL_CONTENT_PROMPT_CHARS)}`,
   });
-  const result = await llm.generate({ prompt });
-  const entries = parseJsonArray(result.text);
-  if (!entries) return [];
-  const entry = entries.find((e): e is Record<string, unknown> => typeof e === "object" && e !== null);
+  const metered = meteredLlm(llm, db, { workspaceId, pipeline: "signal_matching" });
+  const result = await generateStructured(metered, matchingResponseSchema, { prompt, tier: "cheap" });
+  const entry = result.value[0];
   if (!entry) return [];
-  return parseEntryMatches(entry, ctx);
+  return sanitizeEntryMatches(entry, ctx);
 }

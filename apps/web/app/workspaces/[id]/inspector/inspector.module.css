@@ -1,0 +1,78 @@
+/* Agent Inspector (Sprint 57). Editorial tokens only. */
+
+.proofForm {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.75rem;
+}
+
+.proofForm > :first-child {
+  flex: 1;
+}
+
+.row {
+  cursor: pointer;
+}
+
+.selectedRow {
+  cursor: pointer;
+  background: var(--line-soft);
+}
+
+.detail {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+}
+
+.detailMeta {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.systemPrompt {
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}
+
+.systemPrompt summary {
+  cursor: pointer;
+}
+
+.modelStep {
+  border-left: 2px solid var(--border);
+  padding-left: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.toolStep {
+  border-left: 2px solid var(--line-soft);
+  margin-left: 0.9rem;
+  padding-left: 0.9rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.stepHead {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.jsonBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.jsonBlock pre {
+  max-height: 16rem;
+  overflow: auto;
+}

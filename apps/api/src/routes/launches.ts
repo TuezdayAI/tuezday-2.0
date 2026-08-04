@@ -11,6 +11,7 @@ import {
 } from "@tuezday/contracts";
 import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
+import { assertLlmBudget } from "../services/entitlements";
 import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
 import type { OutboundExporter } from "../outbound/exporter";
@@ -122,6 +123,7 @@ export function registerLaunchRoutes(
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
+      assertLlmBudget(db, request.params.id);
       const result = await generateLaunch(
         db,
         llm,

@@ -2,9 +2,12 @@ import { describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "../src/db";
 import {
+  canonicalExternalStories,
   discoveredItems,
   discoveryJobs,
+  discoverySourceOccurrences,
   discoverySources,
+  storyOccurrences,
   workspaces,
 } from "../src/db/schema";
 import {
@@ -142,6 +145,7 @@ function occurrenceCount(db: Db): number {
 describe("atomic discovery occurrence checkpoints", () => {
   it.each([
     "afterOccurrenceInsert",
+    "afterStoryResolution",
     "afterCanonicalization",
     "beforeCursorUpdate",
   ] as const)("rolls back the whole page when %s fails", (hook) => {
@@ -162,6 +166,10 @@ describe("atomic discovery occurrence checkpoints", () => {
     ).toThrow(`fault:${hook}`);
 
     expect(occurrenceCount(db)).toBe(0);
+    // Sprint 60 shadow layer rolls back with the page too.
+    expect(db.select().from(discoverySourceOccurrences).all()).toHaveLength(0);
+    expect(db.select().from(canonicalExternalStories).all()).toHaveLength(0);
+    expect(db.select().from(storyOccurrences).all()).toHaveLength(0);
     const sourceRow = db
       .select()
       .from(discoverySources)

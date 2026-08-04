@@ -20,17 +20,20 @@ function fakeGateway(): LlmGateway {
     async generate({ prompt }) {
       let text: string;
       if (prompt.includes("Google responsive search ad")) {
-        const headlines = Array.from({ length: 3 }, (_, i) => `Headline ${i + 1}: H${i + 1}`);
-        const descriptions = Array.from({ length: 2 }, (_, i) => `Description ${i + 1}: D${i + 1}`);
-        text = [...headlines, ...descriptions].join("\n");
+        text = JSON.stringify({
+          headlines: Array.from({ length: 3 }, (_, i) => `H${i + 1}`),
+          descriptions: Array.from({ length: 2 }, (_, i) => `D${i + 1}`),
+        });
       } else {
         const match = /Write (\d+) distinct Meta ad/.exec(prompt);
         const n = match ? Number(match[1]) : 1;
-        text = Array.from(
-          { length: n },
-          (_, i) =>
-            `Primary text: Angle ${i + 1} for the offer.\nHeadline: Headline ${i + 1}\nDescription: Desc ${i + 1}`,
-        ).join("\n---\n");
+        text = JSON.stringify({
+          variants: Array.from({ length: n }, (_, i) => ({
+            primaryText: `Angle ${i + 1} for the offer.`,
+            headline: `Headline ${i + 1}`,
+            description: `Desc ${i + 1}`,
+          })),
+        });
       }
       return { text, model: "fake", provider: "fake", durationMs: 5 };
     },

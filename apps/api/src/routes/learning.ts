@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { createMetricInputSchema } from "@tuezday/contracts";
 import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
+import { assertLlmBudget } from "../services/entitlements";
 import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { getDraft } from "../services/drafts";
 import { emitEvent } from "../services/events";
@@ -73,6 +74,7 @@ export function registerLearningRoutes(
       const workspace = workspaceOr404(db, request.params.id, reply);
       if (!workspace) return reply;
       try {
+        assertLlmBudget(db, request.params.id);
         const synthesis = await synthesizeNow(db, llm, request.params.id, workspace.name);
         return reply.status(201).send(synthesis);
       } catch (err) {

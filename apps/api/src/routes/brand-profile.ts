@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { updateBrandProfileInputSchema } from "@tuezday/contracts";
 import type { Db } from "../db";
+import { assertLlmBudget } from "../services/entitlements";
 import type { LlmGateway } from "../llm/gateway";
 import type { SafeFetchService } from "../safe-fetch";
 import {
@@ -39,6 +40,7 @@ export function registerBrandProfileRoutes(
           message: "This workspace has no website URL to read.",
         });
       }
+      assertLlmBudget(db, workspace.id);
       return runBrandProfile(db, llm, safeFetch, workspace.id, workspace.websiteUrl);
     },
   );

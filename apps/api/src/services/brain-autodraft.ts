@@ -9,6 +9,7 @@
 
 import {
   BRAIN_DOC_TYPES,
+  brainDocDraftResponseSchema,
   type BrainDocType,
   type BrandProfile,
   type SocialCorpus,
@@ -17,6 +18,8 @@ import { BRAIN_DOC_META, scoreDoc, type BrainDocMeta } from "@tuezday/brain";
 import type { Db } from "../db";
 import type { ConnectorFabric } from "../connectors/fabric";
 import type { LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
+import { generateStructured } from "../llm/structured";
 import { getBrain, updateBrainDoc, type BrainView } from "./brain";
 import { getBrandProfileView } from "./brand-profile";
 import { readSocialCorpus } from "./social-corpus";
@@ -60,6 +63,7 @@ function composeDocPrompt(meta: BrainDocMeta, input: DraftBrainInput): string {
     "Write it as concise markdown (headings + short bullets), grounded ONLY in the " +
       "material below. Do not invent facts; if the material is thin, write what is " +
       "supported and stop. 120-250 words.",
+    'Respond with ONLY a JSON object: {"content": "<the markdown document>"}.',
     "",
     profileBlock(input.profile),
     "",
@@ -69,11 +73,12 @@ function composeDocPrompt(meta: BrainDocMeta, input: DraftBrainInput): string {
 }
 
 /**
- * Draft all five brain docs — one focused llm.generate per doc. A per-doc
- * failure (gateway error or empty output) leaves that doc absent from
- * `drafts` and never affects the other four. With no ready profile AND an
- * empty social corpus there is nothing to ground the drafts in: typed no-op,
- * zero LLM calls (spec decision #4).
+ * Draft all five brain docs — one focused structured call per doc (Sprint 58:
+ * schema-constrained, so fenced/preambled model noise can no longer pollute a
+ * brain doc). A per-doc failure (gateway error, post-repair malformed output,
+ * or empty content) leaves that doc absent from `drafts` and never affects
+ * the other four. With no ready profile AND an empty social corpus there is
+ * nothing to ground the drafts in: typed no-op, zero LLM calls (decision #4).
  */
 export async function draftBrain(
   llm: LlmGateway,
@@ -86,8 +91,10 @@ export async function draftBrain(
   const drafts: Partial<Record<BrainDocType, string>> = {};
   for (const meta of BRAIN_DOC_META) {
     try {
-      const result = await llm.generate({ prompt: composeDocPrompt(meta, input) });
-      const text = result.text.trim();
+      const result = await generateStructured(llm, brainDocDraftResponseSchema, {
+        prompt: composeDocPrompt(meta, input),
+      });
+      const text = result.value.content.trim();
       if (text) drafts[meta.docType] = text;
     } catch {
       // Isolate per-doc failures — undrafted, retryable on re-run.
@@ -126,7 +133,10 @@ export async function runBrainAutoDraft(
     socialCorpus = { connected: [], entries: [], corpus: "" };
   }
 
-  const result = await draftBrain(llm, { profile, socialCorpus });
+  const result = await draftBrain(
+    meteredLlm(llm, db, { workspaceId, pipeline: "brain_autodraft" }),
+    { profile, socialCorpus },
+  );
   if (result.insufficient) {
     return { insufficient: true, drafted: [], skipped: [], brain: getBrain(db, workspaceId) };
   }

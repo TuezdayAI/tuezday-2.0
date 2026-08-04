@@ -18,6 +18,7 @@ import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
 import { generations } from "../db/schema";
 import type { LlmGateway } from "../llm/gateway";
+import { meteredLlm } from "../llm/metered";
 import type { EvidenceStore } from "../evidence/store";
 import { getBrain } from "../services/brain";
 import { getCampaign } from "../services/campaigns";
@@ -125,7 +126,11 @@ export function registerDraftRoutes(
       const settings = getGenerationSettings(db, request.params.id);
 
       const review = await runPreReview(
-        llm,
+        meteredLlm(llm, db, {
+          workspaceId: request.params.id,
+          pipeline: "review",
+          campaignId: draft.campaignId ?? null,
+        }),
         {
           workspaceName: workspace.name,
           docs: contents,

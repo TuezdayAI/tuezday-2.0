@@ -1,7 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
-import { checkoutInputSchema } from "@tuezday/contracts";
+import { checkoutInputSchema, usageMeter, type WorkspaceSpend } from "@tuezday/contracts";
 import type { Db } from "../db";
-import { getPlan, getUsage, getEntitlements } from "../services/entitlements";
+import { getPlan, getUsage, getEntitlements, USAGE_WINDOW_MS } from "../services/entitlements";
+import { spendRollup } from "../services/usage-ledger";
 import { upsertFromStripe } from "../services/subscriptions";
 import { getWorkspace } from "../services/workspaces";
 import { createCheckoutSession, constructWebhookEvent } from "../services/stripe";
@@ -20,10 +21,25 @@ export function registerBillingRoutes(app: FastifyInstance, db: Db): void {
     const workspace = getWorkspace(db, request.params.id);
     if (!workspace) return reply.status(404).send({ error: "workspace_not_found" });
 
+    // Spend block (Sprint 59): rolling-window LLM spend by pipeline plus the
+    // cache hit rate, all summed from the usage ledger.
+    const periodStart = Date.now() - USAGE_WINDOW_MS;
+    const rollup = spendRollup(db, request.params.id, periodStart);
+    const budgetCents = getEntitlements(db, request.params.id).monthlyLlmCents;
+    const spend: WorkspaceSpend = {
+      periodStart: new Date(periodStart).toISOString(),
+      budgetCents,
+      spentCents: rollup.spentCents,
+      state: usageMeter(rollup.spentCents, budgetCents).state,
+      cacheHitRate: rollup.cacheHitRate,
+      byPipeline: rollup.byPipeline,
+    };
+
     return {
       plan: getPlan(db, request.params.id),
       entitlements: getEntitlements(db, request.params.id),
       usage: getUsage(db, request.params.id),
+      spend,
     };
   });
 
@@ -47,8 +63,10 @@ export function registerBillingRoutes(app: FastifyInstance, db: Db): void {
 
     // Use current request URL origin to construct success/cancel
     const origin = request.headers.origin || `http://${request.headers.host}`;
-    const successUrl = `${origin}/workspaces/${workspace.id}/settings/billing?checkout=success`;
-    const cancelUrl = `${origin}/workspaces/${workspace.id}/settings/billing?checkout=cancel`;
+    // The billing page lives at /workspaces/:id/billing (fixed in Sprint 59 —
+    // the old /settings/billing target was a dead link after checkout).
+    const successUrl = `${origin}/workspaces/${workspace.id}/billing?checkout=success`;
+    const cancelUrl = `${origin}/workspaces/${workspace.id}/billing?checkout=cancel`;
 
     try {
       const url = await createCheckoutSession(

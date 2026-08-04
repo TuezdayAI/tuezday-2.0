@@ -1,10 +1,11 @@
 import { z } from "zod";
 import type { ChatCitation } from "@tuezday/contracts";
-import { parseDocSections, rankSections, type ZoomCandidate } from "@tuezday/brain";
+import { DEFAULT_TOOL_BUDGET, type ToolContext } from "../agents/registry";
+import { getBrainSectionTool } from "../agents/tools/get-brain-section";
+import { searchEvidenceTool } from "../agents/tools/search-evidence";
 import type { Db } from "../db";
 import type { EvidenceStore } from "../evidence/store";
-import { getBrain } from "./brain";
-import { retrieveEvidence } from "./evidence";
+import type { SafeFetchService } from "../safe-fetch/index";
 import { getCampaign, listCampaigns } from "./campaigns";
 import { getCampaignInsights, getWorkspaceInsights } from "./insights";
 import { listOutreachSequences } from "./outreach-sequences";
@@ -60,11 +61,35 @@ function compact(value: unknown): string {
 const emptyArgs = z.object({}).passthrough();
 
 // ---------------------------------------------------------------------------
-// Brain
+// Brain + evidence — DELEGATED to the Sprint 57 internal tool registry
+// (founder decision 2026-08-03: one registry, copilot as consumer). The
+// registry tools own the retrieval logic; this file keeps only the
+// copilot-specific presentation ({summary, citations}). The remaining eight
+// tools below are logic-free one-line service wraps and stay put until the
+// Phase O chat surface rebuilds the copilot on agent_runs.
 // ---------------------------------------------------------------------------
 
-const BRAIN_SECTION_LIMIT = 6;
-const BRAIN_BODY_CHARS = 320;
+/** The copilot never fetches external URLs; these two read tools never touch
+ * safeFetch, so a context stub that fails closed is correct here. */
+const unavailableSafeFetch: SafeFetchService = {
+  validateUrl() {
+    throw new Error("safe fetch is not available to the copilot");
+  },
+  async fetch() {
+    throw new Error("safe fetch is not available to the copilot");
+  },
+};
+
+function registryContext(ctx: CopilotToolContext): ToolContext {
+  return {
+    db: ctx.db,
+    evidence: ctx.evidence,
+    safeFetch: unavailableSafeFetch,
+    workspaceId: ctx.workspaceId,
+    actor: { userId: null, label: "copilot" },
+    budget: DEFAULT_TOOL_BUDGET,
+  };
+}
 
 const searchBrain: CopilotTool = {
   name: "search_brain",
@@ -73,46 +98,30 @@ const searchBrain: CopilotTool = {
   argsSchema: z.object({ query: z.string().min(1) }).passthrough(),
   async run(ctx, args) {
     const query = String(args.query ?? "").trim();
-    const { docs } = getBrain(ctx.db, ctx.workspaceId);
-    const candidates: ZoomCandidate[] = [];
-    for (const doc of docs) {
-      if (!doc.content.trim()) continue;
-      for (const section of parseDocSections(doc.content)) {
-        candidates.push({ docType: doc.docType, section });
-      }
+    const result = (await getBrainSectionTool.run(registryContext(ctx), { query })) as {
+      sections?: Array<{ docType: string; sectionId: string; heading: string; text: string }>;
+      note?: string;
+    };
+    if (!result.sections || result.sections.length === 0) {
+      return { summary: result.note ?? "The brain has no written content yet." };
     }
-    if (candidates.length === 0) {
-      return { summary: "The brain has no written content yet." };
-    }
-
-    const ranked = rankSections(query, candidates);
-    // BM25 finds nothing when no query term matched — fall back to the first
-    // sections in canonical doc order so the model always gets grounding.
-    const chosen = (ranked.length > 0 ? ranked : candidates).slice(0, BRAIN_SECTION_LIMIT);
-
-    const citations: ChatCitation[] = chosen.map((c) => ({
+    const citations: ChatCitation[] = result.sections.map((s) => ({
       kind: "brain" as const,
-      ref: `${c.docType}#${c.section.id}`,
-      label: c.section.heading,
-      detail: c.docType,
+      ref: `${s.docType}#${s.sectionId}`,
+      label: s.heading,
+      detail: s.docType,
     }));
     const summary = compact(
-      chosen.map((c) => ({
-        docType: c.docType,
-        section: c.section.id,
-        heading: c.section.heading,
-        text: c.section.body.trim().slice(0, BRAIN_BODY_CHARS),
+      result.sections.map((s) => ({
+        docType: s.docType,
+        section: s.sectionId,
+        heading: s.heading,
+        text: s.text,
       })),
     );
     return { summary, citations };
   },
 };
-
-// ---------------------------------------------------------------------------
-// Evidence
-// ---------------------------------------------------------------------------
-
-const EVIDENCE_TEXT_CHARS = 280;
 
 const searchEvidence: CopilotTool = {
   name: "search_evidence",
@@ -121,24 +130,16 @@ const searchEvidence: CopilotTool = {
   argsSchema: z.object({ query: z.string().min(1) }).passthrough(),
   async run(ctx, args) {
     const query = String(args.query ?? "").trim();
-    // retrieveEvidence never throws and is workspace-scoped; the free query
-    // rides in as signalContent (the highest-priority term in the composer).
-    const resolution = await retrieveEvidence(
-      ctx.db,
-      ctx.evidence,
-      ctx.workspaceId,
-      { taskType: "outbound_email", channel: "email", signalContent: query },
-      true,
-    );
-    if (!resolution.evidence || resolution.evidence.chunks.length === 0) {
-      return {
-        summary: `No matching evidence. ${resolution.exclusionReason ?? "no results."}`,
-      };
+    const result = (await searchEvidenceTool.run(registryContext(ctx), { query })) as {
+      results: Array<{ title: string; text: string; score: number; documentId: string }>;
+      note?: string;
+    };
+    if (result.results.length === 0) {
+      return { summary: `No matching evidence. ${result.note ?? "no results."}` };
     }
-    const chunks = resolution.evidence.chunks;
     const citations: ChatCitation[] = [];
     const seen = new Set<string>();
-    for (const chunk of chunks) {
+    for (const chunk of result.results) {
       if (seen.has(chunk.documentId)) continue;
       seen.add(chunk.documentId);
       citations.push({
@@ -148,9 +149,7 @@ const searchEvidence: CopilotTool = {
         detail: `score ${chunk.score.toFixed(2)}`,
       });
     }
-    const summary = compact(
-      chunks.map((c) => ({ title: c.title, text: c.text.slice(0, EVIDENCE_TEXT_CHARS) })),
-    );
+    const summary = compact(result.results.map((c) => ({ title: c.title, text: c.text })));
     return { summary, citations };
   },
 };

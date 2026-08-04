@@ -442,6 +442,7 @@ describe("signals API", () => {
               text: JSON.stringify([
                 {
                   index: 0,
+                  score: 74,
                   matches: [
                     {
                       personaId: refs.personaId,

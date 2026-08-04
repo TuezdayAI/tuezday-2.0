@@ -1,10 +1,13 @@
-import { PLANS, type Entitlements, type PlanId } from "@tuezday/contracts";
+import { PLANS, type Entitlements, type EntitlementUsage, type PlanId } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { getSubscription } from "./subscriptions";
 import { listMembers } from "./teams";
 import { listConnections } from "./connections";
-import { countGenerationsSince } from "./generations";
-import { countCompletedRevisionTurnsSince } from "./draft-revisions";
+import { sumLlmSpendCents } from "./usage-ledger";
+
+/** The rolling usage window — kept from the old monthlyGenerations semantics.
+ * Stripe-period alignment is a deliberate non-goal this sprint (spec 59 §8.3). */
+export const USAGE_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 
 export class EntitlementError extends Error {
   constructor(public readonly key: keyof Entitlements, public readonly limit: number) {
@@ -22,22 +25,41 @@ export function getEntitlements(db: Db, workspaceId: string): Entitlements {
   return PLANS[getPlan(db, workspaceId)].entitlements;
 }
 
-export function getUsage(db: Db, workspaceId: string) {
-  const periodStart = Date.now() - 30 * 24 * 60 * 60 * 1000;
-  const monthlyGenerationCount = countGenerationsSince(db, workspaceId, periodStart);
-  const monthlyRevisionCount = countCompletedRevisionTurnsSince(db, workspaceId, periodStart);
+export function getUsage(db: Db, workspaceId: string): EntitlementUsage {
+  const periodStart = Date.now() - USAGE_WINDOW_MS;
   return {
     seats: listMembers(db, workspaceId).length,
     connectors: listConnections(db, workspaceId).length,
-    monthlyGenerations: monthlyGenerationCount + monthlyRevisionCount,
+    // D6 (Sprint 59): the LLM entitlement is denominated in cost, summed from
+    // the usage ledger — not a generation count.
+    monthlyLlmCents: sumLlmSpendCents(db, workspaceId, periodStart),
   };
 }
 
+function billingEnforced(): boolean {
+  if (process.env.NODE_ENV === "test" && !process.env.TEST_BILLING_GATING) return false;
+  return process.env.BILLING_ENFORCED !== "false";
+}
+
 export function assertWithinLimit(db: Db, workspaceId: string, key: keyof Entitlements, current: number): void {
-  if (process.env.NODE_ENV === "test" && !process.env.TEST_BILLING_GATING) {
-    return;
-  }
-  if (process.env.BILLING_ENFORCED === "false") return;
+  if (!billingEnforced()) return;
   const limit = getEntitlements(db, workspaceId)[key];
   if (limit !== -1 && current >= limit) throw new EntitlementError(key, limit);
+}
+
+/** Hard stop for interactive LLM routes: throws EntitlementError (mapped to
+ * 402 upgrade_required by the app error handler) when the workspace's rolling
+ * LLM spend has reached its plan budget. Fires BEFORE any model call. */
+export function assertLlmBudget(db: Db, workspaceId: string): void {
+  if (!billingEnforced()) return;
+  assertWithinLimit(db, workspaceId, "monthlyLlmCents", getUsage(db, workspaceId).monthlyLlmCents);
+}
+
+/** Soft check for worker paths: over-budget work is skipped and left pending
+ * (the queue is the pending state), never failed mid-run. */
+export function llmBudgetExhausted(db: Db, workspaceId: string): boolean {
+  if (!billingEnforced()) return false;
+  const limit = getEntitlements(db, workspaceId).monthlyLlmCents;
+  if (limit === -1) return false;
+  return getUsage(db, workspaceId).monthlyLlmCents >= limit;
 }

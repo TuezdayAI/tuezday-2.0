@@ -2577,6 +2577,164 @@ export type ResolveTrackedSocialAccountInput = z.infer<
 >;
 
 // ---------------------------------------------------------------------------
+// Canonical stories & source occurrences (Sprint 60, design §8.1–8.4)
+//
+// The durable intelligence layer behind discovery: immutable source
+// occurrences resolve — by exact identity keys only — into workspace-owned
+// canonical stories with reversible occurrence membership and versioned
+// enrichment. Runs in shadow beside discovered-items triage; `signals` stay
+// the manual-input seam.
+// ---------------------------------------------------------------------------
+
+export const STORY_STATUSES = ["active", "archived"] as const;
+export type StoryStatus = (typeof STORY_STATUSES)[number];
+
+// How an occurrence relates to its story. `redirect` is reserved: adapters do
+// not surface post-redirect final URLs yet, so nothing emits it in Sprint 60.
+export const STORY_OCCURRENCE_RELATIONSHIP_KINDS = [
+  "exact",
+  "redirect",
+  "provider",
+  "similarity",
+  "manual",
+] as const;
+export type StoryOccurrenceRelationshipKind =
+  (typeof STORY_OCCURRENCE_RELATIONSHIP_KINDS)[number];
+
+// Exact identity keys. Resolution priority: provider_id > normalized_url >
+// content_fingerprint. Conflicting keys never auto-merge stories.
+export const STORY_KEY_KINDS = [
+  "provider_id",
+  "normalized_url",
+  "content_fingerprint",
+] as const;
+export type StoryKeyKind = (typeof STORY_KEY_KINDS)[number];
+
+/** Exact-key resolver generation stamped on memberships it creates. */
+export const STORY_MATCHER_VERSION = 1;
+/** Deterministic (no-LLM) enricher generation. */
+export const STORY_ENRICHER_VERSION = 1;
+
+export const storyOccurrenceRelationshipSchema = z.object({
+  kind: z.enum(STORY_OCCURRENCE_RELATIONSHIP_KINDS),
+  confidence: z.number().int().min(0).max(100),
+  matcherVersion: z.number().int(),
+  attachedAt: z.number().int(),
+  /** Null when the system resolver attached it. */
+  attachedByUserId: z.string().uuid().nullable(),
+  attachReason: z.string().nullable(),
+  /** Set when the membership was closed by a merge or split; rows persist. */
+  detachedAt: z.number().int().nullable(),
+  detachedByUserId: z.string().uuid().nullable(),
+  detachReason: z.string().nullable(),
+});
+export type StoryOccurrenceRelationship = z.infer<
+  typeof storyOccurrenceRelationshipSchema
+>;
+
+export const storyOccurrenceSchema = z.object({
+  id: z.string().uuid(),
+  /** No FK — occurrences survive source deletion; the snapshot below stays. */
+  sourceId: z.string().uuid(),
+  sourceType: z.enum(DISCOVERY_SOURCE_TYPES),
+  sourceName: z.string(),
+  /** discovery_jobs row of the fetch attempt; null for backfilled rows. */
+  fetchRunId: z.string().uuid().nullable(),
+  providerExternalId: z.string(),
+  title: z.string(),
+  url: z.string(),
+  excerpt: z.string(),
+  author: z.string().nullable(),
+  providerPublishedAt: z.number().int().nullable(),
+  observedAt: z.number().int(),
+  relationship: storyOccurrenceRelationshipSchema,
+});
+export type StoryOccurrence = z.infer<typeof storyOccurrenceSchema>;
+
+export const canonicalStorySchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  status: z.enum(STORY_STATUSES),
+  canonicalUrl: z.string(),
+  title: z.string(),
+  firstObservedAt: z.number().int(),
+  lastObservedAt: z.number().int(),
+  currentEnrichmentVersion: z.number().int(),
+  /** Set when this story was archived by a manual merge. */
+  mergedIntoStoryId: z.string().uuid().nullable(),
+  /** Active memberships. */
+  occurrenceCount: z.number().int(),
+  /** Distinct sources among active memberships. */
+  corroborationCount: z.number().int(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type CanonicalStory = z.infer<typeof canonicalStorySchema>;
+
+export const storyEnrichmentPayloadSchema = z.object({
+  occurrenceCount: z.number().int(),
+  distinctSourceTypes: z.array(z.string()),
+  earliestObservedAt: z.number().int().nullable(),
+  latestObservedAt: z.number().int().nullable(),
+  titleVariants: z.array(z.string()).max(5),
+});
+export type StoryEnrichmentPayload = z.infer<
+  typeof storyEnrichmentPayloadSchema
+>;
+
+export const storyEnrichmentSchema = z.object({
+  id: z.string().uuid(),
+  storyId: z.string().uuid(),
+  storyFingerprint: z.string(),
+  enricherVersion: z.number().int(),
+  corroborationCount: z.number().int(),
+  payload: storyEnrichmentPayloadSchema,
+  createdAt: z.number().int(),
+});
+export type StoryEnrichment = z.infer<typeof storyEnrichmentSchema>;
+
+export const storyDetailSchema = z.object({
+  story: canonicalStorySchema,
+  /** Active memberships, oldest observation first. */
+  occurrences: z.array(storyOccurrenceSchema),
+  /** Closed memberships — merge/split history, never deleted. */
+  history: z.array(storyOccurrenceSchema),
+  /** Latest enrichment for the current membership fingerprint. */
+  enrichment: storyEnrichmentSchema.nullable(),
+});
+export type StoryDetail = z.infer<typeof storyDetailSchema>;
+
+export const listStoriesResponseSchema = z.object({
+  stories: z.array(canonicalStorySchema),
+  total: z.number().int(),
+});
+export type ListStoriesResponse = z.infer<typeof listStoriesResponseSchema>;
+
+export const updateStoryInputSchema = z.object({
+  status: z.enum(STORY_STATUSES),
+});
+export type UpdateStoryInput = z.infer<typeof updateStoryInputSchema>;
+
+export const mergeStoryInputSchema = z.object({
+  intoStoryId: z.string().uuid(),
+  reason: z.string().trim().min(1).max(500),
+});
+export type MergeStoryInput = z.infer<typeof mergeStoryInputSchema>;
+
+export const splitOccurrenceInputSchema = z.object({
+  reason: z.string().trim().min(1).max(500),
+});
+export type SplitOccurrenceInput = z.infer<typeof splitOccurrenceInputSchema>;
+
+export const storyBackfillResultSchema = z.object({
+  scanned: z.number().int(),
+  occurrencesCreated: z.number().int(),
+  storiesCreated: z.number().int(),
+  membershipsCreated: z.number().int(),
+});
+export type StoryBackfillResult = z.infer<typeof storyBackfillResultSchema>;
+
+// ---------------------------------------------------------------------------
 // Evidence corpus (RAG behind the Brain Gateway boundary)
 // ---------------------------------------------------------------------------
 
@@ -4967,7 +5125,8 @@ export type PlanId = (typeof PLAN_IDS)[number];
 export interface Entitlements {
   seats: number;          // -1 = unlimited
   connectors: number;
-  monthlyGenerations: number;
+  /** Rolling-30-day LLM spend budget in cents (Sprint 59, decision D6). -1 = unlimited. */
+  monthlyLlmCents: number;
   /**
    * Reserved — declared but deliberately unread (Sprint 54, D4d). Activation
    * sprint is not scheduled; a pricing sprint must be created before anything
@@ -4981,15 +5140,15 @@ export interface Entitlements {
 }
 
 export const PLANS: Record<PlanId, { label: string; priceEnv: string | null; entitlements: Entitlements }> = {
-  free:  { label: "Free",  priceEnv: null,                entitlements: { seats: 1,  connectors: 1,  monthlyGenerations: 50,   adSpendCapCents: 0 } },
-  pro:   { label: "Pro",   priceEnv: "STRIPE_PRICE_PRO",  entitlements: { seats: 5,  connectors: 10, monthlyGenerations: 1000, adSpendCapCents: 500_00 } },
-  scale: { label: "Scale", priceEnv: "STRIPE_PRICE_SCALE",entitlements: { seats: -1, connectors: -1, monthlyGenerations: -1,   adSpendCapCents: -1 } },
+  free:  { label: "Free",  priceEnv: null,                entitlements: { seats: 1,  connectors: 1,  monthlyLlmCents: 50,   adSpendCapCents: 0 } },
+  pro:   { label: "Pro",   priceEnv: "STRIPE_PRICE_PRO",  entitlements: { seats: 5,  connectors: 10, monthlyLlmCents: 1000, adSpendCapCents: 500_00 } },
+  scale: { label: "Scale", priceEnv: "STRIPE_PRICE_SCALE",entitlements: { seats: -1, connectors: -1, monthlyLlmCents: -1,   adSpendCapCents: -1 } },
 };
 
 export const entitlementUsageSchema = z.object({
   seats: z.number().int(),
   connectors: z.number().int(),
-  monthlyGenerations: z.number().int(),
+  monthlyLlmCents: z.number(),
 });
 export type EntitlementUsage = z.infer<typeof entitlementUsageSchema>;
 
@@ -5013,6 +5172,66 @@ export function usageMeter(used: number, limit: number): UsageMeterView {
   const raw = (used / limit) * 100;
   return { percent: Math.min(100, Math.round(raw)), state: raw >= 80 ? "near" : "ok" };
 }
+
+// ---------------------------------------------------------------------------
+// Model routing, usage ledger & workspace spend (Sprint 59)
+// ---------------------------------------------------------------------------
+
+/** Model tiers a call site may declare; the gateway resolves tier -> model from config. */
+export const MODEL_TIERS = ["cheap", "frontier"] as const;
+export type ModelTier = (typeof MODEL_TIERS)[number];
+
+/** Every LLM-burning surface, as attributed in the llm_usage_events ledger. */
+export const LLM_PIPELINES = [
+  "generation",
+  "angles",
+  "review",
+  "revision",
+  "outbound_draft",
+  "pr_pitch",
+  "press_kit",
+  "ad_creative",
+  "signal_draft",
+  "engagement_reply",
+  "launch",
+  "launch_sequence",
+  "outreach_step",
+  "copilot",
+  "copilot_action",
+  "signal_matching",
+  "discovery_matching",
+  "mailbox_classification",
+  "outline_summaries",
+  "source_suggestions",
+  "brand_profile",
+  "brain_autodraft",
+  "learning_synthesis",
+  "design_render",
+  "agent_run",
+] as const;
+export type LlmPipeline = (typeof LLM_PIPELINES)[number];
+
+export const pipelineSpendSchema = z.object({
+  pipeline: z.enum(LLM_PIPELINES),
+  calls: z.number().int(),
+  inputTokens: z.number().int(),
+  outputTokens: z.number().int(),
+  cachedTokens: z.number().int(),
+  costCents: z.number(),
+});
+export type PipelineSpend = z.infer<typeof pipelineSpendSchema>;
+
+/** The `spend` block on GET /workspaces/:id/billing. */
+export const workspaceSpendSchema = z.object({
+  periodStart: z.string(),
+  budgetCents: z.number(), // -1 = unlimited
+  spentCents: z.number(),
+  state: z.enum(["ok", "near", "over", "unlimited"]),
+  /** sum(cachedTokens) / sum(inputTokens) over the window; null when no input tokens. */
+  cacheHitRate: z.number().nullable(),
+  byPipeline: z.array(pipelineSpendSchema),
+});
+export type WorkspaceSpend = z.infer<typeof workspaceSpendSchema>;
 
 // GTM insights (Sprint 34) — read-only response schemas for native insights.
 // No new enums; reuses CHANNELS, APPROVAL_STATES, OUTPUT_RATINGS, BRAIN_DOC_TYPES.
@@ -5521,6 +5740,11 @@ export const WORKSPACE_NAV: NavItem[] = [
     tone: "signal",
     icon: "discover",
     section: "grow",
+    children: [
+      { label: "Signal inbox", path: "/discovery", summary: "Triage discovered items", tone: "signal", icon: "discover" },
+      // Sprint 60: canonical stories — the shadow intelligence layer.
+      { label: "Stories", path: "/stories", summary: "Canonical stories across sources", tone: "signal", icon: "blog" },
+    ],
   },
   {
     label: "Audience",
@@ -5576,6 +5800,7 @@ export const WORKSPACE_NAV: NavItem[] = [
       { label: "Content Preferences", path: "/brain#content-preferences", summary: "Channel and scoped guidance", tone: "voice", icon: "edit" },
       { label: "Source materials", path: "/evidence", summary: "Proof and evidence", tone: "history", icon: "doc-history" },
       { label: "Advanced context", path: "/resolver", summary: "Inspect what Tuezday will use", tone: "icp", icon: "search" },
+      { label: "Agent inspector", path: "/inspector", summary: "Watch what agents did and why", tone: "system", icon: "info" },
     ],
   },
   {
@@ -6514,6 +6739,329 @@ export const confirmChatProposalInputSchema = z.object({
   decision: z.enum(["confirm", "discard"]),
 });
 export type ConfirmChatProposalInput = z.infer<typeof confirmChatProposalInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Agent runtime (Sprint 56 — Gateway v2 & AgentRunner)
+//
+// Vocabulary for bounded, tool-using, fully-traced agent loops. The gateway
+// makes single model calls; the AgentRunner (apps/api/src/agents) drives the
+// loop and persists every step. These schemas validate persisted transcripts
+// and become the Agent Inspector API contract in Sprint 57.
+// ---------------------------------------------------------------------------
+
+/** Why an agent run stopped. Every finished run records exactly one. */
+export const AGENT_STOP_REASONS = [
+  "complete",
+  "max_steps",
+  "max_tokens",
+  "timeout",
+  "needs_human",
+  "error",
+] as const;
+export type AgentStopReason = (typeof AGENT_STOP_REASONS)[number];
+
+/** Run lifecycle: `stop_reason` is set iff the run is done. */
+export const AGENT_RUN_STATUSES = ["running", "done"] as const;
+export type AgentRunStatus = (typeof AGENT_RUN_STATUSES)[number];
+
+/** Transcript roles. The system prompt is NOT a message — it travels as a
+ * separate stable prefix so providers can cache it (Sprint 59). */
+export const AGENT_MESSAGE_ROLES = ["user", "assistant", "tool"] as const;
+export type AgentMessageRole = (typeof AGENT_MESSAGE_ROLES)[number];
+
+/** Persisted step kinds: one model invocation, or one tool dispatch. */
+export const AGENT_STEP_KINDS = ["model_call", "tool_call"] as const;
+export type AgentStepKind = (typeof AGENT_STEP_KINDS)[number];
+
+/** A tool invocation requested by the model. Ids are minted by the gateway
+ * (providers like Gemini do not supply them) and are unique within a run. */
+export const agentToolCallSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  /** Parsed JSON arguments as the model produced them — validated by the
+   * tool's own input schema at dispatch time, not here. */
+  arguments: z.unknown(),
+});
+export type AgentToolCall = z.infer<typeof agentToolCallSchema>;
+
+/** One transcript message. Assistant messages may carry tool calls; tool
+ * messages carry the result of exactly one call (linked by toolCallId). */
+export const agentMessageSchema = z.object({
+  role: z.enum(AGENT_MESSAGE_ROLES),
+  content: z.string(),
+  toolCalls: z.array(agentToolCallSchema).optional(),
+  toolCallId: z.string().optional(),
+  toolName: z.string().optional(),
+});
+export type AgentMessage = z.infer<typeof agentMessageSchema>;
+
+/** Token + cost accounting, recorded per model-call step and totalled per
+ * run. costCents is telemetry-grade (REAL); Sprint 59 hardens it into
+ * entitlements. */
+export const agentUsageSchema = z.object({
+  inputTokens: z.number().int().min(0),
+  outputTokens: z.number().int().min(0),
+  cachedTokens: z.number().int().min(0),
+  costCents: z.number().min(0),
+});
+export type AgentUsage = z.infer<typeof agentUsageSchema>;
+
+// ---------------------------------------------------------------------------
+// Internal tool registry (Sprint 57)
+//
+// The registry (apps/api/src/agents/registry.ts) exposes platform
+// capabilities as model-callable tools. Two access tiers only: `read` tools
+// are unrestricted inside the workspace (the same membership rule that
+// scopes HTTP routes); `propose` tools never execute — they mint a gated
+// item and return its id (none ship until Phase L). There is deliberately
+// no "execute" tier.
+// ---------------------------------------------------------------------------
+
+export const TOOL_ACCESS_LEVELS = ["read", "propose"] as const;
+export type ToolAccessLevel = (typeof TOOL_ACCESS_LEVELS)[number];
+
+/** The Sprint 57 read-tool surface. The registry registers exactly this set;
+ * tests assert registry and contracts stay in lockstep. */
+export const AGENT_TOOL_NAMES = [
+  "search_evidence",
+  "get_brain_section",
+  "get_campaign_plan",
+  "list_recent_publications_with_metrics",
+  "find_similar_approved_drafts",
+  "find_instructive_rejections",
+  "get_persona",
+  "list_channel_guardrails",
+  "search_discovery_items",
+  "get_prior_posts_on_topic",
+  "safe_fetch_url",
+] as const;
+export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];
+
+/** Content profiles `safe_fetch_url` accepts — mirrors the Sprint 48
+ * safe-fetch policy's MIME allowlists (apps/api/src/safe-fetch/policy.ts,
+ * which predates this vocabulary; the tool asserts the two stay equal). */
+export const SAFE_FETCH_PROFILES = ["feed", "json", "website"] as const;
+
+/**
+ * Per-tool input schemas — the single definition each registry tool
+ * validates against and derives its model-facing JSON Schema from.
+ * Cross-field rules (e.g. get_brain_section needing sectionId OR query)
+ * are enforced in the tool's run() and returned to the model as
+ * instructive error data, keeping these schemas plain objects the
+ * JSON-Schema deriver can walk.
+ */
+export const toolInputSchemas = {
+  search_evidence: z.object({
+    query: z.string().min(1).max(500),
+    limit: z.number().int().min(1).max(10).optional(),
+  }),
+  get_brain_section: z.object({
+    docType: z.enum(BRAIN_DOC_TYPES).optional(),
+    sectionId: z.string().min(1).optional(),
+    query: z.string().min(1).max(500).optional(),
+  }),
+  get_campaign_plan: z.object({
+    campaignId: z.string().min(1),
+  }),
+  list_recent_publications_with_metrics: z.object({
+    limit: z.number().int().min(1).max(10).optional(),
+    channel: z.enum(CHANNELS).optional(),
+    campaignId: z.string().min(1).optional(),
+  }),
+  find_similar_approved_drafts: z.object({
+    query: z.string().min(1).max(500),
+    taskType: z.enum(TASK_TYPES).optional(),
+    channel: z.enum(CHANNELS).optional(),
+    limit: z.number().int().min(1).max(5).optional(),
+  }),
+  find_instructive_rejections: z.object({
+    query: z.string().min(1).max(500).optional(),
+    taskType: z.enum(TASK_TYPES).optional(),
+    channel: z.enum(CHANNELS).optional(),
+    limit: z.number().int().min(1).max(5).optional(),
+  }),
+  get_persona: z.object({
+    personaId: z.string().min(1),
+  }),
+  list_channel_guardrails: z.object({
+    channel: z.enum(CHANNELS).optional(),
+  }),
+  search_discovery_items: z.object({
+    query: z.string().min(1).max(500).optional(),
+    status: z.enum(DISCOVERED_ITEM_STATUSES).optional(),
+    limit: z.number().int().min(1).max(10).optional(),
+  }),
+  get_prior_posts_on_topic: z.object({
+    topic: z.string().min(1).max(500),
+    channel: z.enum(CHANNELS).optional(),
+    limit: z.number().int().min(1).max(5).optional(),
+  }),
+  safe_fetch_url: z.object({
+    url: z.string().url(),
+    profile: z.enum(SAFE_FETCH_PROFILES).optional(),
+  }),
+} as const satisfies Record<AgentToolName, z.ZodType<Record<string, unknown>>>;
+
+// ---------------------------------------------------------------------------
+// Agent Inspector API (Sprint 57)
+//
+// Wire contract for /workspaces/:id/agent-runs — a straight read of the
+// Sprint 56 agent_runs / agent_run_steps rows with JSON columns parsed
+// server-side. Timestamps are epoch ms integers, per API convention.
+// ---------------------------------------------------------------------------
+
+export const agentRunSummarySchema = z.object({
+  id: z.string().min(1),
+  workspaceId: z.string().min(1),
+  task: z.string(),
+  createdBy: z.string(),
+  status: z.enum(AGENT_RUN_STATUSES),
+  stopReason: z.enum(AGENT_STOP_REASONS).nullable(),
+  error: z.string().nullable(),
+  model: z.string(),
+  provider: z.string(),
+  usage: agentUsageSchema,
+  stepCount: z.number().int().min(0),
+  startedAt: z.number().int(),
+  finishedAt: z.number().int().nullable(),
+});
+export type AgentRunSummary = z.infer<typeof agentRunSummarySchema>;
+
+export const agentRunStepSchema = z.object({
+  id: z.string().min(1),
+  stepIndex: z.number().int().min(0),
+  kind: z.enum(AGENT_STEP_KINDS),
+  /** model_call: the assistant message (text and/or tool calls). */
+  message: agentMessageSchema.nullable(),
+  toolName: z.string().nullable(),
+  toolCallId: z.string().nullable(),
+  toolArgs: z.unknown(),
+  toolResult: z.unknown(),
+  toolError: z.string().nullable(),
+  usage: agentUsageSchema,
+  durationMs: z.number().int().min(0),
+  createdAt: z.number().int(),
+});
+export type AgentRunStep = z.infer<typeof agentRunStepSchema>;
+
+export const agentRunDetailSchema = agentRunSummarySchema.extend({
+  system: z.string(),
+  inputMessages: z.array(agentMessageSchema),
+  output: z.unknown(),
+  steps: z.array(agentRunStepSchema),
+});
+export type AgentRunDetail = z.infer<typeof agentRunDetailSchema>;
+
+/** Trigger a proof run over the read-tool registry (Inspector ignition). */
+export const proofAgentRunInputSchema = z.object({
+  question: z.string().min(1).max(2000),
+});
+export type ProofAgentRunInput = z.infer<typeof proofAgentRunInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Structured LLM outputs (Sprint 58)
+//
+// The response schemas generateStructured validates against — one per service
+// that needs structure from the model. Shapes mirror what the prompts already
+// asked for pre-58, so migrated call sites persist identical outcomes.
+// Tolerance policy: schemas assert shape and type; domain clamps (score 0-100,
+// reason length, top-5 matches, RSA field counts) stay in the services —
+// an over-long or out-of-range value is trimmed/flagged there, not rejected
+// here. brandProfileSchema (Sprint 36.2, above) is the tenth response schema.
+// ---------------------------------------------------------------------------
+
+/** One persona×campaign routing candidate in a scoring response. */
+export const matchingResponseMatchSchema = z.object({
+  personaId: z.string().nullish(),
+  campaignId: z.string().nullish(),
+  score: z.number(),
+  reason: z.string().optional(),
+});
+export type MatchingResponseMatch = z.infer<typeof matchingResponseMatchSchema>;
+
+/** One scored item in a discovery/signal matching response. */
+export const matchingResponseEntrySchema = z.object({
+  index: z.number().int(),
+  score: z.number(),
+  /** Optional top-level fallback reason when `matches` is empty. */
+  reason: z.string().optional(),
+  matches: z.array(matchingResponseMatchSchema),
+});
+export type MatchingResponseEntry = z.infer<typeof matchingResponseEntrySchema>;
+
+export const matchingResponseSchema = z.array(matchingResponseEntrySchema);
+export type MatchingResponse = z.infer<typeof matchingResponseSchema>;
+
+/** Inbox reply classification: one label per batched item. */
+export const emailReplyClassificationResponseSchema = z.array(
+  z.object({
+    index: z.number().int(),
+    label: z.enum(EMAIL_REPLY_LABELS),
+  }),
+);
+export type EmailReplyClassificationResponse = z.infer<
+  typeof emailReplyClassificationResponseSchema
+>;
+
+/** Brain-proposed discovery sources — only the keyless trio is proposable. */
+export const sourceProposalsResponseSchema = z.array(
+  z.object({
+    type: z.enum(["google_news", "reddit", "rss"]),
+    name: z.string(),
+    config: z.object({
+      feedUrl: z.string().optional(),
+      query: z.string().optional(),
+      subreddit: z.string().optional(),
+    }),
+    reason: z.string().optional(),
+  }),
+);
+export type SourceProposalsResponse = z.infer<typeof sourceProposalsResponseSchema>;
+
+/** One reviewer pass (brand voice / channel fit): score + concrete issues. */
+export const reviewCheckResponseSchema = z.object({
+  score: z.number(),
+  issues: z.array(z.string()),
+});
+export type ReviewCheckResponse = z.infer<typeof reviewCheckResponseSchema>;
+
+/** Angle-first generation: N distinct one-sentence angles, strongest first. */
+export const anglesResponseSchema = z.array(z.string());
+export type AnglesResponse = z.infer<typeof anglesResponseSchema>;
+
+/** Meta ad generation: N complete variants. */
+export const metaAdVariantsResponseSchema = z.object({
+  variants: z.array(
+    z.object({
+      primaryText: z.string(),
+      headline: z.string(),
+      description: z.string(),
+    }),
+  ),
+});
+export type MetaAdVariantsResponse = z.infer<typeof metaAdVariantsResponseSchema>;
+
+/** Google RSA generation: one asset set (counts validated as violations). */
+export const googleRsaResponseSchema = z.object({
+  headlines: z.array(z.string()),
+  descriptions: z.array(z.string()),
+});
+export type GoogleRsaResponse = z.infer<typeof googleRsaResponseSchema>;
+
+/** Outline enrichment: one one-line summary per 1-based section index. */
+export const outlineSummariesResponseSchema = z.array(
+  z.object({
+    index: z.number().int(),
+    summary: z.string(),
+  }),
+);
+export type OutlineSummariesResponse = z.infer<typeof outlineSummariesResponseSchema>;
+
+/** Brain auto-draft: one doc's markdown body. */
+export const brainDocDraftResponseSchema = z.object({
+  content: z.string(),
+});
+export type BrainDocDraftResponse = z.infer<typeof brainDocDraftResponseSchema>;
 
 // ---------------------------------------------------------------------------
 // Unified metric model (Sprint 55) — one fact table for every observed number.

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import type { Db } from "../db";
+import { assertLlmBudget } from "../services/entitlements";
 import type { ConnectorFabric } from "../connectors/fabric";
 import type { LlmGateway } from "../llm/gateway";
 import { runBrainAutoDraft } from "../services/brain-autodraft";
@@ -18,6 +19,9 @@ export function registerBrainAutoDraftRoutes(
 ): void {
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/brain/auto-draft",
-    async (request) => runBrainAutoDraft(db, llm, fabric, request.params.id),
+    async (request) => {
+      assertLlmBudget(db, request.params.id);
+      return runBrainAutoDraft(db, llm, fabric, request.params.id);
+    },
   );
 }
