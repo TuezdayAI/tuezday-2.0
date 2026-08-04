@@ -1033,6 +1033,214 @@ export const campaignOpportunityEvents = sqliteTable(
 export type CampaignOpportunityEventRow =
   typeof campaignOpportunityEvents.$inferSelect;
 
+// ---------------------------------------------------------------------------
+// Content packages (Sprint 62, design §8.7–§8.8). The narrative unit between
+// a qualified opportunity and Sprint 63's deliverables, pinned to exactly one
+// campaign and plan revision. Grounding invariant: every generated claim is
+// supported by package sources, or the package remains research_needed.
+// ---------------------------------------------------------------------------
+
+export const contentPackages = sqliteTable(
+  "content_packages",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    planRevisionId: text("plan_revision_id")
+      .notNull()
+      .references(() => campaignPlanRevisions.id, { onDelete: "cascade" }),
+    // set null, not cascade: packages are output provenance and must survive
+    // opportunity/story deletion (design §1.3). Snapshots live on sources.
+    opportunityId: text("opportunity_id").references(
+      () => campaignOpportunities.id,
+      { onDelete: "set null" },
+    ),
+    canonicalStoryId: text("canonical_story_id").references(
+      () => canonicalExternalStories.id,
+      { onDelete: "set null" },
+    ),
+    angle: text("angle").notNull(),
+    angleHash: text("angle_hash").notNull(),
+    // Deterministic angle-overlap novelty at creation (D-62.3), 0–100.
+    novelty: integer("novelty").notNull(),
+    status: text("status").notNull().default("assessing"),
+    // Sufficiency queue state — infrastructure, never a judgment (§8.11).
+    assessmentState: text("assessment_state").notNull().default("pending"),
+    assessmentAttempts: integer("assessment_attempts").notNull().default(0),
+    assessmentLeaseExpiresAt: integer("assessment_lease_expires_at"),
+    assessedAt: integer("assessed_at"),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    // One package per consumed opportunity (D-62.2).
+    uniqueIndex("content_packages_opportunity")
+      .on(t.opportunityId)
+      .where(sql`${t.opportunityId} IS NOT NULL`),
+    index("content_packages_workspace_status").on(
+      t.workspaceId,
+      t.status,
+      t.createdAt,
+    ),
+    index("content_packages_campaign_status").on(t.campaignId, t.status),
+    // Novelty + per-lane repetition lookups.
+    index("content_packages_campaign_angle").on(t.campaignId, t.angleHash),
+    index("content_packages_assessment_queue").on(
+      t.workspaceId,
+      t.assessmentState,
+      t.assessmentLeaseExpiresAt,
+    ),
+  ],
+);
+
+export type ContentPackageRow = typeof contentPackages.$inferSelect;
+
+// Typed source snapshots (design §8.7, PACKAGE_SOURCE_ROLES activated).
+// Nullable refs go set-null on deletion; the snapshot columns survive.
+export const packageSources = sqliteTable(
+  "package_sources",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    packageId: text("package_id")
+      .notNull()
+      .references(() => contentPackages.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    canonicalStoryId: text("canonical_story_id").references(
+      () => canonicalExternalStories.id,
+      { onDelete: "set null" },
+    ),
+    occurrenceId: text("occurrence_id").references(
+      () => discoverySourceOccurrences.id,
+      { onDelete: "set null" },
+    ),
+    signalId: text("signal_id").references(() => signals.id, {
+      onDelete: "set null",
+    }),
+    title: text("title").notNull().default(""),
+    url: text("url"),
+    excerpt: text("excerpt").notNull().default(""),
+    // Full capture (provider, corroboration, captured-at) — snapshot only.
+    snapshotJson: text("snapshot_json").notNull().default("{}"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("package_sources_package").on(t.packageId)],
+);
+
+export type PackageSourceRow = typeof packageSources.$inferSelect;
+
+// Versioned, append-only sufficiency judgments (design §8.8). The verdict is
+// service-derived: sufficient requires ≥1 validated supported claim.
+export const sufficiencyAssessments = sqliteTable(
+  "sufficiency_assessments",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    packageId: text("package_id")
+      .notNull()
+      .references(() => contentPackages.id, { onDelete: "cascade" }),
+    assessmentVersion: integer("assessment_version").notNull(),
+    verdict: text("verdict").notNull(),
+    confidence: integer("confidence").notNull(),
+    supportedClaimsJson: text("supported_claims_json").notNull().default("[]"),
+    missingFactsJson: text("missing_facts_json").notNull().default("[]"),
+    missingMediaJson: text("missing_media_json").notNull().default("[]"),
+    eligibleFormatsJson: text("eligible_formats_json").notNull().default("[]"),
+    ineligibleFormatsJson: text("ineligible_formats_json")
+      .notNull()
+      .default("[]"),
+    researchActionsJson: text("research_actions_json").notNull().default("[]"),
+    assessorVersion: integer("assessor_version").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("sufficiency_assessments_version").on(
+      t.packageId,
+      t.assessmentVersion,
+    ),
+    index("sufficiency_assessments_package").on(t.packageId, t.createdAt),
+  ],
+);
+
+export type SufficiencyAssessmentRow =
+  typeof sufficiencyAssessments.$inferSelect;
+
+// Deterministic per-lane-revision allow/block evaluations (design §8.8) —
+// every reason recorded. Unique per (package, assessment, lane revision) so
+// re-evaluation is idempotent.
+export const laneEligibilityDecisions = sqliteTable(
+  "lane_eligibility_decisions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    packageId: text("package_id")
+      .notNull()
+      .references(() => contentPackages.id, { onDelete: "cascade" }),
+    assessmentId: text("assessment_id")
+      .notNull()
+      .references(() => sufficiencyAssessments.id, { onDelete: "cascade" }),
+    laneId: text("lane_id")
+      .notNull()
+      .references(() => campaignLanes.id, { onDelete: "cascade" }),
+    laneRevisionId: text("lane_revision_id")
+      .notNull()
+      .references(() => campaignLaneRevisions.id, { onDelete: "cascade" }),
+    eligible: integer("eligible", { mode: "boolean" }).notNull(),
+    checksJson: text("checks_json").notNull(),
+    evaluatorVersion: integer("evaluator_version").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("lane_eligibility_identity").on(
+      t.packageId,
+      t.assessmentId,
+      t.laneRevisionId,
+    ),
+    index("lane_eligibility_package").on(t.packageId, t.createdAt),
+  ],
+);
+
+export type LaneEligibilityDecisionRow =
+  typeof laneEligibilityDecisions.$inferSelect;
+
+// Append-only package lifecycle audit (design §12.1: package
+// created/research-needed/blocked). actorUserId null = system.
+export const contentPackageEvents = sqliteTable(
+  "content_package_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    packageId: text("package_id")
+      .notNull()
+      .references(() => contentPackages.id, { onDelete: "cascade" }),
+    fromStatus: text("from_status"),
+    toStatus: text("to_status").notNull(),
+    actorUserId: text("actor_user_id"),
+    reason: text("reason"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("content_package_events_package").on(t.packageId, t.createdAt),
+  ],
+);
+
+export type ContentPackageEventRow = typeof contentPackageEvents.$inferSelect;
+
 // Sprint 45 multi-candidate scoring: one row per candidate persona×campaign
 // pairing a discovered item scored above zero relevance for. Replaced
 // (delete-then-insert) each time the item is scored.

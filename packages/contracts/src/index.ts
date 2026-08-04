@@ -1008,7 +1008,8 @@ export type DeliveryMode = (typeof DELIVERY_MODES)[number];
 export const REACTIVE_PERIODS = ["day", "week", "month"] as const;
 export type ReactivePeriod = (typeof REACTIVE_PERIODS)[number];
 
-// Reserved orchestration vocabulary. Package source roles activate in Sprint 62.
+// Activated in Sprint 62 (`package_sources.role`, design §8.7). `trigger` and
+// `evidence` have producers; the rest are active vocabulary awaiting theirs.
 export const PACKAGE_SOURCE_ROLES = [
   "trigger",
   "evidence",
@@ -2493,6 +2494,9 @@ export const discoveryRunSummarySchema = z.object({
   /** Sprint 61: stories routed into campaign opportunities this tick. */
   storiesRouted: z.number().int().nonnegative().default(0),
   opportunitiesCreated: z.number().int().nonnegative().default(0),
+  /** Sprint 62: package pipeline work performed this tick. */
+  packagesCreated: z.number().int().nonnegative().default(0),
+  packagesAssessed: z.number().int().nonnegative().default(0),
 });
 export type DiscoveryRunSummary = z.infer<
   typeof discoveryRunSummarySchema
@@ -3000,6 +3004,294 @@ export const opportunityMatchRunResultSchema = z.object({
 export type OpportunityMatchRunResult = z.infer<
   typeof opportunityMatchRunResultSchema
 >;
+
+// ---------------------------------------------------------------------------
+// Content packages, sufficiency & lane eligibility (Sprint 62, design
+// §8.7–§8.9)
+//
+// The narrative unit between a qualified opportunity and Sprint 63's
+// deliverables. Grounding invariant: every generated claim is supported by
+// package sources, or the package remains research_needed. Shadow layer —
+// no deliverables, no generation, no dispatch.
+// ---------------------------------------------------------------------------
+
+// Package lifecycle. `assessing`/`research_needed` deliberately mirror the
+// reserved deliverable vocabulary by name — intentional layering, distinct
+// machines (D-62.8).
+export const PACKAGE_STATUSES = [
+  "assessing",
+  "research_needed",
+  "ready",
+  "blocked",
+  "cancelled",
+] as const;
+export type PackageStatus = (typeof PACKAGE_STATUSES)[number];
+
+/**
+ * Sufficiency-assessment queue states — infrastructure, never a judgment.
+ * `failed` means retries exhausted and an operator reassess is needed;
+ * business outcomes live on `PackageStatus` (design §8.11 separation).
+ */
+export const PACKAGE_ASSESSMENT_STATES = [
+  "pending",
+  "in_progress",
+  "complete",
+  "failed",
+] as const;
+export type PackageAssessmentState =
+  (typeof PACKAGE_ASSESSMENT_STATES)[number];
+
+export const PACKAGE_DECISION_ACTIONS = ["reassess", "cancel"] as const;
+export type PackageDecisionAction = (typeof PACKAGE_DECISION_ACTIONS)[number];
+
+export const SUFFICIENCY_VERDICTS = ["sufficient", "research_needed"] as const;
+export type SufficiencyVerdict = (typeof SUFFICIENCY_VERDICTS)[number];
+
+/** Assessor generation stamped on every sufficiency assessment. */
+export const SUFFICIENCY_ASSESSOR_VERSION = 1;
+/** Evaluator generation stamped on every lane eligibility decision. */
+export const LANE_ELIGIBILITY_EVALUATOR_VERSION = 1;
+/** Window for the deterministic angle-overlap novelty score (D-62.3). */
+export const PACKAGE_NOVELTY_WINDOW_DAYS = 30;
+
+export const PACKAGE_TRANSITIONS: Record<
+  PackageStatus,
+  readonly PackageStatus[]
+> = {
+  assessing: ["ready", "research_needed", "blocked", "cancelled"],
+  research_needed: ["assessing", "cancelled"],
+  ready: ["assessing", "blocked", "cancelled"],
+  blocked: ["assessing", "ready", "cancelled"],
+  cancelled: [],
+};
+
+export function canTransitionPackage(
+  from: PackageStatus,
+  to: PackageStatus,
+): boolean {
+  return PACKAGE_TRANSITIONS[from].includes(to);
+}
+
+export function transitionPackage(
+  from: PackageStatus,
+  to: PackageStatus,
+): PackageStatus | undefined {
+  return canTransitionPackage(from, to) ? to : undefined;
+}
+
+/** Operator decision actions → target statuses. */
+export const PACKAGE_DECISION_TARGETS: Record<
+  PackageDecisionAction,
+  PackageStatus
+> = {
+  reassess: "assessing",
+  cancel: "cancelled",
+};
+
+/** Lane eligibility rule ids (design §8.8; evaluation is deterministic). */
+export const ELIGIBILITY_RULES = [
+  "lane_active",
+  "format_registered",
+  "format_supported",
+  "media_available",
+  "angle_novel_for_lane",
+  /** Non-blocking: suggested persona is a recommendation only (§7). */
+  "persona_alignment",
+] as const;
+export type EligibilityRule = (typeof ELIGIBILITY_RULES)[number];
+
+/**
+ * Channel/format registry (design §8.9). A format is *operational* only when
+ * its generation and execution path exist — appearing in an enum is not
+ * enough. v1 registers the formats with native generation/publish flows;
+ * consumed by lane eligibility only (D-62.6) until the registry replaces
+ * free-string lane formats at cutover.
+ */
+export interface ChannelFormatCapability {
+  channel: Channel;
+  format: string;
+  label: string;
+  taskType: TaskType;
+  requiresMedia: boolean;
+  state: "active" | "deprecated";
+}
+
+export const CHANNEL_FORMAT_REGISTRY: readonly ChannelFormatCapability[] = [
+  { channel: "linkedin", format: "linkedin_post", label: "LinkedIn post", taskType: "linkedin_post", requiresMedia: false, state: "active" },
+  { channel: "instagram", format: "instagram_post", label: "Instagram post", taskType: "instagram_post", requiresMedia: false, state: "active" },
+  // Carousels are rendered from media, never text-generated (Sprint 41).
+  { channel: "instagram", format: "instagram_carousel", label: "Instagram carousel", taskType: "instagram_carousel", requiresMedia: true, state: "active" },
+  { channel: "x", format: "x_dm", label: "X direct message", taskType: "x_dm", requiresMedia: false, state: "active" },
+  { channel: "email", format: "outbound_email", label: "Outbound email", taskType: "outbound_email", requiresMedia: false, state: "active" },
+  { channel: "ads", format: "meta_ad_creative", label: "Meta ad creative", taskType: "meta_ad_creative", requiresMedia: false, state: "active" },
+  { channel: "ads", format: "google_rsa", label: "Google RSA", taskType: "google_rsa", requiresMedia: false, state: "active" },
+  { channel: "pr", format: "pr_pitch", label: "PR pitch", taskType: "pr_pitch", requiresMedia: false, state: "active" },
+  { channel: "web", format: "landing_page_hero", label: "Landing page hero", taskType: "landing_page_hero", requiresMedia: false, state: "active" },
+];
+
+export function formatCapability(
+  channel: string,
+  format: string,
+): ChannelFormatCapability | undefined {
+  return CHANNEL_FORMAT_REGISTRY.find(
+    (entry) => entry.channel === channel && entry.format === format,
+  );
+}
+
+export function formatsForChannel(
+  channel: string,
+): ChannelFormatCapability[] {
+  return CHANNEL_FORMAT_REGISTRY.filter((entry) => entry.channel === channel);
+}
+
+export function isRegisteredFormat(channel: string, format: string): boolean {
+  return formatCapability(channel, format) !== undefined;
+}
+
+export const packageSourceSchema = z.object({
+  id: z.string().uuid(),
+  packageId: z.string().uuid(),
+  role: z.enum(PACKAGE_SOURCE_ROLES),
+  /** Nullable refs survive deletion of the referenced rows; the snapshot stays. */
+  canonicalStoryId: z.string().uuid().nullable(),
+  occurrenceId: z.string().uuid().nullable(),
+  signalId: z.string().uuid().nullable(),
+  title: z.string(),
+  url: z.string().nullable(),
+  excerpt: z.string(),
+  createdAt: z.number().int(),
+});
+export type PackageSource = z.infer<typeof packageSourceSchema>;
+
+export const sufficiencyClaimSchema = z.object({
+  claim: z.string(),
+  /** Validated ⊆ the package's source rows at write (grounding invariant). */
+  sourceIds: z.array(z.string()),
+});
+export type SufficiencyClaim = z.infer<typeof sufficiencyClaimSchema>;
+
+export const sufficiencyIneligibleFormatSchema = z.object({
+  format: z.string(),
+  reason: z.string(),
+});
+
+export const sufficiencyAssessmentSchema = z.object({
+  id: z.string().uuid(),
+  packageId: z.string().uuid(),
+  assessmentVersion: z.number().int(),
+  verdict: z.enum(SUFFICIENCY_VERDICTS),
+  confidence: z.number().int().min(0).max(100),
+  supportedClaims: z.array(sufficiencyClaimSchema),
+  missingFacts: z.array(z.string()),
+  missingMedia: z.array(z.string()),
+  eligibleFormats: z.array(z.string()),
+  ineligibleFormats: z.array(sufficiencyIneligibleFormatSchema),
+  researchActions: z.array(z.string()),
+  assessorVersion: z.number().int(),
+  createdAt: z.number().int(),
+});
+export type SufficiencyAssessment = z.infer<typeof sufficiencyAssessmentSchema>;
+
+export const laneEligibilityCheckSchema = z.object({
+  rule: z.enum(ELIGIBILITY_RULES),
+  passed: z.boolean(),
+  detail: z.string().optional(),
+});
+export type LaneEligibilityCheck = z.infer<typeof laneEligibilityCheckSchema>;
+
+export const laneEligibilityDecisionSchema = z.object({
+  id: z.string().uuid(),
+  packageId: z.string().uuid(),
+  assessmentId: z.string().uuid(),
+  laneId: z.string().uuid(),
+  laneRevisionId: z.string().uuid(),
+  eligible: z.boolean(),
+  checks: z.array(laneEligibilityCheckSchema),
+  evaluatorVersion: z.number().int(),
+  createdAt: z.number().int(),
+  /** Lane projection context. */
+  laneName: z.string(),
+  channel: z.string(),
+  format: z.string(),
+});
+export type LaneEligibilityDecision = z.infer<
+  typeof laneEligibilityDecisionSchema
+>;
+
+export const contentPackageSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  campaignId: z.string().uuid(),
+  planRevisionId: z.string().uuid(),
+  /** Null after the source opportunity was deleted; the package survives. */
+  opportunityId: z.string().uuid().nullable(),
+  canonicalStoryId: z.string().uuid().nullable(),
+  angle: z.string(),
+  angleHash: z.string(),
+  novelty: z.number().int().min(0).max(100),
+  status: z.enum(PACKAGE_STATUSES),
+  assessmentState: z.enum(PACKAGE_ASSESSMENT_STATES),
+  assessmentAttempts: z.number().int(),
+  assessedAt: z.number().int().nullable(),
+  createdByUserId: z.string().uuid().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+  /** List projection context. */
+  campaignName: z.string(),
+  storyTitle: z.string().nullable(),
+  latestVerdict: z.enum(SUFFICIENCY_VERDICTS).nullable(),
+});
+export type ContentPackage = z.infer<typeof contentPackageSchema>;
+
+export const packageEventSchema = z.object({
+  id: z.string().uuid(),
+  /** Null on the creation event. */
+  fromStatus: z.enum(PACKAGE_STATUSES).nullable(),
+  toStatus: z.enum(PACKAGE_STATUSES),
+  /** Null when the system (assessment commit, auto-packaging) moved it. */
+  actorUserId: z.string().uuid().nullable(),
+  reason: z.string().nullable(),
+  createdAt: z.number().int(),
+});
+export type PackageEvent = z.infer<typeof packageEventSchema>;
+
+export const packageDetailSchema = z.object({
+  package: contentPackageSchema,
+  sources: z.array(packageSourceSchema),
+  assessments: z.array(sufficiencyAssessmentSchema),
+  eligibility: z.array(laneEligibilityDecisionSchema),
+  events: z.array(packageEventSchema),
+});
+export type PackageDetail = z.infer<typeof packageDetailSchema>;
+
+export const listPackagesResponseSchema = z.object({
+  packages: z.array(contentPackageSchema),
+  total: z.number().int(),
+});
+export type ListPackagesResponse = z.infer<typeof listPackagesResponseSchema>;
+
+export const packageDecisionInputSchema = z
+  .object({
+    action: z.enum(PACKAGE_DECISION_ACTIONS),
+    reason: z.string().trim().max(500).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.action === "cancel" && !value.reason) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["reason"],
+        message: "A reason is required to cancel a package.",
+      });
+    }
+  });
+export type PackageDecisionInput = z.infer<typeof packageDecisionInputSchema>;
+
+export const packageRunResultSchema = z.object({
+  packagesCreated: z.number().int(),
+  packagesAssessed: z.number().int(),
+  failures: z.number().int(),
+});
+export type PackageRunResult = z.infer<typeof packageRunResultSchema>;
 
 // ---------------------------------------------------------------------------
 // Evidence corpus (RAG behind the Brain Gateway boundary)
@@ -5468,6 +5760,7 @@ export const LLM_PIPELINES = [
   "signal_matching",
   "discovery_matching",
   "opportunity_matching",
+  "sufficiency_assessment",
   "mailbox_classification",
   "outline_summaries",
   "source_suggestions",
@@ -6013,6 +6306,8 @@ export const WORKSPACE_NAV: NavItem[] = [
       // Sprint 61: campaign-scoped opportunity decisions (design §11.2's
       // daily view; Signal inbox keeps the top-level path until cutover).
       { label: "Opportunities", path: "/opportunities", summary: "Campaign-scoped story opportunities", tone: "signal", icon: "discover" },
+      // Sprint 62: source-grounded packages between opportunity and deliverable.
+      { label: "Packages", path: "/packages", summary: "Source-grounded content packages", tone: "signal", icon: "discover" },
       // Sprint 60: canonical stories — the shadow intelligence layer.
       { label: "Stories", path: "/stories", summary: "Canonical stories across sources", tone: "signal", icon: "blog" },
     ],
@@ -7300,6 +7595,34 @@ export const opportunityMatcherResponseSchema = z.array(
 export type OpportunityMatcherResponse = z.infer<
   typeof opportunityMatcherResponseSchema
 >;
+
+/**
+ * Sufficiency assessment response (Sprint 62, design §8.8). Shape-tolerant
+ * per the Sprint 58 convention; hard grounding validation (claim sourceIds ⊆
+ * the package's source rows) happens in the service — an invented ID makes
+ * the assessment retryable, never a stored judgment. The verdict is derived
+ * by the service (`sufficient` requires ≥1 validated claim), never trusted.
+ */
+export const sufficiencyResponseSchema = z.object({
+  sufficient: z.boolean(),
+  confidence: z.number().optional(),
+  supportedClaims: z
+    .array(
+      z.object({
+        claim: z.string(),
+        sourceIds: z.array(z.string()).optional(),
+      }),
+    )
+    .optional(),
+  missingFacts: z.array(z.string()).optional(),
+  missingMedia: z.array(z.string()).optional(),
+  eligibleFormats: z.array(z.string()).optional(),
+  ineligibleFormats: z
+    .array(z.object({ format: z.string(), reason: z.string().optional() }))
+    .optional(),
+  researchActions: z.array(z.string()).optional(),
+});
+export type SufficiencyResponse = z.infer<typeof sufficiencyResponseSchema>;
 
 /** Inbox reply classification: one label per batched item. */
 export const emailReplyClassificationResponseSchema = z.array(

@@ -1,0 +1,321 @@
+/* Content packages (Sprint 62) — source-grounded narrative units between
+   qualified opportunities and Sprint 63 deliverables. Mirrors the
+   opportunities-page conventions: tone section heads, chip rows, inline
+   reason capture, preview-value empty states. Editorial tokens only. */
+
+.head {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Packages live on the discover tone (nav vocabulary: discover/signal). */
+.headIcon {
+  color: var(--c2-deep);
+}
+
+.filterLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.runNote {
+  font-size: 13px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  padding: 8px 12px;
+}
+
+.pkgList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.pkg {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.pkgHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.campaignName {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text);
+}
+
+.angle {
+  margin: 0;
+  font-size: 13px;
+}
+
+/* Small metric/attribute chips (novelty, confidence, check failures). */
+.chipRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.chip {
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  padding: 1px 6px;
+}
+
+/* Queue-failure hint — retries exhausted, operator reassess needed. */
+.failedNote {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted-2);
+  font-style: italic;
+}
+
+.actionRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding-top: 2px;
+}
+
+/* Inline reason capture for cancel — appears in place of the actions. */
+.reasonRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 2px;
+}
+
+.reasonRow > input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Non-fatal per-package note (409 not_due on assess). */
+.assessNote {
+  margin: 0;
+  font-size: 12px;
+  color: var(--muted-2);
+}
+
+/* ------------------------------------------------------------------ */
+/* Expanded detail                                                     */
+/* ------------------------------------------------------------------ */
+
+.detail {
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 12px;
+}
+
+.detailSection {
+  display: grid;
+  gap: 6px;
+}
+
+.detailTitle {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sourceList,
+.claimList,
+.factList,
+.eventList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.source {
+  display: grid;
+  gap: 2px;
+}
+
+.sourceHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.sourceTitle {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.sourceHead a {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: inherit;
+}
+
+.externalIcon {
+  color: var(--muted-2);
+}
+
+.sourceExcerpt {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.claim {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.claimSources {
+  flex-shrink: 0;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted-2);
+}
+
+.factItem {
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.blockingSummary {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.eligTableWrap {
+  overflow-x: auto;
+}
+
+.eligTable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.eligTable th {
+  text-align: left;
+  font-weight: 600;
+  color: var(--muted);
+  padding: 4px 10px 4px 0;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.eligTable td {
+  padding: 6px 10px 6px 0;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.eligTable tr:last-child td {
+  border-bottom: none;
+}
+
+.laneFormat {
+  font-size: 11.5px;
+  color: var(--muted-2);
+  white-space: nowrap;
+}
+
+.event {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.eventTransition {
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.eventDate {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--muted-2);
+}
+
+.loadMoreRow {
+  display: flex;
+  justify-content: center;
+  padding-top: 12px;
+}
+
+/* Blurred sample packages behind the empty state (preview-value mode). */
+.previewList {
+  display: grid;
+  gap: 12px;
+  padding: 24px 28px;
+}
+
+.previewCard {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.kindMark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  flex-shrink: 0;
+}
+
+.previewTitle {
+  font-weight: 600;
+  font-size: 13.5px;
+  color: var(--text);
+}
+
+.previewMeta {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--muted-2);
+}

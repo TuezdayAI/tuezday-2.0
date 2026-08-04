@@ -14,6 +14,9 @@ export interface DiscoveryOperatorPolicy {
   // Sprint 61: story → campaign-opportunity routing bounds.
   maxRoutingStoriesPerTick: number;
   routingTimeoutMs: number;
+  // Sprint 62: package pipeline bounds (auto-package + sufficiency, shared).
+  maxPackagesPerTick: number;
+  packageTimeoutMs: number;
 }
 
 export const DEFAULT_DISCOVERY_POLICY = Object.freeze({
@@ -31,6 +34,8 @@ export const DEFAULT_DISCOVERY_POLICY = Object.freeze({
   heartbeatMs: 10_000,
   maxRoutingStoriesPerTick: 10,
   routingTimeoutMs: 45_000,
+  maxPackagesPerTick: 10,
+  packageTimeoutMs: 45_000,
 } satisfies DiscoveryOperatorPolicy);
 
 function boundedInteger(
@@ -162,6 +167,20 @@ export function parseDiscoveryOperatorPolicy(
       5_000,
       120_000,
     ),
+    maxPackagesPerTick: boundedInteger(
+      env,
+      "DISCOVERY_PACKAGE_MAX_PACKAGES",
+      DEFAULT_DISCOVERY_POLICY.maxPackagesPerTick,
+      1,
+      100,
+    ),
+    packageTimeoutMs: boundedInteger(
+      env,
+      "DISCOVERY_PACKAGE_TIMEOUT_MS",
+      DEFAULT_DISCOVERY_POLICY.packageTimeoutMs,
+      5_000,
+      120_000,
+    ),
   };
 
   if (policy.sourceTimeoutMs >= policy.tickTimeoutMs) {
@@ -177,6 +196,11 @@ export function parseDiscoveryOperatorPolicy(
   if (policy.routingTimeoutMs >= policy.tickTimeoutMs) {
     throw new Error(
       "The opportunity routing timeout must stay below the tick timeout.",
+    );
+  }
+  if (policy.packageTimeoutMs >= policy.tickTimeoutMs) {
+    throw new Error(
+      "The package assessment timeout must stay below the tick timeout.",
     );
   }
   if (policy.heartbeatMs * 2 >= policy.leaseMs) {

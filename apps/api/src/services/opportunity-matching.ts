@@ -81,7 +81,7 @@ export function angleHashOf(angle: string): string {
   return createHash("sha256").update(normalized, "utf8").digest("hex");
 }
 
-function tokenize(text: string): Set<string> {
+export function tokenize(text: string): Set<string> {
   return new Set(
     text
       .toLowerCase()

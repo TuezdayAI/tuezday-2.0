@@ -26,6 +26,7 @@ import {
   type DiscoveryJobClaim,
 } from "./discovery-jobs";
 import { runOpportunityRouting } from "./opportunity-matching";
+import { runPackagePipeline } from "./sufficiency";
 import { withTaskLease } from "./task-leases";
 
 export type DiscoverySchedulerResult = DiscoveryRunSummary;
@@ -134,6 +135,8 @@ function emptyResult(busy: boolean): DiscoverySchedulerResult {
     scored: 0,
     storiesRouted: 0,
     opportunitiesCreated: 0,
+    packagesCreated: 0,
+    packagesAssessed: 0,
   };
 }
 
@@ -387,6 +390,25 @@ export async function runDiscoveryScheduler(
           routingRemaining -= routing.storiesConsidered;
           result.storiesRouted += routing.storiesRouted;
           result.opportunitiesCreated += routing.opportunitiesCreated;
+        }
+
+        // Sprint 62: package phase (shadow) — auto-package auto_qualified
+        // opportunities of auto_package-band campaigns, then assess due
+        // packages. Budget gating and lease fencing live in the service.
+        let packagesRemaining = deps.policy.maxPackagesPerTick;
+        for (const workspace of workspaceRows) {
+          if (packagesRemaining <= 0 || tickSignal.aborted) break;
+          const packages = await runPackagePipeline(deps.db, deps.llm, {
+            workspaceId: workspace.id,
+            limit: packagesRemaining,
+            leaseMs: deps.policy.leaseMs,
+            timeoutMs: deps.policy.packageTimeoutMs,
+            signal: tickSignal,
+          });
+          packagesRemaining -=
+            packages.packagesCreated + packages.packagesAssessed + packages.failures;
+          result.packagesCreated += packages.packagesCreated;
+          result.packagesAssessed += packages.packagesAssessed;
         }
         return result;
       } finally {

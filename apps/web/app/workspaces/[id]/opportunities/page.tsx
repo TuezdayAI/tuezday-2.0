@@ -91,6 +91,8 @@ export default function OpportunitiesPage() {
   const [matchResult, setMatchResult] = useState<OpportunityMatchRunResult | null>(null);
 
   const [deciding, setDeciding] = useState<string | null>(null);
+  const [packaging, setPackaging] = useState<string | null>(null);
+  const [packaged, setPackaged] = useState<Record<string, boolean>>({});
   const [reasonFor, setReasonFor] = useState<{
     opportunityId: string;
     action: "dismiss" | "reopen";
@@ -166,6 +168,26 @@ export default function OpportunitiesPage() {
       setError(err instanceof Error ? err.message : "Decision failed");
     } finally {
       setDeciding(null);
+    }
+  }
+
+  // Consume a qualified opportunity into a content package (Sprint 62).
+  async function createPackage(opportunityId: string) {
+    setPackaging(opportunityId);
+    setError(null);
+    try {
+      const res = await apiFetch(
+        `/workspaces/${id}/opportunities/${opportunityId}/package`,
+        { method: "POST" },
+      );
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message ?? `API returned ${res.status}`);
+      setPackaged((prev) => ({ ...prev, [opportunityId]: true }));
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Package creation failed");
+    } finally {
+      setPackaging(null);
     }
   }
 
@@ -309,6 +331,7 @@ export default function OpportunitiesPage() {
                 <ul className={styles.oppList}>
                   {group.opportunities.map((opp) => {
                     const actions = actionsFor(opp.status);
+                    const canPackage = canTransitionOpportunity(opp.status, "package_created");
                     const reasonOpen = reasonFor?.opportunityId === opp.id;
                     return (
                       <li key={opp.id} className={styles.opp}>
@@ -341,8 +364,25 @@ export default function OpportunitiesPage() {
                             {opp.decisionReason}
                           </p>
                         )}
-                        {actions.length > 0 && !reasonOpen && (
+                        {packaged[opp.id] && (
+                          <p className="meta">
+                            <Link href={`/workspaces/${id}/packages`}>
+                              Package created — view packages
+                            </Link>
+                          </p>
+                        )}
+                        {(actions.length > 0 || canPackage) && !reasonOpen && (
                           <div className={styles.actionRow}>
+                            {canPackage && (
+                              <Button
+                                variant="primary"
+                                size="compact"
+                                disabled={packaging === opp.id}
+                                onClick={() => void createPackage(opp.id)}
+                              >
+                                {packaging === opp.id ? "Creating…" : "Create package"}
+                              </Button>
+                            )}
                             {actions.map((action) => (
                               <Button
                                 key={action}

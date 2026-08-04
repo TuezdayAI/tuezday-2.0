@@ -57,6 +57,8 @@ const acceptancePolicy: DiscoveryOperatorPolicy = {
   heartbeatMs: 60_000,
   maxRoutingStoriesPerTick: 10,
   routingTimeoutMs: 120_000,
+  maxPackagesPerTick: 10,
+  packageTimeoutMs: 120_000,
 };
 
 interface ProviderStats {
