@@ -2490,6 +2490,9 @@ export const discoveryRunSummarySchema = z.object({
   processed: z.number().int().nonnegative(),
   sources: z.array(discoveryRunSourceResultSchema),
   scored: z.number().int().nonnegative(),
+  /** Sprint 61: stories routed into campaign opportunities this tick. */
+  storiesRouted: z.number().int().nonnegative().default(0),
+  opportunitiesCreated: z.number().int().nonnegative().default(0),
 });
 export type DiscoveryRunSummary = z.infer<
   typeof discoveryRunSummarySchema
@@ -2733,6 +2736,270 @@ export const storyBackfillResultSchema = z.object({
   membershipsCreated: z.number().int(),
 });
 export type StoryBackfillResult = z.infer<typeof storyBackfillResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Campaign routing profiles & opportunities (Sprint 61, design §8.5–§8.6, §9)
+//
+// Opportunities replace the flat 0–100 relevance score as the autonomy
+// governor: separate score dimensions, campaign-scoped decisions, and policy
+// bands. Shadow layer — the legacy discovered_item_matches flow is untouched.
+// ---------------------------------------------------------------------------
+
+/** Per-campaign routing autonomy band (design §9.4). */
+export const ROUTING_POLICY_BANDS = ["off", "review", "auto_package"] as const;
+export type RoutingPolicyBand = (typeof ROUTING_POLICY_BANDS)[number];
+
+// `qualified` is an operator's qualification, `auto_qualified` is policy's;
+// both feed package creation. `package_created` is reserved until Sprint 62
+// ships packages (same convention as PACKAGE_SOURCE_ROLES).
+export const OPPORTUNITY_STATUSES = [
+  "candidate",
+  "auto_qualified",
+  "qualified",
+  "needs_review",
+  "watchlisted",
+  "dismissed",
+  "package_created",
+  "expired",
+  "superseded",
+] as const;
+export type OpportunityStatus = (typeof OPPORTUNITY_STATUSES)[number];
+
+export const OPPORTUNITY_DECISION_ACTIONS = [
+  "qualify",
+  "dismiss",
+  "watch",
+  "reopen",
+] as const;
+export type OpportunityDecisionAction =
+  (typeof OPPORTUNITY_DECISION_ACTIONS)[number];
+
+/** Story routing queue states — mirrors the discovered-items matching queue. */
+export const STORY_ROUTING_STATES = [
+  "pending",
+  "in_progress",
+  "routed",
+  "failed",
+] as const;
+export type StoryRoutingState = (typeof STORY_ROUTING_STATES)[number];
+
+/** Story×campaign matcher generation stamped on every opportunity. */
+export const OPPORTUNITY_MATCHER_VERSION = 1;
+/** Routing-profile compiler generation folded into profile fingerprints. */
+export const ROUTING_PROFILE_COMPILER_VERSION = 1;
+
+export const OPPORTUNITY_TRANSITIONS: Record<
+  OpportunityStatus,
+  readonly OpportunityStatus[]
+> = {
+  candidate: [
+    "auto_qualified",
+    "needs_review",
+    "watchlisted",
+    "dismissed",
+    "expired",
+    "superseded",
+  ],
+  auto_qualified: ["dismissed", "expired", "superseded", "package_created"],
+  qualified: ["dismissed", "expired", "superseded", "package_created"],
+  needs_review: ["qualified", "dismissed", "watchlisted", "expired", "superseded"],
+  watchlisted: ["qualified", "dismissed", "needs_review", "expired", "superseded"],
+  // Reopen/undo (§11.5) — dismissal stays reversible while nothing consumed it.
+  dismissed: ["needs_review"],
+  package_created: [],
+  expired: [],
+  superseded: [],
+};
+
+export function canTransitionOpportunity(
+  from: OpportunityStatus,
+  to: OpportunityStatus,
+): boolean {
+  return OPPORTUNITY_TRANSITIONS[from].includes(to);
+}
+
+export function transitionOpportunity(
+  from: OpportunityStatus,
+  to: OpportunityStatus,
+): OpportunityStatus | undefined {
+  return canTransitionOpportunity(from, to) ? to : undefined;
+}
+
+/** Operator decision actions → target statuses. */
+export const OPPORTUNITY_DECISION_TARGETS: Record<
+  OpportunityDecisionAction,
+  OpportunityStatus
+> = {
+  qualify: "qualified",
+  dismiss: "dismissed",
+  watch: "watchlisted",
+  reopen: "needs_review",
+};
+
+/** Compiled projection of a plan revision + active lanes — snapshot only. */
+export const routingProfilePayloadSchema = z.object({
+  campaignName: z.string(),
+  objective: z.string(),
+  kpi: z.string(),
+  timeframe: z.string(),
+  startAt: z.number().int().nullable(),
+  endAt: z.number().int().nullable(),
+  audiences: z.array(z.string()),
+  pillars: z.array(z.string()),
+  offers: z.array(z.string()),
+  ctas: z.array(z.string()),
+  guidance: z.string(),
+  /** Personas represented by active lane revisions. */
+  personaIds: z.array(z.string()),
+  channels: z.array(z.string()),
+  formats: z.array(z.string()),
+  exclusions: z.array(z.string()),
+});
+export type RoutingProfilePayload = z.infer<typeof routingProfilePayloadSchema>;
+
+export const campaignRoutingProfileSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  campaignId: z.string().uuid(),
+  planRevisionId: z.string().uuid(),
+  profileVersion: z.number().int(),
+  profileFingerprint: z.string(),
+  routingBand: z.enum(ROUTING_POLICY_BANDS),
+  minFit: z.number().int().min(0).max(100),
+  minConfidence: z.number().int().min(0).max(100),
+  minTrust: z.number().int().min(0).max(100),
+  compilerVersion: z.number().int(),
+  payload: routingProfilePayloadSchema,
+  createdAt: z.number().int(),
+});
+export type CampaignRoutingProfile = z.infer<
+  typeof campaignRoutingProfileSchema
+>;
+
+export const routingPolicyPatchSchema = z.object({
+  band: z.enum(ROUTING_POLICY_BANDS).optional(),
+  minFit: z.number().int().min(0).max(100).optional(),
+  minConfidence: z.number().int().min(0).max(100).optional(),
+  minTrust: z.number().int().min(0).max(100).optional(),
+  exclusions: z.array(z.string().trim().min(1).max(80)).max(50).optional(),
+});
+export type RoutingPolicyPatch = z.infer<typeof routingPolicyPatchSchema>;
+
+export const opportunityPolicyCheckSchema = z.object({
+  rule: z.string(),
+  threshold: z.number().nullable(),
+  value: z.number().nullable(),
+  passed: z.boolean(),
+});
+export const opportunityPolicySchema = z.object({
+  band: z.enum(ROUTING_POLICY_BANDS),
+  checks: z.array(opportunityPolicyCheckSchema),
+});
+export type OpportunityPolicy = z.infer<typeof opportunityPolicySchema>;
+
+export const opportunitySupportedClaimSchema = z.object({
+  claim: z.string(),
+  /** Validated against the story's active occurrence memberships at write. */
+  occurrenceIds: z.array(z.string()),
+});
+export type OpportunitySupportedClaim = z.infer<
+  typeof opportunitySupportedClaimSchema
+>;
+
+export const campaignOpportunitySchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  /** Exactly one of canonicalStoryId / manualSignalId is set (§8.6 XOR). */
+  canonicalStoryId: z.string().uuid().nullable(),
+  manualSignalId: z.string().uuid().nullable(),
+  campaignId: z.string().uuid(),
+  planRevisionId: z.string().uuid(),
+  routingProfileId: z.string().uuid(),
+  status: z.enum(OPPORTUNITY_STATUSES),
+  angle: z.string(),
+  angleHash: z.string(),
+  workspaceRelevance: z.number().int().min(0).max(100),
+  campaignFit: z.number().int().min(0).max(100),
+  confidence: z.number().int().min(0).max(100),
+  actionability: z.number().int().min(0).max(100),
+  sourceTrust: z.number().int().min(0).max(100),
+  /** Recommendation only; the lane revision stays the execution authority. */
+  suggestedPersonaId: z.string().uuid().nullable(),
+  supportedClaims: z.array(opportunitySupportedClaimSchema),
+  reason: z.string(),
+  matcherVersion: z.number().int(),
+  policy: opportunityPolicySchema,
+  expiresAt: z.number().int().nullable(),
+  decidedByUserId: z.string().uuid().nullable(),
+  decidedAt: z.number().int().nullable(),
+  decisionReason: z.string().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+  /** List projection context. */
+  storyTitle: z.string().nullable(),
+  storyUrl: z.string().nullable(),
+  campaignName: z.string(),
+});
+export type CampaignOpportunity = z.infer<typeof campaignOpportunitySchema>;
+
+export const opportunityEventSchema = z.object({
+  id: z.string().uuid(),
+  /** Null on the creation event. */
+  fromStatus: z.enum(OPPORTUNITY_STATUSES).nullable(),
+  toStatus: z.enum(OPPORTUNITY_STATUSES),
+  /** Null when the system (policy, sweep, supersede) transitioned it. */
+  actorUserId: z.string().uuid().nullable(),
+  reason: z.string().nullable(),
+  createdAt: z.number().int(),
+});
+export type OpportunityEvent = z.infer<typeof opportunityEventSchema>;
+
+export const opportunityDetailSchema = z.object({
+  opportunity: campaignOpportunitySchema,
+  /** The exact profile version the matcher decided against. */
+  profile: campaignRoutingProfileSchema,
+  events: z.array(opportunityEventSchema),
+});
+export type OpportunityDetail = z.infer<typeof opportunityDetailSchema>;
+
+export const listOpportunitiesResponseSchema = z.object({
+  opportunities: z.array(campaignOpportunitySchema),
+  total: z.number().int(),
+});
+export type ListOpportunitiesResponse = z.infer<
+  typeof listOpportunitiesResponseSchema
+>;
+
+export const opportunityDecisionInputSchema = z
+  .object({
+    action: z.enum(OPPORTUNITY_DECISION_ACTIONS),
+    reason: z.string().trim().max(500).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      (value.action === "dismiss" || value.action === "reopen") &&
+      !value.reason
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["reason"],
+        message: `A reason is required to ${value.action} an opportunity.`,
+      });
+    }
+  });
+export type OpportunityDecisionInput = z.infer<
+  typeof opportunityDecisionInputSchema
+>;
+
+export const opportunityMatchRunResultSchema = z.object({
+  storiesConsidered: z.number().int(),
+  storiesRouted: z.number().int(),
+  opportunitiesCreated: z.number().int(),
+  failures: z.number().int(),
+});
+export type OpportunityMatchRunResult = z.infer<
+  typeof opportunityMatchRunResultSchema
+>;
 
 // ---------------------------------------------------------------------------
 // Evidence corpus (RAG behind the Brain Gateway boundary)
@@ -5200,6 +5467,7 @@ export const LLM_PIPELINES = [
   "copilot_action",
   "signal_matching",
   "discovery_matching",
+  "opportunity_matching",
   "mailbox_classification",
   "outline_summaries",
   "source_suggestions",
@@ -5742,6 +6010,9 @@ export const WORKSPACE_NAV: NavItem[] = [
     section: "grow",
     children: [
       { label: "Signal inbox", path: "/discovery", summary: "Triage discovered items", tone: "signal", icon: "discover" },
+      // Sprint 61: campaign-scoped opportunity decisions (design §11.2's
+      // daily view; Signal inbox keeps the top-level path until cutover).
+      { label: "Opportunities", path: "/opportunities", summary: "Campaign-scoped story opportunities", tone: "signal", icon: "discover" },
       // Sprint 60: canonical stories — the shadow intelligence layer.
       { label: "Stories", path: "/stories", summary: "Canonical stories across sources", tone: "signal", icon: "blog" },
     ],
@@ -6991,6 +7262,44 @@ export type MatchingResponseEntry = z.infer<typeof matchingResponseEntrySchema>;
 
 export const matchingResponseSchema = z.array(matchingResponseEntrySchema);
 export type MatchingResponse = z.infer<typeof matchingResponseSchema>;
+
+/**
+ * One candidate-campaign judgment in an opportunity matcher response
+ * (Sprint 61, design §9.2). Score fields are optional so an irrelevant
+ * candidate can omit them; ID validation against the candidate set and the
+ * story's occurrences happens in the service — an invented ID makes the
+ * routing attempt retryable, never a stored no-match.
+ */
+export const opportunityMatcherCandidateSchema = z.object({
+  campaignId: z.string(),
+  relevant: z.boolean(),
+  workspaceRelevance: z.number().optional(),
+  campaignFit: z.number().optional(),
+  confidence: z.number().optional(),
+  actionability: z.number().optional(),
+  angle: z.string().optional(),
+  supportedClaims: z
+    .array(
+      z.object({
+        claim: z.string(),
+        occurrenceIds: z.array(z.string()).optional(),
+      }),
+    )
+    .optional(),
+  suggestedPersonaId: z.string().nullish(),
+  expiresInDays: z.number().nullish(),
+  reason: z.string().optional(),
+});
+export type OpportunityMatcherCandidate = z.infer<
+  typeof opportunityMatcherCandidateSchema
+>;
+
+export const opportunityMatcherResponseSchema = z.array(
+  opportunityMatcherCandidateSchema,
+);
+export type OpportunityMatcherResponse = z.infer<
+  typeof opportunityMatcherResponseSchema
+>;
 
 /** Inbox reply classification: one label per batched item. */
 export const emailReplyClassificationResponseSchema = z.array(

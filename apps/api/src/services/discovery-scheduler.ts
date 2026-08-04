@@ -25,6 +25,7 @@ import {
   heartbeatDiscoveryJob,
   type DiscoveryJobClaim,
 } from "./discovery-jobs";
+import { runOpportunityRouting } from "./opportunity-matching";
 import { withTaskLease } from "./task-leases";
 
 export type DiscoverySchedulerResult = DiscoveryRunSummary;
@@ -131,6 +132,8 @@ function emptyResult(busy: boolean): DiscoverySchedulerResult {
     processed: 0,
     sources: [],
     scored: 0,
+    storiesRouted: 0,
+    opportunitiesCreated: 0,
   };
 }
 
@@ -366,6 +369,24 @@ export async function runDiscoveryScheduler(
           } finally {
             matchingDeadline.dispose();
           }
+        }
+
+        // Sprint 61: story → campaign-opportunity routing (shadow). Runs
+        // after item matching under the same scheduler lease; per-workspace
+        // budget gating and lease/fingerprint fencing live in the service.
+        let routingRemaining = deps.policy.maxRoutingStoriesPerTick;
+        for (const workspace of workspaceRows) {
+          if (routingRemaining <= 0 || tickSignal.aborted) break;
+          const routing = await runOpportunityRouting(deps.db, deps.llm, {
+            workspaceId: workspace.id,
+            limit: routingRemaining,
+            leaseMs: deps.policy.leaseMs,
+            timeoutMs: deps.policy.routingTimeoutMs,
+            signal: tickSignal,
+          });
+          routingRemaining -= routing.storiesConsidered;
+          result.storiesRouted += routing.storiesRouted;
+          result.opportunitiesCreated += routing.opportunitiesCreated;
         }
         return result;
       } finally {

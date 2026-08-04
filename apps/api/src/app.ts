@@ -47,6 +47,7 @@ import { registerContextMatrixRoutes } from "./routes/context-matrix";
 import { registerCrmRoutes } from "./routes/crm";
 import { registerDiscoveryRoutes } from "./routes/discovery";
 import { registerStoryRoutes } from "./routes/stories";
+import { registerOpportunityRoutes } from "./routes/opportunities";
 import { registerDraftRoutes } from "./routes/drafts";
 import { registerEvidenceRoutes } from "./routes/evidence";
 import { registerExecutionRoutes } from "./routes/executions";
@@ -320,6 +321,7 @@ export async function buildApp({
     },
   );
   registerStoryRoutes(app, db);
+  registerOpportunityRoutes(app, db, llm);
   registerCampaignRoutes(app, db);
   registerCampaignPlanRoutes(app, db);
   registerAudienceRoutes(app, db);

@@ -30,6 +30,8 @@ const cases = [
   ["matchingTimeoutMs", "DISCOVERY_MATCH_TIMEOUT_MS", 45_000, 5_000, 120_000],
   ["leaseMs", "DISCOVERY_LEASE_MS", 45_000, 15_000, 300_000],
   ["heartbeatMs", "DISCOVERY_HEARTBEAT_MS", 10_000, 2_000, 60_000],
+  ["maxRoutingStoriesPerTick", "DISCOVERY_ROUTING_MAX_STORIES", 10, 1, 100],
+  ["routingTimeoutMs", "DISCOVERY_ROUTING_TIMEOUT_MS", 45_000, 5_000, 120_000],
 ] as const satisfies ReadonlyArray<
   readonly [keyof DiscoveryOperatorPolicy, string, number, number, number]
 >;

@@ -615,6 +615,13 @@ export const canonicalExternalStories = sqliteTable(
     // FK to keep the initial CREATE simple and the pointer historical).
     mergedIntoStoryId: text("merged_into_story_id"),
     archivedAt: integer("archived_at"),
+    // Sprint 61 opportunity-routing queue — mirrors the discovered_items
+    // matching-state machinery (lease + fingerprint fence).
+    routingState: text("routing_state").notNull().default("pending"),
+    routingFingerprint: text("routing_fingerprint"),
+    routingLeaseExpiresAt: integer("routing_lease_expires_at"),
+    routingAttempts: integer("routing_attempts").notNull().default(0),
+    routedAt: integer("routed_at"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -623,6 +630,11 @@ export const canonicalExternalStories = sqliteTable(
       t.workspaceId,
       t.status,
       t.lastObservedAt,
+    ),
+    index("canonical_stories_routing_queue").on(
+      t.workspaceId,
+      t.routingState,
+      t.routingLeaseExpiresAt,
     ),
   ],
 );
@@ -750,6 +762,16 @@ export const campaigns = sqliteTable("campaigns", {
   automationMode: text("automation_mode").notNull().default("manual"),
   // Per-campaign override of the daily auto-post cap; null = workspace default.
   autoDailyCap: integer("auto_daily_cap"),
+  // Sprint 61 routing policy (design §9.4). Lives here, not on the immutable
+  // plan revision, so the founder can tune autonomy without a new revision.
+  routingBand: text("routing_band").notNull().default("review"),
+  routingMinFit: integer("routing_min_fit").notNull().default(70),
+  routingMinConfidence: integer("routing_min_confidence").notNull().default(60),
+  // 0 = not enforced until source classes exist (D-61.4).
+  routingMinTrust: integer("routing_min_trust").notNull().default(0),
+  // Exclusion keywords — policy config consumed by the compiler/stage-1
+  // service code, never joined or SQL-filtered.
+  routingExclusionsJson: text("routing_exclusions_json").notNull().default("[]"),
   // Service-validated pointer to the active immutable plan revision. Kept as
   // a plain id to avoid a circular SQLite table-recreate migration.
   currentPlanRevisionId: text("current_plan_revision_id"),
@@ -861,6 +883,155 @@ export const campaignLaneRevisions = sqliteTable(
 );
 
 export type CampaignLaneRevisionRow = typeof campaignLaneRevisions.$inferSelect;
+
+// Sprint 61 (design §8.5): compiled, versioned candidate-retrieval/matching
+// context for one active plan revision. Derived data — the plan revision and
+// lane revisions remain the authority. Append-only: unchanged inputs produce
+// the same fingerprint and no new row.
+export const campaignRoutingProfiles = sqliteTable(
+  "campaign_routing_profiles",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    planRevisionId: text("plan_revision_id")
+      .notNull()
+      .references(() => campaignPlanRevisions.id, { onDelete: "cascade" }),
+    profileVersion: integer("profile_version").notNull(),
+    profileFingerprint: text("profile_fingerprint").notNull(),
+    // Policy snapshots at compile time — real columns because dispositions
+    // are decided against the profile version the matcher actually used.
+    routingBand: text("routing_band").notNull(),
+    minFit: integer("min_fit").notNull(),
+    minConfidence: integer("min_confidence").notNull(),
+    minTrust: integer("min_trust").notNull(),
+    compilerVersion: integer("compiler_version").notNull(),
+    payloadJson: text("payload_json").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("campaign_routing_profiles_identity").on(
+      t.campaignId,
+      t.planRevisionId,
+      t.profileFingerprint,
+    ),
+    uniqueIndex("campaign_routing_profiles_version").on(
+      t.campaignId,
+      t.profileVersion,
+    ),
+    index("campaign_routing_profiles_workspace").on(t.workspaceId, t.campaignId),
+  ],
+);
+
+export type CampaignRoutingProfileRow =
+  typeof campaignRoutingProfiles.$inferSelect;
+
+// Sprint 61 (design §8.6): independent story×campaign×angle matcher
+// decisions. Judgment fields are immutable once written; only lifecycle
+// status moves, through the contracts transition machine, with audit events.
+export const campaignOpportunities = sqliteTable(
+  "campaign_opportunities",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    canonicalStoryId: text("canonical_story_id").references(
+      () => canonicalExternalStories.id,
+      { onDelete: "cascade" },
+    ),
+    // Producer deferred (D-61.2): schema-level XOR ships once.
+    manualSignalId: text("manual_signal_id").references(() => signals.id, {
+      onDelete: "cascade",
+    }),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    planRevisionId: text("plan_revision_id")
+      .notNull()
+      .references(() => campaignPlanRevisions.id, { onDelete: "cascade" }),
+    routingProfileId: text("routing_profile_id")
+      .notNull()
+      .references(() => campaignRoutingProfiles.id, { onDelete: "cascade" }),
+    status: text("status").notNull(),
+    angle: text("angle").notNull(),
+    angleHash: text("angle_hash").notNull(),
+    // Separate score dimensions are real columns (design §9.3): a composite
+    // sort may project over them, never replace them.
+    workspaceRelevance: integer("workspace_relevance").notNull(),
+    campaignFit: integer("campaign_fit").notNull(),
+    confidence: integer("confidence").notNull(),
+    actionability: integer("actionability").notNull(),
+    sourceTrust: integer("source_trust").notNull(),
+    // Recommendation snapshot; no FK — the lane revision stays the execution
+    // authority and persona deletion must not cascade into decisions.
+    suggestedPersonaId: text("suggested_persona_id"),
+    supportedClaimsJson: text("supported_claims_json").notNull().default("[]"),
+    reason: text("reason").notNull(),
+    matcherVersion: integer("matcher_version").notNull(),
+    policyJson: text("policy_json").notNull(),
+    expiresAt: integer("expires_at"),
+    decidedByUserId: text("decided_by_user_id"),
+    decidedAt: integer("decided_at"),
+    decisionReason: text("decision_reason"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    check(
+      "campaign_opportunities_trigger_xor",
+      sql`(${t.canonicalStoryId} IS NULL) <> (${t.manualSignalId} IS NULL)`,
+    ),
+    uniqueIndex("campaign_opportunities_story_identity")
+      .on(t.canonicalStoryId, t.campaignId, t.planRevisionId, t.angleHash, t.matcherVersion)
+      .where(sql`${t.canonicalStoryId} IS NOT NULL`),
+    uniqueIndex("campaign_opportunities_signal_identity")
+      .on(t.manualSignalId, t.campaignId, t.planRevisionId, t.angleHash, t.matcherVersion)
+      .where(sql`${t.manualSignalId} IS NOT NULL`),
+    index("campaign_opportunities_workspace_status").on(
+      t.workspaceId,
+      t.status,
+      t.createdAt,
+    ),
+    index("campaign_opportunities_story").on(t.canonicalStoryId),
+    index("campaign_opportunities_campaign_status").on(t.campaignId, t.status),
+  ],
+);
+
+export type CampaignOpportunityRow = typeof campaignOpportunities.$inferSelect;
+
+// Append-only lifecycle audit (design §11.4, §12.1): one row per status
+// change, including creation (fromStatus null). actorUserId null = system.
+export const campaignOpportunityEvents = sqliteTable(
+  "campaign_opportunity_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    opportunityId: text("opportunity_id")
+      .notNull()
+      .references(() => campaignOpportunities.id, { onDelete: "cascade" }),
+    fromStatus: text("from_status"),
+    toStatus: text("to_status").notNull(),
+    actorUserId: text("actor_user_id"),
+    reason: text("reason"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("campaign_opportunity_events_opportunity").on(
+      t.opportunityId,
+      t.createdAt,
+    ),
+  ],
+);
+
+export type CampaignOpportunityEventRow =
+  typeof campaignOpportunityEvents.$inferSelect;
 
 // Sprint 45 multi-candidate scoring: one row per candidate persona×campaign
 // pairing a discovered item scored above zero relevance for. Replaced

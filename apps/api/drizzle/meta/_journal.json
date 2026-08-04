@@ -470,6 +470,13 @@
       "when": 1785779699192,
       "tag": "0066_sprint_60_canonical_stories",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "6",
+      "when": 1785868861906,
+      "tag": "0067_sprint_61_campaign_opportunities",
+      "breakpoints": true
     }
   ]
 }
