@@ -27,6 +27,7 @@ import { CountBadge } from "@/src/components/ui/badge";
 import { Tabs } from "@/src/components/ui/tabs";
 import { PreviewCard } from "@/src/components/ui/preview-card";
 import { Icon } from "@/src/components/ui/icon";
+import { Input } from "@/src/components/ui/input";
 import type { BrandName } from "@/src/components/ui/brand-icons";
 import { toast } from "@/src/components/ui/toast";
 import { ConversationalEditor } from "./conversational-editor";
@@ -140,6 +141,10 @@ export function ApprovalsQueue({
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Sprint 66: rejecting asks (optionally) for a why — every provided reason
+  // feeds few-shot retrieval and the grounded critic.
+  const [rejectingId, setRejectingId] = useState<string | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
   const focusNextRef = useRef<string | null>(null);
 
   const load = useCallback(async (): Promise<Draft[]> => {
@@ -241,7 +246,7 @@ export function ApprovalsQueue({
     router.replace(href({ ...overrides, draft: null }), { scroll: false });
   }
 
-  async function action(draft: Draft, name: "approve" | "reject") {
+  async function action(draft: Draft, name: "approve" | "reject", reason?: string) {
     setBusy(true);
     setError(null);
     if (name === "approve") {
@@ -249,11 +254,22 @@ export function ApprovalsQueue({
       focusNextRef.current = orderedApprovableIds[index + 1] ?? orderedApprovableIds[index - 1] ?? null;
     }
     try {
+      const trimmedReason = reason?.trim();
       const response = await apiFetch(`/workspaces/${workspaceId}/drafts/${draft.id}/${name}`, {
         method: "POST",
+        ...(name === "reject" && trimmedReason
+          ? {
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ reason: trimmedReason }),
+            }
+          : {}),
       });
       const body = await response.json().catch(() => null);
       if (!response.ok) throw new Error(body?.message ?? `Could not ${name} this draft.`);
+      if (name === "reject") {
+        setRejectingId(null);
+        setRejectReason("");
+      }
       await load();
       toast(name === "approve" ? "Approved" : "Rejected");
     } catch (actionError) {
@@ -407,7 +423,7 @@ export function ApprovalsQueue({
                       platform={draft.channel === "ads" ? undefined : SOCIAL_PLATFORM[draft.channel]}
                       mediaUrl={draft.media?.[0]?.url}
                       onOpen={() => navigateToDraft(draft.id)}
-                      actions={editable ? <><Button id={`approve-${draft.id}`} variant="primary" size="compact" disabled={busy} onClick={() => void action(draft, "approve")}><Icon name="approve" size="compact" /> Approve</Button><Button variant="secondary" size="compact" onClick={() => navigateToDraft(draft.id)}><Icon name="edit" size="compact" /> Open editor</Button><Button variant="danger" size="compact" disabled={busy} onClick={() => void action(draft, "reject")}><Icon name="reject" size="compact" /> Reject</Button></> : <Button variant="tertiary" size="compact" onClick={() => navigateToDraft(draft.id)}>Open editor</Button>}
+                      actions={editable ? (rejectingId === draft.id ? <><Input value={rejectReason} onChange={(event) => setRejectReason(event.target.value)} placeholder="Why? (optional — teaches the system)" maxLength={500} disabled={busy} /><Button variant="danger" size="compact" disabled={busy} onClick={() => void action(draft, "reject", rejectReason)}><Icon name="reject" size="compact" /> Confirm reject</Button><Button variant="tertiary" size="compact" disabled={busy} onClick={() => { setRejectingId(null); setRejectReason(""); }}>Cancel</Button></> : <><Button id={`approve-${draft.id}`} variant="primary" size="compact" disabled={busy} onClick={() => void action(draft, "approve")}><Icon name="approve" size="compact" /> Approve</Button><Button variant="secondary" size="compact" onClick={() => navigateToDraft(draft.id)}><Icon name="edit" size="compact" /> Open editor</Button><Button variant="danger" size="compact" disabled={busy} onClick={() => { setRejectingId(draft.id); setRejectReason(""); }}><Icon name="reject" size="compact" /> Reject</Button></>) : <Button variant="tertiary" size="compact" onClick={() => navigateToDraft(draft.id)}>Open editor</Button>}
                     />
                   );
                 })}

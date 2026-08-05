@@ -3666,9 +3666,19 @@ export const approvalDecisionSchema = z.object({
   actor: z.string(),
   // Nullable: decisions logged before auth existed (Sprint 19), or by the worker.
   actorId: z.string().uuid().nullable(),
+  // Sprint 66: the human's stated rationale — today only rejections capture
+  // one (optional at the gate). Null everywhere it wasn't given.
+  reason: z.string().nullable(),
   createdAt: z.number().int(),
 });
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>;
+
+/** Sprint 66: an optional reject rationale — every provided reason compounds
+ * (few-shot retrieval, critique grounding, preference memory). */
+export const rejectDraftInputSchema = z.object({
+  reason: z.string().trim().min(1).max(500).optional(),
+});
+export type RejectDraftInput = z.infer<typeof rejectDraftInputSchema>;
 
 export const editDraftInputSchema = z.object({
   content: z
@@ -7911,14 +7921,19 @@ export const draftOutputSchema = z.object({
 });
 export type DraftOutput = z.infer<typeof draftOutputSchema>;
 
-/** Critique findings — a score plus cited issues, feeding the revise loop. */
+/**
+ * Critique findings. Sprint 66 (D-66.3): every finding cites the specific
+ * retrieved artifact it rests on — a guardrail line, a prior post, a voice-doc
+ * passage, a plan pillar. The score is the engine's revise-loop control
+ * signal (D-64.7), not the human-facing product; the cited findings are.
+ */
 export const findingsOutputSchema = z.object({
   score: z.number().int().min(0).max(100),
   findings: z
     .array(
       z.object({
         issue: z.string().min(1),
-        citation: z.string().optional(),
+        citation: z.string().min(1),
       }),
     )
     .max(10)
@@ -8124,7 +8139,9 @@ export const REFERENCE_SIGNAL_SOCIAL_POST_SPEC: PipelineSpec =
         goal:
           "Write the post for the requested channel using the leading angle " +
           "and the Brief. Consult the brain (voice, ICP, now) before " +
-          "writing. Stay strictly inside the Brief's facts.",
+          "writing. Study the provided prior examples from approval history: " +
+          "imitate what got approved, avoid what got rejected and why. Stay " +
+          "strictly inside the Brief's facts.",
         kind: "agent",
         tools: ["get_brain_section"],
         tier: "frontier",
@@ -8136,19 +8153,27 @@ export const REFERENCE_SIGNAL_SOCIAL_POST_SPEC: PipelineSpec =
         key: "critique",
         title: "Critique",
         goal:
-          "Judge the current draft against the voice doc, channel " +
-          "guardrails, and what approved drafts look like. Return findings " +
-          "with citations and a 0-100 score. Set guardrailUncertain when a " +
-          "guardrail's applicability is unclear.",
+          "Retrieve before you judge — never critique from memory. Pull the " +
+          "voice doc's actual examples, the channel guardrail list, the " +
+          "campaign plan's pillars, the last ten posts on this channel, and " +
+          "the most similar approved drafts and instructive rejections. " +
+          "Judge the current draft against what you retrieved. Every finding " +
+          "must cite the specific artifact it rests on — the exact guardrail " +
+          "line, the specific prior post, the voice-doc passage, the plan " +
+          "pillar. Also return a 0-100 score for the revise loop. Set " +
+          "guardrailUncertain when a guardrail's applicability is unclear.",
         kind: "agent",
         tools: [
           "find_similar_approved_drafts",
+          "find_instructive_rejections",
           "list_channel_guardrails",
+          "get_campaign_plan",
+          "list_recent_publications_with_metrics",
           "get_brain_section",
         ],
         tier: "frontier",
         output: "findings",
-        maxSteps: 4,
+        maxSteps: 6,
         maxTokens: 12_000,
       },
       {

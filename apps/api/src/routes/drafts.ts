@@ -6,6 +6,7 @@ import {
   draftEditorContextSchema,
   editDraftInputSchema,
   isAdCreativeTaskType,
+  rejectDraftInputSchema,
   reviseDraftInputSchema,
   validateAdCreative,
   type ApprovalAction,
@@ -256,6 +257,19 @@ export function registerDraftRoutes(
         if (!draft) return reply.status(404).send({ error: "draft_not_found" });
 
         let newContent: string | undefined;
+        // Sprint 66: an optional reject rationale, stored on the decision row
+        // — it feeds few-shot retrieval and the grounded critic.
+        let reason: string | undefined;
+        if (action === "reject") {
+          const parsed = rejectDraftInputSchema.safeParse(request.body ?? {});
+          if (!parsed.success) {
+            return reply.status(400).send({
+              error: "invalid_input",
+              message: parsed.error.issues.map((i) => i.message).join("; "),
+            });
+          }
+          reason = parsed.data.reason;
+        }
         if (action === "edit") {
           const parsed = editDraftInputSchema.safeParse(request.body);
           if (!parsed.success) {
@@ -292,7 +306,7 @@ export function registerDraftRoutes(
         }
 
         try {
-          const updated = applyDraftAction(db, draft, action, actorOf(request), newContent);
+          const updated = applyDraftAction(db, draft, action, actorOf(request), newContent, reason);
           if (action === "resubmit") {
             notifyDraftPending(db, mailer, fetcher, updated).catch(() => {});
           }

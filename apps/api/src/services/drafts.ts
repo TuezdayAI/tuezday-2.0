@@ -77,6 +77,8 @@ function logDecision(
    * for a human `approve`; everything else leaves it null.
    */
   contentFingerprint: string | null = null,
+  /** Sprint 66 — the human's stated rationale (today: optional on reject). */
+  reason: string | null = null,
 ): void {
   db.insert(approvalDecisions)
     .values({
@@ -90,6 +92,7 @@ function logDecision(
       contentFingerprint,
       actor: actor.label,
       actorId: actor.userId,
+      reason,
       createdAt: Date.now(),
     })
     .run();
@@ -401,8 +404,9 @@ export function applyDraftAction(
   action: ApprovalAction,
   actor: DraftActor,
   newContent?: string,
+  reason?: string,
 ): Draft {
-  return applyDraftActionInTransaction(db, draft, action, actor, newContent);
+  return applyDraftActionInTransaction(db, draft, action, actor, newContent, reason);
 }
 
 /** Apply a draft action through either the root DB or an active transaction. */
@@ -412,6 +416,7 @@ export function applyDraftActionInTransaction(
   action: ApprovalAction,
   actor: DraftActor,
   newContent?: string,
+  reason?: string,
 ): Draft {
   const toState = transitionTo(draft.state, action);
   if (!toState) throw new InvalidTransitionError(draft.state, action);
@@ -453,6 +458,7 @@ export function applyDraftActionInTransaction(
     toState,
     action === "edit" ? content : null,
     contentFingerprint,
+    reason ?? null,
   );
   return { ...draft, state: toState, content, updatedAt: now };
 }

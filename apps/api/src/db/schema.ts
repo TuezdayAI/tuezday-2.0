@@ -318,6 +318,9 @@ export const approvalDecisions = sqliteTable("approval_decisions", {
   actor: text("actor").notNull(),
   // Nullable: decisions logged before auth existed, or by the system actor.
   actorId: text("actor_id"),
+  // Sprint 66: the human's stated rationale, captured optionally at the gate.
+  // Today only rejections offer the input; null wherever it wasn't given.
+  reason: text("reason"),
   createdAt: integer("created_at").notNull(),
 });
 

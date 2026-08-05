@@ -1,0 +1,1 @@
+ALTER TABLE `approval_decisions` ADD `reason` text;

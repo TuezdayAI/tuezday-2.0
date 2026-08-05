@@ -22,7 +22,13 @@ import {
   type AgentStopReason,
 } from "@tuezday/contracts";
 import type { z } from "zod";
-import { estimateTokens, type ContextSection, type ResolvedContext } from "@tuezday/brain";
+import {
+  estimateTokens,
+  renderExamples,
+  type ContextSection,
+  type ResolvedContext,
+  type ResolveExamples,
+} from "@tuezday/brain";
 import { toAgentTools } from "../agents/adapter";
 import { DEFAULT_TOOL_BUDGET, type ToolContext } from "../agents/registry";
 import { AgentRunner } from "../agents/runner";
@@ -49,6 +55,7 @@ import {
   rowToRun,
   startPipelineRun,
 } from "./pipeline-runs";
+import { retrievePriorExamples } from "./prior-examples";
 import { getSignal, listSignals } from "./signals";
 import { getWorkspace } from "./workspaces";
 
@@ -216,6 +223,8 @@ function composeStepUserMessage(
   signal: { content: string; source: string; sourceUrl: string | null },
   spec: PipelineSpec,
   outputs: Map<string, unknown>,
+  step: PipelineStepSpec,
+  priorExamples: ResolveExamples | null,
 ): string {
   const lines: string[] = [
     "## Triggering signal",
@@ -225,14 +234,19 @@ function composeStepUserMessage(
     `## Target channel`,
     run.channel,
   ];
-  const prior = spec.steps.filter((step) => outputs.has(step.key));
+  // Sprint 66 (D-66.5): few-shot is a guarantee for drafting steps, not a
+  // tool the model may skip — injected into every draft-output step's context.
+  if (step.output === "draft" && priorExamples) {
+    lines.push("", "## Prior examples from approval history", renderExamples(priorExamples));
+  }
+  const prior = spec.steps.filter((candidate) => outputs.has(candidate.key));
   if (prior.length > 0) {
     lines.push("", "## Prior step outputs");
-    for (const step of prior) {
+    for (const priorStep of prior) {
       lines.push(
         "",
-        `### ${step.key} (${step.output})`,
-        JSON.stringify(outputs.get(step.key), null, 2),
+        `### ${priorStep.key} (${priorStep.output})`,
+        JSON.stringify(outputs.get(priorStep.key), null, 2),
       );
     }
   }
@@ -251,6 +265,7 @@ async function runAgentStepPass(
   step: PipelineStepSpec,
   iteration: number,
   state: EngineState,
+  priorExamples: ResolveExamples | null,
 ): Promise<StepPassResult> {
   const cached = state.cache.get(`${step.key}#${iteration}`);
   if (cached) return { ...cached, fromCache: true };
@@ -282,7 +297,7 @@ async function runAgentStepPass(
       messages: [
         {
           role: "user",
-          content: composeStepUserMessage(run, signal, spec, state.outputs),
+          content: composeStepUserMessage(run, signal, spec, state.outputs, step, priorExamples),
         },
       ],
       tools: toAgentTools(tools, ctx),
@@ -455,6 +470,7 @@ function executePropose(
   spec: PipelineSpec,
   step: PipelineStepSpec,
   state: EngineState,
+  priorExamples: ResolveExamples | null,
 ): { proposal: ProposalOutput; generationId: string | null; draftId: string | null } | null {
   const finalDraft = state.latestDraft;
   if (!finalDraft) return null;
@@ -493,6 +509,20 @@ function executePropose(
         tokens: estimateTokens(content),
       };
     });
+  // Sprint 66: the few-shot block injected into draft steps is a real input —
+  // provenance says so, in the same layer the resolver traces it under.
+  if (priorExamples) {
+    const examplesContent = renderExamples(priorExamples);
+    sections.unshift({
+      key: "examples",
+      layer: "examples",
+      title: "Prior examples from your approval history",
+      content: examplesContent,
+      included: true,
+      reason: `Retrieved ${priorExamples.approved.length} approved and ${priorExamples.rejected.length} rejected/corrected prior output(s) for query: "${priorExamples.query}"; injected into every draft step.`,
+      tokens: estimateTokens(examplesContent),
+    });
+  }
   const draftStep = spec.steps.find(
     (candidate) => candidate.kind === "agent" && candidate.output === "draft",
   );
@@ -623,6 +653,13 @@ export async function executePipelineRun(
   }
   const workspace = getWorkspace(db, workspaceId);
   const workspaceName = workspace?.name ?? "workspace";
+  // Sprint 66: retrieved once per run — every draft-output step sees the same
+  // few-shot bundle, and the propose step traces exactly what was injected.
+  const priorExamples = retrievePriorExamples(db, workspaceId, {
+    query: signal.content,
+    channel: run.channel as Channel,
+    taskType: "signal_response",
+  });
   const definitionRow = db
     .select({ name: pipelineDefinitions.name })
     .from(pipelineDefinitions)
@@ -663,6 +700,7 @@ export async function executePipelineRun(
       step,
       iteration,
       state,
+      priorExamples,
     );
     if (pass.failure) {
       if (pass.failure.escalate) {
@@ -712,7 +750,7 @@ export async function executePipelineRun(
     const step = spec.steps[index]!;
 
     if (step.kind === "propose") {
-      const handoff = executePropose(db, run, spec, step, state);
+      const handoff = executePropose(db, run, spec, step, state, priorExamples);
       if (!handoff) {
         return { run: finishRun(db, run, "failed", state, { failureReason: "no_draft_produced" }) };
       }

@@ -11,7 +11,7 @@ import { storeGeneration } from "./generations";
 import { resolveChannelGuidance } from "./guidance";
 import { toResolvePersona } from "./personas";
 import { resolveDraftAccount } from "./resolve-account";
-import { campaignResolveInputs, selectiveContextInputs } from "./resolve-input";
+import { campaignResolveInputs, priorExampleInputs, selectiveContextInputs } from "./resolve-input";
 import { runPreReview, setGenerationReview } from "./review";
 import {
   submitAutomaticDraft,
@@ -124,6 +124,13 @@ export async function generateSignalDraft(
     ...selective,
     evidence: evidenceResolution.evidence,
     evidenceExclusionReason: evidenceResolution.exclusionReason,
+    // Sprint 66: few-shot from approval history — a traced section, so the
+    // "why this" panel can show exactly which prior examples shaped the draft.
+    ...priorExampleInputs(db, workspace.id, {
+      query: signal.content,
+      channel: opts.channel,
+      taskType: "signal_response",
+    }),
     tokenBudget: opts.tokenBudget,
   });
 

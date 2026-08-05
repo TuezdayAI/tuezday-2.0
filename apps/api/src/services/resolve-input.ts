@@ -1,16 +1,19 @@
-import type { ResolveCampaign, ResolveCampaignPlan } from "@tuezday/brain";
+import type { ResolveCampaign, ResolveCampaignPlan, ResolveExamples } from "@tuezday/brain";
 import type {
   BrainDocType,
   Campaign,
+  Channel,
   CreateCampaignPlanRevisionInput,
   DocOutline,
   ResolvedTaskDocMatrix,
+  TaskType,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { getBrainOutlines } from "./brain";
 import { getCurrentCampaignPlan } from "./campaign-plans";
 import { composeResolveCampaign } from "./campaigns";
 import { resolveTaskDocMatrix } from "./context-matrix";
+import { retrievePriorExamples } from "./prior-examples";
 
 export interface SelectiveContextInputs {
   matrix: ResolvedTaskDocMatrix;
@@ -123,6 +126,32 @@ export function campaignResolveInputs(
  * composed is the unsaved draft rather than the stored active revision. Same
  * pairing guarantee: one plan value feeds both outputs.
  */
+/**
+ * The Sprint 66 few-shot resolver inputs: prior approved/rejected examples
+ * retrieved from approval history, or an exclusion reason when the workspace
+ * has no usable history yet. Always returns one or the other, so every
+ * participating call site's trace states honestly why examples are(n't) there.
+ * Spread it straight into the `resolveContext` argument.
+ */
+export interface PriorExampleInputs {
+  examples: ResolveExamples | undefined;
+  examplesExclusionReason: string | undefined;
+}
+
+export function priorExampleInputs(
+  db: Db,
+  workspaceId: string,
+  input: { query: string; channel?: Channel; taskType?: TaskType },
+): PriorExampleInputs {
+  const examples = retrievePriorExamples(db, workspaceId, input) ?? undefined;
+  return {
+    examples,
+    examplesExclusionReason: examples
+      ? undefined
+      : "no approved or rejected prior outputs match this task yet.",
+  };
+}
+
 export function campaignResolvePreviewInputs(
   db: Db,
   workspaceId: string,
