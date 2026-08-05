@@ -3466,3 +3466,145 @@ export const pipelineRolloutDecisions = sqliteTable(
 );
 
 export type PipelineRolloutDecisionRow = typeof pipelineRolloutDecisions.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Sprint 67 — Eval & replay harness
+// ---------------------------------------------------------------------------
+
+// D-67.5: machine-checkable claims the workspace will not publish. Channel
+// guidance is prose an LLM interprets; this list is a hard check, and it is
+// handed to the critic so a finding can cite the exact phrase it tripped on.
+export const workspaceBannedClaims = sqliteTable(
+  "workspace_banned_claims",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    phrase: text("phrase").notNull(),
+    note: text("note").notNull().default(""),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("workspace_banned_claims_phrase").on(t.workspaceId, t.phrase)],
+);
+
+export type WorkspaceBannedClaimRow = typeof workspaceBannedClaims.$inferSelect;
+
+// D-67.2: a suite is frozen at build time so a trend line means something.
+export const evalSuites = sqliteTable(
+  "eval_suites",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    taskKey: text("task_key").notNull(), // PIPELINE_TASK_KEYS
+    channel: text("channel").notNull(),
+    ctaExpectation: text("cta_expectation").notNull().default("any"), // CTA_EXPECTATIONS
+    caseCount: integer("case_count").notNull().default(0),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("eval_suites_workspace").on(t.workspaceId, t.createdAt)],
+);
+
+export type EvalSuiteRow = typeof evalSuites.$inferSelect;
+
+// One historical tuple, snapshotted. The source FKs are set-null on purpose:
+// deleting the draft a case was built from must not rewrite eval history.
+export const evalCases = sqliteTable(
+  "eval_cases",
+  {
+    id: text("id").primaryKey(),
+    suiteId: text("suite_id")
+      .notNull()
+      .references(() => evalSuites.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    signalId: text("signal_id").references(() => signals.id, { onDelete: "set null" }),
+    signalContent: text("signal_content").notNull(),
+    signalSource: text("signal_source").notNull(),
+    channel: text("channel").notNull(),
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+    personaId: text("persona_id").references(() => personas.id, { onDelete: "set null" }),
+    sourceDraftId: text("source_draft_id").references(() => drafts.id, { onDelete: "set null" }),
+    generatedContent: text("generated_content").notNull(),
+    finalContent: text("final_content").notNull(),
+    outcome: text("outcome").notNull(), // EVAL_CASE_OUTCOMES
+    rejectionReason: text("rejection_reason"),
+    decidedAt: integer("decided_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("eval_cases_suite").on(t.suiteId, t.createdAt)],
+);
+
+export type EvalCaseRow = typeof evalCases.$inferSelect;
+
+// D-67.3: a baseline is a labelled run, not a second table. The partial unique
+// index is what makes a label point at exactly one run per workspace.
+export const evalRuns = sqliteTable(
+  "eval_runs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    suiteId: text("suite_id")
+      .notNull()
+      .references(() => evalSuites.id, { onDelete: "cascade" }),
+    definitionId: text("definition_id").references(() => pipelineDefinitions.id, {
+      onDelete: "set null",
+    }),
+    definitionVersion: integer("definition_version"),
+    status: text("status").notNull().default("running"), // EVAL_RUN_STATUSES
+    judgeEnabled: integer("judge_enabled", { mode: "boolean" }).notNull().default(false),
+    metricsJson: text("metrics_json").notNull(),
+    baselineLabel: text("baseline_label"),
+    failureReason: text("failure_reason"),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: integer("created_at").notNull(),
+    finishedAt: integer("finished_at"),
+  },
+  (t) => [
+    uniqueIndex("eval_runs_baseline_label")
+      .on(t.workspaceId, t.baselineLabel)
+      .where(sql`${t.baselineLabel} IS NOT NULL`),
+    index("eval_runs_workspace").on(t.workspaceId, t.createdAt),
+  ],
+);
+
+export type EvalRunRow = typeof evalRuns.$inferSelect;
+
+export const evalCaseResults = sqliteTable(
+  "eval_case_results",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => evalRuns.id, { onDelete: "cascade" }),
+    caseId: text("case_id")
+      .notNull()
+      .references(() => evalCases.id, { onDelete: "cascade" }),
+    pipelineRunId: text("pipeline_run_id").references(() => pipelineRuns.id, {
+      onDelete: "set null",
+    }),
+    producedContent: text("produced_content"),
+    checksJson: text("checks_json").notNull().default("[]"),
+    judgeJson: text("judge_json"),
+    verdict: text("verdict"), // EVAL_VERDICTS
+    editDistanceToFinal: real("edit_distance_to_final"),
+    costCents: real("cost_cents").notNull().default(0),
+    durationMs: integer("duration_ms").notNull().default(0),
+    failureReason: text("failure_reason"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("eval_case_results_run").on(t.runId, t.createdAt)],
+);
+
+export type EvalCaseResultRow = typeof evalCaseResults.$inferSelect;

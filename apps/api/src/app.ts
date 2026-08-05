@@ -52,6 +52,7 @@ import { registerPackageRoutes } from "./routes/packages";
 import { registerDeliverableRoutes } from "./routes/deliverables";
 import { registerPipelineRoutes } from "./routes/pipelines";
 import { registerDraftRoutes } from "./routes/drafts";
+import { registerEvalRoutes } from "./routes/evals";
 import { registerEvidenceRoutes } from "./routes/evidence";
 import { registerExecutionRoutes } from "./routes/executions";
 import { registerExternalActionRoutes } from "./routes/external-actions";
@@ -328,6 +329,7 @@ export async function buildApp({
   registerPackageRoutes(app, db, llm);
   registerDeliverableRoutes(app, db, llm);
   registerPipelineRoutes(app, db, { llm, evidence, safeFetch: guardedFetch });
+  registerEvalRoutes(app, db, { llm, evidence, safeFetch: guardedFetch });
   registerCampaignRoutes(app, db);
   registerCampaignPlanRoutes(app, db);
   registerAudienceRoutes(app, db);

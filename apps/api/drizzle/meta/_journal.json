@@ -512,6 +512,13 @@
       "when": 1785961101007,
       "tag": "0072_sprint_66_reject_reason",
       "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "6",
+      "when": 1785964452371,
+      "tag": "0073_sprint_67_eval_harness",
+      "breakpoints": true
     }
   ]
 }

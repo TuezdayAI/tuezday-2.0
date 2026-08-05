@@ -152,6 +152,11 @@ export function GenerationPath({ workspaceId }: { workspaceId: string }) {
             <Link href={`/workspaces/${workspaceId}/pipelines`}>Pipelines</Link>.
           </p>
         )}
+        <p className={styles.pathConsequence} style={{ marginTop: 10 }}>
+          This comparison only sees drafts that actually happened. To ask the counterfactual —
+          what would the engine produce for signals you have already ruled on? — replay them on{" "}
+          <Link href={`/workspaces/${workspaceId}/evals`}>Evals</Link>.
+        </p>
       </Card>
 
       {comparison && (

@@ -1,0 +1,60 @@
+{
+  "contextDigest": "c5d8c0ad3b60bc10abe64e88f3d9e87ed458241e6284533b9b3436619d1f874b",
+  "resolverDigest": "a422cf785a744dfdd58330cd097d205ef90808d1551efe2a74491673d7e8be54",
+  "metrics": {
+    "cases": 5,
+    "completed": 5,
+    "failed": 0,
+    "hardCheckPassRate": 20,
+    "violations": {
+      "banned_claims": 1,
+      "length_bounds": 1,
+      "placeholder_leak": 1,
+      "citation_validity": 1
+    },
+    "judged": 0,
+    "avgJudgeScore": null,
+    "avgEditDistanceToFinal": 79.9,
+    "agreementRate": 100,
+    "rejectRecall": 100,
+    "approvePassRate": 100,
+    "costCents": 0,
+    "avgDurationMs": 7,
+    "production": null
+  },
+  "cases": [
+    {
+      "id": "clean-approved",
+      "verdict": "pass",
+      "failedChecks": []
+    },
+    {
+      "id": "banned-claim",
+      "verdict": "flag",
+      "failedChecks": [
+        "banned_claims"
+      ]
+    },
+    {
+      "id": "over-length",
+      "verdict": "flag",
+      "failedChecks": [
+        "length_bounds"
+      ]
+    },
+    {
+      "id": "placeholder-leak",
+      "verdict": "flag",
+      "failedChecks": [
+        "placeholder_leak"
+      ]
+    },
+    {
+      "id": "fabricated-citation",
+      "verdict": "flag",
+      "failedChecks": [
+        "citation_validity"
+      ]
+    }
+  ]
+}

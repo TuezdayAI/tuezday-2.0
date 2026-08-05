@@ -8776,3 +8776,262 @@ export const recordRolloutDecisionInputSchema = z.object({
   rationale: z.string().min(1).max(2000),
 });
 export type RecordRolloutDecisionInput = z.infer<typeof recordRolloutDecisionInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Sprint 67 — Eval & replay harness (PRD §7, direction doc Move 6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ground truth for one replayed case: what the founder actually did with the
+ * draft this signal produced the first time round. `edited` means approved but
+ * not as written — the content changed between generation and approval.
+ */
+export const EVAL_CASE_OUTCOMES = ["approved", "rejected", "edited"] as const;
+export type EvalCaseOutcome = (typeof EVAL_CASE_OUTCOMES)[number];
+
+/** Deterministic checks — no LLM, no network. These are what gate CI (D-67.4). */
+export const EVAL_CHECK_KINDS = [
+  "length_bounds",
+  "banned_claims",
+  "placeholder_leak",
+  "cta_presence",
+  "citation_validity",
+] as const;
+export type EvalCheckKind = (typeof EVAL_CHECK_KINDS)[number];
+
+export const EVAL_CHECK_STATUSES = ["pass", "fail", "skipped"] as const;
+export type EvalCheckStatus = (typeof EVAL_CHECK_STATUSES)[number];
+
+export const EVAL_RUN_STATUSES = ["running", "succeeded", "failed"] as const;
+export type EvalRunStatus = (typeof EVAL_RUN_STATUSES)[number];
+
+/** The harness's own call on a replayed draft, compared against ground truth. */
+export const EVAL_VERDICTS = ["pass", "flag"] as const;
+export type EvalVerdict = (typeof EVAL_VERDICTS)[number];
+
+/** Whether a suite's channel expects a call to action. `any` skips the check. */
+export const CTA_EXPECTATIONS = ["any", "required", "forbidden"] as const;
+export type CtaExpectation = (typeof CTA_EXPECTATIONS)[number];
+
+/** Below this a "draft" is a stub, whatever the channel. */
+export const EVAL_MIN_BODY_CHARS = 40;
+
+/** Judge overall score at or above which the harness's verdict is `pass`. */
+export const EVAL_JUDGE_PASS = 70;
+
+/**
+ * Upper length bounds per channel. Sourced from SOCIAL_POST_CONSTRAINTS where a
+ * publish path exists; `x` is the platform's own limit. A channel with no entry
+ * skips the upper bound (the minimum still applies) rather than inventing one.
+ */
+export const EVAL_MAX_BODY_CHARS: Partial<Record<Channel, number>> = {
+  linkedin: SOCIAL_POST_CONSTRAINTS.linkedin.bodyMaxChars,
+  instagram: SOCIAL_POST_CONSTRAINTS.instagram.bodyMaxChars,
+  x: 280,
+};
+
+export const evalCheckResultSchema = z.object({
+  kind: z.enum(EVAL_CHECK_KINDS),
+  status: z.enum(EVAL_CHECK_STATUSES),
+  /** Human-readable: what was checked and, on a failure, what tripped it. */
+  detail: z.string(),
+});
+export type EvalCheckResult = z.infer<typeof evalCheckResultSchema>;
+
+const rubricDimensionSchema = z.object({
+  score: z.number().int().min(0).max(5),
+  justification: z.string().min(1).max(400),
+});
+
+/** The rubric judge's verdict. Reported and trended; never gates CI (D-67.4). */
+export const evalRubricSchema = z.object({
+  voiceFit: rubricDimensionSchema,
+  specificity: rubricDimensionSchema,
+  channelFit: rubricDimensionSchema,
+  brandSafety: rubricDimensionSchema,
+  actionability: rubricDimensionSchema,
+  overall: z.number().int().min(0).max(100),
+});
+export type EvalRubric = z.infer<typeof evalRubricSchema>;
+
+export const evalCaseSchema = z.object({
+  id: z.string().uuid(),
+  suiteId: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  signalId: z.string().uuid().nullable(),
+  signalContent: z.string(),
+  signalSource: z.string(),
+  channel: z.enum(CHANNELS),
+  campaignId: z.string().uuid().nullable(),
+  personaId: z.string().uuid().nullable(),
+  sourceDraftId: z.string().uuid().nullable(),
+  /** What the model produced the first time (drafts.originalContent). */
+  generatedContent: z.string(),
+  /** What the founder actually shipped or last saw (drafts.content). */
+  finalContent: z.string(),
+  outcome: z.enum(EVAL_CASE_OUTCOMES),
+  rejectionReason: z.string().nullable(),
+  decidedAt: z.number().int(),
+  createdAt: z.number().int(),
+});
+export type EvalCase = z.infer<typeof evalCaseSchema>;
+
+export const evalSuiteSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  name: z.string(),
+  taskKey: z.enum(PIPELINE_TASK_KEYS),
+  channel: z.enum(CHANNELS),
+  ctaExpectation: z.enum(CTA_EXPECTATIONS),
+  caseCount: z.number().int().nonnegative(),
+  createdAt: z.number().int(),
+});
+export type EvalSuite = z.infer<typeof evalSuiteSchema>;
+
+export const buildEvalSuiteInputSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  channel: z.enum(CHANNELS).default("linkedin"),
+  ctaExpectation: z.enum(CTA_EXPECTATIONS).default("any"),
+  limit: z.number().int().min(1).max(50).default(20),
+});
+export type BuildEvalSuiteInput = z.infer<typeof buildEvalSuiteInputSchema>;
+
+export const evalCaseResultSchema = z.object({
+  id: z.string().uuid(),
+  runId: z.string().uuid(),
+  caseId: z.string().uuid(),
+  pipelineRunId: z.string().uuid().nullable(),
+  producedContent: z.string().nullable(),
+  checks: z.array(evalCheckResultSchema),
+  judge: evalRubricSchema.nullable(),
+  verdict: z.enum(EVAL_VERDICTS).nullable(),
+  /** 0–100 normalized distance from what the founder actually shipped. */
+  editDistanceToFinal: z.number().nullable(),
+  costCents: z.number(),
+  durationMs: z.number().int(),
+  failureReason: z.string().nullable(),
+});
+export type EvalCaseResult = z.infer<typeof evalCaseResultSchema>;
+
+/**
+ * One run's aggregate. Every rate is null when its denominator is zero — a
+ * missing number is never silently rendered as a zero, and a null on either
+ * side of a comparison is skipped rather than counted as a regression.
+ */
+export const evalRunMetricsSchema = z.object({
+  cases: z.number().int().nonnegative(),
+  completed: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  hardCheckPassRate: z.number().nullable(),
+  /** Failure count per check kind; a kind that never failed is simply absent. */
+  violations: z.record(z.string(), z.number().int()),
+  judged: z.number().int().nonnegative(),
+  avgJudgeScore: z.number().nullable(),
+  avgEditDistanceToFinal: z.number().nullable(),
+  /** Harness verdict matched the founder's outcome. */
+  agreementRate: z.number().nullable(),
+  /** Of founder-rejected cases, the share the harness also flagged. */
+  rejectRecall: z.number().nullable(),
+  /** Of founder-approved cases, the share the harness passed. */
+  approvePassRate: z.number().nullable(),
+  costCents: z.number(),
+  avgDurationMs: z.number().int(),
+  /** The §1.3 production snapshot, frozen alongside the replay numbers. */
+  production: automationComparisonSchema.nullable(),
+});
+export type EvalRunMetrics = z.infer<typeof evalRunMetricsSchema>;
+
+export const evalRunSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  suiteId: z.string().uuid(),
+  definitionId: z.string().uuid().nullable(),
+  definitionVersion: z.number().int().nullable(),
+  status: z.enum(EVAL_RUN_STATUSES),
+  judgeEnabled: z.boolean(),
+  metrics: evalRunMetricsSchema,
+  /** Non-null makes this run the named baseline for its workspace (D-67.3). */
+  baselineLabel: z.string().nullable(),
+  failureReason: z.string().nullable(),
+  createdAt: z.number().int(),
+  finishedAt: z.number().int().nullable(),
+});
+export type EvalRun = z.infer<typeof evalRunSchema>;
+
+export const evalRunDetailSchema = evalRunSchema.extend({
+  results: z.array(evalCaseResultSchema),
+});
+export type EvalRunDetail = z.infer<typeof evalRunDetailSchema>;
+
+export const runEvalSuiteInputSchema = z.object({
+  suiteId: z.string().uuid(),
+  /** Defaults to the active definition for the suite's task key. */
+  definitionId: z.string().uuid().optional(),
+  /** Off by default — the judge costs money and never gates CI. */
+  judge: z.boolean().default(false),
+  /** Labelling at creation is how a baseline gets captured in one call. */
+  baselineLabel: z.string().trim().min(1).max(60).optional(),
+});
+export type RunEvalSuiteInput = z.infer<typeof runEvalSuiteInputSchema>;
+
+export const labelBaselineInputSchema = z.object({
+  baselineLabel: z.string().trim().min(1).max(60),
+});
+export type LabelBaselineInput = z.infer<typeof labelBaselineInputSchema>;
+
+/**
+ * How far a metric may move before the gate calls it a regression (D-67.9).
+ * `higher` metrics regress by dropping, `lower` metrics regress by rising.
+ * Judge-derived metrics are absent here on purpose — CI cannot compute them.
+ */
+export const EVAL_REGRESSION_THRESHOLDS = {
+  hardCheckPassRate: { better: "higher", tolerance: 2 },
+  rejectRecall: { better: "higher", tolerance: 5 },
+  approvePassRate: { better: "higher", tolerance: 5 },
+  agreementRate: { better: "higher", tolerance: 5 },
+  avgEditDistanceToFinal: { better: "lower", tolerance: 5 },
+} as const satisfies Record<string, { better: "higher" | "lower"; tolerance: number }>;
+
+export type EvalGatedMetric = keyof typeof EVAL_REGRESSION_THRESHOLDS;
+
+export const evalMetricDeltaSchema = z.object({
+  metric: z.string(),
+  baseline: z.number(),
+  current: z.number(),
+  delta: z.number(),
+  tolerance: z.number(),
+});
+export type EvalMetricDelta = z.infer<typeof evalMetricDeltaSchema>;
+
+export const evalComparisonSchema = z.object({
+  ok: z.boolean(),
+  baselineLabel: z.string().nullable(),
+  baselineRunId: z.string().uuid().nullable(),
+  currentRunId: z.string().uuid(),
+  regressions: z.array(evalMetricDeltaSchema),
+  improvements: z.array(evalMetricDeltaSchema),
+  /** Metrics that could not be compared (null on one side). */
+  skipped: z.array(z.string()),
+});
+export type EvalComparison = z.infer<typeof evalComparisonSchema>;
+
+/**
+ * D-67.5: a machine-checkable claim the workspace never wants to publish.
+ * Channel guidance is prose an LLM interprets; this list is a hard check and
+ * is also handed to the critic through list_channel_guardrails so a finding
+ * can cite the exact phrase it tripped on.
+ */
+export const bannedClaimSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  phrase: z.string(),
+  note: z.string(),
+  createdAt: z.number().int(),
+});
+export type BannedClaim = z.infer<typeof bannedClaimSchema>;
+
+export const bannedClaimInputSchema = z.object({
+  phrase: z.string().trim().min(2).max(120),
+  note: z.string().trim().max(300).default(""),
+});
+export type BannedClaimInput = z.infer<typeof bannedClaimInputSchema>;

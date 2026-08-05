@@ -27,8 +27,10 @@ describe("sprint 66 migration (0072)", () => {
     const journal = JSON.parse(
       readFileSync(path.join(migrationsDir, "meta/_journal.json"), "utf8"),
     ) as { entries: { idx: number; tag: string }[] };
-    const last = journal.entries[journal.entries.length - 1]!;
-    expect(last.tag).toBe(SPRINT_66_MIGRATION.replace(/\.sql$/, ""));
+    // Pinned by index, not by being last — a later sprint's migration must not
+    // break this test (Sprint 67's did, when this asserted "last entry").
+    const entry = journal.entries.find((candidate) => candidate.idx === 72);
+    expect(entry?.tag).toBe(SPRINT_66_MIGRATION.replace(/\.sql$/, ""));
     expect(readdirSync(migrationsDir)).toContain(SPRINT_66_MIGRATION);
   });
 
