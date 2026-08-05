@@ -41,6 +41,7 @@ import {
   InvalidOpportunityTransitionError,
   OpportunityNotFoundError,
 } from "./opportunities";
+import { blockDeliverablesForCancelledPackage } from "./deliverables";
 import { loadStoryRoutingContext, tokenize } from "./opportunity-matching";
 
 export class PackageNotFoundError extends Error {}
@@ -592,6 +593,11 @@ export function decidePackage(
       reason: input.reason ?? null,
       createdAt: now,
     });
+    // D-63.9: a cancelled package blocks its undelivered deliverables in the
+    // same transaction; candidates already generated stay for the operator.
+    if (input.action === "cancel") {
+      blockDeliverablesForCancelledPackage(tx, workspaceId, packageId, now);
+    }
   });
   return getPackageDetail(db, workspaceId, packageId);
 }

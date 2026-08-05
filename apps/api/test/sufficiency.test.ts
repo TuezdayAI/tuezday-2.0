@@ -55,7 +55,8 @@ const laneInput = {
   name: "Founder LinkedIn",
   personaId: "",
   audienceId: null,
-  channel: "linkedin" as const,
+  // Widened so per-test lane overrides may use other channels.
+  channel: "linkedin" as import("@tuezday/contracts").Channel,
   format: "linkedin_post",
   publishingConnectionId: null,
   providerTarget: "feed",

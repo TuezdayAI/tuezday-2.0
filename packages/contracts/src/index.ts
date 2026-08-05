@@ -1019,7 +1019,10 @@ export const PACKAGE_SOURCE_ROLES = [
 ] as const;
 export type PackageSourceRole = (typeof PACKAGE_SOURCE_ROLES)[number];
 
-// Reserved orchestration vocabulary. Deliverable production state activates in Sprint 63.
+// Activated in Sprint 63 (`deliverables.status`, design §8.10). `assessing`
+// and `research_needed` are active vocabulary awaiting their producers
+// (deliverable-level re-assessment propagation, D-63.11); every other status
+// has one.
 export const DELIVERABLE_PRODUCTION_STATUSES = [
   "planned",
   "assessing",
@@ -1863,7 +1866,7 @@ export const externalActionPolicyViewSchema = z.object({
 });
 export type ExternalActionPolicyView = z.infer<typeof externalActionPolicyViewSchema>;
 
-const DELIVERABLE_TRANSITIONS: Record<
+export const DELIVERABLE_TRANSITIONS: Record<
   DeliverableProductionStatus,
   readonly DeliverableProductionStatus[]
 > = {
@@ -1884,6 +1887,13 @@ export function canTransitionDeliverable(
   to: DeliverableProductionStatus,
 ): boolean {
   return DELIVERABLE_TRANSITIONS[from].includes(to);
+}
+
+export function transitionDeliverable(
+  from: DeliverableProductionStatus,
+  to: DeliverableProductionStatus,
+): DeliverableProductionStatus | undefined {
+  return canTransitionDeliverable(from, to) ? to : undefined;
 }
 
 export const EXTERNAL_ACTION_TRANSITIONS: Record<
@@ -2497,6 +2507,9 @@ export const discoveryRunSummarySchema = z.object({
   /** Sprint 62: package pipeline work performed this tick. */
   packagesCreated: z.number().int().nonnegative().default(0),
   packagesAssessed: z.number().int().nonnegative().default(0),
+  /** Sprint 63: deliverable pipeline work performed this tick. */
+  deliverablesCreated: z.number().int().nonnegative().default(0),
+  variantsGenerated: z.number().int().nonnegative().default(0),
 });
 export type DiscoveryRunSummary = z.infer<
   typeof discoveryRunSummarySchema
@@ -3292,6 +3305,221 @@ export const packageRunResultSchema = z.object({
   failures: z.number().int(),
 });
 export type PackageRunResult = z.infer<typeof packageRunResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Deliverables, variants & context snapshots (Sprint 63, design §8.10)
+//
+// A deliverable is one campaign commitment for one lane and time; a variant
+// is one candidate execution; every variant retains a replayable context
+// snapshot and never overwrites a prior candidate. The production lifecycle
+// is DELIVERABLE_PRODUCTION_STATUSES (activated above). Shadow layer — no
+// drafts, no external actions, no dispatch.
+// ---------------------------------------------------------------------------
+
+export const DELIVERABLE_KINDS = ["planned", "reactive"] as const;
+export type DeliverableKind = (typeof DELIVERABLE_KINDS)[number];
+
+/**
+ * Variant-generation queue states — infrastructure, never content. `failed`
+ * means retries exhausted and an operator regenerate is needed; production
+ * outcomes live on `DeliverableProductionStatus` (design §8.11 separation).
+ */
+export const DELIVERABLE_GENERATION_STATES = [
+  "pending",
+  "in_progress",
+  "complete",
+  "failed",
+] as const;
+export type DeliverableGenerationState =
+  (typeof DELIVERABLE_GENERATION_STATES)[number];
+
+export const DELIVERABLE_DECISION_ACTIONS = [
+  "regenerate",
+  "select",
+  "cancel",
+] as const;
+export type DeliverableDecisionAction =
+  (typeof DELIVERABLE_DECISION_ACTIONS)[number];
+
+/** One candidate execution's lifecycle — append-only rows, terminal ends. */
+export const VARIANT_STATUSES = ["candidate", "selected", "superseded"] as const;
+export type VariantStatus = (typeof VARIANT_STATUSES)[number];
+
+export const VARIANT_TRANSITIONS: Record<
+  VariantStatus,
+  readonly VariantStatus[]
+> = {
+  candidate: ["selected", "superseded"],
+  selected: [],
+  superseded: [],
+};
+
+export function canTransitionVariant(
+  from: VariantStatus,
+  to: VariantStatus,
+): boolean {
+  return VARIANT_TRANSITIONS[from].includes(to);
+}
+
+export function transitionVariant(
+  from: VariantStatus,
+  to: VariantStatus,
+): VariantStatus | undefined {
+  return canTransitionVariant(from, to) ? to : undefined;
+}
+
+/** How far ahead planned slots are materialized from a lane schedule (D-63.2). */
+export const DELIVERABLE_SLOT_HORIZON_DAYS = 14;
+/** Grace after a planned slot passes before the deliverable goes stale (D-63.10). */
+export const DELIVERABLE_STALE_GRACE_MS = 24 * 60 * 60 * 1000;
+
+export const deliverableSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  campaignId: z.string().uuid(),
+  planRevisionId: z.string().uuid(),
+  laneId: z.string().uuid(),
+  laneRevisionId: z.string().uuid(),
+  kind: z.enum(DELIVERABLE_KINDS),
+  /** Immutable slot identity for planned deliverables; null for reactive. */
+  originalScheduledFor: z.number().int().nullable(),
+  /** Null before assignment (planned) or after the package was deleted. */
+  packageId: z.string().uuid().nullable(),
+  angle: z.string(),
+  angleHash: z.string(),
+  status: z.enum(DELIVERABLE_PRODUCTION_STATUSES),
+  generationState: z.enum(DELIVERABLE_GENERATION_STATES),
+  generationAttempts: z.number().int(),
+  generatedAt: z.number().int().nullable(),
+  createdByUserId: z.string().uuid().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+  /** List projection context. */
+  laneName: z.string(),
+  channel: z.string(),
+  format: z.string(),
+  campaignName: z.string(),
+  variantCount: z.number().int(),
+  latestVariantStatus: z.enum(VARIANT_STATUSES).nullable(),
+});
+export type Deliverable = z.infer<typeof deliverableSchema>;
+
+export const variantSchema = z.object({
+  id: z.string().uuid(),
+  deliverableId: z.string().uuid(),
+  variantVersion: z.number().int(),
+  contextSnapshotId: z.string().uuid(),
+  status: z.enum(VARIANT_STATUSES),
+  content: z.string(),
+  model: z.string(),
+  provider: z.string(),
+  durationMs: z.number().int(),
+  /** Null when the system tick generated it; set for operator-triggered runs. */
+  createdByUserId: z.string().uuid().nullable(),
+  selectedAt: z.number().int().nullable(),
+  createdAt: z.number().int(),
+});
+export type Variant = z.infer<typeof variantSchema>;
+
+/**
+ * The replay/audit record behind one variant: the entire resolved context
+ * (sections with include/exclude trace, final prompt, token accounting) plus
+ * the identity and grounding inputs. Stored JSON is projected tolerantly —
+ * the resolver's shape is owned by `@tuezday/brain`, not re-declared here.
+ */
+export const contextSnapshotSchema = z.object({
+  id: z.string().uuid(),
+  deliverableId: z.string().uuid(),
+  packageId: z.string().uuid().nullable(),
+  resolvedContext: z.unknown(),
+  inputs: z.unknown(),
+  model: z.string(),
+  provider: z.string(),
+  createdAt: z.number().int(),
+});
+export type ContextSnapshot = z.infer<typeof contextSnapshotSchema>;
+
+export const deliverableEventSchema = z.object({
+  id: z.string().uuid(),
+  /** Null on the creation event. */
+  fromStatus: z.enum(DELIVERABLE_PRODUCTION_STATUSES).nullable(),
+  toStatus: z.enum(DELIVERABLE_PRODUCTION_STATUSES),
+  /** Null when the system (tick, fan-out, sweep) moved it. */
+  actorUserId: z.string().uuid().nullable(),
+  reason: z.string().nullable(),
+  createdAt: z.number().int(),
+});
+export type DeliverableEvent = z.infer<typeof deliverableEventSchema>;
+
+export const deliverableDetailSchema = z.object({
+  deliverable: deliverableSchema,
+  variants: z.array(variantSchema),
+  events: z.array(deliverableEventSchema),
+});
+export type DeliverableDetail = z.infer<typeof deliverableDetailSchema>;
+
+export const listDeliverablesResponseSchema = z.object({
+  deliverables: z.array(deliverableSchema),
+  total: z.number().int(),
+});
+export type ListDeliverablesResponse = z.infer<
+  typeof listDeliverablesResponseSchema
+>;
+
+export const deliverableDecisionInputSchema = z
+  .object({
+    action: z.enum(DELIVERABLE_DECISION_ACTIONS),
+    variantId: z.string().uuid().optional(),
+    reason: z.string().trim().max(500).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.action === "cancel" && !value.reason) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["reason"],
+        message: "A reason is required to cancel a deliverable.",
+      });
+    }
+    if (value.action === "select" && !value.variantId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["variantId"],
+        message: "Selecting requires the variant to select.",
+      });
+    }
+  });
+export type DeliverableDecisionInput = z.infer<
+  typeof deliverableDecisionInputSchema
+>;
+
+/** §9.5 fan-out outcome for one package, with per-lane skip reasons. */
+export const FAN_OUT_SKIP_REASONS = [
+  "already_delivered",
+  "no_planned_slot",
+  "reactive_cap",
+] as const;
+export type FanOutSkipReason = (typeof FAN_OUT_SKIP_REASONS)[number];
+
+export const fanOutResultSchema = z.object({
+  deliverablesCreated: z.number().int(),
+  skipped: z.array(
+    z.object({
+      laneRevisionId: z.string().uuid(),
+      reason: z.enum(FAN_OUT_SKIP_REASONS),
+    }),
+  ),
+});
+export type FanOutResult = z.infer<typeof fanOutResultSchema>;
+
+export const deliverableRunResultSchema = z.object({
+  slotsMaterialized: z.number().int(),
+  packagesFannedOut: z.number().int(),
+  deliverablesCreated: z.number().int(),
+  variantsGenerated: z.number().int(),
+  staled: z.number().int(),
+  failures: z.number().int(),
+});
+export type DeliverableRunResult = z.infer<typeof deliverableRunResultSchema>;
 
 // ---------------------------------------------------------------------------
 // Evidence corpus (RAG behind the Brain Gateway boundary)
@@ -5761,6 +5989,7 @@ export const LLM_PIPELINES = [
   "discovery_matching",
   "opportunity_matching",
   "sufficiency_assessment",
+  "variant_generation",
   "mailbox_classification",
   "outline_summaries",
   "source_suggestions",
@@ -6308,6 +6537,8 @@ export const WORKSPACE_NAV: NavItem[] = [
       { label: "Opportunities", path: "/opportunities", summary: "Campaign-scoped story opportunities", tone: "signal", icon: "discover" },
       // Sprint 62: source-grounded packages between opportunity and deliverable.
       { label: "Packages", path: "/packages", summary: "Source-grounded content packages", tone: "signal", icon: "discover" },
+      // Sprint 63: lane commitments and their candidate executions.
+      { label: "Deliverables", path: "/deliverables", summary: "Lane commitments and candidate variants", tone: "signal", icon: "discover" },
       // Sprint 60: canonical stories — the shadow intelligence layer.
       { label: "Stories", path: "/stories", summary: "Canonical stories across sources", tone: "signal", icon: "blog" },
     ],

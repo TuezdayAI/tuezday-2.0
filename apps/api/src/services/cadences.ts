@@ -61,7 +61,7 @@ interface LocalDate {
   weekday: number;
 }
 
-function localDate(timeZone: string, ms: number): LocalDate {
+export function localDate(timeZone: string, ms: number): LocalDate {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
     year: "numeric",
@@ -99,7 +99,7 @@ function zoneOffsetMs(timeZone: string, utcMs: number): number {
 }
 
 /** The UTC instant of a wall-clock time in a given zone (DST-aware). */
-function zonedWallClockToUtc(
+export function zonedWallClockToUtc(
   year: number,
   month: number,
   day: number,
@@ -121,7 +121,11 @@ function zonedWallClockToUtc(
  * Every cadence slot instant in (fromMs, toMs]. Walks the window in 12h steps
  * (well under any DST day length) and considers each distinct local date once.
  */
-export function slotsBetween(cadence: PostingCadence, fromMs: number, toMs: number): number[] {
+export function slotsBetween(
+  cadence: Pick<PostingCadence, "daysOfWeek" | "timeOfDay" | "timezone">,
+  fromMs: number,
+  toMs: number,
+): number[] {
   if (toMs <= fromMs || cadence.daysOfWeek.length === 0) return [];
   const days = new Set(cadence.daysOfWeek);
   const [hh, mm] = cadence.timeOfDay.split(":").map(Number);

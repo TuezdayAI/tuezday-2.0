@@ -34,6 +34,8 @@ const cases = [
   ["routingTimeoutMs", "DISCOVERY_ROUTING_TIMEOUT_MS", 45_000, 5_000, 120_000],
   ["maxPackagesPerTick", "DISCOVERY_PACKAGE_MAX_PACKAGES", 10, 1, 100],
   ["packageTimeoutMs", "DISCOVERY_PACKAGE_TIMEOUT_MS", 45_000, 5_000, 120_000],
+  ["maxDeliverablesPerTick", "DISCOVERY_DELIVERABLE_MAX_ITEMS", 10, 1, 100],
+  ["variantTimeoutMs", "DISCOVERY_VARIANT_TIMEOUT_MS", 60_000, 5_000, 120_000],
 ] as const satisfies ReadonlyArray<
   readonly [keyof DiscoveryOperatorPolicy, string, number, number, number]
 >;
@@ -105,6 +107,16 @@ describe("discovery operator policy", () => {
         DISCOVERY_MATCH_TIMEOUT_MS: "10000",
       }),
     ).toThrow(/matching timeout.*below.*tick/i);
+    expect(() =>
+      parseDiscoveryOperatorPolicy({
+        DISCOVERY_TICK_TIMEOUT_MS: "10000",
+        DISCOVERY_SOURCE_TIMEOUT_MS: "5000",
+        DISCOVERY_MATCH_TIMEOUT_MS: "5000",
+        DISCOVERY_ROUTING_TIMEOUT_MS: "5000",
+        DISCOVERY_PACKAGE_TIMEOUT_MS: "5000",
+        DISCOVERY_VARIANT_TIMEOUT_MS: "10000",
+      }),
+    ).toThrow(/variant generation timeout.*below.*tick/i);
   });
 
   it("requires the heartbeat period to be less than half the lease", () => {

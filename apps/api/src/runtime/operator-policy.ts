@@ -17,6 +17,10 @@ export interface DiscoveryOperatorPolicy {
   // Sprint 62: package pipeline bounds (auto-package + sufficiency, shared).
   maxPackagesPerTick: number;
   packageTimeoutMs: number;
+  // Sprint 63: deliverable pipeline bounds (fan-out + variant generation,
+  // shared).
+  maxDeliverablesPerTick: number;
+  variantTimeoutMs: number;
 }
 
 export const DEFAULT_DISCOVERY_POLICY = Object.freeze({
@@ -36,6 +40,8 @@ export const DEFAULT_DISCOVERY_POLICY = Object.freeze({
   routingTimeoutMs: 45_000,
   maxPackagesPerTick: 10,
   packageTimeoutMs: 45_000,
+  maxDeliverablesPerTick: 10,
+  variantTimeoutMs: 60_000,
 } satisfies DiscoveryOperatorPolicy);
 
 function boundedInteger(
@@ -181,6 +187,20 @@ export function parseDiscoveryOperatorPolicy(
       5_000,
       120_000,
     ),
+    maxDeliverablesPerTick: boundedInteger(
+      env,
+      "DISCOVERY_DELIVERABLE_MAX_ITEMS",
+      DEFAULT_DISCOVERY_POLICY.maxDeliverablesPerTick,
+      1,
+      100,
+    ),
+    variantTimeoutMs: boundedInteger(
+      env,
+      "DISCOVERY_VARIANT_TIMEOUT_MS",
+      DEFAULT_DISCOVERY_POLICY.variantTimeoutMs,
+      5_000,
+      120_000,
+    ),
   };
 
   if (policy.sourceTimeoutMs >= policy.tickTimeoutMs) {
@@ -201,6 +221,11 @@ export function parseDiscoveryOperatorPolicy(
   if (policy.packageTimeoutMs >= policy.tickTimeoutMs) {
     throw new Error(
       "The package assessment timeout must stay below the tick timeout.",
+    );
+  }
+  if (policy.variantTimeoutMs >= policy.tickTimeoutMs) {
+    throw new Error(
+      "The variant generation timeout must stay below the tick timeout.",
     );
   }
   if (policy.heartbeatMs * 2 >= policy.leaseMs) {

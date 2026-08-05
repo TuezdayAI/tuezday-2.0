@@ -1073,6 +1073,8 @@ export const contentPackages = sqliteTable(
     assessmentAttempts: integer("assessment_attempts").notNull().default(0),
     assessmentLeaseExpiresAt: integer("assessment_lease_expires_at"),
     assessedAt: integer("assessed_at"),
+    // Sprint 63 (D-63.4): §9.5 fan-out attempted. Null = due once ready.
+    fannedOutAt: integer("fanned_out_at"),
     createdByUserId: text("created_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
@@ -1240,6 +1242,165 @@ export const contentPackageEvents = sqliteTable(
 );
 
 export type ContentPackageEventRow = typeof contentPackageEvents.$inferSelect;
+
+// Sprint 63 (design §8.10): one campaign commitment for one lane and time.
+// Planned deliverables are materialized slots waiting for a package; reactive
+// ones are born at fan-out with a package attached. Lifecycle is the contracts
+// DELIVERABLE_PRODUCTION_STATUSES machine; the generation queue columns are
+// infrastructure, never content (§8.11 separation).
+export const deliverables = sqliteTable(
+  "deliverables",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    planRevisionId: text("plan_revision_id")
+      .notNull()
+      .references(() => campaignPlanRevisions.id, { onDelete: "cascade" }),
+    laneId: text("lane_id")
+      .notNull()
+      .references(() => campaignLanes.id, { onDelete: "cascade" }),
+    laneRevisionId: text("lane_revision_id")
+      .notNull()
+      .references(() => campaignLaneRevisions.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    // Immutable slot identity for planned deliverables (§8.10); null for
+    // reactive. Reschedules would move a future scheduled_for, never this.
+    originalScheduledFor: integer("original_scheduled_for"),
+    // set null: the deliverable and its angle snapshot survive package
+    // deletion (design §1.3 provenance survival).
+    packageId: text("package_id").references(() => contentPackages.id, {
+      onDelete: "set null",
+    }),
+    angle: text("angle").notNull().default(""),
+    angleHash: text("angle_hash").notNull().default(""),
+    status: text("status").notNull().default("planned"),
+    generationState: text("generation_state").notNull().default("pending"),
+    generationAttempts: integer("generation_attempts").notNull().default(0),
+    generationLeaseExpiresAt: integer("generation_lease_expires_at"),
+    generatedAt: integer("generated_at"),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    // §8.10 planned uniqueness: one commitment per lane revision and slot.
+    uniqueIndex("deliverables_planned_slot")
+      .on(t.laneRevisionId, t.originalScheduledFor)
+      .where(sql`${t.originalScheduledFor} IS NOT NULL`),
+    // §8.10 reactive uniqueness: one reactive commitment per package + lane
+    // revision.
+    uniqueIndex("deliverables_reactive_package")
+      .on(t.packageId, t.laneRevisionId)
+      .where(sql`${t.kind} = 'reactive' AND ${t.packageId} IS NOT NULL`),
+    index("deliverables_workspace_status").on(
+      t.workspaceId,
+      t.status,
+      t.createdAt,
+    ),
+    index("deliverables_lane_revision").on(t.laneRevisionId, t.status),
+    index("deliverables_package").on(t.packageId),
+    index("deliverables_campaign_status").on(t.campaignId, t.status),
+    index("deliverables_generation_queue").on(
+      t.workspaceId,
+      t.generationState,
+      t.generationLeaseExpiresAt,
+    ),
+  ],
+);
+
+export type DeliverableRow = typeof deliverables.$inferSelect;
+
+// Sprint 63 (design §8.10): the replay/audit record behind one variant — the
+// entire resolved context (sections with trace, prompt, token accounting)
+// plus identity and grounding inputs. Append-only; never updated.
+export const contextSnapshots = sqliteTable(
+  "context_snapshots",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    deliverableId: text("deliverable_id")
+      .notNull()
+      .references(() => deliverables.id, { onDelete: "cascade" }),
+    packageId: text("package_id").references(() => contentPackages.id, {
+      onDelete: "set null",
+    }),
+    resolvedContextJson: text("resolved_context_json").notNull(),
+    inputsJson: text("inputs_json").notNull(),
+    model: text("model").notNull(),
+    provider: text("provider").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("context_snapshots_deliverable").on(t.deliverableId, t.createdAt)],
+);
+
+export type ContextSnapshotRow = typeof contextSnapshots.$inferSelect;
+
+// Sprint 63 (design §8.10): one candidate execution. Regeneration appends the
+// next version and never overwrites lineage; only status/selectedAt change,
+// and only through the contracts variant machine.
+export const variants = sqliteTable(
+  "variants",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    deliverableId: text("deliverable_id")
+      .notNull()
+      .references(() => deliverables.id, { onDelete: "cascade" }),
+    variantVersion: integer("variant_version").notNull(),
+    contextSnapshotId: text("context_snapshot_id")
+      .notNull()
+      .references(() => contextSnapshots.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("candidate"),
+    content: text("content").notNull(),
+    model: text("model").notNull(),
+    provider: text("provider").notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    selectedAt: integer("selected_at"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("variants_version").on(t.deliverableId, t.variantVersion),
+    index("variants_deliverable_status").on(t.deliverableId, t.status),
+  ],
+);
+
+export type VariantRow = typeof variants.$inferSelect;
+
+// Append-only deliverable lifecycle audit (§12.1). actorUserId null = system.
+export const deliverableEvents = sqliteTable(
+  "deliverable_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    deliverableId: text("deliverable_id")
+      .notNull()
+      .references(() => deliverables.id, { onDelete: "cascade" }),
+    fromStatus: text("from_status"),
+    toStatus: text("to_status").notNull(),
+    actorUserId: text("actor_user_id"),
+    reason: text("reason"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("deliverable_events_deliverable").on(t.deliverableId, t.createdAt)],
+);
+
+export type DeliverableEventRow = typeof deliverableEvents.$inferSelect;
 
 // Sprint 45 multi-candidate scoring: one row per candidate persona×campaign
 // pairing a discovered item scored above zero relevance for. Replaced

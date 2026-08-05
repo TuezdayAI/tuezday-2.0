@@ -24,6 +24,10 @@ describe("navEntryForPath", () => {
       label: "Packages",
       parentLabel: "Discover",
     });
+    expect(navEntryForPath(WORKSPACE_NAV, "/deliverables")).toMatchObject({
+      label: "Deliverables",
+      parentLabel: "Discover",
+    });
   });
   it("resolves Calendar as a primary surface", () => {
     expect(navEntryForPath(WORKSPACE_NAV, "/calendar")).toMatchObject({
