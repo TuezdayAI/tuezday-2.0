@@ -50,6 +50,7 @@ import { registerStoryRoutes } from "./routes/stories";
 import { registerOpportunityRoutes } from "./routes/opportunities";
 import { registerPackageRoutes } from "./routes/packages";
 import { registerDeliverableRoutes } from "./routes/deliverables";
+import { registerPipelineRoutes } from "./routes/pipelines";
 import { registerDraftRoutes } from "./routes/drafts";
 import { registerEvidenceRoutes } from "./routes/evidence";
 import { registerExecutionRoutes } from "./routes/executions";
@@ -326,6 +327,7 @@ export async function buildApp({
   registerOpportunityRoutes(app, db, llm);
   registerPackageRoutes(app, db, llm);
   registerDeliverableRoutes(app, db, llm);
+  registerPipelineRoutes(app, db, { llm, evidence, safeFetch: guardedFetch });
   registerCampaignRoutes(app, db);
   registerCampaignPlanRoutes(app, db);
   registerAudienceRoutes(app, db);
