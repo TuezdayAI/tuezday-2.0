@@ -1250,6 +1250,7 @@ describe("discovery routing contracts (Sprint 45)", () => {
       perCampaignDailyCap: 10,
       autoReplyEnabled: false,
       matchThreshold: DEFAULT_MATCH_THRESHOLD,
+      generationPath: "legacy",
       updatedAt: 1,
     };
     expect(socialAutomationSettingsSchema.safeParse(settings).success).toBe(true);

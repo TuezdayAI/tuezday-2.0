@@ -1,6 +1,6 @@
 import type { z } from "zod";
 import { toolInputSchemas } from "@tuezday/contracts";
-import { getSocialAutomationSettings } from "../../services/automation";
+import { getSocialAutomationSettings } from "../../services/automation-settings";
 import { getCompliance } from "../../services/compliance";
 import { listChannelGuidance, listScopedGuidance } from "../../services/guidance";
 import { compactText, type Tool } from "../registry";

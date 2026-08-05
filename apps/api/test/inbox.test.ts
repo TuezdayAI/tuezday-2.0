@@ -284,6 +284,7 @@ describe("engagement & reply inbox", () => {
           perCampaignDailyCap: 5,
           autoReplyEnabled: true,
           matchThreshold: 50,
+          generationPath: "legacy",
           updatedAt: 0,
         }).success,
       ).toBe(true);

@@ -12,6 +12,7 @@ import {
   runDiscoveryScheduler,
   type DiscoveryOperatorEvent,
 } from "../services/discovery-scheduler";
+import { runPipelinesTick } from "../services/pipeline-tick";
 import { withTaskLease } from "../services/task-leases";
 import { listWorkspaces } from "../services/workspaces";
 
@@ -94,6 +95,42 @@ export function registerInternalTaskRoutes(
       return leased.busy
         ? { busy: true, processed: 0 }
         : { busy: false, processed: leased.value.processed };
+    },
+  );
+
+  // Sprint 65 (D-65.3): drive queued live/shadow pipeline runs to a resting
+  // state. One global lease — executePipelineRun's own claim fence handles
+  // any per-run race with a synchronous route execution.
+  app.post(
+    "/internal/pipelines/tick",
+    { schema: { body: EMPTY_BODY_SCHEMA } },
+    async () => {
+      const leased = await withTaskLease(
+        deps.db,
+        {
+          key: "pipelines:scheduler",
+          owner: `${deps.instanceId}:pipelines-scheduler:${randomUUID()}`,
+          leaseMs: deps.policy.leaseMs,
+          heartbeatMs: deps.policy.heartbeatMs,
+        },
+        () =>
+          runPipelinesTick(deps.db, {
+            llm: deps.llm,
+            evidence: deps.evidence,
+            safeFetch: deps.safeFetch,
+          }),
+      );
+      return leased.busy
+        ? {
+            busy: true,
+            processed: 0,
+            succeeded: 0,
+            failed: 0,
+            escalated: 0,
+            blocked: 0,
+            autoApproved: 0,
+          }
+        : { busy: false, ...leased.value };
     },
   );
 }

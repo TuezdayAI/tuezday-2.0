@@ -256,6 +256,7 @@ describe("social automation", () => {
           perCampaignDailyCap: 5,
           autoReplyEnabled: false,
           matchThreshold: 50,
+          generationPath: "legacy",
           updatedAt: 0,
         }).success,
       ).toBe(true);

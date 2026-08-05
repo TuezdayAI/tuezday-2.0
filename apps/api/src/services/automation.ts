@@ -1,8 +1,5 @@
 import { and, asc, eq, gte, inArray, lt, ne } from "drizzle-orm";
 import {
-  DEFAULT_MATCH_THRESHOLD,
-  DEFAULT_PER_CAMPAIGN_DAILY_CAP,
-  DEFAULT_PER_CONNECTION_DAILY_CAP,
   type AutomationCampaignResult,
   type AutomationRunResult,
   type Campaign,
@@ -10,7 +7,6 @@ import {
   type Signal,
   type SignalSource,
   type SocialAutomationSettings,
-  type UpdateSocialAutomationSettingsInput,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
 import {
@@ -19,10 +15,10 @@ import {
   postingCadences,
   publications,
   signals as signalsTable,
-  socialAutomationSettings,
 } from "../db/schema";
 import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
+import { getSocialAutomationSettings } from "./automation-settings";
 import { listAutomatedCampaigns } from "./campaigns";
 import { llmBudgetExhausted } from "./entitlements";
 import {
@@ -31,6 +27,12 @@ import {
 } from "./drafts";
 import { getBestSignalMatchForCampaign } from "./matching";
 import { listPersonas } from "./personas";
+import { resolvePipelineDefinition } from "./pipeline-definitions";
+import {
+  DuplicatePipelineRunError,
+  startPipelineRun,
+} from "./pipeline-runs";
+import { createShadowPair, shadowPairKey } from "./pipeline-shadow";
 import { generateSignalDraft } from "./signal-drafting";
 import { withTaskLease } from "./task-leases";
 import { getWorkspace } from "./workspaces";
@@ -42,65 +44,16 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const SYSTEM_ACTOR: DraftActor = { userId: null, label: "system", human: false };
 
 // ---------------------------------------------------------------------------
-// Settings (per workspace; mirrors ad_settings)
+// Settings (per workspace; mirrors ad_settings) — implementation lives in
+// automation-settings.ts so agent tools can read settings without importing
+// this module (which reaches the pipeline engine, and through it the tool
+// registry — a cycle). Re-exported here for the existing call sites.
 // ---------------------------------------------------------------------------
 
-export function getSocialAutomationSettings(db: Db, workspaceId: string): SocialAutomationSettings {
-  const row = db
-    .select()
-    .from(socialAutomationSettings)
-    .where(eq(socialAutomationSettings.workspaceId, workspaceId))
-    .get();
-  return row
-    ? {
-        workspaceId,
-        killSwitch: row.killSwitch === 1,
-        perConnectionDailyCap: row.perConnectionDailyCap,
-        perCampaignDailyCap: row.perCampaignDailyCap,
-        autoReplyEnabled: row.autoReplyEnabled === 1,
-        matchThreshold: row.matchThreshold,
-        updatedAt: row.updatedAt,
-      }
-    : {
-        workspaceId,
-        killSwitch: false,
-        perConnectionDailyCap: DEFAULT_PER_CONNECTION_DAILY_CAP,
-        perCampaignDailyCap: DEFAULT_PER_CAMPAIGN_DAILY_CAP,
-        autoReplyEnabled: false,
-        matchThreshold: DEFAULT_MATCH_THRESHOLD,
-        updatedAt: 0,
-      };
-}
-
-export function updateSocialAutomationSettings(
-  db: Db,
-  workspaceId: string,
-  patch: UpdateSocialAutomationSettingsInput,
-): SocialAutomationSettings {
-  const current = getSocialAutomationSettings(db, workspaceId);
-  const next: SocialAutomationSettings = {
-    workspaceId,
-    killSwitch: patch.killSwitch ?? current.killSwitch,
-    perConnectionDailyCap: patch.perConnectionDailyCap ?? current.perConnectionDailyCap,
-    perCampaignDailyCap: patch.perCampaignDailyCap ?? current.perCampaignDailyCap,
-    autoReplyEnabled: patch.autoReplyEnabled ?? current.autoReplyEnabled,
-    matchThreshold: patch.matchThreshold ?? current.matchThreshold,
-    updatedAt: Date.now(),
-  };
-  const columns = {
-    killSwitch: next.killSwitch ? 1 : 0,
-    perConnectionDailyCap: next.perConnectionDailyCap,
-    perCampaignDailyCap: next.perCampaignDailyCap,
-    autoReplyEnabled: next.autoReplyEnabled ? 1 : 0,
-    matchThreshold: next.matchThreshold,
-    updatedAt: next.updatedAt,
-  };
-  db.insert(socialAutomationSettings)
-    .values({ workspaceId, ...columns })
-    .onConflictDoUpdate({ target: socialAutomationSettings.workspaceId, set: columns })
-    .run();
-  return next;
-}
+export {
+  getSocialAutomationSettings,
+  updateSocialAutomationSettings,
+} from "./automation-settings";
 
 // ---------------------------------------------------------------------------
 // Guardrails (the safety net for scheduled_auto posting)
@@ -329,20 +282,50 @@ export async function runAutomation(
     };
 
     if (budgetExhausted) {
-      results.push({ ...base, generated: 0, autoApproved: 0, skipped: 0, blocked: "llm_budget_exhausted" });
+      results.push({
+        ...base,
+        generated: 0,
+        autoApproved: 0,
+        skipped: 0,
+        engineQueued: 0,
+        shadowQueued: 0,
+        blocked: "llm_budget_exhausted",
+      });
       continue;
     }
 
     // The kill switch halts auto-posting only (scheduled_auto); human-in-the-loop
     // still drafts to the gate, where a human is the control.
     if (campaign.automationMode === "scheduled_auto" && settings.killSwitch) {
-      results.push({ ...base, generated: 0, autoApproved: 0, skipped: 0, blocked: "kill_switch_on" });
+      results.push({
+        ...base,
+        generated: 0,
+        autoApproved: 0,
+        skipped: 0,
+        engineQueued: 0,
+        shadowQueued: 0,
+        blocked: "kill_switch_on",
+      });
       continue;
     }
 
     let generated = 0;
     let autoApproved = 0;
     let skipped = 0;
+    let engineQueued = 0;
+    let shadowQueued = 0;
+
+    // Sprint 65 (D-65.1/D-65.6): the engine path needs an ACTIVE definition
+    // resolving for this campaign. None resolving means the live path falls
+    // back to legacy generation — flipping the flag must never halt automation.
+    const definition =
+      settings.generationPath === "legacy"
+        ? undefined
+        : resolvePipelineDefinition(db, {
+            workspaceId,
+            taskKey: "signal_social_post",
+            campaignId: campaign.id,
+          });
 
     for (const signal of signals) {
       // Sprint 45: a signal only reaches this campaign when discovery (or a
@@ -367,6 +350,37 @@ export async function runAutomation(
         ) {
           continue;
         }
+
+        // Sprint 65 pipeline path (D-65.3): queue a live engine run instead of
+        // generating here — the pipelines tick executes it. The run's
+        // idempotency key is the exact legacy draft key, so run identity
+        // mirrors draft identity and a rerun dedupes (D-65.5: a failed run is
+        // terminal for this work item, visibly, not silently retried).
+        if (settings.generationPath === "pipeline" && definition) {
+          try {
+            startPipelineRun(db, {
+              workspaceId,
+              definition,
+              signalId: signal.id,
+              channel,
+              campaignId: campaign.id,
+              personaId: persona?.id ?? null,
+              mode: "live",
+              idempotencyKey: automaticDraftKey({
+                workspaceId,
+                signalId: signal.id,
+                campaignId: campaign.id,
+                channel,
+              }),
+              createdBy: "automation",
+            });
+            engineQueued += 1;
+          } catch (err) {
+            if (!(err instanceof DuplicatePipelineRunError)) skipped += 1;
+          }
+          continue;
+        }
+
         try {
           const committed = await generateSignalDraft(
             db,
@@ -394,6 +408,47 @@ export async function runAutomation(
           );
           if (committed.created) generated += 1;
           if (committed.autoApproved) autoApproved += 1;
+
+          // Sprint 65 shadow path (D-65.7): replay the same work item through
+          // the engine as a paired shadow run — simulated proposal, no draft,
+          // reviewed side by side on the Automation page.
+          if (
+            settings.generationPath === "shadow" &&
+            definition &&
+            committed.created
+          ) {
+            const pairKey = shadowPairKey({
+              workspaceId,
+              signalId: signal.id,
+              campaignId: campaign.id,
+              channel,
+            });
+            try {
+              const run = startPipelineRun(db, {
+                workspaceId,
+                definition,
+                signalId: signal.id,
+                channel,
+                campaignId: campaign.id,
+                personaId: persona?.id ?? null,
+                mode: "shadow",
+                idempotencyKey: pairKey,
+                createdBy: "automation",
+              });
+              createShadowPair(db, {
+                workspaceId,
+                pairKey,
+                signalId: signal.id,
+                campaignId: campaign.id,
+                channel,
+                draftId: committed.draft.id,
+                runId: run.id,
+              });
+              shadowQueued += 1;
+            } catch (err) {
+              if (!(err instanceof DuplicatePipelineRunError)) throw err;
+            }
+          }
         } catch {
           // One bad signal never aborts the run; it's counted and retried next tick.
           skipped += 1;
@@ -401,7 +456,15 @@ export async function runAutomation(
       }
     }
 
-    results.push({ ...base, generated, autoApproved, skipped, blocked: null });
+    results.push({
+      ...base,
+      generated,
+      autoApproved,
+      skipped,
+      engineQueued,
+      shadowQueued,
+      blocked: null,
+    });
   }
 
   return { results, ranAt: nowMs };

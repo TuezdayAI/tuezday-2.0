@@ -182,6 +182,33 @@ async function runAutomationForAllWorkspaces(): Promise<void> {
   );
 }
 
+interface PipelinesTickResponse {
+  busy?: boolean;
+  processed?: number;
+  succeeded?: number;
+  failed?: number;
+  escalated?: number;
+  blocked?: number;
+  autoApproved?: number;
+}
+
+/** Sprint 65: drive queued pipeline runs (live drafts on the engine path,
+ * shadow runs for the A/B) to a resting state, then auto-approve any
+ * scheduled_auto live results. */
+async function runPipelinesTickForAllWorkspaces(): Promise<void> {
+  const result = (await worker.runInternal(
+    "/internal/pipelines/tick",
+  )) as PipelinesTickResponse;
+  if (result.busy) {
+    console.log("[pipelines] busy");
+    return;
+  }
+  if ((result.processed ?? 0) === 0) return; // nothing queued — stay quiet
+  console.log(
+    `[pipelines] ${result.processed} run(s): ${result.succeeded ?? 0} succeeded, ${result.escalated ?? 0} escalated, ${result.failed ?? 0} failed, ${result.blocked ?? 0} blocked, ${result.autoApproved ?? 0} auto-approved`,
+  );
+}
+
 interface InboxRunResponse {
   newItems: number;
   metricsCaptured: number;
@@ -368,6 +395,11 @@ const loopSpecs = [
     name: "automation",
     intervalMs: config.intervals.automationMs,
     run: runAutomationForAllWorkspaces,
+  },
+  {
+    name: "pipelines",
+    intervalMs: config.intervals.pipelinesMs,
+    run: runPipelinesTickForAllWorkspaces,
   },
   {
     name: "learning",

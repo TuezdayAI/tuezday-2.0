@@ -5207,6 +5207,17 @@ export type UpdateAdSettingsInput = z.infer<typeof updateAdSettingsInputSchema>;
 // ---------------------------------------------------------------------------
 
 /**
+ * Sprint 65 (D-65.1): which path automation uses to turn a matched signal into
+ * a draft. `legacy` — the single-prompt `generateSignalDraft` path. `shadow` —
+ * legacy still produces the live draft, and the pipeline engine replays the
+ * same (signal, campaign, channel) as a paired `shadow`-mode run for the A/B.
+ * `pipeline` — the engine produces the live draft; legacy generation is skipped
+ * (with a legacy fallback when no active pipeline definition resolves, D-65.6).
+ */
+export const AUTOMATION_GENERATION_PATHS = ["legacy", "shadow", "pipeline"] as const;
+export type AutomationGenerationPath = (typeof AUTOMATION_GENERATION_PATHS)[number];
+
+/**
  * Per-workspace guardrails for `scheduled_auto` campaigns — the safety net that
  * replaces the human gate. The kill switch is the hard stop; the caps bound how
  * many auto-posts land per UTC day. Mirrors `ad_settings`.
@@ -5222,6 +5233,9 @@ export const socialAutomationSettingsSchema = z.object({
   // Sprint 45: minimum persona×campaign match score (0–100) a signal needs
   // before automation generates for that campaign. Default DEFAULT_MATCH_THRESHOLD.
   matchThreshold: z.number().int().min(0).max(100),
+  // Sprint 65: legacy | shadow | pipeline. Default legacy — flipping is a
+  // founder action, normally recorded through a rollout decision.
+  generationPath: z.enum(AUTOMATION_GENERATION_PATHS),
   updatedAt: z.number().int(),
 });
 export type SocialAutomationSettings = z.infer<typeof socialAutomationSettingsSchema>;
@@ -5232,6 +5246,7 @@ export const updateSocialAutomationSettingsInputSchema = z.object({
   perCampaignDailyCap: z.number().int().positive().max(1000).optional(),
   autoReplyEnabled: z.boolean().optional(),
   matchThreshold: z.number().int().min(0).max(100).optional(),
+  generationPath: z.enum(AUTOMATION_GENERATION_PATHS).optional(),
 });
 export type UpdateSocialAutomationSettingsInput = z.infer<
   typeof updateSocialAutomationSettingsInputSchema
@@ -5245,6 +5260,11 @@ export const automationCampaignResultSchema = z.object({
   generated: z.number().int(),
   autoApproved: z.number().int(),
   skipped: z.number().int(),
+  // Sprint 65: engine runs queued this tick — live runs replacing legacy
+  // generation (pipeline path) and paired shadow runs (shadow path). Zero on
+  // the legacy path or when no active pipeline definition resolves (D-65.6).
+  engineQueued: z.number().int(),
+  shadowQueued: z.number().int(),
   blocked: z.string().nullable(),
 });
 export type AutomationCampaignResult = z.infer<typeof automationCampaignResultSchema>;
@@ -7843,7 +7863,10 @@ export type PipelineStepStatus = (typeof PIPELINE_STEP_STATUSES)[number];
 export const PIPELINE_STEP_KINDS = ["agent", "propose"] as const;
 export type PipelineStepKind = (typeof PIPELINE_STEP_KINDS)[number];
 
-export const PIPELINE_RUN_MODES = ["live", "dry_run"] as const;
+// "shadow" (Sprint 65, D-65.2): a dry run with a pairing identity — queued by
+// automation alongside the legacy path's live draft so both can be compared.
+// Only "live" runs touch the gate; every other mode ends in a simulated proposal.
+export const PIPELINE_RUN_MODES = ["live", "dry_run", "shadow"] as const;
 export type PipelineRunMode = (typeof PIPELINE_RUN_MODES)[number];
 
 // Step output kinds (D-64.3): a registered vocabulary, not arbitrary JSON
@@ -8602,3 +8625,129 @@ export const metricSchema = z.object({
   createdAt: z.number().int(),
 });
 export type Metric = z.infer<typeof metricSchema>;
+
+// ---------------------------------------------------------------------------
+// Sprint 65 — first agent-executed pipeline, measured (shadow A/B + rollout)
+// ---------------------------------------------------------------------------
+
+/**
+ * The founder's side-by-side call on one shadow pair (D-65.7). Shadow proposals
+ * never enter the approval gate, so this explicit verdict is the shadow-side
+ * approval signal the comparison aggregates.
+ */
+export const SHADOW_VERDICTS = ["engine", "legacy", "tie"] as const;
+export type ShadowVerdict = (typeof SHADOW_VERDICTS)[number];
+
+/**
+ * One legacy draft paired with its engine shadow run — the unit of the
+ * founder-visible A/B. `draftContent`/`proposalContent` are joined in at read
+ * time (the proposal from the run's stored result; null until the run reaches
+ * a terminal state).
+ */
+export const pipelineShadowPairSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  signalId: z.string().uuid().nullable(),
+  campaignId: z.string().uuid().nullable(),
+  channel: z.enum(CHANNELS),
+  draftId: z.string().uuid().nullable(),
+  runId: z.string().uuid(),
+  draftContent: z.string().nullable(),
+  draftState: z.enum(APPROVAL_STATES).nullable(),
+  proposalContent: z.string().nullable(),
+  runStatus: z.enum(PIPELINE_RUN_STATUSES),
+  verdict: z.enum(SHADOW_VERDICTS).nullable(),
+  verdictNotes: z.string(),
+  verdictAt: z.number().int().nullable(),
+  createdAt: z.number().int(),
+});
+export type PipelineShadowPair = z.infer<typeof pipelineShadowPairSchema>;
+
+export const shadowVerdictInputSchema = z.object({
+  verdict: z.enum(SHADOW_VERDICTS),
+  notes: z.string().max(2000).default(""),
+});
+export type ShadowVerdictInput = z.infer<typeof shadowVerdictInputSchema>;
+
+/**
+ * Gate outcomes for one path's automation drafts (D-65.8). `approvalRate` and
+ * `avgEditDistance` are null until at least one draft has been decided —
+ * "no data yet" must be distinguishable from 0.
+ */
+export const automationPathMetricsSchema = z.object({
+  drafts: z.number().int().min(0),
+  decided: z.number().int().min(0),
+  approved: z.number().int().min(0),
+  rejected: z.number().int().min(0),
+  /** approved / decided, percent 0–100. */
+  approvalRate: z.number().min(0).max(100).nullable(),
+  /** Mean normalized Levenshtein between original and final content, 0–100. */
+  avgEditDistance: z.number().min(0).max(100).nullable(),
+  costCents: z.number().int().min(0),
+});
+export type AutomationPathMetrics = z.infer<typeof automationPathMetricsSchema>;
+
+export const engineRunHealthSchema = z.object({
+  runs: z.number().int().min(0),
+  succeeded: z.number().int().min(0),
+  failed: z.number().int().min(0),
+  escalated: z.number().int().min(0),
+});
+export type EngineRunHealth = z.infer<typeof engineRunHealthSchema>;
+
+export const shadowSummarySchema = z.object({
+  pairs: z.number().int().min(0),
+  reviewed: z.number().int().min(0),
+  engineWins: z.number().int().min(0),
+  legacyWins: z.number().int().min(0),
+  ties: z.number().int().min(0),
+});
+export type ShadowSummary = z.infer<typeof shadowSummarySchema>;
+
+/**
+ * The A/B panel's payload. Cost sides are measured differently and readers
+ * must say so: engine cost is the exact per-run metered sum; legacy cost is
+ * the workspace's signal_draft + review usage for the window, which includes
+ * founder-triggered manual drafts (D-65.8).
+ */
+export const automationComparisonSchema = z.object({
+  workspaceId: z.string().uuid(),
+  generationPath: z.enum(AUTOMATION_GENERATION_PATHS),
+  windowDays: z.number().int().positive(),
+  legacy: automationPathMetricsSchema,
+  engine: automationPathMetricsSchema.extend({ health: engineRunHealthSchema }),
+  shadow: shadowSummarySchema,
+});
+export type AutomationComparison = z.infer<typeof automationComparisonSchema>;
+
+/**
+ * D-65.9: the founder's recorded call on the A/B. Append-only; recording one
+ * freezes the comparison snapshot into the record and atomically applies the
+ * matching generationPath (adopt_engine → pipeline, keep_legacy → legacy,
+ * extend_shadow → shadow). Deleting the legacy path is a later sprint, only
+ * after adopt_engine has held up in production.
+ */
+export const ROLLOUT_DECISION_KINDS = [
+  "adopt_engine",
+  "keep_legacy",
+  "extend_shadow",
+] as const;
+export type RolloutDecisionKind = (typeof ROLLOUT_DECISION_KINDS)[number];
+
+export const rolloutDecisionSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  taskKey: z.enum(PIPELINE_TASK_KEYS),
+  decision: z.enum(ROLLOUT_DECISION_KINDS),
+  rationale: z.string(),
+  metrics: automationComparisonSchema,
+  decidedByUserId: z.string().uuid().nullable(),
+  createdAt: z.number().int(),
+});
+export type RolloutDecision = z.infer<typeof rolloutDecisionSchema>;
+
+export const recordRolloutDecisionInputSchema = z.object({
+  decision: z.enum(ROLLOUT_DECISION_KINDS),
+  rationale: z.string().min(1).max(2000),
+});
+export type RecordRolloutDecisionInput = z.infer<typeof recordRolloutDecisionInputSchema>;

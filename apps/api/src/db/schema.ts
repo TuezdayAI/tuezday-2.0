@@ -2627,6 +2627,9 @@ export const socialAutomationSettings = sqliteTable("social_automation_settings"
   // Sprint 45: minimum signal-match score (0-100) for runAutomation to route a
   // signal to a campaign.
   matchThreshold: integer("match_threshold").notNull().default(50),
+  // Sprint 65 (D-65.1): AUTOMATION_GENERATION_PATHS — which path automation
+  // uses for signal → social post. Default legacy: merging changes nothing.
+  generationPath: text("generation_path").notNull().default("legacy"),
   updatedAt: integer("updated_at").notNull(),
 });
 
@@ -3392,3 +3395,71 @@ export const pipelineRunSteps = sqliteTable(
 );
 
 export type PipelineRunStepRow = typeof pipelineRunSteps.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Sprint 65 — shadow A/B pairs + rollout decisions
+// ---------------------------------------------------------------------------
+
+// One legacy automation draft paired with its engine shadow run (D-65.7).
+// pair_key is the shadow run's idempotency key (shadow:v1:ws:signal:campaign:
+// channel) so a pair, like a run, exists at most once per work item.
+export const pipelineShadowPairs = sqliteTable(
+  "pipeline_shadow_pairs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    pairKey: text("pair_key").notNull(),
+    signalId: text("signal_id").references(() => signals.id, {
+      onDelete: "set null",
+    }),
+    campaignId: text("campaign_id").references(() => campaigns.id, {
+      onDelete: "set null",
+    }),
+    channel: text("channel").notNull(),
+    draftId: text("draft_id").references(() => drafts.id, {
+      onDelete: "set null",
+    }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => pipelineRuns.id, { onDelete: "cascade" }),
+    verdict: text("verdict"), // SHADOW_VERDICTS, null until reviewed
+    verdictNotes: text("verdict_notes").notNull().default(""),
+    verdictByUserId: text("verdict_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    verdictAt: integer("verdict_at"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("pipeline_shadow_pairs_key").on(t.pairKey),
+    index("pipeline_shadow_pairs_workspace").on(t.workspaceId, t.createdAt),
+  ],
+);
+
+export type PipelineShadowPairRow = typeof pipelineShadowPairs.$inferSelect;
+
+// Append-only founder calls on the A/B (D-65.9). metrics_json freezes the
+// comparison snapshot the decision was made on; recording one also applies
+// the matching generation_path on social_automation_settings.
+export const pipelineRolloutDecisions = sqliteTable(
+  "pipeline_rollout_decisions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    taskKey: text("task_key").notNull(),
+    decision: text("decision").notNull(), // ROLLOUT_DECISION_KINDS
+    rationale: text("rationale").notNull(),
+    metricsJson: text("metrics_json").notNull(),
+    decidedByUserId: text("decided_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("pipeline_rollout_decisions_workspace").on(t.workspaceId, t.createdAt)],
+);
+
+export type PipelineRolloutDecisionRow = typeof pipelineRolloutDecisions.$inferSelect;
