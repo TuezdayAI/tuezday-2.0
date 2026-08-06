@@ -43,17 +43,17 @@
 - Produces: `renderRequestSchema`, `RenderRequest`, `renderErrorSchema`, `RenderErrorResponse`.
 - Produces: `buildRendererApp(options)`, `createBrowserRenderer(options)`, `parseRendererConfig(env)`.
 
-- [ ] **Step 1: Write failing contract/config/template tests**
+- [x] **Step 1: Write failing contract/config/template tests**
 
 Cover dimension/payload bounds, placeholder validation, HTML escaping, missing placeholders, production token requirement, test defaults, and invalid concurrency/timeout values.
 
-- [ ] **Step 2: Run tests to verify failure**
+- [x] **Step 2: Run tests to verify failure**
 
 Run: `npm test -- renderer`
 
 Expected: FAIL because renderer contracts/workspace do not exist.
 
-- [ ] **Step 3: Implement shared contracts and pure renderer modules**
+- [x] **Step 3: Implement shared contracts and pure renderer modules**
 
 Use these stable signatures:
 
@@ -66,15 +66,15 @@ export function substituteTemplate(input: RenderRequest): string;
 export function parseRendererConfig(env: NodeJS.ProcessEnv): RendererConfig;
 ```
 
-- [ ] **Step 4: Write failing authenticated route tests**
+- [x] **Step 4: Write failing authenticated route tests**
 
 Assert health is public; render rejects missing/wrong bearer token; a valid request delegates once and returns `image/png`; validation errors are bounded 400s; renderer failures are stable 503/504 responses.
 
-- [ ] **Step 5: Implement Fastify app and browser owner**
+- [x] **Step 5: Implement Fastify app and browser owner**
 
 `createBrowserRenderer` must block all requests, disable JavaScript, cap concurrent pages, enforce timeout, close pages in `finally`, and expose `close()` for shutdown. Keep Chromium lazy so health/startup does not allocate a browser.
 
-- [ ] **Step 6: Run renderer and contract tests**
+- [x] **Step 6: Run renderer and contract tests**
 
 Run: `npm test -- renderer`
 
@@ -102,17 +102,17 @@ git commit -m "feat(renderer): isolate the Playwright render service" -m "Co-Aut
 - Consumes: `RenderRequest`, `renderRequestSchema`.
 - Produces: `Render`, `RendererError`, `createRendererClient(options): Render`.
 
-- [ ] **Step 1: Replace browser tests with failing HTTP-client tests**
+- [x] **Step 1: Replace browser tests with failing HTTP-client tests**
 
 Assert exact URL, bearer header, JSON body, timeout cancellation, PNG content type, maximum response size, non-2xx error mapping, and transport failure mapping using an injected fetcher.
 
-- [ ] **Step 2: Run the focused test**
+- [x] **Step 2: Run the focused test**
 
 Run: `npm test -- design-pipeline`
 
 Expected: FAIL because `createRendererClient` is absent and local Chromium still owns the path.
 
-- [ ] **Step 3: Implement the client and remove API browser ownership**
+- [x] **Step 3: Implement the client and remove API browser ownership**
 
 ```ts
 export type RenderInput = RenderRequest;
@@ -128,11 +128,11 @@ export function createRendererClient(options?: {
 
 Default `BuildAppOptions.render` to the client, remove `closeRenderer` and the browser shutdown hook, and remove Playwright from `apps/api` dependencies.
 
-- [ ] **Step 4: Wire local development and environment documentation**
+- [x] **Step 4: Wire local development and environment documentation**
 
 Root `dev` starts `renderer,api,web,worker`; `.env.example` documents renderer URL/token/timeouts/concurrency; `CLAUDE.md` names renderer ownership and the new commands.
 
-- [ ] **Step 5: Verify focused behavior and typecheck**
+- [x] **Step 5: Verify focused behavior and typecheck**
 
 Run: `npm test -- design-pipeline carousels ad-image renderer`
 

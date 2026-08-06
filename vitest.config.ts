@@ -6,6 +6,7 @@ export default defineConfig({
       "apps/api",
       "apps/web",
       "apps/worker",
+      "apps/renderer",
       "packages/contracts",
       "packages/brain",
     ],

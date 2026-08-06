@@ -10163,3 +10163,66 @@ export const knobUsageReportSchema = z.object({
   generatedAt: z.number().int(),
 });
 export type KnobUsageReport = z.infer<typeof knobUsageReportSchema>;
+
+// ---------------------------------------------------------------------------
+// Internal renderer wire contract (Sprint 75)
+// ---------------------------------------------------------------------------
+
+export const RENDER_MAX_DOCUMENT_CHARS = 500_000;
+export const RENDER_MAX_VALUE_CHARS = 20_000;
+export const RENDER_MAX_PLACEHOLDERS = 100;
+export const RENDER_MIN_DIMENSION = 64;
+export const RENDER_MAX_DIMENSION = 4_096;
+export const RENDER_DEFAULT_DIMENSION = 1_080;
+
+const renderPlaceholderSchema = z.string().regex(/^[A-Za-z0-9_.-]+$/);
+
+export const renderTemplateSchema = z.object({
+  html: z.string().min(1).max(RENDER_MAX_DOCUMENT_CHARS),
+  css: z.string().max(RENDER_MAX_DOCUMENT_CHARS),
+  placeholders: z
+    .array(renderPlaceholderSchema)
+    .max(RENDER_MAX_PLACEHOLDERS)
+    .refine((values) => new Set(values).size === values.length, {
+      message: "Placeholders must be unique.",
+    }),
+});
+export type RenderTemplate = z.infer<typeof renderTemplateSchema>;
+
+export const renderRequestSchema = z.object({
+  template: renderTemplateSchema,
+  values: z
+    .record(z.string().max(RENDER_MAX_VALUE_CHARS))
+    .refine((values) => Object.keys(values).length <= RENDER_MAX_PLACEHOLDERS, {
+      message: `At most ${RENDER_MAX_PLACEHOLDERS} values are allowed.`,
+    }),
+  width: z
+    .number()
+    .int()
+    .min(RENDER_MIN_DIMENSION)
+    .max(RENDER_MAX_DIMENSION)
+    .default(RENDER_DEFAULT_DIMENSION),
+  height: z
+    .number()
+    .int()
+    .min(RENDER_MIN_DIMENSION)
+    .max(RENDER_MAX_DIMENSION)
+    .default(RENDER_DEFAULT_DIMENSION),
+});
+export type RenderRequest = z.infer<typeof renderRequestSchema>;
+
+export const RENDER_ERROR_CODES = [
+  "unauthorized",
+  "invalid_render_request",
+  "render_timeout",
+  "render_failed",
+  "renderer_unavailable",
+  "invalid_renderer_response",
+] as const;
+export type RenderErrorCode = (typeof RENDER_ERROR_CODES)[number];
+
+export const renderErrorSchema = z.object({
+  error: z.enum(RENDER_ERROR_CODES),
+  message: z.string().min(1).max(500),
+});
+export type RenderErrorResponse = z.infer<typeof renderErrorSchema>;

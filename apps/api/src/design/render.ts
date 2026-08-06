@@ -1,88 +1,175 @@
-import type { Browser } from "playwright";
+import {
+  renderErrorSchema,
+  renderRequestSchema,
+  type RenderErrorCode,
+  type RenderRequest,
+} from "@tuezday/contracts";
 
-// Deterministic template -> PNG renderer (Sprint 41 Part 3). This is the hot
-// path: placeholder substitution + a headless-chromium screenshot. No LLM, no
-// Open Design, no network beyond the local browser — the whole cost model
-// (umbrella Decision 3) rests on this staying pure.
+export type RenderInput = Omit<RenderRequest, "width" | "height"> &
+  Partial<Pick<RenderRequest, "width" | "height">>;
+export type Render = (input: RenderInput) => Promise<Uint8Array>;
 
-export interface RenderTemplate {
-  html: string;
-  css: string;
-  placeholders: string[];
-}
+const DEFAULT_RENDERER_URL = "http://127.0.0.1:7457";
+const DEFAULT_TIMEOUT_MS = 20_000;
+const MAX_PNG_BYTES = 20 * 1024 * 1024;
+const PNG_SIGNATURE = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 
-export interface RenderInput {
-  template: RenderTemplate;
-  values: Record<string, string>;
-  width?: number;
-  height?: number;
-}
-
-const HTML_ESCAPES: Record<string, string> = {
-  "&": "&amp;",
-  "<": "&lt;",
-  ">": "&gt;",
-  '"': "&quot;",
-  "'": "&#39;",
-};
-
-export function escapeHtml(value: string): string {
-  return value.replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch] ?? ch);
-}
-
-/**
- * Substitute values into {{placeholder}} tokens. Every declared placeholder
- * must have a value — a missing one throws rather than rendering half-filled
- * art. Values are HTML-escaped; extra values are ignored.
- */
-export function substituteTemplate(template: RenderTemplate, values: Record<string, string>): string {
-  const missing = template.placeholders.filter((name) => values[name] === undefined);
-  if (missing.length > 0) {
-    throw new Error(`Missing placeholder value(s): ${missing.join(", ")}`);
-  }
-  const html = template.html.replace(/\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}/g, (token, name: string) =>
-    values[name] === undefined ? token : escapeHtml(values[name]),
-  );
-  return [
-    "<!doctype html>",
-    "<html><head><meta charset=\"utf-8\"><style>",
-    "html,body{margin:0;padding:0;}",
-    template.css,
-    "</style></head><body>",
-    html,
-    "</body></html>",
-  ].join("\n");
-}
-
-// One lazily-launched browser per process; pages per render; closed on app
-// shutdown via closeRenderer(). Import of playwright is deferred so processes
-// that never render (tests, worker) don't pay the startup cost.
-let browserPromise: Promise<Browser> | null = null;
-
-async function getBrowser(): Promise<Browser> {
-  if (!browserPromise) {
-    browserPromise = import("playwright").then(({ chromium }) => chromium.launch());
-  }
-  return browserPromise;
-}
-
-export async function closeRenderer(): Promise<void> {
-  if (browserPromise) {
-    const browser = await browserPromise.catch(() => null);
-    browserPromise = null;
-    await browser?.close().catch(() => undefined);
+export class RendererError extends Error {
+  constructor(
+    readonly code: RenderErrorCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "RendererError";
   }
 }
 
-/** Render one slide to PNG bytes at the target dimensions (1080x1080 default). */
-export async function renderSlide({ template, values, width = 1080, height = 1080 }: RenderInput): Promise<Uint8Array> {
-  const content = substituteTemplate(template, values); // throws before any browser work
-  const browser = await getBrowser();
-  const page = await browser.newPage({ viewport: { width, height } });
+function rendererUrl(value: string): string {
+  let url: URL;
   try {
-    await page.setContent(content, { waitUntil: "networkidle" });
-    return await page.screenshot({ type: "png" });
-  } finally {
-    await page.close().catch(() => undefined);
+    url = new URL(value);
+  } catch {
+    throw new RendererError("renderer_unavailable", "The renderer URL is invalid.");
   }
+  const hostname = url.hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  const loopback = hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+  if (
+    (url.protocol !== "https:" && !(url.protocol === "http:" && loopback)) ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash
+  ) {
+    throw new RendererError(
+      "renderer_unavailable",
+      "The renderer URL must use HTTPS, except for loopback development.",
+    );
+  }
+  return url.toString().replace(/\/$/, "");
+}
+
+async function readBoundedPng(response: Response): Promise<Uint8Array> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    throw new RendererError("invalid_renderer_response", "The renderer returned no PNG body.");
+  }
+
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      byteLength += value.byteLength;
+      if (byteLength > MAX_PNG_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        throw new RendererError(
+          "invalid_renderer_response",
+          "The renderer returned an oversized PNG.",
+        );
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+
+  if (byteLength < PNG_SIGNATURE.byteLength) {
+    throw new RendererError("invalid_renderer_response", "The renderer returned invalid PNG bytes.");
+  }
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  if (!PNG_SIGNATURE.every((byte, index) => bytes[index] === byte)) {
+    throw new RendererError("invalid_renderer_response", "The renderer returned invalid PNG bytes.");
+  }
+  return bytes;
+}
+
+export function createRendererClient(options?: {
+  baseUrl?: string;
+  token?: string;
+  timeoutMs?: number;
+  fetcher?: typeof fetch;
+}): Render {
+  const baseUrl = rendererUrl(
+    options?.baseUrl ?? process.env.TUEZDAY_RENDERER_URL?.trim() ?? DEFAULT_RENDERER_URL,
+  );
+  const token = options?.token ?? process.env.TUEZDAY_RENDERER_TOKEN?.trim() ?? "";
+  const envTimeout = Number(process.env.TUEZDAY_RENDERER_TIMEOUT_MS);
+  const timeoutMs =
+    options?.timeoutMs ??
+    (Number.isSafeInteger(envTimeout) && envTimeout > 0 ? envTimeout : DEFAULT_TIMEOUT_MS);
+  const fetcher = options?.fetcher ?? fetch;
+
+  return async (input) => {
+    if (!token) {
+      throw new RendererError(
+        "renderer_unavailable",
+        "Image rendering is not configured. Set TUEZDAY_RENDERER_TOKEN on the API and renderer.",
+      );
+    }
+    const parsed = renderRequestSchema.safeParse(input);
+    if (!parsed.success) {
+      throw new RendererError(
+        "invalid_render_request",
+        parsed.error.issues.map((issue) => issue.message).join(" ").slice(0, 500),
+      );
+    }
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetcher(`${baseUrl}/render`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(parsed.data),
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const error = renderErrorSchema.safeParse(await response.json().catch(() => null));
+        if (error.success) throw new RendererError(error.data.error, error.data.message);
+        throw new RendererError(
+          "renderer_unavailable",
+          `The renderer returned HTTP ${response.status}.`,
+        );
+      }
+      if (response.headers.get("content-type")?.split(";", 1)[0]?.trim() !== "image/png") {
+        throw new RendererError(
+          "invalid_renderer_response",
+          "The renderer returned a non-PNG response.",
+        );
+      }
+      const advertisedHeader = response.headers.get("content-length");
+      if (advertisedHeader !== null) {
+        const advertisedLength = Number(advertisedHeader);
+        if (
+          !Number.isSafeInteger(advertisedLength) ||
+          advertisedLength < PNG_SIGNATURE.byteLength ||
+          advertisedLength > MAX_PNG_BYTES
+        ) {
+          throw new RendererError(
+            "invalid_renderer_response",
+            "The renderer returned an invalid PNG size.",
+          );
+        }
+      }
+      return await readBoundedPng(response);
+    } catch (error) {
+      if (error instanceof RendererError) throw error;
+      if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+        throw new RendererError("render_timeout", "The render exceeded its time limit.");
+      }
+      throw new RendererError("renderer_unavailable", "The renderer service is unavailable.");
+    } finally {
+      clearTimeout(timer);
+    }
+  };
 }
