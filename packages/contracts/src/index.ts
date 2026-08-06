@@ -43,8 +43,23 @@ export const TASK_TYPES = [
   // Sprint 41 (design layer): a rendered multi-image carousel derived from an
   // approved content draft. Never text-generated — the pipeline renders it.
   "instagram_carousel",
+  // Sprint 76 (chat foundations): a GTM strategy conversation. Not a generated
+  // artifact — it exists so a chat thread resolves its own row of the context
+  // matrix rather than borrowing an unrelated task's cell values. Excluded from
+  // GENERATION_TASK_TYPES, so it never appears in a "generate this" picker.
+  "gtm_conversation",
 ] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
+
+/**
+ * The task types a human can ask the platform to *generate* — every task type
+ * except the conversational one. Task-type pickers use this; the resolver, the
+ * context matrix and guidance still range over the full TASK_TYPES.
+ */
+export const GENERATION_TASK_TYPES = TASK_TYPES.filter(
+  (t) => t !== "gtm_conversation",
+) as readonly Exclude<TaskType, "gtm_conversation">[];
+export type GenerationTaskType = (typeof GENERATION_TASK_TYPES)[number];
 
 /** Channels a task can target. */
 export const CHANNELS = ["linkedin", "x", "email", "ads", "web", "pr", "instagram"] as const;
@@ -751,6 +766,10 @@ export const DEFAULT_TASK_DOC_MATRIX: Record<
   engagement_reply: {
     icp: { mode: "omit", reason: "The reply answers a specific person in a live thread — the conversation is the context." },
     history: { mode: "omit", reason: "Thread replies are voice + the conversation; company history is a distractor here." },
+  },
+  gtm_conversation: {
+    icp: { mode: "full", reason: "A strategy conversation is *about* the audience — segments, pains and objections are the substance, not background." },
+    history: { mode: "full", reason: "Planning the next launch means knowing every prior one: what shipped, what worked, what was learned." },
   },
 };
 
@@ -7465,121 +7484,87 @@ export const campaignOutreachInsightsSchema = funnelCountsSchema.extend({
 export type CampaignOutreachInsights = z.infer<typeof campaignOutreachInsightsSchema>;
 
 // ---------------------------------------------------------------------------
-// Chat copilot (Sprint 42, part 1 — grounded read-only Q&A)
+// Unified metric model (Sprint 55) — one fact table for every observed number.
+//
+// Three legacy stores measured time three different ways: a manual reading at
+// an instant, a cumulative snapshot at 24h/7d of age, and a per-day bucket.
+// These vocabularies make the differences explicit instead of implied, and the
+// classifier below is the load-bearing guard: cumulative and periodic values
+// must never be summed together. (`insights` violates that rule today —
+// spec §2.3 — and carries the one commented escape hatch while it migrates.)
 // ---------------------------------------------------------------------------
-
-export const CHAT_MESSAGE_ROLES = ["user", "assistant", "tool"] as const;
-export type ChatMessageRole = (typeof CHAT_MESSAGE_ROLES)[number];
-
-/** Where a grounded answer's claim came from — surfaced as an inspectable chip. */
-export const CHAT_CITATION_KINDS = ["brain", "evidence", "data"] as const;
-export type ChatCitationKind = (typeof CHAT_CITATION_KINDS)[number];
-
-export const chatCitationSchema = z.object({
-  kind: z.enum(CHAT_CITATION_KINDS),
-  /** Stable anchor: a brain section slug, an evidence document id, or a tool name. */
-  ref: z.string(),
-  label: z.string(),
-  detail: z.string().optional(),
-});
-export type ChatCitation = z.infer<typeof chatCitationSchema>;
-
-/** The write tools the copilot may propose (the write whitelist, Sprint 42 P2). */
-export const COPILOT_WRITE_TOOLS = ["draft_content", "draft_reply", "propose_action"] as const;
-export type CopilotWriteTool = (typeof COPILOT_WRITE_TOOLS)[number];
-
-/** The lifecycle of one copilot turn (Sprint 42 P2). */
-export const CHAT_TURN_STATUSES = ["answered", "awaiting_confirmation", "committed"] as const;
-export type ChatTurnStatus = (typeof CHAT_TURN_STATUSES)[number];
 
 /**
- * A proposed write, surfaced in the thread for confirmation. Nothing is written
- * until the user confirms with the server-issued `confirmToken`.
+ * Every metric key, defined once. No `replies`: it is derivable from
+ * `inboxItems` at any moment, so storing it as a fact would create a snapshot
+ * that silently goes stale — two answers to one question.
  */
-export const chatProposalSchema = z.object({
-  toolKind: z.enum(COPILOT_WRITE_TOOLS),
-  /** One-line description of what will be created (not executed). */
-  summary: z.string(),
-  /** The rendered content / action detail the user is confirming. */
-  preview: z.string(),
-  /** Server-issued nonce; the commit step must echo it. */
-  confirmToken: z.string(),
-  /** Present when the effective policy would block or require scheduling. */
-  policyNote: z.string().optional(),
-});
-export type ChatProposal = z.infer<typeof chatProposalSchema>;
+export const METRIC_KEYS = [
+  "impressions",
+  "clicks",
+  "likes",
+  "comments",
+  "shares",
+  "engagements",
+  "conversions",
+  "spend",
+] as const;
+export type MetricKey = (typeof METRIC_KEYS)[number];
 
-export const chatSessionSchema = z.object({
+/**
+ * point = a reading at capturedAt, covering no defined period (manual entry).
+ * 24h/7d = CUMULATIVE since the subject went live, observed at >= that age.
+ * 1d = that calendar day's total, periodStart = the day.
+ */
+export const METRIC_WINDOWS = ["point", "24h", "7d", "1d"] as const;
+export type MetricWindow = (typeof METRIC_WINDOWS)[number];
+
+/** No lane/sequence — nothing writes them. Subject-less manual rows are channel-level readings. */
+export const METRIC_SUBJECT_TYPES = ["publication", "campaign", "ad_campaign", "channel"] as const;
+export type MetricSubjectType = (typeof METRIC_SUBJECT_TYPES)[number];
+
+/** No `derived` — nothing derives in Sprint 55. `imported` covers the ads CSV path. */
+export const METRIC_SOURCES = ["manual", "captured", "synced", "imported"] as const;
+export type MetricSource = (typeof METRIC_SOURCES)[number];
+
+export type MetricWindowKindValue = "cumulative" | "periodic" | "point";
+
+/**
+ * Classify a window so a reader cannot mix incompatible time semantics by
+ * accident. Throws on unknown input rather than guessing — a wrong
+ * classification here silently corrupts every aggregate built on it.
+ */
+export function metricWindowKind(window: MetricWindow): MetricWindowKindValue {
+  switch (window) {
+    case "24h":
+    case "7d":
+      return "cumulative";
+    case "1d":
+      return "periodic";
+    case "point":
+      return "point";
+    default: {
+      const exhaustive: never = window;
+      throw new Error(`Unknown metric window: ${String(exhaustive)}`);
+    }
+  }
+}
+
+/** One observed number. `value` is an integer; money is cents, never floats. */
+export const metricSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
-  userId: z.string().uuid().nullable(),
-  title: z.string(),
-  createdAt: z.number().int(),
-  updatedAt: z.number().int(),
-});
-export type ChatSession = z.infer<typeof chatSessionSchema>;
-
-export const chatMessageSchema = z.object({
-  id: z.string().uuid(),
-  sessionId: z.string().uuid(),
-  workspaceId: z.string().uuid(),
-  role: z.enum(CHAT_MESSAGE_ROLES),
-  content: z.string(),
-  toolName: z.string().nullable(),
-  citations: z.array(chatCitationSchema),
-  /** A pending proposal offered by this assistant message (Sprint 42 P2). */
-  proposal: chatProposalSchema.nullable().optional(),
-  /** What a committed turn created, e.g. "draft:<id>" / "external_action:<id>". */
-  producedRef: z.string().nullable().optional(),
+  subjectType: z.enum(METRIC_SUBJECT_TYPES),
+  subjectId: z.string().min(1),
+  metricKey: z.enum(METRIC_KEYS),
+  value: z.number().int(),
+  window: z.enum(METRIC_WINDOWS),
+  periodStart: z.number().int(),
+  source: z.enum(METRIC_SOURCES),
+  capturedAt: z.number().int(),
   createdAt: z.number().int(),
 });
-export type ChatMessage = z.infer<typeof chatMessageSchema>;
-
-export const createChatSessionInputSchema = z.object({
-  title: z.string().max(200).optional(),
-});
-export type CreateChatSessionInput = z.infer<typeof createChatSessionInputSchema>;
-
-export const sendChatMessageInputSchema = z.object({
-  message: z.string().min(1).max(4000),
-});
-export type SendChatMessageInput = z.infer<typeof sendChatMessageInputSchema>;
-
-/** The outcome of one copilot turn: the grounded answer + its provenance. */
-export const chatTurnResultSchema = z.object({
-  answer: z.string(),
-  citations: z.array(chatCitationSchema),
-  toolCalls: z.array(z.object({ tool: z.string(), ok: z.boolean() })),
-  /** Turn lifecycle: a plain answer, a pending proposal, or a committed write. */
-  status: z.enum(CHAT_TURN_STATUSES).default("answered"),
-  /** Set when status is "awaiting_confirmation": the write awaiting a human yes. */
-  proposal: chatProposalSchema.nullable().optional(),
-  /** Set when status is "committed": the gated item that was created. */
-  producedRef: z.string().nullable().optional(),
-});
-export type ChatTurnResult = z.infer<typeof chatTurnResultSchema>;
-
-export const chatSessionDetailSchema = chatSessionSchema.extend({
-  messages: z.array(chatMessageSchema),
-});
-export type ChatSessionDetail = z.infer<typeof chatSessionDetailSchema>;
-
-// ---------------------------------------------------------------------------
-// Chat copilot (Sprint 42, part 2 — gated action execution)
-//
-// The copilot PROPOSES a write; a human CONFIRMS; the write only ever creates
-// a gated, not-yet-executed item (a draft in `pending_review`, or an external
-// action parked at `authorization_required`). Two independent gates stack:
-// the in-chat confirmation, then the existing approval/authorize gate. The
-// chat has no path to approve, authorize, or dispatch.
-// ---------------------------------------------------------------------------
-
-/** Confirm/decline a pending proposal. */
-export const confirmChatProposalInputSchema = z.object({
-  confirmToken: z.string().min(1),
-  decision: z.enum(["confirm", "discard"]),
-});
-export type ConfirmChatProposalInput = z.infer<typeof confirmChatProposalInputSchema>;
+export type Metric = z.infer<typeof metricSchema>;
 
 // ---------------------------------------------------------------------------
 // Agent runtime (Sprint 56 — Gateway v2 & AgentRunner)
@@ -7675,6 +7660,15 @@ export const READ_TOOL_NAMES = [
   "search_discovery_items",
   "get_prior_posts_on_topic",
   "safe_fetch_url",
+  // Sprint 76 — the analytics and inventory reads a strategy conversation
+  // needs. They join the shared registry rather than a chat-only list (D-76.2):
+  // a metric read is as useful to a critic or a pipeline step as it is to chat.
+  "list_campaigns",
+  "list_personas",
+  "get_campaign_insights",
+  "get_workspace_insights",
+  "get_metric_summary",
+  "get_sequence_funnel",
 ] as const;
 
 /**
@@ -7825,6 +7819,39 @@ export const toolInputSchemas = {
   }),
 
   // -------------------------------------------------------------------------
+  // Analytics & inventory reads (Sprint 76). The first two are how a model
+  // turns "the launch campaign" into an id it can pass to anything else; the
+  // rest answer performance questions from the Sprint 55 metric model.
+  // -------------------------------------------------------------------------
+  list_campaigns: z.object({
+    status: z.enum(CAMPAIGN_STATUSES).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
+  list_personas: z.object({
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
+  get_campaign_insights: z.object({
+    campaignId: z.string().min(1),
+  }),
+  get_workspace_insights: z.object({}),
+  /**
+   * A windowed rollup over the metric fact table. `window` is required, not
+   * defaulted: the Sprint 55 classifier forbids mixing cumulative and periodic
+   * semantics in one number, so the caller must say which question it is
+   * asking rather than have one picked for it.
+   */
+  get_metric_summary: z.object({
+    subjectType: z.enum(METRIC_SUBJECT_TYPES),
+    subjectId: z.string().min(1).optional(),
+    metricKeys: z.array(z.enum(METRIC_KEYS)).min(1).max(8).optional(),
+    window: z.enum(METRIC_WINDOWS),
+    sinceDays: z.number().int().min(1).max(365).optional(),
+  }),
+  get_sequence_funnel: z.object({
+    sequenceId: z.string().min(1),
+  }),
+
+  // -------------------------------------------------------------------------
   // Propose tools (Sprint 69). Every one takes a `rationale`: it is written to
   // the proposal ledger and is what the authorization queue shows a founder who
   // asks why the agent wanted this. Routing (connection, target, recipient) is
@@ -7881,6 +7908,224 @@ export const toolInputSchemas = {
     options: z.array(z.string().trim().min(1).max(80)).min(2).max(4).optional(),
   }),
 } as const satisfies Record<AgentToolName, z.ZodType<Record<string, unknown>>>;
+
+// ---------------------------------------------------------------------------
+// Chat (Sprint 42 → rebuilt in Sprint 76, "chat foundations")
+//
+// A thread is a GTM strategy conversation scoped to a workspace and optionally
+// a campaign / persona / channel. Its system prefix is a resolved context
+// bundle from packages/brain — the same resolver generation uses — not a
+// hand-written preamble, which is the difference between this and a generic
+// assistant pointed at an export.
+//
+// Every assistant turn is an `agent_run` driven by the AgentRunner over the
+// Sprint 57 registry, so the Agent Inspector works for chat with no new
+// tracing code. Sprint 76 offers `read` tools only: chat cannot change
+// anything, and the boundary is the registry's `access` field, not an
+// instruction in the prompt. The write half arrives in Sprint 78.
+// ---------------------------------------------------------------------------
+
+/**
+ * Transcript roles. `compaction` (Sprint 76) is a summary of older turns that
+ * replaced them in the model's message list — persisted as a visible message
+ * so a folded conversation never silently disappears.
+ */
+export const CHAT_MESSAGE_ROLES = ["user", "assistant", "tool", "compaction"] as const;
+export type ChatMessageRole = (typeof CHAT_MESSAGE_ROLES)[number];
+
+/**
+ * Hard per-thread lifetime token cap (Sprint 76, D-76.4). Enforced in chat
+ * rather than deferred to the Sprint 59 workspace budget: this is the runaway
+ * backstop for a single conversation, not the economic control.
+ */
+export const CHAT_THREAD_TOKEN_CAP = 250_000;
+
+/** Per-turn AgentRunner bounds for a chat turn. */
+export const CHAT_TURN_BOUNDS = {
+  maxSteps: 8,
+  maxTokens: 32_000,
+  timeoutMs: 120_000,
+} as const;
+
+/**
+ * Compaction fires when the estimated transcript exceeds this fraction of the
+ * per-turn token bound, and keeps this many newest messages verbatim.
+ */
+export const CHAT_COMPACTION_THRESHOLD = 0.6;
+export const CHAT_COMPACTION_KEEP_RECENT = 6;
+
+/** Bound on a thread's goal — one or two sentences of intent, not a brief. */
+export const CHAT_GOAL_MAX_CHARS = 500;
+
+/** Where a grounded answer's claim came from — surfaced as an inspectable chip. */
+export const CHAT_CITATION_KINDS = ["brain", "evidence", "data"] as const;
+export type ChatCitationKind = (typeof CHAT_CITATION_KINDS)[number];
+
+export const chatCitationSchema = z.object({
+  kind: z.enum(CHAT_CITATION_KINDS),
+  /** Stable anchor: a brain section slug, an evidence document id, or a tool name. */
+  ref: z.string(),
+  label: z.string(),
+  detail: z.string().optional(),
+});
+export type ChatCitation = z.infer<typeof chatCitationSchema>;
+
+/**
+ * A thread. `campaignId` / `personaId` / `channel` are its **scope binding**:
+ * they select the context bundle the conversation runs against, exactly as a
+ * generation request would. `goal` is the standing intent (Sprint 76 D-76.12) —
+ * derived once from the opening message and thereafter user-editable, never
+ * rewritten by the model.
+ */
+export const chatSessionSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  userId: z.string().uuid().nullable(),
+  title: z.string(),
+  goal: z.string(),
+  campaignId: z.string().uuid().nullable(),
+  personaId: z.string().uuid().nullable(),
+  channel: z.enum(CHANNELS).nullable(),
+  /** Lifetime totals, for the in-thread cost display and the token cap. */
+  totalInputTokens: z.number().int(),
+  totalOutputTokens: z.number().int(),
+  totalCostCents: z.number(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type ChatSession = z.infer<typeof chatSessionSchema>;
+
+export const chatMessageSchema = z.object({
+  id: z.string().uuid(),
+  sessionId: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  role: z.enum(CHAT_MESSAGE_ROLES),
+  content: z.string(),
+  toolName: z.string().nullable(),
+  citations: z.array(chatCitationSchema),
+  /** The agent_run behind this assistant turn — the Agent Inspector link. */
+  agentRunId: z.string().uuid().nullable(),
+  /** Per-turn metering, shown inline. */
+  costCents: z.number(),
+  inputTokens: z.number().int(),
+  outputTokens: z.number().int(),
+  /** Why the turn's run stopped; a turn that hit a bound says so in the UI. */
+  stopReason: z.enum(AGENT_STOP_REASONS).nullable(),
+  /**
+   * What a write turn created. Unwritten in Sprint 76 (chat is read-only) —
+   * Sprint 78 repopulates it, which is why the field and its column survive.
+   */
+  producedRef: z.string().nullable().optional(),
+  createdAt: z.number().int(),
+});
+export type ChatMessage = z.infer<typeof chatMessageSchema>;
+
+/** Thread scope, shared by create and patch. */
+const chatScopeFields = {
+  campaignId: z.string().uuid().nullable().optional(),
+  personaId: z.string().uuid().nullable().optional(),
+  channel: z.enum(CHANNELS).nullable().optional(),
+  goal: z.string().max(CHAT_GOAL_MAX_CHARS).optional(),
+};
+
+export const createChatSessionInputSchema = z.object({
+  title: z.string().max(200).optional(),
+  ...chatScopeFields,
+});
+export type CreateChatSessionInput = z.infer<typeof createChatSessionInputSchema>;
+
+export const updateChatSessionInputSchema = z.object({
+  title: z.string().max(200).optional(),
+  ...chatScopeFields,
+});
+export type UpdateChatSessionInput = z.infer<typeof updateChatSessionInputSchema>;
+
+export const sendChatMessageInputSchema = z.object({
+  message: z.string().min(1).max(4000),
+});
+export type SendChatMessageInput = z.infer<typeof sendChatMessageInputSchema>;
+
+/** The outcome of one turn: the grounded answer, its provenance and its cost. */
+export const chatTurnResultSchema = z.object({
+  answer: z.string(),
+  citations: z.array(chatCitationSchema),
+  toolCalls: z.array(z.object({ tool: z.string(), ok: z.boolean() })),
+  /** The persisted assistant message, so a client needs no refetch. */
+  message: chatMessageSchema,
+  agentRunId: z.string().uuid().nullable(),
+  stopReason: z.enum(AGENT_STOP_REASONS),
+  costCents: z.number(),
+  /** Thread lifetime after this turn — what the cap is measured against. */
+  threadTokens: z.number().int(),
+  threadCostCents: z.number(),
+});
+export type ChatTurnResult = z.infer<typeof chatTurnResultSchema>;
+
+export const chatSessionDetailSchema = chatSessionSchema.extend({
+  messages: z.array(chatMessageSchema),
+});
+export type ChatSessionDetail = z.infer<typeof chatSessionDetailSchema>;
+
+/**
+ * SSE frames streamed by POST .../messages (Sprint 76). The five middle kinds
+ * mirror AgentRunEvent so the client renders the runner's own step boundaries;
+ * `tool_call_end` deliberately drops the tool's result payload — results are
+ * large and the citation mapper already extracts what the client needs.
+ */
+export const CHAT_STREAM_EVENTS = [
+  "session",
+  "compaction",
+  "step_start",
+  "text_delta",
+  "tool_call_start",
+  "tool_call_end",
+  "step_end",
+  "message",
+  "done",
+  "error",
+] as const;
+export type ChatStreamEventKind = (typeof CHAT_STREAM_EVENTS)[number];
+
+export const chatStreamEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("session"), sessionId: z.string(), userMessageId: z.string() }),
+  z.object({
+    type: z.literal("compaction"),
+    messageId: z.string(),
+    summarizedThrough: z.string(),
+    agentRunId: z.string().nullable(),
+  }),
+  z.object({ type: z.literal("step_start"), stepIndex: z.number().int() }),
+  z.object({ type: z.literal("text_delta"), stepIndex: z.number().int(), text: z.string() }),
+  z.object({
+    type: z.literal("tool_call_start"),
+    stepIndex: z.number().int(),
+    callId: z.string(),
+    name: z.string(),
+  }),
+  z.object({
+    type: z.literal("tool_call_end"),
+    stepIndex: z.number().int(),
+    callId: z.string(),
+    ok: z.boolean(),
+    error: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("step_end"),
+    stepIndex: z.number().int(),
+    inputTokens: z.number().int(),
+    outputTokens: z.number().int(),
+  }),
+  z.object({ type: z.literal("message"), message: chatMessageSchema }),
+  z.object({
+    type: z.literal("done"),
+    stopReason: z.enum(AGENT_STOP_REASONS),
+    costCents: z.number(),
+    threadTokens: z.number().int(),
+    threadCostCents: z.number(),
+  }),
+  z.object({ type: z.literal("error"), error: z.string(), message: z.string() }),
+]);
+export type ChatStreamEvent = z.infer<typeof chatStreamEventSchema>;
 
 // ---------------------------------------------------------------------------
 // Agent proposals (Sprint 69)
@@ -8902,89 +9147,6 @@ export const brainDocDraftResponseSchema = z.object({
   content: z.string(),
 });
 export type BrainDocDraftResponse = z.infer<typeof brainDocDraftResponseSchema>;
-
-// ---------------------------------------------------------------------------
-// Unified metric model (Sprint 55) — one fact table for every observed number.
-//
-// Three legacy stores measured time three different ways: a manual reading at
-// an instant, a cumulative snapshot at 24h/7d of age, and a per-day bucket.
-// These vocabularies make the differences explicit instead of implied, and the
-// classifier below is the load-bearing guard: cumulative and periodic values
-// must never be summed together. (`insights` violates that rule today —
-// spec §2.3 — and carries the one commented escape hatch while it migrates.)
-// ---------------------------------------------------------------------------
-
-/**
- * Every metric key, defined once. No `replies`: it is derivable from
- * `inboxItems` at any moment, so storing it as a fact would create a snapshot
- * that silently goes stale — two answers to one question.
- */
-export const METRIC_KEYS = [
-  "impressions",
-  "clicks",
-  "likes",
-  "comments",
-  "shares",
-  "engagements",
-  "conversions",
-  "spend",
-] as const;
-export type MetricKey = (typeof METRIC_KEYS)[number];
-
-/**
- * point = a reading at capturedAt, covering no defined period (manual entry).
- * 24h/7d = CUMULATIVE since the subject went live, observed at >= that age.
- * 1d = that calendar day's total, periodStart = the day.
- */
-export const METRIC_WINDOWS = ["point", "24h", "7d", "1d"] as const;
-export type MetricWindow = (typeof METRIC_WINDOWS)[number];
-
-/** No lane/sequence — nothing writes them. Subject-less manual rows are channel-level readings. */
-export const METRIC_SUBJECT_TYPES = ["publication", "campaign", "ad_campaign", "channel"] as const;
-export type MetricSubjectType = (typeof METRIC_SUBJECT_TYPES)[number];
-
-/** No `derived` — nothing derives in Sprint 55. `imported` covers the ads CSV path. */
-export const METRIC_SOURCES = ["manual", "captured", "synced", "imported"] as const;
-export type MetricSource = (typeof METRIC_SOURCES)[number];
-
-export type MetricWindowKindValue = "cumulative" | "periodic" | "point";
-
-/**
- * Classify a window so a reader cannot mix incompatible time semantics by
- * accident. Throws on unknown input rather than guessing — a wrong
- * classification here silently corrupts every aggregate built on it.
- */
-export function metricWindowKind(window: MetricWindow): MetricWindowKindValue {
-  switch (window) {
-    case "24h":
-    case "7d":
-      return "cumulative";
-    case "1d":
-      return "periodic";
-    case "point":
-      return "point";
-    default: {
-      const exhaustive: never = window;
-      throw new Error(`Unknown metric window: ${String(exhaustive)}`);
-    }
-  }
-}
-
-/** One observed number. `value` is an integer; money is cents, never floats. */
-export const metricSchema = z.object({
-  id: z.string().uuid(),
-  workspaceId: z.string().uuid(),
-  subjectType: z.enum(METRIC_SUBJECT_TYPES),
-  subjectId: z.string().min(1),
-  metricKey: z.enum(METRIC_KEYS),
-  value: z.number().int(),
-  window: z.enum(METRIC_WINDOWS),
-  periodStart: z.number().int(),
-  source: z.enum(METRIC_SOURCES),
-  capturedAt: z.number().int(),
-  createdAt: z.number().int(),
-});
-export type Metric = z.infer<typeof metricSchema>;
 
 // ---------------------------------------------------------------------------
 // Sprint 65 — first agent-executed pipeline, measured (shadow A/B + rollout)

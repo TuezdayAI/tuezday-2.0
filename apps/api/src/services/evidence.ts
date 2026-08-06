@@ -248,12 +248,19 @@ export interface RetrievalContext {
   channel: Channel;
   signalContent?: string;
   campaignObjective?: string;
+  /**
+   * What a chat thread is currently about (Sprint 76) — its goal plus the
+   * latest user message. The most specific context there is: a conversation
+   * states its subject directly, where every other call site infers one.
+   */
+  conversation?: string;
 }
 
 /**
  * Compose the retrieval query from the most specific context available:
- * the signal being responded to beats the campaign objective beats the
- * workspace's `now`/soul docs. Deterministic and shown in the trace.
+ * the conversation's own subject beats the signal being responded to, which
+ * beats the campaign objective, which beats the workspace's `now`/soul docs.
+ * Deterministic and shown in the trace.
  */
 export function composeRetrievalQuery(
   db: Db,
@@ -261,7 +268,9 @@ export function composeRetrievalQuery(
   context: RetrievalContext,
 ): string {
   const parts: string[] = [];
-  if (context.signalContent?.trim()) {
+  if (context.conversation?.trim()) {
+    parts.push(context.conversation.trim().slice(0, QUERY_EXCERPT_CHARS));
+  } else if (context.signalContent?.trim()) {
     parts.push(context.signalContent.trim().slice(0, QUERY_EXCERPT_CHARS));
   } else if (context.campaignObjective?.trim()) {
     parts.push(context.campaignObjective.trim().slice(0, QUERY_EXCERPT_CHARS));

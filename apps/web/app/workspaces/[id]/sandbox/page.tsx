@@ -19,7 +19,7 @@ import {
   DEFAULT_TOKEN_BUDGET,
   isAdCreativeTaskType,
   OUTPUT_RATINGS,
-  TASK_TYPES,
+  GENERATION_TASK_TYPES,
   type Campaign,
   type Channel,
   type GenerationReview,
@@ -48,12 +48,15 @@ const TASK_LABELS: Record<TaskType, string> = {
   instagram_post: "Instagram post",
   engagement_reply: "Reply",
   instagram_carousel: "Instagram carousel",
+  // Labelled but never offered: the pickers iterate
+  // GENERATION_TASK_TYPES (Sprint 76, D-76.6).
+  gtm_conversation: "GTM conversation",
 };
 
 /** Ad creative variant sets are generated on the Ad creatives page; a media
  * pitch without a contact is meaningless (PR page). press_boilerplate stays —
  * it is a sandbox-shaped task. */
-const SANDBOX_TASK_TYPES = TASK_TYPES.filter(
+const SANDBOX_TASK_TYPES = GENERATION_TASK_TYPES.filter(
   // engagement_reply needs an inbound conversation — it's generated from the Inbox, not here.
   (t) => !isAdCreativeTaskType(t) && t !== "pr_pitch" && t !== "engagement_reply",
 );
