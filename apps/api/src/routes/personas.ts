@@ -20,6 +20,7 @@ import {
   toResolvePersona,
   updatePersona,
 } from "../services/personas";
+import { knobStatesForResolve } from "../services/knob-usage";
 import { resolveDraftAccount } from "../services/resolve-account";
 import {
   createPersonaSocialAccount,
@@ -211,7 +212,7 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
       campaignId: parsed.data.campaignId ?? null,
     });
 
-    return resolveContext({
+    const resolved = resolveContext({
       workspaceName: workspace.name,
       docs: contents,
       taskType: parsed.data.taskType,
@@ -237,5 +238,16 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
       evidenceExclusionReason: evidenceResolution.exclusionReason,
       tokenBudget: parsed.data.tokenBudget,
     });
+    // Sprint 71: the preview carries the nine knobs alongside the bundle, so
+    // the inspector can show what each one did to *this* resolve rather than
+    // making the reader infer it from section reasons.
+    return {
+      ...resolved,
+      knobs: knobStatesForResolve(db, request.params.id, resolved.sections, {
+        taskType: parsed.data.taskType,
+        channel: parsed.data.channel,
+        campaignId: parsed.data.campaignId ?? null,
+      }),
+    };
   });
 }
