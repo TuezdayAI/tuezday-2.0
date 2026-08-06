@@ -1,0 +1,21 @@
+# Replace @FOUNDER with the founder's GitHub handle before pushing.
+# Optionally add a second owner on the top line so the founder's own PRs are mergeable.
+
+*                                   @FOUNDER
+
+# Blast-radius surfaces — never merged without founder eyes.
+/packages/contracts/                @FOUNDER
+/apps/api/src/db/schema.ts          @FOUNDER
+/apps/api/src/app.ts                @FOUNDER
+/apps/api/src/auth/                 @FOUNDER
+/apps/api/drizzle/                  @FOUNDER
+
+# Guardrails — nobody weakens these in the same PR that needed them.
+/.github/                           @FOUNDER
+/.claude/                           @FOUNDER
+/.agents/                           @FOUNDER
+/lefthook.yml                       @FOUNDER
+/biome.json                         @FOUNDER
+/.dependency-cruiser.cjs            @FOUNDER
+/AGENTS.md                          @FOUNDER
+/CLAUDE.md                          @FOUNDER
