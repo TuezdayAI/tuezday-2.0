@@ -46,7 +46,7 @@ Vitest, existing `apps/worker` HTTP client.
 - Produces database tables `background_jobs`, `background_schedules`, and
   `background_workspace_dispatch` with inferred row types.
 
-- [ ] **Step 1: Write failing contract and migration tests**
+- [x] **Step 1: Write failing contract and migration tests**
 
 ```ts
 expect(BACKGROUND_JOB_KINDS).toEqual([
@@ -67,13 +67,13 @@ The migration test creates an in-memory database and asserts the three tables,
 the active-idempotency unique index, workspace foreign keys, and schedule
 uniqueness.
 
-- [ ] **Step 2: Run the tests and witness missing-export/table failures**
+- [x] **Step 2: Run the tests and witness missing-export/table failures**
 
 Run: `npx vitest run packages/contracts/test/background-jobs.test.ts apps/api/test/background-jobs-migration.test.ts`
 
 Expected: FAIL because the contracts and tables do not exist.
 
-- [ ] **Step 3: Implement discriminated contracts and Drizzle schema**
+- [x] **Step 3: Implement discriminated contracts and Drizzle schema**
 
 Use a strict Zod discriminated union. The thirteen recurring payloads are
 `{ kind, workspaceId }`; `launch_generate` additionally carries `launchId`,
@@ -85,14 +85,14 @@ and an `active_key` that is the idempotency key while active and null when
 terminal. A normal unique index on `active_key` is portable to PostgreSQL and
 allows unlimited null terminal rows without a partial-index dependency.
 
-- [ ] **Step 4: Generate and inspect migration artifacts**
+- [x] **Step 4: Generate and inspect migration artifacts**
 
 Run: `npm run db:generate -w apps/api -- --name sprint_73_durable_queue`
 
 Expected: creates migration 0079 and matching snapshot/journal entries. Inspect
 the SQL for all foreign keys, unique indexes, and non-null bounds before keeping it.
 
-- [ ] **Step 5: Run focused tests and typecheck**
+- [x] **Step 5: Run focused tests and typecheck**
 
 Run: `npx vitest run packages/contracts/test/background-jobs.test.ts apps/api/test/background-jobs-migration.test.ts`
 
@@ -100,7 +100,7 @@ Run: `npm run typecheck -w packages/contracts && npm run typecheck -w apps/api`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add packages/contracts apps/api/src/db/schema.ts apps/api/drizzle apps/api/test/background-jobs-migration.test.ts

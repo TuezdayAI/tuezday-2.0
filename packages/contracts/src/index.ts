@@ -5853,6 +5853,93 @@ export const generateLaunchInputSchema = z.object({
 });
 export type GenerateLaunchInput = z.infer<typeof generateLaunchInputSchema>;
 
+// ---------------------------------------------------------------------------
+// Durable background jobs (Sprint 73)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every recurring worker responsibility plus the first event-driven job. Keep
+ * this order stable: schedule reconciliation and operational output use it.
+ */
+export const BACKGROUND_JOB_KINDS = [
+  "discovery",
+  "automation",
+  "pipelines",
+  "preferences",
+  "learning",
+  "ads",
+  "cadence",
+  "publish",
+  "inbox",
+  "mailbox_inbox",
+  "outreach",
+  "sequence",
+  "evidence",
+  "launch_generate",
+] as const;
+export type BackgroundJobKind = (typeof BACKGROUND_JOB_KINDS)[number];
+
+export const BACKGROUND_RECURRING_JOB_KINDS = BACKGROUND_JOB_KINDS.filter(
+  (kind) => kind !== "launch_generate",
+) as readonly Exclude<BackgroundJobKind, "launch_generate">[];
+export type BackgroundRecurringJobKind =
+  (typeof BACKGROUND_RECURRING_JOB_KINDS)[number];
+
+export const BACKGROUND_JOB_STATUSES = [
+  "queued",
+  "running",
+  "succeeded",
+  "dead_letter",
+  "cancelled",
+] as const;
+export const backgroundJobStatusSchema = z.enum(BACKGROUND_JOB_STATUSES);
+export type BackgroundJobStatus = z.infer<typeof backgroundJobStatusSchema>;
+
+const backgroundDraftActorSchema = z
+  .object({
+    userId: z.string().uuid().nullable(),
+    label: z.string().trim().min(1).max(200),
+    human: z.boolean(),
+  })
+  .strict()
+  .superRefine((actor, ctx) => {
+    if (actor.human && actor.userId === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["userId"],
+        message: "A human actor must carry a user id",
+      });
+    }
+  });
+
+const recurringBackgroundJobPayloadSchema = z
+  .object({
+    kind: z.enum(BACKGROUND_RECURRING_JOB_KINDS as [
+      BackgroundRecurringJobKind,
+      ...BackgroundRecurringJobKind[],
+    ]),
+    workspaceId: z.string().uuid(),
+  })
+  .strict();
+
+const launchGenerationBackgroundJobPayloadSchema = z
+  .object({
+    kind: z.literal("launch_generate"),
+    workspaceId: z.string().uuid(),
+    launchId: z.string().uuid(),
+    input: generateLaunchInputSchema,
+    actor: backgroundDraftActorSchema,
+  })
+  .strict();
+
+export const backgroundJobPayloadSchema = z.union([
+  recurringBackgroundJobPayloadSchema,
+  launchGenerationBackgroundJobPayloadSchema,
+]);
+export type BackgroundJobPayload = z.infer<
+  typeof backgroundJobPayloadSchema
+>;
+
 export const dispatchChannelInputSchema = z.object({
   connectionId: z.string().uuid().optional(),
   media: z.array(launchMediaSchema).max(10, "At most 10 media items").optional(),
