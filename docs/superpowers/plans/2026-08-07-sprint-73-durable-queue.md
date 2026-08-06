@@ -381,7 +381,7 @@ git commit -m "feat(queue): migrate every worker domain to durable jobs"
 - Changes `POST .../launches/:launchId/generate` to return `202` with
   `{ launch, jobId }`.
 
-- [ ] **Step 1: Write failing async-launch tests**
+- [x] **Step 1: Write failing async-launch tests**
 
 Assert the route performs zero LLM calls, persists a queue job transactionally,
 returns 202, rejects duplicate active generation, and preserves actor/input.
@@ -389,13 +389,13 @@ Execute the queued job and assert generation reaches ready. Simulate a crash
 after one stored launch message, reclaim the job, and assert the second run
 skips completed units and creates no duplicate drafts/messages.
 
-- [ ] **Step 2: Run and witness synchronous-route failures**
+- [x] **Step 2: Run and witness synchronous-route failures**
 
 Run: `npx vitest run apps/api/test/launches.test.ts -t "queues launch generation|resumes launch generation"`
 
 Expected: FAIL because the route still waits for `generateLaunch`.
 
-- [ ] **Step 3: Split admission from resumable execution**
+- [x] **Step 3: Split admission from resumable execution**
 
 Admission validates draft/audience/sequence state, changes the launch to
 `generating`, and inserts the job in one transaction. Execution accepts both
@@ -403,19 +403,19 @@ Admission validates draft/audience/sequence state, changes the launch to
 launch/channel/recipient, skips stored units, and marks ready only after every
 required unit is terminal.
 
-- [ ] **Step 4: Update UI behavior**
+- [x] **Step 4: Update UI behavior**
 
 Show queued/generating state immediately and poll the open launch detail while
 status is `generating`; stop polling at ready or on unmount. Do not add a new
 progress endpoint.
 
-- [ ] **Step 5: Run launch/API/UI regression suites**
+- [x] **Step 5: Run launch/API/UI regression suites**
 
 Run: `npx vitest run apps/api/test/launches.test.ts apps/api/test/launch-sequences.test.ts apps/api/test/outbound-convergence.test.ts apps/api/test/external-action-messaging.test.ts apps/web/lib/launch-generation-view.test.ts`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api/src/services/launches.ts apps/api/src/routes/launches.ts apps/api/src/services/background-job-handlers.ts apps/api/test apps/web

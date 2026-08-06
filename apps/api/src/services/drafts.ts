@@ -131,11 +131,21 @@ export function draftForGeneration(
 
 /** Create a draft from a generation and submit it into review in one step. */
 export function submitDraft(db: Db, input: SubmitDraftInput, actor: DraftActor): Draft {
-  return db.transaction((tx) => {
-    const row = insertSubmittedDraft(tx, input, actor, null, false);
-    if (!row) throw new Error("draft_insert_failed");
-    return rowToDraft(row);
-  });
+  return db.transaction((tx) => submitDraftInTransaction(tx, input, actor));
+}
+
+/**
+ * Commit a submitted draft inside a caller-owned transaction. This keeps a
+ * generated launch unit (generation, draft, approval receipt, message) atomic.
+ */
+export function submitDraftInTransaction(
+  db: DbExecutor,
+  input: SubmitDraftInput,
+  actor: DraftActor,
+): Draft {
+  const row = insertSubmittedDraft(db, input, actor, null, false);
+  if (!row) throw new Error("draft_insert_failed");
+  return rowToDraft(row);
 }
 
 function insertSubmittedDraft(

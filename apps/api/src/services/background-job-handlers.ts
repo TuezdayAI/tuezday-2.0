@@ -43,6 +43,7 @@ import { emitEvent } from "./events";
 import type { ExternalActionRuntime } from "./external-action-coordinator";
 import { sweepEvidenceCandidates } from "./evidence";
 import { runInbox } from "./inbox";
+import { resumeLaunchGeneration } from "./launches";
 import { runSequences } from "./launch-sequences";
 import {
   NothingToLearnError,
@@ -369,5 +370,30 @@ export function createBackgroundJobHandlers(
     evidence: async (workspaceId) =>
       sweepEvidenceCandidates(deps.db, workspaceId),
   };
-  return createBackgroundJobHandlersFromOperations(operations, launchGenerate);
+  const launchGenerateHandler: BackgroundJobHandler = launchGenerate ?? (async (payload, context) => {
+    if (payload.kind !== "launch_generate") {
+      return { status: "dead_letter", error: "invalid_launch_generation_payload" };
+    }
+    const result = await resumeLaunchGeneration(
+      deps.db,
+      deps.llm,
+      deps.evidence,
+      payload.workspaceId,
+      payload.launchId,
+      payload.input,
+      payload.actor,
+      { signal: context.signal, heartbeat: context.heartbeat },
+    );
+    return result.ok
+      ? {
+          status: "complete",
+          result: {
+            launchId: result.detail.launch.id,
+            status: result.detail.launch.status,
+            messageCount: result.detail.launch.messageCount,
+          },
+        }
+      : { status: "dead_letter", error: result.error };
+  });
+  return createBackgroundJobHandlersFromOperations(operations, launchGenerateHandler);
 }

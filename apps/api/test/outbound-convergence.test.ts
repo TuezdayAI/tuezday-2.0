@@ -41,6 +41,7 @@ const fakeLlm: LlmGateway = {
     };
   },
 };
+const WORKER_TOKEN = "outbound-convergence-worker-token";
 
 class FakeOutboundEmailProvider implements OutboundEmailProvider {
   send = vi.fn(async (_message: OutboundEmailMessage) => ({
@@ -76,7 +77,13 @@ describe("outbound strategy convergence (Sprint 51)", () => {
     db = createTestDb();
     exporter = new SpyOutboundExporter();
     emailProvider = new FakeOutboundEmailProvider();
-    app = await buildAuthedApp({ db, llm: fakeLlm, exporter, outboundEmail: emailProvider });
+    app = await buildAuthedApp({
+      db,
+      llm: fakeLlm,
+      exporter,
+      outboundEmail: emailProvider,
+      workerToken: WORKER_TOKEN,
+    });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Converge" } })
     ).json().id;
@@ -182,7 +189,15 @@ describe("outbound strategy convergence (Sprint 51)", () => {
       url: `/workspaces/${workspaceId}/launches/${launchId}/generate`,
       payload: {},
     });
-    expect(generated.statusCode).toBe(200);
+    expect(generated.statusCode).toBe(202);
+    const tick = await app.inject({
+      method: "POST",
+      url: "/internal/background-jobs/tick",
+      headers: { authorization: `Bearer ${WORKER_TOKEN}` },
+      payload: {},
+    });
+    expect(tick.statusCode).toBe(200);
+    expect(tick.json()).toMatchObject({ succeeded: 1 });
     return { launchId, recipientEmail: lead.email };
   }
 

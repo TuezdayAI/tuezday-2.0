@@ -21,6 +21,7 @@ const fakeLlm: LlmGateway = {
 
 const T0 = new Date("2026-07-06T08:00:00Z");
 const HOUR = 60 * 60 * 1000;
+const WORKER_TOKEN = "external-action-messaging-worker-token";
 
 // ---------------------------------------------------------------------------
 // One fake fabric covering Reddit replies, LinkedIn broadcasts, and X DMs.
@@ -132,7 +133,12 @@ describe("external-action messaging boundary", () => {
     }
     db = createTestDb();
     state = fabricState();
-    app = await buildAuthedApp({ db, llm: fakeLlm, connectors: fakeFabric(state) });
+    app = await buildAuthedApp({
+      db,
+      llm: fakeLlm,
+      connectors: fakeFabric(state),
+      workerToken: WORKER_TOKEN,
+    });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Messaging" } })
     ).json().id;
@@ -344,7 +350,15 @@ describe("external-action messaging boundary", () => {
       url: `/workspaces/${workspaceId}/launches/${launchId}/generate`,
       payload: {},
     });
-    expect(gen.statusCode).toBe(200);
+    expect(gen.statusCode).toBe(202);
+    const tick = await app.inject({
+      method: "POST",
+      url: "/internal/background-jobs/tick",
+      headers: { authorization: `Bearer ${WORKER_TOKEN}` },
+      payload: {},
+    });
+    expect(tick.statusCode).toBe(200);
+    expect(tick.json()).toMatchObject({ succeeded: 1 });
     return launchId;
   }
 
