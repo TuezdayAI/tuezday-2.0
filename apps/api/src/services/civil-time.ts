@@ -13,6 +13,14 @@ export type WallClockResolution =
   | { ok: true; instantMs: number }
   | { ok: false; reason: "nonexistent_local_time" };
 
+export interface CivilDate {
+  year: number;
+  month: number;
+  day: number;
+  /** 0 = Sunday, matching JavaScript Date's weekday convention. */
+  weekday: number;
+}
+
 function matchesWallClock(
   value: Temporal.ZonedDateTime,
   input: WallClockInput,
@@ -60,5 +68,26 @@ export function zonedDayBounds(
   const current = Temporal.Instant.fromEpochMilliseconds(instantMs).toZonedDateTimeISO(timeZone);
   const start = current.startOfDay();
   const end = start.add({ days: 1 }).startOfDay();
+  return { start: start.epochMilliseconds, end: end.epochMilliseconds };
+}
+
+export function localDateAt(instantMs: number, timeZone: string): CivilDate {
+  const value = Temporal.Instant.fromEpochMilliseconds(instantMs).toZonedDateTimeISO(timeZone);
+  return {
+    year: value.year,
+    month: value.month,
+    day: value.day,
+    weekday: value.dayOfWeek % 7,
+  };
+}
+
+/** Exact bounds for a named civil date, including rare midnight transitions. */
+export function zonedDateBounds(
+  date: Pick<CivilDate, "year" | "month" | "day">,
+  timeZone: string,
+): { start: number; end: number } {
+  const plainDate = Temporal.PlainDate.from(date, { overflow: "reject" });
+  const start = plainDate.toZonedDateTime(timeZone);
+  const end = plainDate.add({ days: 1 }).toZonedDateTime(timeZone);
   return { start: start.epochMilliseconds, end: end.epochMilliseconds };
 }

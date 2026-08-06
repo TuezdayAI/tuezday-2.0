@@ -167,9 +167,9 @@ export function registerCadenceRoutes(
       if (!workspaceOr404(db, request.params.id, reply)) return reply;
       const cadence = getCadence(db, request.params.id, request.params.cadenceId);
       if (!cadence) return reply.status(404).send({ error: "cadence_not_found" });
-      const { filled } = await fillCadence(db, runtime, request.params.id, cadence, Date.now());
+      const result = await fillCadence(db, runtime, request.params.id, cadence, Date.now());
       const detail = getCadenceDetail(db, request.params.id, cadence, Date.now());
-      return { filled, cadence: detail };
+      return { ...result, cadence: detail };
     },
   );
 

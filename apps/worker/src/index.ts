@@ -1,4 +1,8 @@
-import { createWorkerClient } from "./client";
+import {
+  createWorkerClient,
+  summarizeCadenceRun,
+  type CadenceRunResult,
+} from "./client";
 import { loadRootEnv, parseWorkerConfig } from "./config";
 import { startSettledLoop } from "./scheduler";
 
@@ -143,7 +147,7 @@ async function runDuePublicationsForAllWorkspaces(): Promise<void> {
 }
 
 interface CadenceRunResponse {
-  results: Array<{ cadenceId: string; filled: number }>;
+  results: CadenceRunResult[];
 }
 
 /** Top up every active cadence's queue: approved drafts → scheduled posts. The
@@ -158,9 +162,16 @@ async function fillCadencesForAllWorkspaces(): Promise<void> {
       const runRes = await api(`/workspaces/${workspace.id}/cadences/run`, { method: "POST" });
       if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);
       const { results } = (await runRes.json()) as CadenceRunResponse;
-      const filled = results.reduce((sum, r) => sum + r.filled, 0);
-      if (filled === 0) continue; // nothing to slot — stay quiet
-      console.log(`[cadence] ${workspace.name}: ${filled} draft(s) slotted across ${results.length} cadence(s)`);
+      const { filled, issues } = summarizeCadenceRun(results);
+      if (filled === 0 && issues.length === 0) continue; // nothing to slot or report
+      console.log(
+        `[cadence] ${workspace.name}: ${filled} draft(s) slotted across ${results.length} cadence(s), ${issues.length} issue(s)`,
+      );
+      for (const issue of issues) {
+        console.warn(
+          `[cadence] ${workspace.name} / ${issue.cadenceId} / ${issue.code}: ${issue.message.replace(/\s+/g, " ")}`,
+        );
+      }
     } catch (err) {
       console.error(
         `[cadence] ${workspace.name}: failed —`,

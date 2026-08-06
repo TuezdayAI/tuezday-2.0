@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createWorkerClient } from "../src/client";
+import { createWorkerClient, summarizeCadenceRun } from "../src/client";
 import type { WorkerConfig } from "../src/config";
 
 const config: WorkerConfig = {
@@ -19,6 +19,31 @@ const config: WorkerConfig = {
 };
 
 describe("worker HTTP client", () => {
+  it("preserves cadence issues even when no draft was filled", () => {
+    expect(
+      summarizeCadenceRun([
+        {
+          cadenceId: "cadence-1",
+          filled: 0,
+          issues: [
+            {
+              code: "nonexistent_local_time",
+              cadenceId: "cadence-1",
+              draftId: null,
+              slot: null,
+              message: "02:30 does not exist on 2026-03-08 in America/New_York.",
+            },
+          ],
+        },
+      ]),
+    ).toEqual({
+      filled: 0,
+      issues: [
+        expect.objectContaining({ code: "nonexistent_local_time", cadenceId: "cadence-1" }),
+      ],
+    });
+  });
+
   it("retries bounded network failures during concurrent startup", async () => {
     const fetcher = vi
       .fn<typeof fetch>()

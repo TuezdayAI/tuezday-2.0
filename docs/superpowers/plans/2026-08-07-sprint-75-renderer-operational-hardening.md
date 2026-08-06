@@ -208,7 +208,7 @@ Run: `npm test -- civil-time connectors automation inbox launch-sequences sprint
 
 Expected: PASS, including migration application against a fresh in-memory DB.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add packages/contracts apps/api package-lock.json
@@ -228,23 +228,23 @@ git commit -m "feat(automation): enforce account-local social budgets" -m "Co-Au
 - Produces: `slotsBetweenDetailed(...)` and structured `FillResult.issues`.
 - Consumes: `resolveWallClock` and the canonical `preparePublicationAction` validation.
 
-- [ ] **Step 1: Write failing DST occurrence tests**
+- [x] **Step 1: Write failing DST occurrence tests**
 
 Cover `02:30 America/New_York` on the spring-forward Sunday as a structured skipped issue, and `01:30` on fall-back Sunday as exactly one earlier occurrence.
 
-- [ ] **Step 2: Implement detailed slot resolution**
+- [x] **Step 2: Implement detailed slot resolution**
 
 Keep `slotsBetween` as `slotsBetweenDetailed(...).slots` so calendar callers retain their existing shape.
 
-- [ ] **Step 3: Write failing fill-preflight tests**
+- [x] **Step 3: Write failing fill-preflight tests**
 
 Queue an invalid draft followed by a valid one. Assert the invalid draft creates no action/publication, the valid draft takes the open slot, and the response contains one bounded `publish_validation` issue.
 
-- [ ] **Step 4: Implement non-aborting preflight and worker reporting**
+- [x] **Step 4: Implement non-aborting preflight and worker reporting**
 
 Catch only canonical preparation/validation errors; unexpected errors still fail the task. Retry the same slot with the next candidate and return issues through the route/worker client.
 
-- [ ] **Step 5: Run cadence and worker tests**
+- [x] **Step 5: Run cadence and worker tests**
 
 Run: `npm test -- cadences worker`
 

@@ -12,6 +12,7 @@ import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric"
 import type { Db } from "../src/db";
 import { approvalDecisions, externalActionDecisions, publications } from "../src/db/schema";
 import type { LlmGateway } from "../src/llm/gateway";
+import { slotsBetweenDetailed } from "../src/services/cadences";
 import { applyDraftAction, submitDraft } from "../src/services/drafts";
 import { buildAuthedApp, createTestDb } from "./helpers";
 
@@ -24,6 +25,45 @@ const fakeLlm: LlmGateway = {
 // Monday 08:00:00 UTC — a fixed clock so slot timestamps are deterministic.
 const MONDAY_8AM_UTC = new Date("2026-07-06T08:00:00Z");
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+describe("cadence civil-time expansion", () => {
+  it("reports a spring-forward gap instead of shifting the slot", () => {
+    const result = slotsBetweenDetailed(
+      {
+        daysOfWeek: [0],
+        timeOfDay: "02:30",
+        timezone: "America/New_York",
+      },
+      Date.parse("2026-03-08T00:00:00.000Z"),
+      Date.parse("2026-03-09T00:00:00.000Z"),
+    );
+
+    expect(result.slots).toEqual([]);
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        code: "nonexistent_local_time",
+        localDate: "2026-03-08",
+        timeOfDay: "02:30",
+        timezone: "America/New_York",
+      }),
+    ]);
+  });
+
+  it("emits exactly the earlier instant for a fall-back overlap", () => {
+    const result = slotsBetweenDetailed(
+      {
+        daysOfWeek: [0],
+        timeOfDay: "01:30",
+        timezone: "America/New_York",
+      },
+      Date.parse("2026-11-01T00:00:00.000Z"),
+      Date.parse("2026-11-02T00:00:00.000Z"),
+    );
+
+    expect(result.slots).toEqual([Date.parse("2026-11-01T05:30:00.000Z")]);
+    expect(result.issues).toEqual([]);
+  });
+});
 
 // --- Minimal fake fabric with an in-memory Reddit behind the proxy ----------
 
@@ -562,6 +602,49 @@ describe("posting cadences", () => {
         url: `/workspaces/${workspaceId}/cadences/${cadenceId}/fill`,
       });
       expect(again.json().filled).toBe(0);
+    });
+
+    it("reports an invalid draft and fills the same slot with the next valid draft", async () => {
+      const connectionId = await connectReddit();
+      const campaignId = await createCampaign();
+      const invalidDraftId = seedApprovedDraft({
+        campaignId,
+        channel: "linkedin",
+        content: "x".repeat(40_001),
+      });
+      vi.advanceTimersByTime(1);
+      const validDraftId = seedApprovedDraft({
+        campaignId,
+        channel: "linkedin",
+        content: "Valid post title\nA valid body.",
+      });
+      const cadenceId = (
+        await createCadence(cadencePayload({ campaignId, connectionId, daysOfWeek: [1] }))
+      ).json().id;
+
+      const response = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/cadences/${cadenceId}/fill`,
+      });
+      expect(response.statusCode).toBe(200);
+      const body = response.json();
+      expect(body.filled).toBe(1);
+
+      const actions = await listPublishActions();
+      expect(actions).toHaveLength(1);
+      expect(actions[0]!.subject.id).toBe(validDraftId);
+      expect(body.issues).toEqual([
+        expect.objectContaining({
+          code: "publish_validation",
+          cadenceId,
+          draftId: invalidDraftId,
+          slot: actions[0]!.requestedFor,
+        }),
+      ]);
+      expect(body.issues[0].message.length).toBeLessThanOrEqual(500);
+      expect(
+        db.select().from(publications).where(eq(publications.draftId, invalidDraftId)).all(),
+      ).toEqual([]);
     });
 
     it("respects a persona filter and never fills a paused cadence", async () => {

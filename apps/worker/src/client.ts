@@ -5,6 +5,29 @@ export interface WorkspaceSummary {
   name: string;
 }
 
+export interface CadenceRunIssue {
+  code: "nonexistent_local_time" | "publish_validation";
+  cadenceId: string;
+  draftId: string | null;
+  slot: number | null;
+  message: string;
+}
+
+export interface CadenceRunResult {
+  cadenceId: string;
+  filled: number;
+  issues: CadenceRunIssue[];
+}
+
+export function summarizeCadenceRun(
+  results: CadenceRunResult[],
+): { filled: number; issues: CadenceRunIssue[] } {
+  return {
+    filled: results.reduce((sum, result) => sum + result.filled, 0),
+    issues: results.flatMap((result) => result.issues),
+  };
+}
+
 export interface WorkerClient {
   request(path: string, init?: RequestInit): Promise<Response>;
   listWorkspaces(): Promise<WorkspaceSummary[]>;
