@@ -8,12 +8,20 @@ import type {
   PublishDraftInput,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
-import { drafts, publications, type PublicationRow } from "../db/schema";
+import {
+  campaigns,
+  drafts,
+  externalActions,
+  postingCadences,
+  publications,
+  type PublicationRow,
+} from "../db/schema";
 import type { ConnectorFabric } from "../connectors/fabric";
 import { socialAdapterFor, type PublishMedia } from "../connectors/social";
 import { getConnection, providerByKey } from "./connections";
 import { emitEvent } from "./events";
 import { metricsByPublication } from "./inbox";
+import { getSocialAutomationSettings } from "./automation-settings";
 
 type Fetcher = typeof fetch;
 
@@ -182,6 +190,76 @@ export async function attemptPublication(
   workspaceId: string,
   publicationId: string,
 ): Promise<Publication> {
+  return (await attemptPublicationDetailed(db, fabric, fetcher, workspaceId, publicationId))
+    .publication;
+}
+
+export type PublicationRunState = "published" | "processing" | "blocked" | "failed";
+
+interface PublicationAttemptResult {
+  publication: Publication;
+  state: PublicationRunState;
+  error?: string;
+}
+
+/**
+ * The durable action payload is the strongest automation signal. Cadence and
+ * campaign lineage keeps pre-action receipts protected during the migration.
+ */
+function automatedPublication(db: Db, row: PublicationRow): boolean {
+  let campaignId: string | null = null;
+  if (row.externalActionId) {
+    const action = db
+      .select({ payloadJson: externalActions.payloadJson, campaignId: externalActions.campaignId })
+      .from(externalActions)
+      .where(
+        and(
+          eq(externalActions.workspaceId, row.workspaceId),
+          eq(externalActions.id, row.externalActionId),
+        ),
+      )
+      .get();
+    if (action) {
+      campaignId = action.campaignId;
+      try {
+        const payload = JSON.parse(action.payloadJson) as { automated?: unknown };
+        if (typeof payload.automated === "boolean") return payload.automated;
+      } catch {
+        // Fall through to persisted cadence/campaign lineage for older rows.
+      }
+    }
+  }
+  if (!campaignId && row.cadenceId) {
+    campaignId =
+      db
+        .select({ campaignId: postingCadences.campaignId })
+        .from(postingCadences)
+        .where(
+          and(
+            eq(postingCadences.workspaceId, row.workspaceId),
+            eq(postingCadences.id, row.cadenceId),
+          ),
+        )
+        .get()?.campaignId ?? null;
+  }
+  if (!campaignId) return false;
+  return (
+    db
+      .select({ automationMode: campaigns.automationMode })
+      .from(campaigns)
+      .where(and(eq(campaigns.workspaceId, row.workspaceId), eq(campaigns.id, campaignId)))
+      .get()?.automationMode === "scheduled_auto"
+  );
+}
+
+/** The classified attempt used by scheduled runs and asynchronous providers. */
+async function attemptPublicationDetailed(
+  db: Db,
+  fabric: ConnectorFabric,
+  fetcher: Fetcher,
+  workspaceId: string,
+  publicationId: string,
+): Promise<PublicationAttemptResult> {
   const row = db.select().from(publications).where(eq(publications.id, publicationId)).get()!;
   const draft = db.select().from(drafts).where(eq(drafts.id, row.draftId)).get();
   const connection = getConnection(db, workspaceId, row.connectionId);
@@ -197,6 +275,15 @@ export async function attemptPublication(
       throw new Error(
         `The ${row.providerKey} connection is not available — reconnect it on the Integrations page.`,
       );
+    }
+    // This is deliberately the final synchronous check before the adapter.
+    // Earlier scheduling/action guards can race with an emergency stop.
+    if (automatedPublication(db, row) && getSocialAutomationSettings(db, workspaceId).killSwitch) {
+      return {
+        publication: rowToPublication(row),
+        state: "blocked",
+        error: "kill_switch_on",
+      };
     }
     const result = await adapter.publishPost({
       target: row.target,
@@ -223,22 +310,29 @@ export async function attemptPublication(
       title: row.title,
       url: result.url,
     });
+    return { publication: getPublication(db, workspaceId, row.id)!, state: "published" };
   } catch (err) {
+    const error = (err instanceof Error ? err.message : String(err)).slice(0, 500);
     db.update(publications)
       .set({
         status: "failed",
-        lastError: (err instanceof Error ? err.message : String(err)).slice(0, 500),
+        lastError: error,
         updatedAt: Date.now(),
       })
       .where(eq(publications.id, row.id))
       .run();
+    return {
+      publication: getPublication(db, workspaceId, row.id)!,
+      state: "failed",
+      error,
+    };
   }
-  return getPublication(db, workspaceId, row.id)!;
 }
 
 export interface PublishRunResult {
   id: string;
   ok: boolean;
+  state: PublicationRunState;
   error?: string;
 }
 
@@ -264,12 +358,13 @@ export async function runDuePublications(
 
   const results: PublishRunResult[] = [];
   for (const row of due) {
-    const outcome = await attemptPublication(db, fabric, fetcher, workspaceId, row.id);
-    results.push(
-      outcome.status === "published"
-        ? { id: row.id, ok: true }
-        : { id: row.id, ok: false, error: outcome.lastError ?? "unknown error" },
-    );
+    const outcome = await attemptPublicationDetailed(db, fabric, fetcher, workspaceId, row.id);
+    results.push({
+      id: row.id,
+      ok: outcome.state === "published",
+      state: outcome.state,
+      ...(outcome.error ? { error: outcome.error } : {}),
+    });
   }
   return results;
 }

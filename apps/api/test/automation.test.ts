@@ -11,12 +11,13 @@ import {
 import type { TuezdayApp } from "../src/app";
 import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric";
 import type { Db } from "../src/db";
-import { externalActionDecisions, taskLeases } from "../src/db/schema";
+import { externalActionDecisions, publications, taskLeases } from "../src/db/schema";
 import type { EvidenceStore } from "../src/evidence/store";
 import type { LlmGateway } from "../src/llm/gateway";
 import { runAutomationWithLease } from "../src/services/automation";
 import { applyDraftAction, listDecisions, listDrafts, submitDraft } from "../src/services/drafts";
 import { insertSignalMatch } from "../src/services/matching";
+import { getPublication } from "../src/services/publications";
 import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 const fakeLlm: LlmGateway = {
@@ -708,6 +709,124 @@ describe("social automation", () => {
       url: `/workspaces/${workspaceId}/cadences/${manualCadence.id}/fill`,
     });
     expect(manualFill.json().filled).toBe(1);
+  });
+
+  it("re-checks the kill switch at provider dispatch and resumes the same receipt once", async () => {
+    const connectionId = await connectReddit();
+
+    const autoCampaignId = await createCampaign(["linkedin"], "Auto dispatch");
+    await setAutomation(autoCampaignId, "scheduled_auto");
+    const autoDraftId = seedApprovedDraft(autoCampaignId);
+    const autoCadence = (
+      await createCadence({
+        campaignId: autoCampaignId,
+        connectionId,
+        name: "Auto dispatch cadence",
+      })
+    ).json();
+
+    const manualCampaignId = await createCampaign(["linkedin"], "Manual dispatch");
+    const manualDraftId = seedApprovedDraft(manualCampaignId);
+    const manualCadence = (
+      await createCadence({
+        campaignId: manualCampaignId,
+        connectionId,
+        name: "Manual dispatch cadence",
+      })
+    ).json();
+
+    const autoPublicationId = randomUUID();
+    const manualPublicationId = randomUUID();
+    const now = Date.now();
+    db.insert(publications)
+      .values([
+        {
+          id: autoPublicationId,
+          workspaceId,
+          draftId: autoDraftId,
+          externalActionId: null,
+          connectionId,
+          providerKey: "reddit",
+          target: "test",
+          title: "Auto receipt",
+          mediaJson: null,
+          cadenceId: autoCadence.id,
+          status: "scheduled",
+          scheduledFor: now,
+          publishedAt: null,
+          externalId: null,
+          externalUrl: null,
+          lastError: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          id: manualPublicationId,
+          workspaceId,
+          draftId: manualDraftId,
+          externalActionId: null,
+          connectionId,
+          providerKey: "reddit",
+          target: "test",
+          title: "Manual receipt",
+          mediaJson: null,
+          cadenceId: manualCadence.id,
+          status: "scheduled",
+          scheduledFor: now,
+          publishedAt: null,
+          externalId: null,
+          externalUrl: null,
+          lastError: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ])
+      .run();
+
+    // The receipts already exist: this is the scheduling/dispatch race the
+    // earlier guardrails cannot close. Manual publishing remains available.
+    await app.inject({
+      method: "PATCH",
+      url: `/workspaces/${workspaceId}/automation/settings`,
+      payload: { killSwitch: true },
+    });
+    const stopped = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/publish/run`,
+    });
+    expect(stopped.statusCode).toBe(200);
+    expect(stopped.json().results).toEqual(
+      expect.arrayContaining([
+        { id: autoPublicationId, ok: false, state: "blocked", error: "kill_switch_on" },
+        { id: manualPublicationId, ok: true, state: "published" },
+      ]),
+    );
+    expect(state.posts.map((post) => post.title)).toEqual(["Manual receipt"]);
+    expect(getPublication(db, workspaceId, autoPublicationId)).toMatchObject({
+      status: "scheduled",
+      lastError: null,
+    });
+
+    await app.inject({
+      method: "PATCH",
+      url: `/workspaces/${workspaceId}/automation/settings`,
+      payload: { killSwitch: false },
+    });
+    const resumed = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/publish/run`,
+    });
+    expect(resumed.json().results).toEqual([
+      { id: autoPublicationId, ok: true, state: "published" },
+    ]);
+    expect(state.posts.map((post) => post.title)).toEqual(["Manual receipt", "Auto receipt"]);
+
+    const idempotent = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/publish/run`,
+    });
+    expect(idempotent.json().results).toEqual([]);
+    expect(state.posts).toHaveLength(2);
   });
 
   // Sprint 52 follow-up — the kill switch is a *reversible* emergency stop. It

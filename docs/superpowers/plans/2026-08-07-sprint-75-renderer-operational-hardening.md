@@ -250,7 +250,7 @@ Run: `npm test -- cadences worker`
 
 Expected: PASS with existing idempotency and withdrawal tests unchanged.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api/src/services/cadences.ts apps/api/src/routes/cadences.ts apps/api/test/cadences.test.ts apps/worker
@@ -267,15 +267,15 @@ git commit -m "fix(cadence): reject invalid and nonexistent slots before schedul
 **Interfaces:**
 - Produces: `PublishRunResult.state: "published" | "processing" | "blocked" | "failed"` and optional stable error.
 
-- [ ] **Step 1: Write a failing race-window test**
+- [x] **Step 1: Write a failing race-window test**
 
 Schedule an automated publication, flip the kill switch after scheduling, run the due path, and assert zero provider calls plus unchanged `scheduled` status. Lift the switch and assert the same receipt publishes exactly once.
 
-- [ ] **Step 2: Implement automated-lineage detection and last-moment guard**
+- [x] **Step 2: Implement automated-lineage detection and last-moment guard**
 
 Reload settings immediately before `adapter.publishPost`. Return a retryable blocked outcome without changing the receipt to failed.
 
-- [ ] **Step 3: Run focused tests**
+- [x] **Step 3: Run focused tests**
 
 Run: `npm test -- automation publish external-action-publication`
 
