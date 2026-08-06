@@ -120,7 +120,7 @@ git commit -m "feat(queue): add durable job schema and contracts"
   `getBackgroundQueueStats`.
 - Produces `BackgroundJobClaim` carrying non-null lease owner/version/expiry.
 
-- [ ] **Step 1: Write failing repository tests**
+- [x] **Step 1: Write failing repository tests**
 
 Cover deterministic enqueue deduplication, future availability, fair first
 pass across workspaces, per-workspace concurrency, expired-lease reclaim,
@@ -136,40 +136,40 @@ expect(completeBackgroundJob(db, staleClaim, {})).toBe(false);
 expect(completeBackgroundJob(db, currentClaim, {})).toBe(true);
 ```
 
-- [ ] **Step 2: Run and witness missing repository failures**
+- [x] **Step 2: Run and witness missing repository failures**
 
 Run: `npx vitest run apps/api/test/background-jobs.test.ts`
 
 Expected: FAIL because `background-jobs.ts` does not exist.
 
-- [ ] **Step 3: Implement transactional enqueue and claim**
+- [x] **Step 3: Implement transactional enqueue and claim**
 
 Use `DATABASE_NOW_MS` for lease comparisons. Claim candidates in a SQLite
 transaction, derive live counts from unexpired running jobs, order workspaces by
 persisted `lastDispatchedAt`, claim one per workspace per pass, and update each
 workspace dispatch row only after a successful compare-and-swap.
 
-- [ ] **Step 4: Implement fenced lifecycle transitions**
+- [x] **Step 4: Implement fenced lifecycle transitions**
 
 Every heartbeat and terminal update matches `(id, leaseOwner, leaseVersion)` and
 requires an unexpired lease. Retry clears lease fields, increments no additional
 attempt beyond the claim count, computes deterministic capped backoff, and
 retains the active key. Terminal transitions null `activeKey`.
 
-- [ ] **Step 5: Implement bounded query/stats/requeue operations**
+- [x] **Step 5: Implement bounded query/stats/requeue operations**
 
 Stats report runnable depth, delayed retries (`attempt > 0` and future
 availability), running, dead letters, oldest runnable age, and counts by kind.
 Requeue accepts only a dead letter and creates a fresh active attempt without
 deleting history.
 
-- [ ] **Step 6: Run focused tests and refactor green code**
+- [x] **Step 6: Run focused tests and refactor green code**
 
 Run: `npx vitest run apps/api/test/background-jobs.test.ts`
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/api/src/services/background-jobs.ts apps/api/test/background-jobs.test.ts
