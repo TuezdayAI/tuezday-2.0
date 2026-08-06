@@ -42,6 +42,10 @@ function tsFiles(dir: string): string[] {
 const NON_NULL_ALLOWED = new Set([
   path.join("db", "schema.ts"),
   path.join("services", "matching.ts"),
+  // Sprint 61: campaign_opportunities.suggestedPersonaId is a NEW stored
+  // recommendation column (design §8.6), unrelated to the retired legacy
+  // routing columns on signals/discovered_items this guard protects.
+  path.join("services", "opportunities.ts"),
 ]);
 
 describe("the legacy suggested_* columns have no writers (Sprint 53)", () => {

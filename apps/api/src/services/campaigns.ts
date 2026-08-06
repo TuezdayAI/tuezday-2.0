@@ -92,6 +92,12 @@ export function createCampaign(db: Db, workspaceId: string, input: UpsertCampaig
       // campaign edit; a new campaign starts from the input defaults (manual / null).
       automationMode: input.automationMode,
       autoDailyCap: input.autoDailyCap,
+      // Sprint 61 routing policy starts from the schema defaults (D-61.1).
+      routingBand: "review",
+      routingMinFit: 70,
+      routingMinConfidence: 60,
+      routingMinTrust: 0,
+      routingExclusionsJson: "[]",
       currentPlanRevisionId: null,
       createdAt: now,
       updatedAt: now,

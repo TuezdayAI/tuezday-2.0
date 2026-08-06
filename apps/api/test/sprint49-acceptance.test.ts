@@ -55,6 +55,10 @@ const acceptancePolicy: DiscoveryOperatorPolicy = {
   matchingTimeoutMs: 120_000,
   leaseMs: 300_000,
   heartbeatMs: 60_000,
+  maxRoutingStoriesPerTick: 10,
+  routingTimeoutMs: 120_000,
+  maxPackagesPerTick: 10,
+  packageTimeoutMs: 120_000,
 };
 
 interface ProviderStats {
@@ -195,6 +199,12 @@ describe("Sprint 49 founder acceptance", () => {
           };
         },
         async generate({ prompt }) {
+          // Sprint 61 shadow routing runs inside the discovery tick; this
+          // acceptance choreography is about jobs/matching/automation, so the
+          // matcher finds no relevant campaign and stays out of the way.
+          if (prompt.includes("CANDIDATE CAMPAIGNS:")) {
+            return { text: "[]", model: "fixture", provider: "fixture", durationMs: 1 };
+          }
           if (prompt.includes("DISCOVERED ITEMS:")) {
             matchingStarted.resolve(undefined);
             await releaseMatching.promise;
