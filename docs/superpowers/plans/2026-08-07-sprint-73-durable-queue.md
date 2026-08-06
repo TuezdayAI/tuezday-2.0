@@ -441,7 +441,7 @@ git commit -m "feat(launches): generate asynchronously on durable queue"
 - Worker config becomes `{ internalApiUrl, token, queuePollMs }`.
 - Worker client exposes `runBackgroundJobsTick()` only.
 
-- [ ] **Step 1: Write failing worker and acceptance tests**
+- [x] **Step 1: Write failing worker and acceptance tests**
 
 Assert worker startup creates one settled loop named `background-jobs`, client
 traffic is only `POST /internal/background-jobs/tick`, and all thirteen old
@@ -449,43 +449,45 @@ interval fields/functions are absent. Acceptance tests cover two-workspace
 fairness, crash/lease reclaim, retry-to-success, retry-to-dead-letter, explicit
 requeue, and schedule persistence across app restart.
 
-- [ ] **Step 2: Run and witness legacy-worker failures**
+- [x] **Step 2: Run and witness legacy-worker failures**
 
 Run: `npx vitest run apps/worker/test apps/api/test/sprint73-acceptance.test.ts`
 
 Expected: FAIL because thirteen loops and maintenance client methods remain.
 
-- [ ] **Step 3: Replace worker orchestration with one loop**
+- [x] **Step 3: Replace worker orchestration with one loop**
 
 Keep `loadRootEnv`, strict URL/token validation, `startSettledLoop`, structured
 error logging, and graceful SIGINT/SIGTERM shutdown. Remove every domain API
 shape and interval from the worker package.
 
-- [ ] **Step 4: Close deferred records and document operations**
+- [x] **Step 4: Close deferred records and document operations**
 
-Move #2, #4, #8, #12, and #19 from open to resolved with the Sprint 73 queue
-implementation. Document worker/API process requirements, queue policy
-variables, dead-letter inspection/requeue, and rollout metrics.
+Move #4, #8, #12, and #19 from open to resolved with the recurring queue
+implementation. Move #2 only after Task 6 completes the launch event-job path.
+Document worker/API process requirements, queue policy variables, dead-letter
+inspection/requeue, and rollout metrics.
 
-- [ ] **Step 5: Run focused acceptance and all worker tests**
+- [x] **Step 5: Run focused acceptance and all worker tests**
 
 Run: `npx vitest run apps/worker/test apps/api/test/sprint73-acceptance.test.ts`
 
 Expected: PASS.
 
-- [ ] **Step 6: Run full verification**
+- [x] **Step 6: Run task-scoped verification**
 
-Run: `npm test`
+Run: `npx vitest run apps/worker/test apps/api/test/sprint73-acceptance.test.ts apps/api/test/internal-tasks.test.ts`
 
-Run: `npm run typecheck`
+Run: `npm run typecheck --workspace=@tuezday/worker`
 
-Run: `npm run build`
+Run: `npm run typecheck --workspace=@tuezday/api`
 
 Run: `git diff --check`
 
-Expected: all commands exit 0 with no failures.
+Expected: all commands exit 0 with no failures. Repository-wide test, typecheck,
+and build remain the fresh Task 8 completion gate after launch cutover.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add apps/worker apps/api/test/sprint73-acceptance.test.ts README.md .env.example docs/deferred-improvements.md docs/superpowers/plans/2026-08-07-sprint-73-durable-queue.md

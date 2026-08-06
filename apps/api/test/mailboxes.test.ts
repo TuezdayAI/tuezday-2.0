@@ -542,14 +542,12 @@ describe("outreach mailboxes (Sprint 47)", () => {
     });
   });
 
-  // --- Worker actor ---------------------------------------------------------
+  // --- Founder run-now ------------------------------------------------------
 
-  it("runs the mailbox-inbox tick as the system actor (worker token)", async () => {
-    const rawApp = app as unknown as { inject: TuezdayApp["inject"] };
-    const res = await rawApp.inject({
+  it("keeps founder-triggered mailbox polling available", async () => {
+    const res = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/mailbox-inbox/run`,
-      headers: { authorization: `Bearer ${WORKER_TOKEN}` },
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().ranAt).toBeTruthy();

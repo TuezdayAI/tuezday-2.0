@@ -63,20 +63,6 @@ const PUBLIC_ROUTES = new Set([
   "POST /telegram/webhook",
 ]);
 
-const WORKER_ROUTE_ALLOWLIST = new Set([
-  "GET /workspaces",
-  "GET /workspaces/:id/learning/syntheses",
-  "POST /workspaces/:id/learning/synthesize",
-  "POST /workspaces/:id/ads/sync",
-  "POST /workspaces/:id/publish/run",
-  "POST /workspaces/:id/cadences/run",
-  "POST /workspaces/:id/inbox/run",
-  "POST /workspaces/:id/mailbox-inbox/run",
-  "POST /workspaces/:id/outreach/run",
-  "POST /workspaces/:id/sequences/run",
-  "POST /workspaces/:id/evidence/candidates/sweep",
-]);
-
 export function secureWorkerTokenEqual(
   supplied: string,
   expected: string,
@@ -131,29 +117,19 @@ export function registerAuthGuard(app: FastifyInstance, db: Db, workerToken?: st
     }
 
     if (workerAuthenticated) {
-      if (!WORKER_ROUTE_ALLOWLIST.has(`${request.method} ${route}`)) {
-        return reply.status(403).send({ error: "forbidden" });
-      }
-      request.actor = {
-        userId: null,
-        label: "system",
-        email: null,
-        system: true,
-      };
-    } else {
-      const user = sessionUser(db, token);
-      if (!user) return reply.status(401).send({ error: "unauthenticated" });
-      request.actor = {
-        userId: user.id,
-        label: user.name || user.email,
-        email: user.email,
-        system: false,
-      };
+      return reply.status(403).send({ error: "forbidden" });
     }
+    const user = sessionUser(db, token);
+    if (!user) return reply.status(401).send({ error: "unauthenticated" });
+    request.actor = {
+      userId: user.id,
+      label: user.name || user.email,
+      email: user.email,
+      system: false,
+    };
 
     const params = request.params as { id?: string };
     if (route.startsWith("/workspaces/:id") && params.id) {
-      if (request.actor.system) return;
       if (!getWorkspace(db, params.id)) {
         return reply.status(404).send({ error: "workspace_not_found" });
       }

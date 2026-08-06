@@ -31,15 +31,6 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
 - **Trigger to revisit:** When founders publish reels regularly and the retry step becomes annoying.
 - **Origin:** Sprint 26.
 
-### 4. Cadence fill is synchronous on a worker tick
-- **What we shipped (Sprint 27):** Each fill creates scheduled `publication` rows inline (one round
-  trip per draft), bounded to a 14-day horizon and run every few minutes by the worker. Fine for modest
-  volumes.
-- **The better version:** Run fill on a dedicated scheduler with sub-minute precision and back-pressure
-  for large fan-out.
-- **Trigger to revisit:** Large cadence fan-out or a need for sub-minute precision.
-- **Origin:** Sprint 27.
-
 ### 5. DST-gap wall-clock times resolve to the adjacent valid instant
 - **What we shipped (Sprint 27):** The slot math handles normal DST transitions, but the ~1 hour per
   year that *doesn't exist* locally (spring-forward gap) is mapped to the nearest valid instant rather
@@ -65,15 +56,6 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
   depend on this seam.
 - **Origin:** Sprint 27.
 
-### 8. Automation runs synchronously on a worker tick
-- **What we shipped (Sprint 28):** `runAutomation` loops each active automated campaign × channel ×
-  new signal and calls the LLM inline (one generation per draft), bounded by new-signal volume and run
-  every few minutes by the worker. Fine for modest volumes.
-- **The better version:** Enqueue generation on a worker queue with back-pressure and progress, so a
-  burst of signals across many campaigns doesn't block a single request.
-- **Trigger to revisit:** When automated campaigns × channels × signal volume makes a run slow.
-- **Origin:** Sprint 28.
-
 ### 9. Auto-post guardrail caps are per UTC day
 - **What we shipped (Sprint 28):** The per-connection and per-campaign daily caps count posts in the
   UTC calendar day of each candidate slot, ignoring the cadence's own timezone.
@@ -88,15 +70,6 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
   auto-post immediately, regardless of the fill cadence.
 - **Trigger to revisit:** If the few-minute lag between flipping the switch and a due post matters.
 - **Origin:** Sprint 28.
-
-### 12. Inbox polls synchronously on a worker tick
-- **What we shipped (Sprint 29):** `pollInbox` fetches replies + engagement per published post/DM
-  inline on the inbox tick, one platform call at a time, with no per-post cursors.
-- **The better version:** A queue with per-post cursors so high comment/DM volume doesn't serialize
-  behind one slow account, and reads resume from the last-seen id instead of re-scanning.
-- **Trigger to revisit:** When a workspace has enough published posts / inbound volume that a tick
-  takes too long or brushes platform rate limits.
-- **Origin:** Sprint 29.
 
 ### 13. LinkedIn / X / Instagram read + reply methods are verified-when-creds
 - **What we shipped (Sprint 29):** Reddit's `fetchReplies` / `fetchEngagement` / `postReply` are
@@ -147,15 +120,6 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
 - **Trigger to revisit:** If replies and posts need separate budgets, or the UTC boundary surprises a
   customer (see also #9).
 - **Origin:** Sprint 29.
-
-### 19. The sequence engine advances synchronously on the worker tick
-- **What we shipped (Sprint 30):** `runSequences` walks every active recipient inline on each
-  worker tick (`SEQUENCE_INTERVAL_MIN`, default 5), generating due steps one per tick per recipient —
-  the same synchronous shape as cadence fill (#4) and the inbox poll (#12). Fine for modest audiences.
-- **The better version:** A dedicated scheduler with back-pressure for large fan-out and sub-minute
-  precision.
-- **Trigger to revisit:** Large audiences, many concurrent sequences, or a need for tighter timing.
-- **Origin:** Sprint 30.
 
 ### 20. Step delays are whole hours, evaluated on the tick
 - **What we shipped (Sprint 30):** `delayHours` is a whole-hour integer, and a step fires on the first
@@ -475,6 +439,47 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
 ---
 
 ## Done (upgraded)
+
+### 4. Cadence fill is synchronous on a worker tick — **closed by Sprint 73**
+- **What we shipped (Sprint 27):** Workspace cadence fill ran inline through a
+  dedicated worker interval.
+- **Closed (Sprint 73, branch `sprint-73-durable-queue`, 2026-08-07):** Cadence
+  fill is now a persisted, tenant-scoped durable job. Database schedules admit
+  it fairly; bounded claims, per-workspace concurrency, lease fencing, retry
+  backoff, dead letters, and operator requeue provide the required
+  back-pressure and recovery. The domain keeps its existing 14-day bounded
+  fill and publication receipts as replay protection.
+- **Origin:** Sprint 27.
+
+### 8. Automation runs synchronously on a worker tick — **closed by Sprint 73**
+- **What we shipped (Sprint 28):** A dedicated worker interval invoked every
+  workspace and held one HTTP request through all generation.
+- **Closed (Sprint 73, branch `sprint-73-durable-queue`, 2026-08-07):** Each
+  workspace receives its own durable automation job. Fair claims and global +
+  per-workspace bounds absorb bursts, while the existing workspace automation
+  lease, draft keys, and pipeline-run keys remain defense-in-depth replay
+  fences. Failures retry with capped backoff and become inspectable dead letters.
+- **Origin:** Sprint 28.
+
+### 12. Inbox polls synchronously on a worker tick — **closed by Sprint 73**
+- **What we shipped (Sprint 29):** A dedicated worker interval serialized the
+  workspace polling path with no durable execution record.
+- **Closed (Sprint 73, branch `sprint-73-durable-queue`, 2026-08-07):** Inbox
+  polling is now one fair, tenant-scoped durable job with bounded concurrent
+  execution, lease reclaim, retries, dead letters, and persisted schedule
+  state. Existing provider ids, inbox uniqueness constraints, metric windows,
+  and external-action receipts remain the fine-grained replay cursors.
+- **Origin:** Sprint 29.
+
+### 19. The sequence engine advances synchronously on the worker tick — **closed by Sprint 73**
+- **What we shipped (Sprint 30):** A dedicated interval walked every active
+  recipient without a durable top-level execution record.
+- **Closed (Sprint 73, branch `sprint-73-durable-queue`, 2026-08-07):** Sequence
+  advancement is now a tenant-scoped durable job admitted from a persisted
+  schedule. Queue bounds provide back-pressure; leases, retries, dead letters,
+  and explicit requeue provide recovery; existing recipient-step receipts and
+  idempotent external actions prevent repeated sends.
+- **Origin:** Sprint 30.
 
 ### 1. Email send = CSV export, not a live API push — **closed by Sprint 51**
 - **What we shipped (Sprint 26):** Approved per-recipient email messages are exported as a

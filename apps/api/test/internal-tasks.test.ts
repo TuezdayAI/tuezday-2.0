@@ -118,7 +118,7 @@ describe("internal task boundary", () => {
     expect(response.json()).toEqual({ error: "forbidden" });
   });
 
-  it("permits only the exact existing maintenance allowlist", async () => {
+  it("does not let the worker credential call founder maintenance routes", async () => {
     const user = await registerUser(app, "allowlist-owner@test.dev");
     const created = await app.inject({
       method: "POST",
@@ -127,7 +127,7 @@ describe("internal task boundary", () => {
       headers: { authorization: `Bearer ${user.token}` },
     });
     const workspaceId = created.json().id as string;
-    const allowed = [
+    const retiredAllowlist = [
       ["GET", "/workspaces"],
       ["GET", `/workspaces/${workspaceId}/learning/syntheses`],
       ["POST", `/workspaces/${workspaceId}/learning/synthesize`],
@@ -141,18 +141,16 @@ describe("internal task boundary", () => {
       ["POST", `/workspaces/${workspaceId}/evidence/candidates/sweep`],
     ] as const;
 
-    for (const [method, url] of allowed) {
+    for (const [method, url] of retiredAllowlist) {
       const response = await app.inject({
         method,
         url,
         payload: method === "POST" ? {} : undefined,
         headers: workerHeaders(),
       });
-      expect(
-        [401, 403].includes(response.statusCode),
-        `${method} ${url}: ${response.body}`,
-      ).toBe(false);
-      expect(response.statusCode).toBeLessThan(500);
+      expect(response.statusCode, `${method} ${url}: ${response.body}`).toBe(
+        403,
+      );
     }
   });
 

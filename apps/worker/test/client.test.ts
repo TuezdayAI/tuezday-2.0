@@ -5,17 +5,7 @@ import type { WorkerConfig } from "../src/config";
 const config: WorkerConfig = {
   internalApiUrl: "http://localhost:3001",
   token: "worker-client-test-token",
-  intervals: {
-    discoveryMs: 60_000,
-    automationMs: 60_000,
-    learningMs: 86_400_000,
-    adsMs: 3_600_000,
-    publishMs: 60_000,
-    cadenceMs: 60_000,
-    inboxMs: 60_000,
-    sequenceMs: 60_000,
-    evidenceMs: 60_000,
-  },
+  queuePollMs: 1_000,
 };
 
 describe("worker HTTP client", () => {
@@ -35,16 +25,20 @@ describe("worker HTTP client", () => {
       maxAttempts: 3,
     });
 
-    await expect(client.listWorkspaces()).resolves.toEqual([]);
+    await expect(client.runBackgroundJobsTick()).resolves.toEqual([]);
     expect(fetcher).toHaveBeenCalledTimes(2);
     expect(fetcher.mock.calls[1]![0]).toBe(
-      "http://localhost:3001/workspaces",
+      "http://localhost:3001/internal/background-jobs/tick",
     );
     expect(
       new Headers(fetcher.mock.calls[1]![1]?.headers).get(
         "Authorization",
       ),
     ).toBe(`Bearer ${config.token}`);
+    expect(fetcher.mock.calls[1]![1]).toMatchObject({
+      method: "POST",
+      body: "{}",
+    });
   });
 
   it("does not retry an HTTP response", async () => {
@@ -57,9 +51,14 @@ describe("worker HTTP client", () => {
       maxAttempts: 3,
     });
 
-    await expect(client.listWorkspaces()).rejects.toThrow(
-      "GET /workspaces returned 503",
+    await expect(client.runBackgroundJobsTick()).rejects.toThrow(
+      "POST /internal/background-jobs/tick returned 503",
     );
     expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+
+  it("exposes no generic or maintenance request surface", () => {
+    const client = createWorkerClient(config, { fetcher: vi.fn() });
+    expect(Object.keys(client)).toEqual(["runBackgroundJobsTick"]);
   });
 });

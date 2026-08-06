@@ -16,8 +16,8 @@ npm run typecheck
 
 Copy `.env.example` to `.env` and set `TUEZDAY_WORKER_TOKEN` before starting
 the complete stack. The API and worker are both required production processes:
-the worker wakes validated, non-overlapping loops; the API owns scheduler
-leases, database access, and discovery/automation task identity.
+the worker runs one validated, non-overlapping queue poll; the API owns durable
+schedules, fair admission, database access, leases, retries, and domain work.
 
 ## Layout
 
@@ -25,7 +25,7 @@ leases, database access, and discovery/automation task identity.
 apps/
   web/        # Next.js dashboard (port 3000)
   api/        # Fastify API + services + Drizzle/SQLite (port 3001)
-  worker/     # validated, non-overlapping background task loops
+  worker/     # one validated, non-overlapping durable-queue poll
 packages/
   contracts/  # shared zod schemas and types
   testing/    # shared test fixtures
@@ -49,10 +49,10 @@ web/API gateway; the internal URL must point directly at the API process.
 credential.
 
 In production, run the API and worker as separate, required processes. The API
-owns data, leases, bounds, and task identity; the worker only wakes settled
-loops and calls the scoped routes. Restarting either process is safe: expired
-leases and persisted discovery checkpoints resume work without duplicating
-completed writes.
+owns data, schedules, leases, bounds, and task identity; the worker only calls
+`POST /internal/background-jobs/tick` from one settled loop. Restarting either
+process is safe: schedules survive, expired leases are reclaimed, and domain
+receipts/checkpoints prevent duplicate completed writes.
 
 Sprint 73 stores recurring schedules in the application database and runs them
 through one durable queue. The worker only wakes the queue; the API owns fair
@@ -60,8 +60,9 @@ admission, lease-fenced execution, retry backoff, and dead-letter state.
 
 ### Background scheduling
 
-All limits are inclusive and invalid configuration stops startup. Worker
-intervals use the unit in the variable name:
+All limits are inclusive and invalid configuration stops API startup. Recurring
+schedule intervals are parsed and owned by the API; units are part of each
+variable name:
 
 | Variable | Default | Range |
 |---|---:|---:|
@@ -94,6 +95,31 @@ Queue execution policy:
 
 Heartbeat multiplied by two must be below the lease duration. Base backoff must
 not exceed maximum backoff.
+
+### Queue operations
+
+The worker token has no access to workspace or founder routes. From a trusted
+operator shell, use it only against the internal API:
+
+```bash
+curl -fsS -H "Authorization: Bearer $TUEZDAY_WORKER_TOKEN" \
+  "$TUEZDAY_INTERNAL_API_URL/internal/background-jobs/stats"
+
+curl -fsS -H "Authorization: Bearer $TUEZDAY_WORKER_TOKEN" \
+  "$TUEZDAY_INTERNAL_API_URL/internal/background-jobs?status=dead_letter&limit=50"
+
+curl -fsS -X POST -H "Authorization: Bearer $TUEZDAY_WORKER_TOKEN" \
+  -H "Content-Type: application/json" -d '{}' \
+  "$TUEZDAY_INTERNAL_API_URL/internal/background-jobs/JOB_ID/requeue"
+```
+
+Requeue preserves the dead-letter row and creates a fresh active job with the
+same tenant-scoped idempotency key. Watch `runnable`, `retrying`, `running`,
+`deadLetter`, `oldestRunnableAgeMs`, and `byKind` during rollout. Alert on a
+steadily growing runnable depth/age, non-zero dead-letter growth, repeated
+`lost` transitions, or absent `background_jobs_tick` worker events. Roll back
+the worker and API together; the database rows are forward-compatible and no
+queue history should be deleted during rollback.
 
 API-side discovery policy:
 
