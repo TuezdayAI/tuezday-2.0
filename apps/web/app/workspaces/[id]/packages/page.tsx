@@ -106,6 +106,7 @@ export default function PackagesPage() {
   const [reasonText, setReasonText] = useState("");
   const [assessingId, setAssessingId] = useState<string | null>(null);
   const [assessNotes, setAssessNotes] = useState<Record<string, string>>({});
+  const [fanningId, setFanningId] = useState<string | null>(null);
 
   const statusQuery = statusFilter === "all" ? "" : `&status=${statusFilter}`;
 
@@ -226,6 +227,34 @@ export default function PackagesPage() {
       setError(err instanceof Error ? err.message : "Assessment failed");
     } finally {
       setAssessingId(null);
+    }
+  }
+
+  // Sprint 63: fan a ready package out into lane deliverables (§9.5).
+  async function fanOut(packageId: string) {
+    setFanningId(packageId);
+    setError(null);
+    setAssessNotes((prev) => ({ ...prev, [packageId]: "" }));
+    try {
+      const res = await apiFetch(`/workspaces/${id}/packages/${packageId}/fan-out`, {
+        method: "POST",
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message ?? `API returned ${res.status}`);
+      const skipped =
+        body.skipped.length > 0
+          ? ` (${body.skipped.length} lane${body.skipped.length === 1 ? "" : "s"} skipped)`
+          : "";
+      setAssessNotes((prev) => ({
+        ...prev,
+        [packageId]: `Fan-out created ${body.deliverablesCreated} deliverable${
+          body.deliverablesCreated === 1 ? "" : "s"
+        }${skipped} — see the Deliverables page.`,
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Fan-out failed");
+    } finally {
+      setFanningId(null);
     }
   }
 
@@ -405,6 +434,16 @@ export default function PackagesPage() {
                           onClick={() => void assessNow(pkg.id)}
                         >
                           {assessingId === pkg.id ? "Assessing…" : "Assess now"}
+                        </Button>
+                      )}
+                      {pkg.status === "ready" && (
+                        <Button
+                          variant="secondary"
+                          size="compact"
+                          disabled={fanningId === pkg.id}
+                          onClick={() => void fanOut(pkg.id)}
+                        >
+                          {fanningId === pkg.id ? "Fanning out…" : "Fan out"}
                         </Button>
                       )}
                       {actions.map((action) => (

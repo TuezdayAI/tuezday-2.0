@@ -1,0 +1,246 @@
+/* Deliverables (Sprint 63) — lane commitments and their candidate variants,
+   with the replayable context-snapshot inspector. Mirrors the packages-page
+   conventions: tone section heads, chip rows, inline reason capture,
+   preview-value empty states. Editorial tokens only. */
+
+.head {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.headIcon {
+  color: var(--c2-deep);
+}
+
+.filterLabel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.runNote {
+  font-size: 13px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  padding: 8px 12px;
+}
+
+.itemList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.item {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  padding: 10px 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.itemHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.laneName {
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.chip {
+  font-size: 11.5px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+
+.chipRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.angle {
+  margin: 0;
+  font-size: 13.5px;
+}
+
+.failedNote {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--danger, #b3423f);
+}
+
+.assessNote {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.actionRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.reasonRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.detail {
+  border-top: 1px solid var(--border);
+  margin-top: 4px;
+  padding-top: 8px;
+  display: grid;
+  gap: 12px;
+}
+
+.detailSection {
+  display: grid;
+  gap: 6px;
+}
+
+.detailTitle {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.variantList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.variant {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  padding: 8px 10px;
+  display: grid;
+  gap: 6px;
+}
+
+.variantHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.variantContent {
+  margin: 0;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.snapshotBox {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  padding: 8px 10px;
+  display: grid;
+  gap: 4px;
+}
+
+.snapshotSection {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.snapshotKey {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.snapshotReason {
+  color: var(--muted);
+}
+
+.eventList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.event {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.eventTransition {
+  font-weight: 600;
+  color: var(--fg);
+}
+
+.eventDate {
+  margin-left: auto;
+  white-space: nowrap;
+}
+
+.loadMoreRow {
+  display: flex;
+  justify-content: center;
+  padding-top: 10px;
+}
+
+.previewList {
+  display: grid;
+  gap: 8px;
+}
+
+.previewCard {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+  padding: 8px 10px;
+}
+
+.kindMark {
+  display: inline-flex;
+  color: var(--c2-deep);
+}
+
+.previewTitle {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.previewMeta {
+  font-size: 12px;
+  color: var(--muted);
+  margin-left: auto;
+  white-space: nowrap;
+}

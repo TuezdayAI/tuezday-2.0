@@ -1073,6 +1073,8 @@ export const contentPackages = sqliteTable(
     assessmentAttempts: integer("assessment_attempts").notNull().default(0),
     assessmentLeaseExpiresAt: integer("assessment_lease_expires_at"),
     assessedAt: integer("assessed_at"),
+    // Sprint 63 (D-63.4): §9.5 fan-out attempted. Null = due once ready.
+    fannedOutAt: integer("fanned_out_at"),
     createdByUserId: text("created_by_user_id").references(() => users.id, {
       onDelete: "set null",
     }),
@@ -1240,6 +1242,165 @@ export const contentPackageEvents = sqliteTable(
 );
 
 export type ContentPackageEventRow = typeof contentPackageEvents.$inferSelect;
+
+// Sprint 63 (design §8.10): one campaign commitment for one lane and time.
+// Planned deliverables are materialized slots waiting for a package; reactive
+// ones are born at fan-out with a package attached. Lifecycle is the contracts
+// DELIVERABLE_PRODUCTION_STATUSES machine; the generation queue columns are
+// infrastructure, never content (§8.11 separation).
+export const deliverables = sqliteTable(
+  "deliverables",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaigns.id, { onDelete: "cascade" }),
+    planRevisionId: text("plan_revision_id")
+      .notNull()
+      .references(() => campaignPlanRevisions.id, { onDelete: "cascade" }),
+    laneId: text("lane_id")
+      .notNull()
+      .references(() => campaignLanes.id, { onDelete: "cascade" }),
+    laneRevisionId: text("lane_revision_id")
+      .notNull()
+      .references(() => campaignLaneRevisions.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    // Immutable slot identity for planned deliverables (§8.10); null for
+    // reactive. Reschedules would move a future scheduled_for, never this.
+    originalScheduledFor: integer("original_scheduled_for"),
+    // set null: the deliverable and its angle snapshot survive package
+    // deletion (design §1.3 provenance survival).
+    packageId: text("package_id").references(() => contentPackages.id, {
+      onDelete: "set null",
+    }),
+    angle: text("angle").notNull().default(""),
+    angleHash: text("angle_hash").notNull().default(""),
+    status: text("status").notNull().default("planned"),
+    generationState: text("generation_state").notNull().default("pending"),
+    generationAttempts: integer("generation_attempts").notNull().default(0),
+    generationLeaseExpiresAt: integer("generation_lease_expires_at"),
+    generatedAt: integer("generated_at"),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    // §8.10 planned uniqueness: one commitment per lane revision and slot.
+    uniqueIndex("deliverables_planned_slot")
+      .on(t.laneRevisionId, t.originalScheduledFor)
+      .where(sql`${t.originalScheduledFor} IS NOT NULL`),
+    // §8.10 reactive uniqueness: one reactive commitment per package + lane
+    // revision.
+    uniqueIndex("deliverables_reactive_package")
+      .on(t.packageId, t.laneRevisionId)
+      .where(sql`${t.kind} = 'reactive' AND ${t.packageId} IS NOT NULL`),
+    index("deliverables_workspace_status").on(
+      t.workspaceId,
+      t.status,
+      t.createdAt,
+    ),
+    index("deliverables_lane_revision").on(t.laneRevisionId, t.status),
+    index("deliverables_package").on(t.packageId),
+    index("deliverables_campaign_status").on(t.campaignId, t.status),
+    index("deliverables_generation_queue").on(
+      t.workspaceId,
+      t.generationState,
+      t.generationLeaseExpiresAt,
+    ),
+  ],
+);
+
+export type DeliverableRow = typeof deliverables.$inferSelect;
+
+// Sprint 63 (design §8.10): the replay/audit record behind one variant — the
+// entire resolved context (sections with trace, prompt, token accounting)
+// plus identity and grounding inputs. Append-only; never updated.
+export const contextSnapshots = sqliteTable(
+  "context_snapshots",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    deliverableId: text("deliverable_id")
+      .notNull()
+      .references(() => deliverables.id, { onDelete: "cascade" }),
+    packageId: text("package_id").references(() => contentPackages.id, {
+      onDelete: "set null",
+    }),
+    resolvedContextJson: text("resolved_context_json").notNull(),
+    inputsJson: text("inputs_json").notNull(),
+    model: text("model").notNull(),
+    provider: text("provider").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("context_snapshots_deliverable").on(t.deliverableId, t.createdAt)],
+);
+
+export type ContextSnapshotRow = typeof contextSnapshots.$inferSelect;
+
+// Sprint 63 (design §8.10): one candidate execution. Regeneration appends the
+// next version and never overwrites lineage; only status/selectedAt change,
+// and only through the contracts variant machine.
+export const variants = sqliteTable(
+  "variants",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    deliverableId: text("deliverable_id")
+      .notNull()
+      .references(() => deliverables.id, { onDelete: "cascade" }),
+    variantVersion: integer("variant_version").notNull(),
+    contextSnapshotId: text("context_snapshot_id")
+      .notNull()
+      .references(() => contextSnapshots.id, { onDelete: "cascade" }),
+    status: text("status").notNull().default("candidate"),
+    content: text("content").notNull(),
+    model: text("model").notNull(),
+    provider: text("provider").notNull(),
+    durationMs: integer("duration_ms").notNull(),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    selectedAt: integer("selected_at"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("variants_version").on(t.deliverableId, t.variantVersion),
+    index("variants_deliverable_status").on(t.deliverableId, t.status),
+  ],
+);
+
+export type VariantRow = typeof variants.$inferSelect;
+
+// Append-only deliverable lifecycle audit (§12.1). actorUserId null = system.
+export const deliverableEvents = sqliteTable(
+  "deliverable_events",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    deliverableId: text("deliverable_id")
+      .notNull()
+      .references(() => deliverables.id, { onDelete: "cascade" }),
+    fromStatus: text("from_status"),
+    toStatus: text("to_status").notNull(),
+    actorUserId: text("actor_user_id"),
+    reason: text("reason"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("deliverable_events_deliverable").on(t.deliverableId, t.createdAt)],
+);
+
+export type DeliverableEventRow = typeof deliverableEvents.$inferSelect;
 
 // Sprint 45 multi-candidate scoring: one row per candidate persona×campaign
 // pairing a discovered item scored above zero relevance for. Replaced
@@ -3048,3 +3209,186 @@ export const llmUsageEvents = sqliteTable(
 );
 
 export type LlmUsageEventRow = typeof llmUsageEvents.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Pipeline definitions as data + execution engine (Sprint 64, Move 3)
+// ---------------------------------------------------------------------------
+
+// The current spec of one versioned pipeline. Scoped workspace → campaign →
+// lane (most specific active definition wins, D-64.2); at most one active
+// definition per exact scope, enforced in the activation transaction.
+export const pipelineDefinitions = sqliteTable(
+  "pipeline_definitions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    taskKey: text("task_key").notNull(), // PIPELINE_TASK_KEYS
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    campaignId: text("campaign_id").references(() => campaigns.id, {
+      onDelete: "set null",
+    }),
+    laneId: text("lane_id").references(() => campaignLanes.id, {
+      onDelete: "set null",
+    }),
+    status: text("status").notNull().default("draft"), // PIPELINE_DEFINITION_STATUSES
+    currentVersion: integer("current_version").notNull().default(1),
+    specJson: text("spec_json").notNull(),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    index("pipeline_definitions_workspace_task").on(
+      t.workspaceId,
+      t.taskKey,
+      t.status,
+    ),
+  ],
+);
+
+export type PipelineDefinitionRow = typeof pipelineDefinitions.$inferSelect;
+
+// Append-only spec history (D-64.1) — strict unique per version, tighter
+// than the brain-doc pattern, matching the Sprint 63 variants convention.
+export const pipelineDefinitionVersions = sqliteTable(
+  "pipeline_definition_versions",
+  {
+    id: text("id").primaryKey(),
+    definitionId: text("definition_id")
+      .notNull()
+      .references(() => pipelineDefinitions.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    specJson: text("spec_json").notNull(),
+    actorLabel: text("actor_label").notNull(),
+    actorUserId: text("actor_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("pipeline_definition_versions_version").on(
+      t.definitionId,
+      t.version,
+    ),
+  ],
+);
+
+export type PipelineDefinitionVersionRow =
+  typeof pipelineDefinitionVersions.$inferSelect;
+
+// One engine execution against a frozen definition version. The engine is
+// deterministic between steps: status moves only through the contracts
+// pipeline-run machine, and the lease fence keeps one run from executing
+// twice concurrently (D-64.6).
+export const pipelineRuns = sqliteTable(
+  "pipeline_runs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    definitionId: text("definition_id")
+      .notNull()
+      .references(() => pipelineDefinitions.id, { onDelete: "cascade" }),
+    definitionVersion: integer("definition_version").notNull(),
+    taskKey: text("task_key").notNull(),
+    mode: text("mode").notNull().default("live"), // PIPELINE_RUN_MODES
+    dryRunBatchId: text("dry_run_batch_id"),
+    signalId: text("signal_id").references(() => signals.id, {
+      onDelete: "set null",
+    }),
+    campaignId: text("campaign_id").references(() => campaigns.id, {
+      onDelete: "set null",
+    }),
+    laneId: text("lane_id").references(() => campaignLanes.id, {
+      onDelete: "set null",
+    }),
+    personaId: text("persona_id").references(() => personas.id, {
+      onDelete: "set null",
+    }),
+    channel: text("channel").notNull(),
+    status: text("status").notNull().default("queued"), // PIPELINE_RUN_STATUSES
+    pausedAtStepKey: text("paused_at_step_key"),
+    escalationReason: text("escalation_reason"),
+    failureReason: text("failure_reason"),
+    checklistJson: text("checklist_json").notNull().default("[]"),
+    resultJson: text("result_json"),
+    generationId: text("generation_id").references(() => generations.id, {
+      onDelete: "set null",
+    }),
+    draftId: text("draft_id").references(() => drafts.id, {
+      onDelete: "set null",
+    }),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    costCents: real("cost_cents").notNull().default(0),
+    idempotencyKey: text("idempotency_key"),
+    leaseOwner: text("lease_owner"),
+    leaseExpiresAt: integer("lease_expires_at"),
+    createdBy: text("created_by").notNull(),
+    createdAt: integer("created_at").notNull(),
+    startedAt: integer("started_at"),
+    finishedAt: integer("finished_at"),
+  },
+  (t) => [
+    // D-64.12: dedupe only when the caller supplied a key.
+    uniqueIndex("pipeline_runs_idempotency")
+      .on(t.workspaceId, t.idempotencyKey)
+      .where(sql`${t.idempotencyKey} IS NOT NULL`),
+    index("pipeline_runs_workspace_status").on(
+      t.workspaceId,
+      t.status,
+      t.createdAt,
+    ),
+    index("pipeline_runs_definition").on(t.definitionId, t.createdAt),
+    index("pipeline_runs_batch").on(t.dryRunBatchId),
+  ],
+);
+
+export type PipelineRunRow = typeof pipelineRuns.$inferSelect;
+
+// Append-only step attempts (D-64.9): iteration counts revise-loop passes,
+// attempt counts retries of one pass. `passes` is earned by validating the
+// structured output against the declared kind (D-64.10).
+export const pipelineRunSteps = sqliteTable(
+  "pipeline_run_steps",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => pipelineRuns.id, { onDelete: "cascade" }),
+    stepKey: text("step_key").notNull(),
+    iteration: integer("iteration").notNull().default(1),
+    attempt: integer("attempt").notNull().default(1),
+    status: text("status").notNull().default("pending"), // PIPELINE_STEP_STATUSES
+    agentRunId: text("agent_run_id").references(() => agentRuns.id, {
+      onDelete: "set null",
+    }),
+    outputJson: text("output_json"),
+    passes: integer("passes").notNull().default(0),
+    failureReason: text("failure_reason"),
+    stopReason: text("stop_reason"), // AGENT_STOP_REASONS
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    costCents: real("cost_cents").notNull().default(0),
+    startedAt: integer("started_at"),
+    finishedAt: integer("finished_at"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("pipeline_run_steps_attempt").on(
+      t.runId,
+      t.stepKey,
+      t.iteration,
+      t.attempt,
+    ),
+    index("pipeline_run_steps_run").on(t.runId, t.createdAt),
+  ],
+);
+
+export type PipelineRunStepRow = typeof pipelineRunSteps.$inferSelect;

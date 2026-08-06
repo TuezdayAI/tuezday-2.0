@@ -27,6 +27,7 @@ import {
 } from "./discovery-jobs";
 import { runOpportunityRouting } from "./opportunity-matching";
 import { runPackagePipeline } from "./sufficiency";
+import { runDeliverablePipeline } from "./variant-generation";
 import { withTaskLease } from "./task-leases";
 
 export type DiscoverySchedulerResult = DiscoveryRunSummary;
@@ -137,6 +138,8 @@ function emptyResult(busy: boolean): DiscoverySchedulerResult {
     opportunitiesCreated: 0,
     packagesCreated: 0,
     packagesAssessed: 0,
+    deliverablesCreated: 0,
+    variantsGenerated: 0,
   };
 }
 
@@ -409,6 +412,28 @@ export async function runDiscoveryScheduler(
             packages.packagesCreated + packages.packagesAssessed + packages.failures;
           result.packagesCreated += packages.packagesCreated;
           result.packagesAssessed += packages.packagesAssessed;
+        }
+
+        // Sprint 63: deliverable phase (shadow) — materialize planned slots,
+        // fan out ready packages, generate due variants, sweep stale slots.
+        // Deterministic parts always run; generation is budget-gated in the
+        // service.
+        let deliverablesRemaining = deps.policy.maxDeliverablesPerTick;
+        for (const workspace of workspaceRows) {
+          if (deliverablesRemaining <= 0 || tickSignal.aborted) break;
+          const delivery = await runDeliverablePipeline(deps.db, deps.llm, {
+            workspaceId: workspace.id,
+            limit: deliverablesRemaining,
+            leaseMs: deps.policy.leaseMs,
+            timeoutMs: deps.policy.variantTimeoutMs,
+            signal: tickSignal,
+          });
+          deliverablesRemaining -=
+            delivery.packagesFannedOut +
+            delivery.variantsGenerated +
+            delivery.failures;
+          result.deliverablesCreated += delivery.deliverablesCreated;
+          result.variantsGenerated += delivery.variantsGenerated;
         }
         return result;
       } finally {

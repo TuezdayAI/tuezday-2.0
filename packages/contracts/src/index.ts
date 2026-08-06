@@ -1019,7 +1019,10 @@ export const PACKAGE_SOURCE_ROLES = [
 ] as const;
 export type PackageSourceRole = (typeof PACKAGE_SOURCE_ROLES)[number];
 
-// Reserved orchestration vocabulary. Deliverable production state activates in Sprint 63.
+// Activated in Sprint 63 (`deliverables.status`, design §8.10). `assessing`
+// and `research_needed` are active vocabulary awaiting their producers
+// (deliverable-level re-assessment propagation, D-63.11); every other status
+// has one.
 export const DELIVERABLE_PRODUCTION_STATUSES = [
   "planned",
   "assessing",
@@ -1863,7 +1866,7 @@ export const externalActionPolicyViewSchema = z.object({
 });
 export type ExternalActionPolicyView = z.infer<typeof externalActionPolicyViewSchema>;
 
-const DELIVERABLE_TRANSITIONS: Record<
+export const DELIVERABLE_TRANSITIONS: Record<
   DeliverableProductionStatus,
   readonly DeliverableProductionStatus[]
 > = {
@@ -1884,6 +1887,13 @@ export function canTransitionDeliverable(
   to: DeliverableProductionStatus,
 ): boolean {
   return DELIVERABLE_TRANSITIONS[from].includes(to);
+}
+
+export function transitionDeliverable(
+  from: DeliverableProductionStatus,
+  to: DeliverableProductionStatus,
+): DeliverableProductionStatus | undefined {
+  return canTransitionDeliverable(from, to) ? to : undefined;
 }
 
 export const EXTERNAL_ACTION_TRANSITIONS: Record<
@@ -2497,6 +2507,9 @@ export const discoveryRunSummarySchema = z.object({
   /** Sprint 62: package pipeline work performed this tick. */
   packagesCreated: z.number().int().nonnegative().default(0),
   packagesAssessed: z.number().int().nonnegative().default(0),
+  /** Sprint 63: deliverable pipeline work performed this tick. */
+  deliverablesCreated: z.number().int().nonnegative().default(0),
+  variantsGenerated: z.number().int().nonnegative().default(0),
 });
 export type DiscoveryRunSummary = z.infer<
   typeof discoveryRunSummarySchema
@@ -3292,6 +3305,221 @@ export const packageRunResultSchema = z.object({
   failures: z.number().int(),
 });
 export type PackageRunResult = z.infer<typeof packageRunResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Deliverables, variants & context snapshots (Sprint 63, design §8.10)
+//
+// A deliverable is one campaign commitment for one lane and time; a variant
+// is one candidate execution; every variant retains a replayable context
+// snapshot and never overwrites a prior candidate. The production lifecycle
+// is DELIVERABLE_PRODUCTION_STATUSES (activated above). Shadow layer — no
+// drafts, no external actions, no dispatch.
+// ---------------------------------------------------------------------------
+
+export const DELIVERABLE_KINDS = ["planned", "reactive"] as const;
+export type DeliverableKind = (typeof DELIVERABLE_KINDS)[number];
+
+/**
+ * Variant-generation queue states — infrastructure, never content. `failed`
+ * means retries exhausted and an operator regenerate is needed; production
+ * outcomes live on `DeliverableProductionStatus` (design §8.11 separation).
+ */
+export const DELIVERABLE_GENERATION_STATES = [
+  "pending",
+  "in_progress",
+  "complete",
+  "failed",
+] as const;
+export type DeliverableGenerationState =
+  (typeof DELIVERABLE_GENERATION_STATES)[number];
+
+export const DELIVERABLE_DECISION_ACTIONS = [
+  "regenerate",
+  "select",
+  "cancel",
+] as const;
+export type DeliverableDecisionAction =
+  (typeof DELIVERABLE_DECISION_ACTIONS)[number];
+
+/** One candidate execution's lifecycle — append-only rows, terminal ends. */
+export const VARIANT_STATUSES = ["candidate", "selected", "superseded"] as const;
+export type VariantStatus = (typeof VARIANT_STATUSES)[number];
+
+export const VARIANT_TRANSITIONS: Record<
+  VariantStatus,
+  readonly VariantStatus[]
+> = {
+  candidate: ["selected", "superseded"],
+  selected: [],
+  superseded: [],
+};
+
+export function canTransitionVariant(
+  from: VariantStatus,
+  to: VariantStatus,
+): boolean {
+  return VARIANT_TRANSITIONS[from].includes(to);
+}
+
+export function transitionVariant(
+  from: VariantStatus,
+  to: VariantStatus,
+): VariantStatus | undefined {
+  return canTransitionVariant(from, to) ? to : undefined;
+}
+
+/** How far ahead planned slots are materialized from a lane schedule (D-63.2). */
+export const DELIVERABLE_SLOT_HORIZON_DAYS = 14;
+/** Grace after a planned slot passes before the deliverable goes stale (D-63.10). */
+export const DELIVERABLE_STALE_GRACE_MS = 24 * 60 * 60 * 1000;
+
+export const deliverableSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  campaignId: z.string().uuid(),
+  planRevisionId: z.string().uuid(),
+  laneId: z.string().uuid(),
+  laneRevisionId: z.string().uuid(),
+  kind: z.enum(DELIVERABLE_KINDS),
+  /** Immutable slot identity for planned deliverables; null for reactive. */
+  originalScheduledFor: z.number().int().nullable(),
+  /** Null before assignment (planned) or after the package was deleted. */
+  packageId: z.string().uuid().nullable(),
+  angle: z.string(),
+  angleHash: z.string(),
+  status: z.enum(DELIVERABLE_PRODUCTION_STATUSES),
+  generationState: z.enum(DELIVERABLE_GENERATION_STATES),
+  generationAttempts: z.number().int(),
+  generatedAt: z.number().int().nullable(),
+  createdByUserId: z.string().uuid().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+  /** List projection context. */
+  laneName: z.string(),
+  channel: z.string(),
+  format: z.string(),
+  campaignName: z.string(),
+  variantCount: z.number().int(),
+  latestVariantStatus: z.enum(VARIANT_STATUSES).nullable(),
+});
+export type Deliverable = z.infer<typeof deliverableSchema>;
+
+export const variantSchema = z.object({
+  id: z.string().uuid(),
+  deliverableId: z.string().uuid(),
+  variantVersion: z.number().int(),
+  contextSnapshotId: z.string().uuid(),
+  status: z.enum(VARIANT_STATUSES),
+  content: z.string(),
+  model: z.string(),
+  provider: z.string(),
+  durationMs: z.number().int(),
+  /** Null when the system tick generated it; set for operator-triggered runs. */
+  createdByUserId: z.string().uuid().nullable(),
+  selectedAt: z.number().int().nullable(),
+  createdAt: z.number().int(),
+});
+export type Variant = z.infer<typeof variantSchema>;
+
+/**
+ * The replay/audit record behind one variant: the entire resolved context
+ * (sections with include/exclude trace, final prompt, token accounting) plus
+ * the identity and grounding inputs. Stored JSON is projected tolerantly —
+ * the resolver's shape is owned by `@tuezday/brain`, not re-declared here.
+ */
+export const contextSnapshotSchema = z.object({
+  id: z.string().uuid(),
+  deliverableId: z.string().uuid(),
+  packageId: z.string().uuid().nullable(),
+  resolvedContext: z.unknown(),
+  inputs: z.unknown(),
+  model: z.string(),
+  provider: z.string(),
+  createdAt: z.number().int(),
+});
+export type ContextSnapshot = z.infer<typeof contextSnapshotSchema>;
+
+export const deliverableEventSchema = z.object({
+  id: z.string().uuid(),
+  /** Null on the creation event. */
+  fromStatus: z.enum(DELIVERABLE_PRODUCTION_STATUSES).nullable(),
+  toStatus: z.enum(DELIVERABLE_PRODUCTION_STATUSES),
+  /** Null when the system (tick, fan-out, sweep) moved it. */
+  actorUserId: z.string().uuid().nullable(),
+  reason: z.string().nullable(),
+  createdAt: z.number().int(),
+});
+export type DeliverableEvent = z.infer<typeof deliverableEventSchema>;
+
+export const deliverableDetailSchema = z.object({
+  deliverable: deliverableSchema,
+  variants: z.array(variantSchema),
+  events: z.array(deliverableEventSchema),
+});
+export type DeliverableDetail = z.infer<typeof deliverableDetailSchema>;
+
+export const listDeliverablesResponseSchema = z.object({
+  deliverables: z.array(deliverableSchema),
+  total: z.number().int(),
+});
+export type ListDeliverablesResponse = z.infer<
+  typeof listDeliverablesResponseSchema
+>;
+
+export const deliverableDecisionInputSchema = z
+  .object({
+    action: z.enum(DELIVERABLE_DECISION_ACTIONS),
+    variantId: z.string().uuid().optional(),
+    reason: z.string().trim().max(500).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.action === "cancel" && !value.reason) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["reason"],
+        message: "A reason is required to cancel a deliverable.",
+      });
+    }
+    if (value.action === "select" && !value.variantId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["variantId"],
+        message: "Selecting requires the variant to select.",
+      });
+    }
+  });
+export type DeliverableDecisionInput = z.infer<
+  typeof deliverableDecisionInputSchema
+>;
+
+/** §9.5 fan-out outcome for one package, with per-lane skip reasons. */
+export const FAN_OUT_SKIP_REASONS = [
+  "already_delivered",
+  "no_planned_slot",
+  "reactive_cap",
+] as const;
+export type FanOutSkipReason = (typeof FAN_OUT_SKIP_REASONS)[number];
+
+export const fanOutResultSchema = z.object({
+  deliverablesCreated: z.number().int(),
+  skipped: z.array(
+    z.object({
+      laneRevisionId: z.string().uuid(),
+      reason: z.enum(FAN_OUT_SKIP_REASONS),
+    }),
+  ),
+});
+export type FanOutResult = z.infer<typeof fanOutResultSchema>;
+
+export const deliverableRunResultSchema = z.object({
+  slotsMaterialized: z.number().int(),
+  packagesFannedOut: z.number().int(),
+  deliverablesCreated: z.number().int(),
+  variantsGenerated: z.number().int(),
+  staled: z.number().int(),
+  failures: z.number().int(),
+});
+export type DeliverableRunResult = z.infer<typeof deliverableRunResultSchema>;
 
 // ---------------------------------------------------------------------------
 // Evidence corpus (RAG behind the Brain Gateway boundary)
@@ -5761,6 +5989,7 @@ export const LLM_PIPELINES = [
   "discovery_matching",
   "opportunity_matching",
   "sufficiency_assessment",
+  "variant_generation",
   "mailbox_classification",
   "outline_summaries",
   "source_suggestions",
@@ -5769,6 +5998,8 @@ export const LLM_PIPELINES = [
   "learning_synthesis",
   "design_render",
   "agent_run",
+  // Sprint 64: every LLM step of a pipeline_runs execution.
+  "pipeline_run",
 ] as const;
 export type LlmPipeline = (typeof LLM_PIPELINES)[number];
 
@@ -6308,6 +6539,10 @@ export const WORKSPACE_NAV: NavItem[] = [
       { label: "Opportunities", path: "/opportunities", summary: "Campaign-scoped story opportunities", tone: "signal", icon: "discover" },
       // Sprint 62: source-grounded packages between opportunity and deliverable.
       { label: "Packages", path: "/packages", summary: "Source-grounded content packages", tone: "signal", icon: "discover" },
+      // Sprint 63: lane commitments and their candidate executions.
+      { label: "Deliverables", path: "/deliverables", summary: "Lane commitments and candidate variants", tone: "signal", icon: "discover" },
+      // Sprint 64: pipeline definitions as data + the run/dry-run views.
+      { label: "Pipelines", path: "/pipelines", summary: "Versioned generation pipelines and their runs", tone: "signal", icon: "discover" },
       // Sprint 60: canonical stories — the shadow intelligence layer.
       { label: "Stories", path: "/stories", summary: "Canonical stories across sources", tone: "signal", icon: "blog" },
     ],
@@ -7523,6 +7758,596 @@ export const proofAgentRunInputSchema = z.object({
   question: z.string().min(1).max(2000),
 });
 export type ProofAgentRunInput = z.infer<typeof proofAgentRunInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Pipeline definitions as data + execution engine (Sprint 64, direction
+// doc Move 3)
+//
+// A content pipeline is an explicit, versioned record — an ordered list of
+// bounded agent steps — instead of control flow in automation.ts. The engine
+// is deterministic between steps and agentic within a step: it owns
+// sequencing, retries, budgets, idempotency, escalation, and the approval-
+// gate handoff; the agent owns judgment inside one AgentRunner turn with a
+// tool allowlist, step cap, token cap, and a required output schema.
+// Definitions are scoped workspace → campaign → lane (most specific active
+// definition wins) and versioned like brain docs (D-64.1/D-64.2).
+// ---------------------------------------------------------------------------
+
+/** What a pipeline produces. v1 ships the reference signal → social post. */
+export const PIPELINE_TASK_KEYS = ["signal_social_post"] as const;
+export type PipelineTaskKey = (typeof PIPELINE_TASK_KEYS)[number];
+
+export const PIPELINE_DEFINITION_STATUSES = [
+  "draft",
+  "active",
+  "archived",
+] as const;
+export type PipelineDefinitionStatus =
+  (typeof PIPELINE_DEFINITION_STATUSES)[number];
+
+/**
+ * Run lifecycle. `escalated` is the paused ask-the-founder state (D-64.8);
+ * resume re-enters `running`. Terminal: succeeded / failed / cancelled.
+ */
+export const PIPELINE_RUN_STATUSES = [
+  "queued",
+  "running",
+  "escalated",
+  "succeeded",
+  "failed",
+  "cancelled",
+] as const;
+export type PipelineRunStatus = (typeof PIPELINE_RUN_STATUSES)[number];
+
+export const PIPELINE_RUN_TRANSITIONS: Record<
+  PipelineRunStatus,
+  readonly PipelineRunStatus[]
+> = {
+  queued: ["running", "cancelled"],
+  running: ["escalated", "succeeded", "failed", "cancelled"],
+  escalated: ["running", "cancelled"],
+  succeeded: [],
+  failed: [],
+  cancelled: [],
+};
+
+export function canTransitionPipelineRun(
+  from: PipelineRunStatus,
+  to: PipelineRunStatus,
+): boolean {
+  return PIPELINE_RUN_TRANSITIONS[from].includes(to);
+}
+
+export function transitionPipelineRun(
+  from: PipelineRunStatus,
+  to: PipelineRunStatus,
+): PipelineRunStatus | undefined {
+  return canTransitionPipelineRun(from, to) ? to : undefined;
+}
+
+/** Per-attempt step-row states — append-only rows, no machine (D-64.9). */
+export const PIPELINE_STEP_STATUSES = [
+  "pending",
+  "running",
+  "succeeded",
+  "failed",
+  "skipped",
+] as const;
+export type PipelineStepStatus = (typeof PIPELINE_STEP_STATUSES)[number];
+
+/**
+ * `agent` = one bounded AgentRunner turn. `propose` = the engine-owned
+ * deterministic gate handoff (D-64.4) — no LLM, no tools, never an agent
+ * holding a write capability.
+ */
+export const PIPELINE_STEP_KINDS = ["agent", "propose"] as const;
+export type PipelineStepKind = (typeof PIPELINE_STEP_KINDS)[number];
+
+export const PIPELINE_RUN_MODES = ["live", "dry_run"] as const;
+export type PipelineRunMode = (typeof PIPELINE_RUN_MODES)[number];
+
+// Step output kinds (D-64.3): a registered vocabulary, not arbitrary JSON
+// schemas. Structures stay code-validated; everything else about a step is
+// data. Customer-authored schemas arrive only with the eval harness (PRD D5).
+
+export const STEP_OUTPUT_KINDS = [
+  "brief",
+  "angles",
+  "draft",
+  "findings",
+  "proposal",
+] as const;
+export type StepOutputKind = (typeof STEP_OUTPUT_KINDS)[number];
+
+/** Research compaction (PRD): a distilled Brief, never a transcript. */
+export const briefOutputSchema = z.object({
+  summary: z.string().min(1),
+  keyFacts: z.array(z.string().min(1)).min(1).max(10),
+  sources: z.array(z.string()).max(10).default([]),
+  confidence: z.number().int().min(0).max(100).optional(),
+});
+export type BriefOutput = z.infer<typeof briefOutputSchema>;
+
+export const anglesOutputSchema = z.object({
+  angles: z
+    .array(
+      z.object({
+        title: z.string().min(1),
+        rationale: z.string().min(1),
+      }),
+    )
+    .min(1)
+    .max(5),
+  confidence: z.number().int().min(0).max(100).optional(),
+});
+export type AnglesOutput = z.infer<typeof anglesOutputSchema>;
+
+export const draftOutputSchema = z.object({
+  content: z.string().min(1),
+  confidence: z.number().int().min(0).max(100).optional(),
+});
+export type DraftOutput = z.infer<typeof draftOutputSchema>;
+
+/** Critique findings — a score plus cited issues, feeding the revise loop. */
+export const findingsOutputSchema = z.object({
+  score: z.number().int().min(0).max(100),
+  findings: z
+    .array(
+      z.object({
+        issue: z.string().min(1),
+        citation: z.string().optional(),
+      }),
+    )
+    .max(10)
+    .default([]),
+  guardrailUncertain: z.boolean().default(false),
+  confidence: z.number().int().min(0).max(100).optional(),
+});
+export type FindingsOutput = z.infer<typeof findingsOutputSchema>;
+
+/** What the propose step recorded — real ids live, nulls when simulated. */
+export const proposalOutputSchema = z.object({
+  content: z.string().min(1),
+  channel: z.enum(CHANNELS),
+  taskType: z.enum(TASK_TYPES),
+  generationId: z.string().uuid().nullable(),
+  draftId: z.string().uuid().nullable(),
+  simulated: z.boolean(),
+});
+export type ProposalOutput = z.infer<typeof proposalOutputSchema>;
+
+const STEP_OUTPUT_SCHEMAS: Record<StepOutputKind, z.ZodType<unknown>> = {
+  brief: briefOutputSchema,
+  angles: anglesOutputSchema,
+  draft: draftOutputSchema,
+  findings: findingsOutputSchema,
+  proposal: proposalOutputSchema,
+};
+
+export function stepOutputSchemaFor(kind: StepOutputKind): z.ZodType<unknown> {
+  return STEP_OUTPUT_SCHEMAS[kind];
+}
+
+export const pipelineStepSpecSchema = z.object({
+  key: z
+    .string()
+    .regex(/^[a-z][a-z0-9_]{1,31}$/, "Step keys are short lowercase slugs"),
+  title: z.string().min(1).max(80),
+  goal: z.string().min(1).max(2000),
+  kind: z.enum(PIPELINE_STEP_KINDS),
+  /** Tool allowlist — the exact set this step's agent turn may call. */
+  tools: z.array(z.enum(AGENT_TOOL_NAMES)).max(8).default([]),
+  tier: z.enum(MODEL_TIERS).default("cheap"),
+  output: z.enum(STEP_OUTPUT_KINDS),
+  /** AgentRunner model-call cap for this step. */
+  maxSteps: z.number().int().min(1).max(10).default(4),
+  maxTokens: z.number().int().min(1_000).max(32_000).default(16_000),
+  /**
+   * Engine-owned revise loop (D-64.7): skipped when `scoreFrom`'s latest
+   * score ≥ threshold; otherwise this step runs and `scoreFrom` re-runs,
+   * up to maxIterations passes. Never control flow inside a prompt.
+   */
+  loop: z
+    .object({
+      scoreFrom: z.string().min(1),
+      threshold: z.number().int().min(0).max(100),
+      maxIterations: z.number().int().min(1).max(3),
+    })
+    .optional(),
+});
+export type PipelineStepSpec = z.infer<typeof pipelineStepSpecSchema>;
+
+export const pipelineSpecSchema = z
+  .object({
+    steps: z.array(pipelineStepSpecSchema).min(2).max(10),
+    /** Deterministic escalation rule (D-64.8), checked between steps. */
+    escalation: z
+      .object({
+        minConfidence: z.number().int().min(0).max(100).optional(),
+        onGuardrailUncertain: z.boolean().default(true),
+      })
+      .optional(),
+    /** Cumulative token budget across every agent step of one run. */
+    budget: z.object({
+      maxTokens: z.number().int().min(1_000).max(200_000),
+    }),
+  })
+  .superRefine((spec, ctx) => {
+    const keys = new Set<string>();
+    for (const [index, step] of spec.steps.entries()) {
+      if (keys.has(step.key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["steps", index, "key"],
+          message: `Duplicate step key "${step.key}"`,
+        });
+      }
+      keys.add(step.key);
+    }
+
+    const proposeIndexes = spec.steps
+      .map((step, index) => ({ step, index }))
+      .filter(({ step }) => step.kind === "propose");
+    if (
+      proposeIndexes.length !== 1 ||
+      proposeIndexes[0]!.index !== spec.steps.length - 1
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["steps"],
+        message: "A pipeline has exactly one propose step, and it comes last",
+      });
+    }
+    for (const { step, index } of proposeIndexes) {
+      if (step.output !== "proposal") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["steps", index, "output"],
+          message: "The propose step's output kind is \"proposal\"",
+        });
+      }
+      if (step.tools.length > 0 || step.loop) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["steps", index],
+          message: "The propose step is engine-owned: no tools, no loop",
+        });
+      }
+    }
+
+    for (const [index, step] of spec.steps.entries()) {
+      if (step.kind === "agent" && step.output === "proposal") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["steps", index, "output"],
+          message: "Only the propose step produces a proposal",
+        });
+      }
+      if (!step.loop) continue;
+      if (step.output !== "draft") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["steps", index, "loop"],
+          message: "A revise loop step must produce a draft",
+        });
+        continue;
+      }
+      const source = spec.steps.findIndex(
+        (candidate) => candidate.key === step.loop!.scoreFrom,
+      );
+      if (source === -1 || source >= index) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["steps", index, "loop", "scoreFrom"],
+          message: "loop.scoreFrom must name an earlier step",
+        });
+      } else if (spec.steps[source]!.output !== "findings") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["steps", index, "loop", "scoreFrom"],
+          message: "loop.scoreFrom must name a findings step",
+        });
+      }
+    }
+  });
+export type PipelineSpec = z.infer<typeof pipelineSpecSchema>;
+
+/**
+ * The canonical reference definition (PRD §7 Sprint 64), seeded per
+ * workspace as version 1 in `draft` status (D-64.11). Tiers follow Move 8:
+ * cheap for research, frontier where judgment is the product.
+ */
+export const REFERENCE_SIGNAL_SOCIAL_POST_SPEC: PipelineSpec =
+  pipelineSpecSchema.parse({
+    steps: [
+      {
+        key: "research",
+        title: "Research",
+        goal:
+          "Research the triggering signal. Gather what the workspace already " +
+          "knows: prior posts on this topic, recent publications and their " +
+          "metrics, evidence-corpus material, and (only if a URL is given) " +
+          "the source page. Distill a Brief with the key facts a writer " +
+          "needs — never a transcript.",
+        kind: "agent",
+        tools: [
+          "search_evidence",
+          "get_prior_posts_on_topic",
+          "safe_fetch_url",
+          "list_recent_publications_with_metrics",
+        ],
+        tier: "cheap",
+        output: "brief",
+        maxSteps: 6,
+        maxTokens: 16_000,
+      },
+      {
+        key: "angle",
+        title: "Angle",
+        goal:
+          "Propose up to three distinct angles for a social post grounded in " +
+          "the Brief, the campaign plan, and what similar approved drafts " +
+          "did well. Rank them; the first is the one to draft.",
+        kind: "agent",
+        tools: ["get_campaign_plan", "find_similar_approved_drafts"],
+        tier: "frontier",
+        output: "angles",
+        maxSteps: 3,
+        maxTokens: 12_000,
+      },
+      {
+        key: "draft",
+        title: "Draft",
+        goal:
+          "Write the post for the requested channel using the leading angle " +
+          "and the Brief. Consult the brain (voice, ICP, now) before " +
+          "writing. Stay strictly inside the Brief's facts.",
+        kind: "agent",
+        tools: ["get_brain_section"],
+        tier: "frontier",
+        output: "draft",
+        maxSteps: 2,
+        maxTokens: 12_000,
+      },
+      {
+        key: "critique",
+        title: "Critique",
+        goal:
+          "Judge the current draft against the voice doc, channel " +
+          "guardrails, and what approved drafts look like. Return findings " +
+          "with citations and a 0-100 score. Set guardrailUncertain when a " +
+          "guardrail's applicability is unclear.",
+        kind: "agent",
+        tools: [
+          "find_similar_approved_drafts",
+          "list_channel_guardrails",
+          "get_brain_section",
+        ],
+        tier: "frontier",
+        output: "findings",
+        maxSteps: 4,
+        maxTokens: 12_000,
+      },
+      {
+        key: "revise",
+        title: "Revise",
+        goal:
+          "Rewrite the draft to resolve every critique finding while " +
+          "keeping the angle and the Brief's facts.",
+        kind: "agent",
+        tools: ["get_brain_section"],
+        tier: "frontier",
+        output: "draft",
+        maxSteps: 2,
+        maxTokens: 12_000,
+        loop: { scoreFrom: "critique", threshold: 70, maxIterations: 2 },
+      },
+      {
+        key: "propose",
+        title: "Propose",
+        goal: "Submit the final draft to the approval gate.",
+        kind: "propose",
+        output: "proposal",
+      },
+    ],
+    escalation: { minConfidence: 60, onGuardrailUncertain: true },
+    budget: { maxTokens: 120_000 },
+  });
+
+export const pipelineDefinitionSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  taskKey: z.enum(PIPELINE_TASK_KEYS),
+  name: z.string(),
+  description: z.string(),
+  campaignId: z.string().uuid().nullable(),
+  laneId: z.string().uuid().nullable(),
+  status: z.enum(PIPELINE_DEFINITION_STATUSES),
+  currentVersion: z.number().int().min(1),
+  spec: pipelineSpecSchema,
+  createdByUserId: z.string().uuid().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type PipelineDefinition = z.infer<typeof pipelineDefinitionSchema>;
+
+export const pipelineDefinitionVersionSchema = z.object({
+  id: z.string().uuid(),
+  definitionId: z.string().uuid(),
+  version: z.number().int().min(1),
+  spec: pipelineSpecSchema,
+  actorLabel: z.string(),
+  actorUserId: z.string().uuid().nullable(),
+  createdAt: z.number().int(),
+});
+export type PipelineDefinitionVersion = z.infer<
+  typeof pipelineDefinitionVersionSchema
+>;
+
+export const pipelineDefinitionDetailSchema = pipelineDefinitionSchema.extend({
+  versions: z.array(pipelineDefinitionVersionSchema),
+});
+export type PipelineDefinitionDetail = z.infer<
+  typeof pipelineDefinitionDetailSchema
+>;
+
+export const listPipelineDefinitionsResponseSchema = z.object({
+  definitions: z.array(pipelineDefinitionSchema),
+});
+
+export const createPipelineDefinitionInputSchema = z.object({
+  taskKey: z.enum(PIPELINE_TASK_KEYS),
+  name: z.string().trim().min(1).max(120),
+  description: z.string().trim().max(500).default(""),
+  campaignId: z.string().uuid().nullish(),
+  laneId: z.string().uuid().nullish(),
+  spec: pipelineSpecSchema,
+});
+export type CreatePipelineDefinitionInput = z.infer<
+  typeof createPipelineDefinitionInputSchema
+>;
+
+export const updatePipelineSpecInputSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  description: z.string().trim().max(500).optional(),
+  spec: pipelineSpecSchema,
+});
+export type UpdatePipelineSpecInput = z.infer<
+  typeof updatePipelineSpecInputSchema
+>;
+
+/** One checklist entry per executed step pass (D-64.10). `passes` is earned
+ * by validating the structured output against the declared kind. */
+export const pipelineChecklistEntrySchema = z.object({
+  stepKey: z.string(),
+  iteration: z.number().int().min(1),
+  output: z.enum(STEP_OUTPUT_KINDS),
+  passes: z.boolean(),
+  evidence: z.string(),
+  agentRunId: z.string().nullable(),
+});
+export type PipelineChecklistEntry = z.infer<
+  typeof pipelineChecklistEntrySchema
+>;
+
+export const pipelineRunSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  definitionId: z.string().uuid(),
+  definitionVersion: z.number().int().min(1),
+  taskKey: z.enum(PIPELINE_TASK_KEYS),
+  mode: z.enum(PIPELINE_RUN_MODES),
+  dryRunBatchId: z.string().uuid().nullable(),
+  signalId: z.string().uuid().nullable(),
+  campaignId: z.string().uuid().nullable(),
+  laneId: z.string().uuid().nullable(),
+  personaId: z.string().uuid().nullable(),
+  channel: z.enum(CHANNELS),
+  status: z.enum(PIPELINE_RUN_STATUSES),
+  pausedAtStepKey: z.string().nullable(),
+  escalationReason: z.string().nullable(),
+  failureReason: z.string().nullable(),
+  checklist: z.array(pipelineChecklistEntrySchema),
+  result: proposalOutputSchema.nullable(),
+  generationId: z.string().uuid().nullable(),
+  draftId: z.string().uuid().nullable(),
+  inputTokens: z.number().int(),
+  outputTokens: z.number().int(),
+  costCents: z.number(),
+  createdBy: z.string(),
+  createdAt: z.number().int(),
+  startedAt: z.number().int().nullable(),
+  finishedAt: z.number().int().nullable(),
+});
+export type PipelineRun = z.infer<typeof pipelineRunSchema>;
+
+export const pipelineRunStepSchema = z.object({
+  id: z.string().uuid(),
+  runId: z.string().uuid(),
+  stepKey: z.string(),
+  iteration: z.number().int().min(1),
+  attempt: z.number().int().min(1),
+  status: z.enum(PIPELINE_STEP_STATUSES),
+  agentRunId: z.string().uuid().nullable(),
+  output: z.unknown(),
+  passes: z.boolean(),
+  failureReason: z.string().nullable(),
+  stopReason: z.enum(AGENT_STOP_REASONS).nullable(),
+  inputTokens: z.number().int(),
+  outputTokens: z.number().int(),
+  costCents: z.number(),
+  startedAt: z.number().int().nullable(),
+  finishedAt: z.number().int().nullable(),
+  createdAt: z.number().int(),
+});
+export type PipelineRunStep = z.infer<typeof pipelineRunStepSchema>;
+
+export const pipelineRunDetailSchema = pipelineRunSchema.extend({
+  steps: z.array(pipelineRunStepSchema),
+});
+export type PipelineRunDetail = z.infer<typeof pipelineRunDetailSchema>;
+
+export const listPipelineRunsResponseSchema = z.object({
+  runs: z.array(pipelineRunSchema),
+  total: z.number().int(),
+});
+
+export const runPipelineInputSchema = z.object({
+  signalId: z.string().uuid(),
+  channel: z.enum(CHANNELS),
+  campaignId: z.string().uuid().nullish(),
+  personaId: z.string().uuid().nullish(),
+  /** Optional dedupe key (D-64.12) — Sprint 65 automation passes one. */
+  idempotencyKey: z.string().min(1).max(200).optional(),
+});
+export type RunPipelineInput = z.infer<typeof runPipelineInputSchema>;
+
+export const dryRunPipelineInputSchema = z.object({
+  /** Explicit signals to replay; otherwise the most recent are used. */
+  signalIds: z.array(z.string().uuid()).min(1).max(10).optional(),
+  limit: z.number().int().min(1).max(10).default(3),
+  channel: z.enum(CHANNELS).default("linkedin"),
+});
+export type DryRunPipelineInput = z.infer<typeof dryRunPipelineInputSchema>;
+
+export const dryRunPipelineResultSchema = z.object({
+  batchId: z.string().uuid(),
+  runs: z.array(
+    z.object({
+      runId: z.string().uuid(),
+      signalId: z.string().uuid(),
+      status: z.enum(PIPELINE_RUN_STATUSES),
+      proposal: proposalOutputSchema.nullable(),
+      checklist: z.array(pipelineChecklistEntrySchema),
+      costCents: z.number(),
+      failureReason: z.string().nullable(),
+      escalationReason: z.string().nullable(),
+    }),
+  ),
+});
+export type DryRunPipelineResult = z.infer<typeof dryRunPipelineResultSchema>;
+
+export const PIPELINE_RUN_DECISION_ACTIONS = ["resume", "cancel"] as const;
+export type PipelineRunDecisionAction =
+  (typeof PIPELINE_RUN_DECISION_ACTIONS)[number];
+
+export const pipelineRunDecisionInputSchema = z
+  .object({
+    action: z.enum(PIPELINE_RUN_DECISION_ACTIONS),
+    reason: z.string().trim().min(1).max(500).optional(),
+  })
+  .superRefine((input, ctx) => {
+    if (input.action === "cancel" && !input.reason) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["reason"],
+        message: "Cancelling a run requires a reason",
+      });
+    }
+  });
+export type PipelineRunDecisionInput = z.infer<
+  typeof pipelineRunDecisionInputSchema
+>;
 
 // ---------------------------------------------------------------------------
 // Structured LLM outputs (Sprint 58)
