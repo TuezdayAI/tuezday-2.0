@@ -88,6 +88,64 @@ describe("chat drawer shell contract (Sprint 76)", () => {
   });
 });
 
+describe("chat drawer shell contract (Sprint 77)", () => {
+  it("renders records as cards, live and on the persisted message", () => {
+    const drawer = read(DRAWER);
+    expect(drawer).toContain("ResultCard");
+    expect(drawer).toContain('case "card"');
+    // Cards hang off the message, so reopening a thread renders them again.
+    expect(drawer).toContain("m.cards.length > 0");
+  });
+
+  it("a card's buttons call the routes the dedicated pages call (D-77.3)", () => {
+    const drawer = read(DRAWER);
+    expect(drawer).toContain("cardActionRequest");
+    // No chat-side approval implementation — the whole claim of D-77.3 is that
+    // the request is the SAME one, so `/drafts/:id/approve` must be built by
+    // the shared helper and not spelled out here.
+    expect(drawer).not.toMatch(/`\/workspaces\/\$\{workspaceId\}\/drafts\//);
+  });
+
+  it("shows the diff before an inline edit is saved", () => {
+    const drawer = read(DRAWER);
+    expect(drawer).toContain("diffWords");
+    expect(drawer).toContain("describeDiff");
+    expect(drawer).toContain("hasChanges");
+  });
+
+  it("routes an instant command past the model entirely (D-77.4)", () => {
+    const drawer = read(DRAWER);
+    expect(drawer).toContain("parseChatCommand");
+    expect(drawer).toContain("runInstantCommand");
+    expect(drawer).toContain('parsed?.kind === "instant"');
+    // A directive command sends only its NAME; the instruction is the API's.
+    expect(drawer).toContain('parsed?.kind === "directive" ? { command: parsed.command }');
+  });
+
+  it("shows pinned context as removable chips", () => {
+    const drawer = read(DRAWER);
+    expect(drawer).toContain("pinsSummary");
+    expect(drawer).toContain("Unpin ");
+    expect(drawer).toContain("pinIsUntrusted");
+  });
+
+  it("turns a pasted link into an untrusted pin rather than raw text", () => {
+    const drawer = read(DRAWER);
+    expect(drawer).toContain("onPaste");
+    expect(drawer).toContain("pastedUrl");
+    expect(drawer).toContain('pinEntity("url", url)');
+  });
+});
+
+describe("the assistant is summonable from anywhere (Sprint 77)", () => {
+  it("binds Cmd/Ctrl+K in the workspace layout", () => {
+    const layout = read("app/workspaces/[id]/layout.tsx");
+    expect(layout).toContain('e.key.toLowerCase() === "k"');
+    expect(layout).toContain("e.metaKey || e.ctrlKey");
+    expect(layout).toContain("setCopilotOpen((open) => !open)");
+  });
+});
+
 describe("task labels live in one place (Sprint 78, closing D-76.6)", () => {
   const SURFACES = [
     "app/workspaces/[id]/sandbox/page.tsx",

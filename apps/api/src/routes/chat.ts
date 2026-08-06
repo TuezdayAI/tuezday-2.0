@@ -1,6 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import {
+  chatCommand,
+  createChatPinInputSchema,
   createChatSessionInputSchema,
+  runChatCommandInputSchema,
   sendChatMessageInputSchema,
   updateChatSessionInputSchema,
   type ChatSessionDetail,
@@ -21,6 +24,8 @@ import {
   listSessions,
   updateSession,
 } from "../services/chat";
+import { runChatCommand } from "../services/chat-commands";
+import { createChatPin, deleteChatPin, listChatPins } from "../services/chat-pins";
 import {
   confirmChatProposal,
   declineChatProposal,
@@ -127,6 +132,7 @@ export function registerChatRoutes(
         ...session,
         messages: listMessages(db, session.id),
         proposals: listChatProposals(db, session.id),
+        pins: listChatPins(db, session.id),
       };
       return detail;
     },
@@ -206,6 +212,18 @@ export function registerChatRoutes(
       // that already proved membership.
       const actor = { ...actorOf(request), role: request.actor.role };
 
+      // Sprint 77: only a DIRECTIVE command may ride on a message. An instant
+      // command sent here is refused rather than quietly turned into a model
+      // turn the founder did not ask to pay for.
+      const command = parsed.data.command;
+      if (command && chatCommand(command)?.kind !== "directive") {
+        return reply.status(400).send({
+          error: "not_a_directive_command",
+          message: `/${command} runs directly — POST it to .../command instead.`,
+        });
+      }
+      const turnOptions = command ? { command } : {};
+
       if (!wantsStream(request)) {
         const result = await runChatTurn(
           db,
@@ -214,6 +232,8 @@ export function registerChatRoutes(
           actor,
           session.id,
           parsed.data.message,
+          undefined,
+          turnOptions,
         );
         if (!result) return reply.status(404).send({ error: "chat_session_not_found" });
         return reply.status(201).send(result);
@@ -229,6 +249,7 @@ export function registerChatRoutes(
           session.id,
           parsed.data.message,
           stream.send,
+          turnOptions,
         );
       } catch (err) {
         // runChatTurn degrades rather than throwing, so reaching here means
@@ -242,6 +263,102 @@ export function registerChatRoutes(
         stream.close();
       }
       return reply;
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // The command layer and pinned context (Sprint 77).
+  //
+  // An instant command runs registry read tools and returns cards; no model
+  // runs, so no budget check is needed and no cost is incurred. Pins are
+  // ordinary CRUD over the thread's own scope.
+  // -------------------------------------------------------------------------
+
+  app.post<{ Params: { id: string; sessionId: string } }>(
+    "/workspaces/:id/chat/sessions/:sessionId/command",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const session = getSession(db, request.params.id, request.params.sessionId);
+      if (!session) return reply.status(404).send({ error: "chat_session_not_found" });
+
+      const parsed = runChatCommandInputSchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        return reply.status(400).send({
+          error: "invalid_input",
+          message: parsed.error.issues.map((i) => i.message).join("; "),
+        });
+      }
+
+      const outcome = await runChatCommand(
+        { db, evidence, safeFetch },
+        request.params.id,
+        actorOf(request),
+        session.id,
+        parsed.data.command,
+        parsed.data.argument ?? "",
+      );
+      if (!outcome.ok) {
+        return reply.status(400).send({
+          error: outcome.error,
+          message:
+            outcome.error === "not_instant"
+              ? "That command is answered by the assistant — send it as a message instead."
+              : "Unknown command.",
+        });
+      }
+      return reply.status(201).send({
+        userMessage: outcome.userMessage,
+        message: outcome.message,
+        cards: outcome.cards,
+      });
+    },
+  );
+
+  app.get<{ Params: { id: string; sessionId: string } }>(
+    "/workspaces/:id/chat/sessions/:sessionId/pins",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const session = getSession(db, request.params.id, request.params.sessionId);
+      if (!session) return reply.status(404).send({ error: "chat_session_not_found" });
+      return listChatPins(db, session.id);
+    },
+  );
+
+  app.post<{ Params: { id: string; sessionId: string } }>(
+    "/workspaces/:id/chat/sessions/:sessionId/pins",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const session = getSession(db, request.params.id, request.params.sessionId);
+      if (!session) return reply.status(404).send({ error: "chat_session_not_found" });
+
+      const parsed = createChatPinInputSchema.safeParse(request.body ?? {});
+      if (!parsed.success) {
+        return reply.status(400).send({
+          error: "invalid_input",
+          message: parsed.error.issues.map((i) => i.message).join("; "),
+        });
+      }
+      const outcome = createChatPin(db, safeFetch, request.params.id, session.id, parsed.data);
+      if (!outcome.ok) {
+        // A pin the founder cannot see the target of is refused where they can
+        // read the refusal, rather than stored as a chip that renders nothing.
+        return reply.status(outcome.error === "pin_limit_reached" ? 409 : 400).send({
+          error: outcome.error,
+        });
+      }
+      return reply.status(201).send(outcome.pin);
+    },
+  );
+
+  app.delete<{ Params: { id: string; sessionId: string; pinId: string } }>(
+    "/workspaces/:id/chat/sessions/:sessionId/pins/:pinId",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const session = getSession(db, request.params.id, request.params.sessionId);
+      if (!session) return reply.status(404).send({ error: "chat_session_not_found" });
+      const removed = deleteChatPin(db, request.params.id, session.id, request.params.pinId);
+      if (!removed) return reply.status(404).send({ error: "chat_pin_not_found" });
+      return reply.status(204).send();
     },
   );
 

@@ -118,3 +118,24 @@ export const proposeAdMutationTool: Tool<AdInput, unknown> = {
   access: "propose",
   run: (ctx, args) => propose(ctx, (service, origin) => service.proposeAdMutation(origin, args)),
 };
+
+const campaignInput = toolInputSchemas.propose_campaign;
+type CampaignInput = z.infer<typeof campaignInput>;
+
+/**
+ * Sprint 77 (D-77.7). The sixth propose tool, and the first whose gate is the
+ * created record's own status rather than a queue: a `draft`-status campaign
+ * runs no automation, matches no discovery signals and is refused by
+ * `campaignExecutionError` until a human activates it on the campaign page.
+ *
+ * The description says so plainly, because a model that believed this launched
+ * something would report it as launched.
+ */
+export const proposeCampaignTool: Tool<CampaignInput, unknown> = {
+  name: "propose_campaign",
+  description:
+    "Create a new campaign as a DRAFT for the founder to review and activate. Use this when the user wants a campaign that does not exist yet. It creates the campaign record only — nothing is generated, published, sent or automated, and the campaign stays inert until a human activates it. Give it a name and as much of the objective, KPI, timeframe, audience, pillars and channels as the conversation actually established; do not invent the rest.",
+  input: campaignInput,
+  access: "propose",
+  run: (ctx, args) => propose(ctx, (service, origin) => service.proposeCampaign(origin, args)),
+};

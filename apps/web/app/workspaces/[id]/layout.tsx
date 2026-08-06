@@ -160,6 +160,20 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
     };
   }, [id, pathname, router]);
 
+  // Sprint 77: keyboard-first. The assistant is summonable from anywhere in a
+  // workspace, because a surface you have to navigate to is a surface you use
+  // instead of the page — not before it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setCopilotOpen((open) => !open);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   async function logout() {
     await apiFetch("/auth/logout", { method: "POST" }).catch(() => {});
     clearToken();
@@ -281,6 +295,9 @@ export default function WorkspaceLayout({ children }: { children: React.ReactNod
             onClick={() => setCopilotOpen(true)}
           >
             Ask copilot
+            <span className="ws-kbd" aria-hidden="true">
+              ⌘K
+            </span>
           </Button>
           <Link href="/">{"<-"} All workspaces</Link>
           {userLabel && (

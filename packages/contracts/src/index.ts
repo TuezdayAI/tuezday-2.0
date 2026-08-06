@@ -7680,13 +7680,21 @@ export const READ_TOOL_NAMES = [
   "get_workspace_insights",
   "get_metric_summary",
   "get_sequence_funnel",
+  // Sprint 77 — what is waiting for a human right now. Sprint 76's two
+  // draft-shaped tools return historical *decisions* as training examples;
+  // neither can answer "what is in my approval queue", which is both the
+  // PRD's card acceptance case and the `/approve` command. A general registry
+  // read rather than a chat-only one, following D-76.2.
+  "list_drafts",
 ] as const;
 
 /**
- * The Sprint 69 propose surface. Each hands its intent to a gate that already
- * governs that write: four mint a `proposed` external action and let the policy
- * tree decide, and `propose_draft` submits to the approval gate, because a
- * draft is the subject of an external action rather than one itself (D-69.2).
+ * The propose surface. Each hands its intent to a gate that already governs
+ * that write: four mint a `proposed` external action and let the policy tree
+ * decide, `propose_draft` submits to the approval gate because a draft is the
+ * subject of an external action rather than one itself (D-69.2), and
+ * `propose_campaign` (Sprint 77) creates an inert `draft`-status campaign,
+ * whose status is its gate (D-77.7).
  */
 export const PROPOSE_TOOL_NAMES = [
   "propose_draft",
@@ -7694,6 +7702,7 @@ export const PROPOSE_TOOL_NAMES = [
   "propose_reply",
   "propose_sequence_step",
   "propose_ad_mutation",
+  "propose_campaign",
 ] as const;
 
 /**
@@ -7861,6 +7870,18 @@ export const toolInputSchemas = {
   get_sequence_funnel: z.object({
     sequenceId: z.string().min(1),
   }),
+  /**
+   * The approval queue as data (Sprint 77). `state` defaults nowhere — a caller
+   * asking "what is waiting" and a caller asking "what did we ship" want
+   * different rows, and guessing between them is how a card offers Approve on
+   * something already approved.
+   */
+  list_drafts: z.object({
+    state: z.enum(APPROVAL_STATES).optional(),
+    campaignId: z.string().min(1).optional(),
+    channel: z.enum(CHANNELS).optional(),
+    limit: z.number().int().min(1).max(25).optional(),
+  }),
 
   // -------------------------------------------------------------------------
   // Propose tools (Sprint 69). Every one takes a `rationale`: it is written to
@@ -7903,6 +7924,27 @@ export const toolInputSchemas = {
     countries: z.array(z.string().trim().min(2).max(2)).min(1).max(25).optional(),
     ageMin: z.number().int().min(18).max(65).optional(),
     ageMax: z.number().int().min(18).max(65).optional(),
+    rationale: z.string().min(1).max(PROPOSAL_RATIONALE_MAX_CHARS),
+  }),
+
+  /**
+   * Create a campaign (Sprint 77, D-77.7). Deliberately a SUBSET of
+   * `upsertCampaignInputSchema`: `status`, `origin`, `automationMode` and
+   * `autoDailyCap` are not the model's to choose. The campaign is created in
+   * `draft` status with manual automation whatever is passed, because that
+   * inertness is the gate — a proposed campaign runs nothing and matches
+   * nothing until a human activates it on the campaign page.
+   */
+  propose_campaign: z.object({
+    name: z.string().trim().min(1).max(200),
+    objective: z.string().trim().max(1000).optional(),
+    kpi: z.string().trim().max(500).optional(),
+    timeframe: z.string().trim().max(200).optional(),
+    audience: z.string().trim().max(1000).optional(),
+    pillars: z.array(z.string().trim().min(1).max(200)).max(10).optional(),
+    channels: z.array(z.enum(CHANNELS)).optional(),
+    personaIds: z.array(z.string().min(1)).max(10).optional(),
+    purpose: z.enum(CAMPAIGN_PURPOSES).optional(),
     rationale: z.string().min(1).max(PROPOSAL_RATIONALE_MAX_CHARS),
   }),
 
@@ -7982,6 +8024,89 @@ export const chatCitationSchema = z.object({
 });
 export type ChatCitation = z.infer<typeof chatCitationSchema>;
 
+// ---------------------------------------------------------------------------
+// Typed result cards (Sprint 77)
+//
+// A citation says "this claim came from that record". A card IS the record —
+// rendered, and actionable where the platform already has a route for the
+// action. The two are computed from the same tool call by sibling mappers and
+// share the `<kind>:<id>` ref vocabulary, so the web layer routes a card with
+// the citation router and learns no new URLs (D-77.1).
+// ---------------------------------------------------------------------------
+
+export const CHAT_CARD_KINDS = [
+  "campaign",
+  "draft",
+  "publication",
+  "persona",
+  "metric",
+  "evidence",
+  "signal",
+  "brain",
+] as const;
+export type ChatCardKind = (typeof CHAT_CARD_KINDS)[number];
+
+/**
+ * What a card's buttons may do. A closed set on purpose: every one of these
+ * maps to an HTTP route the dedicated pages already call (D-77.3), and a card
+ * carries an action only where that action is actually available — a draft
+ * card offers `approve` only while the draft is in `pending_review`.
+ */
+export const CHAT_CARD_ACTIONS = ["open", "approve", "reject", "edit"] as const;
+export type ChatCardAction = (typeof CHAT_CARD_ACTIONS)[number];
+
+export const chatCardSchema = z.object({
+  kind: z.enum(CHAT_CARD_KINDS),
+  /** The same `<kind>:<id>` anchor citations use — `campaign:9f3c…`. */
+  ref: z.string().min(1),
+  title: z.string(),
+  subtitle: z.string().nullable(),
+  /** Field/value pairs, already formatted for display by the API. */
+  fields: z.array(z.object({ label: z.string(), value: z.string() })),
+  /** Long text where the record has some — a draft's content, an evidence
+   * excerpt. Truncated server-side; the card links to the full record. */
+  body: z.string().nullable(),
+  actions: z.array(z.enum(CHAT_CARD_ACTIONS)),
+});
+export type ChatCard = z.infer<typeof chatCardSchema>;
+
+/**
+ * The render hint (D-77.2). The PRD asks for it on the tool's output schema;
+ * it lives here instead, because the registry's tools are shared with
+ * pipelines, the critic and the eval harness, none of which render anything.
+ * A tool absent from this map produces no cards — which is the right default
+ * for `safe_fetch_url` (untrusted, and already a citation) and for the propose
+ * tools (whose result is a confirmation card, not a record).
+ */
+export const TOOL_CARD_KINDS = {
+  list_campaigns: "campaign",
+  get_campaign_plan: "campaign",
+  get_campaign_insights: "campaign",
+  list_drafts: "draft",
+  find_similar_approved_drafts: "draft",
+  find_instructive_rejections: "draft",
+  list_recent_publications_with_metrics: "publication",
+  get_prior_posts_on_topic: "publication",
+  list_personas: "persona",
+  get_persona: "persona",
+  get_metric_summary: "metric",
+  get_workspace_insights: "metric",
+  get_sequence_funnel: "metric",
+  search_evidence: "evidence",
+  search_discovery_items: "signal",
+  get_brain_section: "brain",
+} as const satisfies Partial<Record<AgentToolName, ChatCardKind>>;
+
+/** Bound on how many cards one turn renders. A twenty-card answer is a list
+ * view the founder did not ask for; the citations still carry the long tail. */
+export const CHAT_CARDS_PER_TURN = 12;
+
+/**
+ * A card's long text is a preview, not the record. Past this the card links
+ * out rather than becoming the page it is supposed to summarise.
+ */
+export const CHAT_CARD_BODY_MAX_CHARS = 600;
+
 /**
  * A thread. `campaignId` / `personaId` / `channel` are its **scope binding**:
  * they select the context bundle the conversation runs against, exactly as a
@@ -8015,6 +8140,13 @@ export const chatMessageSchema = z.object({
   content: z.string(),
   toolName: z.string().nullable(),
   citations: z.array(chatCitationSchema),
+  /**
+   * The records this turn surfaced, rendered as cards (Sprint 77). Persisted on
+   * the message rather than recomputed: the tool results they came from live in
+   * `agent_run_steps` and are subject to retention, and a transcript that loses
+   * its cards on a sweep would be a transcript that changes shape over time.
+   */
+  cards: z.array(chatCardSchema).default([]),
   /** The agent_run behind this assistant turn — the Agent Inspector link. */
   agentRunId: z.string().uuid().nullable(),
   /** Per-turn metering, shown inline. */
@@ -8053,10 +8185,172 @@ export const updateChatSessionInputSchema = z.object({
 });
 export type UpdateChatSessionInput = z.infer<typeof updateChatSessionInputSchema>;
 
+// ---------------------------------------------------------------------------
+// The command layer (Sprint 77)
+//
+// Two kinds, and the difference is whether a model runs at all (D-77.4).
+//
+// `instant` commands are executed by the API against the registry's read tools
+// and return cards. No LLM call, no cost, no inference — "what is waiting for
+// me" is a query, and paying a model to pick a tool for it is paying for a
+// worse answer.
+//
+// `directive` commands are ordinary model turns whose *intent* is pinned by an
+// instruction the API owns. The model still decides how; it no longer has to
+// guess what. The directive text is deliberately not client-supplied: a client
+// that could post arbitrary prose as a "command" would be a prompt-injection
+// surface with a slash in front of it.
+// ---------------------------------------------------------------------------
+
+export const CHAT_COMMAND_KINDS = ["instant", "directive"] as const;
+export type ChatCommandKind = (typeof CHAT_COMMAND_KINDS)[number];
+
+export const CHAT_COMMANDS = [
+  {
+    name: "status",
+    kind: "instant",
+    summary: "Where the workspace stands right now",
+    argumentHint: null,
+  },
+  {
+    name: "approve",
+    kind: "instant",
+    summary: "Everything waiting in your approval queue",
+    argumentHint: null,
+  },
+  {
+    name: "draft",
+    kind: "directive",
+    summary: "Write something and put it up for review",
+    argumentHint: "what to write",
+  },
+  {
+    name: "campaign",
+    kind: "directive",
+    summary: "Plan a campaign and put it forward",
+    argumentHint: "what the campaign is for",
+  },
+  {
+    name: "agent",
+    kind: "directive",
+    summary: "Work a goal end to end, proposing as it goes",
+    argumentHint: "the goal",
+  },
+] as const satisfies readonly {
+  name: string;
+  kind: ChatCommandKind;
+  summary: string;
+  argumentHint: string | null;
+}[];
+
+export const CHAT_COMMAND_NAMES = CHAT_COMMANDS.map((c) => c.name) as unknown as readonly [
+  "status",
+  "approve",
+  "draft",
+  "campaign",
+  "agent",
+];
+export type ChatCommandName = (typeof CHAT_COMMAND_NAMES)[number];
+
+export function chatCommand(name: string): (typeof CHAT_COMMANDS)[number] | undefined {
+  return CHAT_COMMANDS.find((c) => c.name === name);
+}
+
+export interface ParsedChatCommand {
+  command: ChatCommandName;
+  kind: ChatCommandKind;
+  /** Everything after the command word, trimmed. Empty when none was given. */
+  argument: string;
+}
+
+/**
+ * Parse composer text into a command. Shared by the client (which renders the
+ * palette and routes the request) and the API (which never trusts the client's
+ * parse and redoes it). Returns null for ordinary prose, for an unknown
+ * command word, and for a bare `/` — an unrecognised slash is a message the
+ * founder wrote, not a command we should guess at.
+ */
+export function parseChatCommand(text: string): ParsedChatCommand | null {
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith("/")) return null;
+  const match = /^\/([a-z_]+)(?:\s+([\s\S]*))?$/i.exec(trimmed.trim());
+  if (!match) return null;
+  const found = chatCommand(match[1]!.toLowerCase());
+  if (!found) return null;
+  return {
+    command: found.name,
+    kind: found.kind,
+    argument: (match[2] ?? "").trim(),
+  };
+}
+
+export const runChatCommandInputSchema = z.object({
+  command: z.enum(CHAT_COMMAND_NAMES),
+  argument: z.string().max(4000).optional(),
+});
+export type RunChatCommandInput = z.infer<typeof runChatCommandInputSchema>;
+
 export const sendChatMessageInputSchema = z.object({
   message: z.string().min(1).max(4000),
+  /**
+   * Sprint 77: the directive command this message was sent under, if any. The
+   * API validates that it is a `directive` command and supplies the
+   * instruction itself; an `instant` command sent here is refused rather than
+   * quietly turned into a model turn.
+   */
+  command: z.enum(CHAT_COMMAND_NAMES).optional(),
 });
 export type SendChatMessageInput = z.infer<typeof sendChatMessageInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Pinned context — `@` mentions (Sprint 77)
+//
+// "Context that is implicit is context the user cannot debug." A pin is the
+// visible, removable form of it: the founder names an entity, sees a chip, and
+// the next turn's system prefix says so out loud.
+//
+// Campaign and persona pins WRITE THROUGH to the thread's scope columns
+// (D-77.5) — the resolver reads scope from the session, and two notions of
+// "the campaign this thread is about" would eventually disagree.
+// ---------------------------------------------------------------------------
+
+export const CHAT_PIN_KINDS = [
+  "campaign",
+  "persona",
+  "draft",
+  "signal",
+  "brain_section",
+  /** A URL the founder pasted. Fetched through Sprint 48's safe-fetch at turn
+   * time and marked untrusted in the prefix — vouching for a link is not
+   * vouching for what is on the other end of it (D-77.6). */
+  "url",
+] as const;
+export type ChatPinKind = (typeof CHAT_PIN_KINDS)[number];
+
+/** Enough to steer a conversation, few enough that the prefix stays readable. */
+export const CHAT_PINS_MAX = 8;
+
+export const chatPinSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  sessionId: z.string().uuid(),
+  kind: z.enum(CHAT_PIN_KINDS),
+  /** The entity id, or the URL for a `url` pin. */
+  refId: z.string().min(1),
+  /** What the chip says. Resolved at pin time; a renamed entity keeps the label
+   * it was pinned under until it is re-pinned, which is honest about when the
+   * founder made the choice. */
+  label: z.string(),
+  createdAt: z.number().int(),
+});
+export type ChatPin = z.infer<typeof chatPinSchema>;
+
+export const createChatPinInputSchema = z.object({
+  kind: z.enum(CHAT_PIN_KINDS),
+  refId: z.string().trim().min(1).max(2000),
+  label: z.string().trim().max(200).optional(),
+});
+export type CreateChatPinInput = z.infer<typeof createChatPinInputSchema>;
 
 // ---------------------------------------------------------------------------
 // Chat proposals — confirm-before-propose (Sprint 78)
@@ -8136,6 +8430,9 @@ export type ChatProposal = z.infer<typeof chatProposalSchema>;
 export const chatTurnResultSchema = z.object({
   answer: z.string(),
   citations: z.array(chatCitationSchema),
+  /** The records this turn surfaced (Sprint 77). Also on `message`; repeated
+   * here so a non-streaming client renders the turn from one object. */
+  cards: z.array(chatCardSchema),
   toolCalls: z.array(z.object({ tool: z.string(), ok: z.boolean() })),
   /** The persisted assistant message, so a client needs no refetch. */
   message: chatMessageSchema,
@@ -8158,6 +8455,8 @@ export type ChatTurnResult = z.infer<typeof chatTurnResultSchema>;
 export const chatSessionDetailSchema = chatSessionSchema.extend({
   messages: z.array(chatMessageSchema),
   proposals: z.array(chatProposalSchema),
+  /** Sprint 77: the thread's pinned context, rendered as removable chips. */
+  pins: z.array(chatPinSchema),
 });
 export type ChatSessionDetail = z.infer<typeof chatSessionDetailSchema>;
 
@@ -8178,6 +8477,10 @@ export const CHAT_STREAM_EVENTS = [
   /** Sprint 78: a proposal was recorded — the card appears before the answer
    * settles, because the founder should see what it is about to ask for. */
   "proposal",
+  /** Sprint 77: a tool returned records worth rendering. Emitted as the tool
+   * returns, so a founder watching a six-step run sees the campaigns appear
+   * while it is still reading metrics. */
+  "card",
   "message",
   "done",
   "error",
@@ -8214,6 +8517,7 @@ export const chatStreamEventSchema = z.discriminatedUnion("type", [
     outputTokens: z.number().int(),
   }),
   z.object({ type: z.literal("proposal"), proposal: chatProposalSchema }),
+  z.object({ type: z.literal("card"), stepIndex: z.number().int(), cards: z.array(chatCardSchema) }),
   z.object({ type: z.literal("message"), message: chatMessageSchema }),
   z.object({
     type: z.literal("done"),
@@ -8236,7 +8540,9 @@ export type ChatStreamEvent = z.infer<typeof chatStreamEventSchema>;
 // source (D-69.4).
 // ---------------------------------------------------------------------------
 
-export const AGENT_PROPOSAL_TARGET_KINDS = ["draft", "external_action"] as const;
+/** Sprint 77 adds `campaign`: like a draft, it is a governed record rather than
+ * an external action, and its own status is what holds it back (D-77.7). */
+export const AGENT_PROPOSAL_TARGET_KINDS = ["draft", "external_action", "campaign"] as const;
 export type AgentProposalTargetKind = (typeof AGENT_PROPOSAL_TARGET_KINDS)[number];
 
 export const agentProposalSchema = z
@@ -8250,6 +8556,8 @@ export const agentProposalSchema = z
      * proposal survives it. */
     draftId: z.string().uuid().nullable(),
     externalActionId: z.string().uuid().nullable(),
+    /** The campaign a `propose_campaign` call created (Sprint 77). */
+    campaignId: z.string().uuid().nullable().optional(),
     summary: z.string().trim().min(1),
     rationale: z.string().trim().min(1),
     /** The conversation a founder confirmed this in (Sprint 78). Null for a

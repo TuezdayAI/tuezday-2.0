@@ -11,11 +11,13 @@ import { getPriorPostsTool } from "./get-prior-posts";
 import { getSequenceFunnelTool } from "./get-sequence-funnel";
 import { getWorkspaceInsightsTool } from "./get-workspace-insights";
 import { listCampaignsTool } from "./list-campaigns";
+import { listDraftsTool } from "./list-drafts";
 import { listChannelGuardrailsTool } from "./list-channel-guardrails";
 import { listPersonasTool } from "./list-personas";
 import { listRecentPublicationsTool } from "./list-recent-publications";
 import {
   proposeAdMutationTool,
+  proposeCampaignTool,
   proposeDraftTool,
   proposePublicationTool,
   proposeReplyTool,
@@ -56,6 +58,8 @@ export const READ_TOOLS: readonly AnyTool[] = [
   getWorkspaceInsightsTool,
   getMetricSummaryTool,
   getSequenceFunnelTool,
+  // Sprint 77 — the approval queue as data (D-77.8).
+  listDraftsTool,
 ];
 
 export const PROPOSE_TOOLS: readonly AnyTool[] = [
@@ -64,6 +68,8 @@ export const PROPOSE_TOOLS: readonly AnyTool[] = [
   proposeReplyTool,
   proposeSequenceStepTool,
   proposeAdMutationTool,
+  // Sprint 77 — the sixth propose tool (D-77.7).
+  proposeCampaignTool,
 ];
 
 export const ASK_TOOLS: readonly AnyTool[] = [askFounderTool];

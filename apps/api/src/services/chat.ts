@@ -4,6 +4,7 @@ import {
   CHAT_THREAD_TOKEN_CAP,
   type AgentStopReason,
   type Channel,
+  type ChatCard,
   type ChatCitation,
   type ChatMessage,
   type ChatMessageRole,
@@ -40,11 +41,11 @@ export function rowToSession(row: ChatSessionRow): ChatSession {
   };
 }
 
-/** Parse the stored citations JSON defensively — a bad blob never breaks a read. */
-function parseCitations(json: string): ChatCitation[] {
+/** Parse a stored JSON array defensively — a bad blob never breaks a read. */
+function parseArray<T>(json: string): T[] {
   try {
     const parsed = JSON.parse(json);
-    return Array.isArray(parsed) ? (parsed as ChatCitation[]) : [];
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
   } catch {
     return [];
   }
@@ -58,7 +59,9 @@ export function rowToMessage(row: ChatMessageRow): ChatMessage {
     role: row.role as ChatMessageRole,
     content: row.content,
     toolName: row.toolName ?? null,
-    citations: parseCitations(row.citationsJson),
+    citations: parseArray<ChatCitation>(row.citationsJson),
+    // Sprint 77: the typed result cards this turn rendered.
+    cards: parseArray<ChatCard>(row.cardsJson),
     agentRunId: row.agentRunId ?? null,
     costCents: row.costCents,
     inputTokens: row.inputTokens,
@@ -276,6 +279,8 @@ export interface AppendMessageInput {
   content: string;
   toolName?: string | null;
   citations?: ChatCitation[];
+  /** The records this turn surfaced, rendered as cards (Sprint 77). */
+  cards?: ChatCard[];
   /** The agent_run behind this assistant turn (Sprint 76). */
   agentRunId?: string | null;
   costCents?: number;
@@ -302,6 +307,7 @@ export function appendMessage(
     content: input.content,
     toolName: input.toolName ?? null,
     citationsJson: JSON.stringify(input.citations ?? []),
+    cardsJson: JSON.stringify(input.cards ?? []),
     // Sprint 78 keeps `proposal_json` dormant: a chat proposal is its own row
     // now (chat_proposals), because its status changes after the message is
     // written and a transcript row should not be rewritten by a click.

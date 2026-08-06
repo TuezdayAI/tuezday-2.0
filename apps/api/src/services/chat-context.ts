@@ -1,11 +1,13 @@
 import { resolveContext, type BrainContents, type ResolvedContext } from "@tuezday/brain";
-import type { Channel, ChatSession } from "@tuezday/contracts";
+import type { Channel, ChatPin, ChatSession } from "@tuezday/contracts";
 import type { Db } from "../db";
 import type { EvidenceStore } from "../evidence/store";
+import type { SafeFetchService } from "../safe-fetch/index";
 import { getBrain } from "./brain";
 import { getCampaign } from "./campaigns";
 import { retrieveEvidence } from "./evidence";
 import { resolveChannelGuidance } from "./guidance";
+import { composePinnedContext, listChatPins, renderChatPins } from "./chat-pins";
 import { getPersona, toResolvePersona } from "./personas";
 import {
   campaignResolveInputs,
@@ -38,14 +40,24 @@ export const DEFAULT_CHAT_CHANNEL: Channel = "web";
 
 export interface ChatContext {
   resolved: ResolvedContext;
-  /** The full system string handed to the runner: bundle + goal + capability. */
+  /** The full system string: goal + bundle + pinned context + capability. */
   system: string;
   channel: Channel;
+  /** The thread's pins (Sprint 77) — the chips the drawer renders. */
+  pins: ChatPin[];
+  /**
+   * The text of any pin that came from outside the workspace. The turn feeds
+   * these to the taint tracker, so a pinned page taints the turn before the
+   * model has taken a single step (D-77.6).
+   */
+  untrustedPinTexts: string[];
 }
 
 export interface ChatContextOptions {
   /** Whether this turn's actor may put things forward for confirmation. */
   mayPropose?: boolean;
+  /** Needed to resolve `url` pins. Absent means url pins render nothing. */
+  safeFetch?: SafeFetchService;
 }
 
 /**
@@ -148,13 +160,28 @@ export async function buildChatContext(
   const capability = options.mayPropose
     ? CHAT_CAPABILITY_PROPOSE
     : CHAT_CAPABILITY_READ_ONLY;
+
+  // Pinned context (Sprint 77) sits between the bundle and the capability
+  // clause: it is what THIS conversation is about, narrower than the workspace
+  // bundle above it and above the rules that follow.
+  const pins = listChatPins(db, session.id);
+  const rendered = await renderChatPins(db, options.safeFetch, session.workspaceId, pins);
+  const pinned = composePinnedContext(pins, rendered);
+
   const system = [
     goal ? `THREAD GOAL: ${goal}` : "",
     resolved.prompt,
+    pinned,
     capability,
   ]
     .filter(Boolean)
     .join("\n\n");
 
-  return { resolved, system, channel };
+  return {
+    resolved,
+    system,
+    channel,
+    pins,
+    untrustedPinTexts: rendered.filter((pin) => pin.untrusted).map((pin) => pin.content),
+  };
 }

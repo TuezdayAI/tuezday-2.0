@@ -150,6 +150,31 @@ export function buildProposalIntent(
       };
     }
 
+    case "propose_campaign": {
+      const name = str(args, "name") ?? "Untitled campaign";
+      if (str(args, "objective")) {
+        detail.push({ label: "Objective", value: str(args, "objective")! });
+      }
+      if (str(args, "kpi")) detail.push({ label: "KPI", value: str(args, "kpi")! });
+      if (str(args, "timeframe")) {
+        detail.push({ label: "Timeframe", value: str(args, "timeframe")! });
+      }
+      if (str(args, "audience")) detail.push({ label: "Audience", value: str(args, "audience")! });
+      const pillars = Array.isArray(args.pillars) ? (args.pillars as string[]) : [];
+      if (pillars.length > 0) detail.push({ label: "Pillars", value: pillars.join(", ") });
+      const channels = Array.isArray(args.channels) ? (args.channels as string[]) : [];
+      if (channels.length > 0) detail.push({ label: "Channels", value: channels.join(", ") });
+      return {
+        title: `Create the campaign "${name}"`,
+        detail,
+        // The effect line is the whole of D-77.7 stated to the founder: what
+        // they are confirming is a record, not a launch.
+        effect:
+          "This creates the campaign as a DRAFT on your Campaigns page. Nothing is generated, published, sent or automated by it, and it stays inert — matching no signals and running no cadence — until you open it and activate it yourself.",
+        rationale,
+      };
+    }
+
     default: {
       // Unreachable while ProposeToolName is exhaustive; a new propose tool
       // that forgets a card gets a legible fallback rather than a blank one.

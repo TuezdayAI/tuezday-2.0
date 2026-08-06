@@ -11,19 +11,42 @@
 // confirmation card here; nothing reaches the approval gate or the action
 // policy until the founder confirms it, and the policy tree still decides what
 // happens after that.
+//
+// Sprint 77: records render as CARDS rather than prose, and a card's buttons
+// call the same routes the dedicated pages call. Plus the command layer (`/`),
+// pinned context (`@`), and a URL paste that becomes an untrusted pin.
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import type {
-  AgentStopReason,
-  ChatCitation,
-  ChatCitationKind,
-  ChatMessage,
-  ChatProposal,
-  ChatSession,
-  ChatSessionDetail,
-  ChatTurnResult,
+import {
+  CHAT_COMMANDS,
+  parseChatCommand,
+  type AgentStopReason,
+  type ChatCard,
+  type ChatCitation,
+  type ChatCitationKind,
+  type ChatMessage,
+  type ChatPin,
+  type ChatPinKind,
+  type ChatProposal,
+  type ChatSession,
+  type ChatSessionDetail,
+  type ChatTurnResult,
 } from "@tuezday/contracts";
 import { apiFetch } from "@/lib/api";
+import {
+  cardActionRequest,
+  cardHasAction,
+  cardHref,
+  cardKindLabel,
+  clearMention,
+  commandQuery,
+  mentionQuery,
+  pastedUrl,
+  pinKindLabel,
+  pinIsUntrusted,
+  pinsSummary,
+} from "@/lib/chat-card-view";
+import { describeDiff, diffWords, hasChanges } from "@/lib/text-diff";
 import { readChatStream } from "@/lib/chat-stream";
 import {
   isActionable,
@@ -73,15 +96,32 @@ const CITATION_ICON: Record<ChatCitationKind, IconName> = {
 interface LiveTurn {
   text: string;
   tools: { callId: string; name: string; done: boolean; ok: boolean }[];
+  /** Cards arrive as each tool returns, so records appear mid-run. */
+  cards: ChatCard[];
 }
 
-const EMPTY_TURN: LiveTurn = { text: "", tools: [] };
+const EMPTY_TURN: LiveTurn = { text: "", tools: [], cards: [] };
+
+/** What an `@` mention can pin, and where the picker reads its options from. */
+const MENTION_SOURCES: { kind: ChatPinKind; path: string; labelKey: "name" | "content" }[] = [
+  { kind: "campaign", path: "/campaigns", labelKey: "name" },
+  { kind: "persona", path: "/personas", labelKey: "name" },
+  { kind: "draft", path: "/drafts?state=pending_review", labelKey: "content" },
+];
+
+interface MentionOption {
+  kind: ChatPinKind;
+  refId: string;
+  label: string;
+}
 
 export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [proposals, setProposals] = useState<ChatProposal[]>([]);
+  const [pins, setPins] = useState<ChatPin[]>([]);
+  const [mentionOptions, setMentionOptions] = useState<MentionOption[]>([]);
   const [resolving, setResolving] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [loadingSessions, setLoadingSessions] = useState(false);
@@ -101,14 +141,17 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
         if (!res.ok) {
           setMessages([]);
           setProposals([]);
+          setPins([]);
           return;
         }
         const detail: ChatSessionDetail = await res.json();
         setMessages(detail.messages ?? []);
         setProposals(detail.proposals ?? []);
+        setPins(detail.pins ?? []);
       } catch {
         setMessages([]);
         setProposals([]);
+        setPins([]);
       }
     },
     [base],
@@ -149,6 +192,7 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
     if (!activeId) {
       setMessages([]);
       setProposals([]);
+      setPins([]);
     }
   }, [open, activeId, loadSession]);
 
@@ -185,6 +229,7 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
       setActiveId(session.id);
       setMessages([]);
       setProposals([]);
+      setPins([]);
       setNotice(null);
       return session.id;
     } catch {
@@ -203,6 +248,145 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
       await apiFetch(`${base}/sessions/${sessionId}`, { method: "DELETE" });
     } catch {
       // Best effort — the row is already gone from the UI.
+    }
+  }
+
+  /**
+   * Pin an entity to the thread (Sprint 77). Campaign and persona pins also
+   * rebind the thread's scope server-side (D-77.5), so the next turn resolves
+   * against a different bundle — which is the whole point of pinning one.
+   */
+  async function pinEntity(kind: ChatPinKind, refId: string, label?: string) {
+    if (!activeId) return;
+    try {
+      const res = await apiFetch(`${base}/sessions/${activeId}/pins`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind, refId, ...(label ? { label } : {}) }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setNotice(
+          body.error === "pin_limit_reached"
+            ? "That's as much as one conversation can hold pinned. Remove one first."
+            : body.error === "invalid_url"
+              ? "That link can't be read from here."
+              : "Couldn't pin that.",
+        );
+        return;
+      }
+      const pin: ChatPin = await res.json();
+      setPins((prev) => (prev.some((p) => p.id === pin.id) ? prev : [...prev, pin]));
+      setNotice(null);
+    } catch {
+      setNotice("Couldn't reach the assistant. Check your connection and try again.");
+    }
+  }
+
+  async function unpin(pinId: string) {
+    if (!activeId) return;
+    setPins((prev) => prev.filter((p) => p.id !== pinId));
+    try {
+      await apiFetch(`${base}/sessions/${activeId}/pins/${pinId}`, { method: "DELETE" });
+    } catch {
+      // Best effort — the chip is already gone from the UI.
+    }
+  }
+
+  /** Load what an `@` can pin. Fetched once per open, filtered client-side. */
+  const loadMentionOptions = useCallback(async () => {
+    const collected: MentionOption[] = [];
+    for (const source of MENTION_SOURCES) {
+      try {
+        const res = await apiFetch(`/workspaces/${workspaceId}${source.path}`);
+        if (!res.ok) continue;
+        const rows: Record<string, unknown>[] = await res.json();
+        for (const row of rows.slice(0, 20)) {
+          const id = typeof row.id === "string" ? row.id : null;
+          const raw = row[source.labelKey];
+          if (!id || typeof raw !== "string") continue;
+          collected.push({
+            kind: source.kind,
+            refId: id,
+            label: raw.length > 60 ? `${raw.slice(0, 59)}…` : raw,
+          });
+        }
+      } catch {
+        // A source that will not load simply offers nothing to pin.
+      }
+    }
+    setMentionOptions(collected);
+  }, [workspaceId]);
+
+  /**
+   * Run an instant command (D-77.4). No model runs: the API executes registry
+   * read tools and returns cards, so this costs nothing and cannot be wrong
+   * about what the founder meant.
+   */
+  async function runInstantCommand(command: string, argument: string): Promise<boolean> {
+    let sessionId = activeId;
+    if (!sessionId) {
+      sessionId = await createSession();
+      if (!sessionId) return false;
+    }
+    setDraft("");
+    setNotice(null);
+    setPending(true);
+    try {
+      const res = await apiFetch(`${base}/sessions/${sessionId}/command`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command, argument }),
+      });
+      if (!res.ok) {
+        setNotice("Couldn't run that command.");
+        return false;
+      }
+      const body = (await res.json()) as { userMessage: ChatMessage; message: ChatMessage };
+      setMessages((prev) => [...prev, body.userMessage, body.message]);
+      void loadSessions();
+      return true;
+    } catch {
+      setNotice("Couldn't reach the assistant. Check your connection and try again.");
+      return false;
+    } finally {
+      setPending(false);
+    }
+  }
+
+  /**
+   * A card's button (D-77.3). It issues the SAME request /review issues, which
+   * is why the decision-log record is identical — the same route writes it.
+   * The card is then reloaded from the server rather than patched optimistically:
+   * an approval can change more than the state we guessed at.
+   */
+  async function actOnCard(card: ChatCard, action: "approve" | "reject" | "edit", content?: string) {
+    const request = cardActionRequest(card, action, workspaceId);
+    if (!request || !activeId) return;
+    setResolving(card.ref);
+    try {
+      const res = await apiFetch(request.path, {
+        method: request.method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(action === "edit" ? { content } : {}),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { message?: string };
+        setNotice(body.message ?? "That couldn't go through.");
+        return;
+      }
+      setNotice(
+        action === "approve"
+          ? "Approved. It's recorded in the decision log exactly as it would be from Review."
+          : action === "reject"
+            ? "Rejected."
+            : "Saved.",
+      );
+      await loadSession(activeId);
+    } catch {
+      setNotice("Couldn't reach the assistant. Check your connection and try again.");
+    } finally {
+      setResolving(null);
     }
   }
 
@@ -244,6 +428,14 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
     const message = text.trim();
     if (!message || pending) return;
 
+    // Sprint 77: the same parser the API uses, so the client and the server
+    // agree on what is a command. An instant one never becomes a model turn.
+    const parsed = parseChatCommand(message);
+    if (parsed?.kind === "instant") {
+      await runInstantCommand(parsed.command, parsed.argument);
+      return;
+    }
+
     let sessionId = activeId;
     if (!sessionId) {
       sessionId = await createSession();
@@ -261,7 +453,12 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
       const res = await apiFetch(`${base}/sessions/${sessionId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
-        body: JSON.stringify({ message }),
+        body: JSON.stringify({
+          message,
+          // A directive command pins the turn's intent; the INSTRUCTION comes
+          // from the API, never from here (D-77.4).
+          ...(parsed?.kind === "directive" ? { command: parsed.command } : {}),
+        }),
       });
       if (res.status === 404) {
         setUnavailable(true);
@@ -315,6 +512,11 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
               ),
             }));
             break;
+          case "card":
+            // Records appear while the run is still going, which is most of
+            // what "generative UI" means to someone watching a six-step turn.
+            setLive((prev) => ({ ...prev, cards: [...prev.cards, ...event.cards] }));
+            break;
           case "proposal":
             // Arrives mid-run, before the answer settles: the founder sees what
             // it is about to ask for while it is still writing the sentence.
@@ -361,6 +563,26 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
   const activeSession = sessions.find((s) => s.id === activeId) ?? null;
   const budget = activeSession ? threadBudgetView(activeSession) : null;
   const shown = filterVisible(messages);
+
+  // The `/` palette and the `@` picker, both driven by what is in the composer
+  // right now. Neither is a mode the founder has to enter or leave.
+  const slash = commandQuery(draft);
+  const commandMatches =
+    slash === null ? [] : CHAT_COMMANDS.filter((c) => c.name.startsWith(slash));
+  const mention = mentionQuery(draft);
+  // Computed plainly rather than memoised: this sits AFTER the `!open` early
+  // return, where a hook would be a conditional one, and filtering a few dozen
+  // options per keystroke costs nothing.
+  const mentionMatches =
+    mention === null
+      ? []
+      : (() => {
+          const pinned = new Set(pins.map((p) => `${p.kind}:${p.refId}`));
+          return mentionOptions
+            .filter((o) => !pinned.has(`${o.kind}:${o.refId}`))
+            .filter((o) => (mention ? o.label.toLowerCase().includes(mention) : true))
+            .slice(0, 8);
+        })();
 
   return (
     <div className={styles.overlay} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
@@ -453,10 +675,37 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
               </div>
             )}
 
-            {(notice ?? budget?.warning ?? pendingSummary(proposals)) && (
+            {pins.length > 0 && (
+              <div className={styles.pinBar}>
+                {pins.map((pin) => (
+                  <span
+                    key={pin.id}
+                    className={`${styles.pinChip} ${pinIsUntrusted(pin) ? styles.pinChipUntrusted : ""}`}
+                    title={
+                      pinIsUntrusted(pin)
+                        ? `${pinKindLabel(pin.kind)} — from outside your workspace, so the assistant treats it as data, never as instructions.`
+                        : pinKindLabel(pin.kind)
+                    }
+                  >
+                    <span className={styles.pinKind}>{pinKindLabel(pin.kind)}</span>
+                    <span className={styles.pinLabel}>{pin.label}</span>
+                    <button
+                      type="button"
+                      className={styles.pinRemove}
+                      aria-label={`Unpin ${pin.label}`}
+                      onClick={() => void unpin(pin.id)}
+                    >
+                      <Icon name="close" size="compact" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {(notice ?? budget?.warning ?? pinsSummary(pins) ?? pendingSummary(proposals)) && (
               <p className={styles.notice}>
                 <Icon name="info" size="compact" />
-                {notice ?? budget?.warning ?? pendingSummary(proposals)}
+                {notice ?? budget?.warning ?? pendingSummary(proposals) ?? pinsSummary(pins)}
               </p>
             )}
 
@@ -509,6 +758,19 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
                           >
                             {m.content}
                           </div>
+                          {m.role === "assistant" && m.cards.length > 0 && (
+                            <div className={styles.cards}>
+                              {m.cards.map((c) => (
+                                <ResultCard
+                                  key={`${m.id}-${c.kind}-${c.ref}`}
+                                  card={c}
+                                  workspaceId={workspaceId}
+                                  busy={resolving === c.ref}
+                                  onAct={(action, content) => void actOnCard(c, action, content)}
+                                />
+                              ))}
+                            </div>
+                          )}
                           {m.role === "assistant" &&
                             proposalsForMessage(proposals, m).map((p) => (
                               <ProposalCard
@@ -543,6 +805,19 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
                             onResolve={(decision) => void resolveProposalCard(p, decision)}
                           />
                         ))}
+                        {live.cards.length > 0 && (
+                          <div className={styles.cards}>
+                            {live.cards.map((c) => (
+                              <ResultCard
+                                key={`live-${c.kind}-${c.ref}`}
+                                card={c}
+                                workspaceId={workspaceId}
+                                busy={false}
+                                onAct={() => {}}
+                              />
+                            ))}
+                          </div>
+                        )}
                         {live.tools.map((t) => (
                           <div key={t.callId} className={styles.toolLine}>
                             <Icon
@@ -567,6 +842,44 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
               )}
             </div>
 
+            {commandMatches.length > 0 && (
+              <div className={styles.palette} role="listbox" aria-label="Commands">
+                {commandMatches.map((c) => (
+                  <button
+                    key={c.name}
+                    type="button"
+                    className={styles.paletteRow}
+                    onClick={() => setDraft(c.argumentHint ? `/${c.name} ` : `/${c.name}`)}
+                  >
+                    <span className={styles.paletteName}>/{c.name}</span>
+                    <span className={styles.paletteSummary}>{c.summary}</span>
+                    <span className={styles.paletteKind}>
+                      {c.kind === "instant" ? "runs directly" : "asks the assistant"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {mention !== null && mentionMatches.length > 0 && (
+              <div className={styles.palette} role="listbox" aria-label="Pin something">
+                {mentionMatches.map((o) => (
+                  <button
+                    key={`${o.kind}-${o.refId}`}
+                    type="button"
+                    className={styles.paletteRow}
+                    onClick={() => {
+                      setDraft((prev) => clearMention(prev));
+                      void pinEntity(o.kind, o.refId, o.label);
+                    }}
+                  >
+                    <span className={styles.paletteName}>{pinKindLabel(o.kind)}</span>
+                    <span className={styles.paletteSummary}>{o.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+
             <form
               className={styles.composer}
               onSubmit={(e) => {
@@ -576,11 +889,28 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
             >
               <Textarea
                 className={styles.composerField}
-                placeholder="What are you trying to do?"
+                placeholder="What are you trying to do? / for commands, @ to pin something"
                 value={draft}
                 rows={1}
                 disabled={pending || budget?.exhausted}
-                onChange={(e) => setDraft(e.target.value)}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  // Loading the pickable entities on the first `@` keeps the
+                  // drawer's open cost at one request, not four.
+                  if (mentionQuery(e.target.value) !== null && mentionOptions.length === 0) {
+                    void loadMentionOptions();
+                  }
+                }}
+                onPaste={(e) => {
+                  // A pasted link becomes a pin, fetched through safe-fetch and
+                  // marked untrusted (D-77.6) — vouching for a link is not
+                  // vouching for what is on the other end of it.
+                  const url = pastedUrl(e.clipboardData.getData("text"));
+                  if (url && activeId) {
+                    e.preventDefault();
+                    void pinEntity("url", url);
+                  }
+                }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
@@ -600,6 +930,131 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
           </>
         )}
       </aside>
+    </div>
+  );
+}
+
+/**
+ * A typed result card (Sprint 77). The record itself, rendered — and, where the
+ * platform already has a route for the action, actionable.
+ *
+ * The Approve button issues the identical request `/review` issues (D-77.3),
+ * which is why the decision-log record it writes is identical: the same route
+ * writes it. There is no chat-side approval service, and there must never be
+ * one.
+ */
+function ResultCard({
+  card,
+  workspaceId,
+  busy,
+  onAct,
+}: {
+  card: ChatCard;
+  workspaceId: string;
+  busy: boolean;
+  onAct: (action: "approve" | "reject" | "edit", content?: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [edited, setEdited] = useState(card.body ?? "");
+  const href = cardHref(card, workspaceId);
+  const original = card.body ?? "";
+  const spans = editing ? diffWords(original, edited) : [];
+
+  return (
+    <div className={`${styles.card} ${styles[`card_${card.kind}`] ?? ""}`}>
+      <div className={styles.cardHead}>
+        <span className={styles.cardKind}>{cardKindLabel(card.kind)}</span>
+        <span className={styles.cardTitle}>{card.title}</span>
+        {card.subtitle && <span className={styles.cardSubtitle}>{card.subtitle}</span>}
+      </div>
+
+      {card.fields.length > 0 && (
+        <dl className={styles.cardFields}>
+          {card.fields.map((f) => (
+            <div key={f.label} className={styles.cardField}>
+              <dt className={styles.cardFieldLabel}>{f.label}</dt>
+              <dd className={styles.cardFieldValue}>{f.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
+      {card.body && !editing && <p className={styles.cardBody}>{card.body}</p>}
+
+      {editing && (
+        <div className={styles.cardEditor}>
+          <Textarea
+            className={styles.cardEditorField}
+            value={edited}
+            rows={6}
+            onChange={(e) => setEdited(e.target.value)}
+          />
+          {/* The diff is the point of editing here: the box is small, the draft
+              may be long, and "I thought I only fixed the typo" is how a
+              paragraph goes missing. */}
+          <p className={styles.cardDiffSummary}>{describeDiff(spans)}</p>
+          <p className={styles.cardDiff}>
+            {spans.map((span, i) => (
+              <span
+                key={i}
+                className={
+                  span.op === "insert"
+                    ? styles.diffInsert
+                    : span.op === "delete"
+                      ? styles.diffDelete
+                      : undefined
+                }
+              >
+                {span.text}
+              </span>
+            ))}
+          </p>
+        </div>
+      )}
+
+      <div className={styles.cardActions}>
+        {editing ? (
+          <>
+            <Button
+              variant="primary"
+              loading={busy}
+              disabled={!hasChanges(original, edited)}
+              onClick={() => {
+                onAct("edit", edited);
+                setEditing(false);
+              }}
+            >
+              Save edit
+            </Button>
+            <Button variant="tertiary" disabled={busy} onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+          </>
+        ) : (
+          <>
+            {cardHasAction(card, "approve") && (
+              <Button variant="primary" loading={busy} onClick={() => onAct("approve")}>
+                Approve
+              </Button>
+            )}
+            {cardHasAction(card, "edit") && (
+              <Button variant="secondary" disabled={busy} onClick={() => setEditing(true)}>
+                Edit
+              </Button>
+            )}
+            {cardHasAction(card, "reject") && (
+              <Button variant="tertiary" disabled={busy} onClick={() => onAct("reject")}>
+                Reject
+              </Button>
+            )}
+            {href && (
+              <Link className={styles.cardLink} href={href}>
+                Open
+              </Link>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -764,6 +1219,7 @@ function bubble(
     content,
     toolName: null,
     citations: [],
+    cards: [],
     agentRunId: null,
     costCents: 0,
     inputTokens: 0,

@@ -42,6 +42,7 @@ function message(overrides: Partial<ChatMessage> = {}): ChatMessage {
     content: "text",
     toolName: null,
     citations: [],
+    cards: [],
     agentRunId: null,
     costCents: 0,
     inputTokens: 0,
