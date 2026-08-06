@@ -67,7 +67,6 @@ import { registerGuidanceRoutes } from "./routes/guidance";
 import { registerGenerationSettingsRoutes } from "./routes/generation-settings";
 import { registerInboxRoutes } from "./routes/inbox";
 import { registerInternalBackgroundJobRoutes } from "./routes/internal-background-jobs";
-import { registerInternalTaskRoutes } from "./routes/internal-tasks";
 import { registerLaunchRoutes } from "./routes/launches";
 import { registerLearningRoutes } from "./routes/learning";
 import { registerMailRoutes } from "./routes/mail";
@@ -105,7 +104,7 @@ import { createExternalActionRuntime } from "./services/external-action-coordina
 import { repairDanglingDuplicateGroups } from "./services/discovery-dedupe";
 import type { DiscoveryOperatorEvent } from "./services/discovery-scheduler";
 import {
-  unavailableBackgroundJobHandlers,
+  createBackgroundJobHandlers,
   type BackgroundJobHandlers,
 } from "./services/background-job-handlers";
 import {
@@ -200,7 +199,7 @@ export async function buildApp({
   gmail = new FabricGmailProvider(connectors),
   resendWebhookVerifier = createResendWebhookVerifierFromEnv(),
   workerToken = process.env.TUEZDAY_WORKER_TOKEN,
-  backgroundJobHandlers = unavailableBackgroundJobHandlers(),
+  backgroundJobHandlers,
   backgroundJobPolicy = parseBackgroundJobPolicy(process.env),
   analytics = createAnalyticsSink(),
   design = new OpenDesignProvider(),
@@ -261,6 +260,26 @@ export async function buildApp({
   });
   // Sprint 70: the ask seam, built once for the same reason.
   const agentQuestions = createAgentQuestions({ db });
+  const effectiveBackgroundJobHandlers =
+    backgroundJobHandlers ??
+    createBackgroundJobHandlers({
+      db,
+      llm,
+      evidence,
+      safeFetch: guardedFetch,
+      proposals: agentProposals,
+      questions: agentQuestions,
+      intentProvider: intent,
+      fabric: connectors,
+      gmail,
+      mailer,
+      fetcher,
+      runtime: externalActionRuntime,
+      discoveryPolicy: operatorPolicy,
+      jobPolicy: backgroundJobPolicy,
+      instanceId,
+      log: operatorLog,
+    });
 
   // The design renderer keeps one shared headless browser per process.
   app.addHook("preClose", async () => {
@@ -307,25 +326,10 @@ export async function buildApp({
 
   registerInternalBackgroundJobRoutes(app, {
     db,
-    handlers: backgroundJobHandlers,
+    handlers: effectiveBackgroundJobHandlers,
     policy: backgroundJobPolicy,
     instanceId,
     shutdownSignal: effectiveShutdownSignal,
-  });
-
-  registerInternalTaskRoutes(app, {
-    db,
-    llm,
-    evidence,
-    safeFetch: guardedFetch,
-    proposals: agentProposals,
-    questions: agentQuestions,
-    intentProvider: intent,
-    fabric: connectors,
-    policy: operatorPolicy,
-    instanceId,
-    shutdownSignal: effectiveShutdownSignal,
-    log: operatorLog,
   });
 
   registerAuthRoutes(app, db, fetcher, analytics);

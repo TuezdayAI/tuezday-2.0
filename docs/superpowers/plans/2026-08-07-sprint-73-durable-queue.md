@@ -321,20 +321,20 @@ git commit -m "feat(queue): execute typed jobs through one internal tick"
 - Extends `runPipelinesTick` with an optional `workspaceId` filter.
 - Produces one tenant-scoped handler for every recurring kind.
 
-- [ ] **Step 1: Write the failing full-cutover test**
+- [x] **Step 1: Write the failing full-cutover test**
 
 The test creates two workspaces, reconciles schedules, runs queue ticks with
 injected fake dependencies, and asserts each of the thirteen handler spies is
 invoked only with its job workspace. It also asserts the legacy discovery,
 automation, pipelines, and preferences internal tick routes return 404.
 
-- [ ] **Step 2: Run and witness legacy-route/handler failures**
+- [x] **Step 2: Run and witness legacy-route/handler failures**
 
 Run: `npx vitest run apps/api/test/sprint73-domain-cutover.test.ts apps/api/test/internal-tasks.test.ts apps/api/test/automation-ab-routes.test.ts`
 
 Expected: FAIL because legacy routes still exist and handlers are incomplete.
 
-- [ ] **Step 3: Wire all domain handlers through existing bounded services**
+- [x] **Step 3: Wire all domain handlers through existing bounded services**
 
 Discovery uses its existing per-source durable ledger with `workspaceId` input.
 Pipelines filter queued runs by workspace. Automation retains its per-workspace
@@ -342,19 +342,20 @@ idempotency lease as defense in depth. The remaining handlers call their
 existing per-workspace service functions; current domain receipts and unique
 constraints remain their replay fences.
 
-- [ ] **Step 4: Remove all four legacy internal task tick routes**
+- [x] **Step 4: Remove all four legacy internal task tick routes**
 
 Delete `/internal/discovery/tick`, `/internal/automation/tick`,
 `/internal/pipelines/tick`, and `/internal/preferences/tick`. Keep manual
-workspace routes for founders, but the worker can no longer authenticate to them.
+workspace routes for founders. The transitional worker allowlist is removed in
+Task 7 atomically with the worker binary cutover.
 
-- [ ] **Step 5: Run domain regression suites**
+- [x] **Step 5: Run domain regression suites**
 
 Run: `npx vitest run apps/api/test/sprint73-domain-cutover.test.ts apps/api/test/sprint49-acceptance.test.ts apps/api/test/automation-ab-routes.test.ts apps/api/test/preference-extraction.test.ts apps/api/test/cadences.test.ts apps/api/test/mailboxes.test.ts apps/api/test/outreach.test.ts apps/api/test/launch-sequences.test.ts`
 
 Expected: PASS after updating assertions to the single queue entrypoint.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api/src apps/api/test

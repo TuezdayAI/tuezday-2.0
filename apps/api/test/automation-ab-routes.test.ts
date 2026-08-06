@@ -266,38 +266,20 @@ describe("automation A/B routes (Sprint 65)", () => {
     expect(list.json()[0].id).toBe(record.id);
   });
 
-  it("exposes the pipelines tick to the worker credential only", async () => {
-    const absent = await rawApp.inject({
-      method: "POST",
-      url: "/internal/pipelines/tick",
-      payload: {},
-    });
-    expect(absent.statusCode).toBe(401);
-
-    const userToken = await rawApp.inject({
-      method: "POST",
-      url: "/internal/pipelines/tick",
-      payload: {},
-      headers: { authorization: `Bearer ${founder.token}` },
-    });
-    expect(userToken.statusCode).toBe(401);
-
-    const nonEmpty = await rawApp.inject({
-      method: "POST",
-      url: "/internal/pipelines/tick",
-      payload: { workspaceId },
-      headers: { authorization: `Bearer ${WORKER_TOKEN}` },
-    });
-    expect(nonEmpty.statusCode).toBe(400);
-
-    const ok = await rawApp.inject({
-      method: "POST",
-      url: "/internal/pipelines/tick",
-      payload: {},
-      headers: { authorization: `Bearer ${WORKER_TOKEN}` },
-    });
-    expect(ok.statusCode, ok.body).toBe(200);
-    expect(ok.json()).toMatchObject({ busy: false, processed: 0, autoApproved: 0 });
+  it("retires the standalone pipelines tick after the queue cutover", async () => {
+    for (const headers of [
+      undefined,
+      { authorization: `Bearer ${founder.token}` },
+      { authorization: `Bearer ${WORKER_TOKEN}` },
+    ]) {
+      const response = await rawApp.inject({
+        method: "POST",
+        url: "/internal/pipelines/tick",
+        payload: {},
+        headers,
+      });
+      expect([401, 404]).toContain(response.statusCode);
+    }
   });
 
   it("hides the A/B surface from non-members", async () => {

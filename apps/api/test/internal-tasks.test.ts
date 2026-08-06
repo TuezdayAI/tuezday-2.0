@@ -55,29 +55,24 @@ describe("internal task boundary", () => {
   });
 
   it("runs both API-owned scheduler entrypoints with the worker token", async () => {
-    const discovery = await app.inject({
-      method: "POST",
-      url: "/internal/discovery/tick",
-      payload: {},
-      headers: workerHeaders(),
-    });
-    const automation = await app.inject({
-      method: "POST",
-      url: "/internal/automation/tick",
-      payload: {},
-      headers: workerHeaders(),
-    });
-
-    expect(discovery.statusCode, discovery.body).toBe(200);
-    expect(automation.statusCode, automation.body).toBe(200);
-    expect(discovery.json()).toMatchObject({ busy: false, processed: 0 });
-    expect(automation.json()).toMatchObject({ busy: false, processed: 0 });
+    for (const url of [
+      "/internal/discovery/tick",
+      "/internal/automation/tick",
+      "/internal/pipelines/tick",
+      "/internal/preferences/tick",
+    ]) {
+      const response = await app.inject({
+        method: "POST",
+        url,
+        payload: {},
+        headers: workerHeaders(),
+      });
+      expect(response.statusCode, url).toBe(404);
+    }
   });
 
-  it.each([
-    "/internal/discovery/tick",
-    "/internal/automation/tick",
-  ])("accepts only an empty body on %s", async (url) => {
+  it("accepts only an empty body on the consolidated queue tick", async () => {
+    const url = "/internal/background-jobs/tick";
     const accepted = await app.inject({
       method: "POST",
       url,
