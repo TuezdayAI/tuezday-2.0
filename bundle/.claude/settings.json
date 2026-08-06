@@ -1,0 +1,44 @@
+{
+  "//": "Commit this as .claude/settings.json — every agent on the team inherits it on git clone.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/guard.sh",
+            "timeout": 15,
+            "statusMessage": "Checking guardrails..."
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "path=$(jq -r '.tool_input.file_path // empty'); echo \"$path\" | grep -qE '\\.(ts|tsx|js|jsx|json)$' || exit 0; npx --no-install biome check --write \"$path\" >/dev/null 2>&1; exit 0",
+            "timeout": 30,
+            "statusMessage": "Formatting..."
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/end-of-turn.sh",
+            "timeout": 180,
+            "statusMessage": "Typecheck + lint..."
+          }
+        ]
+      }
+    ]
+  }
+}

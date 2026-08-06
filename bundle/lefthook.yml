@@ -1,0 +1,81 @@
+# lefthook.yml — enforcement that fires for every agent and every human.
+# Install: npm install (package.json "prepare": "lefthook install")
+# Never bypass with --no-verify.
+
+pre-commit:
+  parallel: true
+  commands:
+    format:
+      glob: "*.{ts,tsx,js,jsx,json}"
+      run: npx biome check --write --no-errors-on-unmatched {staged_files}
+      stage_fixed: true
+
+    no-secrets:
+      run: |
+        if git diff --cached -U0 | grep -qE '^\+.*(sk-[A-Za-z0-9]{20,}|AIza[A-Za-z0-9_-]{20,}|-----BEGIN [A-Z ]*PRIVATE KEY)'; then
+          echo "BLOCKED: possible secret in staged diff (AGENTS.md §11)."
+          exit 1
+        fi
+
+    no-env-files:
+      run: |
+        if git diff --cached --name-only | grep -qE '(^|/)\.env($|\.)|\.pem$|id_rsa'; then
+          echo "BLOCKED: env/key files are never committed (AGENTS.md §11)."
+          exit 1
+        fi
+
+    no-test-gaming:
+      glob: "*.{test,spec}.{ts,tsx}"
+      run: |
+        if grep -nE '\b(it|test|describe)\.(skip|only|todo)\b' {staged_files}; then
+          echo "BLOCKED: skipped/exclusive tests are not allowed (AGENTS.md §5)."
+          exit 1
+        fi
+
+    no-debug-logs:
+      glob: "apps/**/*.{ts,tsx}"
+      run: |
+        if grep -nE '^\s*console\.(log|debug)\(' {staged_files}; then
+          echo "BLOCKED: use the logger, not console.log (AGENTS.md §3)."
+          exit 1
+        fi
+
+    no-stray-markdown:
+      run: |
+        BAD=$(git diff --cached --name-only --diff-filter=A \
+              | grep -E '\.md$' \
+              | grep -vE '^(docs/specs/|AGENTS\.md|CLAUDE\.md|docs/agent/)') || true
+        if [ -n "$BAD" ]; then
+          echo "BLOCKED: unrequested markdown (AGENTS.md §4):"; echo "$BAD"
+          echo "If the human asked for it, commit it separately with LEFTHOOK=0."
+          exit 1
+        fi
+
+    guardrails-untouched:
+      run: |
+        if git diff --cached --name-only \
+           | grep -qE '^(lefthook\.yml|\.github/|\.claude/settings\.json|AGENTS\.md)'; then
+          echo "NOTE: this commit edits guardrail config. Founder review required (AGENTS.md §9.7)."
+        fi
+
+pre-push:
+  parallel: false
+  commands:
+    no-push-to-main:
+      run: |
+        if git rev-parse --abbrev-ref HEAD | grep -qx 'main'; then
+          echo "BLOCKED: never push to main. Open a PR (AGENTS.md §9.7)."
+          exit 1
+        fi
+
+    lint:
+      run: npm run lint
+
+    typecheck:
+      run: npm run typecheck
+
+    graph:
+      run: npm run graph:check
+
+    test:
+      run: npm test
