@@ -14,6 +14,7 @@ import {
 import type { Db, DbExecutor } from "../db";
 import { approvalDecisions, drafts, generations, type DraftRow } from "../db/schema";
 import { draftApprovalFingerprint } from "./draft-approval-fingerprint";
+import { capturePreferenceEdit } from "./preference-edits";
 
 // `select` is needed alongside the writes so an approval can read the draft's
 // stored mediaJson to fingerprint it, without widening the public Draft type.
@@ -79,10 +80,11 @@ function logDecision(
   contentFingerprint: string | null = null,
   /** Sprint 66 — the human's stated rationale (today: optional on reject). */
   reason: string | null = null,
-): void {
+): string {
+  const id = randomUUID();
   db.insert(approvalDecisions)
     .values({
-      id: randomUUID(),
+      id,
       draftId: draft.id,
       workspaceId: draft.workspaceId,
       action,
@@ -96,6 +98,7 @@ function logDecision(
       createdAt: Date.now(),
     })
     .run();
+  return id;
 }
 
 export interface SubmitDraftInput {
@@ -398,6 +401,16 @@ export function humanApprovalCoveringDraft(
  * Apply a state-machine action to a draft. `newContent` is only meaningful
  * for `edit`. Throws InvalidTransitionError if the action is illegal.
  */
+export interface ApplyDraftActionOptions {
+  /**
+   * Sprint 68 — the founder's own words for an `edit`, when the edit came
+   * through the conversational editor. The preference-memory capture is keyed
+   * off this: both editor turns and hand edits land through this one `edit`
+   * transition, so the instruction is what distinguishes the two sources.
+   */
+  instruction?: string | null;
+}
+
 export function applyDraftAction(
   db: Db,
   draft: Draft,
@@ -405,8 +418,9 @@ export function applyDraftAction(
   actor: DraftActor,
   newContent?: string,
   reason?: string,
+  options?: ApplyDraftActionOptions,
 ): Draft {
-  return applyDraftActionInTransaction(db, draft, action, actor, newContent, reason);
+  return applyDraftActionInTransaction(db, draft, action, actor, newContent, reason, options);
 }
 
 /** Apply a draft action through either the root DB or an active transaction. */
@@ -417,6 +431,7 @@ export function applyDraftActionInTransaction(
   actor: DraftActor,
   newContent?: string,
   reason?: string,
+  options?: ApplyDraftActionOptions,
 ): Draft {
   const toState = transitionTo(draft.state, action);
   if (!toState) throw new InvalidTransitionError(draft.state, action);
@@ -449,7 +464,7 @@ export function applyDraftActionInTransaction(
     .set({ state: toState, content, updatedAt: now })
     .where(eq(drafts.id, draft.id))
     .run();
-  logDecision(
+  const decisionId = logDecision(
     db,
     draft,
     actor,
@@ -460,5 +475,22 @@ export function applyDraftActionInTransaction(
     contentFingerprint,
     reason ?? null,
   );
+  // Sprint 68 (D-68.2): capture the correction for preference memory. Human
+  // edits only — this same path carries system approvals, the automation tick
+  // and the public API, and a machine edit is not a preference. Capture is a
+  // plain insert keyed on the decision id, so it is idempotent and adds no
+  // latency to the founder's action.
+  if (action === "edit" && actor.human && content !== draft.content) {
+    capturePreferenceEdit(db, {
+      workspaceId: draft.workspaceId,
+      sourceId: decisionId,
+      draftId: draft.id,
+      taskType: draft.taskType,
+      channel: draft.channel,
+      beforeContent: draft.content,
+      afterContent: content,
+      instruction: options?.instruction ?? null,
+    });
+  }
   return { ...draft, state: toState, content, updatedAt: now };
 }

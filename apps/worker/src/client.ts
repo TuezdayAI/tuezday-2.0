@@ -12,7 +12,8 @@ export interface WorkerClient {
     path:
       | "/internal/discovery/tick"
       | "/internal/automation/tick"
-      | "/internal/pipelines/tick",
+      | "/internal/pipelines/tick"
+      | "/internal/preferences/tick",
   ): Promise<unknown>;
 }
 

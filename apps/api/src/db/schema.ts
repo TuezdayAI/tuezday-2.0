@@ -3608,3 +3608,88 @@ export const evalCaseResults = sqliteTable(
 );
 
 export type EvalCaseResultRow = typeof evalCaseResults.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Preference memory (Sprint 68) — the fast learning layer.
+//
+// A human correction is captured verbatim and deterministically (no LLM in the
+// request path, D-68.3); an extraction pass turns groups of same-scope edits
+// into learned rules; the rules are injected as a traced resolver section and
+// promoted into the brain docs only through the existing founder-accepts gate.
+// ---------------------------------------------------------------------------
+
+export const preferenceEdits = sqliteTable(
+  "preference_edits",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    source: text("source").notNull(), // PREFERENCE_EDIT_SOURCES
+    /** Decision id or revision-turn id — the unique key that makes capture idempotent. */
+    sourceId: text("source_id").notNull(),
+    // Set null, not cascade: deleting a draft removes the link, never the
+    // correction it taught us (the Sprint 67 freeze rule).
+    draftId: text("draft_id").references(() => drafts.id, { onDelete: "set null" }),
+    taskType: text("task_type").notNull(),
+    channel: text("channel").notNull(),
+    beforeContent: text("before_content").notNull(),
+    afterContent: text("after_content").notNull(),
+    instruction: text("instruction"),
+    editDistance: real("edit_distance").notNull().default(0),
+    digestedAt: integer("digested_at"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("preference_edit_source").on(t.workspaceId, t.source, t.sourceId),
+    index("preference_edit_undigested").on(t.workspaceId, t.digestedAt, t.createdAt),
+  ],
+);
+
+export type PreferenceEditRow = typeof preferenceEdits.$inferSelect;
+
+export const preferenceRules = sqliteTable(
+  "preference_rules",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    rule: text("rule").notNull(),
+    polarity: text("polarity").notNull(), // PREFERENCE_POLARITIES
+    scopeTaskType: text("scope_task_type"),
+    scopeChannel: text("scope_channel"),
+    status: text("status").notNull(), // PREFERENCE_RULE_STATUSES
+    origin: text("origin").notNull(), // PREFERENCE_RULE_ORIGINS
+    confidence: integer("confidence").notNull().default(0),
+    observationCount: integer("observation_count").notNull().default(0),
+    appliedCount: integer("applied_count").notNull().default(0),
+    lastObservedAt: integer("last_observed_at"),
+    lastAppliedAt: integer("last_applied_at"),
+    promotedAt: integer("promoted_at"),
+    retiredAt: integer("retired_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("preference_rule_workspace").on(t.workspaceId, t.status, t.confidence)],
+);
+
+export type PreferenceRuleRow = typeof preferenceRules.$inferSelect;
+
+export const preferenceRuleEvidence = sqliteTable(
+  "preference_rule_evidence",
+  {
+    id: text("id").primaryKey(),
+    ruleId: text("rule_id")
+      .notNull()
+      .references(() => preferenceRules.id, { onDelete: "cascade" }),
+    editId: text("edit_id")
+      .notNull()
+      .references(() => preferenceEdits.id, { onDelete: "cascade" }),
+    excerpt: text("excerpt").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("preference_rule_evidence_pair").on(t.ruleId, t.editId)],
+);
+
+export type PreferenceRuleEvidenceRow = typeof preferenceRuleEvidence.$inferSelect;

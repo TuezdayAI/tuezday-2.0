@@ -218,7 +218,10 @@ export default function LearningPage() {
 
       <p className="subtitle">
         What Tuezday learns from your decisions, edits, and results — proposed as brain updates
-        that you approve or dismiss.
+        that you approve or dismiss. This is the slow, permanent half; the rules learned from your
+        edits the same day live in{" "}
+        <Link href={`/workspaces/${id}/preferences`}>Preferences</Link>, and a synthesis you accept
+        is what folds the stable ones in here for good.
       </p>
 
       <Card>

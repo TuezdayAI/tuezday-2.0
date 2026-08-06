@@ -6030,6 +6030,8 @@ export const LLM_PIPELINES = [
   "agent_run",
   // Sprint 64: every LLM step of a pipeline_runs execution.
   "pipeline_run",
+  // Sprint 68: turning a batch of founder edits into learned preference rules.
+  "preference_extraction",
 ] as const;
 export type LlmPipeline = (typeof LLM_PIPELINES)[number];
 
@@ -9035,3 +9037,160 @@ export const bannedClaimInputSchema = z.object({
   note: z.string().trim().max(300).default(""),
 });
 export type BannedClaimInput = z.infer<typeof bannedClaimInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Preference memory (Sprint 68, PRD §7 Sprint 68 / direction doc Move 5)
+//
+// The fast layer under the weekly `now` synthesis: a founder edit becomes a
+// captured diff, the diff becomes a learned rule, and the rule is injected as
+// a traced resolver section the same afternoon. The slow layer keeps its job —
+// promoting stable rules into the brain docs behind the founder-accepts gate.
+// ---------------------------------------------------------------------------
+
+/** Where a captured correction came from (D-68.1: edits only). */
+export const PREFERENCE_EDIT_SOURCES = ["draft_edit", "editor_turn"] as const;
+export type PreferenceEditSource = (typeof PREFERENCE_EDIT_SOURCES)[number];
+
+export const PREFERENCE_POLARITIES = ["do", "avoid"] as const;
+export type PreferencePolarity = (typeof PREFERENCE_POLARITIES)[number];
+
+/**
+ * `candidate` — extracted below the activation confidence; visible, not
+ * injected. `active` — injected. `disabled` — the founder switched it off.
+ * `promoted` — folded into a brain doc by an accepted synthesis, so the
+ * resolver already reads it. `retired` — neither re-observed nor applied
+ * inside the retirement window (D-68.8).
+ */
+export const PREFERENCE_RULE_STATUSES = [
+  "candidate",
+  "active",
+  "disabled",
+  "promoted",
+  "retired",
+] as const;
+export type PreferenceRuleStatus = (typeof PREFERENCE_RULE_STATUSES)[number];
+
+export const PREFERENCE_RULE_ORIGINS = ["extracted", "manual"] as const;
+export type PreferenceRuleOrigin = (typeof PREFERENCE_RULE_ORIGINS)[number];
+
+/** A rule is one imperative line. Longer than this is a paragraph, not a rule. */
+export const PREFERENCE_RULE_MAX_CHARS = 160;
+/** Top-N injected per resolve (PRD: "top-N *relevant* rules"). */
+export const PREFERENCE_RULE_LIMIT = 5;
+/** The section's own budget, enforced inside the resolver before the global ladder. */
+export const PREFERENCE_MAX_TOKENS = 300;
+/** Below this normalized edit distance a "correction" is whitespace, not taste. */
+export const PREFERENCE_MIN_EDIT_DISTANCE = 2;
+/** Normalized distance at or below which two rules are the same rule restated. */
+export const PREFERENCE_MERGE_DISTANCE = 20;
+/** At or above this confidence an extracted rule is `active`; below it, `candidate` (D-68.9). */
+export const PREFERENCE_ACTIVATE_CONFIDENCE = 65;
+/** Promotion needs a rule the founder's edits re-derived at least this often. */
+export const PROMOTE_MIN_OBSERVATIONS = 2;
+export const PROMOTE_MIN_CONFIDENCE = 70;
+/** Neither observed nor applied within this window ⇒ retired. */
+export const RETIRE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
+
+export const preferenceEditSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  source: z.enum(PREFERENCE_EDIT_SOURCES),
+  /** Stable id of the originating row — the decision id, or the revision turn id. */
+  sourceId: z.string(),
+  draftId: z.string().uuid().nullable(),
+  taskType: z.enum(TASK_TYPES),
+  channel: z.enum(CHANNELS),
+  beforeContent: z.string(),
+  afterContent: z.string(),
+  /** The founder's own words for the correction; only the editor path has them. */
+  instruction: z.string().nullable(),
+  /** Normalized Levenshtein, 0–100 (Sprint 65's `edit-distance.ts`). */
+  editDistance: z.number(),
+  /** Null until an extraction pass has read it. */
+  digestedAt: z.number().int().nullable(),
+  createdAt: z.number().int(),
+});
+export type PreferenceEdit = z.infer<typeof preferenceEditSchema>;
+
+export const preferenceRuleSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  rule: z.string(),
+  polarity: z.enum(PREFERENCE_POLARITIES),
+  /** Scope is derived from the edit group, never asked of the model (D-68.4). */
+  scopeTaskType: z.enum(TASK_TYPES).nullable(),
+  scopeChannel: z.enum(CHANNELS).nullable(),
+  status: z.enum(PREFERENCE_RULE_STATUSES),
+  origin: z.enum(PREFERENCE_RULE_ORIGINS),
+  confidence: z.number().int().min(0).max(100),
+  /** How many distinct founder edits produced or restated this rule. */
+  observationCount: z.number().int(),
+  /** How many real generations it has shaped — never moved by a preview (D-68.6). */
+  appliedCount: z.number().int(),
+  lastObservedAt: z.number().int().nullable(),
+  lastAppliedAt: z.number().int().nullable(),
+  promotedAt: z.number().int().nullable(),
+  retiredAt: z.number().int().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type PreferenceRule = z.infer<typeof preferenceRuleSchema>;
+
+export const preferenceRuleEvidenceSchema = z.object({
+  id: z.string().uuid(),
+  ruleId: z.string().uuid(),
+  editId: z.string().uuid(),
+  excerpt: z.string(),
+  createdAt: z.number().int(),
+  /** The originating edit, when it still exists — what makes a rule attributable. */
+  edit: preferenceEditSchema.nullable(),
+});
+export type PreferenceRuleEvidence = z.infer<typeof preferenceRuleEvidenceSchema>;
+
+export const preferenceRuleDetailSchema = z.object({
+  rule: preferenceRuleSchema,
+  evidence: z.array(preferenceRuleEvidenceSchema),
+});
+export type PreferenceRuleDetail = z.infer<typeof preferenceRuleDetailSchema>;
+
+export const createPreferenceRuleInputSchema = z.object({
+  rule: z.string().trim().min(8).max(PREFERENCE_RULE_MAX_CHARS),
+  polarity: z.enum(PREFERENCE_POLARITIES).default("avoid"),
+  scopeTaskType: z.enum(TASK_TYPES).nullish(),
+  scopeChannel: z.enum(CHANNELS).nullish(),
+});
+export type CreatePreferenceRuleInput = z.infer<typeof createPreferenceRuleInputSchema>;
+
+export const updatePreferenceRuleInputSchema = z.object({
+  /** The founder's four levers: activate, switch off, switch back on, retire by hand. */
+  status: z.enum(["candidate", "active", "disabled", "retired"]),
+});
+export type UpdatePreferenceRuleInput = z.infer<typeof updatePreferenceRuleInputSchema>;
+
+/** The extraction step's structured output — one group of same-scope edits in. */
+export const extractedPreferenceRuleSchema = z.object({
+  rule: z.string().min(8).max(PREFERENCE_RULE_MAX_CHARS),
+  polarity: z.enum(PREFERENCE_POLARITIES),
+  confidence: z.number().int().min(0).max(100),
+  /** Quoted from the diffs — what makes the rule auditable rather than asserted. */
+  evidence: z.string().max(300),
+});
+export type ExtractedPreferenceRule = z.infer<typeof extractedPreferenceRuleSchema>;
+
+export const EXTRACTION_MAX_RULES = 3;
+
+export const preferenceExtractionSchema = z.object({
+  rules: z.array(extractedPreferenceRuleSchema).max(EXTRACTION_MAX_RULES),
+});
+export type PreferenceExtraction = z.infer<typeof preferenceExtractionSchema>;
+
+export const preferenceExtractionResultSchema = z.object({
+  /** Scope groups processed this pass. */
+  groups: z.number().int(),
+  /** Edits digested this pass, including ones that taught nothing. */
+  edits: z.number().int(),
+  created: z.number().int(),
+  merged: z.number().int(),
+  retired: z.number().int(),
+});
+export type PreferenceExtractionResult = z.infer<typeof preferenceExtractionResultSchema>;

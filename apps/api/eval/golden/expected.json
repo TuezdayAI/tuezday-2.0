@@ -1,5 +1,5 @@
 {
-  "contextDigest": "c5d8c0ad3b60bc10abe64e88f3d9e87ed458241e6284533b9b3436619d1f874b",
+  "contextDigest": "a8e93d956192fc33b90c1eabbef1a1dc62af4049f26883fcb6b46c33ed349202",
   "resolverDigest": "a422cf785a744dfdd58330cd097d205ef90808d1551efe2a74491673d7e8be54",
   "metrics": {
     "cases": 5,
@@ -19,7 +19,7 @@
     "rejectRecall": 100,
     "approvePassRate": 100,
     "costCents": 0,
-    "avgDurationMs": 7,
+    "avgDurationMs": 8,
     "production": null
   },
   "cases": [

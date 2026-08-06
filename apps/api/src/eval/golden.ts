@@ -10,6 +10,7 @@ import type { EvidenceStore } from "../evidence/store";
 import { ScriptedGateway } from "../llm/scripted";
 import type { SafeFetchService } from "../safe-fetch/index";
 import { addBannedClaim } from "../services/banned-claims";
+import { createManualRule } from "../services/preference-rules";
 import { failedCheckKinds } from "./golden-helpers";
 import {
   buildEvalSuite,
@@ -26,6 +27,7 @@ import {
   GOLDEN_BANNED_CLAIMS,
   GOLDEN_CASES,
   GOLDEN_CTA_EXPECTATION,
+  GOLDEN_PREFERENCE_RULE,
   GOLDEN_RESOLVER_INPUT,
   GOLDEN_RESOLVER_MUST_CONTAIN,
 } from "./golden-cases";
@@ -81,6 +83,9 @@ function seedWorkspace(db: Db): string {
   for (const phrase of GOLDEN_BANNED_CLAIMS) {
     addBannedClaim(db, workspaceId, { phrase, note: "" });
   }
+  // Sprint 68: one active learned rule, so every draft step's context carries
+  // the preference block and the digest moves if that block ever changes.
+  createManualRule(db, workspaceId, GOLDEN_PREFERENCE_RULE, now);
   // Newest first so buildEvalSuite's updatedAt-desc order matches fixture order,
   // which is what makes the scripted gateway's step sequence line up.
   GOLDEN_CASES.forEach((goldenCase, index) => {

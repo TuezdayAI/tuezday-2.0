@@ -27,6 +27,19 @@ export interface GoldenCase {
 }
 
 export const GOLDEN_BANNED_CLAIMS = ["the only platform that", "guaranteed results"];
+
+/**
+ * Sprint 68: one learned preference rule in the fixture, so the CI gate covers
+ * the preference-memory layer too. Without it, a change to `renderPreferences`
+ * or to the injection order would move nothing and pass silently — and the PRD
+ * requires the harness to run "on any change to a prompt or the resolver".
+ */
+export const GOLDEN_PREFERENCE_RULE = {
+  rule: "Lead with the concrete result, never a rhetorical question",
+  polarity: "avoid" as const,
+  scopeChannel: "linkedin" as const,
+  scopeTaskType: "signal_response" as const,
+};
 export const GOLDEN_CTA_EXPECTATION: CtaExpectation = "any";
 
 const CITATION_FROM_GOAL = "Retrieve before you judge";
@@ -78,6 +91,8 @@ export const GOLDEN_CASES: GoldenCase[] = [
       "## Triggering signal",
       "A competitor published a usage-based pricing page this morning.",
       "## Target channel",
+      "## Learned preferences from your edits",
+      GOLDEN_PREFERENCE_RULE.rule,
       "## Prior examples from approval history",
       "## Prior step outputs",
     ],
@@ -97,7 +112,11 @@ export const GOLDEN_CASES: GoldenCase[] = [
         "connects this to revenue, and that is why the announcement matters to operators.",
       [],
     ),
-    mustContain: ["## Triggering signal", "## Prior examples from approval history"],
+    mustContain: [
+      "## Triggering signal",
+      "## Learned preferences from your edits",
+      "## Prior examples from approval history",
+    ],
     expect: { verdict: "flag", failedChecks: ["banned_claims"] },
   },
   {
@@ -110,7 +129,11 @@ export const GOLDEN_CASES: GoldenCase[] = [
       content: "Far too long a post about pricing tiers to publish anywhere.",
     },
     script: steps(LONG_DRAFT, []),
-    mustContain: ["## Triggering signal", "## Prior examples from approval history"],
+    mustContain: [
+      "## Triggering signal",
+      "## Learned preferences from your edits",
+      "## Prior examples from approval history",
+    ],
     expect: { verdict: "flag", failedChecks: ["length_bounds"] },
   },
   {
@@ -127,7 +150,11 @@ export const GOLDEN_CASES: GoldenCase[] = [
         "incumbent in under a week, and the reason was not features — it was the first day.",
       [],
     ),
-    mustContain: ["## Triggering signal", "## Prior examples from approval history"],
+    mustContain: [
+      "## Triggering signal",
+      "## Learned preferences from your edits",
+      "## Prior examples from approval history",
+    ],
     expect: { verdict: "flag", failedChecks: ["placeholder_leak"] },
   },
   {
@@ -150,7 +177,11 @@ export const GOLDEN_CASES: GoldenCase[] = [
         },
       ],
     ),
-    mustContain: ["## Triggering signal", "## Prior examples from approval history"],
+    mustContain: [
+      "## Triggering signal",
+      "## Learned preferences from your edits",
+      "## Prior examples from approval history",
+    ],
     expect: { verdict: "flag", failedChecks: ["citation_validity"] },
   },
 ];

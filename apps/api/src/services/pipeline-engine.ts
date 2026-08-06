@@ -25,9 +25,11 @@ import type { z } from "zod";
 import {
   estimateTokens,
   renderExamples,
+  renderPreferences,
   type ContextSection,
   type ResolvedContext,
   type ResolveExamples,
+  type ResolvePreferences,
 } from "@tuezday/brain";
 import { toAgentTools } from "../agents/adapter";
 import { DEFAULT_TOOL_BUDGET, type ToolContext } from "../agents/registry";
@@ -55,6 +57,7 @@ import {
   rowToRun,
   startPipelineRun,
 } from "./pipeline-runs";
+import { recordRuleApplications, retrievePreferenceRules } from "./preference-rules";
 import { retrievePriorExamples } from "./prior-examples";
 import { getSignal, listSignals } from "./signals";
 import { getWorkspace } from "./workspaces";
@@ -225,6 +228,7 @@ function composeStepUserMessage(
   outputs: Map<string, unknown>,
   step: PipelineStepSpec,
   priorExamples: ResolveExamples | null,
+  preferences: ResolvePreferences | null,
 ): string {
   const lines: string[] = [
     "## Triggering signal",
@@ -234,6 +238,11 @@ function composeStepUserMessage(
     `## Target channel`,
     run.channel,
   ];
+  // Sprint 68 (Move 5): rules before examples — the instruction, then the
+  // illustrations. Same guarantee as few-shot below: every draft step sees them.
+  if (step.output === "draft" && preferences) {
+    lines.push("", "## Learned preferences from your edits", renderPreferences(preferences));
+  }
   // Sprint 66 (D-66.5): few-shot is a guarantee for drafting steps, not a
   // tool the model may skip — injected into every draft-output step's context.
   if (step.output === "draft" && priorExamples) {
@@ -266,6 +275,7 @@ async function runAgentStepPass(
   iteration: number,
   state: EngineState,
   priorExamples: ResolveExamples | null,
+  preferences: ResolvePreferences | null,
 ): Promise<StepPassResult> {
   const cached = state.cache.get(`${step.key}#${iteration}`);
   if (cached) return { ...cached, fromCache: true };
@@ -297,7 +307,15 @@ async function runAgentStepPass(
       messages: [
         {
           role: "user",
-          content: composeStepUserMessage(run, signal, spec, state.outputs, step, priorExamples),
+          content: composeStepUserMessage(
+            run,
+            signal,
+            spec,
+            state.outputs,
+            step,
+            priorExamples,
+            preferences,
+          ),
         },
       ],
       tools: toAgentTools(tools, ctx),
@@ -471,6 +489,7 @@ function executePropose(
   step: PipelineStepSpec,
   state: EngineState,
   priorExamples: ResolveExamples | null,
+  preferences: ResolvePreferences | null,
 ): { proposal: ProposalOutput; generationId: string | null; draftId: string | null } | null {
   const finalDraft = state.latestDraft;
   if (!finalDraft) return null;
@@ -509,6 +528,20 @@ function executePropose(
         tokens: estimateTokens(content),
       };
     });
+  // Sprint 68: same rule for the learned-preference block. Unshifted after the
+  // examples block so the stored provenance reads in bundle order: rules first.
+  if (preferences) {
+    const preferencesContent = renderPreferences(preferences);
+    sections.unshift({
+      key: "preferences",
+      layer: "preferences",
+      title: "Learned preferences from your edits",
+      content: preferencesContent,
+      included: true,
+      reason: `Applied ${preferences.rules.length} rule(s) learned from this workspace's own edits; injected into every draft step. Each is reversible on the Preferences page.`,
+      tokens: estimateTokens(preferencesContent),
+    });
+  }
   // Sprint 66: the few-shot block injected into draft steps is a real input —
   // provenance says so, in the same layer the resolver traces it under.
   if (priorExamples) {
@@ -548,6 +581,11 @@ function executePropose(
     provider: "pipeline",
     durationMs: 0,
   });
+  // Sprint 68 (D-68.6): only a live run that actually produced a generation
+  // counts as a rule application. Dry and shadow runs returned above, so an
+  // eval replay of eighty historical cases cannot inflate the hit count that
+  // promotion and retirement read.
+  recordRuleApplications(db, (preferences?.rules ?? []).map((rule) => rule.id));
   const draft = submitDraft(
     db,
     {
@@ -660,6 +698,12 @@ export async function executePipelineRun(
     channel: run.channel as Channel,
     taskType: "signal_response",
   });
+  // Sprint 68: the same treatment for learned preference rules — retrieved
+  // once per run, injected into every draft step, traced on the propose step.
+  const preferences = retrievePreferenceRules(db, workspaceId, {
+    channel: run.channel as Channel,
+    taskType: "signal_response",
+  });
   const definitionRow = db
     .select({ name: pipelineDefinitions.name })
     .from(pipelineDefinitions)
@@ -701,6 +745,7 @@ export async function executePipelineRun(
       iteration,
       state,
       priorExamples,
+      preferences,
     );
     if (pass.failure) {
       if (pass.failure.escalate) {
@@ -750,7 +795,7 @@ export async function executePipelineRun(
     const step = spec.steps[index]!;
 
     if (step.kind === "propose") {
-      const handoff = executePropose(db, run, spec, step, state, priorExamples);
+      const handoff = executePropose(db, run, spec, step, state, priorExamples, preferences);
       if (!handoff) {
         return { run: finishRun(db, run, "failed", state, { failureReason: "no_draft_produced" }) };
       }

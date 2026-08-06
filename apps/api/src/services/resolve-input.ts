@@ -1,4 +1,9 @@
-import type { ResolveCampaign, ResolveCampaignPlan, ResolveExamples } from "@tuezday/brain";
+import type {
+  ResolveCampaign,
+  ResolveCampaignPlan,
+  ResolveExamples,
+  ResolvePreferences,
+} from "@tuezday/brain";
 import type {
   BrainDocType,
   Campaign,
@@ -13,6 +18,7 @@ import { getBrainOutlines } from "./brain";
 import { getCurrentCampaignPlan } from "./campaign-plans";
 import { composeResolveCampaign } from "./campaigns";
 import { resolveTaskDocMatrix } from "./context-matrix";
+import { retrievePreferenceRules } from "./preference-rules";
 import { retrievePriorExamples } from "./prior-examples";
 
 export interface SelectiveContextInputs {
@@ -149,6 +155,35 @@ export function priorExampleInputs(
     examplesExclusionReason: examples
       ? undefined
       : "no approved or rejected prior outputs match this task yet.",
+  };
+}
+
+/**
+ * The Sprint 68 preference-memory resolver inputs: the top-N active rules the
+ * founder's own edits taught us, or an exclusion reason when none apply. Same
+ * shape and same guarantee as `priorExampleInputs` — always one or the other,
+ * so a participating trace states honestly why rules are(n't) there.
+ *
+ * Read-only (D-68.6). Recording that a rule was *applied* is a separate,
+ * explicit call from the generation paths, so a preview or an eval replay
+ * cannot inflate the hit count that promotion and retirement both read.
+ */
+export interface PreferenceRuleInputs {
+  preferences: ResolvePreferences | undefined;
+  preferencesExclusionReason: string | undefined;
+}
+
+export function preferenceRuleInputs(
+  db: Db,
+  workspaceId: string,
+  input: { channel?: Channel; taskType?: TaskType },
+): PreferenceRuleInputs {
+  const preferences = retrievePreferenceRules(db, workspaceId, input) ?? undefined;
+  return {
+    preferences,
+    preferencesExclusionReason: preferences
+      ? undefined
+      : "no active learned rules apply to this task yet.",
   };
 }
 

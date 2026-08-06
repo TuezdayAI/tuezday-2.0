@@ -13,6 +13,7 @@ import {
   type DiscoveryOperatorEvent,
 } from "../services/discovery-scheduler";
 import { runPipelinesTick } from "../services/pipeline-tick";
+import { runPreferenceExtraction } from "../services/preference-extraction";
 import { withTaskLease } from "../services/task-leases";
 import { listWorkspaces } from "../services/workspaces";
 
@@ -130,6 +131,42 @@ export function registerInternalTaskRoutes(
             blocked: 0,
             autoApproved: 0,
           }
+        : { busy: false, ...leased.value };
+    },
+  );
+
+  // Sprint 68 (D-68.3): turn captured founder edits into learned rules, and
+  // retire the ones that stopped firing. Runs far more often than the weekly
+  // synthesis — the whole point of the fast layer is that a correction made
+  // this morning is in effect this afternoon.
+  app.post(
+    "/internal/preferences/tick",
+    { schema: { body: EMPTY_BODY_SCHEMA } },
+    async () => {
+      const leased = await withTaskLease(
+        deps.db,
+        {
+          key: "preferences:extraction",
+          owner: `${deps.instanceId}:preferences-extraction:${randomUUID()}`,
+          leaseMs: deps.policy.leaseMs,
+          heartbeatMs: deps.policy.heartbeatMs,
+        },
+        async ({ signal }) => {
+          const totals = { workspaces: 0, edits: 0, created: 0, merged: 0, retired: 0 };
+          for (const workspace of listWorkspaces(deps.db)) {
+            if (signal.aborted || deps.shutdownSignal.aborted) break;
+            const result = await runPreferenceExtraction(deps.db, deps.llm, workspace.id);
+            totals.workspaces += 1;
+            totals.edits += result.edits;
+            totals.created += result.created;
+            totals.merged += result.merged;
+            totals.retired += result.retired;
+          }
+          return totals;
+        },
+      );
+      return leased.busy
+        ? { busy: true, workspaces: 0, edits: 0, created: 0, merged: 0, retired: 0 }
         : { busy: false, ...leased.value };
     },
   );

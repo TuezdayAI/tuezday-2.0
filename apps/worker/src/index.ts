@@ -209,6 +209,32 @@ async function runPipelinesTickForAllWorkspaces(): Promise<void> {
   );
 }
 
+interface PreferencesTickResponse {
+  busy?: boolean;
+  workspaces?: number;
+  edits?: number;
+  created?: number;
+  merged?: number;
+  retired?: number;
+}
+
+/** Sprint 68: turn the founder's captured edits into learned preference rules,
+ * and retire the ones that stopped firing. The fast half of the learning loop —
+ * the weekly synthesis below is still the only path into the brain docs. */
+async function runPreferencesTickForAllWorkspaces(): Promise<void> {
+  const result = (await worker.runInternal(
+    "/internal/preferences/tick",
+  )) as PreferencesTickResponse;
+  if (result.busy) {
+    console.log("[preferences] busy");
+    return;
+  }
+  if ((result.edits ?? 0) === 0 && (result.retired ?? 0) === 0) return; // nothing to digest
+  console.log(
+    `[preferences] ${result.edits ?? 0} edit(s) digested: ${result.created ?? 0} new rule(s), ${result.merged ?? 0} reinforced, ${result.retired ?? 0} retired`,
+  );
+}
+
 interface InboxRunResponse {
   newItems: number;
   metricsCaptured: number;
@@ -400,6 +426,11 @@ const loopSpecs = [
     name: "pipelines",
     intervalMs: config.intervals.pipelinesMs,
     run: runPipelinesTickForAllWorkspaces,
+  },
+  {
+    name: "preferences",
+    intervalMs: config.intervals.preferencesMs,
+    run: runPreferencesTickForAllWorkspaces,
   },
   {
     name: "learning",

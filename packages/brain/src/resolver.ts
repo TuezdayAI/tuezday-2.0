@@ -6,6 +6,7 @@
   DEFAULT_TOKEN_BUDGET,
   MATRIX_DOC_TYPES,
   PLAN_SECTION_TOKEN_CAP,
+  PREFERENCE_MAX_TOKENS,
   TASK_TYPES,
   ZOOM_DOC_TOKEN_CAP,
   ZOOM_MAX_SECTIONS_PER_DOC,
@@ -238,6 +239,8 @@ export type ContextLayer =
   | "evidence"
   /** Prior approved/rejected examples from approval history (Sprint 66). */
   | "examples"
+  /** Rules learned from the founder's own edits (Sprint 68). */
+  | "preferences"
   | "angle"
   | "review"
   | "task";
@@ -373,6 +376,27 @@ export interface ResolveExamples {
   rejected: ResolveExampleRejected[];
 }
 
+/**
+ * One learned preference rule (Sprint 68, PRD Move 5) — an instruction the
+ * founder's own edits taught the system, injected the same day rather than
+ * waiting for the weekly synthesis to notice it.
+ */
+export interface ResolvePreferenceRule {
+  id: string;
+  rule: string;
+  polarity: "do" | "avoid";
+  /** 0–100. Shown in the trace so a weak rule is visibly a weak rule. */
+  confidence: number;
+  /** How many separate founder edits produced or restated it. */
+  observationCount: number;
+  /** Human-readable scope, e.g. "signal_response on linkedin" or "all tasks". */
+  scope: string;
+}
+
+export interface ResolvePreferences {
+  rules: ResolvePreferenceRule[];
+}
+
 export interface ResolveInput {
   workspaceName: string;
   docs: BrainContents;
@@ -408,6 +432,15 @@ export interface ResolveInput {
   examples?: ResolveExamples;
   /** Why examples are absent (no history yet, scope excluded) — shown in the trace. */
   examplesExclusionReason?: string;
+  /**
+   * Learned preference rules (Sprint 68). Same participation rule as
+   * `examples`: the section is pushed only when this or
+   * `preferencesExclusionReason` is set, so call sites that don't participate
+   * keep byte-identical section lists.
+   */
+  preferences?: ResolvePreferences;
+  /** Why no rules are present (none learned yet, all disabled) — shown in the trace. */
+  preferencesExclusionReason?: string;
   /**
    * Replaces the static TASK_INSTRUCTIONS entry — used when the instruction is
    * composed per request (e.g. ad creative variant count). Visible in the
@@ -550,6 +583,47 @@ export function renderExamples(examples: ResolveExamples): string {
     parts.push(`### Rejected or corrected — avoid repeating these mistakes\n\n${lines.join("\n\n")}`);
   }
   return parts.join("\n\n");
+}
+
+/**
+ * Sprint 68: the learned-rule block. One imperative line per rule with its
+ * provenance in brackets, so the model sees *why* the rule has standing and
+ * the "why this" panel can show the founder the same thing. Exported so the
+ * pipeline engine renders exactly the block it traces.
+ */
+export function renderPreferences(preferences: ResolvePreferences): string {
+  const lines = preferences.rules.map((rule) => {
+    const observed =
+      rule.observationCount === 1
+        ? "learned from 1 edit"
+        : `learned from ${rule.observationCount} edits`;
+    return `- ${rule.polarity === "avoid" ? "Avoid" : "Do"}: ${rule.rule.trim()} [${observed}, ${rule.scope}]`;
+  });
+  return [
+    "These are corrections learned from this founder's own edits to previous drafts. Follow them.",
+    "Where one conflicts with the voice doc above, the voice doc wins — it is the authored source of truth and these are inferred.",
+    "",
+    ...lines,
+  ].join("\n");
+}
+
+/**
+ * The section's *own* budget (PRD: "with their own budget"). Applied before the
+ * global trim ladder, by dropping the lowest-ranked rules — the retrieval order
+ * is already the priority order, so the rule that survives is the one that
+ * matters most for this task.
+ */
+function fitPreferences(
+  preferences: ResolvePreferences,
+  maxTokens: number,
+): { fitted: ResolvePreferences; dropped: number } {
+  const rules = [...preferences.rules];
+  let dropped = 0;
+  while (rules.length > 1 && estimateTokens(renderPreferences({ rules })) > maxTokens) {
+    rules.pop();
+    dropped += 1;
+  }
+  return { fitted: { rules }, dropped };
 }
 
 export function resolveContext(input: ResolveInput): ResolvedContext {
@@ -982,6 +1056,37 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
     });
   }
 
+  // Sprint 68: rules learned from the founder's own edits. Sits immediately
+  // before the few-shot examples — the instruction, then the illustrations.
+  // Same participation rule as examples: pushed only when the caller opts in.
+  if (input.preferences || input.preferencesExclusionReason) {
+    const hasRules = input.preferences && input.preferences.rules.length > 0;
+    if (hasRules) {
+      const { fitted, dropped } = fitPreferences(input.preferences!, PREFERENCE_MAX_TOKENS);
+      const preferencesContent = renderPreferences(fitted);
+      const droppedNote = dropped > 0 ? ` ${dropped} lower-ranked rule(s) did not fit the section's own ${PREFERENCE_MAX_TOKENS}-token budget.` : "";
+      sections.push({
+        key: "preferences",
+        layer: "preferences",
+        title: "Learned preferences from your edits",
+        content: preferencesContent,
+        included: true,
+        reason: `Applied ${fitted.rules.length} rule(s) learned from this workspace's own edits, ranked by scope then confidence.${droppedNote} Each is reversible on the Preferences page.`,
+        tokens: estimateTokens(preferencesContent),
+      });
+    } else {
+      sections.push({
+        key: "preferences",
+        layer: "preferences",
+        title: "Learned preferences from your edits",
+        content: "",
+        included: false,
+        reason: `Excluded: ${input.preferencesExclusionReason ?? "no learned preference rules apply to this task yet."}`,
+        tokens: 0,
+      });
+    }
+  }
+
   // Sprint 66: retrieval few-shot from approval history. Pushed only when the
   // caller participates (examples or an exclusion reason set), so every other
   // call site's section list stays byte-for-byte unchanged.
@@ -1097,6 +1202,21 @@ export function resolveContext(input: ResolveInput): ResolvedContext {
       examplesSection.content = "";
       examplesSection.tokens = 0;
       examplesSection.reason = `Excluded: prior examples dropped to fit the token budget (bundle was ${over} tokens over).`;
+    }
+  }
+
+  // Ladder step 1.6 (Sprint 68): drop the learned-preferences section whole,
+  // after the examples and before zoom. A compact instruction earns its tokens
+  // more than a 600-character sample does, so it outlives few-shot; it is still
+  // inferred rather than authored, so it dies before the brain's own content.
+  if (includedTotal() > tokenBudget) {
+    const preferencesSection = sections.find((s) => s.key === "preferences");
+    if (preferencesSection?.included) {
+      const over = includedTotal() - tokenBudget;
+      preferencesSection.included = false;
+      preferencesSection.content = "";
+      preferencesSection.tokens = 0;
+      preferencesSection.reason = `Excluded: learned preferences dropped to fit the token budget (bundle was ${over} tokens over).`;
     }
   }
 
