@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   CHAT_GOAL_MAX_CHARS,
   CHAT_TURN_BOUNDS,
@@ -5,14 +6,21 @@ import {
   type AgentToolCall,
   type ChatCitation,
   type ChatMessage,
+  type ChatProposal,
   type ChatSession,
   type ChatStreamEvent,
   type ChatTurnResult,
+  type WorkspaceRole,
 } from "@tuezday/contracts";
 import { toAgentTools } from "../agents/adapter";
-import { DEFAULT_TOOL_BUDGET, type ToolActor, type ToolContext } from "../agents/registry";
+import {
+  DEFAULT_TOOL_BUDGET,
+  type AnyTool,
+  type ToolActor,
+  type ToolContext,
+} from "../agents/registry";
 import { AgentRunner, type AgentRunEvent } from "../agents/runner";
-import { READ_TOOLS } from "../agents/tools/index";
+import { PROPOSE_TOOLS, READ_TOOLS } from "../agents/tools/index";
 import type { Db } from "../db";
 import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
@@ -32,6 +40,12 @@ import {
 import { buildChatContext } from "./chat-context";
 import { citationsForToolCall, dedupeCitations } from "./chat-citations";
 import { maybeCompact } from "./chat-compaction";
+import {
+  attachProposalsToMessage,
+  createChatProposalRecorder,
+  listChatProposals,
+} from "./chat-proposals";
+import { createTaintTracker, isUntrustedTool, wrapUntrusted } from "./chat-quarantine";
 
 // ---------------------------------------------------------------------------
 // One chat turn (Sprint 76). Replaces the Sprint 42 prompt-engineered
@@ -41,13 +55,18 @@ import { maybeCompact } from "./chat-compaction";
 // Sprint 57 registry, so the Agent Inspector works for chat with no new
 // tracing code — this is the whole reason chat comes after Sprint 57.
 //
-// READ-ONLY BY CONSTRUCTION (D-76.9). Two independent things make that true,
-// and both are asserted by tests:
-//   1. the tool list is filtered to `access === "read"`;
-//   2. the ToolContext is built WITHOUT `proposals` and `questions`, so the
-//      propose and ask tools cannot be constructed even if the filter were
-//      wrong. There is no "propose without a gate" state.
-// The write half arrives in Sprint 78 and reuses this service.
+// THE WRITE BOUNDARY (D-76.9, extended in Sprint 78). Two independent things
+// decide it, and both are asserted by tests:
+//   1. the tool list, filtered by the actor's role (`chatToolsForActor`);
+//   2. the ToolContext, which carries `proposals` only when that actor may
+//      write — so the propose tools cannot be *constructed* for a read-only
+//      actor even if the filter were wrong. There is no "propose without a
+//      gate" state, and there never was one.
+//
+// What propose means here is narrower than it means in a pipeline: the service
+// bound to `proposals` is the RECORDER (services/chat-proposals.ts), which
+// writes a pending row and returns. Nothing reaches the Sprint 69 gate until a
+// human confirms it in the thread (D-78.1).
 // ---------------------------------------------------------------------------
 
 export interface ChatTurnDeps {
@@ -59,10 +78,45 @@ export interface ChatTurnDeps {
 export interface ChatTurnActor {
   userId: string | null;
   label: string;
+  /** Workspace role, from the auth guard. Absent for the system actor. */
+  role?: WorkspaceRole;
+  /** True only for a signed-in person (auth/guard.ts `actorOf`). */
+  human?: boolean;
 }
 
-/** The read tools a chat turn may call — the filter, evaluated once. */
+/** The read tools every chat turn may call — the Sprint 76 floor. */
 export const CHAT_TOOLS = READ_TOOLS.filter((tool) => tool.access === "read");
+
+/** The propose tools a writing actor may additionally call (Sprint 78). */
+export const CHAT_PROPOSE_TOOLS = PROPOSE_TOOLS.filter((tool) => tool.access === "propose");
+
+/**
+ * Roles that may put something forward for confirmation in chat (D-78.3).
+ *
+ * This platform has no read-only workspace role today — `WORKSPACE_ROLES` is
+ * `["owner", "member"]` and both write freely through every existing route, so
+ * granting both here matches what those roles already mean everywhere else.
+ * Inventing a chat-only restriction would put an authorization rule in chat,
+ * which the PRD's §1.2 invariant forbids and which would be trivially bypassed
+ * by using the app normally.
+ *
+ * What this list DOES buy is the seam: the day a `viewer` role exists, its
+ * chat is read-only by construction with no change to this file — an
+ * unrecognised role never reaches the allowlist, and the system actor never
+ * does either.
+ */
+const PROPOSING_ROLES: readonly WorkspaceRole[] = ["owner", "member"];
+
+export function actorMayPropose(actor: ChatTurnActor): boolean {
+  if (actor.human === false) return false;
+  if (!actor.userId) return false;
+  return actor.role !== undefined && PROPOSING_ROLES.includes(actor.role);
+}
+
+/** The tool list for this actor, and nothing about the prompt decides it. */
+export function chatToolsForActor(actor: ChatTurnActor): readonly AnyTool[] {
+  return actorMayPropose(actor) ? [...CHAT_TOOLS, ...CHAT_PROPOSE_TOOLS] : CHAT_TOOLS;
+}
 
 const TITLE_SCHEMA = {
   type: "object",
@@ -210,10 +264,22 @@ export async function runChatTurn(
     active = listActiveMessages(db, sessionId, compaction.summarizedThrough);
   }
 
-  const { system } = await buildChatContext(db, deps.evidence, current, userMessage);
+  const mayPropose = actorMayPropose(actor);
+  const { system } = await buildChatContext(db, deps.evidence, current, userMessage, {
+    mayPropose,
+  });
 
   const toolActor: ToolActor = { userId: actor.userId, label: actor.label };
-  // No `proposals`, no `questions` — the read-only boundary (D-76.9).
+  const taint = createTaintTracker();
+  const recordedProposals: ChatProposal[] = [];
+  // Minted here rather than inside the runner: a propose tool attributes its
+  // proposal to the run that called it, so the id has to exist before the tool
+  // context does.
+  const runId = randomUUID();
+
+  // `proposals` is present only for an actor who may write (D-78.3), and even
+  // then it is the RECORDER, not the live gate — so a propose call inside a
+  // chat turn cannot execute anything, whatever the model intends.
   const toolCtx: ToolContext = {
     db,
     evidence: deps.evidence,
@@ -221,18 +287,40 @@ export async function runChatTurn(
     workspaceId,
     actor: toolActor,
     budget: DEFAULT_TOOL_BUDGET,
+    agentRunId: runId,
+    ...(mayPropose
+      ? {
+          proposals: createChatProposalRecorder(db, {
+            workspaceId,
+            sessionId,
+            taint,
+            onRecorded: (proposal) => {
+              recordedProposals.push(proposal);
+              emit({ type: "proposal", proposal });
+            },
+          }),
+        }
+      : {}),
   };
 
   const citations: ChatCitation[] = [];
   const toolCalls: { tool: string; ok: boolean }[] = [];
   const callsById = new Map<string, AgentToolCall>();
 
-  const tools = toAgentTools(CHAT_TOOLS, toolCtx).map((tool) => ({
+  const tools = toAgentTools(chatToolsForActor(actor), toolCtx).map((tool) => ({
     ...tool,
     handler: async (args: unknown) => {
       const result = await tool.handler(args);
-      citations.push(...citationsForToolCall(tool.definition.name, args, result));
-      return result;
+      const name = tool.definition.name;
+      citations.push(...citationsForToolCall(name, args, result));
+      // The propose tools' own results are not content the model read, so they
+      // neither taint the turn nor count as trusted grounding for it.
+      if (tool.definition.name.startsWith("propose_")) return result;
+      taint.observe(name, result);
+      // Untrusted results are wrapped before the model — and therefore before
+      // `agent_run_steps.tool_result_json` — sees them, so the boundary is in
+      // the trace by construction rather than by a parallel log (D-78.6).
+      return isUntrustedTool(name) ? wrapUntrusted(name, result) : result;
     },
   }));
 
@@ -280,6 +368,7 @@ export async function runChatTurn(
   };
 
   const run = await new AgentRunner(db, llm).run({
+    runId,
     workspaceId,
     task: "chat",
     createdBy: actor.label,
@@ -309,15 +398,28 @@ export async function runChatTurn(
     outputTokens: run.usage.outputTokens,
     stopReason: run.stopReason,
   });
+  attachProposalsToMessage(
+    db,
+    recordedProposals.map((p) => p.id),
+    message.id,
+  );
 
   addSessionUsage(db, sessionId, turnUsage);
   const after = getSession(db, workspaceId, sessionId);
+
+  // Re-read rather than returning what we collected: `messageId` was written
+  // after the rows were, and the client renders cards keyed on it.
+  const proposals =
+    recordedProposals.length === 0
+      ? []
+      : listChatProposals(db, sessionId).filter((p) => p.messageId === message.id);
 
   const result: ChatTurnResult = {
     answer,
     citations: message.citations,
     toolCalls,
     message,
+    proposals,
     agentRunId: run.runId,
     stopReason: run.stopReason,
     costCents: turnUsage.costCents,

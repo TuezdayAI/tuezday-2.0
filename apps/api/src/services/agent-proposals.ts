@@ -127,6 +127,7 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
       externalActionId: target.externalActionId ?? null,
       summary,
       rationale,
+      chatSessionId: origin.chatSessionId ?? null,
     });
   }
 
@@ -158,10 +159,14 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
   ): Promise<ProposalResult> {
     const submission = await runtime.propose(command, {
       userId: null,
+      // Sprint 78 (D-78.7): a founder confirming in chat is attribution, not
+      // humanity — `human: false` keeps the Sprint 52 publish gate and the
+      // policy tree behaving exactly as they do for a pipeline proposal.
       label: `agent:${origin.agentRunId}`,
       human: false,
       origin: "agent",
       originRunId: origin.agentRunId,
+      originSurface: origin.surface ?? "pipeline",
     });
     record(
       origin,

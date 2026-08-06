@@ -46,6 +46,11 @@ export const findSimilarApprovedDraftsTool: Tool<Input, unknown> = {
 
     return {
       drafts: chosen.slice(0, limit ?? DEFAULT_LIMIT).map((e) => ({
+        // Sprint 78: the record this came from, so a claim grounded in it can
+        // be cited to somewhere the founder can open. A `rating` example is a
+        // generation, not a draft, and says so with null rather than being
+        // silently uncitable (which is what Sprint 76 shipped).
+        draftId: e.kind === "decision" ? e.id : null,
         taskType: e.taskType,
         channel: e.channel,
         content: compactText(e.content, CONTENT_CHARS),

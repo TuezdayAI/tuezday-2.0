@@ -5,9 +5,12 @@
 // "unavailable" panel if those routes 404.
 //
 // Sprint 76: answers STREAM. The turn is an agent_run, so tool calls appear as
-// they run and every answer links to its trace in the Agent Inspector. Still
-// read-only — it answers and it plans, it changes nothing (Sprint 78 adds the
-// write half through the same governed propose-tools every other agent uses).
+// they run and every answer links to its trace in the Agent Inspector.
+//
+// Sprint 78: it can now ACT — but only by asking. A propose call renders a
+// confirmation card here; nothing reaches the approval gate or the action
+// policy until the founder confirms it, and the policy tree still decides what
+// happens after that.
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type {
@@ -15,12 +18,24 @@ import type {
   ChatCitation,
   ChatCitationKind,
   ChatMessage,
+  ChatProposal,
   ChatSession,
   ChatSessionDetail,
   ChatTurnResult,
 } from "@tuezday/contracts";
 import { apiFetch } from "@/lib/api";
 import { readChatStream } from "@/lib/chat-stream";
+import {
+  isActionable,
+  mergeProposal,
+  pendingSummary,
+  producedHref,
+  proposalOutcome,
+  proposalTone,
+  proposalsForMessage,
+  quarantineWarning,
+  unattachedProposals,
+} from "@/lib/chat-proposal-view";
 import {
   agentRunHref,
   citationHref,
@@ -44,7 +59,7 @@ interface CopilotProps {
 const EXAMPLE_QUESTIONS = [
   "I want to launch a campaign for our new product — where do we start?",
   "Why did our LinkedIn engagement drop last month?",
-  "What's working across our campaigns right now?",
+  "Draft a LinkedIn post about our funding and queue it to the Launch campaign",
 ];
 
 /** Citation kind → icon within the shared vocabulary (brain=book, evidence=file, data=chart). */
@@ -66,6 +81,8 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [proposals, setProposals] = useState<ChatProposal[]>([]);
+  const [resolving, setResolving] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [pending, setPending] = useState(false);
@@ -83,12 +100,15 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
         const res = await apiFetch(`${base}/sessions/${sessionId}`);
         if (!res.ok) {
           setMessages([]);
+          setProposals([]);
           return;
         }
         const detail: ChatSessionDetail = await res.json();
         setMessages(detail.messages ?? []);
+        setProposals(detail.proposals ?? []);
       } catch {
         setMessages([]);
+        setProposals([]);
       }
     },
     [base],
@@ -126,7 +146,10 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
   // Load the active thread's transcript when it changes.
   useEffect(() => {
     if (open && activeId) void loadSession(activeId);
-    if (!activeId) setMessages([]);
+    if (!activeId) {
+      setMessages([]);
+      setProposals([]);
+    }
   }, [open, activeId, loadSession]);
 
   // Close on Escape.
@@ -161,6 +184,7 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
       setSessions((prev) => [session, ...prev]);
       setActiveId(session.id);
       setMessages([]);
+      setProposals([]);
       setNotice(null);
       return session.id;
     } catch {
@@ -179,6 +203,40 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
       await apiFetch(`${base}/sessions/${sessionId}`, { method: "DELETE" });
     } catch {
       // Best effort — the row is already gone from the UI.
+    }
+  }
+
+  /**
+   * Confirm or decline one proposal. The response IS the resolved proposal —
+   * including a `failed` one, because a governed refusal is an answer the
+   * founder needs to read on the card, not an HTTP error to swallow.
+   */
+  async function resolveProposalCard(proposal: ChatProposal, decision: "confirm" | "decline") {
+    if (!activeId || resolving) return;
+    setResolving(proposal.id);
+    try {
+      const res = await apiFetch(
+        `${base}/sessions/${activeId}/proposals/${proposal.id}/${decision}`,
+        { method: "POST" },
+      );
+      if (!res.ok) {
+        setNotice(
+          res.status === 409
+            ? "That was already confirmed or declined."
+            : "Couldn't complete that. Try again.",
+        );
+        await loadSession(activeId);
+        return;
+      }
+      const updated: ChatProposal = await res.json();
+      setProposals((prev) => mergeProposal(prev, updated));
+      // Confirming appends a receipt (or a refusal) to the transcript.
+      if (decision === "confirm") await loadSession(activeId);
+      void loadSessions();
+    } catch {
+      setNotice("Couldn't reach the assistant. Check your connection and try again.");
+    } finally {
+      setResolving(null);
     }
   }
 
@@ -231,11 +289,13 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
       if (!res.headers.get("content-type")?.includes("text/event-stream")) {
         const turn: ChatTurnResult = await res.json();
         setMessages((prev) => [...prev, turn.message]);
+        setProposals((prev) => turn.proposals.reduce(mergeProposal, prev));
         void loadSessions();
         return;
       }
 
       let settled = false;
+      let sawProposal = false;
       await readChatStream(res, (event) => {
         switch (event.type) {
           case "text_delta":
@@ -254,6 +314,12 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
                 t.callId === event.callId ? { ...t, done: true, ok: event.ok } : t,
               ),
             }));
+            break;
+          case "proposal":
+            // Arrives mid-run, before the answer settles: the founder sees what
+            // it is about to ask for while it is still writing the sentence.
+            sawProposal = true;
+            setProposals((prev) => mergeProposal(prev, event.proposal));
             break;
           case "message":
             settled = true;
@@ -274,7 +340,9 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
 
       // A stream that dropped before its `message` frame left a fully persisted
       // transcript on the server — refetch rather than trusting the partial.
-      if (!settled) await loadSession(sessionId);
+      // A proposal frame also needs the refetch: it is streamed before the
+      // message it belongs to exists, so the client's copy has no messageId.
+      if (!settled || sawProposal) await loadSession(sessionId);
       // Refresh the list so an auto-generated title and the thread cost show up.
       void loadSessions();
     } catch {
@@ -385,10 +453,10 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
               </div>
             )}
 
-            {(notice ?? budget?.warning) && (
+            {(notice ?? budget?.warning ?? pendingSummary(proposals)) && (
               <p className={styles.notice}>
                 <Icon name="info" size="compact" />
-                {notice ?? budget?.warning}
+                {notice ?? budget?.warning ?? pendingSummary(proposals)}
               </p>
             )}
 
@@ -402,7 +470,8 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
                     <h3 className={styles.emptyTitle}>Work through a GTM problem</h3>
                     <p className={styles.emptyText}>
                       Grounded in your brain, evidence and live data. It asks what it needs and shows its
-                      sources — and it&apos;s read-only, so it changes nothing.
+                      sources. It can put work forward — a draft, a post, a send — but nothing happens
+                      until you confirm it, and your action policy still decides what comes next.
                     </p>
                   </div>
                   <div className={styles.examples}>
@@ -440,6 +509,16 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
                           >
                             {m.content}
                           </div>
+                          {m.role === "assistant" &&
+                            proposalsForMessage(proposals, m).map((p) => (
+                              <ProposalCard
+                                key={p.id}
+                                proposal={p}
+                                workspaceId={workspaceId}
+                                busy={resolving === p.id}
+                                onResolve={(decision) => void resolveProposalCard(p, decision)}
+                              />
+                            ))}
                           {m.role === "assistant" && (
                             <AssistantFooter
                               message={m}
@@ -454,6 +533,16 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
                   {pending && (
                     <div className={`${styles.row} ${styles.rowAssistant}`}>
                       <div>
+                        {/* Recorded this turn, before the answer settled. */}
+                        {unattachedProposals(proposals).map((p) => (
+                          <ProposalCard
+                            key={p.id}
+                            proposal={p}
+                            workspaceId={workspaceId}
+                            busy={resolving === p.id}
+                            onResolve={(decision) => void resolveProposalCard(p, decision)}
+                          />
+                        ))}
                         {live.tools.map((t) => (
                           <div key={t.callId} className={styles.toolLine}>
                             <Icon
@@ -511,6 +600,84 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
           </>
         )}
       </aside>
+    </div>
+  );
+}
+
+/**
+ * The statement of intent (Sprint 78). This is the whole safety story made
+ * visible: what it wants to do, what confirming actually causes, and — when the
+ * turn read anything from outside the workspace — a warning to read it twice.
+ *
+ * The buttons are never hidden on a quarantined card. The founder is the
+ * authority here, and a UI that suppressed the choice would be teaching them
+ * that warnings are obstacles to route around.
+ */
+function ProposalCard({
+  proposal,
+  workspaceId,
+  busy,
+  onResolve,
+}: {
+  proposal: ChatProposal;
+  workspaceId: string;
+  busy: boolean;
+  onResolve: (decision: "confirm" | "decline") => void;
+}) {
+  const tone = proposalTone(proposal);
+  const warning = quarantineWarning(proposal);
+  const outcome = proposalOutcome(proposal);
+  const href = producedHref(proposal, workspaceId);
+
+  return (
+    <div className={`${styles.proposal} ${styles[`proposal_${tone}`] ?? ""}`}>
+      <div className={styles.proposalHead}>
+        <Icon name={tone === "quarantined" ? "info" : "status-learning"} size="compact" />
+        <span className={styles.proposalTitle}>{proposal.intent.title}</span>
+      </div>
+
+      {proposal.intent.detail.length > 0 && (
+        <dl className={styles.proposalDetail}>
+          {proposal.intent.detail.map((row) => (
+            <div key={row.label} className={styles.proposalRow}>
+              <dt className={styles.proposalLabel}>{row.label}</dt>
+              <dd className={styles.proposalValue}>{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
+      <p className={styles.proposalEffect}>{proposal.intent.effect}</p>
+      {proposal.intent.rationale && (
+        <p className={styles.proposalRationale}>“{proposal.intent.rationale}”</p>
+      )}
+
+      {warning && (
+        <p className={styles.proposalWarning}>
+          <Icon name="info" size="compact" />
+          {warning}
+        </p>
+      )}
+
+      {isActionable(proposal) ? (
+        <div className={styles.proposalActions}>
+          <Button variant="primary" loading={busy} onClick={() => onResolve("confirm")}>
+            Confirm
+          </Button>
+          <Button variant="secondary" disabled={busy} onClick={() => onResolve("decline")}>
+            Decline
+          </Button>
+        </div>
+      ) : (
+        <p className={styles.proposalOutcome}>
+          {outcome}
+          {href && (
+            <Link className={styles.proposalLink} href={href}>
+              Open it
+            </Link>
+          )}
+        </p>
+      )}
     </div>
   );
 }

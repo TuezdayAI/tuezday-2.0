@@ -83,7 +83,11 @@ beforeEach(() => {
   ).id;
 });
 
-describe("read-only by construction (D-76.9)", () => {
+// Sprint 78 note: ACTOR carries no workspace role, so `actorMayPropose` is
+// false and every turn in this file is still the read-only path. That is the
+// safe default under test here — the write path has its own suite
+// (chat-write-turn.test.ts), which is where a role is supplied.
+describe("read-only by construction for an actor who may not write (D-76.9)", () => {
   it("offers only read tools", () => {
     expect(CHAT_TOOLS.length).toBeGreaterThan(0);
     for (const tool of CHAT_TOOLS) {

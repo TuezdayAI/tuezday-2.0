@@ -9,6 +9,7 @@ import {
   type ExternalActionExecutionRef,
   type ExternalActionKind,
   type ExternalActionOrigin,
+  type ExternalActionOriginSurface,
   type ExternalActionStatus,
   type ExternalActionSubmission,
   type ExternalActionSubject,
@@ -88,6 +89,8 @@ export interface ExternalActionRuntimeActor extends ExternalActionActor {
    */
   origin?: ExternalActionOrigin;
   originRunId?: string | null;
+  /** Sprint 78: which agent surface asked — chat or the pipeline engine. */
+  originSurface?: ExternalActionOriginSurface | null;
 }
 
 export interface ExternalActionIntent {
@@ -482,6 +485,7 @@ export function createExternalActionRuntime({
       actor,
       ...(actor.origin ? { origin: actor.origin } : {}),
       originRunId: actor.originRunId ?? null,
+      originSurface: actor.originSurface ?? null,
       supersedesActionId,
       draftId: intent.links?.draftId ?? null,
     });

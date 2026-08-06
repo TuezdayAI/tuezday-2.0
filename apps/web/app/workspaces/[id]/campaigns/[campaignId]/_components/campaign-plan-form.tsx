@@ -15,6 +15,7 @@ import { ContextSectionsTrace } from "@/components/why-this-output";
 import { Button } from "@/src/components/ui/button";
 import { Input, Select, Textarea } from "@/src/components/ui/input";
 import { apiFetch } from "@/lib/api";
+import { TASK_LABELS } from "@/lib/task-labels";
 import { dateOnlyToTimestamp, timestampToDateOnly } from "@/lib/campaign-control-plane";
 import styles from "../campaign-workspace.module.css";
 
@@ -28,25 +29,6 @@ interface CampaignPlanFormProps {
   onSubmit(input: CreateCampaignPlanRevisionInput): Promise<void>;
 }
 
-const TASK_LABELS: Record<TaskType, string> = {
-  linkedin_post: "LinkedIn post",
-  cold_email_opener: "Cold email opener",
-  ad_copy_variant: "Ad copy variant",
-  landing_page_hero: "Landing page hero",
-  signal_response: "Signal response",
-  outbound_email: "Outbound email",
-  meta_ad_creative: "Meta ad creative",
-  google_rsa: "Google RSA",
-  pr_pitch: "Media pitch",
-  press_boilerplate: "Press boilerplate",
-  x_dm: "X DM",
-  instagram_post: "Instagram post",
-  engagement_reply: "Reply",
-  instagram_carousel: "Instagram carousel",
-  // Labelled but never offered: the pickers iterate
-  // GENERATION_TASK_TYPES (Sprint 76, D-76.6).
-  gtm_conversation: "GTM conversation",
-};
 
 function lines(value: string): string[] {
   return [...new Set(value.split("\n").map((item) => item.trim()).filter(Boolean))];

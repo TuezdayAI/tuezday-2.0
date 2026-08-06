@@ -325,7 +325,7 @@ export async function buildApp({
   registerCarouselRoutes(app, db, design, assetStorage, render);
   registerNotificationRoutes(app, db, mailer, fetcher);
   registerSignalRoutes(app, db, llm, evidence);
-  registerChatRoutes(app, db, llm, evidence, guardedFetch);
+  registerChatRoutes(app, db, llm, evidence, guardedFetch, agentProposals);
   registerAgentRunRoutes(app, db, { llm, evidence, safeFetch: guardedFetch });
   registerDiscoveryRoutes(
     app,

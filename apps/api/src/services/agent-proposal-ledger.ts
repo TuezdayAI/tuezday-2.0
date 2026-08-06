@@ -29,6 +29,7 @@ export function rowToAgentProposal(row: AgentProposalRow): AgentProposal {
     externalActionId: row.externalActionId,
     summary: row.summary,
     rationale: row.rationale,
+    chatSessionId: row.chatSessionId,
     createdAt: row.createdAt,
   };
 }
@@ -70,6 +71,8 @@ export interface RecordProposalInput {
   externalActionId?: string | null;
   summary: string;
   rationale: string;
+  /** Sprint 78: the thread a founder confirmed this in, when there was one. */
+  chatSessionId?: string | null;
 }
 
 export function recordAgentProposal(db: Db, input: RecordProposalInput): AgentProposal {
@@ -83,6 +86,7 @@ export function recordAgentProposal(db: Db, input: RecordProposalInput): AgentPr
     externalActionId: input.externalActionId ?? null,
     summary: input.summary,
     rationale: input.rationale,
+    chatSessionId: input.chatSessionId ?? null,
     createdAt: Date.now(),
   };
   db.insert(agentProposals).values(row).run();

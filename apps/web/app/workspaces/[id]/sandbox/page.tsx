@@ -30,28 +30,10 @@ import {
   type Workspace,
 } from "@tuezday/contracts";
 import type { ContextSection, ResolvedContext } from "@tuezday/brain";
+import { TASK_LABELS } from "@/lib/task-labels";
 import { ReviewPanel } from "@/components/ReviewPanel";
 import { WhyThisOutput, EvidenceRetrieval, SectionBadges } from "@/components/why-this-output";
 
-const TASK_LABELS: Record<TaskType, string> = {
-  linkedin_post: "LinkedIn post",
-  cold_email_opener: "Cold email opener",
-  ad_copy_variant: "Ad copy variant",
-  landing_page_hero: "Landing page hero",
-  signal_response: "Signal response",
-  outbound_email: "Outbound email",
-  meta_ad_creative: "Meta ad creative",
-  google_rsa: "Google RSA",
-  pr_pitch: "Media pitch",
-  press_boilerplate: "Press boilerplate",
-  x_dm: "X DM",
-  instagram_post: "Instagram post",
-  engagement_reply: "Reply",
-  instagram_carousel: "Instagram carousel",
-  // Labelled but never offered: the pickers iterate
-  // GENERATION_TASK_TYPES (Sprint 76, D-76.6).
-  gtm_conversation: "GTM conversation",
-};
 
 /** Ad creative variant sets are generated on the Ad creatives page; a media
  * pitch without a contact is meaningless (PR page). press_boilerplate stays —

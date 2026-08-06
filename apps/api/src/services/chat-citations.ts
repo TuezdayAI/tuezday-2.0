@@ -9,12 +9,14 @@ import type { AgentToolName, ChatCitation } from "@tuezday/contracts";
 // envelope wrapped around its output — so the mapping lives here, keyed by tool
 // name, instead of changing what the tools return.
 //
-// A citation must be able to become a LINK. Two tools therefore deliberately
-// produce none: `find_similar_approved_drafts` and `find_instructive_rejections`
-// return prior text without the record id that produced it, and a chip that
-// cannot be opened is worse than no chip. They are style anchors, not the
-// source of a factual claim, so nothing is lost — but this is the reason, and
-// it is why the tests assert zero rather than treating it as an oversight.
+// A citation must be able to become a LINK. Sprint 76 shipped two tools that
+// could produce none — `find_similar_approved_drafts` and
+// `find_instructive_rejections` returned prior text with no record id — and
+// Sprint 78 fixed that at the source: both now return the `draftId` the example
+// came from, which they already had in hand. What remains uncitable is the
+// honest remainder: an example drawn from a *rated generation* is not a draft
+// and has no page to open, so it carries `draftId: null` and is skipped
+// explicitly rather than by omission.
 //
 // Everything below reads plain JSON defensively. A tool whose shape drifts
 // produces fewer citations, never a thrown turn.
@@ -259,8 +261,31 @@ export function citationsForToolCall(
       break;
     }
 
-    // find_similar_approved_drafts / find_instructive_rejections: see the
-    // header note — no record id in their output, so no linkable citation.
+    // Both return prior human decisions about the workspace's own content, and
+    // both key them on the draft the decision was made about (Sprint 78).
+    case "find_similar_approved_drafts":
+    case "find_instructive_rejections": {
+      const approved = toolName === "find_similar_approved_drafts";
+      for (const raw of arr(approved ? result.drafts : result.rejections)) {
+        if (!isRecord(raw)) continue;
+        // Null for a rated generation — real, and not a draft anyone can open.
+        const id = str(raw.draftId);
+        if (!id) continue;
+        const outcome = str(raw.outcome);
+        out.push({
+          kind: "data",
+          ref: `draft:${id}`,
+          label: label(str(raw.content) ?? (approved ? "Approved draft" : "Corrected draft")),
+          detail: approved
+            ? raw.wasEdited === true
+              ? "approved after edits"
+              : "approved"
+            : (outcome ?? "corrected"),
+        });
+      }
+      break;
+    }
+
     default:
       break;
   }

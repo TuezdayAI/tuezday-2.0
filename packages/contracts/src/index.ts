@@ -1113,6 +1113,15 @@ export type ExternalActionDecisionValue = (typeof EXTERNAL_ACTION_DECISIONS)[num
 export const EXTERNAL_ACTION_ORIGINS = ["human", "system", "agent"] as const;
 export type ExternalActionOrigin = (typeof EXTERNAL_ACTION_ORIGINS)[number];
 
+/**
+ * Which agent surface proposed an `agent`-origin action (Sprint 78, D-78.8).
+ * Derivable from `originRunId` → the run's task, but the authorization queue
+ * would need a join per row and `agent_runs` is prunable by retention while an
+ * action is not. Null for human- and system-origin actions.
+ */
+export const EXTERNAL_ACTION_ORIGIN_SURFACES = ["chat", "pipeline"] as const;
+export type ExternalActionOriginSurface = (typeof EXTERNAL_ACTION_ORIGIN_SURFACES)[number];
+
 export const EXTERNAL_ACTION_SUBJECT_KINDS = [
   "draft",
   "inbox_item",
@@ -1255,6 +1264,8 @@ export const externalActionSchema = z
     origin: z.enum(EXTERNAL_ACTION_ORIGINS),
     /** The agent run whose propose tool minted this — `agent` origin only. */
     originRunId: z.string().uuid().nullable(),
+    /** Which agent surface it came from (Sprint 78) — `agent` origin only. */
+    originSurface: z.enum(EXTERNAL_ACTION_ORIGIN_SURFACES).nullable(),
     createdAt: z.number().int(),
     updatedAt: z.number().int(),
     authorizedAt: z.number().int().nullable(),
@@ -7920,9 +7931,10 @@ export const toolInputSchemas = {
 //
 // Every assistant turn is an `agent_run` driven by the AgentRunner over the
 // Sprint 57 registry, so the Agent Inspector works for chat with no new
-// tracing code. Sprint 76 offers `read` tools only: chat cannot change
-// anything, and the boundary is the registry's `access` field, not an
-// instruction in the prompt. The write half arrives in Sprint 78.
+// tracing code. The boundary is the registry's `access` field, not an
+// instruction in the prompt: Sprint 76 offered `read` tools only, and
+// Sprint 78 adds `propose` for actors who may write — every one of which stops
+// at a confirmation in the thread before the Sprint 69 gate sees it.
 // ---------------------------------------------------------------------------
 
 /**
@@ -8012,8 +8024,9 @@ export const chatMessageSchema = z.object({
   /** Why the turn's run stopped; a turn that hit a bound says so in the UI. */
   stopReason: z.enum(AGENT_STOP_REASONS).nullable(),
   /**
-   * What a write turn created. Unwritten in Sprint 76 (chat is read-only) —
-   * Sprint 78 repopulates it, which is why the field and its column survive.
+   * What a confirmed proposal produced — `draft:<id>` / `external_action:<id>`
+   * — set on the receipt message a confirmation appends (Sprint 78, reviving
+   * the Sprint 42 column D-76.7 deliberately kept).
    */
   producedRef: z.string().nullable().optional(),
   createdAt: z.number().int(),
@@ -8045,6 +8058,80 @@ export const sendChatMessageInputSchema = z.object({
 });
 export type SendChatMessageInput = z.infer<typeof sendChatMessageInputSchema>;
 
+// ---------------------------------------------------------------------------
+// Chat proposals — confirm-before-propose (Sprint 78)
+//
+// A propose-tool call inside a chat turn does not execute. It records one of
+// these, carrying a structured statement of intent the founder confirms in the
+// thread; confirming runs the UNCHANGED Sprint 69 service, so the policy tree,
+// the approval gate and the authorization queue decide what happens next
+// exactly as they do for a pipeline-proposed action (D-78.1, D-78.7).
+// ---------------------------------------------------------------------------
+
+/**
+ * `pending` → `confirmed` (the gate accepted it) | `failed` (the gate refused
+ * it, with the platform's own error code — D-78.2) | `declined` (the founder
+ * said no). Terminal states never transition again.
+ */
+export const CHAT_PROPOSAL_STATUSES = ["pending", "confirmed", "declined", "failed"] as const;
+export type ChatProposalStatus = (typeof CHAT_PROPOSAL_STATUSES)[number];
+
+/**
+ * Chat's own bounds on *asking* (D-78.4). Distinct from
+ * `AGENT_PROPOSALS_PER_DAY`, which bounds what is actually minted and is
+ * neither raised nor bypassed here.
+ */
+export const CHAT_PROPOSALS_PER_THREAD = 10;
+export const CHAT_PROPOSALS_PER_DAY = 20;
+
+/**
+ * The statement of intent, rendered as a card. Structured rather than prose so
+ * the founder confirms a specific, legible thing — and so Sprint 77's card
+ * registry has a contract to adopt rather than a paragraph to parse.
+ */
+export const chatProposalIntentSchema = z.object({
+  /** One line, imperative: "Submit a LinkedIn draft for review". */
+  title: z.string().trim().min(1),
+  /** Field/value pairs the founder should check before confirming. */
+  detail: z.array(z.object({ label: z.string(), value: z.string() })),
+  /** What happens on confirm, in plain language — including what does NOT. */
+  effect: z.string().trim().min(1),
+  /** Why the assistant wants to do it, in its own words. */
+  rationale: z.string(),
+});
+export type ChatProposalIntent = z.infer<typeof chatProposalIntentSchema>;
+
+export const chatProposalSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  sessionId: z.string().uuid(),
+  /** The assistant message this card renders under. */
+  messageId: z.string().uuid().nullable(),
+  /** The run that asked — the Inspector link, and the attribution the minted
+   * action carries through to the authorization queue. */
+  agentRunId: z.string().uuid().nullable(),
+  tool: z.enum(PROPOSE_TOOL_NAMES),
+  intent: chatProposalIntentSchema,
+  status: z.enum(CHAT_PROPOSAL_STATUSES),
+  /**
+   * True when this proposal's arguments derive only from untrusted content
+   * (D-78.6). The card warns; the trace records it.
+   */
+  quarantined: z.boolean(),
+  quarantineReason: z.string().nullable(),
+  /** What confirming produced: `draft:<id>` or `external_action:<id>`. */
+  producedRef: z.string().nullable(),
+  /** Where the policy tree left the minted action, when there is one. */
+  producedStatus: z.string().nullable(),
+  /** The platform's own refusal code when the gate said no. */
+  error: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+  confirmedByUserId: z.string().uuid().nullable(),
+  resolvedAt: z.number().int().nullable(),
+  createdAt: z.number().int(),
+});
+export type ChatProposal = z.infer<typeof chatProposalSchema>;
+
 /** The outcome of one turn: the grounded answer, its provenance and its cost. */
 export const chatTurnResultSchema = z.object({
   answer: z.string(),
@@ -8052,6 +8139,13 @@ export const chatTurnResultSchema = z.object({
   toolCalls: z.array(z.object({ tool: z.string(), ok: z.boolean() })),
   /** The persisted assistant message, so a client needs no refetch. */
   message: chatMessageSchema,
+  /**
+   * What this turn wants to do and is waiting on the founder for (Sprint 78).
+   * Carried beside the message rather than on it: a proposal's status changes
+   * after the message is written, and a transcript row should not be rewritten
+   * because a card was clicked.
+   */
+  proposals: z.array(chatProposalSchema),
   agentRunId: z.string().uuid().nullable(),
   stopReason: z.enum(AGENT_STOP_REASONS),
   costCents: z.number(),
@@ -8063,6 +8157,7 @@ export type ChatTurnResult = z.infer<typeof chatTurnResultSchema>;
 
 export const chatSessionDetailSchema = chatSessionSchema.extend({
   messages: z.array(chatMessageSchema),
+  proposals: z.array(chatProposalSchema),
 });
 export type ChatSessionDetail = z.infer<typeof chatSessionDetailSchema>;
 
@@ -8080,6 +8175,9 @@ export const CHAT_STREAM_EVENTS = [
   "tool_call_start",
   "tool_call_end",
   "step_end",
+  /** Sprint 78: a proposal was recorded — the card appears before the answer
+   * settles, because the founder should see what it is about to ask for. */
+  "proposal",
   "message",
   "done",
   "error",
@@ -8115,6 +8213,7 @@ export const chatStreamEventSchema = z.discriminatedUnion("type", [
     inputTokens: z.number().int(),
     outputTokens: z.number().int(),
   }),
+  z.object({ type: z.literal("proposal"), proposal: chatProposalSchema }),
   z.object({ type: z.literal("message"), message: chatMessageSchema }),
   z.object({
     type: z.literal("done"),
@@ -8153,6 +8252,9 @@ export const agentProposalSchema = z
     externalActionId: z.string().uuid().nullable(),
     summary: z.string().trim().min(1),
     rationale: z.string().trim().min(1),
+    /** The conversation a founder confirmed this in (Sprint 78). Null for a
+     * pipeline-proposed action, which nobody confirmed in a thread. */
+    chatSessionId: z.string().uuid().nullable().optional(),
     createdAt: z.number().int(),
   })
   .superRefine((value, ctx) => {

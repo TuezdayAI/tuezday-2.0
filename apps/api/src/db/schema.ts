@@ -1888,6 +1888,10 @@ export const externalActions = sqliteTable(
     // fingerprint (D-69.3): the gate is origin-blind on purpose.
     origin: text("origin").notNull().default("human"),
     originRunId: text("origin_run_id"),
+    // Sprint 78 (D-78.8): which agent surface asked. Derivable from the run,
+    // but the queue would need a join per row and runs are prunable while
+    // actions are not. Null unless origin is `agent`.
+    originSurface: text("origin_surface"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
     authorizedAt: integer("authorized_at"),
@@ -2476,6 +2480,54 @@ export const chatMessages = sqliteTable(
 );
 
 export type ChatMessageRow = typeof chatMessages.$inferSelect;
+
+// Confirm-before-propose (Sprint 78). One row per propose-tool call made inside
+// a chat turn. The row IS the pause: the tool records intent here and returns,
+// the run finishes, and nothing reaches the Sprint 69 gate until a human
+// confirms (D-78.1). Kept beside the transcript rather than on it because a
+// proposal's status changes long after its message was written.
+export const chatProposals = sqliteTable(
+  "chat_proposals",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => chatSessions.id, { onDelete: "cascade" }),
+    // Set once the turn's assistant message exists; the proposal is recorded
+    // mid-run, before there is a message to hang it under.
+    messageId: text("message_id"),
+    // No FK, for the same retention reason as chat_messages.agent_run_id.
+    agentRunId: text("agent_run_id"),
+    tool: text("tool").notNull(), // PROPOSE_TOOL_NAMES
+    /** The validated tool arguments, replayed verbatim on confirmation. */
+    argsJson: text("args_json").notNull(),
+    /** The rendered ChatProposalIntent the founder confirms. */
+    intentJson: text("intent_json").notNull(),
+    status: text("status").notNull(), // CHAT_PROPOSAL_STATUSES
+    // Sprint 78 (D-78.6): the arguments derive only from untrusted content.
+    quarantined: integer("quarantined", { mode: "boolean" }).notNull().default(false),
+    quarantineReason: text("quarantine_reason"),
+    producedRef: text("produced_ref"),
+    producedStatus: text("produced_status"),
+    error: text("error"),
+    errorMessage: text("error_message"),
+    confirmedByUserId: text("confirmed_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    resolvedAt: integer("resolved_at"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("chat_proposals_session_created").on(t.sessionId, t.createdAt),
+    // The per-day cap's read path.
+    index("chat_proposals_workspace_created").on(t.workspaceId, t.createdAt),
+  ],
+);
+
+export type ChatProposalRow = typeof chatProposals.$inferSelect;
 
 // Social publishing receipts (Sprint 17) — one row per publish attempt (now
 // or scheduled); the post lives on the platform, Tuezday keeps status + URL.
@@ -3755,6 +3807,9 @@ export const agentProposals = sqliteTable(
     }),
     summary: text("summary").notNull(),
     rationale: text("rationale").notNull(),
+    // Sprint 78: the conversation a founder confirmed this in. No FK — a
+    // deleted thread must not take the record of what it proposed with it.
+    chatSessionId: text("chat_session_id"),
     createdAt: integer("created_at").notNull(),
   },
   (t) => [

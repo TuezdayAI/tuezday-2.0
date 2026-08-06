@@ -171,7 +171,20 @@ describe("the Sprint 42 proposal surface is gone", () => {
   it("no longer exports the copilot write vocabulary", async () => {
     const contracts = (await import("../src/index")) as Record<string, unknown>;
     expect(contracts.COPILOT_WRITE_TOOLS).toBeUndefined();
-    expect(contracts.chatProposalSchema).toBeUndefined();
     expect(contracts.confirmChatProposalInputSchema).toBeUndefined();
+  });
+
+  it("and what Sprint 78 reintroduced under the same name is a different thing", async () => {
+    // Sprint 42's `chatProposalSchema` described a copilot's own write tool,
+    // with its own confirm token and its own execution path. Sprint 78's
+    // describes a PAUSE in front of the shared Sprint 69 propose tools — which
+    // is why it is keyed on `PROPOSE_TOOL_NAMES` and carries no token.
+    const { chatProposalSchema, PROPOSE_TOOL_NAMES } = await import("../src/index");
+    expect(chatProposalSchema).toBeDefined();
+    const keys = Object.keys(chatProposalSchema.shape);
+    expect(keys).toContain("tool");
+    expect(keys).toContain("quarantined");
+    expect(keys).not.toContain("confirmToken");
+    expect(PROPOSE_TOOL_NAMES).toHaveLength(5);
   });
 });
