@@ -247,7 +247,6 @@ git commit -m "feat(queue): persist recurring workspace schedules"
 - Create: `apps/api/test/background-job-runner.test.ts`
 - Create: `apps/api/test/background-job-routes.test.ts`
 - Modify: `apps/api/src/app.ts`
-- Modify: `apps/api/src/auth/guard.ts`
 
 **Interfaces:**
 - Produces `BackgroundJobHandler`, `BackgroundJobHandlerDependencies`,
@@ -256,7 +255,7 @@ git commit -m "feat(queue): persist recurring workspace schedules"
   `GET /internal/background-jobs`, `GET /internal/background-jobs/stats`, and
   `POST /internal/background-jobs/:jobId/requeue`.
 
-- [ ] **Step 1: Write failing registry, runner, and route tests**
+- [x] **Step 1: Write failing registry, runner, and route tests**
 
 Assert all fourteen payload kinds map exactly once, malformed persisted payloads
 dead-letter without handler invocation, handler retry/dead-letter outcomes drive
@@ -264,13 +263,13 @@ the correct repository transition, heartbeat loss aborts execution, and the
 tick returns bounded totals. Route tests assert worker-token-only access, strict
 empty tick bodies, bounded filters, and dead-letter-only requeue.
 
-- [ ] **Step 2: Run and witness missing handler/route failures**
+- [x] **Step 2: Run and witness missing handler/route failures**
 
 Run: `npx vitest run apps/api/test/background-job-handlers.test.ts apps/api/test/background-job-runner.test.ts apps/api/test/background-job-routes.test.ts`
 
 Expected: FAIL because the registry, runner, and routes do not exist.
 
-- [ ] **Step 3: Implement explicit handler outcomes and heartbeat runner**
+- [x] **Step 3: Implement explicit handler outcomes and heartbeat runner**
 
 ```ts
 type BackgroundJobOutcome =
@@ -283,13 +282,15 @@ Acquire the dispatcher task lease only for schedule reconciliation, admission,
 and claims. Release it before executing handlers. Execute the claimed batch with
 bounded parallelism and one heartbeat timer per job.
 
-- [ ] **Step 4: Register internal routes and remove the public worker allowlist**
+- [x] **Step 4: Register internal routes**
 
-The worker token remains valid for `/internal/*` only. Human run-now endpoints
-remain session-authenticated. Route query schemas bound result sizes and reject
-unknown fields.
+Human run-now endpoints remain session-authenticated. Route query schemas bound
+result sizes and reject unknown fields. Remove the transitional public worker
+allowlist in Task 7 at the same commit that switches the deployed worker to its
+single internal endpoint; this avoids an intentionally broken intermediate
+commit.
 
-- [ ] **Step 5: Run focused tests and typecheck**
+- [x] **Step 5: Run focused tests and typecheck**
 
 Run: `npx vitest run apps/api/test/background-job-handlers.test.ts apps/api/test/background-job-runner.test.ts apps/api/test/background-job-routes.test.ts apps/api/test/internal-tasks.test.ts`
 
@@ -297,10 +298,10 @@ Run: `npm run typecheck -w apps/api`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
-git add apps/api/src/services/background-job-* apps/api/src/routes/internal-background-jobs.ts apps/api/src/app.ts apps/api/src/auth/guard.ts apps/api/test/background-job-*
+git add apps/api/src/services/background-job-* apps/api/src/routes/internal-background-jobs.ts apps/api/src/app.ts apps/api/test/background-job-*
 git commit -m "feat(queue): execute typed jobs through one internal tick"
 ```
 

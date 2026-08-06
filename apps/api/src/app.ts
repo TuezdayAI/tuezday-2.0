@@ -66,6 +66,7 @@ import { registerDesignSystemRoutes } from "./routes/design-systems";
 import { registerGuidanceRoutes } from "./routes/guidance";
 import { registerGenerationSettingsRoutes } from "./routes/generation-settings";
 import { registerInboxRoutes } from "./routes/inbox";
+import { registerInternalBackgroundJobRoutes } from "./routes/internal-background-jobs";
 import { registerInternalTaskRoutes } from "./routes/internal-tasks";
 import { registerLaunchRoutes } from "./routes/launches";
 import { registerLearningRoutes } from "./routes/learning";
@@ -103,6 +104,14 @@ import { createExternalActionAdapters } from "./services/external-action-adapter
 import { createExternalActionRuntime } from "./services/external-action-coordinator";
 import { repairDanglingDuplicateGroups } from "./services/discovery-dedupe";
 import type { DiscoveryOperatorEvent } from "./services/discovery-scheduler";
+import {
+  unavailableBackgroundJobHandlers,
+  type BackgroundJobHandlers,
+} from "./services/background-job-handlers";
+import {
+  parseBackgroundJobPolicy,
+  type BackgroundJobPolicy,
+} from "./runtime/background-job-policy";
 import {
   DEFAULT_DISCOVERY_POLICY,
   type DiscoveryOperatorPolicy,
@@ -155,6 +164,10 @@ export interface BuildAppOptions {
    * access to every workspace. Defaults to TUEZDAY_WORKER_TOKEN.
    */
   workerToken?: string;
+  /** Typed durable-job registry; defaults to fail-closed retry handlers. */
+  backgroundJobHandlers?: BackgroundJobHandlers;
+  /** Validated durable queue, lease, retry, and schedule policy. */
+  backgroundJobPolicy?: BackgroundJobPolicy;
   /** Product-analytics sink; defaults to PostHog-or-Noop from env. */
   analytics?: AnalyticsSink;
   /** Design template author (Sprint 41); defaults to the self-hosted Open Design client. */
@@ -187,6 +200,8 @@ export async function buildApp({
   gmail = new FabricGmailProvider(connectors),
   resendWebhookVerifier = createResendWebhookVerifierFromEnv(),
   workerToken = process.env.TUEZDAY_WORKER_TOKEN,
+  backgroundJobHandlers = unavailableBackgroundJobHandlers(),
+  backgroundJobPolicy = parseBackgroundJobPolicy(process.env),
   analytics = createAnalyticsSink(),
   design = new OpenDesignProvider(),
   assetStorage = new S3AssetStorage(),
@@ -288,6 +303,14 @@ export async function buildApp({
   app.get("/health", async () => {
     db.run(sql`select 1`);
     return { status: "ok", db: "ok" };
+  });
+
+  registerInternalBackgroundJobRoutes(app, {
+    db,
+    handlers: backgroundJobHandlers,
+    policy: backgroundJobPolicy,
+    instanceId,
+    shutdownSignal: effectiveShutdownSignal,
   });
 
   registerInternalTaskRoutes(app, {
