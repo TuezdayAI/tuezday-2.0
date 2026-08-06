@@ -457,7 +457,10 @@ describe("posting cadences", () => {
     const action = (await listPublishActions())[0]!;
     expect(action.status).toBe("scheduled");
     vi.setSystemTime(new Date(action.requestedFor + 1));
-    await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
+    await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/external-actions/run`,
+    });
 
     // Flip the receipt to failed directly — the failure path itself is covered
     // in publish.test.ts; here we only assert the calendar projection.
@@ -541,7 +544,10 @@ describe("posting cadences", () => {
 
     // Once the runner produces the native receipt, the receipt replaces it.
     vi.setSystemTime(new Date(action.requestedFor + 1));
-    await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
+    await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/external-actions/run`,
+    });
     entries = await calendar();
     expect(entries.some((e: { kind: string }) => e.kind === "external_action")).toBe(false);
     const receipt = entries.find((e: { kind: string }) => e.kind === "publication");
@@ -678,7 +684,7 @@ describe("posting cadences", () => {
 
   // --- Firing reuses the Sprint 17 worker -----------------------------------
 
-  it("a filled slot publishes when due via publish/run", async () => {
+  it("a filled slot publishes when due via the external-action runner", async () => {
     const connectionId = await connectReddit();
     const campaignId = await createCampaign();
     // Auto-approved, so this stays the explicitly-authorized path (Sprint 52
@@ -716,16 +722,21 @@ describe("posting cadences", () => {
     expect(authorized.json().action.status).toBe("scheduled");
 
     // Before the slot: nothing fires.
-    const early = await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
-    expect(early.json().results).toHaveLength(0);
+    const early = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/external-actions/run`,
+    });
+    expect(early.json().actions).toHaveLength(0);
 
     // Advance past the slot and run.
     vi.setSystemTime(new Date(MONDAY_8AM_UTC.getTime() + 10 * 60 * 1000));
-    const run = await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
+    const run = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/external-actions/run`,
+    });
     expect(run.json().actions).toEqual([
       expect.objectContaining({ action: expect.objectContaining({ id: action.id, status: "succeeded" }) }),
     ]);
-    expect(run.json().results).toEqual([]);
 
     const pubs = (
       await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/publications` })
@@ -802,7 +813,10 @@ describe("posting cadences", () => {
     });
 
     vi.setSystemTime(new Date(MONDAY_8AM_UTC.getTime() + 10 * 60 * 1000));
-    const run = await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
+    const run = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/external-actions/run`,
+    });
     expect(run.json().actions).toEqual([
       expect.objectContaining({
         action: expect.objectContaining({ id: action.id, status: "succeeded" }),
@@ -870,7 +884,10 @@ describe("posting cadences", () => {
 
     // Nothing left to dispatch, so nothing is published.
     vi.setSystemTime(new Date(MONDAY_8AM_UTC.getTime() + 8 * DAY_MS));
-    await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
+    await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/external-actions/run`,
+    });
     expect(state.posts).toEqual([]);
 
     // …but the cadence is not frozen: a different approved draft still fills.

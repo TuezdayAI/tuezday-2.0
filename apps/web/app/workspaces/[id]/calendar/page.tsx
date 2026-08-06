@@ -299,6 +299,7 @@ export default function CalendarPage() {
 
   const counts = {
     scheduled: visible.filter((e) => e.status === "scheduled").length,
+    processing: visible.filter((e) => e.status === "processing").length,
     published: visible.filter((e) => e.status === "published").length,
     failed: visible.filter((e) => e.status === "failed").length,
     open: visible.filter((e) => e.status === "open").length,
@@ -481,6 +482,11 @@ export default function CalendarPage() {
             <span className={styles.count}>
               <Icon name="calendar" size="compact" /> {counts.scheduled} scheduled
             </span>
+            {counts.processing > 0 && (
+              <span className={styles.count}>
+                <Icon name="status-generating" size="compact" /> {counts.processing} processing
+              </span>
+            )}
             <span className={styles.count}>
               <Icon name="status-approved" size="compact" /> {counts.published} published
             </span>

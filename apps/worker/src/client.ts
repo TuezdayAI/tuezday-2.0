@@ -28,6 +28,72 @@ export function summarizeCadenceRun(
   };
 }
 
+export type PublishOutcomeState = "published" | "processing" | "blocked" | "failed";
+
+export interface PublishOutcome {
+  id: string;
+  state: PublishOutcomeState;
+  error?: string;
+}
+
+export interface PublishingRun {
+  actions: Array<{
+    action: {
+      id: string;
+      kind: string;
+      status: string;
+      blocker?: { code?: string; message?: string } | null;
+    };
+    execution?: { id: string; status: string; error?: string | null } | null;
+  }>;
+  results: Array<{ id: string; state: PublishOutcomeState; ok: boolean; error?: string }>;
+}
+
+export function summarizePublishRun(run: PublishingRun): {
+  published: number;
+  processing: number;
+  blocked: number;
+  failed: number;
+  outcomes: PublishOutcome[];
+} {
+  const governed: PublishOutcome[] = run.actions
+    .filter(({ action }) => action.kind === "publish")
+    .map(({ action, execution }) => {
+      const id = execution?.id ?? action.id;
+      if (action.status === "succeeded") return { id, state: "published" };
+      if (action.status === "blocked") {
+        return {
+          id,
+          state: "blocked",
+          ...(action.blocker?.code ? { error: action.blocker.code } : {}),
+        };
+      }
+      if (action.status === "failed") {
+        return {
+          id,
+          state: "failed",
+          ...(execution?.error ? { error: execution.error } : {}),
+        };
+      }
+      return { id, state: "processing" };
+    });
+  const outcomes: PublishOutcome[] = [
+    ...governed,
+    ...run.results.map(({ id, state, error }) => ({
+      id,
+      state,
+      ...(error ? { error } : {}),
+    })),
+  ];
+  return {
+    published: outcomes.filter((outcome) => outcome.state === "published").length,
+    processing: outcomes.filter((outcome) => outcome.state === "processing").length,
+    blocked: outcomes.filter((outcome) => outcome.state === "blocked").length,
+    failed: outcomes.filter((outcome) => outcome.state === "failed").length,
+    outcomes,
+  };
+}
+
 export interface WorkerClient {
   request(path: string, init?: RequestInit): Promise<Response>;
   listWorkspaces(): Promise<WorkspaceSummary[]>;
@@ -38,6 +104,7 @@ export interface WorkerClient {
       | "/internal/pipelines/tick"
       | "/internal/preferences/tick",
   ): Promise<unknown>;
+  runPublishing(workspaceId: string): Promise<PublishingRun>;
 }
 
 export interface WorkerClientOptions {
@@ -99,6 +166,25 @@ export function createWorkerClient(
         throw new Error(`POST ${path} returned ${response.status}`);
       }
       return response.json();
+    },
+    async runPublishing(workspaceId) {
+      const actionResponse = await request(
+        `/workspaces/${workspaceId}/external-actions/run`,
+        { method: "POST" },
+      );
+      if (!actionResponse.ok) {
+        throw new Error(`external-action run returned ${actionResponse.status}`);
+      }
+      const { actions } = (await actionResponse.json()) as Pick<PublishingRun, "actions">;
+
+      const publicationResponse = await request(`/workspaces/${workspaceId}/publish/run`, {
+        method: "POST",
+      });
+      if (!publicationResponse.ok) {
+        throw new Error(`publish run returned ${publicationResponse.status}`);
+      }
+      const { results } = (await publicationResponse.json()) as Pick<PublishingRun, "results">;
+      return { actions, results };
     },
   };
 }

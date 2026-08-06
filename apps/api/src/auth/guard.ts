@@ -69,6 +69,7 @@ const WORKER_ROUTE_ALLOWLIST = new Set([
   "POST /workspaces/:id/learning/synthesize",
   "POST /workspaces/:id/ads/sync",
   "POST /workspaces/:id/publish/run",
+  "POST /workspaces/:id/external-actions/run",
   "POST /workspaces/:id/cadences/run",
   "POST /workspaces/:id/inbox/run",
   "POST /workspaces/:id/mailbox-inbox/run",

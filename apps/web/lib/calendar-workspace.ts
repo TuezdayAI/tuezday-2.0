@@ -94,6 +94,7 @@ const ENTRY_WORKFLOW_STATUS: Record<CalendarEntryStatus, WorkflowStatus | null> 
   authorization_required: "authorization_required",
   authorized: "authorized",
   scheduled: "scheduled",
+  processing: "publishing",
   published: "completed",
   failed: "failed",
   blocked: "policy_blocked",

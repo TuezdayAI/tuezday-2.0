@@ -281,7 +281,7 @@ Run: `npm test -- automation publish external-action-publication`
 
 Expected: PASS; manual approved publications remain unaffected.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add apps/api/src/services/publications.ts apps/api/test/automation.test.ts apps/api/test/publish.test.ts
@@ -293,6 +293,9 @@ git commit -m "fix(publishing): enforce the kill switch at provider dispatch" -m
 **Files:**
 - Modify: `packages/contracts/src/index.ts`
 - Modify: `packages/contracts/test/contracts.test.ts`
+- Modify: `apps/api/drizzle/0079_sprint_75_operational_hardening.sql`
+- Modify: `apps/api/drizzle/meta/0079_snapshot.json`
+- Modify: `apps/api/src/db/schema.ts`
 - Modify: `apps/api/src/connectors/social/index.ts`
 - Modify: `apps/api/src/connectors/social/reddit.ts`
 - Modify: `apps/api/src/connectors/social/linkedin.ts`
@@ -301,40 +304,46 @@ git commit -m "fix(publishing): enforce the kill switch at provider dispatch" -m
 - Modify: `apps/api/src/services/publications.ts`
 - Modify: `apps/api/src/services/external-action-coordinator.ts`
 - Modify: `apps/api/src/services/external-actions.ts`
+- Modify: `apps/api/src/services/executions.ts`
 - Modify: `apps/api/src/auth/guard.ts`
 - Modify: `apps/api/test/connect-social.test.ts`
+- Create: `apps/api/test/instagram.test.ts`
 - Modify: `apps/api/test/publish.test.ts`
 - Modify: `apps/api/test/external-action-publication.test.ts`
 - Modify: `apps/api/test/external-actions.test.ts`
+- Modify: `apps/api/test/internal-tasks.test.ts`
 - Modify: `apps/worker/src/index.ts`
 - Modify: `apps/worker/test/client.test.ts`
+- Modify: `apps/web/lib/calendar-workspace.ts`
+- Modify: `apps/web/app/workspaces/[id]/calendar/page.tsx`
+- Modify: `apps/web/app/workspaces/[id]/content/page.tsx`
 
 **Interfaces:**
 - Produces: `SocialPublishResult` tagged union and optional `SocialAdapter.finalizePost`.
 - Extends: publication status with `processing` and durable provider-operation retry fields.
 - Extends: coordinator handling for execution receipt status `processing`.
 
-- [ ] **Step 1: Write failing adapter tests**
+- [x] **Step 1: Write failing adapter tests**
 
 Assert image-only Instagram stays synchronous; video creation returns processing without status polling/sleep; pending finalize performs one status read; ready finalize publishes once and reads permalink; error status throws.
 
-- [ ] **Step 2: Implement tagged publish results across adapters**
+- [x] **Step 2: Implement tagged publish results across adapters**
 
 All synchronous adapters return `{ status: "published", externalId, url }`. Instagram alone implements `finalizePost(operationId)`.
 
-- [ ] **Step 3: Write failing publication persistence tests**
+- [x] **Step 3: Write failing publication persistence tests**
 
 Assert the operation id is stored separately, processing attempts honor `nextAttemptAt`, repeated runs never recreate the container, ready transitions to published, and failures become retryable failed receipts.
 
-- [ ] **Step 4: Implement processing persistence and execution semantics**
+- [x] **Step 4: Implement processing persistence and execution semantics**
 
 Keep in-flight external actions `dispatching` with their processing execution receipt. On resume, a published receipt transitions the governing action to `succeeded`; errors follow existing failure semantics.
 
-- [ ] **Step 5: Add worker action-run before legacy publish-run**
+- [x] **Step 5: Add worker action-run before legacy publish-run**
 
 Call `/external-actions/run` with the worker credential for every workspace, then `/publish/run`. Exclude action-linked processing rows from the legacy runner and log each nonterminal category without calling it failed.
 
-- [ ] **Step 6: Run focused integration tests**
+- [x] **Step 6: Run focused integration tests**
 
 Run: `npm test -- instagram publish external-action-publication external-actions worker`
 

@@ -46,6 +46,22 @@ describe("sprint 75 operational-hardening migration (0079)", () => {
         "INSERT INTO social_automation_settings (workspace_id, updated_at) VALUES ('ws-1', 1)",
       )
       .run();
+    sqlite
+      .prepare(
+        `INSERT INTO drafts (
+          id, workspace_id, task_type, channel, original_content, content, state, created_at, updated_at
+        ) VALUES ('draft-1', 'ws-1', 'instagram_post', 'instagram', 'Video', 'Video', 'approved', 1, 1)`,
+      )
+      .run();
+    sqlite
+      .prepare(
+        `INSERT INTO publications (
+          id, workspace_id, draft_id, connection_id, provider_key, target, title,
+          status, scheduled_for, created_at, updated_at
+        ) VALUES ('publication-1', 'ws-1', 'draft-1', 'conn-1', 'instagram', 'feed', 'Video',
+          'scheduled', 1, 1, 1)`,
+      )
+      .run();
 
     sqlite.exec(readFileSync(path.join(migrationsDir, SPRINT_75_MIGRATION), "utf8"));
 
@@ -59,16 +75,29 @@ describe("sprint 75 operational-hardening migration (0079)", () => {
         )
         .get(),
     ).toEqual({ cap: 10 });
+    expect(
+      sqlite
+        .prepare(
+          `SELECT provider_operation_id AS operationId, next_attempt_at AS nextAttemptAt,
+            processing_started_at AS startedAt, processing_attempts AS attempts
+          FROM publications WHERE id = 'publication-1'`,
+        )
+        .get(),
+    ).toEqual({ operationId: null, nextAttemptAt: null, startedAt: null, attempts: 0 });
     sqlite.close();
   });
 
-  it("adds only the two additive non-null columns with defaults", () => {
+  it("adds only the six additive Sprint 75 columns", () => {
     const sql = readFileSync(path.join(migrationsDir, SPRINT_75_MIGRATION), "utf8");
-    expect(sql.match(/ALTER TABLE/g)).toHaveLength(2);
+    expect(sql.match(/ALTER TABLE/g)).toHaveLength(6);
     expect(sql).toContain("`connections` ADD `timezone` text DEFAULT 'UTC' NOT NULL");
     expect(sql).toContain(
       "`social_automation_settings` ADD `per_connection_reply_daily_cap` integer DEFAULT 10 NOT NULL",
     );
+    expect(sql).toContain("`publications` ADD `provider_operation_id` text");
+    expect(sql).toContain("`publications` ADD `next_attempt_at` integer");
+    expect(sql).toContain("`publications` ADD `processing_started_at` integer");
+    expect(sql).toContain("`publications` ADD `processing_attempts` integer DEFAULT 0 NOT NULL");
     expect(sql).not.toMatch(/DROP|DELETE|UPDATE/i);
   });
 });

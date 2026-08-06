@@ -261,7 +261,13 @@ export function publishActionAdapter(
           retryable: true,
         };
       }
-      const existing = findLivePublication(db, payload.draftId, payload.connectionId, payload.target);
+      const existing = findLivePublication(
+        db,
+        action.workspaceId,
+        payload.draftId,
+        payload.connectionId,
+        payload.target,
+      );
       if (existing && existing.externalActionId !== action.id) {
         return {
           code: "already_published",
@@ -296,7 +302,9 @@ export function publishActionAdapter(
     async execute(action: ExternalAction, rawPayload): Promise<ExternalActionExecutionRef> {
       const payload = asPublishPayload(rawPayload);
       const existing = getPublicationByExternalAction(db, action.workspaceId, action.id);
-      if (existing && existing.status !== "scheduled") return publicationReceipt(existing);
+      if (existing && (existing.status === "published" || existing.status === "failed")) {
+        return publicationReceipt(existing);
+      }
       const connection = getConnection(db, action.workspaceId, payload.connectionId);
       if (!connection) {
         return {

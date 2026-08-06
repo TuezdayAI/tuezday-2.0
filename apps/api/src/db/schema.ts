@@ -2565,6 +2565,12 @@ export const publications = sqliteTable(
     externalId: text("external_id"),
     externalUrl: text("external_url"),
     lastError: text("last_error"),
+    // Durable asynchronous-provider state (Sprint 75). The operation id is a
+    // container/job handle, never the final public media id.
+    providerOperationId: text("provider_operation_id"),
+    nextAttemptAt: integer("next_attempt_at"),
+    processingStartedAt: integer("processing_started_at"),
+    processingAttempts: integer("processing_attempts").notNull().default(0),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },

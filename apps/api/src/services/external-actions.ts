@@ -336,6 +336,32 @@ export function transitionExternalAction(
   return getExternalAction(db, workspaceId, actionId)!;
 }
 
+/** Persist a nonterminal provider receipt without inventing a state transition. */
+export function updateExternalActionExecution(
+  db: Db,
+  workspaceId: string,
+  actionId: string,
+  execution: ExternalActionExecutionRef,
+): ExternalAction {
+  const action = getExternalAction(db, workspaceId, actionId);
+  if (!action) throw new Error("External action not found");
+  if (action.status !== "dispatching") {
+    throw new InvalidExternalActionTransitionError(action.status, "dispatching");
+  }
+  db.update(externalActions)
+    .set({
+      executionKind: execution.kind,
+      executionId: execution.id,
+      executionReceiptJson: JSON.stringify(execution),
+      updatedAt: Date.now(),
+    })
+    .where(
+      and(eq(externalActions.workspaceId, workspaceId), eq(externalActions.id, actionId)),
+    )
+    .run();
+  return getExternalAction(db, workspaceId, actionId)!;
+}
+
 export function insertExternalActionDecision(
   db: Db,
   action: ExternalAction,

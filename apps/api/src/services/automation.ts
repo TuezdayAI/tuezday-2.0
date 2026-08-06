@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, lt, ne } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lt, ne, or } from "drizzle-orm";
 import {
   type AutomationCampaignResult,
   type AutomationRunResult,
@@ -97,6 +97,12 @@ export function countConnectionPublicationsForDay(
       and(
         eq(publications.connectionId, connectionId),
         ne(publications.status, "failed"),
+        excludeActionId
+          ? or(
+              isNull(publications.externalActionId),
+              ne(publications.externalActionId, excludeActionId),
+            )
+          : undefined,
         gte(publications.scheduledFor, start),
         lt(publications.scheduledFor, end),
       ),
@@ -142,6 +148,12 @@ export function countCampaignPublicationsForDay(
       and(
         eq(postingCadences.campaignId, campaignId),
         ne(publications.status, "failed"),
+        excludeActionId
+          ? or(
+              isNull(publications.externalActionId),
+              ne(publications.externalActionId, excludeActionId),
+            )
+          : undefined,
         gte(publications.scheduledFor, start),
         lt(publications.scheduledFor, end),
       ),

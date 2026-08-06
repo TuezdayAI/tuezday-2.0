@@ -94,6 +94,7 @@ describe("calendar workspace view model", () => {
 
   it("maps publication statuses to the canonical vocabulary and leaves slots unbadged", () => {
     expect(entryWorkflowStatus(entry({ status: "scheduled" }))).toBe("scheduled");
+    expect(entryWorkflowStatus(entry({ status: "processing" }))).toBe("publishing");
     expect(entryWorkflowStatus(entry({ status: "published" }))).toBe("completed");
     expect(entryWorkflowStatus(entry({ status: "failed" }))).toBe("failed");
     expect(entryWorkflowStatus(entry({ kind: "slot", status: "open" }))).toBeNull();

@@ -4824,7 +4824,7 @@ export function validateSocialPost(
   return { ok: violations.length === 0, violations };
 }
 
-export const PUBLICATION_STATUSES = ["scheduled", "published", "failed"] as const;
+export const PUBLICATION_STATUSES = ["scheduled", "processing", "published", "failed"] as const;
 export type PublicationStatus = (typeof PUBLICATION_STATUSES)[number];
 
 export const publicationSchema = z.object({
@@ -4844,6 +4844,12 @@ export const publicationSchema = z.object({
   externalId: z.string().nullable(),
   externalUrl: z.string().nullable(),
   lastError: z.string().nullable(),
+  /** Provider-side container/job id while an asynchronous publish is in flight. */
+  providerOperationId: z.string().nullable(),
+  /** Earliest instant at which the worker may poll the provider again. */
+  nextAttemptAt: z.number().int().nullable(),
+  processingStartedAt: z.number().int().nullable(),
+  processingAttempts: z.number().int().nonnegative(),
   /** Governing action for new receipts; absent/null on legacy rows. */
   externalActionId: z.string().uuid().nullable().optional(),
   createdAt: z.number().int(),
@@ -4949,6 +4955,7 @@ export const CALENDAR_ENTRY_STATUSES = [
   "authorization_required",
   "authorized",
   "scheduled",
+  "processing",
   "published",
   "failed",
   "blocked",

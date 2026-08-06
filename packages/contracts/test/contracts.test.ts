@@ -1845,7 +1845,7 @@ describe("social publishing contracts (Sprint 17)", () => {
       titleMaxChars: 300,
       bodyMaxChars: 40000,
     });
-    expect(PUBLICATION_STATUSES).toEqual(["scheduled", "published", "failed"]);
+    expect(PUBLICATION_STATUSES).toEqual(["scheduled", "processing", "published", "failed"]);
   });
 
   it("validates posts against the platform constraints", () => {
@@ -1897,6 +1897,10 @@ describe("social publishing contracts (Sprint 17)", () => {
       externalId: "t3_abc",
       externalUrl: "https://www.reddit.com/r/test/comments/abc/x/",
       lastError: null,
+      providerOperationId: null,
+      nextAttemptAt: null,
+      processingStartedAt: null,
+      processingAttempts: 0,
       createdAt: 1765500000000,
       updatedAt: 1765500001000,
     };
@@ -1909,6 +1913,19 @@ describe("social publishing contracts (Sprint 17)", () => {
         publishedAt: null,
         externalId: null,
         externalUrl: null,
+      }).success,
+    ).toBe(true);
+    expect(
+      publicationSchema.safeParse({
+        ...publication,
+        status: "processing",
+        publishedAt: null,
+        externalId: null,
+        externalUrl: null,
+        providerOperationId: "ig-container-1",
+        nextAttemptAt: 1765500005000,
+        processingStartedAt: 1765500000000,
+        processingAttempts: 1,
       }).success,
     ).toBe(true);
   });

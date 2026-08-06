@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, lte } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lte, or } from "drizzle-orm";
 import type {
   Connection,
   Publication,
@@ -99,9 +99,10 @@ export function getPublicationByExternalAction(
   return row ? rowToPublication(row) : undefined;
 }
 
-/** A live (scheduled or already published) receipt blocks an accidental dupe. */
+/** A live (scheduled, provider-processing, or published) receipt blocks a dupe. */
 export function findLivePublication(
   db: Db,
+  workspaceId: string,
   draftId: string,
   connectionId: string,
   target: string,
@@ -111,18 +112,21 @@ export function findLivePublication(
     .from(publications)
     .where(
       and(
+        eq(publications.workspaceId, workspaceId),
         eq(publications.draftId, draftId),
         eq(publications.connectionId, connectionId),
         eq(publications.target, target),
-        inArray(publications.status, ["scheduled", "published"]),
+        inArray(publications.status, ["scheduled", "processing", "published"]),
       ),
     )
     .get();
   return row ? rowToPublication(row) : undefined;
 }
 
-export function deletePublication(db: Db, publicationId: string): void {
-  db.delete(publications).where(eq(publications.id, publicationId)).run();
+export function deletePublication(db: Db, workspaceId: string, publicationId: string): void {
+  db.delete(publications)
+    .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, publicationId)))
+    .run();
 }
 
 /**
@@ -146,7 +150,10 @@ export async function createPublication(
   if (externalActionId) {
     const existing = getPublicationByExternalAction(db, workspaceId, externalActionId);
     if (existing) {
-      if (existing.status === "scheduled" && existing.scheduledFor <= now) {
+      if (
+        (existing.status === "scheduled" && existing.scheduledFor <= now) ||
+        existing.status === "processing"
+      ) {
         return attemptPublication(db, fabric, fetcher, workspaceId, existing.id);
       }
       return existing;
@@ -169,6 +176,10 @@ export async function createPublication(
     externalId: null,
     externalUrl: null,
     lastError: null,
+    providerOperationId: null,
+    nextAttemptAt: null,
+    processingStartedAt: null,
+    processingAttempts: 0,
     createdAt: now,
     updatedAt: now,
   };
@@ -260,7 +271,21 @@ async function attemptPublicationDetailed(
   workspaceId: string,
   publicationId: string,
 ): Promise<PublicationAttemptResult> {
-  const row = db.select().from(publications).where(eq(publications.id, publicationId)).get()!;
+  const row = db
+    .select()
+    .from(publications)
+    .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, publicationId)))
+    .get()!;
+  if (row.status === "published") {
+    return { publication: rowToPublication(row), state: "published" };
+  }
+  if (
+    row.status === "processing" &&
+    row.nextAttemptAt !== null &&
+    row.nextAttemptAt > Date.now()
+  ) {
+    return { publication: rowToPublication(row), state: "processing" };
+  }
   const draft = db.select().from(drafts).where(eq(drafts.id, row.draftId)).get();
   const connection = getConnection(db, workspaceId, row.connectionId);
   const provider = connection ? providerByKey(connection.providerKey) : undefined;
@@ -268,6 +293,7 @@ async function attemptPublicationDetailed(
     connection && provider && connection.status === "connected"
       ? socialAdapterFor(fabric, provider, connection)
       : undefined;
+  let finalizeAttempted = false;
 
   try {
     if (!draft) throw new Error("The draft behind this publication no longer exists.");
@@ -285,22 +311,60 @@ async function attemptPublicationDetailed(
         error: "kill_switch_on",
       };
     }
-    const result = await adapter.publishPost({
-      target: row.target,
-      title: row.title,
-      body: draft.content,
-      media: row.mediaJson ? (JSON.parse(row.mediaJson) as PublishMedia[]) : undefined,
-    });
+    const result = row.providerOperationId
+      ? await (async () => {
+          if (!adapter.finalizePost) {
+            throw new Error(`${row.providerKey} cannot resume this provider operation.`);
+          }
+          finalizeAttempted = true;
+          return adapter.finalizePost(row.providerOperationId!);
+        })()
+      : await adapter.publishPost({
+          target: row.target,
+          title: row.title,
+          body: draft.content,
+          media: row.mediaJson ? (JSON.parse(row.mediaJson) as PublishMedia[]) : undefined,
+        });
+    const attemptedAt = Date.now();
+    const processingAttempts = row.processingAttempts + (finalizeAttempted ? 1 : 0);
+    if (result.status === "processing") {
+      if (row.providerOperationId && result.operationId !== row.providerOperationId) {
+        throw new Error("The provider changed the operation id while finalizing a publication.");
+      }
+      const requestedRetryMs =
+        Number.isFinite(result.retryAfterMs) && result.retryAfterMs > 0
+          ? result.retryAfterMs
+          : 5_000;
+      const retryAfterMs = Math.max(1_000, Math.min(requestedRetryMs, 60 * 60 * 1_000));
+      db.update(publications)
+        .set({
+          status: "processing",
+          providerOperationId: result.operationId,
+          nextAttemptAt: attemptedAt + retryAfterMs,
+          processingStartedAt: row.processingStartedAt ?? attemptedAt,
+          processingAttempts,
+          lastError: null,
+          updatedAt: attemptedAt,
+        })
+        .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, row.id)))
+        .run();
+      return {
+        publication: getPublication(db, workspaceId, row.id)!,
+        state: "processing",
+      };
+    }
     db.update(publications)
       .set({
         status: "published",
-        publishedAt: Date.now(),
+        publishedAt: attemptedAt,
         externalId: result.externalId,
         externalUrl: result.url,
+        nextAttemptAt: null,
+        processingAttempts,
         lastError: null,
-        updatedAt: Date.now(),
+        updatedAt: attemptedAt,
       })
-      .where(eq(publications.id, row.id))
+      .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, row.id)))
       .run();
     await emitEvent(db, fetcher, workspaceId, "post.published", {
       publicationId: row.id,
@@ -316,10 +380,12 @@ async function attemptPublicationDetailed(
     db.update(publications)
       .set({
         status: "failed",
+        nextAttemptAt: null,
+        processingAttempts: row.processingAttempts + (finalizeAttempted ? 1 : 0),
         lastError: error,
         updatedAt: Date.now(),
       })
-      .where(eq(publications.id, row.id))
+      .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, row.id)))
       .run();
     return {
       publication: getPublication(db, workspaceId, row.id)!,
@@ -336,7 +402,11 @@ export interface PublishRunResult {
   error?: string;
 }
 
-/** Fire every due scheduled receipt; per-row failures never abort the run. */
+/**
+ * Fire legacy receipts without a governing external action. Action-linked
+ * receipts are resumed by the action runner so governance cannot report a
+ * success before provider processing actually completes.
+ */
 export async function runDuePublications(
   db: Db,
   fabric: ConnectorFabric,
@@ -349,8 +419,20 @@ export async function runDuePublications(
     .where(
       and(
         eq(publications.workspaceId, workspaceId),
-        eq(publications.status, "scheduled"),
-        lte(publications.scheduledFor, Date.now()),
+        isNull(publications.externalActionId),
+        or(
+          and(
+            eq(publications.status, "scheduled"),
+            lte(publications.scheduledFor, Date.now()),
+          ),
+          and(
+            eq(publications.status, "processing"),
+            or(
+              isNull(publications.nextAttemptAt),
+              lte(publications.nextAttemptAt, Date.now()),
+            ),
+          ),
+        ),
       ),
     )
     .orderBy(publications.scheduledFor)

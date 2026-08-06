@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { createWorkerClient, summarizeCadenceRun } from "../src/client";
+import {
+  createWorkerClient,
+  summarizeCadenceRun,
+  summarizePublishRun,
+} from "../src/client";
 import type { WorkerConfig } from "../src/config";
 
 const config: WorkerConfig = {
@@ -19,6 +23,49 @@ const config: WorkerConfig = {
 };
 
 describe("worker HTTP client", () => {
+  it("runs governed actions before legacy publication receipts", async () => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(
+        Response.json({
+          actions: [
+            {
+              action: { id: "action-1", kind: "publish", status: "dispatching" },
+              execution: { id: "publication-1", status: "processing", error: null },
+            },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(
+        Response.json({
+          results: [
+            { id: "publication-2", ok: true, state: "published" },
+            { id: "publication-3", ok: false, state: "blocked", error: "kill_switch_on" },
+          ],
+        }),
+      );
+    const client = createWorkerClient(config, { fetcher, maxAttempts: 1 });
+
+    const result = await client.runPublishing("workspace-1");
+
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      "http://localhost:3001/workspaces/workspace-1/external-actions/run",
+      "http://localhost:3001/workspaces/workspace-1/publish/run",
+    ]);
+    expect(fetcher.mock.calls.every(([, init]) => init?.method === "POST")).toBe(true);
+    expect(summarizePublishRun(result)).toEqual({
+      published: 1,
+      processing: 1,
+      blocked: 1,
+      failed: 0,
+      outcomes: [
+        { id: "publication-1", state: "processing" },
+        { id: "publication-2", state: "published" },
+        { id: "publication-3", state: "blocked", error: "kill_switch_on" },
+      ],
+    });
+  });
+
   it("preserves cadence issues even when no draft was filled", () => {
     expect(
       summarizeCadenceRun([

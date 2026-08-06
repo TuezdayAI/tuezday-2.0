@@ -507,7 +507,10 @@ describe("social automation", () => {
     expect(fill.json().filled).toBe(1);
 
     vi.setSystemTime(new Date("2026-07-06T13:05:00Z")); // past the 09:00 EDT (13:00Z) slot
-    const published = await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
+    const published = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/external-actions/run`,
+    });
     expect(
       published
         .json()

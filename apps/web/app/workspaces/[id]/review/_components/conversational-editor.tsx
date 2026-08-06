@@ -626,7 +626,7 @@ export function ConversationalEditor({
               {context.publications.map((publication) => (
                 <Link key={publication.id} href={editorRecoveryHref(workspaceId, publication)} className={styles.activityRow}>
                   <span><strong>{publication.title}</strong><small>{fmtDate(publication.scheduledFor)} · {publication.target}</small></span>
-                  <WorkflowStatusBadge status={publication.status === "scheduled" ? "scheduled" : publication.status === "published" ? "completed" : "failed"} />
+                  <WorkflowStatusBadge status={publication.status === "scheduled" ? "scheduled" : publication.status === "processing" ? "publishing" : publication.status === "published" ? "completed" : "failed"} />
                 </Link>
               ))}
             </div>

@@ -137,6 +137,7 @@ describe("internal task boundary", () => {
       ["GET", `/workspaces/${workspaceId}/learning/syntheses`],
       ["POST", `/workspaces/${workspaceId}/learning/synthesize`],
       ["POST", `/workspaces/${workspaceId}/ads/sync`],
+      ["POST", `/workspaces/${workspaceId}/external-actions/run`],
       ["POST", `/workspaces/${workspaceId}/publish/run`],
       ["POST", `/workspaces/${workspaceId}/cadences/run`],
       ["POST", `/workspaces/${workspaceId}/inbox/run`],

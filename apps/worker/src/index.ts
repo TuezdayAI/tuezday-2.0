@@ -1,6 +1,7 @@
 import {
   createWorkerClient,
   summarizeCadenceRun,
+  summarizePublishRun,
   type CadenceRunResult,
 } from "./client";
 import { loadRootEnv, parseWorkerConfig } from "./config";
@@ -113,11 +114,7 @@ async function syncAdsForAllWorkspaces(): Promise<void> {
   }
 }
 
-interface PublishRunResponse {
-  results: Array<{ id: string; ok: boolean; error?: string }>;
-}
-
-/** Fire scheduled social posts that have come due. */
+/** Resume governed social actions, then fire due legacy publication receipts. */
 async function runDuePublicationsForAllWorkspaces(): Promise<void> {
   const res = await api(`/workspaces`);
   if (!res.ok) throw new Error(`GET /workspaces returned ${res.status}`);
@@ -125,17 +122,17 @@ async function runDuePublicationsForAllWorkspaces(): Promise<void> {
 
   for (const workspace of workspaces) {
     try {
-      const runRes = await api(`/workspaces/${workspace.id}/publish/run`, {
-        method: "POST",
-      });
-      if (!runRes.ok) throw new Error(`run returned ${runRes.status}`);
-      const { results } = (await runRes.json()) as PublishRunResponse;
-      if (results.length === 0) continue; // nothing due — stay quiet
-      const published = results.filter((r) => r.ok).length;
-      const failed = results.filter((r) => !r.ok);
-      console.log(`[publish] ${workspace.name}: ${published} published, ${failed.length} failed`);
-      for (const failure of failed) {
-        console.error(`[publish] ${workspace.name} / ${failure.id}: ${failure.error}`);
+      const summary = summarizePublishRun(await worker.runPublishing(workspace.id));
+      if (summary.outcomes.length === 0) continue; // nothing due — stay quiet
+      console.log(
+        `[publish] ${workspace.name}: ${summary.published} published, ${summary.processing} processing, ${summary.blocked} blocked, ${summary.failed} failed`,
+      );
+      for (const outcome of summary.outcomes) {
+        if (outcome.state === "failed") {
+          console.error(`[publish] ${workspace.name} / ${outcome.id}: ${outcome.error ?? "failed"}`);
+        } else if (outcome.state === "blocked") {
+          console.warn(`[publish] ${workspace.name} / ${outcome.id}: ${outcome.error ?? "blocked"}`);
+        }
       }
     } catch (err) {
       console.error(
