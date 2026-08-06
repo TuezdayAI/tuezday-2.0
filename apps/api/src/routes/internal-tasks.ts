@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import type { AgentProposalService } from "../agents/proposals";
+import type { AgentQuestionService } from "../agents/questions";
 import type { ConnectorFabric } from "../connectors/fabric";
 import type { Db } from "../db";
 import type { IntentProvider } from "../discovery/intent";
@@ -26,6 +27,9 @@ export interface InternalTaskDependencies {
   /** Sprint 69: the propose seam for live pipeline runs. This tick is the only
    * place a live run executes, so it is the only place the real one is used. */
   proposals?: AgentProposalService;
+  /** Sprint 70: the ask seam, for the same reason — a live run is the only
+   * kind that can genuinely suspend on a question. */
+  questions?: AgentQuestionService;
   intentProvider: IntentProvider;
   fabric: ConnectorFabric;
   policy: DiscoveryOperatorPolicy;
@@ -124,6 +128,7 @@ export function registerInternalTaskRoutes(
             evidence: deps.evidence,
             safeFetch: deps.safeFetch,
             ...(deps.proposals ? { proposals: deps.proposals } : {}),
+            ...(deps.questions ? { questions: deps.questions } : {}),
           }),
       );
       return leased.busy

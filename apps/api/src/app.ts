@@ -78,6 +78,7 @@ import { registerComplianceRoutes } from "./routes/compliance";
 import { registerTrackingRoutes } from "./routes/tracking";
 import { registerPrRoutes } from "./routes/pr";
 import { registerPriorityRoutes } from "./routes/priorities";
+import { registerQuestionRoutes } from "./routes/questions";
 import { registerPublicationRoutes } from "./routes/publications";
 import { registerGenerationRoutes } from "./routes/generations";
 import { registerPersonaRoutes } from "./routes/personas";
@@ -96,6 +97,7 @@ import { backfillMissingCampaignPlans } from "./services/campaign-plan-backfill"
 import { backfillMetrics } from "./services/metrics-backfill";
 import { backfillExternalActionPolicies } from "./services/external-action-backfill";
 import { createAgentProposals } from "./services/agent-proposals";
+import { createAgentQuestions } from "./services/agent-questions";
 import { createExternalActionAdapters } from "./services/external-action-adapters";
 import { createExternalActionRuntime } from "./services/external-action-coordinator";
 import { repairDanglingDuplicateGroups } from "./services/discovery-dedupe";
@@ -241,6 +243,8 @@ export async function buildApp({
     fabric: connectors,
     fetcher,
   });
+  // Sprint 70: the ask seam, built once for the same reason.
+  const agentQuestions = createAgentQuestions({ db });
 
   // The design renderer keeps one shared headless browser per process.
   app.addHook("preClose", async () => {
@@ -291,6 +295,7 @@ export async function buildApp({
     evidence,
     safeFetch: guardedFetch,
     proposals: agentProposals,
+    questions: agentQuestions,
     intentProvider: intent,
     fabric: connectors,
     policy: operatorPolicy,
@@ -345,6 +350,16 @@ export async function buildApp({
     evidence,
     safeFetch: guardedFetch,
     proposals: agentProposals,
+    questions: agentQuestions,
+  });
+  registerQuestionRoutes(app, db, {
+    engine: {
+      llm,
+      evidence,
+      safeFetch: guardedFetch,
+      proposals: agentProposals,
+      questions: agentQuestions,
+    },
   });
   registerEvalRoutes(app, db, { llm, evidence, safeFetch: guardedFetch });
   registerPreferenceRoutes(app, db, { llm });

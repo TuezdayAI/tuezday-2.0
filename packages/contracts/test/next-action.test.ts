@@ -22,26 +22,36 @@ const base: NextActionState = {
   },
 };
 
-describe("nextActionFor — spec §5.1 priority order", () => {
-  it("1: drafts waiting for review win over everything", () => {
-    const action = nextActionFor({ ...base, draftCount: 3, blockedPublishCount: 2 });
-    expect(action).toMatchObject({ kind: "review", module: "/review" });
-    expect(action.reason).toBe("3 drafts waiting for review");
+describe("nextActionFor — the setup answer only (Sprint 70, D-70.9)", () => {
+  /**
+   * Sprint 70 deleted the four branches that ranked *work*. They were the other
+   * half of atlas conflict #7: each re-derived from raw counts something the
+   * agent inbox already computes as a ranked item with a reason, and the two
+   * could disagree in front of the founder. These assertions are the proof the
+   * duplication is gone, not a regression.
+   */
+  it("no longer answers for work the inbox ranks", () => {
+    const busy: NextActionState = {
+      ...base,
+      draftCount: 3,
+      blockedPublishCount: 2,
+      liveCampaignsWithoutContent: 1,
+      insightsAvailableUnconnected: true,
+    };
+    // Setup complete and nothing generating: the setup answer is "all clear",
+    // and the drafts/blocks/campaigns show up in the inbox instead.
+    expect(nextActionFor(busy)).toMatchObject({ kind: "none", module: "" });
+    for (const kind of ["review", "connect_blocked", "campaign_content", "connect_insights"]) {
+      expect(nextActionFor(busy).kind).not.toBe(kind);
+    }
   });
-  it("uses singular copy for one draft", () => {
-    expect(nextActionFor({ ...base, draftCount: 1 }).reason).toBe("1 draft waiting for review");
-  });
-  it("2: blocked publish points at Integrations", () => {
-    const action = nextActionFor({ ...base, blockedPublishCount: 1, liveCampaignsWithoutContent: 2 });
-    expect(action).toMatchObject({ kind: "connect_blocked", module: "/connectors" });
-  });
-  it("3: live campaign without content points at Campaigns", () => {
-    const action = nextActionFor({ ...base, liveCampaignsWithoutContent: 1, insightsAvailableUnconnected: true });
-    expect(action).toMatchObject({ kind: "campaign_content", module: "/campaigns" });
-  });
-  it("4: unconnected insights points at Integrations", () => {
-    const action = nextActionFor({ ...base, insightsAvailableUnconnected: true });
-    expect(action).toMatchObject({ kind: "connect_insights", module: "/connectors" });
+  it("work never outranks an unmet setup step any more", () => {
+    const action = nextActionFor({
+      ...base,
+      draftCount: 5,
+      checklist: { ...base.checklist, channel_connected: false },
+    });
+    expect(action).toMatchObject({ kind: "checklist", checklistItem: "channel_connected" });
   });
   it("5: first incomplete checklist item, in fixed order", () => {
     const action = nextActionFor({

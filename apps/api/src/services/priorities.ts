@@ -419,41 +419,20 @@ export function connectionImpact(
   };
 }
 
-/** Ranking tiers: exact execution/action recovery first, then stopping risks,
- * ordinary content review, and finally unmatched signal triage. */
-function tier(item: PriorityItem, now: number): number {
-  const overdue = item.dueAt !== null && item.dueAt <= now;
-  const failureLike =
-    item.kind === "execution_failure" ||
-    item.kind === "policy_block" ||
-    item.kind === "stale_action";
-  if (failureLike && overdue) return 0;
-  if (item.kind === "authorization" && overdue) return 1;
-  if (failureLike) return 2;
-  if (item.kind === "authorization") return 3;
-  if (
-    item.kind === "connection_health" ||
-    item.kind === "campaign_risk" ||
-    item.kind === "learning_review" ||
-    (item.kind === "signal_triage" && item.campaignId !== null)
-  ) {
-    return 4;
-  }
-  if (item.kind === "content_review") return 5;
-  return 6;
-}
-
 /**
- * The Home "Needs you now" projection: every durable action state a human has
- * to resolve, plus failed executions and pending content reviews, ranked
- * deterministically most-urgent first.
+ * Every durable state a human has to resolve — failed executions, blocked and
+ * stale actions, authorizations, pending reviews, unrouted signals, proposed
+ * learning, lost connections, at-risk campaigns.
+ *
+ * Sprint 70 (D-70.8) took the *ranking* out of this file. This collects; the
+ * agent inbox ranks. There is now exactly one comparator in the codebase that
+ * decides what a founder looks at first, and it lives beside the lanes.
  */
-export function listWorkspacePriorities(
+export function collectPriorityItems(
   db: Db,
   workspaceId: string,
-  limit: number = DEFAULT_LIMIT,
-): PriorityQueue {
-  const now = Date.now();
+  now: number = Date.now(),
+): PriorityItem[] {
   const items: PriorityItem[] = [];
 
   const actions = db
@@ -569,16 +548,5 @@ export function listWorkspacePriorities(
 
   items.push(...deriveCampaignRisks(db, workspaceId, now, executionResults));
 
-  items.sort((left, right) => {
-    const byTier = tier(left, now) - tier(right, now);
-    if (byTier !== 0) return byTier;
-    const byDue = (left.dueAt ?? left.createdAt) - (right.dueAt ?? right.createdAt);
-    if (byDue !== 0) return byDue;
-    const byCreated = left.createdAt - right.createdAt;
-    if (byCreated !== 0) return byCreated;
-    return left.id.localeCompare(right.id);
-  });
-
-  const bounded = Math.min(Math.max(limit, 1), MAX_LIMIT);
-  return { items: items.slice(0, bounded), generatedAt: now };
+  return items;
 }

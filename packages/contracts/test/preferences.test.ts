@@ -29,7 +29,9 @@ describe("preference memory contracts (Sprint 68)", () => {
       "promoted",
       "retired",
     ]);
-    expect([...PREFERENCE_RULE_ORIGINS]).toEqual(["extracted", "manual"]);
+    // Sprint 70 added a third origin: a rule the founder chose to keep while
+    // answering an agent's question.
+    expect([...PREFERENCE_RULE_ORIGINS]).toEqual(["extracted", "manual", "answered_question"]);
   });
 
   it("caps a rule at one line and injects only a handful", () => {

@@ -19,6 +19,7 @@ import {
   type PipelineStepStatus,
   type PipelineTaskKey,
   type ProposalOutput,
+  type AgentQuestion,
   type AgentStopReason,
 } from "@tuezday/contracts";
 import type { z } from "zod";
@@ -35,6 +36,7 @@ import { toAgentTools } from "../agents/adapter";
 import { DEFAULT_TOOL_BUDGET, type ToolContext } from "../agents/registry";
 import { AgentRunner } from "../agents/runner";
 import { simulatedAgentProposals, type AgentProposalService } from "../agents/proposals";
+import { simulatedAgentQuestions, type AgentQuestionService } from "../agents/questions";
 import { ALL_TOOLS } from "../agents/tools/index";
 import type { Db } from "../db";
 import {
@@ -50,6 +52,7 @@ import type { LlmGateway } from "../llm/gateway";
 import { jsonSchemaFor } from "../llm/json-schema";
 import { meteredLlm } from "../llm/metered";
 import type { SafeFetchService } from "../safe-fetch/index";
+import { listAnsweredQuestionsForPipelineRun } from "./agent-questions";
 import { submitDraft } from "./drafts";
 import { llmBudgetExhausted } from "./entitlements";
 import { storeGeneration } from "./generations";
@@ -90,6 +93,12 @@ export interface PipelineEngineDeps {
    * nothing (D-69.6).
    */
   proposals?: AgentProposalService;
+  /**
+   * Sprint 70: the ask seam. Same rule — absent means `ask_founder` is not
+   * offered, and a non-live run gets the simulating one so a dry run never
+   * suspends waiting for an answer nobody is going to give (D-70.5).
+   */
+  questions?: AgentQuestionService;
 }
 
 export class PipelineRunNotFoundError extends Error {
@@ -238,6 +247,7 @@ function composeStepUserMessage(
   step: PipelineStepSpec,
   priorExamples: ResolveExamples | null,
   preferences: ResolvePreferences | null,
+  answers: AgentQuestion[],
 ): string {
   const lines: string[] = [
     "## Triggering signal",
@@ -247,6 +257,17 @@ function composeStepUserMessage(
     `## Target channel`,
     run.channel,
   ];
+  // Sprint 70 (D-70.3): what this run already asked and was told. First in the
+  // message, before anything the model might re-derive from — an answer the
+  // founder gave outranks every other input in the bundle, and putting it here
+  // is what stops the resumed step from asking the same thing again.
+  if (answers.length > 0) {
+    lines.push("", "## Answers you already have");
+    for (const answered of answers) {
+      lines.push(`- You asked: “${answered.question}” — the founder answered: “${answered.answer}”`);
+    }
+    lines.push("", "Treat those answers as settled. Do not ask them again.");
+  }
   // Sprint 68 (Move 5): rules before examples — the instruction, then the
   // illustrations. Same guarantee as few-shot below: every draft step sees them.
   if (step.output === "draft" && preferences) {
@@ -285,6 +306,7 @@ async function runAgentStepPass(
   state: EngineState,
   priorExamples: ResolveExamples | null,
   preferences: ResolvePreferences | null,
+  answers: AgentQuestion[],
 ): Promise<StepPassResult> {
   const cached = state.cache.get(`${step.key}#${iteration}`);
   if (cached) return { ...cached, fromCache: true };
@@ -295,14 +317,37 @@ async function runAgentStepPass(
   // all rather than an ungoverned write path.
   const proposals: AgentProposalService | null =
     run.mode === "live" ? (deps.proposals ?? null) : simulatedAgentProposals();
+  const questions: AgentQuestionService | null =
+    run.mode === "live" ? (deps.questions ?? null) : simulatedAgentQuestions();
   const tools = ALL_TOOLS.filter(
     (tool) =>
-      step.tools.includes(tool.name) && (tool.access !== "propose" || proposals !== null),
+      step.tools.includes(tool.name) &&
+      (tool.access !== "propose" || proposals !== null) &&
+      (tool.access !== "ask" || questions !== null),
   );
   const runner = new AgentRunner(db, metered);
 
+  // Attempts continue where the last execution left off. A pass that failed
+  // (or, since Sprint 70, stopped to ask) leaves its attempt rows behind, and
+  // the run's step history is keyed by (step, iteration, attempt) — so resuming
+  // at attempt 1 would collide with the row that recorded why it stopped. The
+  // per-execution bound below is unchanged; only the numbering carries over.
+  const priorAttempts =
+    db
+      .select({ used: sql<number>`coalesce(max(${pipelineRunSteps.attempt}), 0)` })
+      .from(pipelineRunSteps)
+      .where(
+        and(
+          eq(pipelineRunSteps.runId, run.id),
+          eq(pipelineRunSteps.stepKey, step.key),
+          eq(pipelineRunSteps.iteration, iteration),
+        ),
+      )
+      .get()?.used ?? 0;
+
   let lastFailure = "unknown";
-  for (let attempt = 1; attempt <= STEP_MAX_ATTEMPTS; attempt += 1) {
+  for (let pass = 1; pass <= STEP_MAX_ATTEMPTS; pass += 1) {
+    const attempt = priorAttempts + pass;
     const rowId = insertStepRow(db, run, {
       stepKey: step.key,
       iteration,
@@ -319,7 +364,10 @@ async function runAgentStepPass(
       actor: { userId: null, label: run.createdBy },
       budget: DEFAULT_TOOL_BUDGET,
       ...(proposals ? { proposals } : {}),
+      ...(questions ? { questions } : {}),
       agentRunId,
+      pipelineRunId: run.id,
+      stepKey: step.key,
     };
     const result = await runner.run({
       workspaceId: run.workspaceId,
@@ -338,6 +386,7 @@ async function runAgentStepPass(
             step,
             priorExamples,
             preferences,
+            answers,
           ),
         },
       ],
@@ -738,6 +787,10 @@ export async function executePipelineRun(
     pipeline: "pipeline_run",
     campaignId: run.campaignId,
   });
+  // Sprint 70: everything this run has already asked and been told. Read once
+  // per execution — a question asked mid-execution suspends the run, so no
+  // later step in *this* pass can ever see a newer answer than these.
+  const answeredQuestions = listAnsweredQuestionsForPipelineRun(db, run.id);
   const deadline = now + RUN_MAX_DURATION_MS;
   // Escalation checks fire only on freshly executed passes: cached passes
   // were either checked before pausing or are the acknowledged pause point.
@@ -769,6 +822,7 @@ export async function executePipelineRun(
       state,
       priorExamples,
       preferences,
+      answeredQuestions,
     );
     if (pass.failure) {
       if (pass.failure.escalate) {

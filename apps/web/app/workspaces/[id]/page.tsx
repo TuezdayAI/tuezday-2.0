@@ -9,21 +9,33 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import {
   SETUP_CHECKLIST_ITEMS,
+  type AgentInboxFeed,
+  type AgentInboxItem,
+  type AgentQuestion,
   type Campaign,
   type NextAction,
   type NextActionState,
   type NowSynthesis,
-  type PriorityQueue,
   type SetupChecklistItem,
   type Workspace,
 } from "@tuezday/contracts";
 import { API_URL, apiFetch } from "@/lib/api";
-import { priorityQueueState, priorityView } from "@/lib/priorities";
+import {
+  answerCta,
+  answerOptions,
+  inboxIsClear,
+  inboxItemView,
+  itemsInLane,
+  laneMeta,
+  questionTypeLabel,
+  suggestedRule,
+  LANE_ORDER,
+} from "@/lib/agent-inbox-view";
 import { EmptyState } from "@/src/components/empty-state";
 import { PageHeader } from "@/src/components/page-header";
 import { Icon, type IconName } from "@/src/components/ui/icon";
 import { CountBadge, WorkflowStatusBadge } from "@/src/components/ui/badge";
-import { ButtonLink } from "@/src/components/ui/button";
+import { Button, ButtonLink } from "@/src/components/ui/button";
 import { LoopGlyph } from "@/src/components/ui/diagram-kit";
 import styles from "./home-hero.module.css";
 
@@ -36,7 +48,8 @@ interface NextActionPayload {
 
 interface HomeData {
   workspace: Workspace;
-  priorities: PriorityQueue;
+  /** Sprint 70: one ranked feed, three lanes — the only ranking on this page. */
+  feed: AgentInboxFeed;
   newSignals: number;
   syntheses: NowSynthesis[];
   campaigns: Campaign[];
@@ -59,6 +72,154 @@ function truncate(text: string, max: number): string {
   return clean.length > max ? `${clean.slice(0, max - 1)}…` : clean;
 }
 
+/** An ordinary feed item: the API wrote the reason and the consequence. */
+function InboxCard({ workspaceId, item }: { workspaceId: string; item: AgentInboxItem }) {
+  const view = inboxItemView(item);
+  return (
+    <article className={styles.priorityCard}>
+      <div className={styles.priorityHead}>
+        <span className={styles.priorityKind}>
+          <Icon name={view.icon} size="compact" />
+          {view.label}
+        </span>
+        <WorkflowStatusBadge status={view.status} />
+      </div>
+      <h3>{item.title}</h3>
+      <p className={styles.priorityReason}>{item.reason}</p>
+      <p className={styles.priorityConsequence}>{item.consequence}</p>
+      <div className={styles.priorityContext}>
+        {item.campaignId && (
+          <Link href={`/workspaces/${workspaceId}/campaigns/${item.campaignId}`}>
+            {item.campaignName ?? "Open campaign"}
+          </Link>
+        )}
+        {item.dueAt && (
+          <time dateTime={new Date(item.dueAt).toISOString()}>
+            Due {new Date(item.dueAt).toLocaleString()}
+          </time>
+        )}
+      </div>
+      <ButtonLink variant="secondary" size="standard" href={item.href}>
+        {view.cta}
+      </ButtonLink>
+    </article>
+  );
+}
+
+/**
+ * The ask lane's card (Sprint 70). Answering here is the whole feature: one
+ * click on an option the agent offered, or a sentence, and the suspended run
+ * picks up where it stopped.
+ */
+function AskCard({
+  workspaceId,
+  question,
+  item,
+  onAnswered,
+}: {
+  workspaceId: string;
+  question: AgentQuestion;
+  item: AgentInboxItem;
+  onAnswered: () => void;
+}) {
+  const [answer, setAnswer] = useState("");
+  const [remember, setRemember] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState<string | null>(null);
+
+  async function send(text: string, action: "answer" | "dismiss" = "answer") {
+    if (busy) return;
+    setBusy(true);
+    setFailed(null);
+    const body: Record<string, unknown> = { action };
+    if (action === "answer") {
+      body.answer = text;
+      // D-70.11: the rule is what the founder chose to keep, prefilled from
+      // their own answer — never something parsed out of it server-side.
+      if (remember) body.remember = { rule: suggestedRule(question, text), polarity: "do" };
+    }
+    const res = await apiFetch(`/workspaces/${workspaceId}/questions/${question.id}/answer`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }).catch(() => null);
+    setBusy(false);
+    if (!res?.ok) {
+      setFailed("That did not go through. Try again.");
+      return;
+    }
+    onAnswered();
+  }
+
+  return (
+    <article className={styles.priorityCard}>
+      <div className={styles.priorityHead}>
+        <span className={styles.priorityKind}>
+          <Icon name="status-review" size="compact" />
+          {questionTypeLabel(question)}
+        </span>
+        <WorkflowStatusBadge status={item.status} />
+      </div>
+      <h3>{question.question}</h3>
+      <p className={styles.priorityReason}>{question.why}</p>
+      <p className={styles.priorityConsequence}>{item.consequence}</p>
+
+      {answerOptions(question).length > 0 && (
+        <div className={styles.askOptions}>
+          {answerOptions(question).map((option) => (
+            <Button
+              key={option}
+              variant="secondary"
+              size="compact"
+              disabled={busy}
+              onClick={() => void send(option)}
+            >
+              {option}
+            </Button>
+          ))}
+        </div>
+      )}
+
+      <textarea
+        className={styles.askInput}
+        rows={2}
+        placeholder="Or answer in your own words…"
+        value={answer}
+        disabled={busy}
+        onChange={(event) => setAnswer(event.target.value)}
+      />
+      <label className={styles.askRemember}>
+        <input
+          type="checkbox"
+          checked={remember}
+          disabled={busy}
+          onChange={(event) => setRemember(event.target.checked)}
+        />
+        Remember this for next time
+      </label>
+      {failed && <p className={styles.priorityReason}>{failed}</p>}
+      <div className={styles.askActions}>
+        <Button
+          variant="primary"
+          size="standard"
+          loading={busy}
+          disabled={busy || answer.trim().length === 0}
+          onClick={() => void send(answer)}
+        >
+          {answerCta(question)}
+        </Button>
+        <Button
+          variant="tertiary"
+          size="standard"
+          disabled={busy}
+          onClick={() => void send("", "dismiss")}
+        >
+          Not now
+        </Button>
+      </div>
+    </article>
+  );
+}
+
 export default function WorkspaceHomePage() {
   const { id } = useParams<{ id: string }>();
   const [data, setData] = useState<HomeData | null>(null);
@@ -66,18 +227,18 @@ export default function WorkspaceHomePage() {
 
   const load = useCallback(async () => {
     try {
-      const [ws, priorities, signals, syntheses, campaigns, next] = await Promise.all([
+      const [ws, feed, signals, syntheses, campaigns, next] = await Promise.all([
         apiFetch(`/workspaces/${id}`),
-        apiFetch(`/workspaces/${id}/priorities`),
+        apiFetch(`/workspaces/${id}/agent-inbox`),
         apiFetch(`/workspaces/${id}/discovery/items?status=new`),
         apiFetch(`/workspaces/${id}/learning/syntheses`),
         apiFetch(`/workspaces/${id}/campaigns`),
         apiFetch(`/workspaces/${id}/next-action`),
       ]);
-      if (!ws.ok || !priorities.ok) throw new Error("not found");
+      if (!ws.ok || !feed.ok) throw new Error("not found");
       setData({
         workspace: await ws.json(),
-        priorities: await priorities.json(),
+        feed: await feed.json(),
         newSignals: signals.ok ? ((await signals.json()) as unknown[]).length : 0,
         syntheses: syntheses.ok ? await syntheses.json() : [],
         campaigns: campaigns.ok ? await campaigns.json() : [],
@@ -104,15 +265,14 @@ export default function WorkspaceHomePage() {
 
   if (!data) return <EmptyState description="Loading..." />;
 
-  const { workspace, priorities, newSignals, syntheses, campaigns, next } = data;
-  const pendingReview = priorities.items.filter((item) => item.kind === "content_review").length;
+  const { workspace, feed, newSignals, syntheses, campaigns, next } = data;
+  const pendingReview = feed.items.filter((item) => item.kind === "content_review").length;
   const proposedUpdates = syntheses.filter((s) => s.status === "proposed").length;
   const activeCampaigns = campaigns.filter((c) => c.status === "active").length;
 
-  // The API owns urgency and deterministic ordering across authorization,
-  // blockers, failures, stale actions, and content review.
-  const queue = priorities.items.slice(0, 8);
-  const queueState = priorityQueueState(priorities);
+  // Sprint 70: the API owns lane assignment and the single ranking. This page
+  // renders the order it was given and never re-sorts — the whole point of
+  // collapsing the two engines was to stop two surfaces disagreeing.
   const generatingCount = next?.state.generatingCount ?? 0;
 
   // Zone 3 — recent learning-loop entries (dismissed ones taught us nothing).
@@ -160,13 +320,12 @@ export default function WorkspaceHomePage() {
         </Link>
       </nav>
 
-      {/* Zone 1 — Needs you now: the work queue. */}
-      <section className={styles.zone}>
-        <div className={styles.zoneHead}>
-          <h2 className={styles.zoneTitle}>Needs you now</h2>
-          {queue.length > 0 && <span className={styles.zoneMeta}>Ranked by urgency and due time</span>}
-        </div>
-        {queueState === "all_clear" ? (
+      {/* Zone 1 — the agent inbox: notify / ask / review over one ranked feed. */}
+      {inboxIsClear(feed) ? (
+        <section className={styles.zone}>
+          <div className={styles.zoneHead}>
+            <h2 className={styles.zoneTitle}>Your inbox</h2>
+          </div>
           <p className={styles.allClear}>
             <Icon name="status-approved" size="compact" />
             All clear — nothing is waiting on you.
@@ -176,44 +335,37 @@ export default function WorkspaceHomePage() {
               </span>
             )}
           </p>
-        ) : (
-          <div className={styles.priorityGrid}>
-            {queue.map((priority, index) => {
-              const view = priorityView(priority);
-              return (
-                <article key={priority.id} className={styles.priorityCard}>
-                  <div className={styles.priorityHead}>
-                    <span className={styles.priorityKind}>
-                      <Icon name={view.icon} size="compact" />
-                      {index === 0 && <span className={styles.nextTag}>Next up</span>}
-                      {view.label}
-                    </span>
-                    <WorkflowStatusBadge status={view.status} />
-                  </div>
-                  <h3>{priority.title}</h3>
-                  <p className={styles.priorityReason}>{priority.reason}</p>
-                  <p className={styles.priorityConsequence}>{priority.consequence}</p>
-                  <div className={styles.priorityContext}>
-                    {priority.campaignId && (
-                      <Link href={`/workspaces/${id}/campaigns/${priority.campaignId}`}>
-                        {priority.campaignName ?? "Open campaign"}
-                      </Link>
-                    )}
-                    {priority.dueAt && (
-                      <time dateTime={new Date(priority.dueAt).toISOString()}>
-                        Due {new Date(priority.dueAt).toLocaleString()}
-                      </time>
-                    )}
-                  </div>
-                  <ButtonLink variant="secondary" size="standard" href={priority.href}>
-                    {view.cta}
-                  </ButtonLink>
-                </article>
-              );
-            })}
-          </div>
-        )}
-      </section>
+        </section>
+      ) : (
+        LANE_ORDER.map((lane) => {
+          const items = itemsInLane(feed, lane);
+          if (items.length === 0) return null;
+          const meta = laneMeta(lane);
+          return (
+            <section key={lane} className={styles.zone}>
+              <div className={styles.zoneHead}>
+                <h2 className={styles.zoneTitle}>{meta.title}</h2>
+                <CountBadge count={feed.counts[lane]} label={meta.blurb} />
+              </div>
+              <div className={styles.priorityGrid}>
+                {items.map((item) =>
+                  item.question ? (
+                    <AskCard
+                      key={item.id}
+                      workspaceId={id}
+                      question={item.question}
+                      item={item}
+                      onAnswered={() => void load()}
+                    />
+                  ) : (
+                    <InboxCard key={item.id} workspaceId={id} item={item} />
+                  ),
+                )}
+              </div>
+            </section>
+          );
+        })
+      )}
 
       {/* Zone 2 — Setup checklist: activation phase only, gone forever when done. */}
       {next && !next.checklist.complete && (

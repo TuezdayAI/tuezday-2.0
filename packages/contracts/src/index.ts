@@ -6884,42 +6884,21 @@ export function checklistProgress(state: NextActionState): { done: number; total
   return { done, total, complete: done === total };
 }
 
+/**
+ * The setup answer: which activation step is still missing.
+ *
+ * Sprint 70 (D-70.9) deleted the four branches that ranked *work* — pending
+ * drafts, blocked publishes, live campaigns without content, unconnected
+ * insights. Each re-derived, from raw counts, something the inbox already
+ * computes as a ranked item with a reason and a consequence, and the two could
+ * disagree in front of the founder. The inbox now answers "what needs you";
+ * this answers "what setup step is left", and the answers no longer overlap.
+ *
+ * The `review` / `connect_blocked` / `campaign_content` / `connect_insights`
+ * kinds remain in `NextActionKind` for stored/legacy payloads; nothing returns
+ * them any more.
+ */
 export function nextActionFor(state: NextActionState): NextAction {
-  if (state.draftCount > 0) {
-    const n = state.draftCount;
-    return {
-      kind: "review",
-      module: "/review",
-      label: "Review drafts",
-      reason: `${n} draft${n === 1 ? "" : "s"} waiting for review`,
-    };
-  }
-  if (state.blockedPublishCount > 0) {
-    const n = state.blockedPublishCount;
-    return {
-      kind: "connect_blocked",
-      module: "/connectors",
-      label: "Connect a channel",
-      reason: `${n} approved post${n === 1 ? "" : "s"} can't publish without a connected channel`,
-    };
-  }
-  if (state.liveCampaignsWithoutContent > 0) {
-    const n = state.liveCampaignsWithoutContent;
-    return {
-      kind: "campaign_content",
-      module: "/campaigns",
-      label: "Add campaign content",
-      reason: `${n} live campaign${n === 1 ? "" : "s"} with no content generating`,
-    };
-  }
-  if (state.insightsAvailableUnconnected) {
-    return {
-      kind: "connect_insights",
-      module: "/connectors",
-      label: "Connect insights",
-      reason: "Connect a channel to see what worked",
-    };
-  }
   for (const item of SETUP_CHECKLIST_ITEMS) {
     if (!state.checklist[item]) {
       const target = CHECKLIST_TARGETS[item];
@@ -7672,14 +7651,15 @@ export type AgentUsage = z.infer<typeof agentUsageSchema>;
 // Internal tool registry (Sprint 57)
 //
 // The registry (apps/api/src/agents/registry.ts) exposes platform
-// capabilities as model-callable tools. Two access tiers only: `read` tools
+// capabilities as model-callable tools. Three access tiers: `read` tools
 // are unrestricted inside the workspace (the same membership rule that
 // scopes HTTP routes); `propose` tools never execute — they mint a gated
-// item and return its id. Sprint 69 shipped the five of them. There is
-// deliberately no "execute" tier.
+// item and return its id (Sprint 69 shipped the five of them); `ask` tools
+// write nothing at all — they record a question and stop the run until a
+// human answers it (Sprint 70). There is deliberately no "execute" tier.
 // ---------------------------------------------------------------------------
 
-export const TOOL_ACCESS_LEVELS = ["read", "propose"] as const;
+export const TOOL_ACCESS_LEVELS = ["read", "propose", "ask"] as const;
 export type ToolAccessLevel = (typeof TOOL_ACCESS_LEVELS)[number];
 
 /** The Sprint 57 read-tool surface: unrestricted inside the workspace. */
@@ -7711,14 +7691,31 @@ export const PROPOSE_TOOL_NAMES = [
   "propose_ad_mutation",
 ] as const;
 
+/**
+ * The Sprint 70 ask surface. The only tool that produces no artefact at all: it
+ * records a question, suspends the run, and waits. One tool, because "ask the
+ * founder something" is one capability — the *type* of question is an argument,
+ * not a separate tool the model has to choose between.
+ */
+export const ASK_TOOL_NAMES = ["ask_founder"] as const;
+
 /** The whole registry. Tests assert registry and contracts stay in lockstep. */
-export const AGENT_TOOL_NAMES = [...READ_TOOL_NAMES, ...PROPOSE_TOOL_NAMES] as const;
+export const AGENT_TOOL_NAMES = [
+  ...READ_TOOL_NAMES,
+  ...PROPOSE_TOOL_NAMES,
+  ...ASK_TOOL_NAMES,
+] as const;
 export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];
 export type ReadToolName = (typeof READ_TOOL_NAMES)[number];
 export type ProposeToolName = (typeof PROPOSE_TOOL_NAMES)[number];
+export type AskToolName = (typeof ASK_TOOL_NAMES)[number];
 
 export function isProposeToolName(name: string): name is ProposeToolName {
   return (PROPOSE_TOOL_NAMES as readonly string[]).includes(name);
+}
+
+export function isAskToolName(name: string): name is AskToolName {
+  return (ASK_TOOL_NAMES as readonly string[]).includes(name);
 }
 
 /**
@@ -7730,6 +7727,38 @@ export function isProposeToolName(name: string): name is ProposeToolName {
 export const AGENT_PROPOSALS_PER_RUN = 3;
 export const AGENT_PROPOSALS_PER_DAY = 20;
 export const PROPOSAL_RATIONALE_MAX_CHARS = 500;
+
+/**
+ * What an agent can be stuck on (Sprint 70). Four kinds, because they are
+ * answered differently and mean different things about the workspace:
+ * `disambiguation` — several readings of the same instruction;
+ * `missing_permission` — the plan does not say whether this is allowed;
+ * `missing_fact` — the platform does not hold something it needs;
+ * `policy_escalation` — it would be acting outside what it was configured for.
+ */
+export const AGENT_QUESTION_TYPES = [
+  "disambiguation",
+  "missing_permission",
+  "missing_fact",
+  "policy_escalation",
+] as const;
+export type AgentQuestionType = (typeof AGENT_QUESTION_TYPES)[number];
+
+export const AGENT_QUESTION_STATUSES = ["open", "answered", "dismissed"] as const;
+export type AgentQuestionStatus = (typeof AGENT_QUESTION_STATUSES)[number];
+
+/**
+ * Question caps (D-70.4, D-70.6). The per-run one is counted over the *pipeline*
+ * run, so it survives the resumes that asking causes — an agent-run-scoped cap
+ * would reset every time a question suspended the run, and bound nothing. The
+ * open cap is per workspace: the ask lane's value is that a question there is
+ * worth reading, and twenty of them is a queue.
+ */
+export const AGENT_QUESTIONS_PER_RUN = 2;
+export const AGENT_QUESTIONS_OPEN_MAX = 10;
+export const QUESTION_TEXT_MAX_CHARS = 300;
+export const QUESTION_WHY_MAX_CHARS = 500;
+export const QUESTION_ANSWER_MAX_CHARS = 1_000;
 
 /** Content profiles `safe_fetch_url` accepts — mirrors the Sprint 48
  * safe-fetch policy's MIME allowlists (apps/api/src/safe-fetch/policy.ts,
@@ -7838,6 +7867,19 @@ export const toolInputSchemas = {
     ageMax: z.number().int().min(18).max(65).optional(),
     rationale: z.string().min(1).max(PROPOSAL_RATIONALE_MAX_CHARS),
   }),
+
+  // -------------------------------------------------------------------------
+  // Ask tool (Sprint 70). `why` is not decoration: a question without the
+  // reason it is being asked is unanswerable in one click, which is the only
+  // form of asking worth building. `options` are advisory (D-70.12) — they
+  // become one-click answers, and the free-text answer always remains open.
+  // -------------------------------------------------------------------------
+  ask_founder: z.object({
+    type: z.enum(AGENT_QUESTION_TYPES),
+    question: z.string().trim().min(1).max(QUESTION_TEXT_MAX_CHARS),
+    why: z.string().trim().min(1).max(QUESTION_WHY_MAX_CHARS),
+    options: z.array(z.string().trim().min(1).max(80)).min(2).max(4).optional(),
+  }),
 } as const satisfies Record<AgentToolName, z.ZodType<Record<string, unknown>>>;
 
 // ---------------------------------------------------------------------------
@@ -7885,6 +7927,140 @@ export const agentProposalSchema = z
     }
   });
 export type AgentProposal = z.infer<typeof agentProposalSchema>;
+
+// ---------------------------------------------------------------------------
+// Agent questions — the ask lane (Sprint 70)
+//
+// A question is durable state, not a message (D-70.2): the run that asked it is
+// gone from memory long before the answer arrives, and the row is the only
+// thing that survives to reconnect the two. It carries what it blocks
+// (`pipelineRunId` + `stepKey`) and what it needs, so the queue and the run
+// point at each other without reading a transcript.
+//
+// The answer input lives further down — it re-uses the preference vocabulary,
+// which is declared after this.
+// ---------------------------------------------------------------------------
+
+export const agentQuestionSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    agentRunId: z.string().uuid(),
+    /** Null when nothing is suspended — a one-shot run has no resume point. */
+    pipelineRunId: z.string().uuid().nullable(),
+    stepKey: z.string().nullable(),
+    type: z.enum(AGENT_QUESTION_TYPES),
+    question: z.string().trim().min(1).max(QUESTION_TEXT_MAX_CHARS),
+    why: z.string().trim().min(1).max(QUESTION_WHY_MAX_CHARS),
+    options: z.array(z.string()).max(4),
+    status: z.enum(AGENT_QUESTION_STATUSES),
+    answer: z.string().nullable(),
+    answeredByUserId: z.string().uuid().nullable(),
+    answeredByLabel: z.string().nullable(),
+    answeredAt: z.number().int().nullable(),
+    /** The preference rule this answer minted, if the founder kept it. */
+    ruleId: z.string().uuid().nullable(),
+    createdAt: z.number().int(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.status === "answered" && (value.answer === null || value.answer.trim() === "")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["answer"],
+        message: "An answered question carries the answer.",
+      });
+    }
+    if (value.status === "open" && value.answeredAt !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["answeredAt"],
+        message: "An open question has not been answered.",
+      });
+    }
+  });
+export type AgentQuestion = z.infer<typeof agentQuestionSchema>;
+
+// ---------------------------------------------------------------------------
+// The agent inbox (Sprint 70) — one ranked feed, three lanes.
+//
+// Closes atlas conflict #7. `priorities` and `next-action` both answered "what
+// should you look at", read the same tables, and could disagree in front of the
+// founder. There is now one ranker (apps/api/src/services/agent-inbox.ts) and
+// both of those endpoints are projections of it (D-70.8, D-70.9).
+//
+// The lanes come from the ambient-agent triad: `notify` — something happened
+// you should know; `ask` — the agent is stopped and only you can start it;
+// `review` — something is waiting on your judgment.
+// ---------------------------------------------------------------------------
+
+export const AGENT_INBOX_LANES = ["notify", "ask", "review"] as const;
+export type AgentInboxLane = (typeof AGENT_INBOX_LANES)[number];
+
+/** The nine priority kinds plus the two the merge brings in. */
+export const AGENT_INBOX_ITEM_KINDS = [
+  ...PRIORITY_ITEM_KINDS,
+  /** An open agent question (the ask lane's only kind). */
+  "agent_question",
+  /** An unmet setup checklist item, folded in from the next-action engine. */
+  "setup_task",
+] as const;
+export type AgentInboxItemKind = (typeof AGENT_INBOX_ITEM_KINDS)[number];
+
+const AGENT_INBOX_LANE_BY_KIND: Record<AgentInboxItemKind, AgentInboxLane> = {
+  // Waiting on the founder's judgment.
+  agent_question: "ask",
+  authorization: "review",
+  content_review: "review",
+  signal_triage: "review",
+  learning_review: "review",
+  // Statements of fact about the system: true whether or not anyone decides.
+  execution_failure: "notify",
+  policy_block: "notify",
+  stale_action: "notify",
+  connection_health: "notify",
+  campaign_risk: "notify",
+  setup_task: "notify",
+};
+
+/** Total over the kinds, so the API and the UI can never lane an item differently. */
+export function agentInboxLaneFor(kind: AgentInboxItemKind): AgentInboxLane {
+  return AGENT_INBOX_LANE_BY_KIND[kind];
+}
+
+export const agentInboxItemSchema = z.object({
+  id: z.string().min(1),
+  lane: z.enum(AGENT_INBOX_LANES),
+  kind: z.enum(AGENT_INBOX_ITEM_KINDS),
+  status: workflowStatusSchema,
+  title: z.string().trim().min(1),
+  reason: z.string().trim().min(1),
+  consequence: z.string().trim().min(1),
+  href: z.string().startsWith("/"),
+  campaignId: z.string().uuid().nullable(),
+  campaignName: z.string().nullable(),
+  dueAt: z.number().int().nullable(),
+  createdAt: z.number().int(),
+  /** Carried on ask-lane items so the answer form needs no second fetch. */
+  question: agentQuestionSchema.nullable(),
+});
+export type AgentInboxItem = z.infer<typeof agentInboxItemSchema>;
+
+export const agentInboxFeedSchema = z.object({
+  items: z.array(agentInboxItemSchema),
+  counts: z.object({
+    notify: z.number().int().min(0),
+    ask: z.number().int().min(0),
+    review: z.number().int().min(0),
+  }),
+  /** Activation state, unchanged — displayed, never ranked against the feed. */
+  checklist: z.object({
+    done: z.number().int().min(0),
+    total: z.number().int().min(0),
+    complete: z.boolean(),
+  }),
+  generatedAt: z.number().int(),
+});
+export type AgentInboxFeed = z.infer<typeof agentInboxFeedSchema>;
 
 // ---------------------------------------------------------------------------
 // Agent Inspector API (Sprint 57)
@@ -7936,6 +8112,9 @@ export const agentRunDetailSchema = agentRunSummarySchema.extend({
   /** What this run actually proposed (Sprint 69) — the durable ledger, not a
    * re-read of the transcript, so a deleted draft still leaves its proposal. */
   proposals: z.array(agentProposalSchema),
+  /** What this run asked (Sprint 70), with the answers it got. A run that
+   * stopped at `needs_human` is unreadable without the question that stopped it. */
+  questions: z.array(agentQuestionSchema),
 });
 export type AgentRunDetail = z.infer<typeof agentRunDetailSchema>;
 
@@ -9224,7 +9403,13 @@ export const PREFERENCE_RULE_STATUSES = [
 ] as const;
 export type PreferenceRuleStatus = (typeof PREFERENCE_RULE_STATUSES)[number];
 
-export const PREFERENCE_RULE_ORIGINS = ["extracted", "manual"] as const;
+/**
+ * Where a rule came from. `answered_question` (Sprint 70) is a rule the founder
+ * chose to keep while answering an agent's question — it is not inferred from
+ * the prose of the answer (D-70.11); the founder supplies the rule text, and the
+ * origin exists so the Preferences page can say where it came from.
+ */
+export const PREFERENCE_RULE_ORIGINS = ["extracted", "manual", "answered_question"] as const;
 export type PreferenceRuleOrigin = (typeof PREFERENCE_RULE_ORIGINS)[number];
 
 /** A rule is one imperative line. Longer than this is a paragraph, not a rule. */
@@ -9348,3 +9533,61 @@ export const preferenceExtractionResultSchema = z.object({
   retired: z.number().int(),
 });
 export type PreferenceExtractionResult = z.infer<typeof preferenceExtractionResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Answering an agent question (Sprint 70). Declared here rather than beside
+// `agentQuestionSchema` because `remember` re-uses the preference vocabulary
+// above it.
+// ---------------------------------------------------------------------------
+
+/**
+ * Answering. `remember` is explicit and complete (D-70.11): the platform never
+ * infers a durable rule from the prose of an answer, so if a rule is to be kept
+ * the caller says what the rule is. `resume: false` records the answer without
+ * restarting the blocked run — for an answer given long after the fact.
+ */
+export const answerAgentQuestionInputSchema = z
+  .object({
+    action: z.enum(["answer", "dismiss"]).default("answer"),
+    answer: z.string().trim().min(1).max(QUESTION_ANSWER_MAX_CHARS).optional(),
+    resume: z.boolean().default(true),
+    remember: z
+      .object({
+        rule: z.string().trim().min(8).max(PREFERENCE_RULE_MAX_CHARS),
+        polarity: z.enum(PREFERENCE_POLARITIES).default("do"),
+        scopeTaskType: z.enum(TASK_TYPES).nullish(),
+        scopeChannel: z.enum(CHANNELS).nullish(),
+      })
+      .optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.action === "answer" && !value.answer) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["answer"],
+        message: "Answering requires an answer.",
+      });
+    }
+    if (value.action === "dismiss" && value.remember) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["remember"],
+        message: "A dismissed question teaches nothing to remember.",
+      });
+    }
+  });
+export type AnswerAgentQuestionInput = z.infer<typeof answerAgentQuestionInputSchema>;
+
+export const answerAgentQuestionResultSchema = z.object({
+  question: agentQuestionSchema,
+  /** The rule the answer minted, when `remember` was given. */
+  rule: preferenceRuleSchema.nullable(),
+  /** The blocked run's status after answering — the proof it continued. */
+  resumedRun: z
+    .object({
+      id: z.string().uuid(),
+      status: z.enum(PIPELINE_RUN_STATUSES),
+    })
+    .nullable(),
+});
+export type AnswerAgentQuestionResult = z.infer<typeof answerAgentQuestionResultSchema>;

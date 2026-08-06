@@ -3737,3 +3737,48 @@ export const agentProposals = sqliteTable(
 );
 
 export type AgentProposalRow = typeof agentProposals.$inferSelect;
+
+/**
+ * Sprint 70: the ask lane. One row per question an agent stopped to ask.
+ *
+ * `pipeline_run_id` is what makes suspend/resume work: the run itself is
+ * suspended by `pipeline_runs.status = 'escalated'` (Sprint 64), and this row
+ * is the only thing that knows *why* and can carry the answer back. Null on a
+ * one-shot agent run, which has no resume point.
+ */
+export const agentQuestions = sqliteTable(
+  "agent_questions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    agentRunId: text("agent_run_id").notNull(),
+    pipelineRunId: text("pipeline_run_id").references(() => pipelineRuns.id, {
+      onDelete: "set null",
+    }),
+    stepKey: text("step_key"),
+    type: text("type").notNull(),
+    question: text("question").notNull(),
+    why: text("why").notNull(),
+    optionsJson: text("options_json"),
+    /** sha256(type + normalized question) — the re-ask check (D-70.3). */
+    fingerprint: text("fingerprint").notNull(),
+    status: text("status").notNull().default("open"),
+    answer: text("answer"),
+    answeredByUserId: text("answered_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    answeredByLabel: text("answered_by_label"),
+    answeredAt: integer("answered_at"),
+    ruleId: text("rule_id").references(() => preferenceRules.id, { onDelete: "set null" }),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("agent_questions_workspace_status").on(t.workspaceId, t.status, t.createdAt),
+    index("agent_questions_pipeline_run").on(t.pipelineRunId),
+    index("agent_questions_run").on(t.agentRunId),
+  ],
+);
+
+export type AgentQuestionRow = typeof agentQuestions.$inferSelect;

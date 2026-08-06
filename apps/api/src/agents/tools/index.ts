@@ -1,4 +1,5 @@
 import type { AnyTool } from "../registry";
+import { askFounderTool } from "./ask";
 import { findInstructiveRejectionsTool } from "./find-instructive-rejections";
 import { findSimilarApprovedDraftsTool } from "./find-similar-approved-drafts";
 import { getBrainSectionTool } from "./get-brain-section";
@@ -21,7 +22,8 @@ import { searchEvidenceTool } from "./search-evidence";
 // ---------------------------------------------------------------------------
 // The registry whitelist: every tool the model can call. Kept in
 // AGENT_TOOL_NAMES order (packages/contracts) — a test asserts the two stay in
-// lockstep, read tools first (Sprint 57), propose tools after (Sprint 69).
+// lockstep: read tools first (Sprint 57), propose tools next (Sprint 69), the
+// ask tool last (Sprint 70).
 //
 // Everything reachable from this module must stay a leaf: TOOLS_BY_NAME is
 // built at top level, so an import cycle back into here leaves the map
@@ -51,7 +53,9 @@ export const PROPOSE_TOOLS: readonly AnyTool[] = [
   proposeAdMutationTool,
 ];
 
-export const ALL_TOOLS: readonly AnyTool[] = [...READ_TOOLS, ...PROPOSE_TOOLS];
+export const ASK_TOOLS: readonly AnyTool[] = [askFounderTool];
+
+export const ALL_TOOLS: readonly AnyTool[] = [...READ_TOOLS, ...PROPOSE_TOOLS, ...ASK_TOOLS];
 
 const TOOLS_BY_NAME = new Map<string, AnyTool>(ALL_TOOLS.map((tool) => [tool.name, tool]));
 

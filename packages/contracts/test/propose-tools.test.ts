@@ -3,6 +3,7 @@ import {
   AGENT_PROPOSALS_PER_DAY,
   AGENT_PROPOSALS_PER_RUN,
   AGENT_TOOL_NAMES,
+  ASK_TOOL_NAMES,
   EXTERNAL_ACTION_ORIGINS,
   PROPOSAL_RATIONALE_MAX_CHARS,
   PROPOSE_TOOL_NAMES,
@@ -72,11 +73,19 @@ function action(overrides: Record<string, unknown> = {}) {
 }
 
 describe("propose-tool contracts (Sprint 69)", () => {
-  it("partitions the registry into read and propose, with no overlap or gaps", () => {
-    expect(AGENT_TOOL_NAMES).toEqual([...READ_TOOL_NAMES, ...PROPOSE_TOOL_NAMES]);
+  it("partitions the registry into read, propose and ask, with no overlap or gaps", () => {
+    expect(AGENT_TOOL_NAMES).toEqual([
+      ...READ_TOOL_NAMES,
+      ...PROPOSE_TOOL_NAMES,
+      ...ASK_TOOL_NAMES,
+    ]);
     expect(new Set(AGENT_TOOL_NAMES).size).toBe(AGENT_TOOL_NAMES.length);
     for (const name of READ_TOOL_NAMES) expect(isProposeToolName(name)).toBe(false);
     for (const name of PROPOSE_TOOL_NAMES) expect(isProposeToolName(name)).toBe(true);
+    // Sprint 70: the ask tier is not a propose tier. A tool misfiled as
+    // `propose` would be counted against the proposal cap and, worse, would
+    // read to a founder as something the agent tried to do.
+    for (const name of ASK_TOOL_NAMES) expect(isProposeToolName(name)).toBe(false);
   });
 
   it("gives every tool — including the five new ones — an input schema", () => {

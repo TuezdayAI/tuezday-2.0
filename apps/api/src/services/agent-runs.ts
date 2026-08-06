@@ -8,6 +8,7 @@ import {
 } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { listAgentProposalsForRun } from "./agent-proposal-ledger";
+import { listQuestionsForAgentRun } from "./agent-questions";
 import { agentRuns, agentRunSteps, type AgentRunRow, type AgentRunStepRow } from "../db/schema";
 
 // ---------------------------------------------------------------------------
@@ -132,5 +133,8 @@ export function getAgentRunDetail(
     // than re-derived from the transcript, so a proposal survives the deletion
     // of the thing it proposed.
     proposals: listAgentProposalsForRun(db, runId),
+    // Sprint 70: and what it asked. A run that stopped at `needs_human` cannot
+    // be read at all without the question that stopped it.
+    questions: listQuestionsForAgentRun(db, runId),
   };
 }

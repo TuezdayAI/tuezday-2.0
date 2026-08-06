@@ -533,6 +533,13 @@
       "when": 1786001593893,
       "tag": "0075_sprint_69_propose_tools",
       "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "6",
+      "when": 1786008449993,
+      "tag": "0076_sprint_70_agent_inbox",
+      "breakpoints": true
     }
   ]
 }

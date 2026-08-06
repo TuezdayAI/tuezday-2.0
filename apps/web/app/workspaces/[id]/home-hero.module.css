@@ -260,3 +260,38 @@
   display: grid;
   gap: 8px;
 }
+
+/* --- Sprint 70: the ask lane's card --- */
+
+.askOptions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.askInput {
+  width: 100%;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.askRemember {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.askActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+

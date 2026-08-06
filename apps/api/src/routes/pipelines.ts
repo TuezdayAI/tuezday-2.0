@@ -11,6 +11,7 @@ import {
   type PipelineRunStatus,
 } from "@tuezday/contracts";
 import type { AgentProposalService } from "../agents/proposals";
+import type { AgentQuestionService } from "../agents/questions";
 import { actorOf } from "../auth/guard";
 import type { Db } from "../db";
 import type { EvidenceStore } from "../evidence/store";
@@ -65,6 +66,9 @@ export interface PipelineRouteDeps {
    * executes synchronously) always get the simulating one, so this matters
    * only for live runs the tick picks up. */
   proposals?: AgentProposalService;
+  /** Sprint 70: the ask seam. Same reasoning — dry runs always get the
+   * simulating one, so a founder previewing a definition is never asked. */
+  questions?: AgentQuestionService;
 }
 
 export function registerPipelineRoutes(

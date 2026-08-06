@@ -66,17 +66,18 @@ interface NextActionView {
 }
 
 /**
- * Spec §5.3: the dot never appears for system-owned or all-clear states, and
- * once the setup checklist completes it only returns for genuinely blocking
- * kinds (review / connect_blocked).
+ * Spec §5.3, as amended by Sprint 70 (D-70.9): the dot never appears for
+ * system-owned or all-clear states, and it disappears entirely once setup is
+ * complete. Before Sprint 70 it stayed on for `review` / `connect_blocked` —
+ * the two kinds `nextActionFor` no longer returns, because ranking work is now
+ * the agent inbox's job and having it in two places is what made the two
+ * surfaces disagree. The dot is a setup guide now, and nothing else.
  */
 function guideDotAction(view: NextActionView | null): NextAction | null {
   if (!view) return null;
   const { nextAction, checklist } = view;
   if (nextAction.kind === "system_working" || nextAction.kind === "none") return null;
-  if (checklist.complete && nextAction.kind !== "review" && nextAction.kind !== "connect_blocked") {
-    return null;
-  }
+  if (checklist.complete) return null;
   return nextAction;
 }
 
