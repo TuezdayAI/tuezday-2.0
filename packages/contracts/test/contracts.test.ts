@@ -509,6 +509,7 @@ it("parses connection identity metadata", () => {
       config: {},
       contentProfile: { topics: [], guidance: "" },
       displayName: "Founder LinkedIn",
+      timezone: "UTC",
       externalAccountId: "person-123",
       externalAccountName: "Founder Name",
       externalAccountHandle: "founder",
@@ -563,12 +564,17 @@ it("parses persona social account assignments", () => {
   ).toBe("feed");
 });
 
-it("validates connection display name updates", () => {
+it("validates connection display name and timezone updates", () => {
   expect(updateConnectionInputSchema.parse({ displayName: "  Founder LinkedIn  " }).displayName).toBe(
     "Founder LinkedIn",
   );
   expect(updateConnectionInputSchema.safeParse({ displayName: "  " }).success).toBe(false);
   expect(updateConnectionInputSchema.safeParse({ displayName: "x".repeat(121) }).success).toBe(false);
+  expect(updateConnectionInputSchema.parse({ timezone: "Asia/Kolkata" }).timezone).toBe(
+    "Asia/Kolkata",
+  );
+  expect(updateConnectionInputSchema.safeParse({ timezone: "Mars/Olympus" }).success).toBe(false);
+  expect(updateConnectionInputSchema.safeParse({}).success).toBe(false);
 });
 
 describe("resolveRequestSchema", () => {
@@ -1248,6 +1254,7 @@ describe("discovery routing contracts (Sprint 45)", () => {
       workspaceId: uuid,
       killSwitch: false,
       perConnectionDailyCap: 5,
+      perConnectionReplyDailyCap: 7,
       perCampaignDailyCap: 10,
       autoReplyEnabled: false,
       matchThreshold: DEFAULT_MATCH_THRESHOLD,

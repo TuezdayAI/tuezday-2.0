@@ -62,6 +62,7 @@ function rowToConnection(row: ConnectionRow): Connection {
     lastCheckedAt: row.lastCheckedAt,
     lastError: row.lastError,
     contentProfile: connectionContentProfileSchema.parse(JSON.parse(row.contentProfileJson)),
+    timezone: row.timezone,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt ?? row.createdAt,
   };
@@ -99,7 +100,11 @@ export function updateConnection(
   const existing = getConnection(db, workspaceId, connectionId);
   if (!existing) return undefined;
   db.update(connections)
-    .set({ displayName: input.displayName, updatedAt: Date.now() })
+    .set({
+      displayName: input.displayName,
+      timezone: input.timezone,
+      updatedAt: Date.now(),
+    })
     .where(and(eq(connections.workspaceId, workspaceId), eq(connections.id, connectionId)))
     .run();
   return getConnection(db, workspaceId, connectionId);
@@ -191,6 +196,7 @@ export function registerOAuthConnection(
     nangoConnectionId,
     configJson: "{}",
     displayName: provider.label,
+    timezone: "UTC",
     externalAccountId: null,
     externalAccountName: null,
     externalAccountHandle: null,
@@ -331,6 +337,7 @@ export async function connectProvider(
     nangoConnectionId,
     configJson: config,
     displayName: provider.label,
+    timezone: "UTC",
     externalAccountId: null,
     externalAccountName: null,
     externalAccountHandle: null,

@@ -31,9 +31,8 @@ import { socialAdapterFor } from "../connectors/social";
 import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
 import {
-  countConnectionPublicationsForDay,
+  connectionDayBounds,
   getSocialAutomationSettings,
-  utcDayBounds,
 } from "./automation";
 import { getCampaign } from "./campaigns";
 import { getConnection, listConnections, providerByKey } from "./connections";
@@ -343,9 +342,9 @@ export function metricsByPublication(db: Db, workspaceId: string): Map<string, P
 // Guardrails (reuse the S28 kill switch + per-connection cap for replies)
 // ---------------------------------------------------------------------------
 
-/** Posted replies on a connection on the slot's UTC day. */
+/** Posted replies on a connection on the slot's account-local day. */
 function countConnectionRepliesForDay(db: Db, connectionId: string, dayMs: number): number {
-  const { start, end } = utcDayBounds(dayMs);
+  const { start, end } = connectionDayBounds(db, connectionId, dayMs);
   return db
     .select({ id: inboxItems.id })
     .from(inboxItems)
@@ -364,9 +363,8 @@ type ReplyGuardrailCheck =
   | { ok: true }
   | { ok: false; error: "kill_switch_on" | "connection_cap" };
 
-/** Auto-replies obey the kill switch + the per-connection daily cap (posts +
- * replies share an account's daily allowance). The per-campaign post cap does
- * not apply — that bounds original posts, not responses. Also consumed by the
+/** Auto-replies obey the kill switch and their own account-local reply budget.
+ * Original publications never consume reply capacity. Also consumed by the
  * reply action adapter as a dispatch guardrail. */
 export function checkReplyGuardrails(
   db: Db,
@@ -375,10 +373,10 @@ export function checkReplyGuardrails(
   slotMs: number,
 ): ReplyGuardrailCheck {
   if (settings.killSwitch) return { ok: false, error: "kill_switch_on" };
-  const used =
-    countConnectionPublicationsForDay(db, connectionId, slotMs) +
-    countConnectionRepliesForDay(db, connectionId, slotMs);
-  if (used >= settings.perConnectionDailyCap) return { ok: false, error: "connection_cap" };
+  const used = countConnectionRepliesForDay(db, connectionId, slotMs);
+  if (used >= settings.perConnectionReplyDailyCap) {
+    return { ok: false, error: "connection_cap" };
+  }
   return { ok: true };
 }
 

@@ -258,6 +258,28 @@ describe("connector fabric API", () => {
       expect(listed[0].contentProfile.topics).toEqual(["gtm memory", "founder-led sales"]);
     });
 
+    it("defaults account time to UTC and validates timezone-only updates", async () => {
+      const connection = (await connect()).json();
+      expect(connection.timezone).toBe("UTC");
+
+      const updated = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/connections/${connection.id}`,
+        payload: { timezone: "Asia/Kolkata" },
+      });
+      expect(updated.statusCode).toBe(200);
+      expect(updated.json().timezone).toBe("Asia/Kolkata");
+      expect(connectionSchema.safeParse(updated.json()).success).toBe(true);
+
+      const invalid = await app.inject({
+        method: "PATCH",
+        url: `/workspaces/${workspaceId}/connections/${connection.id}`,
+        payload: { timezone: "Mars/Olympus" },
+      });
+      expect(invalid.statusCode).toBe(400);
+      expect(invalid.json().message).toContain("Unknown time zone");
+    });
+
     it("rejects an over-limit content profile and 404s unknown connections", async () => {
       const connection = (await connect()).json();
       const tooMany = await app.inject({

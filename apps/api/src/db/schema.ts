@@ -1612,6 +1612,8 @@ export const connections = sqliteTable("connections", {
   nangoConnectionId: text("nango_connection_id").notNull(),
   configJson: text("config_json").notNull().default("{}"),
   displayName: text("display_name").notNull().default(""),
+  // Sprint 75: account-local day boundary for social budgets.
+  timezone: text("timezone").notNull().default("UTC"),
   externalAccountId: text("external_account_id"),
   externalAccountName: text("external_account_name"),
   externalAccountHandle: text("external_account_handle"),
@@ -2701,14 +2703,15 @@ export const generationSettings = sqliteTable("generation_settings", {
 export type GenerationSettingsRow = typeof generationSettings.$inferSelect;
 
 // Social automation guardrails (Sprint 28) — one row per workspace, like
-// ad_settings. killSwitch is the hard stop for scheduled_auto posting; the caps
-// bound auto-posts per UTC day (per connection and per campaign).
+// ad_settings. killSwitch is the hard stop for scheduled_auto posting; caps
+// use each destination account's local day, with replies budgeted separately.
 export const socialAutomationSettings = sqliteTable("social_automation_settings", {
   workspaceId: text("workspace_id")
     .primaryKey()
     .references(() => workspaces.id, { onDelete: "cascade" }),
   killSwitch: integer("kill_switch").notNull().default(0),
   perConnectionDailyCap: integer("per_connection_daily_cap").notNull().default(10),
+  perConnectionReplyDailyCap: integer("per_connection_reply_daily_cap").notNull().default(10),
   perCampaignDailyCap: integer("per_campaign_daily_cap").notNull().default(5),
   // Sprint 29: master switch for auto-posting engagement replies (off by default).
   autoReplyEnabled: integer("auto_reply_enabled").notNull().default(0),

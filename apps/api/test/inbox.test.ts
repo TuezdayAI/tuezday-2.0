@@ -281,6 +281,7 @@ describe("engagement & reply inbox", () => {
           workspaceId: randomUUID(),
           killSwitch: false,
           perConnectionDailyCap: 10,
+          perConnectionReplyDailyCap: 10,
           perCampaignDailyCap: 5,
           autoReplyEnabled: true,
           matchThreshold: 50,
@@ -502,7 +503,7 @@ describe("engagement & reply inbox", () => {
 
   // --- Guardrails -----------------------------------------------------------
 
-  it("kill switch and per-connection cap block auto-replies", async () => {
+  it("kill switch and the separate per-connection reply cap govern auto-replies", async () => {
     const connectionId = await connectReddit();
     const campaignId = await createCampaign("scheduled_auto");
     await setAutoReply(true);
@@ -518,28 +519,38 @@ describe("engagement & reply inbox", () => {
     expect((await runInbox()).repliesPosted).toBe(0);
     expect((await listInbox())[0].status).toBe("unread");
 
-    // Switch off but per-connection cap of 1 (the published post already used it).
+    // The published post consumes the post budget, not the separate reply budget.
     await app.inject({
       method: "PATCH",
       url: `/workspaces/${workspaceId}/automation/settings`,
-      payload: { killSwitch: false, perConnectionDailyCap: 1 },
+      payload: {
+        killSwitch: false,
+        perConnectionDailyCap: 1,
+        perConnectionReplyDailyCap: 1,
+      },
     });
+    const firstReply = await runInbox();
+    expect(firstReply.repliesPosted).toBe(1);
+    expect((await listInbox())[0].status).toBe("replied");
+
+    // One posted reply now exhausts only the reply budget.
+    addComment(pub.externalId);
     const capped = await runInbox();
     expect(capped.repliesGenerated).toBe(0);
-    expect((await listInbox())[0].status).toBe("unread");
+    const unread = (await listInbox()).find((item: { status: string }) => item.status === "unread");
+    expect(unread).toBeDefined();
 
     // Manual reply still works under the cap (the human path isn't gated by it).
-    const item = (await listInbox())[0];
     const draft = (
-      await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/inbox/${item.id}/reply` })
+      await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/inbox/${unread.id}/reply` })
     ).json();
     await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/drafts/${draft.id}/approve` });
     const posted = await app.inject({
       method: "POST",
-      url: `/workspaces/${workspaceId}/inbox/${item.id}/post-reply`,
+      url: `/workspaces/${workspaceId}/inbox/${unread.id}/post-reply`,
     });
     expect(posted.statusCode).toBe(201);
     expect(posted.json().action.status).toBe("succeeded");
-    expect((await listInbox())[0].status).toBe("replied");
+    expect((await listInbox()).every((item: { status: string }) => item.status === "replied")).toBe(true);
   });
 });

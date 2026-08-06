@@ -253,6 +253,7 @@ describe("social automation", () => {
           workspaceId: randomUUID(),
           killSwitch: false,
           perConnectionDailyCap: 10,
+          perConnectionReplyDailyCap: 10,
           perCampaignDailyCap: 5,
           autoReplyEnabled: false,
           matchThreshold: 50,
@@ -301,6 +302,7 @@ describe("social automation", () => {
       expect(initial).toMatchObject({
         killSwitch: false,
         perConnectionDailyCap: 10,
+        perConnectionReplyDailyCap: 10,
         perCampaignDailyCap: 5,
         matchThreshold: 50,
       });
@@ -309,12 +311,19 @@ describe("social automation", () => {
         await app.inject({
           method: "PATCH",
           url: `/workspaces/${workspaceId}/automation/settings`,
-          payload: { killSwitch: true, perConnectionDailyCap: 3, perCampaignDailyCap: 2, matchThreshold: 40 },
+          payload: {
+            killSwitch: true,
+            perConnectionDailyCap: 3,
+            perConnectionReplyDailyCap: 4,
+            perCampaignDailyCap: 2,
+            matchThreshold: 40,
+          },
         })
       ).json();
       expect(updated).toMatchObject({
         killSwitch: true,
         perConnectionDailyCap: 3,
+        perConnectionReplyDailyCap: 4,
         perCampaignDailyCap: 2,
         matchThreshold: 40,
       });
@@ -799,5 +808,41 @@ describe("social automation", () => {
     await createCadence({ campaignId, connectionId, name: "10am", timeOfDay: "10:00" });
 
     expect(await runCadences()).toBe(2); // one per Monday on this connection
+  });
+
+  it("treats two UTC dates in one account-local day as one cap window", async () => {
+    const connectionId = await connectReddit();
+    await app.inject({
+      method: "PATCH",
+      url: `/workspaces/${workspaceId}/connections/${connectionId}`,
+      payload: { timezone: "America/New_York" },
+    });
+    const campaignId = await createCampaign(["linkedin"]);
+    await setAutomation(campaignId, "scheduled_auto", 50);
+    await setPublishPolicy(campaignId, "autonomous");
+    await app.inject({
+      method: "PATCH",
+      url: `/workspaces/${workspaceId}/automation/settings`,
+      payload: { perConnectionDailyCap: 1 },
+    });
+    for (let i = 0; i < 4; i++) seedApprovedDraft(campaignId);
+    await createCadence({
+      campaignId,
+      connectionId,
+      name: "Sunday UTC",
+      daysOfWeek: [0],
+      timeOfDay: "23:30",
+      timezone: "UTC",
+    });
+    await createCadence({
+      campaignId,
+      connectionId,
+      name: "Monday UTC",
+      daysOfWeek: [1],
+      timeOfDay: "00:30",
+      timezone: "UTC",
+    });
+
+    expect(await runCadences()).toBe(2);
   });
 });

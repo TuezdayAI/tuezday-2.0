@@ -957,6 +957,7 @@ export type AutomationMode = (typeof AUTOMATION_MODES)[number];
 
 /** Default daily auto-post caps (Sprint 28) when a workspace hasn't set its own. */
 export const DEFAULT_PER_CONNECTION_DAILY_CAP = 10;
+export const DEFAULT_PER_CONNECTION_REPLY_DAILY_CAP = 10;
 export const DEFAULT_PER_CAMPAIGN_DAILY_CAP = 5;
 
 export const campaignSchema = z.object({
@@ -4232,6 +4233,10 @@ export const connectionSchema = z.object({
   }),
   contentProfile: connectionContentProfileSchema,
   displayName: z.string(),
+  timezone: z
+    .string()
+    .min(1, "A time zone is required")
+    .refine(isValidTimeZone, { message: "Unknown time zone" }),
   externalAccountId: z.string().nullable(),
   externalAccountName: z.string().nullable(),
   externalAccountHandle: z.string().nullable(),
@@ -4271,9 +4276,18 @@ export type UpsertPersonaSocialAccountInput = z.infer<
   typeof upsertPersonaSocialAccountInputSchema
 >;
 
-export const updateConnectionInputSchema = z.object({
-  displayName: z.string().trim().min(1).max(120),
-});
+export const updateConnectionInputSchema = z
+  .object({
+    displayName: z.string().trim().min(1).max(120).optional(),
+    timezone: z
+      .string()
+      .min(1, "A time zone is required")
+      .refine(isValidTimeZone, { message: "Unknown time zone" })
+      .optional(),
+  })
+  .refine((input) => input.displayName !== undefined || input.timezone !== undefined, {
+    message: "Provide a display name or time zone.",
+  });
 export type UpdateConnectionInput = z.infer<typeof updateConnectionInputSchema>;
 
 /** Credential requirements are enforced per provider auth mode at the route. */
@@ -5289,12 +5303,14 @@ export type AutomationGenerationPath = (typeof AUTOMATION_GENERATION_PATHS)[numb
 /**
  * Per-workspace guardrails for `scheduled_auto` campaigns — the safety net that
  * replaces the human gate. The kill switch is the hard stop; the caps bound how
- * many auto-posts land per UTC day. Mirrors `ad_settings`.
+ * many automated actions land per destination account's local day. Original
+ * posts/X DMs and replies have independent connection budgets.
  */
 export const socialAutomationSettingsSchema = z.object({
   workspaceId: z.string().uuid(),
   killSwitch: z.boolean(),
   perConnectionDailyCap: z.number().int().positive(),
+  perConnectionReplyDailyCap: z.number().int().positive(),
   perCampaignDailyCap: z.number().int().positive(),
   // Sprint 29: master switch for auto-posting engagement replies. Off by default —
   // even scheduled_auto campaigns gate their replies until the founder opts in.
@@ -5312,6 +5328,7 @@ export type SocialAutomationSettings = z.infer<typeof socialAutomationSettingsSc
 export const updateSocialAutomationSettingsInputSchema = z.object({
   killSwitch: z.boolean().optional(),
   perConnectionDailyCap: z.number().int().positive().max(1000).optional(),
+  perConnectionReplyDailyCap: z.number().int().positive().max(1000).optional(),
   perCampaignDailyCap: z.number().int().positive().max(1000).optional(),
   autoReplyEnabled: z.boolean().optional(),
   matchThreshold: z.number().int().min(0).max(100).optional(),

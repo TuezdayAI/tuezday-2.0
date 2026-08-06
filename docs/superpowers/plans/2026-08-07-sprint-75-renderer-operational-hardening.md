@@ -80,7 +80,7 @@ Run: `npm test -- renderer`
 
 Expected: PASS for contracts and renderer unit/injection tests.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add packages/contracts apps/renderer vitest.config.ts package.json package-lock.json docs/specs/sprint-75-renderer-operational-hardening.md docs/superpowers/plans/2026-08-07-sprint-75-renderer-operational-hardening.md
@@ -142,7 +142,7 @@ Run: `npm run typecheck`
 
 Expected: PASS across the new renderer workspace and all existing workspaces.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api apps/renderer package.json package-lock.json .env.example CLAUDE.md
@@ -175,34 +175,34 @@ git commit -m "refactor(api): route image rendering through the isolated service
 - Extends: `Connection.timezone`, `UpdateConnectionInput.timezone`.
 - Extends: `SocialAutomationSettings.perConnectionReplyDailyCap`.
 
-- [ ] **Step 1: Install Temporal and write failing civil-time tests**
+- [x] **Step 1: Install Temporal and write failing civil-time tests**
 
 Run: `npm install @js-temporal/polyfill -w apps/api`
 
 Test Kolkata/local midnight across UTC, New York 23/25-hour days, spring gap rejection, and fall overlap choosing exactly one earlier instant.
 
-- [ ] **Step 2: Implement the civil-time leaf module**
+- [x] **Step 2: Implement the civil-time leaf module**
 
 ```ts
 export function resolveWallClock(input: WallClockInput): WallClockResolution;
 export function zonedDayBounds(instantMs: number, timeZone: string): { start: number; end: number };
 ```
 
-- [ ] **Step 3: Write failing persistence/contract tests**
+- [x] **Step 3: Write failing persistence/contract tests**
 
 Assert existing connections default to UTC, PATCH validates/stores an IANA timezone, settings default and round-trip `perConnectionReplyDailyCap`, and reply/post budget counts differ across a UTC boundary.
 
-- [ ] **Step 4: Extend contracts/schema/services and generate the migration**
+- [x] **Step 4: Extend contracts/schema/services and generate the migration**
 
 Run: `npm run db:generate -w apps/api -- --name=sprint_75_operational_hardening`
 
 Expected: migration 0079 adds only additive columns with safe defaults.
 
-- [ ] **Step 5: Replace UTC windows at social guardrail call sites**
+- [x] **Step 5: Replace UTC windows at social guardrail call sites**
 
 Use the destination connection timezone for post, campaign, reply, and X-DM counts. Replies compare only reply rows against `perConnectionReplyDailyCap`; publications no longer contribute.
 
-- [ ] **Step 6: Run focused tests**
+- [x] **Step 6: Run focused tests**
 
 Run: `npm test -- civil-time connectors automation inbox launch-sequences sprint75-migrations`
 

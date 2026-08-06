@@ -257,12 +257,17 @@ describe("list_channel_guardrails", () => {
   it("returns defaults for every channel plus automation limits", async () => {
     const result = (await listChannelGuardrailsTool.run(ctx, {})) as {
       guidance: Array<{ channel: string; source: string }>;
-      limits: { killSwitch: boolean; perConnectionDailyCap: number };
+      limits: {
+        killSwitch: boolean;
+        perConnectionDailyCap: number;
+        perConnectionReplyDailyCap: number;
+      };
     };
     expect(result.guidance.length).toBeGreaterThanOrEqual(7);
     expect(result.guidance.every((g) => g.source === "default")).toBe(true);
     expect(result.limits.killSwitch).toBe(false);
     expect(result.limits.perConnectionDailyCap).toBeGreaterThan(0);
+    expect(result.limits.perConnectionReplyDailyCap).toBeGreaterThan(0);
   });
 
   it("surfaces workspace overrides and scoped rows, filtered by channel", async () => {
