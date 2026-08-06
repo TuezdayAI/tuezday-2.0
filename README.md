@@ -44,9 +44,9 @@ import an old R2R corpus, then use
 Worker traffic uses `TUEZDAY_INTERNAL_API_URL` (HTTPS outside loopback) and
 never uses the browser/MCP `TUEZDAY_API_URL`. The public URL may point at the
 web/API gateway; the internal URL must point directly at the API process.
-`TUEZDAY_WORKER_TOKEN` is shared only by API and worker, authorizes the two
-worker-only `/internal/*` ticks plus a small explicit maintenance allowlist,
-and is not a user, system-session, or general API credential.
+`TUEZDAY_WORKER_TOKEN` is shared only by API and worker, authorizes only
+`/internal/*` routes, and is not a user, system-session, or general API
+credential.
 
 In production, run the API and worker as separate, required processes. The API
 owns data, leases, bounds, and task identity; the worker only wakes settled
@@ -54,9 +54,9 @@ loops and calls the scoped routes. Restarting either process is safe: expired
 leases and persisted discovery checkpoints resume work without duplicating
 completed writes.
 
-The worker schedules discovery, automation, learning synthesis, ads sync,
-publishing, cadence fill, inbox polling, Gmail mailbox polling, outreach reply
-actions, sequence execution, and evidence sweeping.
+Sprint 73 stores recurring schedules in the application database and runs them
+through one durable queue. The worker only wakes the queue; the API owns fair
+admission, lease-fenced execution, retry backoff, and dead-letter state.
 
 ### Background scheduling
 
@@ -67,6 +67,8 @@ intervals use the unit in the variable name:
 |---|---:|---:|
 | `DISCOVERY_INTERVAL_MIN` | 30 | 1–1440 min |
 | `AUTOMATION_INTERVAL_MIN` | 5 | 1–1440 min |
+| `PIPELINES_INTERVAL_MIN` | 2 | 1–1440 min |
+| `PREFERENCES_INTERVAL_MIN` | 10 | 1–1440 min |
 | `LEARNING_SYNTHESIS_DAYS` | 7 | 1–365 days |
 | `ADS_SYNC_HOURS` | 6 | 1–168 hours |
 | `PUBLISH_INTERVAL_MIN` | 1 | 1–1440 min |
@@ -76,6 +78,22 @@ intervals use the unit in the variable name:
 | `OUTREACH_INTERVAL_MIN` | 5 | 1–1440 min |
 | `SEQUENCE_INTERVAL_MIN` | 5 | 1–1440 min |
 | `EVIDENCE_SWEEP_MIN` | 30 | 1–1440 min |
+
+Queue execution policy:
+
+| Variable | Default | Range |
+|---|---:|---:|
+| `BACKGROUND_JOB_POLL_MS` | 1000 | 250–60000 ms |
+| `BACKGROUND_JOB_BATCH_SIZE` | 4 | 1–100 jobs |
+| `BACKGROUND_JOB_PER_WORKSPACE` | 1 | 1–100 jobs, not above batch |
+| `BACKGROUND_JOB_LEASE_MS` | 300000 | 15000–3600000 ms |
+| `BACKGROUND_JOB_HEARTBEAT_MS` | 30000 | 1000–60000 ms |
+| `BACKGROUND_JOB_MAX_ATTEMPTS` | 5 | 1–25 attempts |
+| `BACKGROUND_JOB_BACKOFF_MS` | 5000 | 100–3600000 ms |
+| `BACKGROUND_JOB_MAX_BACKOFF_MS` | 3600000 | 100–604800000 ms |
+
+Heartbeat multiplied by two must be below the lease duration. Base backoff must
+not exceed maximum backoff.
 
 API-side discovery policy:
 

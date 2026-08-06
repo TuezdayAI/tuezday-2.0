@@ -191,7 +191,7 @@ git commit -m "feat(queue): add fenced fair job lifecycle"
   `DEFAULT_BACKGROUND_JOB_POLICY`.
 - Produces `reconcileBackgroundSchedules` and `admitDueBackgroundSchedules`.
 
-- [ ] **Step 1: Write failing policy and schedule tests**
+- [x] **Step 1: Write failing policy and schedule tests**
 
 ```ts
 expect(parseBackgroundJobPolicy(BASE_ENV).pollMs).toBe(1_000);
@@ -204,25 +204,25 @@ expect(admitDueBackgroundSchedules(db, now)).toMatchObject({ admitted: 0 });
 Test that downtime admits one occurrence per schedule and advances
 `nextRunAt` to the first interval boundary after `now`, avoiding a catch-up storm.
 
-- [ ] **Step 2: Run and witness missing-policy/service failures**
+- [x] **Step 2: Run and witness missing-policy/service failures**
 
 Run: `npx vitest run apps/api/test/background-job-policy.test.ts apps/api/test/background-schedules.test.ts`
 
 Expected: FAIL because the modules do not exist.
 
-- [ ] **Step 3: Implement strict API-side policy parsing**
+- [x] **Step 3: Implement strict API-side policy parsing**
 
 Move all thirteen domain intervals to the API policy. Add queue poll, batch,
 global concurrency, per-workspace concurrency, lease, heartbeat, max attempts,
 base backoff, and maximum backoff bounds. Preserve current environment variable
 names and defaults for domain intervals.
 
-- [ ] **Step 4: Implement schedule reconciliation and atomic admission**
+- [x] **Step 4: Implement schedule reconciliation and atomic admission**
 
 Reconcile every live workspace against the thirteen recurring kinds. Admission
 updates the schedule and inserts a deterministic job in one transaction.
 
-- [ ] **Step 5: Run focused tests and typecheck**
+- [x] **Step 5: Run focused tests and typecheck**
 
 Run: `npx vitest run apps/api/test/background-job-policy.test.ts apps/api/test/background-schedules.test.ts`
 
@@ -230,7 +230,7 @@ Run: `npm run typecheck -w apps/api`
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add apps/api/src/runtime apps/api/src/services/background-schedules.ts apps/api/test/background-job-policy.test.ts apps/api/test/background-schedules.test.ts .env.example README.md
