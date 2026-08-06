@@ -7,6 +7,7 @@ import {
   type AgentRunSummary,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
+import { listAgentProposalsForRun } from "./agent-proposal-ledger";
 import { agentRuns, agentRunSteps, type AgentRunRow, type AgentRunStepRow } from "../db/schema";
 
 // ---------------------------------------------------------------------------
@@ -127,5 +128,9 @@ export function getAgentRunDetail(
     inputMessages: parseMessages(row.inputMessages),
     output: parseJson(row.outputJson),
     steps,
+    // Sprint 69: what the run actually proposed. Read from the ledger rather
+    // than re-derived from the transcript, so a proposal survives the deletion
+    // of the thing it proposed.
+    proposals: listAgentProposalsForRun(db, runId),
   };
 }

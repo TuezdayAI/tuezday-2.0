@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { AGENT_TOOL_NAMES, toolInputSchemas } from "@tuezday/contracts";
+import {
+  AGENT_TOOL_NAMES,
+  PROPOSE_TOOL_NAMES,
+  READ_TOOL_NAMES,
+  toolInputSchemas,
+} from "@tuezday/contracts";
 import { toAgentTools } from "../src/agents/adapter";
 import { jsonSchemaFor } from "../src/llm/json-schema";
 import {
@@ -182,17 +187,25 @@ describe("toAgentTools", () => {
   });
 });
 
-describe("READ_TOOLS whitelist", () => {
-  it("stays in lockstep with the contracts vocabulary, all access read", async () => {
-    const { READ_TOOLS, getTool } = await import("../src/agents/tools/index");
-    expect(READ_TOOLS.map((t) => t.name)).toEqual([...AGENT_TOOL_NAMES]);
-    for (const tool of READ_TOOLS) {
-      expect(tool.access, tool.name).toBe("read");
+describe("tool whitelist", () => {
+  it("stays in lockstep with the contracts vocabulary, tier by tier", async () => {
+    const { ALL_TOOLS, PROPOSE_TOOLS, READ_TOOLS, getTool } = await import(
+      "../src/agents/tools/index"
+    );
+    expect(ALL_TOOLS.map((t) => t.name)).toEqual([...AGENT_TOOL_NAMES]);
+    expect(READ_TOOLS.map((t) => t.name)).toEqual([...READ_TOOL_NAMES]);
+    expect(PROPOSE_TOOLS.map((t) => t.name)).toEqual([...PROPOSE_TOOL_NAMES]);
+    for (const tool of READ_TOOLS) expect(tool.access, tool.name).toBe("read");
+    // Sprint 69: the access tier is what the adapter's proposal budget keys
+    // off, so a propose tool mislabelled `read` would silently escape the cap.
+    for (const tool of PROPOSE_TOOLS) expect(tool.access, tool.name).toBe("propose");
+    for (const tool of ALL_TOOLS) {
       expect(tool.input, tool.name).toBe(toolInputSchemas[tool.name]);
       // Every declared schema derives cleanly for the model.
       expect(() => jsonSchemaFor(tool.input), tool.name).not.toThrow();
     }
     expect(getTool("search_evidence")).toBeDefined();
+    expect(getTool("propose_publication")).toBeDefined();
     expect(getTool("rm_rf")).toBeUndefined();
   });
 });

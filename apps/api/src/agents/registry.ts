@@ -1,8 +1,9 @@
 import type { z } from "zod";
-import type { AgentToolName, ToolAccessLevel } from "@tuezday/contracts";
+import { AGENT_PROPOSALS_PER_RUN, type AgentToolName, type ToolAccessLevel } from "@tuezday/contracts";
 import type { Db } from "../db/index";
 import type { EvidenceStore } from "../evidence/store";
 import type { SafeFetchService } from "../safe-fetch/index";
+import type { AgentProposalService } from "./proposals";
 
 // ---------------------------------------------------------------------------
 // Internal tool registry (Sprint 57) — the platform's capability surface for
@@ -35,6 +36,11 @@ export interface ToolBudget {
   maxCalls: number;
   /** Per-tool caps overriding the shared pool (e.g. safe_fetch_url). */
   perTool?: Partial<Record<string, number>>;
+  /** Sprint 69 (D-69.8): max calls to `propose`-tier tools per run, counted
+   * across all of them. A per-tool cap would let one run make three
+   * publications *and* three ad mutations — not what "three proposals" means
+   * to the founder reading the queue. */
+  maxProposals?: number;
 }
 
 export const DEFAULT_TOOL_BUDGET: ToolBudget = {
@@ -42,6 +48,7 @@ export const DEFAULT_TOOL_BUDGET: ToolBudget = {
   // The one tool that leaves the tenant and burns wall-clock (20s deadline
   // per call) — and the obvious probe vector for a prompt-injected model.
   perTool: { safe_fetch_url: 3 },
+  maxProposals: AGENT_PROPOSALS_PER_RUN,
 };
 
 export interface ToolContext {
@@ -51,6 +58,11 @@ export interface ToolContext {
   workspaceId: string;
   actor: ToolActor;
   budget: ToolBudget;
+  /** Sprint 69: the gated write seam. Absent means the propose tools are not
+   * offered at all (D-69.7) — there is no "propose without a gate" state. */
+  proposals?: AgentProposalService;
+  /** The run a propose tool attributes its proposal to. Set by the engine. */
+  agentRunId?: string;
 }
 
 export interface Tool<I = unknown, O = unknown> {

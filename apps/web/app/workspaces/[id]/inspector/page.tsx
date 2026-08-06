@@ -19,8 +19,9 @@ import {
 } from "@/lib/agent-inspector";
 
 import { useCallback, useEffect, useState } from "react";
-import { useParams } from "next/navigation";
-import type { AgentRunDetail, AgentRunStep, AgentRunSummary } from "@tuezday/contracts";
+import { useParams, useSearchParams } from "next/navigation";
+import type { AgentProposal, AgentRunDetail, AgentRunStep, AgentRunSummary } from "@tuezday/contracts";
+import { proposalLine, proposalTone } from "@/lib/agent-proposals-view";
 
 function RunStatusBadge({ run }: { run: Pick<AgentRunSummary, "status" | "stopReason"> }) {
   const view = runBadge(run);
@@ -100,6 +101,18 @@ function RunDetailView({ detail }: { detail: AgentRunDetail }) {
         </div>
       ))}
 
+      {detail.proposals.length > 0 ? (
+        <section className={styles.proposals} aria-label="What this run proposed">
+          <span className="meta">What this run proposed</span>
+          {detail.proposals.map((proposal: AgentProposal) => (
+            <div key={proposal.id} className={styles.proposal}>
+              <Badge tone={proposalTone(proposal)}>{proposal.tool}</Badge>
+              <span className="section-content">{proposalLine(proposal)}</span>
+            </div>
+          ))}
+        </section>
+      ) : null}
+
       {detail.output !== null && detail.output !== undefined ? (
         <JsonBlock label="final output" value={detail.output} />
       ) : null}
@@ -109,6 +122,9 @@ function RunDetailView({ detail }: { detail: AgentRunDetail }) {
 
 export default function InspectorPage() {
   const { id } = useParams<{ id: string }>();
+  // Deep link from the authorization queue: "an agent proposed this — why?"
+  // should be one click, not a hunt through the run list.
+  const requestedRun = useSearchParams().get("run");
 
   const [runs, setRuns] = useState<AgentRunSummary[]>([]);
   const [detail, setDetail] = useState<AgentRunDetail | null>(null);
@@ -145,6 +161,10 @@ export default function InspectorPage() {
     },
     [id],
   );
+
+  useEffect(() => {
+    if (requestedRun) void openRun(requestedRun);
+  }, [openRun, requestedRun]);
 
   const runProof = useCallback(async () => {
     if (!question.trim() || busy) return;

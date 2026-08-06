@@ -1084,6 +1084,16 @@ export type ExternalActionEffectivePolicy =
 export const EXTERNAL_ACTION_DECISIONS = ["authorize", "deny"] as const;
 export type ExternalActionDecisionValue = (typeof EXTERNAL_ACTION_DECISIONS)[number];
 
+/**
+ * Who proposed an action (Sprint 69). Distinct from `proposedBy`, which names
+ * the actor: two system-actor proposals can come from a cadence and from an
+ * agent's propose tool, and the authorization queue has to be able to say
+ * which. Deliberately absent from the action fingerprint (D-69.3) — the gate
+ * must treat an agent-originated action exactly as a human-originated one.
+ */
+export const EXTERNAL_ACTION_ORIGINS = ["human", "system", "agent"] as const;
+export type ExternalActionOrigin = (typeof EXTERNAL_ACTION_ORIGINS)[number];
+
 export const EXTERNAL_ACTION_SUBJECT_KINDS = [
   "draft",
   "inbox_item",
@@ -1223,6 +1233,9 @@ export const externalActionSchema = z
     supersededByActionId: z.string().uuid().nullable(),
     execution: externalActionExecutionRefSchema.nullable(),
     proposedBy: externalActionActorSchema,
+    origin: z.enum(EXTERNAL_ACTION_ORIGINS),
+    /** The agent run whose propose tool minted this — `agent` origin only. */
+    originRunId: z.string().uuid().nullable(),
     createdAt: z.number().int(),
     updatedAt: z.number().int(),
     authorizedAt: z.number().int().nullable(),
@@ -1242,6 +1255,22 @@ export const externalActionSchema = z
         code: z.ZodIssueCode.custom,
         path: ["execution"],
         message: "Succeeded actions require an execution receipt.",
+      });
+    }
+    // An agent-originated action that cannot name the run that proposed it is
+    // unattributable, which is the one thing Sprint 69 owed the queue.
+    if (value.origin === "agent" && !value.originRunId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["originRunId"],
+        message: "Agent-originated actions must name the agent run that proposed them.",
+      });
+    }
+    if (value.origin !== "agent" && value.originRunId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["originRunId"],
+        message: "Only agent-originated actions carry an agent run id.",
       });
     }
   });
@@ -7646,16 +7675,15 @@ export type AgentUsage = z.infer<typeof agentUsageSchema>;
 // capabilities as model-callable tools. Two access tiers only: `read` tools
 // are unrestricted inside the workspace (the same membership rule that
 // scopes HTTP routes); `propose` tools never execute — they mint a gated
-// item and return its id (none ship until Phase L). There is deliberately
-// no "execute" tier.
+// item and return its id. Sprint 69 shipped the five of them. There is
+// deliberately no "execute" tier.
 // ---------------------------------------------------------------------------
 
 export const TOOL_ACCESS_LEVELS = ["read", "propose"] as const;
 export type ToolAccessLevel = (typeof TOOL_ACCESS_LEVELS)[number];
 
-/** The Sprint 57 read-tool surface. The registry registers exactly this set;
- * tests assert registry and contracts stay in lockstep. */
-export const AGENT_TOOL_NAMES = [
+/** The Sprint 57 read-tool surface: unrestricted inside the workspace. */
+export const READ_TOOL_NAMES = [
   "search_evidence",
   "get_brain_section",
   "get_campaign_plan",
@@ -7668,7 +7696,40 @@ export const AGENT_TOOL_NAMES = [
   "get_prior_posts_on_topic",
   "safe_fetch_url",
 ] as const;
+
+/**
+ * The Sprint 69 propose surface. Each hands its intent to a gate that already
+ * governs that write: four mint a `proposed` external action and let the policy
+ * tree decide, and `propose_draft` submits to the approval gate, because a
+ * draft is the subject of an external action rather than one itself (D-69.2).
+ */
+export const PROPOSE_TOOL_NAMES = [
+  "propose_draft",
+  "propose_publication",
+  "propose_reply",
+  "propose_sequence_step",
+  "propose_ad_mutation",
+] as const;
+
+/** The whole registry. Tests assert registry and contracts stay in lockstep. */
+export const AGENT_TOOL_NAMES = [...READ_TOOL_NAMES, ...PROPOSE_TOOL_NAMES] as const;
 export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];
+export type ReadToolName = (typeof READ_TOOL_NAMES)[number];
+export type ProposeToolName = (typeof PROPOSE_TOOL_NAMES)[number];
+
+export function isProposeToolName(name: string): name is ProposeToolName {
+  return (PROPOSE_TOOL_NAMES as readonly string[]).includes(name);
+}
+
+/**
+ * Proposal caps (Sprint 69, D-69.8). The per-run one is shared across all five
+ * tools — a per-tool cap would let one run make three publications *and* three
+ * ad mutations, which is not what "three proposals" means to a founder. The
+ * daily one is per workspace across every run.
+ */
+export const AGENT_PROPOSALS_PER_RUN = 3;
+export const AGENT_PROPOSALS_PER_DAY = 20;
+export const PROPOSAL_RATIONALE_MAX_CHARS = 500;
 
 /** Content profiles `safe_fetch_url` accepts — mirrors the Sprint 48
  * safe-fetch policy's MIME allowlists (apps/api/src/safe-fetch/policy.ts,
@@ -7733,7 +7794,97 @@ export const toolInputSchemas = {
     url: z.string().url(),
     profile: z.enum(SAFE_FETCH_PROFILES).optional(),
   }),
+
+  // -------------------------------------------------------------------------
+  // Propose tools (Sprint 69). Every one takes a `rationale`: it is written to
+  // the proposal ledger and is what the authorization queue shows a founder who
+  // asks why the agent wanted this. Routing (connection, target, recipient) is
+  // resolved by the platform rather than asked of the model (D-69.9).
+  // -------------------------------------------------------------------------
+  propose_draft: z.object({
+    content: z.string().min(1).max(20_000),
+    channel: z.enum(CHANNELS),
+    taskType: z.enum(TASK_TYPES).optional(),
+    campaignId: z.string().min(1).optional(),
+    personaId: z.string().min(1).optional(),
+    rationale: z.string().min(1).max(PROPOSAL_RATIONALE_MAX_CHARS),
+  }),
+  propose_publication: z.object({
+    draftId: z.string().min(1),
+    /** Epoch ms; omit to publish as soon as the gate clears. */
+    scheduledFor: z.number().int().positive().optional(),
+    /** Channel-specific destination (e.g. a subreddit). Defaults to the last
+     * destination this workspace successfully published to on this account. */
+    target: z.string().trim().min(1).max(300).optional(),
+    connectionId: z.string().min(1).optional(),
+    rationale: z.string().min(1).max(PROPOSAL_RATIONALE_MAX_CHARS),
+  }),
+  propose_reply: z.object({
+    inboxItemId: z.string().min(1),
+    rationale: z.string().min(1).max(PROPOSAL_RATIONALE_MAX_CHARS),
+  }),
+  propose_sequence_step: z.object({
+    launchMessageId: z.string().min(1),
+    rationale: z.string().min(1).max(PROPOSAL_RATIONALE_MAX_CHARS),
+  }),
+  propose_ad_mutation: z.object({
+    launchId: z.string().min(1),
+    /** Exactly one of a budget change or a targeting change per call. A
+     * targeting change needs all three fields: the ads API replaces the whole
+     * targeting spec, so a partial change would silently reset the rest. */
+    dailyBudgetCents: z.number().int().positive().optional(),
+    countries: z.array(z.string().trim().min(2).max(2)).min(1).max(25).optional(),
+    ageMin: z.number().int().min(18).max(65).optional(),
+    ageMax: z.number().int().min(18).max(65).optional(),
+    rationale: z.string().min(1).max(PROPOSAL_RATIONALE_MAX_CHARS),
+  }),
 } as const satisfies Record<AgentToolName, z.ZodType<Record<string, unknown>>>;
+
+// ---------------------------------------------------------------------------
+// Agent proposals (Sprint 69)
+//
+// One durable row per successful propose-tool call. It answers two questions a
+// column on `external_actions` cannot: "what did this run propose" (across
+// kinds, including drafts, which are not external actions) and "how many
+// proposals has this workspace made today" — the daily cap's only honest
+// source (D-69.4).
+// ---------------------------------------------------------------------------
+
+export const AGENT_PROPOSAL_TARGET_KINDS = ["draft", "external_action"] as const;
+export type AgentProposalTargetKind = (typeof AGENT_PROPOSAL_TARGET_KINDS)[number];
+
+export const agentProposalSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    agentRunId: z.string().uuid(),
+    tool: z.enum(PROPOSE_TOOL_NAMES),
+    targetKind: z.enum(AGENT_PROPOSAL_TARGET_KINDS),
+    /** Null once the thing proposed has been deleted; the record of the
+     * proposal survives it. */
+    draftId: z.string().uuid().nullable(),
+    externalActionId: z.string().uuid().nullable(),
+    summary: z.string().trim().min(1),
+    rationale: z.string().trim().min(1),
+    createdAt: z.number().int(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.targetKind === "draft" && value.externalActionId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["externalActionId"],
+        message: "A draft proposal does not point at an external action.",
+      });
+    }
+    if (value.targetKind === "external_action" && value.draftId && !value.externalActionId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["externalActionId"],
+        message: "An external-action proposal must name its action.",
+      });
+    }
+  });
+export type AgentProposal = z.infer<typeof agentProposalSchema>;
 
 // ---------------------------------------------------------------------------
 // Agent Inspector API (Sprint 57)
@@ -7782,6 +7933,9 @@ export const agentRunDetailSchema = agentRunSummarySchema.extend({
   inputMessages: z.array(agentMessageSchema),
   output: z.unknown(),
   steps: z.array(agentRunStepSchema),
+  /** What this run actually proposed (Sprint 69) — the durable ledger, not a
+   * re-read of the transcript, so a deleted draft still leaves its proposal. */
+  proposals: z.array(agentProposalSchema),
 });
 export type AgentRunDetail = z.infer<typeof agentRunDetailSchema>;
 

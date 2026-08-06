@@ -1882,6 +1882,12 @@ export const externalActions = sqliteTable(
       onDelete: "set null",
     }),
     proposedByLabel: text("proposed_by_label").notNull(),
+    // Sprint 69: who proposed it, as a typed fact rather than a label
+    // convention — the authorization queue has to be able to say "an agent
+    // asked for this" without parsing `proposed_by_label`. Not part of the
+    // fingerprint (D-69.3): the gate is origin-blind on purpose.
+    origin: text("origin").notNull().default("human"),
+    originRunId: text("origin_run_id"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
     authorizedAt: integer("authorized_at"),
@@ -3693,3 +3699,41 @@ export const preferenceRuleEvidence = sqliteTable(
 );
 
 export type PreferenceRuleEvidenceRow = typeof preferenceRuleEvidence.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Agent proposals (Sprint 69, PRD §8 / direction Move 7)
+//
+// One row per successful propose-tool call. `external_actions.origin` already
+// says who proposed a given action; this says what a given *run* proposed, and
+// it is the only place drafts (which are not external actions) and actions can
+// be counted together — which is what the per-workspace daily cap needs.
+//
+// Both target links are `set null`: deleting the draft an agent wrote must not
+// erase the fact that it wrote one.
+// ---------------------------------------------------------------------------
+
+export const agentProposals = sqliteTable(
+  "agent_proposals",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    agentRunId: text("agent_run_id").notNull(),
+    tool: text("tool").notNull(),
+    targetKind: text("target_kind").notNull(),
+    draftId: text("draft_id").references(() => drafts.id, { onDelete: "set null" }),
+    externalActionId: text("external_action_id").references(() => externalActions.id, {
+      onDelete: "set null",
+    }),
+    summary: text("summary").notNull(),
+    rationale: text("rationale").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("agent_proposals_workspace_created").on(t.workspaceId, t.createdAt),
+    index("agent_proposals_run").on(t.agentRunId),
+  ],
+);
+
+export type AgentProposalRow = typeof agentProposals.$inferSelect;

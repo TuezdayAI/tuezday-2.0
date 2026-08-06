@@ -8,6 +8,7 @@ import {
   type ExternalActionContext,
   type ExternalActionExecutionRef,
   type ExternalActionKind,
+  type ExternalActionOrigin,
   type ExternalActionStatus,
   type ExternalActionSubmission,
   type ExternalActionSubject,
@@ -78,6 +79,15 @@ export function withdrawalReason(
  */
 export interface ExternalActionRuntimeActor extends ExternalActionActor {
   human: boolean;
+  /**
+   * Sprint 69: who *originated* the proposal, which the actor alone cannot
+   * say. A cadence and an agent propose tool both arrive as the system actor
+   * with no user id, and the authorization queue has to tell them apart.
+   * Omitted means the honest default — a person if there is a user id, the
+   * platform otherwise. Never part of the fingerprint (D-69.3).
+   */
+  origin?: ExternalActionOrigin;
+  originRunId?: string | null;
 }
 
 export interface ExternalActionIntent {
@@ -470,6 +480,8 @@ export function createExternalActionRuntime({
       fingerprint,
       policy,
       actor,
+      ...(actor.origin ? { origin: actor.origin } : {}),
+      originRunId: actor.originRunId ?? null,
       supersedesActionId,
       draftId: intent.links?.draftId ?? null,
     });

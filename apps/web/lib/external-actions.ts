@@ -85,6 +85,37 @@ const KIND_LABELS: Record<ExternalActionKind, string> = {
   targeting_change: "Targeting change",
 };
 
+/**
+ * Sprint 69 — who asked for this. `proposedBy.label` is a free-text
+ * attribution string ("system", an email address, "agent:<run>"); origin is the
+ * typed fact behind it, and it is the only thing that tells a cadence's
+ * proposal apart from an agent's, since both arrive as the system actor.
+ */
+export function actionOriginLabel(action: ExternalAction): string {
+  switch (action.origin) {
+    case "agent":
+      return "Proposed by an agent";
+    case "system":
+      return "Proposed automatically";
+    default:
+      return "Proposed by you";
+  }
+}
+
+/** True when a founder is looking at something no person asked for. Drives the
+ * badge; deliberately not a warning tone — an agent proposal that reached the
+ * queue was gated exactly like any other. */
+export function isAgentOriginated(action: ExternalAction): boolean {
+  return action.origin === "agent";
+}
+
+/** Deep link to the run that proposed it, so "why did it want this?" is one
+ * click from the queue rather than a hunt through the inspector. */
+export function actionOriginHref(workspaceId: string, action: ExternalAction): string | null {
+  if (action.origin !== "agent" || !action.originRunId) return null;
+  return `/workspaces/${workspaceId}/inspector?run=${action.originRunId}`;
+}
+
 export function actionKindLabel(kind: ExternalActionKind): string {
   return KIND_LABELS[kind];
 }

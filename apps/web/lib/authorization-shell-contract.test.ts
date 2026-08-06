@@ -119,4 +119,13 @@ describe("authorization queue shell contract", () => {
     expect(reviewPage).toContain('tab: "authorizations"');
     expect(reviewPage).toContain("status=authorization_required");
   });
+
+  it("says when an agent asked for it, and links to what it was doing (Sprint 69)", () => {
+    expect(queueSource).toContain("isAgentOriginated");
+    expect(queueSource).toContain("actionOriginLabel");
+    expect(queueSource).toContain("actionOriginHref");
+    // The origin replaces the raw proposer label in the detail pane — reading
+    // "agent:<uuid>" there told a founder nothing.
+    expect(queueSource).not.toContain("selected.proposedBy.label");
+  });
 });

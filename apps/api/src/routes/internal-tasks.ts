@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
+import type { AgentProposalService } from "../agents/proposals";
 import type { ConnectorFabric } from "../connectors/fabric";
 import type { Db } from "../db";
 import type { IntentProvider } from "../discovery/intent";
@@ -22,6 +23,9 @@ export interface InternalTaskDependencies {
   llm: LlmGateway;
   evidence: EvidenceStore;
   safeFetch: SafeFetchService;
+  /** Sprint 69: the propose seam for live pipeline runs. This tick is the only
+   * place a live run executes, so it is the only place the real one is used. */
+  proposals?: AgentProposalService;
   intentProvider: IntentProvider;
   fabric: ConnectorFabric;
   policy: DiscoveryOperatorPolicy;
@@ -119,6 +123,7 @@ export function registerInternalTaskRoutes(
             llm: deps.llm,
             evidence: deps.evidence,
             safeFetch: deps.safeFetch,
+            ...(deps.proposals ? { proposals: deps.proposals } : {}),
           }),
       );
       return leased.busy

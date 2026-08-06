@@ -45,6 +45,10 @@ export type AgentRunEvent =
 
 export interface AgentRunParams {
   workspaceId: string;
+  /** Pre-minted run id (Sprint 69). The engine needs the id *before* the run
+   * starts so a propose tool can attribute its proposal to it; omitted, the
+   * runner mints its own as before. */
+  runId?: string;
   /** Short label persisted on the run, e.g. "proof" or "pipeline:research". */
   task: string;
   /** Actor attribution label, e.g. "user:<id>" or "system". */
@@ -97,7 +101,7 @@ export class AgentRunner {
       );
     }
 
-    const runId = randomUUID();
+    const runId = params.runId ?? randomUUID();
     const startedAt = Date.now();
     const deadline = startedAt + params.timeoutMs;
     const emit = params.onEvent ?? (() => {});

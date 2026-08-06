@@ -95,6 +95,7 @@ import { registerPublicApiRoutes } from "./routes/public-api";
 import { backfillMissingCampaignPlans } from "./services/campaign-plan-backfill";
 import { backfillMetrics } from "./services/metrics-backfill";
 import { backfillExternalActionPolicies } from "./services/external-action-backfill";
+import { createAgentProposals } from "./services/agent-proposals";
 import { createExternalActionAdapters } from "./services/external-action-adapters";
 import { createExternalActionRuntime } from "./services/external-action-coordinator";
 import { repairDanglingDuplicateGroups } from "./services/discovery-dedupe";
@@ -231,6 +232,15 @@ export async function buildApp({
     adapters: createExternalActionAdapters(db, connectors, fetcher, outboundEmail, gmail),
     analytics,
   });
+  // Sprint 69: the propose seam. Built once here, where the runtime already
+  // exists, and injected into the engine — the agent tools themselves stay
+  // leaves and never import any of this (D-69.5).
+  const agentProposals = createAgentProposals({
+    db,
+    runtime: externalActionRuntime,
+    fabric: connectors,
+    fetcher,
+  });
 
   // The design renderer keeps one shared headless browser per process.
   app.addHook("preClose", async () => {
@@ -280,6 +290,7 @@ export async function buildApp({
     llm,
     evidence,
     safeFetch: guardedFetch,
+    proposals: agentProposals,
     intentProvider: intent,
     fabric: connectors,
     policy: operatorPolicy,
@@ -329,7 +340,12 @@ export async function buildApp({
   registerOpportunityRoutes(app, db, llm);
   registerPackageRoutes(app, db, llm);
   registerDeliverableRoutes(app, db, llm);
-  registerPipelineRoutes(app, db, { llm, evidence, safeFetch: guardedFetch });
+  registerPipelineRoutes(app, db, {
+    llm,
+    evidence,
+    safeFetch: guardedFetch,
+    proposals: agentProposals,
+  });
   registerEvalRoutes(app, db, { llm, evidence, safeFetch: guardedFetch });
   registerPreferenceRoutes(app, db, { llm });
   registerCampaignRoutes(app, db);

@@ -34,7 +34,8 @@ import {
 import { toAgentTools } from "../agents/adapter";
 import { DEFAULT_TOOL_BUDGET, type ToolContext } from "../agents/registry";
 import { AgentRunner } from "../agents/runner";
-import { READ_TOOLS } from "../agents/tools/index";
+import { simulatedAgentProposals, type AgentProposalService } from "../agents/proposals";
+import { ALL_TOOLS } from "../agents/tools/index";
 import type { Db } from "../db";
 import {
   pipelineDefinitions,
@@ -81,6 +82,14 @@ export interface PipelineEngineDeps {
   llm: LlmGateway;
   evidence: EvidenceStore;
   safeFetch: SafeFetchService;
+  /**
+   * Sprint 69: the gated write seam for the propose tools. Absent means they
+   * are not offered at all (D-69.7) — there is no ungoverned fallback. A
+   * non-live run gets the simulating implementation instead of this one, so a
+   * dry run, a shadow run or an eval replay sees the same tools and mints
+   * nothing (D-69.6).
+   */
+  proposals?: AgentProposalService;
 }
 
 export class PipelineRunNotFoundError extends Error {
@@ -281,7 +290,15 @@ async function runAgentStepPass(
   if (cached) return { ...cached, fromCache: true };
 
   const outputSchema = stepOutputSchemaFor(step.output);
-  const tools = READ_TOOLS.filter((tool) => step.tools.includes(tool.name));
+  // Sprint 69: a live run gets the real propose seam, every other mode the
+  // simulating one, and a deps object without either gets no propose tools at
+  // all rather than an ungoverned write path.
+  const proposals: AgentProposalService | null =
+    run.mode === "live" ? (deps.proposals ?? null) : simulatedAgentProposals();
+  const tools = ALL_TOOLS.filter(
+    (tool) =>
+      step.tools.includes(tool.name) && (tool.access !== "propose" || proposals !== null),
+  );
   const runner = new AgentRunner(db, metered);
 
   let lastFailure = "unknown";
@@ -291,6 +308,9 @@ async function runAgentStepPass(
       iteration,
       attempt,
     });
+    // Minted here, not by the runner: a propose tool has to be able to name
+    // the run it is acting for while that run is still going.
+    const agentRunId = randomUUID();
     const ctx: ToolContext = {
       db,
       evidence: deps.evidence,
@@ -298,9 +318,12 @@ async function runAgentStepPass(
       workspaceId: run.workspaceId,
       actor: { userId: null, label: run.createdBy },
       budget: DEFAULT_TOOL_BUDGET,
+      ...(proposals ? { proposals } : {}),
+      agentRunId,
     };
     const result = await runner.run({
       workspaceId: run.workspaceId,
+      runId: agentRunId,
       task: `pipeline:${step.key}`,
       createdBy: run.createdBy,
       system: composeStepSystem(definitionName, workspaceName, step),
