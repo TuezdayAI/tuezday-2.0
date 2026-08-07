@@ -9,9 +9,9 @@ interface MasterRow {
 }
 
 describe("Sprint 73 background queue migration", () => {
-  it("creates the job, schedule, and workspace-dispatch tables", () => {
+  it("creates the job, schedule, and workspace-dispatch tables", async () => {
     const db = createTestDb();
-    const rows = db.all<MasterRow>(sql`
+    const rows = await db.all<MasterRow>(sql`
       SELECT name, type, sql
       FROM sqlite_master
       WHERE name IN (
@@ -34,9 +34,9 @@ describe("Sprint 73 background queue migration", () => {
     }
   });
 
-  it("enforces active job and per-workspace schedule uniqueness", () => {
+  it("enforces active job and per-workspace schedule uniqueness", async () => {
     const db = createTestDb();
-    const indexes = db.all<{ name: string; sql: string | null }>(sql`
+    const indexes = await db.all<{ name: string; sql: string | null }>(sql`
       SELECT name, sql
       FROM sqlite_master
       WHERE type = 'index'

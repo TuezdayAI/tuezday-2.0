@@ -16,23 +16,23 @@ export class EntitlementError extends Error {
   }
 }
 
-export function getPlan(db: Db, workspaceId: string): PlanId {
-  const sub = getSubscription(db, workspaceId);
+export async function getPlan(db: Db, workspaceId: string): Promise<PlanId> {
+  const sub = await getSubscription(db, workspaceId);
   return sub && sub.status === "active" ? (sub.plan as PlanId) : "free";
 }
 
-export function getEntitlements(db: Db, workspaceId: string): Entitlements {
-  return PLANS[getPlan(db, workspaceId)].entitlements;
+export async function getEntitlements(db: Db, workspaceId: string): Promise<Entitlements> {
+  return PLANS[(await getPlan(db, workspaceId))].entitlements;
 }
 
-export function getUsage(db: Db, workspaceId: string): EntitlementUsage {
+export async function getUsage(db: Db, workspaceId: string): Promise<EntitlementUsage> {
   const periodStart = Date.now() - USAGE_WINDOW_MS;
   return {
-    seats: listMembers(db, workspaceId).length,
-    connectors: listConnections(db, workspaceId).length,
+    seats: (await listMembers(db, workspaceId)).length,
+    connectors: (await listConnections(db, workspaceId)).length,
     // D6 (Sprint 59): the LLM entitlement is denominated in cost, summed from
     // the usage ledger — not a generation count.
-    monthlyLlmCents: sumLlmSpendCents(db, workspaceId, periodStart),
+    monthlyLlmCents: await sumLlmSpendCents(db, workspaceId, periodStart),
   };
 }
 
@@ -41,25 +41,25 @@ function billingEnforced(): boolean {
   return process.env.BILLING_ENFORCED !== "false";
 }
 
-export function assertWithinLimit(db: Db, workspaceId: string, key: keyof Entitlements, current: number): void {
+export async function assertWithinLimit(db: Db, workspaceId: string, key: keyof Entitlements, current: number): Promise<void> {
   if (!billingEnforced()) return;
-  const limit = getEntitlements(db, workspaceId)[key];
+  const limit = (await getEntitlements(db, workspaceId))[key];
   if (limit !== -1 && current >= limit) throw new EntitlementError(key, limit);
 }
 
 /** Hard stop for interactive LLM routes: throws EntitlementError (mapped to
  * 402 upgrade_required by the app error handler) when the workspace's rolling
  * LLM spend has reached its plan budget. Fires BEFORE any model call. */
-export function assertLlmBudget(db: Db, workspaceId: string): void {
+export async function assertLlmBudget(db: Db, workspaceId: string): Promise<void> {
   if (!billingEnforced()) return;
-  assertWithinLimit(db, workspaceId, "monthlyLlmCents", getUsage(db, workspaceId).monthlyLlmCents);
+  await assertWithinLimit(db, workspaceId, "monthlyLlmCents", (await getUsage(db, workspaceId)).monthlyLlmCents);
 }
 
 /** Soft check for worker paths: over-budget work is skipped and left pending
  * (the queue is the pending state), never failed mid-run. */
-export function llmBudgetExhausted(db: Db, workspaceId: string): boolean {
+export async function llmBudgetExhausted(db: Db, workspaceId: string): Promise<boolean> {
   if (!billingEnforced()) return false;
-  const limit = getEntitlements(db, workspaceId).monthlyLlmCents;
+  const limit = (await getEntitlements(db, workspaceId)).monthlyLlmCents;
   if (limit === -1) return false;
-  return getUsage(db, workspaceId).monthlyLlmCents >= limit;
+  return (await getUsage(db, workspaceId)).monthlyLlmCents >= limit;
 }

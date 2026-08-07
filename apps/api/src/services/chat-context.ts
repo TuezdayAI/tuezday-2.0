@@ -92,7 +92,7 @@ export async function buildChatContext(
   latestUserMessage: string,
   options: ChatContextOptions = {},
 ): Promise<ChatContext> {
-  const workspace = getWorkspace(db, session.workspaceId);
+  const workspace = await getWorkspace(db, session.workspaceId);
   if (!workspace) throw new Error(`Unknown workspace ${session.workspaceId}`);
 
   const channel = session.channel ?? DEFAULT_CHAT_CHANNEL;
@@ -101,10 +101,10 @@ export async function buildChatContext(
   // A scope pointing at something deleted degrades to an unscoped thread rather
   // than failing the turn: the founder's conversation outlives the campaign.
   const campaign = session.campaignId
-    ? (getCampaign(db, session.workspaceId, session.campaignId) ?? null)
+    ? (await getCampaign(db, session.workspaceId, session.campaignId) ?? null)
     : null;
   const persona = session.personaId
-    ? (getPersona(db, session.workspaceId, session.personaId) ?? null)
+    ? (await getPersona(db, session.workspaceId, session.personaId) ?? null)
     : null;
 
   const evidenceResolution = await retrieveEvidence(
@@ -120,9 +120,9 @@ export async function buildChatContext(
     true,
   );
 
-  const { docs } = getBrain(db, session.workspaceId);
+  const { docs } = await getBrain(db, session.workspaceId);
   const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
-  const channelGuidance = resolveChannelGuidance(db, session.workspaceId, channel, {
+  const channelGuidance = await resolveChannelGuidance(db, session.workspaceId, channel, {
     personaId: session.personaId,
     campaignId: session.campaignId,
   });
@@ -138,14 +138,14 @@ export async function buildChatContext(
       scope: channelGuidance.scopeLabel,
     },
     persona: persona ? toResolvePersona(persona) : undefined,
-    ...campaignResolveInputs(db, session.workspaceId, campaign),
-    ...selectiveContextInputs(db, session.workspaceId),
-    ...priorExampleInputs(db, session.workspaceId, {
+    ...await campaignResolveInputs(db, session.workspaceId, campaign),
+    ...await selectiveContextInputs(db, session.workspaceId),
+    ...await priorExampleInputs(db, session.workspaceId, {
       query,
       channel,
       taskType: "gtm_conversation",
     }),
-    ...preferenceRuleInputs(db, session.workspaceId, {
+    ...await preferenceRuleInputs(db, session.workspaceId, {
       channel,
       taskType: "gtm_conversation",
     }),
@@ -164,7 +164,7 @@ export async function buildChatContext(
   // Pinned context (Sprint 77) sits between the bundle and the capability
   // clause: it is what THIS conversation is about, narrower than the workspace
   // bundle above it and above the rules that follow.
-  const pins = listChatPins(db, session.id);
+  const pins = await listChatPins(db, session.id);
   const rendered = await renderChatPins(db, options.safeFetch, session.workspaceId, pins);
   const pinned = composePinnedContext(pins, rendered);
 

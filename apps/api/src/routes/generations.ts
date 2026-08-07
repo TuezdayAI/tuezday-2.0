@@ -27,8 +27,8 @@ import { campaignResolveInputs, selectiveContextInputs } from "../services/resol
 import { runPreReview, setGenerationReview } from "../services/review";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -43,11 +43,11 @@ export function registerGenerationRoutes(
   analytics: AnalyticsSink,
 ): void {
   app.post<{ Params: { id: string } }>("/workspaces/:id/generate", async (request, reply) => {
-    const workspace = workspaceOr404(db, request.params.id, reply);
+    const workspace = await workspaceOr404(db, request.params.id, reply);
     if (!workspace) return reply;
 
     try {
-      assertLlmBudget(db, request.params.id);
+      await assertLlmBudget(db, request.params.id);
     } catch (err) {
       if (err instanceof EntitlementError) {
         return reply.status(402).send({ error: "upgrade_required", key: err.key, limit: err.limit });
@@ -65,13 +65,13 @@ export function registerGenerationRoutes(
 
     let persona;
     if (parsed.data.personaId) {
-      persona = getPersona(db, request.params.id, parsed.data.personaId);
+      persona = await getPersona(db, request.params.id, parsed.data.personaId);
       if (!persona) return reply.status(404).send({ error: "persona_not_found" });
     }
 
     let campaign;
     if (parsed.data.campaignId) {
-      campaign = getCampaign(db, request.params.id, parsed.data.campaignId);
+      campaign = await getCampaign(db, request.params.id, parsed.data.campaignId);
       if (!campaign) return reply.status(404).send({ error: "campaign_not_found" });
       const campaignError = campaignExecutionError(campaign);
       if (campaignError) return reply.status(409).send({ error: campaignError });
@@ -89,20 +89,20 @@ export function registerGenerationRoutes(
       parsed.data.useEvidence ?? true,
     );
 
-    const { docs } = getBrain(db, request.params.id);
+    const { docs } = await getBrain(db, request.params.id);
     const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
-    const channelGuidance = resolveChannelGuidance(db, request.params.id, parsed.data.channel, {
+    const channelGuidance = await resolveChannelGuidance(db, request.params.id, parsed.data.channel, {
       personaId: parsed.data.personaId ?? null,
       campaignId: parsed.data.campaignId ?? null,
     });
-    const settings = getGenerationSettings(db, request.params.id);
-    const selective = selectiveContextInputs(db, request.params.id);
+    const settings = await getGenerationSettings(db, request.params.id);
+    const selective = await selectiveContextInputs(db, request.params.id);
 
     const personaInput = persona ? toResolvePersona(persona) : undefined;
     // One helper, so the campaign section and the plan section can never be
     // composed from different plans (Sprint 53 review, I4).
-    const campaignInputs = campaignResolveInputs(db, request.params.id, campaign);
-    const account = resolveDraftAccount(db, request.params.id, {
+    const campaignInputs = await campaignResolveInputs(db, request.params.id, campaign);
+    const account = await resolveDraftAccount(db, request.params.id, {
       personaId: parsed.data.personaId,
       channel: parsed.data.channel,
     });
@@ -137,7 +137,7 @@ export function registerGenerationRoutes(
         });
 
         try {
-          assertLlmBudget(db, request.params.id);
+          await assertLlmBudget(db, request.params.id);
         } catch (err) {
           if (err instanceof EntitlementError) {
             return reply.status(402).send({ error: "upgrade_required", key: err.key, limit: err.limit });
@@ -188,7 +188,7 @@ export function registerGenerationRoutes(
         campaignId: parsed.data.campaignId ?? null,
       });
       const result = await generateLlm.generate({ prompt: resolved.prompt });
-      const generation = storeGeneration(db, {
+      const generation = await storeGeneration(db, {
         workspaceId: request.params.id,
         taskType: parsed.data.taskType,
         channel: parsed.data.channel,
@@ -224,10 +224,10 @@ export function registerGenerationRoutes(
           result.text,
           settings.flagThreshold,
         );
-        setGenerationReview(db, request.params.id, generation.id, review);
+        await setGenerationReview(db, request.params.id, generation.id, review);
       }
 
-      track(db, analytics, {
+      await track(db, analytics, {
         event: "generation.created",
         distinctId: request.actor.userId!,
         workspaceId: request.params.id,
@@ -246,7 +246,7 @@ export function registerGenerationRoutes(
   });
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/angles", async (request, reply) => {
-    const workspace = workspaceOr404(db, request.params.id, reply);
+    const workspace = await workspaceOr404(db, request.params.id, reply);
     if (!workspace) return reply;
     const parsed = generateAnglesInputSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -258,13 +258,13 @@ export function registerGenerationRoutes(
 
     let persona;
     if (parsed.data.personaId) {
-      persona = getPersona(db, request.params.id, parsed.data.personaId);
+      persona = await getPersona(db, request.params.id, parsed.data.personaId);
       if (!persona) return reply.status(404).send({ error: "persona_not_found" });
     }
 
     let campaign;
     if (parsed.data.campaignId) {
-      campaign = getCampaign(db, request.params.id, parsed.data.campaignId);
+      campaign = await getCampaign(db, request.params.id, parsed.data.campaignId);
       if (!campaign) return reply.status(404).send({ error: "campaign_not_found" });
       const campaignError = campaignExecutionError(campaign);
       if (campaignError) return reply.status(409).send({ error: campaignError });
@@ -272,11 +272,11 @@ export function registerGenerationRoutes(
 
     // Sprint 43: angle suggestions run as the brief — Tier 1 + outlines only,
     // no zoom, no evidence retrieval. Cheap by construction.
-    const settings = getGenerationSettings(db, request.params.id);
+    const settings = await getGenerationSettings(db, request.params.id);
     const count = parsed.data.angleCount ?? settings.angleCount ?? DEFAULT_ANGLE_COUNT;
-    const { docs } = getBrain(db, request.params.id);
+    const { docs } = await getBrain(db, request.params.id);
     const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
-    const channelGuidance = resolveChannelGuidance(db, request.params.id, parsed.data.channel, {
+    const channelGuidance = await resolveChannelGuidance(db, request.params.id, parsed.data.channel, {
       personaId: parsed.data.personaId ?? null,
       campaignId: parsed.data.campaignId ?? null,
     });
@@ -291,12 +291,12 @@ export function registerGenerationRoutes(
         scope: channelGuidance.scopeLabel,
       },
       persona: persona ? toResolvePersona(persona) : undefined,
-      ...campaignResolveInputs(db, request.params.id, campaign),
-      account: resolveDraftAccount(db, request.params.id, {
+      ...await campaignResolveInputs(db, request.params.id, campaign),
+      account: await resolveDraftAccount(db, request.params.id, {
         personaId: parsed.data.personaId,
         channel: parsed.data.channel,
       }),
-      ...selectiveContextInputs(db, request.params.id),
+      ...await selectiveContextInputs(db, request.params.id),
       resolveMode: "brief",
       evidenceExclusionReason: "brief mode (angle step) runs without evidence.",
       tokenBudget: parsed.data.tokenBudget,
@@ -304,7 +304,7 @@ export function registerGenerationRoutes(
     });
 
     try {
-      assertLlmBudget(db, request.params.id);
+      await assertLlmBudget(db, request.params.id);
       const angleLlm = meteredLlm(llm, db, {
         workspaceId: request.params.id,
         pipeline: "angles",
@@ -321,14 +321,14 @@ export function registerGenerationRoutes(
   });
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/generations", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return listGenerations(db, request.params.id);
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return await listGenerations(db, request.params.id);
   });
 
   app.post<{ Params: { id: string; generationId: string } }>(
     "/workspaces/:id/generations/:generationId/rating",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = rateGenerationInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -336,7 +336,7 @@ export function registerGenerationRoutes(
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      const rated = rateGeneration(
+      const rated = await rateGeneration(
         db,
         request.params.id,
         request.params.generationId,

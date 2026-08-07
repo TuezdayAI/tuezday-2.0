@@ -43,9 +43,9 @@ const WORKSPACE_ID = randomUUID();
 let db: Db;
 let ctx: ToolContext;
 
-beforeEach(() => {
+beforeEach(async () => {
   db = createTestDb();
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({ id: WORKSPACE_ID, name: "Read tools", createdAt: 1, updatedAt: 1 })
     .run();
   ctx = {
@@ -69,7 +69,7 @@ Never say "synergy", "leverage" (as a verb), or "game-changing".
 
 describe("get_brain_section", () => {
   it("returns one exact section by docType + sectionId", async () => {
-    updateBrainDoc(db, WORKSPACE_ID, "voice", VOICE_DOC);
+    await updateBrainDoc(db, WORKSPACE_ID, "voice", VOICE_DOC);
     const result = (await getBrainSectionTool.run(ctx, {
       docType: "voice",
       sectionId: "words-we-avoid",
@@ -79,7 +79,7 @@ describe("get_brain_section", () => {
   });
 
   it("lists available section ids when the section is unknown", async () => {
-    updateBrainDoc(db, WORKSPACE_ID, "voice", VOICE_DOC);
+    await updateBrainDoc(db, WORKSPACE_ID, "voice", VOICE_DOC);
     const result = (await getBrainSectionTool.run(ctx, {
       docType: "voice",
       sectionId: "nope",
@@ -89,8 +89,8 @@ describe("get_brain_section", () => {
   });
 
   it("ranks sections by query, filtered by docType when given", async () => {
-    updateBrainDoc(db, WORKSPACE_ID, "voice", VOICE_DOC);
-    updateBrainDoc(db, WORKSPACE_ID, "now", "## Current focus\n\nShip the agent inspector.\n");
+    await updateBrainDoc(db, WORKSPACE_ID, "voice", VOICE_DOC);
+    await updateBrainDoc(db, WORKSPACE_ID, "now", "## Current focus\n\nShip the agent inspector.\n");
     const result = (await getBrainSectionTool.run(ctx, { query: "words avoid hype" })) as {
       sections: Array<{ docType: string; sectionId: string }>;
     };
@@ -116,7 +116,7 @@ describe("get_brain_section", () => {
 
 describe("get_persona", () => {
   it("returns the resolver-facing persona shape", async () => {
-    const persona = createPersona(
+    const persona = await createPersona(
       db,
       WORKSPACE_ID,
       upsertPersonaInputSchema.parse({
@@ -141,7 +141,7 @@ describe("get_persona", () => {
   });
 
   it("lists available personas on unknown id", async () => {
-    createPersona(db, WORKSPACE_ID, upsertPersonaInputSchema.parse({ name: "Field CTO" }));
+    await createPersona(db, WORKSPACE_ID, upsertPersonaInputSchema.parse({ name: "Field CTO" }));
     const result = (await getPersonaTool.run(ctx, { personaId: "missing" })) as {
       error: string;
       availablePersonas: Array<{ name: string }>;
@@ -153,7 +153,7 @@ describe("get_persona", () => {
 
 describe("get_campaign_plan", () => {
   it("returns the campaign with a note when no plan revision is active", async () => {
-    const campaign = createCampaign(
+    const campaign = await createCampaign(
       db,
       WORKSPACE_ID,
       upsertCampaignInputSchema.parse({ name: "Launch", objective: "Ship it" }),
@@ -169,18 +169,18 @@ describe("get_campaign_plan", () => {
   });
 
   it("returns the current plan revision with its lanes", async () => {
-    const campaign = createCampaign(
+    const campaign = await createCampaign(
       db,
       WORKSPACE_ID,
       upsertCampaignInputSchema.parse({ name: "Launch" }),
     );
-    const persona = createPersona(
+    const persona = await createPersona(
       db,
       WORKSPACE_ID,
       upsertPersonaInputSchema.parse({ name: "Field CTO" }),
     );
     const planId = randomUUID();
-    db.insert(campaignPlanRevisions)
+    await db.insert(campaignPlanRevisions)
       .values({
         id: planId,
         workspaceId: WORKSPACE_ID,
@@ -194,12 +194,12 @@ describe("get_campaign_plan", () => {
         activatedAt: 2,
       })
       .run();
-    db.update(campaigns)
+    await db.update(campaigns)
       .set({ currentPlanRevisionId: planId })
       .where(eq(campaigns.id, campaign.id))
       .run();
     const laneId = randomUUID();
-    db.insert(campaignLanes)
+    await db.insert(campaignLanes)
       .values({
         id: laneId,
         workspaceId: WORKSPACE_ID,
@@ -210,7 +210,7 @@ describe("get_campaign_plan", () => {
         updatedAt: 1,
       })
       .run();
-    db.insert(campaignLaneRevisions)
+    await db.insert(campaignLaneRevisions)
       .values({
         id: randomUUID(),
         workspaceId: WORKSPACE_ID,
@@ -243,7 +243,7 @@ describe("get_campaign_plan", () => {
   });
 
   it("lists available campaigns on unknown id", async () => {
-    createCampaign(db, WORKSPACE_ID, upsertCampaignInputSchema.parse({ name: "Launch" }));
+    await createCampaign(db, WORKSPACE_ID, upsertCampaignInputSchema.parse({ name: "Launch" }));
     const result = (await getCampaignPlanTool.run(ctx, { campaignId: "missing" })) as {
       error: string;
       availableCampaigns: Array<{ name: string }>;
@@ -271,13 +271,13 @@ describe("list_channel_guardrails", () => {
   });
 
   it("surfaces workspace overrides and scoped rows, filtered by channel", async () => {
-    const persona = createPersona(
+    const persona = await createPersona(
       db,
       WORKSPACE_ID,
       upsertPersonaInputSchema.parse({ name: "Field CTO" }),
     );
-    setChannelGuidance(db, WORKSPACE_ID, "linkedin", "No emojis. Ever.");
-    setChannelGuidance(db, WORKSPACE_ID, "linkedin", "Field CTO may use one emoji.", {
+    await setChannelGuidance(db, WORKSPACE_ID, "linkedin", "No emojis. Ever.");
+    await setChannelGuidance(db, WORKSPACE_ID, "linkedin", "Field CTO may use one emoji.", {
       personaId: persona.id,
     });
 
@@ -297,16 +297,16 @@ describe("list_channel_guardrails", () => {
 // Batch 2 — publications, prior posts, similar drafts, rejections, discovery
 // ---------------------------------------------------------------------------
 
-function seedDraft(opts: {
+async function seedDraft(opts: {
   state: string;
   content: string;
   original?: string;
   taskType?: string;
   channel?: string;
   campaignId?: string;
-}): string {
+}): Promise<string> {
   const id = randomUUID();
-  db.insert(drafts)
+  await db.insert(drafts)
     .values({
       id,
       workspaceId: WORKSPACE_ID,
@@ -323,9 +323,9 @@ function seedDraft(opts: {
   return id;
 }
 
-function seedConnection(): string {
+async function seedConnection(): Promise<string> {
   const id = randomUUID();
-  db.insert(connections)
+  await db.insert(connections)
     .values({
       id,
       workspaceId: WORKSPACE_ID,
@@ -338,13 +338,13 @@ function seedConnection(): string {
   return id;
 }
 
-function seedPublication(
+async function seedPublication(
   connectionId: string,
   draftId: string,
   opts: { title: string; status?: string; publishedAt?: number },
-): string {
+): Promise<string> {
   const id = randomUUID();
-  db.insert(publications)
+  await db.insert(publications)
     .values({
       id,
       workspaceId: WORKSPACE_ID,
@@ -366,12 +366,12 @@ function seedPublication(
 
 describe("list_recent_publications_with_metrics", () => {
   it("returns only published posts, with their metric snapshots", async () => {
-    const connectionId = seedConnection();
-    const liveDraft = seedDraft({ state: "approved", content: "Usage-based pricing post." });
-    const liveId = seedPublication(connectionId, liveDraft, { title: "Pricing post" });
-    const queuedDraft = seedDraft({ state: "approved", content: "Not out yet." });
-    seedPublication(connectionId, queuedDraft, { title: "Queued", status: "scheduled" });
-    db.insert(publicationMetrics)
+    const connectionId = await seedConnection();
+    const liveDraft = await seedDraft({ state: "approved", content: "Usage-based pricing post." });
+    const liveId = await seedPublication(connectionId, liveDraft, { title: "Pricing post" });
+    const queuedDraft = await seedDraft({ state: "approved", content: "Not out yet." });
+    await seedPublication(connectionId, queuedDraft, { title: "Queued", status: "scheduled" });
+    await db.insert(publicationMetrics)
       .values({
         id: randomUUID(),
         workspaceId: WORKSPACE_ID,
@@ -393,20 +393,20 @@ describe("list_recent_publications_with_metrics", () => {
   });
 
   it("filters by campaign through the draft join", async () => {
-    const connectionId = seedConnection();
-    const campaign = createCampaign(
+    const connectionId = await seedConnection();
+    const campaign = await createCampaign(
       db,
       WORKSPACE_ID,
       upsertCampaignInputSchema.parse({ name: "Launch" }),
     );
-    const inCampaign = seedDraft({
+    const inCampaign = await seedDraft({
       state: "approved",
       content: "Campaign post.",
       campaignId: campaign.id,
     });
-    seedPublication(connectionId, inCampaign, { title: "In campaign" });
-    const outside = seedDraft({ state: "approved", content: "Other post." });
-    seedPublication(connectionId, outside, { title: "Outside" });
+    await seedPublication(connectionId, inCampaign, { title: "In campaign" });
+    const outside = await seedDraft({ state: "approved", content: "Other post." });
+    await seedPublication(connectionId, outside, { title: "Outside" });
 
     const result = (await listRecentPublicationsTool.run(ctx, { campaignId: campaign.id })) as {
       publications: Array<{ title: string }>;
@@ -417,14 +417,14 @@ describe("list_recent_publications_with_metrics", () => {
 
 describe("get_prior_posts_on_topic", () => {
   it("ranks published posts by topic match", async () => {
-    const connectionId = seedConnection();
-    const pricing = seedDraft({
+    const connectionId = await seedConnection();
+    const pricing = await seedDraft({
       state: "approved",
       content: "We tested usage-based pricing and churn dropped.",
     });
-    seedPublication(connectionId, pricing, { title: "Pricing lessons" });
-    const onboarding = seedDraft({ state: "approved", content: "Onboarding flows that work." });
-    seedPublication(connectionId, onboarding, { title: "Onboarding" });
+    await seedPublication(connectionId, pricing, { title: "Pricing lessons" });
+    const onboarding = await seedDraft({ state: "approved", content: "Onboarding flows that work." });
+    await seedPublication(connectionId, onboarding, { title: "Onboarding" });
 
     const result = (await getPriorPostsTool.run(ctx, { topic: "pricing churn" })) as {
       posts: Array<{ title: string }>;
@@ -434,9 +434,9 @@ describe("get_prior_posts_on_topic", () => {
   });
 
   it("says so when nothing matches the topic", async () => {
-    const connectionId = seedConnection();
-    const d = seedDraft({ state: "approved", content: "Onboarding flows." });
-    seedPublication(connectionId, d, { title: "Onboarding" });
+    const connectionId = await seedConnection();
+    const d = await seedDraft({ state: "approved", content: "Onboarding flows." });
+    await seedPublication(connectionId, d, { title: "Onboarding" });
     const result = (await getPriorPostsTool.run(ctx, { topic: "quantum blockchain" })) as {
       posts: unknown[];
       note: string;
@@ -448,9 +448,9 @@ describe("get_prior_posts_on_topic", () => {
 
 describe("find_similar_approved_drafts", () => {
   it("returns approved drafts ranked by the query, excluding rejections", async () => {
-    seedDraft({ state: "approved", content: "Approved take on usage-based pricing." });
-    seedDraft({ state: "rejected", content: "Rejected pricing rant." });
-    seedDraft({ state: "approved", content: "Approved onboarding story.", channel: "x" });
+    await seedDraft({ state: "approved", content: "Approved take on usage-based pricing." });
+    await seedDraft({ state: "rejected", content: "Rejected pricing rant." });
+    await seedDraft({ state: "approved", content: "Approved onboarding story.", channel: "x" });
 
     const result = (await findSimilarApprovedDraftsTool.run(ctx, { query: "pricing" })) as {
       drafts: Array<{ content: string; approvedVia: string }>;
@@ -461,7 +461,7 @@ describe("find_similar_approved_drafts", () => {
   });
 
   it("falls back to recent approvals with a note when the query matches nothing", async () => {
-    seedDraft({ state: "approved", content: "Approved onboarding story." });
+    await seedDraft({ state: "approved", content: "Approved onboarding story." });
     const result = (await findSimilarApprovedDraftsTool.run(ctx, { query: "zeppelin" })) as {
       drafts: unknown[];
       note?: string;
@@ -473,8 +473,8 @@ describe("find_similar_approved_drafts", () => {
 
 describe("find_instructive_rejections", () => {
   it("surfaces rejections, edit deltas, and human revision instructions", async () => {
-    const rejectedId = seedDraft({ state: "rejected", content: "Too salesy pricing pitch." });
-    db.insert(draftRevisionTurns)
+    const rejectedId = await seedDraft({ state: "rejected", content: "Too salesy pricing pitch." });
+    await db.insert(draftRevisionTurns)
       .values({
         id: randomUUID(),
         requestId: randomUUID(),
@@ -486,12 +486,12 @@ describe("find_instructive_rejections", () => {
         createdAt: 1,
       })
       .run();
-    seedDraft({
+    await seedDraft({
       state: "approved",
       content: "Tight, edited post.",
       original: "Rambling first version.",
     });
-    seedDraft({ state: "approved", content: "Untouched approved post." });
+    await seedDraft({ state: "approved", content: "Untouched approved post." });
 
     const result = (await findInstructiveRejectionsTool.run(ctx, {})) as {
       rejections: Array<{
@@ -511,9 +511,9 @@ describe("find_instructive_rejections", () => {
 });
 
 describe("search_discovery_items", () => {
-  function seedDiscovery(): void {
+  async function seedDiscovery(): Promise<void> {
     const sourceId = randomUUID();
-    db.insert(discoverySources)
+    await db.insert(discoverySources)
       .values({
         id: sourceId,
         workspaceId: WORKSPACE_ID,
@@ -530,7 +530,7 @@ describe("search_discovery_items", () => {
       summary: "",
       createdAt: 1,
     };
-    db.insert(discoveredItems)
+    await db.insert(discoveredItems)
       .values([
         {
           ...base,
@@ -555,7 +555,7 @@ describe("search_discovery_items", () => {
   }
 
   it("orders by score without a query and by BM25 with one", async () => {
-    seedDiscovery();
+    await seedDiscovery();
     const byScore = (await searchDiscoveryItemsTool.run(ctx, {})) as {
       items: Array<{ title: string }>;
     };

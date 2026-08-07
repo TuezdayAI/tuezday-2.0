@@ -55,44 +55,44 @@ const LONG_HISTORY = [
   ),
 ].join("\n");
 
-function knob(sections: ContextSection[], db: Db, key: string, meta = {}) {
-  return knobStatesForResolve(db, WORKSPACE_ID, sections, meta).find((k) => k.key === key)!;
+async function knob(sections: ContextSection[], db: Db, key: string, meta = {}) {
+  return (await knobStatesForResolve(db, WORKSPACE_ID, sections, meta)).find((k) => k.key === key)!;
 }
 
 describe("the nine knobs, judged by what they did (Sprint 71)", () => {
   let db: Db;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createTestDb();
-    db.insert(workspaces)
+    await db.insert(workspaces)
       .values({ id: WORKSPACE_ID, name: "Acme", createdAt: 1, updatedAt: 1 })
       .run();
   });
 
-  it("returns all nine, in precedence order, for any bundle", () => {
-    const knobs = knobStatesForResolve(db, WORKSPACE_ID, resolve({}));
+  it("returns all nine, in precedence order, for any bundle", async () => {
+    const knobs = await knobStatesForResolve(db, WORKSPACE_ID, resolve({}));
     expect(knobs).toHaveLength(9);
     expect(knobs[0]!.key).toBe("brain_docs");
     expect(knobs.at(-1)!.key).toBe("design_overlays");
     for (const entry of knobs) expect(entry.href).toContain(`/workspaces/${WORKSPACE_ID}`);
   });
 
-  it("says the built-in channel guidance applied when nothing overrode it", () => {
+  it("says the built-in channel guidance applied when nothing overrode it", async () => {
     const sections = resolve({});
-    expect(knob(sections, db, "channel_guidance_builtin").state).toBe("applied");
-    expect(knob(sections, db, "channel_guidance_workspace").state).toBe("absent");
-    expect(knob(sections, db, "scoped_guidance").state).toBe("absent");
+    expect((await knob(sections, db, "channel_guidance_builtin")).state).toBe("applied");
+    expect((await knob(sections, db, "channel_guidance_workspace")).state).toBe("absent");
+    expect((await knob(sections, db, "scoped_guidance")).state).toBe("absent");
   });
 
-  it("says the workspace override applied, and stops crediting the built-in", () => {
+  it("says the workspace override applied, and stops crediting the built-in", async () => {
     const sections = resolve({
       channelGuidance: { content: "Ship short posts.", source: "workspace" },
     });
-    expect(knob(sections, db, "channel_guidance_workspace").state).toBe("applied");
-    expect(knob(sections, db, "channel_guidance_builtin").state).toBe("absent");
+    expect((await knob(sections, db, "channel_guidance_workspace")).state).toBe("applied");
+    expect((await knob(sections, db, "channel_guidance_builtin")).state).toBe("absent");
   });
 
-  it("credits the scoped override, not the workspace one, when a scope won", () => {
+  it("credits the scoped override, not the workspace one, when a scope won", async () => {
     const sections = resolve({
       channelGuidance: {
         content: "Ship short posts.",
@@ -101,14 +101,14 @@ describe("the nine knobs, judged by what they did (Sprint 71)", () => {
       },
     });
     // Most-specific-wins means exactly one of these three shaped the prompt.
-    expect(knob(sections, db, "scoped_guidance").state).toBe("applied");
-    expect(knob(sections, db, "channel_guidance_workspace").state).toBe("absent");
-    expect(knob(sections, db, "scoped_guidance").detail).toContain("Founder");
+    expect((await knob(sections, db, "scoped_guidance")).state).toBe("applied");
+    expect((await knob(sections, db, "channel_guidance_workspace")).state).toBe("absent");
+    expect((await knob(sections, db, "scoped_guidance")).detail).toContain("Founder");
   });
 
-  it("separates a knob that is set from a knob that did something", () => {
+  it("separates a knob that is set from a knob that did something", async () => {
     // Guidance exists for a channel this resolve never touched.
-    db.insert(guidanceOverrides)
+    await db.insert(guidanceOverrides)
       .values({
         id: randomUUID(),
         workspaceId: WORKSPACE_ID,
@@ -120,13 +120,13 @@ describe("the nine knobs, judged by what they did (Sprint 71)", () => {
         updatedAt: 2,
       })
       .run();
-    const entry = knob(resolve({}), db, "channel_guidance_workspace");
+    const entry = await knob(resolve({}), db, "channel_guidance_workspace");
     // The gap between these two words is the whole deletion decision (D-71.5).
     expect(entry.state).toBe("configured");
     expect(entry.detail).toContain("not for this channel");
   });
 
-  it("credits the matrix only when a workspace cell won", () => {
+  it("credits the matrix only when a workspace cell won", async () => {
     const matrix = defaultResolvedMatrix();
     matrix.linkedin_post.history = {
       mode: "omit",
@@ -134,16 +134,16 @@ describe("the nine knobs, judged by what they did (Sprint 71)", () => {
       source: "workspace",
     };
     const sections = resolve({ matrix });
-    expect(knob(sections, db, "context_matrix", { taskType: "linkedin_post" }).state).toBe(
+    expect((await knob(sections, db, "context_matrix", { taskType: "linkedin_post" })).state).toBe(
       "applied",
     );
     // The shipped defaults are not a knob anybody turned.
     expect(
-      knob(resolve({}), db, "context_matrix", { taskType: "linkedin_post" }).state,
+      (await knob(resolve({}), db, "context_matrix", { taskType: "linkedin_post" })).state,
     ).toBe("absent");
   });
 
-  it("reports zoom by the sections it actually pulled", () => {
+  it("reports zoom by the sections it actually pulled", async () => {
     const matrix = defaultResolvedMatrix();
     matrix.linkedin_post.history = {
       mode: "outline",
@@ -155,17 +155,17 @@ describe("the nine knobs, judged by what they did (Sprint 71)", () => {
       matrix,
       signal: { content: "pricing experiment", source: "manual" },
     });
-    const entry = knob(zoomed, db, "zoom", { taskType: "linkedin_post" });
+    const entry = await knob(zoomed, db, "zoom", { taskType: "linkedin_post" });
     expect(entry.state).toBe("applied");
     // Deferred improvement #22 is surfaced, not fixed: the panel says out loud
     // that zoom ranks lexically, which is what makes the case for hybrid.
     expect(entry.detail).toContain("BM25");
-    expect(knob(resolve({}), db, "zoom").state).toBe("absent");
+    expect((await knob(resolve({}), db, "zoom")).state).toBe("absent");
   });
 
-  it("never claims a design overlay shaped the text, because it cannot", () => {
+  it("never claims a design overlay shaped the text, because it cannot", async () => {
     const systemId = randomUUID();
-    db.insert(designSystems)
+    await db.insert(designSystems)
       .values({
         id: systemId,
         workspaceId: WORKSPACE_ID,
@@ -175,7 +175,7 @@ describe("the nine knobs, judged by what they did (Sprint 71)", () => {
         updatedAt: 1,
       })
       .run();
-    db.insert(designOverlays)
+    await db.insert(designOverlays)
       .values({
         id: randomUUID(),
         workspaceId: WORKSPACE_ID,
@@ -188,13 +188,13 @@ describe("the nine knobs, judged by what they did (Sprint 71)", () => {
         updatedAt: 3,
       })
       .run();
-    const entry = knob(resolve({}), db, "design_overlays");
+    const entry = await knob(resolve({}), db, "design_overlays");
     expect(entry.state).toBe("configured");
     expect(entry.detail).toContain("not this text");
   });
 
-  it("does not count generation settings that match the shipped defaults", () => {
-    db.insert(generationSettings)
+  it("does not count generation settings that match the shipped defaults", async () => {
+    await db.insert(generationSettings)
       .values({
         workspaceId: WORKSPACE_ID,
         reviewEnabled: 1,
@@ -204,9 +204,9 @@ describe("the nine knobs, judged by what they did (Sprint 71)", () => {
         updatedAt: 5,
       })
       .run();
-    expect(readKnobConfiguration(db, WORKSPACE_ID).generationSettings.count).toBe(0);
-    db.update(generationSettings).set({ angleEnabled: 1, updatedAt: 6 }).run();
-    expect(readKnobConfiguration(db, WORKSPACE_ID).generationSettings).toEqual({
+    expect((await readKnobConfiguration(db, WORKSPACE_ID)).generationSettings.count).toBe(0);
+    await db.update(generationSettings).set({ angleEnabled: 1, updatedAt: 6 }).run();
+    expect((await readKnobConfiguration(db, WORKSPACE_ID)).generationSettings).toEqual({
       count: 1,
       lastAt: 6,
     });
@@ -216,8 +216,8 @@ describe("the nine knobs, judged by what they did (Sprint 71)", () => {
 describe("the knob-usage report (Sprint 71 acceptance)", () => {
   let db: Db;
 
-  function seedGeneration(sections: ContextSection[], createdAt: number) {
-    db.insert(generations)
+  async function seedGeneration(sections: ContextSection[], createdAt: number) {
+    await db.insert(generations)
       .values({
         id: randomUUID(),
         workspaceId: WORKSPACE_ID,
@@ -234,20 +234,20 @@ describe("the knob-usage report (Sprint 71 acceptance)", () => {
       .run();
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createTestDb();
-    db.insert(workspaces)
+    await db.insert(workspaces)
       .values({ id: WORKSPACE_ID, name: "Acme", createdAt: 1, updatedAt: 1 })
       .run();
   });
 
-  it("gives every knob a configured flag, an applied count, and a visible denominator", () => {
-    seedGeneration(resolve({}), 10);
-    seedGeneration(
+  it("gives every knob a configured flag, an applied count, and a visible denominator", async () => {
+    await seedGeneration(resolve({}), 10);
+    await seedGeneration(
       resolve({ channelGuidance: { content: "Short.", source: "workspace" } }),
       20,
     );
-    const report = buildKnobUsageReport(db, WORKSPACE_ID);
+    const report = await buildKnobUsageReport(db, WORKSPACE_ID);
     expect(report.knobs).toHaveLength(9);
     expect(report.sampledResolves).toBe(2);
     const workspaceGuidance = report.knobs.find(
@@ -257,9 +257,9 @@ describe("the knob-usage report (Sprint 71 acceptance)", () => {
     expect(workspaceGuidance.appliedShare).toBe(0.5);
   });
 
-  it("finds the knob nobody uses — the one the follow-up should delete", () => {
-    for (let i = 0; i < 5; i += 1) seedGeneration(resolve({}), 10 + i);
-    db.insert(contextMatrixOverrides)
+  it("finds the knob nobody uses — the one the follow-up should delete", async () => {
+    for (let i = 0; i < 5; i += 1) await seedGeneration(resolve({}), 10 + i);
+    await db.insert(contextMatrixOverrides)
       .values({
         id: randomUUID(),
         workspaceId: WORKSPACE_ID,
@@ -271,7 +271,7 @@ describe("the knob-usage report (Sprint 71 acceptance)", () => {
         updatedAt: 2,
       })
       .run();
-    const matrix = buildKnobUsageReport(db, WORKSPACE_ID).knobs.find(
+    const matrix = (await buildKnobUsageReport(db, WORKSPACE_ID)).knobs.find(
       (k) => k.key === "context_matrix",
     )!;
     // Configured once, applied never, across every resolve on record.
@@ -282,16 +282,16 @@ describe("the knob-usage report (Sprint 71 acceptance)", () => {
     expect(matrix.appliedShare).toBe(0);
   });
 
-  it("samples, and says what it sampled", () => {
-    for (let i = 0; i < 6; i += 1) seedGeneration(resolve({}), 100 + i);
-    const report = buildKnobUsageReport(db, WORKSPACE_ID, { sampleLimit: 3 });
+  it("samples, and says what it sampled", async () => {
+    for (let i = 0; i < 6; i += 1) await seedGeneration(resolve({}), 100 + i);
+    const report = await buildKnobUsageReport(db, WORKSPACE_ID, { sampleLimit: 3 });
     expect(report.sampleLimit).toBe(3);
     expect(report.sampledResolves).toBe(3);
   });
 
-  it("skips a trace it cannot read rather than scoring it as unused", () => {
-    seedGeneration(resolve({}), 10);
-    db.insert(generations)
+  it("skips a trace it cannot read rather than scoring it as unused", async () => {
+    await seedGeneration(resolve({}), 10);
+    await db.insert(generations)
       .values({
         id: randomUUID(),
         workspaceId: WORKSPACE_ID,
@@ -306,14 +306,14 @@ describe("the knob-usage report (Sprint 71 acceptance)", () => {
         createdAt: 20,
       })
       .run();
-    const report = buildKnobUsageReport(db, WORKSPACE_ID);
+    const report = await buildKnobUsageReport(db, WORKSPACE_ID);
     // Counting the unreadable row would silently halve every applied share.
     expect(report.sampledResolves).toBe(1);
     expect(report.knobs.find((k) => k.key === "brain_docs")!.appliedShare).toBe(1);
   });
 
-  it("returns zeroes, not NaN, for a workspace that has generated nothing", () => {
-    const report = buildKnobUsageReport(db, WORKSPACE_ID);
+  it("returns zeroes, not NaN, for a workspace that has generated nothing", async () => {
+    const report = await buildKnobUsageReport(db, WORKSPACE_ID);
     expect(report.sampledResolves).toBe(0);
     for (const entry of report.knobs) expect(entry.appliedShare).toBe(0);
   });

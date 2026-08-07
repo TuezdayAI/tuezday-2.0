@@ -21,7 +21,7 @@ export const listCampaignsTool: Tool<Input, unknown> = {
   input,
   access: "read",
   async run(ctx, { status, limit }) {
-    const all = listCampaigns(ctx.db, ctx.workspaceId);
+    const all = await listCampaigns(ctx.db, ctx.workspaceId);
     const filtered = status ? all.filter((c) => c.status === status) : all;
     if (filtered.length === 0) {
       return {

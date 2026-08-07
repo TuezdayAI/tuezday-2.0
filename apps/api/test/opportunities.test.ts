@@ -114,14 +114,14 @@ describe("opportunity routes (Sprint 61)", () => {
       })
     ).json().id;
     for (const campaignId of [campaignA, campaignB]) {
-      const revision = createPlanRevision(db, workspaceId, campaignId, planInput, {
+      const revision = await createPlanRevision(db, workspaceId, campaignId, planInput, {
         userId: null,
       });
-      upsertLaneRevision(db, workspaceId, campaignId, revision.id, {
+      await upsertLaneRevision(db, workspaceId, campaignId, revision.id, {
         ...laneInput,
         personaId,
       });
-      activatePlanRevision(db, workspaceId, campaignId, revision.id);
+      await activatePlanRevision(db, workspaceId, campaignId, revision.id);
     }
   });
 
@@ -129,9 +129,9 @@ describe("opportunity routes (Sprint 61)", () => {
     await app.close();
   });
 
-  function seedStory(title: string, url: string): string {
-    db.transaction((tx) => {
-      recordOccurrenceAndResolve(tx, {
+  async function seedStory(title: string, url: string): Promise<string> {
+    await db.transaction(async (tx) => {
+      await recordOccurrenceAndResolve(tx, {
         workspaceId,
         source: { id: randomUUID(), type: "rss", name: "Feed" },
         fetchRunId: null,
@@ -145,11 +145,11 @@ describe("opportunity routes (Sprint 61)", () => {
         observedAt: Date.now(),
       });
     });
-    return db
+    return (await db
       .select({ id: canonicalExternalStories.id })
       .from(canonicalExternalStories)
       .where(eq(canonicalExternalStories.title, title))
-      .get()!.id;
+      .get())!.id;
   }
 
   async function runMatch() {
@@ -162,7 +162,7 @@ describe("opportunity routes (Sprint 61)", () => {
   }
 
   it("runs a founder-triggered match and lists campaign-scoped opportunities", async () => {
-    seedStory("Buyers hate generic AI output", "https://ex.com/a");
+    await seedStory("Buyers hate generic AI output", "https://ex.com/a");
     const run = await runMatch();
     expect(run.storiesRouted).toBe(1);
     expect(run.opportunitiesCreated).toBe(2);
@@ -206,7 +206,7 @@ describe("opportunity routes (Sprint 61)", () => {
   });
 
   it("serves detail with the exact profile version and audit events", async () => {
-    seedStory("Detail story about GTM memory", "https://ex.com/detail");
+    await seedStory("Detail story about GTM memory", "https://ex.com/detail");
     await runMatch();
     const list = listOpportunitiesResponseSchema.parse(
       (
@@ -234,7 +234,7 @@ describe("opportunity routes (Sprint 61)", () => {
   });
 
   it("dismissing for one campaign never touches the other (§6.1)", async () => {
-    seedStory("Independence story about GTM memory", "https://ex.com/indep");
+    await seedStory("Independence story about GTM memory", "https://ex.com/indep");
     await runMatch();
     const list = listOpportunitiesResponseSchema.parse(
       (
@@ -267,7 +267,7 @@ describe("opportunity routes (Sprint 61)", () => {
   });
 
   it("enforces the transition machine and decision-input rules", async () => {
-    seedStory("Transition story about GTM memory", "https://ex.com/transitions");
+    await seedStory("Transition story about GTM memory", "https://ex.com/transitions");
     await runMatch();
     const list = listOpportunitiesResponseSchema.parse(
       (
@@ -371,7 +371,7 @@ describe("opportunity routes (Sprint 61)", () => {
   });
 
   it("keeps every surface workspace-guarded", async () => {
-    seedStory("Guarded story about GTM memory", "https://ex.com/guard");
+    await seedStory("Guarded story about GTM memory", "https://ex.com/guard");
     await runMatch();
     const list = listOpportunitiesResponseSchema.parse(
       (

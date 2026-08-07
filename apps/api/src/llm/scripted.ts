@@ -46,7 +46,7 @@ export class ScriptedGateway implements LlmGateway {
   }
 
   async agentStep(params: AgentStepParams): Promise<AgentStepResult> {
-    return this.next(params);
+    return await this.next(params);
   }
 
   async agentStepStream(

@@ -108,9 +108,9 @@ describe("audiences API", () => {
     return res.json();
   }
 
-  function seedConnection(): string {
+  async function seedConnection(): Promise<string> {
     const id = randomUUID();
-    db.insert(connections)
+    await db.insert(connections)
       .values({
         id,
         workspaceId,
@@ -127,9 +127,9 @@ describe("audiences API", () => {
     return id;
   }
 
-  function seedContact(connectionId: string, over: Partial<{ name: string; email: string; company: string; role: string; leadId: string }> = {}): string {
+  async function seedContact(connectionId: string, over: Partial<{ name: string; email: string; company: string; role: string; leadId: string }> = {}): Promise<string> {
     const id = randomUUID();
-    db.insert(crmContacts)
+    await db.insert(crmContacts)
       .values({
         id,
         workspaceId,
@@ -148,7 +148,7 @@ describe("audiences API", () => {
   }
 
   async function createAudience(payload: Record<string, unknown>) {
-    return app.inject({ method: "POST", url: `/workspaces/${workspaceId}/audiences`, payload });
+    return await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/audiences`, payload });
   }
 
   async function getDetail(audienceId: string) {
@@ -233,9 +233,9 @@ describe("audiences API", () => {
     it("returns leads plus unlinked contacts, and represents a linked contact once", async () => {
       const lead = await createLead({ name: "Asha", email: "asha@acme.io" });
       await createLead({ name: "Ben", email: "ben@acme.io" });
-      const conn = seedConnection();
-      seedContact(conn, { name: "Unlinked", email: "u@crm.io" });
-      seedContact(conn, { name: "Linked", email: "asha@acme.io", leadId: lead.id });
+      const conn = await seedConnection();
+      await seedContact(conn, { name: "Unlinked", email: "u@crm.io" });
+      await seedContact(conn, { name: "Linked", email: "asha@acme.io", leadId: lead.id });
 
       const people = (
         await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/people` })
@@ -252,8 +252,8 @@ describe("audiences API", () => {
   describe("static membership", () => {
     it("adds (idempotently), removes, and drops a deleted lead", async () => {
       const lead = await createLead({ name: "Asha", email: "asha@acme.io" });
-      const conn = seedConnection();
-      const contactId = seedContact(conn, { name: "Cara", email: "cara@crm.io" });
+      const conn = await seedConnection();
+      const contactId = await seedContact(conn, { name: "Cara", email: "cara@crm.io" });
       const list = (await createAudience({ name: "Picks", kind: "static" })).json();
 
       const add = await app.inject({
@@ -317,8 +317,8 @@ describe("audiences API", () => {
       await createLead({ name: "Dana", role: "VP Marketing", company: "FintechCo", email: "dana@x.io" });
       await createLead({ name: "Evan", role: "VP Sales", company: "Acme", email: "evan@fintech.io" });
       await createLead({ name: "Frank", role: "Engineer", company: "FintechCo", email: "frank@fintechco.com" });
-      const conn = seedConnection();
-      seedContact(conn, { name: "Gita", role: "VP Product", company: "Healthwise", email: "gita@health.com" });
+      const conn = await seedConnection();
+      await seedContact(conn, { name: "Gita", role: "VP Product", company: "Healthwise", email: "gita@health.com" });
 
       const seg = (await createAudience({ name: "VPs at fintech", kind: "dynamic", rules: VPS_AT_FINTECH })).json();
       const members = (await getDetail(seg.id)).members;

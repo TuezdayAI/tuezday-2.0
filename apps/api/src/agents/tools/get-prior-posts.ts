@@ -23,7 +23,7 @@ export const getPriorPostsTool: Tool<Input, unknown> = {
   input,
   access: "read",
   async run(ctx, { topic, channel, limit }) {
-    const published = listPublications(ctx.db, ctx.workspaceId)
+    const published = (await listPublications(ctx.db, ctx.workspaceId))
       .filter((p) => p.status === "published" && p.draft !== null)
       .filter((p) => !channel || p.draft!.channel === channel);
     if (published.length === 0) {

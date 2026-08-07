@@ -25,16 +25,16 @@ export const listRecentPublicationsTool: Tool<Input, unknown> = {
   async run(ctx, { limit, channel, campaignId }) {
     const draftCampaigns = campaignId
       ? new Set(
-          ctx.db
+          (await ctx.db
             .select({ id: drafts.id })
             .from(drafts)
             .where(and(eq(drafts.workspaceId, ctx.workspaceId), eq(drafts.campaignId, campaignId)))
-            .all()
+            .all())
             .map((row) => row.id),
         )
       : null;
 
-    const published = listPublications(ctx.db, ctx.workspaceId)
+    const published = (await listPublications(ctx.db, ctx.workspaceId))
       .filter((p) => p.status === "published")
       .filter((p) => !channel || p.draft?.channel === channel)
       .filter((p) => !draftCampaigns || (p.draft && draftCampaigns.has(p.draft.id)))

@@ -20,9 +20,9 @@ export const getSequenceFunnelTool: Tool<Input, unknown> = {
   input,
   access: "read",
   async run(ctx, { sequenceId }) {
-    const funnel = getSequenceFunnel(ctx.db, ctx.workspaceId, sequenceId);
+    const funnel = await getSequenceFunnel(ctx.db, ctx.workspaceId, sequenceId);
     if (!funnel) {
-      const available = ctx.db
+      const available = await ctx.db
         .select({ id: outreachSequences.id, name: outreachSequences.name })
         .from(outreachSequences)
         .where(eq(outreachSequences.workspaceId, ctx.workspaceId))

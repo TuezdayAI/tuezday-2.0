@@ -35,11 +35,11 @@ function dualGateway(script: ScriptedStep[]): LlmGateway {
         durationMs: 1,
       };
     },
-    agentStep(params: AgentStepParams): Promise<AgentStepResult> {
+    async agentStep(params: AgentStepParams): Promise<AgentStepResult> {
       if (!params.system?.includes("content pipeline for the workspace")) {
         throw new GatewayError("provider_error", "Only pipeline steps are scripted here.");
       }
-      return scripted.agentStep(params);
+      return await scripted.agentStep(params);
     },
   };
 }
@@ -152,9 +152,9 @@ describe("Sprint 67 — eval routes", () => {
     it("builds a suite, replays it, and reports the comparison", async () => {
       await seedDecidedDraft("Competitor published usage-based pricing.", "approve");
       await seedDecidedDraft("A rival announced a cloud partnership.", "reject");
-      ensurePipelineDefinitions(db, workspaceId);
-      const definition = listPipelineDefinitions(db, workspaceId)[0]!;
-      setPipelineStatus(db, workspaceId, definition.id, "active");
+      await ensurePipelineDefinitions(db, workspaceId);
+      const definition = (await listPipelineDefinitions(db, workspaceId))[0]!;
+      await setPipelineStatus(db, workspaceId, definition.id, "active");
 
       const suiteRes = await app.inject({
         method: "POST",

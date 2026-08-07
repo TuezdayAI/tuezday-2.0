@@ -78,9 +78,9 @@ async function session(app: App, workspaceId: string): Promise<string> {
  * so the scripted gateway's steps stay dedicated to the turn under test — the
  * claim here is about the APPROVE route, which is entered through the app.
  */
-function pendingDraft(workspaceId: string): string {
+async function pendingDraft(workspaceId: string): Promise<string> {
   const id = randomUUID();
-  db.insert(drafts)
+  await db.insert(drafts)
     .values({
       id,
       workspaceId,
@@ -103,7 +103,7 @@ beforeEach(() => {
 describe("cards reach the founder and act (the PRD's acceptance case)", () => {
   it("a turn returns draft cards with the approve action on them", async () => {
     const { app, workspaceId } = await appWith(listDraftsScript);
-    const draftId = pendingDraft(workspaceId);
+    const draftId = await pendingDraft(workspaceId);
     const sessionId = await session(app, workspaceId);
 
     const turn = await app.inject({
@@ -131,7 +131,7 @@ describe("cards reach the founder and act (the PRD's acceptance case)", () => {
 
   it("approving from a card writes the same decision the review page writes", async () => {
     const { app, workspaceId } = await appWith(listDraftsScript);
-    const draftId = pendingDraft(workspaceId);
+    const draftId = await pendingDraft(workspaceId);
 
     // The exact request the card issues (apps/web/lib/chat-card-view.ts).
     const approved = await app.inject({
@@ -157,7 +157,7 @@ describe("the command route", () => {
   it("/approve answers with cards without calling the model at all", async () => {
     // The scripted gateway has NO steps: if a model call happened, this throws.
     const { app, workspaceId } = await appWith([]);
-    pendingDraft(workspaceId);
+    await pendingDraft(workspaceId);
     const sessionId = await session(app, workspaceId);
 
     const res = await app.inject({

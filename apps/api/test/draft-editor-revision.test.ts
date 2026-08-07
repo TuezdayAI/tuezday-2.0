@@ -96,7 +96,7 @@ describe("conversational draft revision API", () => {
     prompts.length = 0;
     draftId = randomUUID();
     updatedAt = Date.now();
-    db.insert(drafts)
+    await db.insert(drafts)
       .values({
         id: draftId,
         workspaceId,
@@ -144,11 +144,11 @@ describe("conversational draft revision API", () => {
     ).json();
   }
 
-  const ledgerEvents = () =>
-    db.select().from(llmUsageEvents).all().filter((e) => e.workspaceId === workspaceId);
+  const ledgerEvents = async () =>
+    (await db.select().from(llmUsageEvents).all()).filter((e) => e.workspaceId === workspaceId);
 
   it("revises with current context and records the canonical edit decision", async () => {
-    const beforeEvents = ledgerEvents().length;
+    const beforeEvents = (await ledgerEvents()).length;
     const response = await revise();
     expect(response.statusCode).toBe(200);
     expect(response.json().draft).toMatchObject({ state: "edited", content: "Sharper copy" });
@@ -165,7 +165,7 @@ describe("conversational draft revision API", () => {
     expect(context.contextSections.length).toBeGreaterThan(0);
     expect(context.contextSections.find((section: { key: string }) => section.key === "evidence"))
       .toMatchObject({ included: false, reason: expect.stringContaining("no evidence") });
-    const events = ledgerEvents();
+    const events = await ledgerEvents();
     expect(events).toHaveLength(beforeEvents + 1);
     expect(events.at(-1)).toMatchObject({ pipeline: "revision", inputTokens: 120, outputTokens: 12 });
     expect(captured.filter((event) => event.event === "review.revision_requested"))
@@ -185,7 +185,7 @@ describe("conversational draft revision API", () => {
 
   it("rejects a duplicate running request without calling the provider", async () => {
     const requestId = randomUUID();
-    createRunningTurn(db, {
+    await createRunningTurn(db, {
       requestId,
       workspaceId,
       draftId,
@@ -201,9 +201,9 @@ describe("conversational draft revision API", () => {
 
   it("does not overwrite a draft changed during the provider call", async () => {
     mode = "deferred";
-    const pending = revise();
+    const pending = await revise();
     await llmEntered.promise;
-    db.update(drafts)
+    await db.update(drafts)
       .set({ content: "Newer manual copy", updatedAt: updatedAt + 1 })
       .where(eq(drafts.id, draftId))
       .run();
@@ -221,7 +221,7 @@ describe("conversational draft revision API", () => {
   });
 
   it.each(["approved", "rejected"] as const)("rejects revisions once the draft is %s", async (state) => {
-    db.update(drafts).set({ state }).where(eq(drafts.id, draftId)).run();
+    await db.update(drafts).set({ state }).where(eq(drafts.id, draftId)).run();
     const response = await revise();
     expect(response.statusCode).toBe(409);
     expect(response.json().error).toBe("invalid_transition");
@@ -229,7 +229,7 @@ describe("conversational draft revision API", () => {
   });
 
   it("records provider failure without changing content or usage", async () => {
-    const beforeEvents = ledgerEvents().length;
+    const beforeEvents = (await ledgerEvents()).length;
     mode = "failure";
     const response = await revise();
     expect(response.statusCode).toBe(502);
@@ -237,7 +237,7 @@ describe("conversational draft revision API", () => {
     const context = await editor();
     expect(context.draft.content).toBe("Original copy");
     expect(context.turns.at(-1)).toMatchObject({ status: "failed", error: "provider down" });
-    expect(ledgerEvents()).toHaveLength(beforeEvents); // a throw never bills
+    expect(await ledgerEvents()).toHaveLength(beforeEvents); // a throw never bills
   });
 
   it("treats an empty provider result as a failed turn", async () => {
@@ -249,7 +249,7 @@ describe("conversational draft revision API", () => {
 
   it("bounds conversational history to the six newest completed turns", async () => {
     for (let index = 1; index <= 7; index += 1) {
-      const turn = createRunningTurn(db, {
+      const turn = await createRunningTurn(db, {
         requestId: randomUUID(),
         workspaceId,
         draftId,
@@ -257,7 +257,7 @@ describe("conversational draft revision API", () => {
         instruction: `Historical instruction ${index}`,
         sourceContent: "Original copy",
       });
-      completeTurn(db, workspaceId, turn.id, {
+      await completeTurn(db, workspaceId, turn.id, {
         resultContent: `Historical result ${index}`,
         contextSections: [],
         model: "history-model",
@@ -284,7 +284,7 @@ describe("conversational draft revision API", () => {
       url: `/workspaces/${workspaceId}/guidance/linkedin`,
       payload: { content: "Lead with the customer proof point.", campaignId: campaign.id },
     });
-    db.update(drafts).set({ campaignId: campaign.id }).where(eq(drafts.id, draftId)).run();
+    await db.update(drafts).set({ campaignId: campaign.id }).where(eq(drafts.id, draftId)).run();
     expect((await revise()).statusCode).toBe(200);
     expect(prompts[0]).toContain("Lead with the customer proof point.");
   });
@@ -292,7 +292,7 @@ describe("conversational draft revision API", () => {
   it("returns 402 before calling the provider when the LLM budget is exhausted", async () => {
     const previous = process.env.TEST_BILLING_GATING;
     process.env.TEST_BILLING_GATING = "1";
-    recordLlmUsage(db, {
+    await recordLlmUsage(db, {
       workspaceId,
       pipeline: "generation",
       model: "unknown-model",

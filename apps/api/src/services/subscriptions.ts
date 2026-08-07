@@ -3,20 +3,20 @@ import type { Db } from "../db";
 import { subscriptions, type SubscriptionRow } from "../db/schema";
 import { randomUUID } from "node:crypto";
 
-export function getSubscription(db: Db, workspaceId: string): SubscriptionRow | undefined {
-  return db.select().from(subscriptions).where(eq(subscriptions.workspaceId, workspaceId)).get();
+export async function getSubscription(db: Db, workspaceId: string): Promise<SubscriptionRow | undefined> {
+  return await db.select().from(subscriptions).where(eq(subscriptions.workspaceId, workspaceId)).get();
 }
 
-export function upsertFromStripe(
+export async function upsertFromStripe(
   db: Db,
   workspaceId: string,
   data: { plan: string; status: string; stripeCustomerId?: string; stripeSubscriptionId?: string; currentPeriodEnd?: number }
-): SubscriptionRow {
-  const existing = getSubscription(db, workspaceId);
+): Promise<SubscriptionRow> {
+  const existing = await getSubscription(db, workspaceId);
   const now = Date.now();
 
   if (existing) {
-    return db
+    return await db
       .update(subscriptions)
       .set({
         plan: data.plan,
@@ -31,7 +31,7 @@ export function upsertFromStripe(
       .get();
   }
 
-  return db
+  return await db
     .insert(subscriptions)
     .values({
       id: randomUUID(),

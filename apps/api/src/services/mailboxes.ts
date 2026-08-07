@@ -65,14 +65,14 @@ function utcDayStart(nowMs: number): number {
 }
 
 /** Accepted gmail sends from this mailbox since UTC midnight — the per-mailbox cap basis. */
-export function mailboxDailySendCount(
+export async function mailboxDailySendCount(
   db: Db,
   workspaceId: string,
   mailboxId: string,
   nowMs: number = Date.now(),
-): number {
+): Promise<number> {
   return Number(
-    db
+    (await db
       .select({ count: sql<number>`count(*)` })
       .from(emailDeliveries)
       .where(
@@ -84,52 +84,52 @@ export function mailboxDailySendCount(
           gte(emailDeliveries.acceptedAt, utcDayStart(nowMs)),
         ),
       )
-      .get()?.count ?? 0,
+      .get())?.count ?? 0,
   );
 }
 
-function withUsage(db: Db, mailbox: Mailbox): MailboxWithUsage {
+async function withUsage(db: Db, mailbox: Mailbox): Promise<MailboxWithUsage> {
   return {
     ...mailbox,
-    sentToday: mailboxDailySendCount(db, mailbox.workspaceId, mailbox.id),
+    sentToday: await mailboxDailySendCount(db, mailbox.workspaceId, mailbox.id),
   };
 }
 
-export function getMailboxRow(
+export async function getMailboxRow(
   db: Db,
   workspaceId: string,
   mailboxId: string,
-): MailboxRow | undefined {
-  return db
+): Promise<MailboxRow | undefined> {
+  return await db
     .select()
     .from(mailboxes)
     .where(and(eq(mailboxes.workspaceId, workspaceId), eq(mailboxes.id, mailboxId)))
     .get();
 }
 
-export function getMailbox(db: Db, workspaceId: string, mailboxId: string): Mailbox | undefined {
-  const row = getMailboxRow(db, workspaceId, mailboxId);
+export async function getMailbox(db: Db, workspaceId: string, mailboxId: string): Promise<Mailbox | undefined> {
+  const row = await getMailboxRow(db, workspaceId, mailboxId);
   return row ? rowToMailbox(row) : undefined;
 }
 
-export function listMailboxes(db: Db, workspaceId: string): MailboxWithUsage[] {
-  return db
-    .select()
-    .from(mailboxes)
-    .where(eq(mailboxes.workspaceId, workspaceId))
-    .orderBy(mailboxes.createdAt)
-    .all()
-    .map((row) => withUsage(db, rowToMailbox(row)));
+export async function listMailboxes(db: Db, workspaceId: string): Promise<MailboxWithUsage[]> {
+  return await Promise.all((await await db
+      .select()
+      .from(mailboxes)
+      .where(eq(mailboxes.workspaceId, workspaceId))
+      .orderBy(mailboxes.createdAt)
+      .all())
+      .map(async (row) => await withUsage(db, rowToMailbox(row))));
 }
 
 /** Connected mailboxes only — what the poller and send guard operate on. */
-export function listConnectedMailboxes(db: Db, workspaceId: string): Mailbox[] {
-  return db
+export async function listConnectedMailboxes(db: Db, workspaceId: string): Promise<Mailbox[]> {
+  return (await db
     .select()
     .from(mailboxes)
     .where(and(eq(mailboxes.workspaceId, workspaceId), eq(mailboxes.status, "connected")))
     .orderBy(mailboxes.createdAt)
-    .all()
+    .all())
     .map(rowToMailbox);
 }
 
@@ -144,7 +144,7 @@ export async function createMailbox(
   workspaceId: string,
   input: { connectionId: string },
 ): Promise<MailboxWithUsage> {
-  const connection = getConnection(db, workspaceId, input.connectionId);
+  const connection = await getConnection(db, workspaceId, input.connectionId);
   if (!connection) {
     throw new MailboxError("connection_not_found", "Connection not found.", 404);
   }
@@ -176,13 +176,13 @@ export async function createMailbox(
   }
 
   const now = Date.now();
-  const existing = db
+  const existing = await db
     .select()
     .from(mailboxes)
     .where(and(eq(mailboxes.workspaceId, workspaceId), eq(mailboxes.address, address)))
     .get();
   if (existing) {
-    db.update(mailboxes)
+    await db.update(mailboxes)
       .set({
         connectionId: connection.id,
         status: "connected",
@@ -191,11 +191,11 @@ export async function createMailbox(
       })
       .where(eq(mailboxes.id, existing.id))
       .run();
-    return withUsage(db, getMailbox(db, workspaceId, existing.id)!);
+    return await withUsage(db, (await getMailbox(db, workspaceId, existing.id))!);
   }
 
   const id = randomUUID();
-  db.insert(mailboxes)
+  await db.insert(mailboxes)
     .values({
       id,
       workspaceId,
@@ -215,18 +215,18 @@ export async function createMailbox(
       updatedAt: now,
     })
     .run();
-  return withUsage(db, getMailbox(db, workspaceId, id)!);
+  return await withUsage(db, (await getMailbox(db, workspaceId, id))!);
 }
 
-export function updateMailbox(
+export async function updateMailbox(
   db: Db,
   workspaceId: string,
   mailboxId: string,
   input: UpdateMailboxInput,
-): MailboxWithUsage | undefined {
-  const existing = getMailboxRow(db, workspaceId, mailboxId);
+): Promise<MailboxWithUsage | undefined> {
+  const existing = await getMailboxRow(db, workspaceId, mailboxId);
   if (!existing) return undefined;
-  db.update(mailboxes)
+  await db.update(mailboxes)
     .set({
       ...(input.displayName !== undefined ? { displayName: input.displayName } : {}),
       ...(input.replyTo !== undefined ? { replyTo: input.replyTo } : {}),
@@ -240,14 +240,14 @@ export function updateMailbox(
     })
     .where(and(eq(mailboxes.workspaceId, workspaceId), eq(mailboxes.id, mailboxId)))
     .run();
-  return withUsage(db, getMailbox(db, workspaceId, mailboxId)!);
+  return await withUsage(db, (await getMailbox(db, workspaceId, mailboxId))!);
 }
 
 /** Soft delete: the mailbox stops sending/polling but its send history stays attributable. */
-export function deleteMailbox(db: Db, workspaceId: string, mailboxId: string): boolean {
-  const existing = getMailboxRow(db, workspaceId, mailboxId);
+export async function deleteMailbox(db: Db, workspaceId: string, mailboxId: string): Promise<boolean> {
+  const existing = await getMailboxRow(db, workspaceId, mailboxId);
   if (!existing) return false;
-  db.update(mailboxes)
+  await db.update(mailboxes)
     .set({ status: "disconnected", updatedAt: Date.now() })
     .where(and(eq(mailboxes.workspaceId, workspaceId), eq(mailboxes.id, mailboxId)))
     .run();

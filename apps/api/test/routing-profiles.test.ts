@@ -85,36 +85,36 @@ describe("campaign routing profiles (Sprint 61)", () => {
     await app.close();
   });
 
-  function activatePlan(overrides: Partial<typeof planInput> = {}) {
-    const revision = createPlanRevision(
+  async function activatePlan(overrides: Partial<typeof planInput> = {}) {
+    const revision = await createPlanRevision(
       db,
       workspaceId,
       campaignId,
       { ...planInput, ...overrides },
       { userId: null },
     );
-    upsertLaneRevision(db, workspaceId, campaignId, revision.id, {
+    await upsertLaneRevision(db, workspaceId, campaignId, revision.id, {
       ...laneInput,
       personaId,
     });
-    activatePlanRevision(db, workspaceId, campaignId, revision.id);
+    await activatePlanRevision(db, workspaceId, campaignId, revision.id);
     return revision;
   }
 
-  it("returns undefined before a plan revision is active", () => {
-    expect(compileRoutingProfile(db, workspaceId, campaignId)).toBeUndefined();
-    expect(currentRoutingProfiles(db, workspaceId)).toEqual([]);
+  it("returns undefined before a plan revision is active", async () => {
+    expect(await compileRoutingProfile(db, workspaceId, campaignId)).toBeUndefined();
+    expect(await currentRoutingProfiles(db, workspaceId)).toEqual([]);
   });
 
-  it("compiles deterministically: unchanged inputs produce no new row", () => {
-    activatePlan();
-    const first = compileRoutingProfile(db, workspaceId, campaignId)!;
-    const second = compileRoutingProfile(db, workspaceId, campaignId)!;
+  it("compiles deterministically: unchanged inputs produce no new row", async () => {
+    await activatePlan();
+    const first = (await compileRoutingProfile(db, workspaceId, campaignId))!;
+    const second = (await compileRoutingProfile(db, workspaceId, campaignId))!;
     expect(first.profileVersion).toBe(1);
     expect(second.id).toBe(first.id);
     expect(second.profileFingerprint).toBe(first.profileFingerprint);
     expect(
-      db.select().from(campaignRoutingProfiles).where(eq(campaignRoutingProfiles.campaignId, campaignId)).all(),
+      await db.select().from(campaignRoutingProfiles).where(eq(campaignRoutingProfiles.campaignId, campaignId)).all(),
     ).toHaveLength(1);
     // The compiled projection reflects plan + active lanes + policy defaults.
     expect(first.payload.pillars).toEqual(["GTM memory"]);
@@ -125,24 +125,24 @@ describe("campaign routing profiles (Sprint 61)", () => {
     expect(first.minFit).toBe(70);
   });
 
-  it("versions on plan-revision change with the fingerprint tracking inputs", () => {
-    activatePlan();
-    const first = compileRoutingProfile(db, workspaceId, campaignId)!;
-    activatePlan({ pillars: ["GTM memory", "Proof"] });
-    const second = compileRoutingProfile(db, workspaceId, campaignId)!;
+  it("versions on plan-revision change with the fingerprint tracking inputs", async () => {
+    await activatePlan();
+    const first = (await compileRoutingProfile(db, workspaceId, campaignId))!;
+    await activatePlan({ pillars: ["GTM memory", "Proof"] });
+    const second = (await compileRoutingProfile(db, workspaceId, campaignId))!;
     expect(second.profileVersion).toBe(2);
     expect(second.profileFingerprint).not.toBe(first.profileFingerprint);
     expect(second.planRevisionId).not.toBe(first.planRevisionId);
     // Both rows survive — profiles are append-only derived data.
     expect(
-      db.select().from(campaignRoutingProfiles).where(eq(campaignRoutingProfiles.campaignId, campaignId)).all(),
+      await db.select().from(campaignRoutingProfiles).where(eq(campaignRoutingProfiles.campaignId, campaignId)).all(),
     ).toHaveLength(2);
   });
 
-  it("recompiles when routing policy changes and snapshots the new policy", () => {
-    activatePlan();
-    const first = compileRoutingProfile(db, workspaceId, campaignId)!;
-    const { profile } = updateRoutingPolicy(db, workspaceId, campaignId, {
+  it("recompiles when routing policy changes and snapshots the new policy", async () => {
+    await activatePlan();
+    const first = (await compileRoutingProfile(db, workspaceId, campaignId))!;
+    const { profile } = await updateRoutingPolicy(db, workspaceId, campaignId, {
       band: "auto_package",
       minFit: 80,
       exclusions: ["crypto"],
@@ -151,19 +151,19 @@ describe("campaign routing profiles (Sprint 61)", () => {
     expect(profile!.routingBand).toBe("auto_package");
     expect(profile!.minFit).toBe(80);
     expect(profile!.payload.exclusions).toEqual(["crypto"]);
-    const campaign = db
+    const campaign = (await db
       .select()
       .from(campaigns)
       .where(eq(campaigns.id, campaignId))
-      .get()!;
+      .get())!;
     expect(campaign.routingBand).toBe("auto_package");
     expect(campaign.routingMinFit).toBe(80);
   });
 
-  it("excludes band-off campaigns from the routing set", () => {
-    activatePlan();
-    expect(currentRoutingProfiles(db, workspaceId)).toHaveLength(1);
-    updateRoutingPolicy(db, workspaceId, campaignId, { band: "off" });
-    expect(currentRoutingProfiles(db, workspaceId)).toEqual([]);
+  it("excludes band-off campaigns from the routing set", async () => {
+    await activatePlan();
+    expect(await currentRoutingProfiles(db, workspaceId)).toHaveLength(1);
+    await updateRoutingPolicy(db, workspaceId, campaignId, { band: "off" });
+    expect(await currentRoutingProfiles(db, workspaceId)).toEqual([]);
   });
 });

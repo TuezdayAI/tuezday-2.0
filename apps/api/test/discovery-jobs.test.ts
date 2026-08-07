@@ -68,12 +68,12 @@ describe("discovery job ledger (Sprint 46)", () => {
     return res.json() as { id: string };
   }
 
-  function sources() {
-    return listDiscoverySources(db, workspaceId);
+  async function sources() {
+    return await listDiscoverySources(db, workspaceId);
   }
 
-  function jobRows() {
-    return db
+  async function jobRows() {
+    return await db
       .select()
       .from(discoveryJobs)
       .where(eq(discoveryJobs.workspaceId, workspaceId))
@@ -84,13 +84,13 @@ describe("discovery job ledger (Sprint 46)", () => {
     const now = Date.now();
     await addRssSource(1);
     await addRssSource(2);
-    const sourceSnapshot = sources();
+    const sourceSnapshot = await sources();
     const selectSpy = vi.spyOn(db, "select");
-    expect(enqueueDueDiscoveryJobs(db, workspaceId, sourceSnapshot, now)).toBe(2);
+    expect(await enqueueDueDiscoveryJobs(db, workspaceId, sourceSnapshot, now)).toBe(2);
     expect(selectSpy).not.toHaveBeenCalled();
     // second enqueue is a no-op while the jobs are still queued
-    expect(enqueueDueDiscoveryJobs(db, workspaceId, sourceSnapshot, now + 1)).toBe(0);
-    const rows = jobRows();
+    expect(await enqueueDueDiscoveryJobs(db, workspaceId, sourceSnapshot, now + 1)).toBe(0);
+    const rows = await jobRows();
     expect(rows).toHaveLength(2);
     for (const row of rows) {
       expect(discoveryJobSchema.safeParse(row).success).toBe(true);
@@ -105,7 +105,7 @@ describe("discovery job ledger (Sprint 46)", () => {
     const dbA = createDb(databaseFile);
     const dbB = createDb(databaseFile);
     try {
-      dbA.insert(workspaces)
+      await dbA.insert(workspaces)
         .values({
           id: "workspace-shared",
           name: "Shared",
@@ -113,7 +113,7 @@ describe("discovery job ledger (Sprint 46)", () => {
           updatedAt: 1,
         })
         .run();
-      dbA.insert(discoverySources)
+      await dbA.insert(discoverySources)
         .values({
           id: "source-shared",
           workspaceId: "workspace-shared",
@@ -134,10 +134,10 @@ describe("discovery job ledger (Sprint 46)", () => {
           createdAt: 1,
         })
         .run();
-      const [source] = listDiscoverySources(dbA, "workspace-shared");
+      const [source] = await listDiscoverySources(dbA, "workspace-shared");
 
       const attempts = await Promise.allSettled([
-        Promise.resolve().then(() =>
+        Promise.resolve().then(async () =>
           enqueueDueDiscoveryJobs(
             dbA,
             "workspace-shared",
@@ -145,7 +145,7 @@ describe("discovery job ledger (Sprint 46)", () => {
             10,
           ),
         ),
-        Promise.resolve().then(() =>
+        Promise.resolve().then(async () =>
           enqueueDueDiscoveryJobs(
             dbB,
             "workspace-shared",
@@ -161,7 +161,7 @@ describe("discovery job ledger (Sprint 46)", () => {
         ),
       ).toEqual(expect.arrayContaining([0, 1]));
       expect(
-        dbA
+        await dbA
           .select()
           .from(discoveryJobs)
           .where(eq(discoveryJobs.sourceId, "source-shared"))
@@ -169,14 +169,14 @@ describe("discovery job ledger (Sprint 46)", () => {
       ).toHaveLength(1);
 
       const claims = await Promise.allSettled([
-        Promise.resolve().then(() =>
+        Promise.resolve().then(async () =>
           claimNextDiscoveryJob(dbA, {
             workspaceId: "workspace-shared",
             owner: "api-a:shared-claim",
             leaseMs: 45_000,
           }),
         ),
-        Promise.resolve().then(() =>
+        Promise.resolve().then(async () =>
           claimNextDiscoveryJob(dbB, {
             workspaceId: "workspace-shared",
             owner: "api-b:shared-claim",
@@ -189,18 +189,18 @@ describe("discovery job ledger (Sprint 46)", () => {
           (
             attempt,
           ): attempt is PromiseFulfilledResult<
-            ReturnType<typeof claimNextDiscoveryJob>
+            Awaited<ReturnType<typeof claimNextDiscoveryJob>>
           > => attempt.status === "fulfilled",
         )
         .map((attempt) => attempt.value)
         .filter((claim) => claim !== null);
       expect(claimedRows).toHaveLength(1);
       expect(
-        dbA
+        (await dbA
           .select()
           .from(discoveryJobs)
           .where(eq(discoveryJobs.sourceId, "source-shared"))
-          .get()!.leaseOwner,
+          .get())!.leaseOwner,
       ).toBe(claimedRows[0]!.leaseOwner);
     } finally {
       (dbA as Db & { $client: { close(): void } }).$client.close();
@@ -212,14 +212,14 @@ describe("discovery job ledger (Sprint 46)", () => {
   it("skips a source in backoff until it is due", async () => {
     const source = await addRssSource(1);
     const now = Date.now();
-    db.update(discoverySources)
+    await db.update(discoverySources)
       .set({ backoffUntil: now + 60_000 })
       .where(eq(discoverySources.id, source.id))
       .run();
-    expect(enqueueDueDiscoveryJobs(db, workspaceId, sources(), now)).toBe(0);
-    expect(jobRows()).toHaveLength(0);
+    expect(await enqueueDueDiscoveryJobs(db, workspaceId, await sources(), now)).toBe(0);
+    expect(await jobRows()).toHaveLength(0);
     // past the backoff the source is due again
-    expect(enqueueDueDiscoveryJobs(db, workspaceId, sources(), now + 60_001)).toBe(1);
+    expect(await enqueueDueDiscoveryJobs(db, workspaceId, await sources(), now + 60_001)).toBe(1);
   });
 
   it("claims one oldest job at a time and leaves later jobs queued", async () => {
@@ -228,22 +228,22 @@ describe("discovery job ledger (Sprint 46)", () => {
     for (let n = 2; n <= DISCOVERY_JOB_BATCH_SIZE + 2; n += 1) rest.push(await addRssSource(n));
     const base = Date.now();
     // the first source was enqueued on an earlier run
-    enqueueDueDiscoveryJobs(db, workspaceId, sources().filter((s) => s.id === first.id), base - 1000);
-    enqueueDueDiscoveryJobs(db, workspaceId, sources(), base);
-    expect(jobRows()).toHaveLength(DISCOVERY_JOB_BATCH_SIZE + 2);
+    await enqueueDueDiscoveryJobs(db, workspaceId, (await sources()).filter((s) => s.id === first.id), base - 1000);
+    await enqueueDueDiscoveryJobs(db, workspaceId, await sources(), base);
+    expect(await jobRows()).toHaveLength(DISCOVERY_JOB_BATCH_SIZE + 2);
 
-    const claimed = claimNextDiscoveryJob(db, {
+    const claimed = (await claimNextDiscoveryJob(db, {
       workspaceId,
       owner: "api-a:job-1",
       leaseMs: 45_000,
-    })!;
+    }))!;
     expect(claimed.sourceId).toBe(first.id);
     expect(claimed.status).toBe("running");
     expect(claimed.attempt).toBe(1);
     expect(claimed.leaseVersion).toBe(1);
     expect(claimed.leaseOwner).toBe("api-a:job-1");
     expect(claimed.leaseExpiresAt).toBeGreaterThan(claimed.lockedAt!);
-    expect(jobRows().filter((row) => row.status === "queued")).toHaveLength(
+    expect((await jobRows()).filter((row) => row.status === "queued")).toHaveLength(
       DISCOVERY_JOB_BATCH_SIZE + 1,
     );
   });
@@ -251,23 +251,23 @@ describe("discovery job ledger (Sprint 46)", () => {
   it("rejects a live overlap and reclaims only after database-clock expiry", async () => {
     await addRssSource(1);
     const t0 = Date.now();
-    enqueueDueDiscoveryJobs(db, workspaceId, sources(), t0);
-    const first = claimNextDiscoveryJob(db, {
+    await enqueueDueDiscoveryJobs(db, workspaceId, await sources(), t0);
+    const first = (await claimNextDiscoveryJob(db, {
       workspaceId,
       owner: "api-a:job-1",
       leaseMs: 45_000,
-    })!;
+    }))!;
 
     expect(
-      claimNextDiscoveryJob(db, {
+      await claimNextDiscoveryJob(db, {
         workspaceId,
         owner: "api-b:job-2",
         leaseMs: 45_000,
       }),
     ).toBeNull();
-    expect(enqueueDueDiscoveryJobs(db, workspaceId, sources(), t0 + 1)).toBe(0);
+    expect(await enqueueDueDiscoveryJobs(db, workspaceId, await sources(), t0 + 1)).toBe(0);
 
-    db.update(discoveryJobs)
+    await db.update(discoveryJobs)
       .set({
         leaseExpiresAt: sql`
           CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) - 1
@@ -276,26 +276,26 @@ describe("discovery job ledger (Sprint 46)", () => {
       .where(eq(discoveryJobs.id, first.id))
       .run();
 
-    const reclaimed = claimNextDiscoveryJob(db, {
+    const reclaimed = (await claimNextDiscoveryJob(db, {
       workspaceId,
       owner: "api-b:job-2",
       leaseMs: 45_000,
-    })!;
+    }))!;
     expect(reclaimed.id).toBe(first.id);
     expect(reclaimed.leaseOwner).toBe("api-b:job-2");
     expect(reclaimed.leaseVersion).toBe(first.leaseVersion + 1);
     expect(reclaimed.attempt).toBe(2);
-    expect(jobRows()).toHaveLength(1);
+    expect(await jobRows()).toHaveLength(1);
   });
 
   it("increments source execution version and cancels old jobs atomically", async () => {
     const source = await addRssSource(1);
-    enqueueDueDiscoveryJobs(db, workspaceId, sources(), Date.now());
-    const claim = claimNextDiscoveryJob(db, {
+    await enqueueDueDiscoveryJobs(db, workspaceId, await sources(), Date.now());
+    const claim = (await claimNextDiscoveryJob(db, {
       workspaceId,
       owner: "api-a:old-source-version",
       leaseMs: 45_000,
-    })!;
+    }))!;
     expect(claim.sourceExecutionVersion).toBe(1);
 
     const response = await app.inject({
@@ -307,35 +307,35 @@ describe("discovery job ledger (Sprint 46)", () => {
     });
     expect(response.statusCode).toBe(200);
 
-    const updatedSource = db
+    const updatedSource = (await db
       .select()
       .from(discoverySources)
       .where(eq(discoverySources.id, source.id))
-      .get()!;
+      .get())!;
     expect(updatedSource.executionVersion).toBe(2);
 
-    const cancelled = db
+    const cancelled = (await db
       .select()
       .from(discoveryJobs)
       .where(eq(discoveryJobs.id, claim.id))
-      .get()!;
+      .get())!;
     expect(cancelled.status).toBe("skipped");
     expect(cancelled.error).toBe("source_version_changed");
     expect(cancelled.finishedAt).not.toBeNull();
     expect(cancelled.leaseOwner).toBeNull();
     expect(
-      completeDiscoveryJob(db, claim, { fetchedCount: 1, newCount: 1 }),
+      await completeDiscoveryJob(db, claim, { fetchedCount: 1, newCount: 1 }),
     ).toBe(false);
   });
 
   it("does not cancel work or bump execution version for a name-only edit", async () => {
     const source = await addRssSource(1);
-    enqueueDueDiscoveryJobs(db, workspaceId, sources(), Date.now());
-    const claim = claimNextDiscoveryJob(db, {
+    await enqueueDueDiscoveryJobs(db, workspaceId, await sources(), Date.now());
+    const claim = (await claimNextDiscoveryJob(db, {
       workspaceId,
       owner: "api-a:same-source-version",
       leaseMs: 45_000,
-    })!;
+    }))!;
 
     const response = await app.inject({
       method: "PATCH",
@@ -344,18 +344,18 @@ describe("discovery job ledger (Sprint 46)", () => {
     });
     expect(response.statusCode).toBe(200);
 
-    const updatedSource = db
+    const updatedSource = (await db
       .select()
       .from(discoverySources)
       .where(eq(discoverySources.id, source.id))
-      .get()!;
+      .get())!;
     expect(updatedSource.executionVersion).toBe(1);
     expect(
-      db
+      (await db
         .select()
         .from(discoveryJobs)
         .where(eq(discoveryJobs.id, claim.id))
-        .get()!.status,
+        .get())!.status,
     ).toBe("running");
   });
 
@@ -382,8 +382,8 @@ describe("discovery job ledger (Sprint 46)", () => {
       expect(first.queued).toBe(total);
       expect(first.processed).toBe(DISCOVERY_JOB_BATCH_SIZE);
       expect(first.sources).toHaveLength(DISCOVERY_JOB_BATCH_SIZE);
-      expect(jobRows().filter((r) => r.status === "queued")).toHaveLength(2);
-      expect(jobRows().filter((r) => r.status === "succeeded")).toHaveLength(
+      expect((await jobRows()).filter((r) => r.status === "queued")).toHaveLength(2);
+      expect((await jobRows()).filter((r) => r.status === "succeeded")).toHaveLength(
         DISCOVERY_JOB_BATCH_SIZE,
       );
 
@@ -393,12 +393,12 @@ describe("discovery job ledger (Sprint 46)", () => {
       expect(second.queued).toBe(DISCOVERY_JOB_BATCH_SIZE);
       expect(second.processed).toBe(DISCOVERY_JOB_BATCH_SIZE);
       const succeededSources = new Set(
-        jobRows()
+        (await jobRows())
           .filter((r) => r.status === "succeeded")
           .map((r) => r.sourceId),
       );
       expect(succeededSources.size).toBe(total); // every source ran at least once
-      expect(jobRows().filter((r) => r.status === "queued")).toHaveLength(2);
+      expect((await jobRows()).filter((r) => r.status === "queued")).toHaveLength(2);
     });
 
     it("marks the job failed when a keyless fetch fails, without failing the run", async () => {
@@ -419,15 +419,15 @@ describe("discovery job ledger (Sprint 46)", () => {
         `upstream_status: ${safeFetchPublicMessage("upstream_status")}`,
       );
 
-      const failedJob = jobRows().find((r) => r.sourceId === bad.id)!;
+      const failedJob = (await jobRows()).find((r) => r.sourceId === bad.id)!;
       expect(failedJob.status).toBe("failed");
       expect(failedJob.error).toBe(
         `upstream_status: ${safeFetchPublicMessage("upstream_status")}`,
       );
-      const okJob = jobRows().find((r) => r.sourceId !== bad.id)!;
+      const okJob = (await jobRows()).find((r) => r.sourceId !== bad.id)!;
       expect(okJob.status).toBe("succeeded");
 
-      const badSource = sources().find((s) => s.id === bad.id)!;
+      const badSource = (await sources()).find((s) => s.id === bad.id)!;
       expect(badSource.status).toBe("error");
       expect(badSource.lastAttemptedAt).not.toBeNull();
     });
@@ -437,44 +437,44 @@ describe("discovery job ledger (Sprint 46)", () => {
     await addRssSource(1);
     await addRssSource(2);
     const t0 = Date.now();
-    enqueueDueDiscoveryJobs(db, workspaceId, sources(), t0);
-    const a = claimNextDiscoveryJob(db, {
+    await enqueueDueDiscoveryJobs(db, workspaceId, await sources(), t0);
+    const a = (await claimNextDiscoveryJob(db, {
       workspaceId,
       owner: "api-a:job-a",
       leaseMs: 45_000,
-    })!;
-    const b = claimNextDiscoveryJob(db, {
+    }))!;
+    const b = (await claimNextDiscoveryJob(db, {
       workspaceId,
       owner: "api-a:job-b",
       leaseMs: 45_000,
-    })!;
+    }))!;
 
-    expect(heartbeatDiscoveryJob(db, a, 45_000)).toMatchObject({
+    expect(await heartbeatDiscoveryJob(db, a, 45_000)).toMatchObject({
       id: a.id,
       leaseOwner: a.leaseOwner,
       leaseVersion: a.leaseVersion,
     });
     expect(
-      completeDiscoveryJob(
+      await completeDiscoveryJob(
         db,
         { ...a, leaseOwner: "stale-owner" },
         { fetchedCount: 10, newCount: 4 },
       ),
     ).toBe(false);
     expect(
-      completeDiscoveryJob(db, a, { fetchedCount: 10, newCount: 4 }),
+      await completeDiscoveryJob(db, a, { fetchedCount: 10, newCount: 4 }),
     ).toBe(true);
-    expect(failDiscoveryJob(db, a, "late stale failure")).toBe(false);
-    expect(failDiscoveryJob(db, b, "x".repeat(600))).toBe(true);
+    expect(await failDiscoveryJob(db, a, "late stale failure")).toBe(false);
+    expect(await failDiscoveryJob(db, b, "x".repeat(600))).toBe(true);
 
-    const done = db.select().from(discoveryJobs).where(eq(discoveryJobs.id, a.id)).get()!;
+    const done = (await db.select().from(discoveryJobs).where(eq(discoveryJobs.id, a.id)).get())!;
     expect(done.status).toBe("succeeded");
     expect(done.fetchedCount).toBe(10);
     expect(done.newCount).toBe(4);
     expect(done.finishedAt).not.toBeNull();
     expect(done.error).toBeNull();
 
-    const failed = db.select().from(discoveryJobs).where(eq(discoveryJobs.id, b.id)).get()!;
+    const failed = (await db.select().from(discoveryJobs).where(eq(discoveryJobs.id, b.id)).get())!;
     expect(failed.status).toBe("failed");
     expect(failed.error).toHaveLength(500);
     expect(failed.finishedAt).not.toBeNull();

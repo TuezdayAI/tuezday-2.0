@@ -97,7 +97,7 @@ describe("external-action publication boundary", () => {
     connectionId = randomUUID();
     draftId = randomUUID();
     const now = Date.now();
-    db.insert(connections)
+    await db.insert(connections)
       .values({
         id: connectionId,
         workspaceId,
@@ -108,7 +108,7 @@ describe("external-action publication boundary", () => {
         updatedAt: now,
       })
       .run();
-    db.insert(drafts)
+    await db.insert(drafts)
       .values({
         id: draftId,
         workspaceId,
@@ -148,9 +148,9 @@ describe("external-action publication boundary", () => {
     const submission = externalActionSubmissionSchema.parse(queued.json());
     expect(submission.action.status).toBe("authorization_required");
     expect(posts).toHaveLength(0);
-    expect(db.select().from(publications).all()).toEqual([]);
+    expect(await db.select().from(publications).all()).toEqual([]);
 
-    const prepared = preparePublicationAction(
+    const prepared = await preparePublicationAction(
       db,
       workspaceId,
       draftId,
@@ -166,7 +166,7 @@ describe("external-action publication boundary", () => {
       db,
       publicationFabric(posts, fail),
       fetch,
-    ).revalidate(submission.action, getExternalActionPayload(db, submission.action.id));
+    ).revalidate(submission.action, await getExternalActionPayload(db, submission.action.id));
     expect(revalidated).toEqual({
       subject: prepared.subject,
       context: prepared.context,
@@ -174,7 +174,7 @@ describe("external-action publication boundary", () => {
       requestedFor: prepared.requestedFor,
       links: prepared.links,
     });
-    const currentPolicy = resolveExternalActionPolicy(db, {
+    const currentPolicy = await resolveExternalActionPolicy(db, {
       workspaceId,
       actionKind: "publish",
       campaignId: null,
@@ -186,7 +186,7 @@ describe("external-action publication boundary", () => {
     expect(revalidated).toEqual({
       subject: submission.action.subject,
       context: submission.action.context,
-      payload: getExternalActionPayload(db, submission.action.id),
+      payload: await getExternalActionPayload(db, submission.action.id),
       requestedFor: submission.action.requestedFor,
       links: { draftId },
     });
@@ -214,7 +214,7 @@ describe("external-action publication boundary", () => {
     expect(authorized.statusCode).toBe(200);
     expect(authorized.json().action.status).toBe("succeeded");
     expect(posts).toHaveLength(1);
-    expect(db.select().from(publications).all()[0]?.externalActionId).toBe(submission.action.id);
+    expect((await db.select().from(publications).all())[0]?.externalActionId).toBe(submission.action.id);
 
     const twice = await app.inject({
       method: "POST",
@@ -241,7 +241,7 @@ describe("external-action publication boundary", () => {
     });
     expect(denied.statusCode).toBe(200);
     expect(denied.json().action.status).toBe("cancelled");
-    expect(db.select().from(publications).all()).toEqual([]);
+    expect(await db.select().from(publications).all()).toEqual([]);
   });
 
   it("dispatches autonomous policy exactly once with a linked receipt", async () => {
@@ -256,12 +256,12 @@ describe("external-action publication boundary", () => {
     const retry = await publish();
     expect(retry.json().action.id).toBe(first.json().action.id);
     expect(posts).toHaveLength(1);
-    expect(db.select().from(publications).all()).toHaveLength(1);
+    expect(await db.select().from(publications).all()).toHaveLength(1);
   });
 
   it("marks an edited queued draft stale and never calls the provider", async () => {
     const queued = await publish();
-    db.update(drafts)
+    await db.update(drafts)
       .set({ content: "Edited after authorization request", updatedAt: Date.now() })
       .where(eq(drafts.id, draftId))
       .run();
@@ -282,7 +282,7 @@ describe("external-action publication boundary", () => {
   it("answers 409 stale_action when the draft is no longer publishable at authorize", async () => {
     const queued = await publish();
     expect(queued.json().action.status).toBe("authorization_required");
-    db.update(drafts)
+    await db.update(drafts)
       .set({ state: "pending_review", updatedAt: Date.now() })
       .where(eq(drafts.id, draftId))
       .run();
@@ -296,19 +296,19 @@ describe("external-action publication boundary", () => {
     expect(authorized.json().error).toBe("stale_action");
     expect(authorized.json().action.status).toBe("stale");
     expect(posts).toHaveLength(0);
-    expect(db.select().from(publications).all()).toEqual([]);
+    expect(await db.select().from(publications).all()).toEqual([]);
   });
 
   it("reports why a blocked action cannot be re-proposed instead of calling it stale", async () => {
     await putActionPolicy(app, workspaceId, "workspace", workspaceId, { publish: "autonomous" });
-    db.update(connections)
+    await db.update(connections)
       .set({ status: "disconnected", updatedAt: Date.now() })
       .where(eq(connections.id, connectionId))
       .run();
     const blocked = await publish();
     expect(blocked.json().action.status).toBe("blocked");
 
-    db.update(drafts)
+    await db.update(drafts)
       .set({ state: "pending_review", updatedAt: Date.now() })
       .where(eq(drafts.id, draftId))
       .run();
@@ -334,7 +334,7 @@ describe("external-action publication boundary", () => {
       payload: {},
     });
     expect(authorized.json().action.status).toBe("scheduled");
-    expect(db.select().from(publications).all()).toEqual([]);
+    expect(await db.select().from(publications).all()).toEqual([]);
 
     vi.setSystemTime(dueAt + 1);
     const run = await app.inject({
@@ -355,7 +355,7 @@ describe("external-action publication boundary", () => {
     expect(result.statusCode).toBe(201);
     expect(result.json().action.status).toBe("failed");
     expect(result.json().execution.error).toContain("RATELIMIT");
-    expect(db.select().from(publications).all()[0]).toMatchObject({
+    expect((await db.select().from(publications).all())[0]).toMatchObject({
       status: "failed",
       externalActionId: result.json().action.id,
     });
@@ -369,10 +369,10 @@ describe("external-action publication boundary", () => {
     const IMAGE_A = JSON.stringify([{ url: "https://cdn.test/a.png", type: "image" }]);
     const IMAGE_B = JSON.stringify([{ url: "https://cdn.test/b.png", type: "image" }]);
 
-    function seedPendingDraft(overrides: { content?: string; mediaJson?: string | null } = {}) {
+    async function seedPendingDraft(overrides: { content?: string; mediaJson?: string | null } = {}) {
       const id = randomUUID();
       const now = Date.now();
-      db.insert(drafts)
+      await db.insert(drafts)
         .values({
           id,
           workspaceId,
@@ -410,20 +410,20 @@ describe("external-action publication boundary", () => {
       });
     }
 
-    function decisionsFor(actionId: string) {
-      return db
+    async function decisionsFor(actionId: string) {
+      return await db
         .select()
         .from(externalActionDecisions)
         .where(eq(externalActionDecisions.actionId, actionId))
         .all();
     }
 
-    function approvalOf(draftId: string) {
-      return db.select().from(approvalDecisions).where(eq(approvalDecisions.draftId, draftId)).get()!;
+    async function approvalOf(draftId: string) {
+      return (await db.select().from(approvalDecisions).where(eq(approvalDecisions.draftId, draftId)).get())!;
     }
 
     it("authorizes and publishes what a human already approved, attributed to that human", async () => {
-      const id = seedPendingDraft();
+      const id = await seedPendingDraft();
       expect((await approve(id)).statusCode).toBe(200);
 
       const published = await publishDraft(id);
@@ -433,12 +433,12 @@ describe("external-action publication boundary", () => {
       expect(submission.action.status).toBe("succeeded");
       expect(submission.action.authorizedAt).not.toBeNull();
       expect(posts).toHaveLength(1);
-      expect(db.select().from(publications).all()).toHaveLength(1);
+      expect(await db.select().from(publications).all()).toHaveLength(1);
 
-      const approval = approvalOf(id);
+      const approval = await approvalOf(id);
       expect(approval.action).toBe("approve");
       expect(approval.actorId).not.toBeNull();
-      const decisions = decisionsFor(submission.action.id);
+      const decisions = await decisionsFor(submission.action.id);
       expect(decisions).toHaveLength(1);
       expect(decisions[0]).toMatchObject({
         decision: "authorize",
@@ -461,12 +461,12 @@ describe("external-action publication boundary", () => {
     // is still an authorization. Without its own event the funnel would read
     // publishes migrating to the collapse as authorizations vanishing.
     it("records a distinct analytics event for a collapsed authorization", async () => {
-      const id = seedPendingDraft();
+      const id = await seedPendingDraft();
       await approve(id);
       const published = await publishDraft(id);
       expect(published.json().action.status).toBe("succeeded");
 
-      const approval = approvalOf(id);
+      const approval = await approvalOf(id);
       expect(
         captured.filter((event) => event.event === "review.action_authorized_collapsed"),
       ).toEqual([
@@ -482,12 +482,12 @@ describe("external-action publication boundary", () => {
     });
 
     it("re-arms the second gate when the content changed after approval", async () => {
-      const id = seedPendingDraft();
+      const id = await seedPendingDraft();
       await approve(id);
       // An `edit` also moves the draft out of `approved`, which publishing
       // refuses outright (409). The case that matters here is content that
       // drifted while the draft still reads as approved.
-      db.update(drafts)
+      await db.update(drafts)
         .set({ content: "Rewritten after approval", updatedAt: Date.now() })
         .where(eq(drafts.id, id))
         .run();
@@ -496,17 +496,17 @@ describe("external-action publication boundary", () => {
       expect(published.statusCode).toBe(202);
       expect(published.json().action.status).toBe("authorization_required");
       expect(posts).toHaveLength(0);
-      expect(decisionsFor(published.json().action.id)).toEqual([]);
+      expect(await decisionsFor(published.json().action.id)).toEqual([]);
     });
 
     it("re-arms the second gate when only the media changed after approval", async () => {
-      const id = seedPendingDraft({ mediaJson: IMAGE_A });
+      const id = await seedPendingDraft({ mediaJson: IMAGE_A });
       await approve(id);
-      db.update(drafts)
+      await db.update(drafts)
         .set({ mediaJson: IMAGE_B, updatedAt: Date.now() })
         .where(eq(drafts.id, id))
         .run();
-      expect(getDraft(db, workspaceId, id)?.content).toBe("Reviewed launch post");
+      expect((await getDraft(db, workspaceId, id))?.content).toBe("Reviewed launch post");
 
       const published = await publishDraft(id);
       expect(published.statusCode).toBe(202);
@@ -515,7 +515,7 @@ describe("external-action publication boundary", () => {
     });
 
     it("never collapses for a system-approved draft (D2a)", async () => {
-      const commit = submitAutomaticDraft(
+      const commit = await submitAutomaticDraft(
         db,
         {
           workspaceId,
@@ -535,21 +535,21 @@ describe("external-action publication boundary", () => {
       expect(published.statusCode).toBe(202);
       expect(published.json().action.status).toBe("authorization_required");
       expect(posts).toHaveLength(0);
-      expect(decisionsFor(published.json().action.id)).toEqual([]);
+      expect(await decisionsFor(published.json().action.id)).toEqual([]);
     });
 
     it("collapses an approval made through the email one-click link (D2c)", async () => {
-      const id = seedPendingDraft();
-      const token = mintActionToken(db, workspaceId, id, "approve");
+      const id = await seedPendingDraft();
+      const token = await mintActionToken(db, workspaceId, id, "approve");
       const clicked = await app.inject({ method: "GET", url: `/a/${token}` });
       expect(clicked.statusCode).toBe(200);
-      expect(getDraft(db, workspaceId, id)?.state).toBe("approved");
+      expect((await getDraft(db, workspaceId, id))?.state).toBe("approved");
 
       const published = await publishDraft(id);
       expect(published.statusCode).toBe(201);
       expect(published.json().action.status).toBe("succeeded");
       expect(posts).toHaveLength(1);
-      const decision = decisionsFor(published.json().action.id)[0]!;
+      const decision = (await decisionsFor(published.json().action.id))[0]!;
       expect(decision.decision).toBe("authorize");
       // No user id behind a one-click link, but a named human all the same.
       expect(decision.actorUserId).toBeNull();
@@ -562,7 +562,7 @@ describe("external-action publication boundary", () => {
     it("withdraws a collapsed publication before its scheduled slot", async () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(new Date("2026-07-14T10:00:00Z"));
-      const id = seedPendingDraft();
+      const id = await seedPendingDraft();
       await approve(id);
       const dueAt = Date.now() + 60_000;
       const first = await publishDraft(id, { scheduledFor: dueAt });
@@ -578,7 +578,7 @@ describe("external-action publication boundary", () => {
       expect(externalActionSubmissionSchema.parse(cancelled.json()).action.status).toBe("cancelled");
       // The founder's reason, kept behind the marker that says this was a
       // withdrawal of an authorization already granted — not a denial.
-      const withdrawal = decisionsFor(actionId).at(-1)!;
+      const withdrawal = (await decisionsFor(actionId)).at(-1)!;
       expect(withdrawal.decision).toBe("deny");
       expect(withdrawal.reason).toContain("Wrong week for this one");
       expect(withdrawal.reason).toContain(WITHDRAWN_BEFORE_DISPATCH);
@@ -589,11 +589,11 @@ describe("external-action publication boundary", () => {
         url: `/workspaces/${workspaceId}/external-actions/run`,
       });
       expect(posts).toHaveLength(0);
-      expect(db.select().from(publications).all()).toEqual([]);
+      expect(await db.select().from(publications).all()).toEqual([]);
     });
 
     it("refuses to withdraw a collapsed publication that already went out", async () => {
-      const id = seedPendingDraft();
+      const id = await seedPendingDraft();
       await approve(id);
       const published = await publishDraft(id);
       expect(published.json().action.status).toBe("succeeded");
@@ -611,7 +611,7 @@ describe("external-action publication boundary", () => {
     it("never collapses a repropose — a stale action changed something the approval cannot see", async () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(new Date("2026-07-14T10:00:00Z"));
-      const id = seedPendingDraft();
+      const id = await seedPendingDraft();
       await approve(id);
 
       const dueAt = Date.now() + 60_000;
@@ -621,7 +621,7 @@ describe("external-action publication boundary", () => {
 
       // The destination changes — exactly the class of change the approval
       // fingerprint (content + media only) is blind to.
-      db.update(connections)
+      await db.update(connections)
         .set({ displayName: "A different Reddit account", updatedAt: Date.now() })
         .where(eq(connections.id, connectionId))
         .run();
@@ -642,7 +642,7 @@ describe("external-action publication boundary", () => {
       expect(reproposed.statusCode).toBe(200);
       expect(reproposed.json().action.status).toBe("authorization_required");
       expect(reproposed.json().action.supersedesActionId).toBe(first.json().action.id);
-      expect(decisionsFor(reproposed.json().action.id)).toEqual([]);
+      expect(await decisionsFor(reproposed.json().action.id)).toEqual([]);
       expect(posts).toHaveLength(0);
     });
   });

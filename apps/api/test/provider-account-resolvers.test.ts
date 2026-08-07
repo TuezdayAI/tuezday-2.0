@@ -29,7 +29,7 @@ describe("LinkedIn organization resolution", () => {
     }));
 
     await expect(
-      resolveLinkedInOrganizationUrn({ target: "@acme", get }),
+      await resolveLinkedInOrganizationUrn({ target: "@acme", get }),
     ).resolves.toBe("urn:li:organization:73");
     expect(get).toHaveBeenCalledWith(
       "/rest/organizations?q=vanityName&vanityName=acme",
@@ -39,7 +39,7 @@ describe("LinkedIn organization resolution", () => {
   it("accepts a cached organization URN without a provider lookup", async () => {
     const get = vi.fn();
     await expect(
-      resolveLinkedInOrganizationUrn({
+      await resolveLinkedInOrganizationUrn({
         target: "urn:li:organization:73",
         get,
       }),
@@ -53,13 +53,13 @@ describe("LinkedIn organization resolution", () => {
       json: { elements: [] },
     }));
     await expect(
-      resolveLinkedInOrganizationUrn({
+      await resolveLinkedInOrganizationUrn({
         target: "https://linkedin.com/in/founder",
         get,
       }),
     ).rejects.toMatchObject({ code: "target_unresolvable" });
     await expect(
-      resolveLinkedInOrganizationUrn({
+      await resolveLinkedInOrganizationUrn({
         target: "missing-company",
         get,
       }),
@@ -74,7 +74,7 @@ describe("LinkedIn organization resolution", () => {
       },
     }));
     await expect(
-      resolveLinkedInOrganizationUrn({ target: "acme", get }),
+      await resolveLinkedInOrganizationUrn({ target: "acme", get }),
     ).rejects.toMatchObject({ code: "target_unresolvable" });
   });
 });

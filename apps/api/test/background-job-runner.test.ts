@@ -40,9 +40,9 @@ function policy(overrides: Partial<typeof DEFAULT_BACKGROUND_JOB_POLICY> = {}) {
 describe("background job runner", () => {
   let db: Db;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createTestDb();
-    db.insert(workspaces)
+    await db.insert(workspaces)
       .values({
         id: WORKSPACE_ID,
         name: "Runner",
@@ -82,12 +82,12 @@ describe("background job runner", () => {
 
   it("dead-letters malformed persisted payload without invoking a handler", async () => {
     const handlers = handlersWith();
-    const job = enqueueBackgroundJob(db, {
+    const job = await enqueueBackgroundJob(db, {
       payload: { kind: "evidence", workspaceId: WORKSPACE_ID },
       idempotencyKey: "malformed",
       priority: 100,
     });
-    db.update(backgroundJobs)
+    await db.update(backgroundJobs)
       .set({ payloadJson: "{" })
       .where(eq(backgroundJobs.id, job.id))
       .run();
@@ -101,7 +101,7 @@ describe("background job runner", () => {
     });
     expect(result).toMatchObject({ claimed: 1, deadLettered: 1 });
     expect(
-      db.select().from(backgroundJobs).where(eq(backgroundJobs.id, job.id)).get(),
+      await db.select().from(backgroundJobs).where(eq(backgroundJobs.id, job.id)).get(),
     ).toMatchObject({ status: "dead_letter", activeKey: null });
     expect(
       Object.values(handlers).every(
@@ -112,7 +112,7 @@ describe("background job runner", () => {
 
   it("persists explicit retry and dead-letter outcomes", async () => {
     const retryHandlers = handlersWith({ status: "retry", error: "rate_limited" });
-    enqueueBackgroundJob(db, {
+    await enqueueBackgroundJob(db, {
       payload: { kind: "evidence", workspaceId: WORKSPACE_ID },
       idempotencyKey: "retry",
       priority: 100,
@@ -127,7 +127,7 @@ describe("background job runner", () => {
     expect(retry).toMatchObject({ claimed: 1, retried: 1 });
 
     const deadHandlers = handlersWith({ status: "dead_letter", error: "invalid_target" });
-    enqueueBackgroundJob(db, {
+    await enqueueBackgroundJob(db, {
       payload: { kind: "ads", workspaceId: WORKSPACE_ID },
       idempotencyKey: "dead",
       priority: 100,
@@ -147,7 +147,7 @@ describe("background job runner", () => {
     handlers.evidence = vi.fn(async () => {
       throw new Error("provider unavailable");
     });
-    enqueueBackgroundJob(db, {
+    await enqueueBackgroundJob(db, {
       payload: { kind: "evidence", workspaceId: WORKSPACE_ID },
       idempotencyKey: "throws",
       priority: 100,
@@ -166,13 +166,13 @@ describe("background job runner", () => {
   it("does not finish a job after its lease fence changes", async () => {
     const handlers = handlersWith();
     handlers.evidence = vi.fn<BackgroundJobHandler>(async (_payload, context) => {
-      db.update(backgroundJobs)
+      await db.update(backgroundJobs)
         .set({ leaseVersion: context.claim.leaseVersion + 1 })
         .where(eq(backgroundJobs.id, context.claim.id))
         .run();
       return { status: "complete" as const };
     });
-    enqueueBackgroundJob(db, {
+    await enqueueBackgroundJob(db, {
       payload: { kind: "evidence", workspaceId: WORKSPACE_ID },
       idempotencyKey: "lose-fence",
       priority: 100,

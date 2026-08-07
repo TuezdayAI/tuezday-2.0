@@ -146,15 +146,15 @@ describe("XAdapter.readSocialProfile", () => {
     const state = xReadState();
     state.me = { status: 401, json: { title: "Unauthorized" } };
 
-    await expect(adapter(state).readSocialProfile()).rejects.toThrowError(ConnectorFabricError);
-    await expect(adapter(state).readSocialProfile()).rejects.toThrowError(/401/);
+    await expect(await adapter(state).readSocialProfile()).rejects.toThrowError(ConnectorFabricError);
+    await expect(await adapter(state).readSocialProfile()).rejects.toThrowError(/401/);
   });
 
   it("throws a ConnectorFabricError with the status when the tweets call is non-2xx", async () => {
     const state = xReadState();
     state.tweets = { status: 429, json: { title: "Too Many Requests" } };
 
-    await expect(adapter(state).readSocialProfile()).rejects.toThrowError(ConnectorFabricError);
-    await expect(adapter(state).readSocialProfile()).rejects.toThrowError(/429/);
+    await expect(await adapter(state).readSocialProfile()).rejects.toThrowError(ConnectorFabricError);
+    await expect(await adapter(state).readSocialProfile()).rejects.toThrowError(/429/);
   });
 });

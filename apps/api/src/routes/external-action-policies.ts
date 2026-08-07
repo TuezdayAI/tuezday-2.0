@@ -20,8 +20,8 @@ const policyQuerySchema = z.object({
   scopeId: z.string().uuid(),
 });
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) void reply.status(404).send({ error: "workspace_not_found" });
   return workspace;
 }
@@ -51,11 +51,11 @@ export function registerExternalActionPolicyRoutes(app: FastifyInstance, db: Db)
     Params: { id: string };
     Querystring: { scope?: string; scopeId?: string };
   }>("/workspaces/:id/external-action-policies", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = policyQuerySchema.safeParse(request.query);
     if (!parsed.success) return invalid(reply, parsed.error.issues);
     try {
-      return listExternalActionPolicies(
+      return await listExternalActionPolicies(
         db,
         request.params.id,
         parsed.data.scope,
@@ -69,11 +69,11 @@ export function registerExternalActionPolicyRoutes(app: FastifyInstance, db: Db)
   app.put<{ Params: { id: string } }>(
     "/workspaces/:id/external-action-policies",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = upsertExternalActionPoliciesInputSchema.safeParse(request.body);
       if (!parsed.success) return invalid(reply, parsed.error.issues);
       try {
-        return upsertExternalActionPolicies(
+        return await upsertExternalActionPolicies(
           db,
           request.params.id,
           parsed.data,
@@ -88,11 +88,11 @@ export function registerExternalActionPolicyRoutes(app: FastifyInstance, db: Db)
   app.delete<{ Params: { id: string; ruleId: string } }>(
     "/workspaces/:id/external-action-policies/:ruleId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsedRuleId = z.string().uuid().safeParse(request.params.ruleId);
       if (!parsedRuleId.success) return invalid(reply, parsedRuleId.error.issues);
       try {
-        if (!deleteExternalActionPolicy(db, request.params.id, parsedRuleId.data)) {
+        if (!await deleteExternalActionPolicy(db, request.params.id, parsedRuleId.data)) {
           return reply.status(404).send({ error: "not_found" });
         }
         return reply.status(204).send();

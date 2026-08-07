@@ -8,8 +8,8 @@ import { AdImageSourceError, generateAdImage } from "../services/ad-images";
 import { EntitlementError } from "../services/entitlements";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -26,7 +26,7 @@ export function registerAdImageRoutes(
   app.post<{ Params: { id: string; draftId: string } }>(
     "/workspaces/:id/ad-creatives/:draftId/image",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       try {
         const draft = await generateAdImage(
           { db, design, assetStorage, render },

@@ -26,13 +26,13 @@ const MAX_LIMIT = 200;
  * and ad launches — rolled up into the canonical result states. Read-only;
  * scheduled/draft work is Calendar and Review territory, not a result.
  */
-export function listExecutionResults(
+export async function listExecutionResults(
   db: Db,
   workspaceId: string,
   options: ExecutionListOptions = {},
-): ExecutionResult[] {
+): Promise<ExecutionResult[]> {
   const campaignNames = new Map<string, string>();
-  for (const row of db
+  for (const row of await db
     .select({ id: campaigns.id, name: campaigns.name })
     .from(campaigns)
     .where(eq(campaigns.workspaceId, workspaceId))
@@ -45,11 +45,11 @@ export function listExecutionResults(
   };
 
   const results: ExecutionResult[] = [
-    ...publicationResults(db, workspaceId, campaignOf),
-    ...launchResults(db, workspaceId, campaignOf),
-    ...adLaunchResults(db, workspaceId, campaignOf),
-    ...adMutationResults(db, workspaceId, campaignOf),
-    ...emailDeliveryResults(db, workspaceId, campaignOf),
+    ...await publicationResults(db, workspaceId, campaignOf),
+    ...await launchResults(db, workspaceId, campaignOf),
+    ...await adLaunchResults(db, workspaceId, campaignOf),
+    ...await adMutationResults(db, workspaceId, campaignOf),
+    ...await emailDeliveryResults(db, workspaceId, campaignOf),
   ];
 
   const scoped = options.campaignId
@@ -59,12 +59,12 @@ export function listExecutionResults(
   return scoped.sort((left, right) => right.at - left.at).slice(0, limit);
 }
 
-function emailDeliveryResults(
+async function emailDeliveryResults(
   db: Db,
   workspaceId: string,
   campaignOf: CampaignOf,
-): ExecutionResult[] {
-  const rows = db
+): Promise<ExecutionResult[]> {
+  const rows = await db
     .select({ delivery: emailDeliveries, action: externalActions })
     .from(emailDeliveries)
     .innerJoin(externalActions, eq(emailDeliveries.externalActionId, externalActions.id))
@@ -97,12 +97,12 @@ function emailDeliveryResults(
   });
 }
 
-function adMutationResults(
+async function adMutationResults(
   db: Db,
   workspaceId: string,
   campaignOf: CampaignOf,
-): ExecutionResult[] {
-  const rows = db
+): Promise<ExecutionResult[]> {
+  const rows = await db
     .select()
     .from(externalActions)
     .where(
@@ -160,8 +160,8 @@ type CampaignOf = (campaignId: string | null | undefined) => {
   campaignName: string | null;
 };
 
-function publicationResults(db: Db, workspaceId: string, campaignOf: CampaignOf): ExecutionResult[] {
-  const rows = db
+async function publicationResults(db: Db, workspaceId: string, campaignOf: CampaignOf): Promise<ExecutionResult[]> {
+  const rows = await db
     .select({ publication: publications, draft: drafts })
     .from(publications)
     .leftJoin(drafts, eq(publications.draftId, drafts.id))
@@ -194,14 +194,14 @@ function publicationResults(db: Db, workspaceId: string, campaignOf: CampaignOf)
   });
 }
 
-function launchResults(db: Db, workspaceId: string, campaignOf: CampaignOf): ExecutionResult[] {
-  const launchRows = db
+async function launchResults(db: Db, workspaceId: string, campaignOf: CampaignOf): Promise<ExecutionResult[]> {
+  const launchRows = await db
     .select()
     .from(launches)
     .where(eq(launches.workspaceId, workspaceId))
     .all();
   if (launchRows.length === 0) return [];
-  const messageRows = db
+  const messageRows = await db
     .select({
       launchId: launchMessages.launchId,
       status: launchMessages.status,
@@ -289,8 +289,8 @@ function launchResults(db: Db, workspaceId: string, campaignOf: CampaignOf): Exe
   return results;
 }
 
-function adLaunchResults(db: Db, workspaceId: string, campaignOf: CampaignOf): ExecutionResult[] {
-  const rows = db
+async function adLaunchResults(db: Db, workspaceId: string, campaignOf: CampaignOf): Promise<ExecutionResult[]> {
+  const rows = await db
     .select()
     .from(adLaunches)
     .where(eq(adLaunches.workspaceId, workspaceId))

@@ -75,7 +75,7 @@ describe("ad creatives API", () => {
   }
 
   async function generate(payload: Record<string, unknown>) {
-    return app.inject({
+    return await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/ad-creatives/generate`,
       payload,

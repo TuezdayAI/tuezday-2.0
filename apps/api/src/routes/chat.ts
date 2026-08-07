@@ -35,8 +35,8 @@ import { runChatTurn } from "../services/chat-turn";
 import { EntitlementError, assertLlmBudget } from "../services/entitlements";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -101,7 +101,7 @@ export function registerChatRoutes(
   proposals?: AgentProposalService,
 ): void {
   app.post<{ Params: { id: string } }>("/workspaces/:id/chat/sessions", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = createChatSessionInputSchema.safeParse(request.body ?? {});
     if (!parsed.success) {
       return reply.status(400).send({
@@ -110,7 +110,7 @@ export function registerChatRoutes(
       });
     }
     const actor = actorOf(request);
-    const session = createSession(db, request.params.id, actor.userId, {
+    const session = await createSession(db, request.params.id, actor.userId, {
       ...parsed.data,
       title: parsed.data.title?.trim() || DEFAULT_TITLE,
     });
@@ -118,21 +118,21 @@ export function registerChatRoutes(
   });
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/chat/sessions", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return listSessions(db, request.params.id);
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return await listSessions(db, request.params.id);
   });
 
   app.get<{ Params: { id: string; sessionId: string } }>(
     "/workspaces/:id/chat/sessions/:sessionId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const session = getSession(db, request.params.id, request.params.sessionId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const session = await getSession(db, request.params.id, request.params.sessionId);
       if (!session) return reply.status(404).send({ error: "chat_session_not_found" });
       const detail: ChatSessionDetail = {
         ...session,
-        messages: listMessages(db, session.id),
-        proposals: listChatProposals(db, session.id),
-        pins: listChatPins(db, session.id),
+        messages: await listMessages(db, session.id),
+        proposals: await listChatProposals(db, session.id),
+        pins: await listChatPins(db, session.id),
       };
       return detail;
     },
@@ -141,7 +141,7 @@ export function registerChatRoutes(
   app.patch<{ Params: { id: string; sessionId: string } }>(
     "/workspaces/:id/chat/sessions/:sessionId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = updateChatSessionInputSchema.safeParse(request.body ?? {});
       if (!parsed.success) {
         return reply.status(400).send({
@@ -149,7 +149,7 @@ export function registerChatRoutes(
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      const session = updateSession(
+      const session = await updateSession(
         db,
         request.params.id,
         request.params.sessionId,
@@ -163,8 +163,8 @@ export function registerChatRoutes(
   app.delete<{ Params: { id: string; sessionId: string } }>(
     "/workspaces/:id/chat/sessions/:sessionId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const deleted = deleteSession(db, request.params.id, request.params.sessionId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const deleted = await deleteSession(db, request.params.id, request.params.sessionId);
       if (!deleted) return reply.status(404).send({ error: "chat_session_not_found" });
       return reply.status(204).send();
     },
@@ -173,8 +173,8 @@ export function registerChatRoutes(
   app.post<{ Params: { id: string; sessionId: string } }>(
     "/workspaces/:id/chat/sessions/:sessionId/messages",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const session = getSession(db, request.params.id, request.params.sessionId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const session = await getSession(db, request.params.id, request.params.sessionId);
       if (!session) return reply.status(404).send({ error: "chat_session_not_found" });
 
       const parsed = sendChatMessageInputSchema.safeParse(request.body);
@@ -189,7 +189,7 @@ export function registerChatRoutes(
       // refusals rather than degradations: a turn that starts is a turn the
       // founder gets to finish.
       try {
-        assertLlmBudget(db, request.params.id);
+        await assertLlmBudget(db, request.params.id);
       } catch (err) {
         if (err instanceof EntitlementError) {
           return reply
@@ -277,8 +277,8 @@ export function registerChatRoutes(
   app.post<{ Params: { id: string; sessionId: string } }>(
     "/workspaces/:id/chat/sessions/:sessionId/command",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const session = getSession(db, request.params.id, request.params.sessionId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const session = await getSession(db, request.params.id, request.params.sessionId);
       if (!session) return reply.status(404).send({ error: "chat_session_not_found" });
 
       const parsed = runChatCommandInputSchema.safeParse(request.body ?? {});
@@ -317,18 +317,18 @@ export function registerChatRoutes(
   app.get<{ Params: { id: string; sessionId: string } }>(
     "/workspaces/:id/chat/sessions/:sessionId/pins",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const session = getSession(db, request.params.id, request.params.sessionId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const session = await getSession(db, request.params.id, request.params.sessionId);
       if (!session) return reply.status(404).send({ error: "chat_session_not_found" });
-      return listChatPins(db, session.id);
+      return await listChatPins(db, session.id);
     },
   );
 
   app.post<{ Params: { id: string; sessionId: string } }>(
     "/workspaces/:id/chat/sessions/:sessionId/pins",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const session = getSession(db, request.params.id, request.params.sessionId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const session = await getSession(db, request.params.id, request.params.sessionId);
       if (!session) return reply.status(404).send({ error: "chat_session_not_found" });
 
       const parsed = createChatPinInputSchema.safeParse(request.body ?? {});
@@ -338,7 +338,7 @@ export function registerChatRoutes(
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      const outcome = createChatPin(db, safeFetch, request.params.id, session.id, parsed.data);
+      const outcome = await createChatPin(db, safeFetch, request.params.id, session.id, parsed.data);
       if (!outcome.ok) {
         // A pin the founder cannot see the target of is refused where they can
         // read the refusal, rather than stored as a chip that renders nothing.
@@ -353,10 +353,10 @@ export function registerChatRoutes(
   app.delete<{ Params: { id: string; sessionId: string; pinId: string } }>(
     "/workspaces/:id/chat/sessions/:sessionId/pins/:pinId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const session = getSession(db, request.params.id, request.params.sessionId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const session = await getSession(db, request.params.id, request.params.sessionId);
       if (!session) return reply.status(404).send({ error: "chat_session_not_found" });
-      const removed = deleteChatPin(db, request.params.id, session.id, request.params.pinId);
+      const removed = await deleteChatPin(db, request.params.id, session.id, request.params.pinId);
       if (!removed) return reply.status(404).send({ error: "chat_pin_not_found" });
       return reply.status(204).send();
     },
@@ -374,18 +374,18 @@ export function registerChatRoutes(
   app.get<{ Params: { id: string; sessionId: string } }>(
     "/workspaces/:id/chat/sessions/:sessionId/proposals",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const session = getSession(db, request.params.id, request.params.sessionId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const session = await getSession(db, request.params.id, request.params.sessionId);
       if (!session) return reply.status(404).send({ error: "chat_session_not_found" });
-      return listChatProposals(db, session.id);
+      return await listChatProposals(db, session.id);
     },
   );
 
   app.post<{ Params: { id: string; sessionId: string; proposalId: string } }>(
     "/workspaces/:id/chat/sessions/:sessionId/proposals/:proposalId/confirm",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const session = getSession(db, request.params.id, request.params.sessionId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const session = await getSession(db, request.params.id, request.params.sessionId);
       if (!session) return reply.status(404).send({ error: "chat_session_not_found" });
       if (!proposals) {
         // No live gate wired means no confirmation path — refusing is the only
@@ -423,11 +423,11 @@ export function registerChatRoutes(
   app.post<{ Params: { id: string; sessionId: string; proposalId: string } }>(
     "/workspaces/:id/chat/sessions/:sessionId/proposals/:proposalId/decline",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const session = getSession(db, request.params.id, request.params.sessionId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const session = await getSession(db, request.params.id, request.params.sessionId);
       if (!session) return reply.status(404).send({ error: "chat_session_not_found" });
 
-      const outcome = declineChatProposal(
+      const outcome = await declineChatProposal(
         db,
         request.params.id,
         actorOf(request),

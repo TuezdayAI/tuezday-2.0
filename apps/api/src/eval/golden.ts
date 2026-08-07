@@ -74,24 +74,24 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function seedWorkspace(db: Db): string {
+async function seedWorkspace(db: Db): Promise<string> {
   const workspaceId = randomUUID();
   const now = SEED_BASE;
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({ id: workspaceId, name: "Golden", createdAt: now, updatedAt: now })
     .run();
   for (const phrase of GOLDEN_BANNED_CLAIMS) {
-    addBannedClaim(db, workspaceId, { phrase, note: "" });
+    await addBannedClaim(db, workspaceId, { phrase, note: "" });
   }
   // Sprint 68: one active learned rule, so every draft step's context carries
   // the preference block and the digest moves if that block ever changes.
-  createManualRule(db, workspaceId, GOLDEN_PREFERENCE_RULE, now);
+  await createManualRule(db, workspaceId, GOLDEN_PREFERENCE_RULE, now);
   // Newest first so buildEvalSuite's updatedAt-desc order matches fixture order,
   // which is what makes the scripted gateway's step sequence line up.
-  GOLDEN_CASES.forEach((goldenCase, index) => {
+  for (const [index, goldenCase] of GOLDEN_CASES.entries()) {
     const signalId = randomUUID();
     const stamp = SEED_BASE - index;
-    db.insert(signals)
+    await db.insert(signals)
       .values({
         id: signalId,
         workspaceId,
@@ -103,7 +103,7 @@ function seedWorkspace(db: Db): string {
         createdAt: stamp,
       })
       .run();
-    db.insert(drafts)
+    await db.insert(drafts)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -125,7 +125,7 @@ function seedWorkspace(db: Db): string {
         updatedAt: stamp,
       })
       .run();
-  });
+  }
   return workspaceId;
 }
 
@@ -138,13 +138,13 @@ function transcript(gateway: ScriptedGateway): string[] {
 
 export async function runGoldenSuite(): Promise<GoldenOutcome> {
   const db = createDb(":memory:");
-  const workspaceId = seedWorkspace(db);
+  const workspaceId = await seedWorkspace(db);
 
-  ensurePipelineDefinitions(db, workspaceId);
-  const definition = listPipelineDefinitions(db, workspaceId)[0]!;
-  setPipelineStatus(db, workspaceId, definition.id, "active");
+  await ensurePipelineDefinitions(db, workspaceId);
+  const definition = (await listPipelineDefinitions(db, workspaceId))[0]!;
+  await setPipelineStatus(db, workspaceId, definition.id, "active");
 
-  const { suite } = buildEvalSuite(
+  const { suite } = await buildEvalSuite(
     db,
     workspaceId,
     {

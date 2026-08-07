@@ -185,8 +185,8 @@ describe("engagement & reply inbox", () => {
     return id;
   }
 
-  function seedApprovedDraft(campaignId: string): string {
-    const draft = submitDraft(
+  async function seedApprovedDraft(campaignId: string): Promise<string> {
+    const draft = await submitDraft(
       db,
       {
         workspaceId,
@@ -199,12 +199,12 @@ describe("engagement & reply inbox", () => {
       },
       { userId: null, label: "test", human: true },
     );
-    return applyDraftAction(db, draft, "approve", { userId: null, label: "test", human: true }).id;
+    return (await applyDraftAction(db, draft, "approve", { userId: null, label: "test", human: true })).id;
   }
 
   /** Publish an approved draft to Reddit (post-now) and return its receipt. */
   async function publishPost(connectionId: string, campaignId: string) {
-    const draftId = seedApprovedDraft(campaignId);
+    const draftId = await seedApprovedDraft(campaignId);
     const res = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/drafts/${draftId}/publish`,
@@ -346,7 +346,7 @@ describe("engagement & reply inbox", () => {
     // Sprint 55 dual-write: the capture also lands cumulative facts in the
     // unified metrics table — publication subject, periodStart = publishedAt,
     // one row per observed metric (impressions was not observed → no row).
-    const facts = db
+    const facts = await db
       .select()
       .from(metricsTable)
       .where(eq(metricsTable.subjectId, pub.id))
@@ -470,7 +470,7 @@ describe("engagement & reply inbox", () => {
     expect(state.postedReplies).toHaveLength(1);
 
     // The reply went through the gate as the system actor.
-    const decisions = listDecisions(db, item.replyDraftId);
+    const decisions = await listDecisions(db, item.replyDraftId);
     expect(decisions.map((d) => d.action)).toEqual(["submit", "approve"]);
     expect(decisions.every((d) => d.actor === "system")).toBe(true);
   });

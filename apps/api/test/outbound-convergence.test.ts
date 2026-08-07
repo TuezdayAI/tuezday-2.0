@@ -105,9 +105,9 @@ describe("outbound strategy convergence (Sprint 51)", () => {
   // fixtures
   // -------------------------------------------------------------------------
 
-  function verifySender(): void {
+  async function verifySender(): Promise<void> {
     const now = Date.now();
-    db.insert(workspaceEmailSenders)
+    await db.insert(workspaceEmailSenders)
       .values({
         workspaceId,
         domain: "example.com",
@@ -130,9 +130,9 @@ describe("outbound strategy convergence (Sprint 51)", () => {
       .run();
   }
 
-  function allowRecipient(email: string): void {
+  async function allowRecipient(email: string): Promise<void> {
     const now = Date.now();
-    db.insert(emailRecipientPermissions)
+    await db.insert(emailRecipientPermissions)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -244,8 +244,8 @@ describe("outbound strategy convergence (Sprint 51)", () => {
     it("dispatches a launch email natively without invoking the exporter", async () => {
       const { launchId, recipientEmail } = await emailLaunch();
       await approveLaunchDrafts(launchId);
-      verifySender();
-      allowRecipient(recipientEmail);
+      await verifySender();
+      await allowRecipient(recipientEmail);
 
       const dispatch = await app.inject({
         method: "POST",
@@ -266,8 +266,8 @@ describe("outbound strategy convergence (Sprint 51)", () => {
     it("sends an approved outbound draft natively without invoking the exporter", async () => {
       const lead = await createLead("Bob");
       const draft = await approvedLeadDraft(lead.id);
-      verifySender();
-      allowRecipient(lead.email);
+      await verifySender();
+      await allowRecipient(lead.email);
 
       const send = await app.inject({
         method: "POST",
@@ -283,7 +283,7 @@ describe("outbound strategy convergence (Sprint 51)", () => {
     it("blocks on sender_unverified instead of falling back to the exporter", async () => {
       const { launchId, recipientEmail } = await emailLaunch();
       await approveLaunchDrafts(launchId);
-      allowRecipient(recipientEmail); // permission is fine — no verified sender
+      await allowRecipient(recipientEmail); // permission is fine — no verified sender
 
       const dispatch = await app.inject({
         method: "POST",
@@ -348,8 +348,8 @@ describe("outbound strategy convergence (Sprint 51)", () => {
     it("drops natively-sent messages from the export — one send path, not two", async () => {
       const { launchId, recipientEmail } = await emailLaunch();
       await approveLaunchDrafts(launchId);
-      verifySender();
-      allowRecipient(recipientEmail);
+      await verifySender();
+      await allowRecipient(recipientEmail);
       await app.inject({
         method: "POST",
         url: `/workspaces/${workspaceId}/launches/${launchId}/channels/email/dispatch`,

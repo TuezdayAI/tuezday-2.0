@@ -18,8 +18,8 @@ import {
 } from "../services/preference-rules";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -51,39 +51,39 @@ export function registerPreferenceRoutes(
   app.get<{ Params: { id: string }; Querystring: { status?: string } }>(
     "/workspaces/:id/preferences/rules",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const status = request.query.status as PreferenceRuleStatus | undefined;
-      return { rules: listPreferenceRules(db, request.params.id, { status }) };
+      return { rules: await listPreferenceRules(db, request.params.id, { status }) };
     },
   );
 
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/preferences/rules",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = createPreferenceRuleInputSchema.safeParse(request.body);
       if (!parsed.success) return invalidInput(reply, parsed.error.issues);
-      return reply.status(201).send(createManualRule(db, request.params.id, parsed.data));
+      return reply.status(201).send(await createManualRule(db, request.params.id, parsed.data));
     },
   );
 
   app.get<{ Params: { id: string; ruleId: string } }>(
     "/workspaces/:id/preferences/rules/:ruleId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const rule = getPreferenceRule(db, request.params.id, request.params.ruleId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const rule = await getPreferenceRule(db, request.params.id, request.params.ruleId);
       if (!rule) return reply.status(404).send({ error: "rule_not_found" });
-      return { rule, evidence: listRuleEvidence(db, rule.id) };
+      return { rule, evidence: await listRuleEvidence(db, rule.id) };
     },
   );
 
   app.patch<{ Params: { id: string; ruleId: string } }>(
     "/workspaces/:id/preferences/rules/:ruleId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = updatePreferenceRuleInputSchema.safeParse(request.body);
       if (!parsed.success) return invalidInput(reply, parsed.error.issues);
-      const rule = setRuleStatus(db, request.params.id, request.params.ruleId, parsed.data.status);
+      const rule = await setRuleStatus(db, request.params.id, request.params.ruleId, parsed.data.status);
       if (!rule) return reply.status(404).send({ error: "rule_not_found" });
       return rule;
     },
@@ -92,8 +92,8 @@ export function registerPreferenceRoutes(
   app.delete<{ Params: { id: string; ruleId: string } }>(
     "/workspaces/:id/preferences/rules/:ruleId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      if (!deletePreferenceRule(db, request.params.id, request.params.ruleId)) {
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await deletePreferenceRule(db, request.params.id, request.params.ruleId)) {
         return reply.status(404).send({ error: "rule_not_found" });
       }
       return reply.status(204).send();
@@ -105,10 +105,10 @@ export function registerPreferenceRoutes(
   app.get<{ Params: { id: string }; Querystring: { digested?: string } }>(
     "/workspaces/:id/preferences/edits",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const digested =
         request.query.digested === undefined ? undefined : request.query.digested === "true";
-      return { edits: listPreferenceEdits(db, request.params.id, { digested }) };
+      return { edits: await listPreferenceEdits(db, request.params.id, { digested }) };
     },
   );
 
@@ -117,7 +117,7 @@ export function registerPreferenceRoutes(
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/preferences/extract",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       return reply
         .status(200)
         .send(await runPreferenceExtraction(db, deps.llm, request.params.id));

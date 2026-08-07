@@ -46,7 +46,7 @@ export function shadowPairKey(input: {
   ].join(":");
 }
 
-export function createShadowPair(
+export async function createShadowPair(
   db: Db,
   input: {
     workspaceId: string;
@@ -57,7 +57,7 @@ export function createShadowPair(
     draftId: string;
     runId: string;
   },
-): PipelineShadowPairRow {
+): Promise<PipelineShadowPairRow> {
   const row: PipelineShadowPairRow = {
     id: randomUUID(),
     workspaceId: input.workspaceId,
@@ -73,7 +73,7 @@ export function createShadowPair(
     verdictAt: null,
     createdAt: Date.now(),
   };
-  db.insert(pipelineShadowPairs).values(row).run();
+  await db.insert(pipelineShadowPairs).values(row).run();
   return row;
 }
 
@@ -111,15 +111,15 @@ function toPair(
   };
 }
 
-export function listShadowPairs(
+export async function listShadowPairs(
   db: Db,
   workspaceId: string,
   options: { reviewed?: boolean; limit?: number } = {},
-): PipelineShadowPair[] {
+): Promise<PipelineShadowPair[]> {
   const conditions = [eq(pipelineShadowPairs.workspaceId, workspaceId)];
   if (options.reviewed === true) conditions.push(isNotNull(pipelineShadowPairs.verdict));
   if (options.reviewed === false) conditions.push(isNull(pipelineShadowPairs.verdict));
-  return db
+  return (await db
     .select({
       pair: pipelineShadowPairs,
       draftContent: drafts.content,
@@ -133,7 +133,7 @@ export function listShadowPairs(
     .where(and(...conditions))
     .orderBy(desc(pipelineShadowPairs.createdAt), sql`${pipelineShadowPairs}.rowid desc`)
     .limit(Math.min(options.limit ?? 50, 100))
-    .all()
+    .all())
     .map((row) =>
       toPair(
         row.pair,
@@ -143,20 +143,20 @@ export function listShadowPairs(
     );
 }
 
-export function recordShadowVerdict(
+export async function recordShadowVerdict(
   db: Db,
   workspaceId: string,
   pairId: string,
   input: ShadowVerdictInput,
   actor: { userId: string | null },
-): PipelineShadowPair | undefined {
-  const existing = db
+): Promise<PipelineShadowPair | undefined> {
+  const existing = await db
     .select()
     .from(pipelineShadowPairs)
     .where(and(eq(pipelineShadowPairs.workspaceId, workspaceId), eq(pipelineShadowPairs.id, pairId)))
     .get();
   if (!existing) return undefined;
-  db.update(pipelineShadowPairs)
+  await db.update(pipelineShadowPairs)
     .set({
       verdict: input.verdict,
       verdictNotes: input.notes,
@@ -165,12 +165,12 @@ export function recordShadowVerdict(
     })
     .where(eq(pipelineShadowPairs.id, pairId))
     .run();
-  const [pair] = listShadowPairsById(db, workspaceId, pairId);
+  const [pair] = await listShadowPairsById(db, workspaceId, pairId);
   return pair;
 }
 
-function listShadowPairsById(db: Db, workspaceId: string, pairId: string): PipelineShadowPair[] {
-  return db
+async function listShadowPairsById(db: Db, workspaceId: string, pairId: string): Promise<PipelineShadowPair[]> {
+  return (await db
     .select({
       pair: pipelineShadowPairs,
       draftContent: drafts.content,
@@ -182,7 +182,7 @@ function listShadowPairsById(db: Db, workspaceId: string, pairId: string): Pipel
     .innerJoin(pipelineRuns, eq(pipelineShadowPairs.runId, pipelineRuns.id))
     .leftJoin(drafts, eq(pipelineShadowPairs.draftId, drafts.id))
     .where(and(eq(pipelineShadowPairs.workspaceId, workspaceId), eq(pipelineShadowPairs.id, pairId)))
-    .all()
+    .all())
     .map((row) =>
       toPair(
         row.pair,
@@ -228,8 +228,8 @@ function draftMetrics(rows: Pick<DraftRow, "state" | "originalContent" | "conten
 
 /** The workspace's generation path, read directly so this module never imports
  * the automation orchestrator (which imports this one). */
-export function getGenerationPath(db: Db, workspaceId: string): AutomationGenerationPath {
-  const row = db
+export async function getGenerationPath(db: Db, workspaceId: string): Promise<AutomationGenerationPath> {
+  const row = await db
     .select({ generationPath: socialAutomationSettings.generationPath })
     .from(socialAutomationSettings)
     .where(eq(socialAutomationSettings.workspaceId, workspaceId))
@@ -237,9 +237,9 @@ export function getGenerationPath(db: Db, workspaceId: string): AutomationGenera
   return (row?.generationPath ?? "legacy") as AutomationGenerationPath;
 }
 
-function setGenerationPath(db: Db, workspaceId: string, path: AutomationGenerationPath): void {
+async function setGenerationPath(db: Db, workspaceId: string, path: AutomationGenerationPath): Promise<void> {
   const now = Date.now();
-  db.insert(socialAutomationSettings)
+  await db.insert(socialAutomationSettings)
     .values({ workspaceId, generationPath: path, updatedAt: now })
     .onConflictDoUpdate({
       target: socialAutomationSettings.workspaceId,
@@ -248,17 +248,17 @@ function setGenerationPath(db: Db, workspaceId: string, path: AutomationGenerati
     .run();
 }
 
-export function getAutomationComparison(
+export async function getAutomationComparison(
   db: Db,
   workspaceId: string,
   options: { windowDays?: number; now?: number } = {},
-): AutomationComparison {
+): Promise<AutomationComparison> {
   const windowDays = options.windowDays ?? COMPARISON_WINDOW_DAYS;
   const now = options.now ?? Date.now();
   const since = now - windowDays * DAY_MS;
 
   // Legacy side: automation drafts are the ones carrying an automationKey.
-  const legacyDrafts = db
+  const legacyDrafts = await db
     .select({
       state: drafts.state,
       originalContent: drafts.originalContent,
@@ -276,7 +276,7 @@ export function getAutomationComparison(
   // Caveat stated on the wire schema: this sum includes founder-triggered
   // manual signal drafts — the legacy path has no per-draft cost attribution.
   const legacyCost =
-    db
+    (await db
       .select({ total: sql<number>`coalesce(sum(${llmUsageEvents.costCents}), 0)` })
       .from(llmUsageEvents)
       .where(
@@ -286,11 +286,11 @@ export function getAutomationComparison(
           gte(llmUsageEvents.createdAt, since),
         ),
       )
-      .get()?.total ?? 0;
+      .get())?.total ?? 0;
 
   // Engine side: live + shadow runs in the window (dry runs are founder
   // experiments, not the A/B), drafts joined from the live runs' gate handoff.
-  const engineRuns = db
+  const engineRuns = await db
     .select({
       mode: pipelineRuns.mode,
       status: pipelineRuns.status,
@@ -311,7 +311,7 @@ export function getAutomationComparison(
     .map((run) => run.draftId!);
   const engineDrafts =
     engineDraftIds.length > 0
-      ? db
+      ? await db
           .select({
             state: drafts.state,
             originalContent: drafts.originalContent,
@@ -322,7 +322,7 @@ export function getAutomationComparison(
           .all()
       : [];
 
-  const pairs = db
+  const pairs = await db
     .select({ verdict: pipelineShadowPairs.verdict })
     .from(pipelineShadowPairs)
     .where(
@@ -335,7 +335,7 @@ export function getAutomationComparison(
 
   return {
     workspaceId,
-    generationPath: getGenerationPath(db, workspaceId),
+    generationPath: await getGenerationPath(db, workspaceId),
     windowDays,
     legacy: { ...draftMetrics(legacyDrafts), costCents: Math.round(legacyCost) },
     engine: {
@@ -371,13 +371,13 @@ const PATH_FOR_DECISION: Record<RecordRolloutDecisionInput["decision"], Automati
 
 /** Freeze the comparison into an append-only record, then apply the matching
  * generation path. The record is the paper trail the PRD's acceptance names. */
-export function recordRolloutDecision(
+export async function recordRolloutDecision(
   db: Db,
   workspaceId: string,
   input: RecordRolloutDecisionInput,
   actor: { userId: string | null },
-): RolloutDecision {
-  const metrics = getAutomationComparison(db, workspaceId);
+): Promise<RolloutDecision> {
+  const metrics = await getAutomationComparison(db, workspaceId);
   const record: RolloutDecision = {
     id: randomUUID(),
     workspaceId,
@@ -388,7 +388,7 @@ export function recordRolloutDecision(
     decidedByUserId: actor.userId,
     createdAt: Date.now(),
   };
-  db.insert(pipelineRolloutDecisions)
+  await db.insert(pipelineRolloutDecisions)
     .values({
       id: record.id,
       workspaceId,
@@ -400,17 +400,17 @@ export function recordRolloutDecision(
       createdAt: record.createdAt,
     })
     .run();
-  setGenerationPath(db, workspaceId, PATH_FOR_DECISION[input.decision]);
+  await setGenerationPath(db, workspaceId, PATH_FOR_DECISION[input.decision]);
   return record;
 }
 
-export function listRolloutDecisions(db: Db, workspaceId: string): RolloutDecision[] {
-  return db
+export async function listRolloutDecisions(db: Db, workspaceId: string): Promise<RolloutDecision[]> {
+  return (await db
     .select()
     .from(pipelineRolloutDecisions)
     .where(eq(pipelineRolloutDecisions.workspaceId, workspaceId))
     .orderBy(desc(pipelineRolloutDecisions.createdAt), sql`${pipelineRolloutDecisions}.rowid desc`)
-    .all()
+    .all())
     .map((row) => ({
       id: row.id,
       workspaceId: row.workspaceId,

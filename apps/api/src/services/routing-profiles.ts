@@ -61,25 +61,25 @@ function distinct(values: Array<string | null | undefined>): string[] {
  * Returns undefined when the campaign is missing or has no active plan
  * revision (a campaign cannot be routed to before its plan exists).
  */
-export function compileRoutingProfile(
+export async function compileRoutingProfile(
   db: Db,
   workspaceId: string,
   campaignId: string,
-): CampaignRoutingProfile | undefined {
-  const campaign = db
+): Promise<CampaignRoutingProfile | undefined> {
+  const campaign = await db
     .select()
     .from(campaigns)
     .where(and(eq(campaigns.id, campaignId), eq(campaigns.workspaceId, workspaceId)))
     .get();
   if (!campaign) return undefined;
-  const detail = getCurrentCampaignPlan(db, workspaceId, campaignId);
+  const detail = await getCurrentCampaignPlan(db, workspaceId, campaignId);
   if (!detail) return undefined;
 
   const activeLanes = detail.lanes.filter((lane) => lane.status === "active");
   const audienceIds = distinct(detail.plan.audienceIds);
   const audienceNames =
     audienceIds.length > 0
-      ? db
+      ? (await db
           .select({ name: audiences.name })
           .from(audiences)
           .where(
@@ -89,7 +89,7 @@ export function compileRoutingProfile(
             ),
           )
           .orderBy(asc(audiences.name))
-          .all()
+          .all())
           .map((row) => row.name)
       : [];
 
@@ -126,8 +126,8 @@ export function compileRoutingProfile(
     )
     .digest("hex");
 
-  return db.transaction((tx) => {
-    const existing = tx
+  return await db.transaction(async (tx) => {
+    const existing = await tx
       .select()
       .from(campaignRoutingProfiles)
       .where(
@@ -139,14 +139,14 @@ export function compileRoutingProfile(
       )
       .get();
     if (existing) return rowToRoutingProfile(existing);
-    const latest = tx
+    const latest = await tx
       .select({ profileVersion: campaignRoutingProfiles.profileVersion })
       .from(campaignRoutingProfiles)
       .where(eq(campaignRoutingProfiles.campaignId, campaignId))
       .orderBy(desc(campaignRoutingProfiles.profileVersion))
       .limit(1)
       .get();
-    const inserted = tx
+    const inserted = await tx
       .insert(campaignRoutingProfiles)
       .values({
         id: randomUUID(),
@@ -174,11 +174,11 @@ export function compileRoutingProfile(
  * (band != off). Compiles lazily; campaigns without an active plan are
  * skipped. Ordered by campaign creation for deterministic candidate ties.
  */
-export function currentRoutingProfiles(
+export async function currentRoutingProfiles(
   db: Db,
   workspaceId: string,
-): CampaignRoutingProfile[] {
-  const rows = db
+): Promise<CampaignRoutingProfile[]> {
+  const rows = await db
     .select({ id: campaigns.id, routingBand: campaigns.routingBand })
     .from(campaigns)
     .where(
@@ -189,20 +189,20 @@ export function currentRoutingProfiles(
   const profiles: CampaignRoutingProfile[] = [];
   for (const row of rows) {
     if (row.routingBand === "off") continue;
-    const profile = compileRoutingProfile(db, workspaceId, row.id);
+    const profile = await compileRoutingProfile(db, workspaceId, row.id);
     if (profile) profiles.push(profile);
   }
   return profiles;
 }
 
 /** Latest compiled profile fingerprints, cheap read for drift checks. */
-export function latestProfileFingerprints(
+export async function latestProfileFingerprints(
   db: DbExecutor,
   workspaceId: string,
   campaignIds: string[],
-): Map<string, string> {
+): Promise<Map<string, string>> {
   if (campaignIds.length === 0) return new Map();
-  const rows = db
+  const rows = await db
     .select({
       campaignId: campaignRoutingProfiles.campaignId,
       profileFingerprint: campaignRoutingProfiles.profileFingerprint,
@@ -239,12 +239,12 @@ export function latestProfileFingerprints(
  * profile, or undefined when the campaign has no active plan yet (the policy
  * columns still update so they take effect once a plan activates).
  */
-export function updateRoutingPolicy(
+export async function updateRoutingPolicy(
   db: Db,
   workspaceId: string,
   campaignId: string,
   patch: RoutingPolicyPatch,
-): { updated: boolean; profile: CampaignRoutingProfile | undefined } {
+): Promise<{ updated: boolean; profile: CampaignRoutingProfile | undefined }> {
   const changes: Partial<{
     routingBand: string;
     routingMinFit: number;
@@ -262,7 +262,7 @@ export function updateRoutingPolicy(
     changes.routingExclusionsJson = JSON.stringify(patch.exclusions);
   if (Object.keys(changes).length > 0) {
     changes.updatedAt = Date.now();
-    const result = db
+    const result = await db
       .update(campaigns)
       .set(changes)
       .where(
@@ -273,6 +273,6 @@ export function updateRoutingPolicy(
   }
   return {
     updated: true,
-    profile: compileRoutingProfile(db, workspaceId, campaignId),
+    profile: await compileRoutingProfile(db, workspaceId, campaignId),
   };
 }

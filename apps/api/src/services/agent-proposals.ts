@@ -114,7 +114,7 @@ function refuseFromError(error: unknown): ProposalResult {
 export function createAgentProposals(deps: AgentProposalDeps): AgentProposalService {
   const { db, runtime, fabric, fetcher } = deps;
 
-  function record(
+  async function record(
     origin: ProposalOrigin,
     tool: ProposeToolName,
     target: {
@@ -125,8 +125,8 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
     },
     summary: string,
     rationale: string,
-  ): void {
-    recordAgentProposal(db, {
+  ): Promise<void> {
+    await recordAgentProposal(db, {
       workspaceId: origin.workspaceId,
       agentRunId: origin.agentRunId,
       tool,
@@ -142,8 +142,8 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
 
   /** The daily cap (D-69.8). Read before any command is built, so a capped
    * workspace never touches an adapter. */
-  function capped(origin: ProposalOrigin): ProposalResult | null {
-    const used = countProposalsToday(db, origin.workspaceId);
+  async function capped(origin: ProposalOrigin): Promise<ProposalResult | null> {
+    const used = await countProposalsToday(db, origin.workspaceId);
     if (used < AGENT_PROPOSALS_PER_DAY) return null;
     return refuse(
       "proposal_cap_reached",
@@ -177,7 +177,7 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
       originRunId: origin.agentRunId,
       originSurface: origin.surface ?? "pipeline",
     });
-    record(
+    await record(
       origin,
       tool,
       { kind: "external_action", externalActionId: submission.action.id },
@@ -196,7 +196,7 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
 
   return {
     async proposeDraft(origin, args: ProposeDraftArgs): Promise<ProposalResult> {
-      const capReached = capped(origin);
+      const capReached = await capped(origin);
       if (capReached) return capReached;
 
       // D-69.2: a draft is not an external action, so this lands in the
@@ -204,7 +204,7 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
       // draft has provenance in Review like every other draft — the trace names
       // the run and the reason, which is all the agent actually contributed.
       const trace = `Written by agent run ${origin.agentRunId}.\n\nReason given: ${args.rationale}`;
-      const generation = storeGeneration(db, {
+      const generation = await storeGeneration(db, {
         workspaceId: origin.workspaceId,
         taskType: args.taskType ?? "signal_response",
         channel: args.channel as Channel,
@@ -233,7 +233,7 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
         provider: "agent",
         durationMs: 0,
       });
-      const draft = submitDraft(
+      const draft = await submitDraft(
         db,
         {
           workspaceId: origin.workspaceId,
@@ -249,7 +249,7 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
         { userId: null, label: `agent:${origin.agentRunId}`, human: false },
       );
       const summary = `Submitted a ${args.channel} draft for review.`;
-      record(origin, "propose_draft", { kind: "draft", draftId: draft.id }, summary, args.rationale);
+      await record(origin, "propose_draft", { kind: "draft", draftId: draft.id }, summary, args.rationale);
       return {
         ok: true,
         targetKind: "draft",
@@ -264,10 +264,10 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
       origin,
       args: ProposePublicationArgs,
     ): Promise<ProposalResult> {
-      const capReached = capped(origin);
+      const capReached = await capped(origin);
       if (capReached) return capReached;
 
-      const draft = getDraft(db, origin.workspaceId, args.draftId);
+      const draft = await getDraft(db, origin.workspaceId, args.draftId);
       if (!draft) return refuse("draft_not_found", `No draft ${args.draftId} in this workspace.`);
 
       // D-69.9: routing is the platform's job when the model does not name a
@@ -278,7 +278,7 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
       // a human's choice on the route. No second opinion is added here.
       let connectionId = args.connectionId;
       if (!connectionId) {
-        const routed = resolvePersonaSocialConnection(db, origin.workspaceId, {
+        const routed = await resolvePersonaSocialConnection(db, origin.workspaceId, {
           personaId: draft.personaId,
           channel: draft.channel,
         });
@@ -293,7 +293,7 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
       }
       const target =
         args.target ??
-        listPublications(db, origin.workspaceId).find(
+        (await listPublications(db, origin.workspaceId)).find(
           (publication) =>
             publication.connectionId === connectionId && publication.status === "published",
         )?.target;
@@ -306,7 +306,7 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
       }
 
       try {
-        const command = preparePublicationAction(
+        const command = await preparePublicationAction(
           db,
           origin.workspaceId,
           draft.id,
@@ -331,10 +331,10 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
     },
 
     async proposeReply(origin, args: ProposeReplyArgs): Promise<ProposalResult> {
-      const capReached = capped(origin);
+      const capReached = await capped(origin);
       if (capReached) return capReached;
 
-      const item = getInboxItem(db, origin.workspaceId, args.inboxItemId);
+      const item = await getInboxItem(db, origin.workspaceId, args.inboxItemId);
       if (!item) {
         return refuse("inbox_item_not_found", `No inbox item ${args.inboxItemId}.`);
       }
@@ -348,7 +348,7 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
           "Draft a reply and get it approved before proposing to post it.",
         );
       }
-      const draft = getDraft(db, origin.workspaceId, item.replyDraftId);
+      const draft = await getDraft(db, origin.workspaceId, item.replyDraftId);
       if (!draft || draft.state !== "approved") {
         return refuse(
           "reply_not_approved",
@@ -357,7 +357,7 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
         );
       }
       try {
-        const command = prepareReplyAction(db, origin.workspaceId, item.id, {
+        const command = await prepareReplyAction(db, origin.workspaceId, item.id, {
           idempotencyKey: deriveReplyIdempotencyKey(item.id, draft),
           automated: false,
         });
@@ -377,10 +377,10 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
       origin,
       args: ProposeSequenceStepArgs,
     ): Promise<ProposalResult> {
-      const capReached = capped(origin);
+      const capReached = await capped(origin);
       if (capReached) return capReached;
 
-      const message = db
+      const message = await db
         .select()
         .from(launchMessages)
         .where(
@@ -396,7 +396,7 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
       if (message.status === "sent") {
         return refuse("already_sent", "This sequence message has already gone out.");
       }
-      const draft = message.draftId ? getDraft(db, origin.workspaceId, message.draftId) : undefined;
+      const draft = message.draftId ? await getDraft(db, origin.workspaceId, message.draftId) : undefined;
       if (!draft || draft.state !== "approved") {
         return refuse(
           "message_not_approved",
@@ -405,7 +405,7 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
         );
       }
       try {
-        const command = prepareEmailAction(db, origin.workspaceId, {
+        const command = await prepareEmailAction(db, origin.workspaceId, {
           origin: "launch_message",
           originId: message.id,
           idempotencyKey: deriveEmailSendIdempotencyKey(message.id, {
@@ -437,7 +437,7 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
      * and activate, which is the whole of the guarantee.
      */
     async proposeCampaign(origin, args: ProposeCampaignArgs): Promise<ProposalResult> {
-      const capReached = capped(origin);
+      const capReached = await capped(origin);
       if (capReached) return capReached;
 
       const parsed = upsertCampaignInputSchema.safeParse({
@@ -462,7 +462,7 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
         );
       }
 
-      const campaign = createCampaign(
+      const campaign = await createCampaign(
         db,
         origin.workspaceId,
         {
@@ -475,7 +475,7 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
         { origin: "system" },
       );
       const summary = `Created the campaign "${campaign.name}" as a draft.`;
-      record(
+      await record(
         origin,
         "propose_campaign",
         { kind: "campaign", campaignId: campaign.id },
@@ -493,7 +493,7 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
     },
 
     async proposeAdMutation(origin, args: ProposeAdMutationArgs): Promise<ProposalResult> {
-      const capReached = capped(origin);
+      const capReached = await capped(origin);
       if (capReached) return capReached;
 
       const wantsBudget = args.dailyBudgetCents !== undefined;
@@ -506,7 +506,7 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
           "Pass dailyBudgetCents, or all of countries, ageMin and ageMax.",
         );
       }
-      const launch = getLaunch(db, origin.workspaceId, args.launchId);
+      const launch = await getLaunch(db, origin.workspaceId, args.launchId);
       if (!launch) return refuse("launch_not_found", `No ad launch ${args.launchId}.`);
 
       try {

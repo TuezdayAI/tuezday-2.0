@@ -59,38 +59,38 @@ export {
 // Guardrails (the safety net for scheduled_auto posting)
 // ---------------------------------------------------------------------------
 
-export function connectionTimeZone(db: Db, connectionId: string): string {
+export async function connectionTimeZone(db: Db, connectionId: string): Promise<string> {
   return (
-    db
+    (await db
       .select({ timezone: connections.timezone })
       .from(connections)
       .where(eq(connections.id, connectionId))
-      .get()?.timezone ?? "UTC"
+      .get())?.timezone ?? "UTC"
   );
 }
 
 /** Account-local civil-day window containing `ms` — [start, end). */
-export function connectionDayBounds(
+export async function connectionDayBounds(
   db: Db,
   connectionId: string,
   ms: number,
-): { start: number; end: number } {
-  return zonedDayBounds(ms, connectionTimeZone(db, connectionId));
+): Promise<{ start: number; end: number }> {
+  return zonedDayBounds(ms, await connectionTimeZone(db, connectionId));
 }
 
 /** Non-failed publications already on this connection on the slot's local day —
  * the platform posting limit is per account, regardless of who created the post. */
-export function countConnectionPublicationsForDay(
+export async function countConnectionPublicationsForDay(
   db: Db,
   connectionId: string,
   dayMs: number,
   excludeActionId?: string,
   timeZone?: string,
-): number {
+): Promise<number> {
   const { start, end } = timeZone
     ? zonedDayBounds(dayMs, timeZone)
-    : connectionDayBounds(db, connectionId, dayMs);
-  const receipts = db
+    : await connectionDayBounds(db, connectionId, dayMs);
+  const receipts = (await db
     .select({ id: publications.id })
     .from(publications)
     .where(
@@ -107,8 +107,8 @@ export function countConnectionPublicationsForDay(
         lt(publications.scheduledFor, end),
       ),
     )
-    .all().length;
-  const pendingActions = db
+    .all()).length;
+  const pendingActions = (await db
     .select({ id: externalActions.id })
     .from(externalActions)
     .where(
@@ -127,20 +127,20 @@ export function countConnectionPublicationsForDay(
         lt(externalActions.requestedFor, end),
       ),
     )
-    .all().length;
+    .all()).length;
   return receipts + pendingActions;
 }
 
 /** Non-failed publications for this campaign on the candidate account's local day. */
-export function countCampaignPublicationsForDay(
+export async function countCampaignPublicationsForDay(
   db: Db,
   campaignId: string,
   dayMs: number,
   excludeActionId?: string,
   timeZone = "UTC",
-): number {
+): Promise<number> {
   const { start, end } = zonedDayBounds(dayMs, timeZone);
-  const receipts = db
+  const receipts = (await db
     .select({ id: publications.id })
     .from(publications)
     .innerJoin(postingCadences, eq(publications.cadenceId, postingCadences.id))
@@ -158,8 +158,8 @@ export function countCampaignPublicationsForDay(
         lt(publications.scheduledFor, end),
       ),
     )
-    .all().length;
-  const pendingActions = db
+    .all()).length;
+  const pendingActions = (await db
     .select({ id: externalActions.id })
     .from(externalActions)
     .where(
@@ -178,7 +178,7 @@ export function countCampaignPublicationsForDay(
         lt(externalActions.requestedFor, end),
       ),
     )
-    .all().length;
+    .all()).length;
   return receipts + pendingActions;
 }
 
@@ -191,11 +191,11 @@ export type PostGuardrailCheck =
  * slot). The kill switch is the hard stop; caps use the destination account's
  * civil day, independently of the cadence wall-clock timezone.
  */
-export function checkPostGuardrails(
+export async function checkPostGuardrails(
   db: Db,
   settings: SocialAutomationSettings,
   args: { campaign: Campaign; connectionId: string; slotMs: number; excludeActionId?: string },
-): PostGuardrailCheck {
+): Promise<PostGuardrailCheck> {
   if (settings.killSwitch) {
     return {
       ok: false,
@@ -203,8 +203,8 @@ export function checkPostGuardrails(
       message: "The workspace kill switch is on — turn it off in Automation settings to auto-post.",
     };
   }
-  const timeZone = connectionTimeZone(db, args.connectionId);
-  const connCount = countConnectionPublicationsForDay(
+  const timeZone = await connectionTimeZone(db, args.connectionId);
+  const connCount = await countConnectionPublicationsForDay(
     db,
     args.connectionId,
     args.slotMs,
@@ -219,7 +219,7 @@ export function checkPostGuardrails(
     };
   }
   const campCap = args.campaign.autoDailyCap ?? settings.perCampaignDailyCap;
-  const campCount = countCampaignPublicationsForDay(
+  const campCount = await countCampaignPublicationsForDay(
     db,
     args.campaign.id,
     args.slotMs,
@@ -240,27 +240,27 @@ export function checkPostGuardrails(
 // Orchestrator (mode-routed fan-out + auto-approval)
 // ---------------------------------------------------------------------------
 
-function signalsOldestFirst(db: Db, workspaceId: string): Signal[] {
-  return db
+async function signalsOldestFirst(db: Db, workspaceId: string): Promise<Signal[]> {
+  return (await db
     .select()
     .from(signalsTable)
     .where(eq(signalsTable.workspaceId, workspaceId))
     .orderBy(asc(signalsTable.createdAt))
-    .all()
+    .all())
     // `matches` stays empty on these internal objects — routing reads the
     // signal_matches table directly via getBestSignalMatchForCampaign.
     .map((row) => ({ ...row, source: row.source as SignalSource, matches: [] }));
 }
 
-function hasDraftFor(
+async function hasDraftFor(
   db: Db,
   workspaceId: string,
   signalId: string,
   campaignId: string,
   channel: Channel,
-): boolean {
+): Promise<boolean> {
   return (
-    db
+    await db
       .select({ id: drafts.id })
       .from(drafts)
       .where(
@@ -292,19 +292,19 @@ export async function runAutomation(
   workspaceId: string,
   nowMs: number = Date.now(),
 ): Promise<AutomationRunResult> {
-  const workspace = getWorkspace(db, workspaceId);
+  const workspace = await getWorkspace(db, workspaceId);
   if (!workspace) return { results: [], ranAt: nowMs };
 
-  const settings = getSocialAutomationSettings(db, workspaceId);
-  const campaigns = listAutomatedCampaigns(db, workspaceId);
-  const signals = signalsOldestFirst(db, workspaceId);
-  const personasById = new Map(listPersonas(db, workspaceId).map((p) => [p.id, p]));
+  const settings = await getSocialAutomationSettings(db, workspaceId);
+  const campaigns = await listAutomatedCampaigns(db, workspaceId);
+  const signals = await signalsOldestFirst(db, workspaceId);
+  const personasById = new Map((await listPersonas(db, workspaceId)).map((p) => [p.id, p]));
   const results: AutomationCampaignResult[] = [];
 
   // Budget degradation (Sprint 59): an over-budget workspace generates nothing
   // this tick; unmatched work stays pending and a later tick resumes once the
   // rolling spend frees up or the plan changes. Structured refusal, no throw.
-  const budgetExhausted = llmBudgetExhausted(db, workspaceId);
+  const budgetExhausted = await llmBudgetExhausted(db, workspaceId);
 
   for (const campaign of campaigns) {
     const base = {
@@ -353,7 +353,7 @@ export async function runAutomation(
     const definition =
       settings.generationPath === "legacy"
         ? undefined
-        : resolvePipelineDefinition(db, {
+        : await resolvePipelineDefinition(db, {
             workspaceId,
             taskKey: "signal_social_post",
             campaignId: campaign.id,
@@ -362,7 +362,7 @@ export async function runAutomation(
     for (const signal of signals) {
       // Sprint 45: a signal only reaches this campaign when discovery (or a
       // human) matched it above the workspace threshold — no more blind fan-out.
-      const match = getBestSignalMatchForCampaign(
+      const match = await getBestSignalMatchForCampaign(
         db,
         workspaceId,
         signal.id,
@@ -372,7 +372,7 @@ export async function runAutomation(
       const persona = match.personaId ? personasById.get(match.personaId) : undefined;
       for (const channel of campaign.channels) {
         if (
-          hasDraftFor(
+          await hasDraftFor(
             db,
             workspaceId,
             signal.id,
@@ -390,7 +390,7 @@ export async function runAutomation(
         // terminal for this work item, visibly, not silently retried).
         if (settings.generationPath === "pipeline" && definition) {
           try {
-            startPipelineRun(db, {
+            await startPipelineRun(db, {
               workspaceId,
               definition,
               signalId: signal.id,
@@ -456,7 +456,7 @@ export async function runAutomation(
               channel,
             });
             try {
-              const run = startPipelineRun(db, {
+              const run = await startPipelineRun(db, {
                 workspaceId,
                 definition,
                 signalId: signal.id,
@@ -467,7 +467,7 @@ export async function runAutomation(
                 idempotencyKey: pairKey,
                 createdBy: "automation",
               });
-              createShadowPair(db, {
+              await createShadowPair(db, {
                 workspaceId,
                 pairKey,
                 signalId: signal.id,
@@ -523,8 +523,8 @@ export async function runAutomationWithLease(
       leaseMs: deps.leaseMs,
       heartbeatMs: deps.heartbeatMs,
     },
-    () =>
-      runAutomation(
+    async () =>
+      await runAutomation(
         deps.db,
         deps.llm,
         deps.evidence,

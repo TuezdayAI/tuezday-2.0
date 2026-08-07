@@ -54,7 +54,7 @@ export interface StoreGenerationInput {
   durationMs: number;
 }
 
-export function storeGeneration(db: DbExecutor, input: StoreGenerationInput): GenerationWithTrace {
+export async function storeGeneration(db: DbExecutor, input: StoreGenerationInput): Promise<GenerationWithTrace> {
   const row: GenerationRow = {
     id: randomUUID(),
     workspaceId: input.workspaceId,
@@ -75,27 +75,27 @@ export function storeGeneration(db: DbExecutor, input: StoreGenerationInput): Ge
     reviewJson: null,
     createdAt: Date.now(),
   };
-  db.insert(generations).values(row).run();
+  await db.insert(generations).values(row).run();
   return rowToGeneration(row);
 }
 
-export function listGenerations(db: Db, workspaceId: string): GenerationWithTrace[] {
-  return db
+export async function listGenerations(db: Db, workspaceId: string): Promise<GenerationWithTrace[]> {
+  return (await db
     .select()
     .from(generations)
     .where(eq(generations.workspaceId, workspaceId))
     .orderBy(desc(generations.createdAt))
-    .all()
+    .all())
     .map(rowToGeneration);
 }
 
-export function rateGeneration(
+export async function rateGeneration(
   db: Db,
   workspaceId: string,
   generationId: string,
   rating: OutputRating,
-): GenerationWithTrace | undefined {
-  const row = db
+): Promise<GenerationWithTrace | undefined> {
+  const row = await db
     .select()
     .from(generations)
     .where(and(eq(generations.workspaceId, workspaceId), eq(generations.id, generationId)))
@@ -103,18 +103,18 @@ export function rateGeneration(
   if (!row) return undefined;
 
   const ratedAt = Date.now();
-  db.update(generations)
+  await db.update(generations)
     .set({ rating, ratedAt })
     .where(eq(generations.id, generationId))
     .run();
   return rowToGeneration({ ...row, rating, ratedAt });
 }
 
-export function countGenerationsSince(db: Db, workspaceId: string, sinceMs: number): number {
-  return db
+export async function countGenerationsSince(db: Db, workspaceId: string, sinceMs: number): Promise<number> {
+  return (await db
     .select()
     .from(generations)
     .where(and(eq(generations.workspaceId, workspaceId), gte(generations.createdAt, sinceMs)))
-    .all()
+    .all())
     .length;
 }

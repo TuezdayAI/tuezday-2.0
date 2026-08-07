@@ -31,7 +31,7 @@ describe("automation A/B routes (Sprint 65)", () => {
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "AB" } })
     ).json().id;
-    db.insert(signals)
+    await db.insert(signals)
       .values({
         id: SIGNAL_ID,
         workspaceId,
@@ -43,9 +43,9 @@ describe("automation A/B routes (Sprint 65)", () => {
       .run();
   });
 
-  function seedPair() {
+  async function seedPair() {
     const campaignId = randomUUID();
-    db.insert(campaigns)
+    await db.insert(campaigns)
       .values({
         id: campaignId,
         workspaceId,
@@ -58,7 +58,7 @@ describe("automation A/B routes (Sprint 65)", () => {
       })
       .run();
     const draftId = randomUUID();
-    db.insert(draftsTable)
+    await db.insert(draftsTable)
       .values({
         id: draftId,
         workspaceId,
@@ -71,7 +71,7 @@ describe("automation A/B routes (Sprint 65)", () => {
         updatedAt: Date.now(),
       })
       .run();
-    const definition = createPipelineDefinition(
+    const definition = await createPipelineDefinition(
       db,
       workspaceId,
       {
@@ -99,7 +99,7 @@ describe("automation A/B routes (Sprint 65)", () => {
       { userId: founder.id, label: "founder" },
     );
     const runId = randomUUID();
-    db.insert(pipelineRuns)
+    await db.insert(pipelineRuns)
       .values({
         id: runId,
         workspaceId,
@@ -123,7 +123,7 @@ describe("automation A/B routes (Sprint 65)", () => {
         createdAt: Date.now(),
       })
       .run();
-    return createShadowPair(db, {
+    return await createShadowPair(db, {
       workspaceId,
       pairKey: shadowPairKey({
         workspaceId,
@@ -184,7 +184,7 @@ describe("automation A/B routes (Sprint 65)", () => {
   });
 
   it("runs the shadow review flow over HTTP", async () => {
-    const pair = seedPair();
+    const pair = await seedPair();
 
     const unreviewed = await app.inject({
       method: "GET",

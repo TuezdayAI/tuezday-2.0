@@ -90,22 +90,22 @@ export function rowToChatProposal(row: ChatProposalRow): ChatProposal {
 // Reads
 // ---------------------------------------------------------------------------
 
-export function listChatProposals(db: Db, sessionId: string): ChatProposal[] {
-  return db
+export async function listChatProposals(db: Db, sessionId: string): Promise<ChatProposal[]> {
+  return (await db
     .select()
     .from(chatProposals)
     .where(eq(chatProposals.sessionId, sessionId))
     .orderBy(asc(chatProposals.createdAt))
-    .all()
+    .all())
     .map(rowToChatProposal);
 }
 
-export function getChatProposal(
+export async function getChatProposal(
   db: Db,
   workspaceId: string,
   proposalId: string,
-): ChatProposal | undefined {
-  const row = db
+): Promise<ChatProposal | undefined> {
+  const row = await db
     .select()
     .from(chatProposals)
     .where(and(eq(chatProposals.workspaceId, workspaceId), eq(chatProposals.id, proposalId)))
@@ -114,17 +114,17 @@ export function getChatProposal(
 }
 
 /** Every proposal a thread has ever recorded — the per-thread cap's count. */
-export function countChatProposalsForThread(db: Db, sessionId: string): number {
-  return db
+export async function countChatProposalsForThread(db: Db, sessionId: string): Promise<number> {
+  return (await db
     .select({ id: chatProposals.id })
     .from(chatProposals)
     .where(eq(chatProposals.sessionId, sessionId))
-    .all().length;
+    .all()).length;
 }
 
 /** Chat proposals recorded workspace-wide in the trailing 24 hours. */
-export function countChatProposalsToday(db: Db, workspaceId: string, now = Date.now()): number {
-  return db
+export async function countChatProposalsToday(db: Db, workspaceId: string, now = Date.now()): Promise<number> {
+  return (await db
     .select({ id: chatProposals.id })
     .from(chatProposals)
     .where(
@@ -133,16 +133,16 @@ export function countChatProposalsToday(db: Db, workspaceId: string, now = Date.
         gte(chatProposals.createdAt, now - DAY_MS),
       ),
     )
-    .all().length;
+    .all()).length;
 }
 
 /**
  * Hang a turn's proposals under the assistant message once it exists. The
  * proposals are recorded mid-run, before there is a message to point at.
  */
-export function attachProposalsToMessage(db: Db, ids: string[], messageId: string): void {
+export async function attachProposalsToMessage(db: Db, ids: string[], messageId: string): Promise<void> {
   for (const id of ids) {
-    db.update(chatProposals).set({ messageId }).where(eq(chatProposals.id, id)).run();
+    await db.update(chatProposals).set({ messageId }).where(eq(chatProposals.id, id)).run();
   }
 }
 
@@ -166,20 +166,20 @@ export interface ChatProposalRecorderContext {
  * raw id, which is still checkable, and the confirmation path will refuse a
  * bad id with the platform's own message.
  */
-function namesFor(db: Db, workspaceId: string, args: Record<string, unknown>): IntentNames {
+async function namesFor(db: Db, workspaceId: string, args: Record<string, unknown>): Promise<IntentNames> {
   const names: IntentNames = {};
   if (typeof args.campaignId === "string") {
-    names.campaignName = getCampaign(db, workspaceId, args.campaignId)?.name ?? null;
+    names.campaignName = (await getCampaign(db, workspaceId, args.campaignId))?.name ?? null;
   }
   if (typeof args.personaId === "string") {
-    names.personaName = getPersona(db, workspaceId, args.personaId)?.name ?? null;
+    names.personaName = (await getPersona(db, workspaceId, args.personaId))?.name ?? null;
   }
   if (typeof args.draftId === "string") {
-    const draft = getDraft(db, workspaceId, args.draftId);
+    const draft = await getDraft(db, workspaceId, args.draftId);
     names.draftTitle = draft ? deriveTitle(draft.content) : null;
   }
   if (typeof args.launchId === "string") {
-    names.launchName = getLaunch(db, workspaceId, args.launchId)?.name ?? null;
+    names.launchName = (await getLaunch(db, workspaceId, args.launchId))?.name ?? null;
   }
   return names;
 }
@@ -196,8 +196,8 @@ export function createChatProposalRecorder(
    * proposing into a queue nobody can act on. Returned as data, never thrown —
    * the model reads the refusal and wraps up.
    */
-  function capped(): ProposalResult | null {
-    const thread = countChatProposalsForThread(db, ctx.sessionId);
+  async function capped(): Promise<ProposalResult | null> {
+    const thread = await countChatProposalsForThread(db, ctx.sessionId);
     if (thread >= CHAT_PROPOSALS_PER_THREAD) {
       return {
         ok: false,
@@ -206,7 +206,7 @@ export function createChatProposalRecorder(
         hint: "Summarise what is left to do and let them work through what is already on the table, or start a new conversation.",
       };
     }
-    const today = countChatProposalsToday(db, ctx.workspaceId, now());
+    const today = await countChatProposalsToday(db, ctx.workspaceId, now());
     if (today >= CHAT_PROPOSALS_PER_DAY) {
       return {
         ok: false,
@@ -218,15 +218,15 @@ export function createChatProposalRecorder(
     return null;
   }
 
-  function record(
+  async function record(
     origin: ProposalOrigin,
     tool: ProposeToolName,
     args: Record<string, unknown>,
-  ): ProposalResult {
-    const capReached = capped();
+  ): Promise<ProposalResult> {
+    const capReached = await capped();
     if (capReached) return capReached;
 
-    const intent = buildProposalIntent(tool, args, namesFor(db, ctx.workspaceId, args));
+    const intent = buildProposalIntent(tool, args, await namesFor(db, ctx.workspaceId, args));
     const verdict = ctx.taint.assess(args);
 
     const row: ChatProposalRow = {
@@ -249,7 +249,7 @@ export function createChatProposalRecorder(
       resolvedAt: null,
       createdAt: now(),
     };
-    db.insert(chatProposals).values(row).run();
+    await db.insert(chatProposals).values(row).run();
     const proposal = rowToChatProposal(row);
     ctx.onRecorded?.(proposal);
 
@@ -270,18 +270,18 @@ export function createChatProposalRecorder(
   }
 
   return {
-    proposeDraft: (origin, args) =>
-      Promise.resolve(record(origin, "propose_draft", { ...args })),
-    proposePublication: (origin, args) =>
-      Promise.resolve(record(origin, "propose_publication", { ...args })),
-    proposeReply: (origin, args) =>
-      Promise.resolve(record(origin, "propose_reply", { ...args })),
-    proposeSequenceStep: (origin, args) =>
-      Promise.resolve(record(origin, "propose_sequence_step", { ...args })),
-    proposeAdMutation: (origin, args) =>
-      Promise.resolve(record(origin, "propose_ad_mutation", { ...args })),
-    proposeCampaign: (origin, args) =>
-      Promise.resolve(record(origin, "propose_campaign", { ...args })),
+    proposeDraft: async (origin, args) =>
+      await Promise.resolve(await record(origin, "propose_draft", { ...args })),
+    proposePublication: async (origin, args) =>
+      await Promise.resolve(await record(origin, "propose_publication", { ...args })),
+    proposeReply: async (origin, args) =>
+      await Promise.resolve(await record(origin, "propose_reply", { ...args })),
+    proposeSequenceStep: async (origin, args) =>
+      await Promise.resolve(await record(origin, "propose_sequence_step", { ...args })),
+    proposeAdMutation: async (origin, args) =>
+      await Promise.resolve(await record(origin, "propose_ad_mutation", { ...args })),
+    proposeCampaign: async (origin, args) =>
+      await Promise.resolve(await record(origin, "propose_campaign", { ...args })),
   };
 }
 
@@ -298,13 +298,13 @@ export type ResolveChatProposalOutcome =
   | { ok: true; proposal: ChatProposal }
   | { ok: false; error: "not_found" | "already_resolved"; proposal?: ChatProposal };
 
-function resolveRow(
+async function resolveRow(
   db: Db,
   id: string,
   patch: Partial<ChatProposalRow>,
-): ChatProposal | undefined {
-  db.update(chatProposals).set(patch).where(eq(chatProposals.id, id)).run();
-  const row = db.select().from(chatProposals).where(eq(chatProposals.id, id)).get();
+): Promise<ChatProposal | undefined> {
+  await db.update(chatProposals).set(patch).where(eq(chatProposals.id, id)).run();
+  const row = await db.select().from(chatProposals).where(eq(chatProposals.id, id)).get();
   return row ? rowToChatProposal(row) : undefined;
 }
 
@@ -322,18 +322,18 @@ export async function confirmChatProposal(
   actor: ChatProposalActor,
   proposalId: string,
 ): Promise<ResolveChatProposalOutcome> {
-  const existing = getChatProposal(db, workspaceId, proposalId);
+  const existing = await getChatProposal(db, workspaceId, proposalId);
   if (!existing) return { ok: false, error: "not_found" };
   if (existing.status !== "pending") {
     return { ok: false, error: "already_resolved", proposal: existing };
   }
 
-  const row = db.select().from(chatProposals).where(eq(chatProposals.id, proposalId)).get()!;
+  const row = (await db.select().from(chatProposals).where(eq(chatProposals.id, proposalId)).get())!;
   const parsed = toolInputSchemas[existing.tool].safeParse(parseArgs(row.argsJson));
   const at = Date.now();
 
   if (!parsed.success) {
-    const failed = fail(db, existing, actor, at, {
+    const failed = await fail(db, existing, actor, at, {
       error: "invalid_arguments",
       message: parsed.error.issues.map((i) => i.message).join("; "),
     });
@@ -354,7 +354,7 @@ export async function confirmChatProposal(
   const result = await dispatch(live, existing.tool, origin, args);
 
   if (!result.ok) {
-    const failed = fail(db, existing, actor, at, {
+    const failed = await fail(db, existing, actor, at, {
       error: result.error,
       message: result.message + (result.hint ? ` ${result.hint}` : ""),
     });
@@ -366,7 +366,7 @@ export async function confirmChatProposal(
   // no new case in either place beyond naming it.
   const producedRef = result.id ? `${result.targetKind}:${result.id}` : null;
 
-  const updated = resolveRow(db, proposalId, {
+  const updated = await resolveRow(db, proposalId, {
     status: "confirmed",
     producedRef,
     producedStatus: result.status,
@@ -376,7 +376,7 @@ export async function confirmChatProposal(
 
   // The receipt is a real transcript message, so the next turn's model knows
   // this happened and does not offer to do it again.
-  appendMessage(db, workspaceId, existing.sessionId, {
+  await appendMessage(db, workspaceId, existing.sessionId, {
     role: "assistant",
     content: `${result.summary} (${describeStatus(result.status)})`,
     producedRef,
@@ -385,18 +385,18 @@ export async function confirmChatProposal(
   return { ok: true, proposal: updated ?? existing };
 }
 
-export function declineChatProposal(
+export async function declineChatProposal(
   db: Db,
   workspaceId: string,
   actor: ChatProposalActor,
   proposalId: string,
-): ResolveChatProposalOutcome {
-  const existing = getChatProposal(db, workspaceId, proposalId);
+): Promise<ResolveChatProposalOutcome> {
+  const existing = await getChatProposal(db, workspaceId, proposalId);
   if (!existing) return { ok: false, error: "not_found" };
   if (existing.status !== "pending") {
     return { ok: false, error: "already_resolved", proposal: existing };
   }
-  const updated = resolveRow(db, proposalId, {
+  const updated = await resolveRow(db, proposalId, {
     status: "declined",
     confirmedByUserId: actor.userId,
     resolvedAt: Date.now(),
@@ -411,21 +411,21 @@ export function declineChatProposal(
  * turn's model sees the real reason and can correct itself instead of
  * proposing the same impossible thing again (D-78.2).
  */
-function fail(
+async function fail(
   db: Db,
   existing: ChatProposal,
   actor: ChatProposalActor,
   at: number,
   refusal: { error: string; message: string },
-): ChatProposal {
-  const updated = resolveRow(db, existing.id, {
+): Promise<ChatProposal> {
+  const updated = await resolveRow(db, existing.id, {
     status: "failed",
     error: refusal.error,
     errorMessage: refusal.message,
     confirmedByUserId: actor.userId,
     resolvedAt: at,
   });
-  appendMessage(db, existing.workspaceId, existing.sessionId, {
+  await appendMessage(db, existing.workspaceId, existing.sessionId, {
     role: "assistant",
     content: `That couldn't go through: ${refusal.message}`,
   });

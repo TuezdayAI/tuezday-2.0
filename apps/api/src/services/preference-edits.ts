@@ -55,11 +55,11 @@ export interface CapturePreferenceEditInput {
  * Re-recording the same `sourceId` is a no-op, so a retried transaction cannot
  * double-count an edit into a rule's observation count.
  */
-export function capturePreferenceEdit(
+export async function capturePreferenceEdit(
   db: PreferenceWriteDb,
   input: CapturePreferenceEditInput,
   now = Date.now(),
-): PreferenceEdit | null {
+): Promise<PreferenceEdit | null> {
   const before = input.beforeContent;
   const after = input.afterContent;
   const distance = normalizedEditDistance(before, after);
@@ -81,7 +81,7 @@ export function capturePreferenceEdit(
     digestedAt: null,
     createdAt: now,
   };
-  const inserted = db
+  const inserted = await db
     .insert(preferenceEdits)
     .values(row)
     .onConflictDoNothing({
@@ -97,45 +97,45 @@ export interface ListPreferenceEditsOptions {
   limit?: number;
 }
 
-export function listPreferenceEdits(
+export async function listPreferenceEdits(
   db: Db,
   workspaceId: string,
   options: ListPreferenceEditsOptions = {},
-): PreferenceEdit[] {
+): Promise<PreferenceEdit[]> {
   const digestedFilter =
     options.digested === undefined
       ? undefined
       : options.digested
         ? isNotNull(preferenceEdits.digestedAt)
         : isNull(preferenceEdits.digestedAt);
-  return db
+  return (await db
     .select()
     .from(preferenceEdits)
     .where(and(eq(preferenceEdits.workspaceId, workspaceId), digestedFilter))
     .orderBy(desc(preferenceEdits.createdAt))
     .limit(options.limit ?? 50)
-    .all()
+    .all())
     .map(rowToPreferenceEdit);
 }
 
 /** Oldest-first, so a backlog is digested in the order the founder made it. */
-export function listUndigestedEdits(db: Db, workspaceId: string, limit: number): PreferenceEdit[] {
-  return db
+export async function listUndigestedEdits(db: Db, workspaceId: string, limit: number): Promise<PreferenceEdit[]> {
+  return (await db
     .select()
     .from(preferenceEdits)
     .where(and(eq(preferenceEdits.workspaceId, workspaceId), isNull(preferenceEdits.digestedAt)))
     .orderBy(asc(preferenceEdits.createdAt))
     .limit(limit)
-    .all()
+    .all())
     .map(rowToPreferenceEdit);
 }
 
-export function getPreferenceEdit(
+export async function getPreferenceEdit(
   db: Db,
   workspaceId: string,
   editId: string,
-): PreferenceEdit | undefined {
-  const row = db
+): Promise<PreferenceEdit | undefined> {
+  const row = await db
     .select()
     .from(preferenceEdits)
     .where(and(eq(preferenceEdits.workspaceId, workspaceId), eq(preferenceEdits.id, editId)))
@@ -148,9 +148,9 @@ export function getPreferenceEdit(
  * that taught nothing and ones whose extraction call failed — so a single
  * poisonous diff can never wedge the loop behind it.
  */
-export function markEditsDigested(db: Db, editIds: string[], now = Date.now()): void {
+export async function markEditsDigested(db: Db, editIds: string[], now = Date.now()): Promise<void> {
   for (const editId of editIds) {
-    db.update(preferenceEdits)
+    await db.update(preferenceEdits)
       .set({ digestedAt: now })
       .where(eq(preferenceEdits.id, editId))
       .run();

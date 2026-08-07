@@ -56,11 +56,11 @@ let live: ReturnType<typeof createAgentProposals>;
 const runId = "99999999-9999-4999-8999-999999999999";
 const origin = () => ({ agentRunId: runId, workspaceId });
 
-beforeEach(() => {
+beforeEach(async () => {
   db = createTestDb();
   workspaceId = randomUUID();
-  db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 }).run();
-  ensureWorkspaceActionPolicies(db, workspaceId);
+  await db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 }).run();
+  await ensureWorkspaceActionPolicies(db, workspaceId);
   live = createAgentProposals({
     db,
     runtime: createExternalActionRuntime({
@@ -88,7 +88,7 @@ describe("the live implementation", () => {
     expect(result.targetKind).toBe("campaign");
     expect(result.status).toBe("draft");
 
-    const created = listCampaigns(db, workspaceId);
+    const created = await listCampaigns(db, workspaceId);
     expect(created).toHaveLength(1);
     expect(created[0]).toMatchObject({
       name: "Q4 Launch",
@@ -104,14 +104,14 @@ describe("the live implementation", () => {
 
   it("forces draft status even when the row it wrote is inspected directly", async () => {
     await live.proposeCampaign(origin(), { name: "Q4", rationale: "r" });
-    const row = db.select().from(campaigns).where(eq(campaigns.workspaceId, workspaceId)).get();
+    const row = await db.select().from(campaigns).where(eq(campaigns.workspaceId, workspaceId)).get();
     expect(row?.status).toBe("draft");
     expect(row?.origin).toBe("system");
   });
 
   it("records a ledger row pointing at the campaign", async () => {
     const result = await live.proposeCampaign(origin(), { name: "Q4", rationale: "why" });
-    const row = db.select().from(agentProposals).where(eq(agentProposals.agentRunId, runId)).get();
+    const row = await db.select().from(agentProposals).where(eq(agentProposals.agentRunId, runId)).get();
     expect(row).toMatchObject({
       tool: "propose_campaign",
       targetKind: "campaign",
@@ -127,7 +127,7 @@ describe("the live implementation", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error).toBe("invalid_arguments");
-    expect(listCampaigns(db, workspaceId)).toHaveLength(0);
+    expect(await listCampaigns(db, workspaceId)).toHaveLength(0);
   });
 
   it("refuses a hallucinated persona id rather than dropping it silently", async () => {
@@ -137,7 +137,7 @@ describe("the live implementation", () => {
       rationale: "r",
     });
     expect(result.ok).toBe(false);
-    expect(listCampaigns(db, workspaceId)).toHaveLength(0);
+    expect(await listCampaigns(db, workspaceId)).toHaveLength(0);
   });
 
   it("creates nothing in a simulated run", async () => {
@@ -151,7 +151,7 @@ describe("the live implementation", () => {
 
 describe("inside a conversation it is double-gated", () => {
   it("records a confirmation card and creates nothing until it is confirmed", async () => {
-    const sessionId = createSession(db, workspaceId, null, {}).id;
+    const sessionId = (await createSession(db, workspaceId, null, {})).id;
     const recorder = createChatProposalRecorder(db, {
       workspaceId,
       sessionId,
@@ -165,9 +165,9 @@ describe("inside a conversation it is double-gated", () => {
     });
     expect(recorded).toMatchObject({ ok: true, awaitingConfirmation: true });
     // Nothing exists yet. This is the Sprint 78 pause doing its job.
-    expect(listCampaigns(db, workspaceId)).toHaveLength(0);
+    expect(await listCampaigns(db, workspaceId)).toHaveLength(0);
 
-    const pending = listChatProposals(db, sessionId)[0]!;
+    const pending = (await listChatProposals(db, sessionId))[0]!;
     expect(pending.tool).toBe("propose_campaign");
     expect(pending.intent.title).toContain("Q4 Launch");
     // The card says what confirming does AND what it does not.
@@ -181,12 +181,12 @@ describe("inside a conversation it is double-gated", () => {
     expect(outcome.proposal.producedRef).toMatch(/^campaign:/);
     expect(outcome.proposal.producedStatus).toBe("draft");
 
-    const created = listCampaigns(db, workspaceId);
+    const created = await listCampaigns(db, workspaceId);
     expect(created).toHaveLength(1);
     expect(created[0]!.status).toBe("draft");
 
     // The receipt tells the founder — and the next turn's model — the truth.
-    const receipt = listMessages(db, sessionId).at(-1)!;
+    const receipt = (await listMessages(db, sessionId)).at(-1)!;
     expect(receipt.content).toContain("inert until you activate it");
     expect(receipt.producedRef).toBe(outcome.proposal.producedRef);
   });

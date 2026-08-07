@@ -25,8 +25,8 @@ const EVENT_STATUS: Record<string, EmailDeliveryStatus | undefined> = {
   "email.failed": "failed",
 };
 
-export function recordVerifiedEmailEvent(db: Db, event: VerifiedEmailEvent): RecordedEmailEvent {
-  const duplicate = db
+export async function recordVerifiedEmailEvent(db: Db, event: VerifiedEmailEvent): Promise<RecordedEmailEvent> {
+  const duplicate = await db
     .select({ id: emailDeliveryEvents.id })
     .from(emailDeliveryEvents)
     .where(
@@ -38,7 +38,7 @@ export function recordVerifiedEmailEvent(db: Db, event: VerifiedEmailEvent): Rec
     .get();
   if (duplicate) return { duplicate: true, deliveryFound: true };
 
-  const delivery = db
+  const delivery = await db
     .select()
     .from(emailDeliveries)
     .where(
@@ -50,8 +50,8 @@ export function recordVerifiedEmailEvent(db: Db, event: VerifiedEmailEvent): Rec
     .get();
   if (!delivery) return { duplicate: false, deliveryFound: false };
 
-  db.transaction((tx) => {
-    tx.insert(emailDeliveryEvents)
+  await db.transaction(async (tx) => {
+    await tx.insert(emailDeliveryEvents)
       .values({
         id: randomUUID(),
         workspaceId: delivery.workspaceId,
@@ -69,7 +69,7 @@ export function recordVerifiedEmailEvent(db: Db, event: VerifiedEmailEvent): Rec
     const currentStatus = delivery.status as EmailDeliveryStatus;
     if (nextStatus && canTransitionEmailDelivery(currentStatus, nextStatus)) {
       const terminal = ["delivered", "bounced", "complained", "failed"].includes(nextStatus);
-      tx.update(emailDeliveries)
+      await tx.update(emailDeliveries)
         .set({
           status: nextStatus,
           acceptedAt: nextStatus === "accepted" ? event.occurredAt : delivery.acceptedAt,
@@ -82,7 +82,7 @@ export function recordVerifiedEmailEvent(db: Db, event: VerifiedEmailEvent): Rec
     }
 
     if (event.eventType === "email.bounced" || event.eventType === "email.complained") {
-      tx.insert(emailSuppressions)
+      await tx.insert(emailSuppressions)
         .values({
           id: randomUUID(),
           workspaceId: delivery.workspaceId,

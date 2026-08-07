@@ -153,6 +153,6 @@ export class OpenDesignProvider implements DesignProvider {
       `/api/projects/${projectId}/files/${encodeURIComponent(path)}`,
       { method: "GET" },
     );
-    return res.text();
+    return await res.text();
   }
 }

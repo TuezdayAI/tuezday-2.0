@@ -96,12 +96,12 @@ const script = (): ScriptedStep[] => [
   { text: JSON.stringify({ content: "A post that names no investors.", confidence: 90 }) },
 ];
 
-function fixture() {
+async function fixture() {
   const db = createTestDb();
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({ id: WORKSPACE_ID, name: "Asking", createdAt: 1, updatedAt: 1 })
     .run();
-  db.insert(signals)
+  await db.insert(signals)
     .values({
       id: SIGNAL_ID,
       workspaceId: WORKSPACE_ID,
@@ -114,14 +114,14 @@ function fixture() {
   return { db, questions: createAgentQuestions({ db }) };
 }
 
-function definitionFor(db: Db): PipelineDefinition {
-  const definition = createPipelineDefinition(
+async function definitionFor(db: Db): Promise<PipelineDefinition> {
+  const definition = await createPipelineDefinition(
     db,
     WORKSPACE_ID,
     { taskKey: "signal_social_post", name: "Asking", description: "", spec: spec() },
     ACTOR,
   );
-  setPipelineStatus(db, WORKSPACE_ID, definition.id, "active");
+  await setPipelineStatus(db, WORKSPACE_ID, definition.id, "active");
   return definition;
 }
 
@@ -131,7 +131,7 @@ async function startRun(
   definition: PipelineDefinition,
   mode: PipelineRunMode,
 ) {
-  const run = startPipelineRun(db, {
+  const run = await startPipelineRun(db, {
     workspaceId: WORKSPACE_ID,
     definition,
     signalId: SIGNAL_ID,
@@ -141,12 +141,12 @@ async function startRun(
     mode,
     createdBy: "automation",
   });
-  return executePipelineRun(db, deps, WORKSPACE_ID, run.id);
+  return await executePipelineRun(db, deps, WORKSPACE_ID, run.id);
 }
 
 describe("the ask lane, end to end (Sprint 70 acceptance)", () => {
   it("suspends the run on a question and continues the SAME run on the answer", async () => {
-    const { db, questions } = fixture();
+    const { db, questions } = await fixture();
     const gateway = new ScriptedGateway(script());
     const deps: PipelineEngineDeps = {
       llm: gateway,
@@ -154,25 +154,25 @@ describe("the ask lane, end to end (Sprint 70 acceptance)", () => {
       safeFetch: noFetch,
       questions,
     };
-    const definition = definitionFor(db);
+    const definition = await definitionFor(db);
 
     // 1. The agent hits an ambiguity it cannot resolve and stops.
     const first = await startRun(db, deps, definition, "live");
     expect(first.run.status).toBe("escalated");
     expect(first.run.pausedAtStepKey).toBe("draft");
     expect(first.run.escalationReason).toContain("needs_human");
-    expect(db.select().from(drafts).all()).toHaveLength(0);
+    expect(await db.select().from(drafts).all()).toHaveLength(0);
 
     // 2. The question is durable, attached to the run, and carries what it
     //    takes to answer it in one click.
-    const question = openQuestionForPipelineRun(db, first.run.id)!;
+    const question = (await openQuestionForPipelineRun(db, first.run.id))!;
     expect(question.question).toBe(QUESTION);
     expect(question.type).toBe("missing_permission");
     expect(question.options).toEqual(["Yes, name them", "No, keep them out"]);
     expect(question.stepKey).toBe("draft");
 
     // 3. The founder answers.
-    answerAgentQuestion(
+    await answerAgentQuestion(
       db,
       WORKSPACE_ID,
       question.id,
@@ -186,7 +186,7 @@ describe("the ask lane, end to end (Sprint 70 acceptance)", () => {
     });
     expect(resumed.run.id).toBe(first.run.id);
     expect(resumed.run.status).toBe("succeeded");
-    expect(db.select().from(drafts).all()).toHaveLength(1);
+    expect(await db.select().from(drafts).all()).toHaveLength(1);
 
     // 5. And the resumed step was actually told the answer (D-70.3) — the
     //    prompt carries it, which is why the model did not have to ask again.
@@ -197,21 +197,21 @@ describe("the ask lane, end to end (Sprint 70 acceptance)", () => {
   });
 
   it("never suspends a dry run, so previews and evals still finish (D-70.5)", async () => {
-    const { db, questions } = fixture();
+    const { db, questions } = await fixture();
     const deps: PipelineEngineDeps = {
       llm: new ScriptedGateway(script()),
       evidence: noEvidence,
       safeFetch: noFetch,
       questions,
     };
-    const outcome = await startRun(db, deps, definitionFor(db), "dry_run");
+    const outcome = await startRun(db, deps, await definitionFor(db), "dry_run");
     expect(outcome.run.status).toBe("succeeded");
     // Nothing was recorded and nobody was asked.
-    expect(db.select().from(agentQuestions).all()).toHaveLength(0);
+    expect(await db.select().from(agentQuestions).all()).toHaveLength(0);
   });
 
   it("does not offer the tool at all when nothing can answer it (D-70.7 shape)", async () => {
-    const { db } = fixture();
+    const { db } = await fixture();
     // A live run with no ask seam: the model is never shown `ask_founder`, so
     // it answers directly rather than calling a tool that cannot be honoured.
     const gateway = new ScriptedGateway([
@@ -220,7 +220,7 @@ describe("the ask lane, end to end (Sprint 70 acceptance)", () => {
     const outcome = await startRun(
       db,
       { llm: gateway, evidence: noEvidence, safeFetch: noFetch },
-      definitionFor(db),
+      await definitionFor(db),
       "live",
     );
     expect(outcome.run.status).toBe("succeeded");

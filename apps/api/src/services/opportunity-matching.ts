@@ -152,12 +152,12 @@ export function selectCandidateProfiles(
  * count, so compiling one re-queues), and the matcher version. Any drift
  * re-queues the story; identical inputs never re-run.
  */
-export function deriveWorkspaceProfilesDigest(
+export async function deriveWorkspaceProfilesDigest(
   db: DbExecutor,
   workspaceId: string,
   now: number,
-): string {
-  const rows = db
+): Promise<string> {
+  const rows = await db
     .select({
       id: campaigns.id,
       routingBand: campaigns.routingBand,
@@ -180,7 +180,7 @@ export function deriveWorkspaceProfilesDigest(
       row.currentPlanRevisionId !== null &&
       (row.endAt === null || row.endAt >= now),
   );
-  const fingerprints = latestProfileFingerprints(
+  const fingerprints = await latestProfileFingerprints(
     db,
     workspaceId,
     eligible.map((row) => row.id),
@@ -190,12 +190,12 @@ export function deriveWorkspaceProfilesDigest(
   );
 }
 
-export function deriveStoryRoutingFingerprint(
+export async function deriveStoryRoutingFingerprint(
   db: DbExecutor,
   story: { id: string; contentFingerprint: string },
   profilesDigest: string,
-): string {
-  const enrichment = db
+): Promise<string> {
+  const enrichment = await db
     .select({ storyFingerprint: storyEnrichments.storyFingerprint })
     .from(storyEnrichments)
     .where(eq(storyEnrichments.storyId, story.id))
@@ -214,11 +214,11 @@ export function deriveStoryRoutingFingerprint(
     .digest("hex");
 }
 
-export function loadStoryRoutingContext(
+export async function loadStoryRoutingContext(
   db: DbExecutor,
   story: CanonicalExternalStoryRow,
-): StoryRoutingContext {
-  const members = db
+): Promise<StoryRoutingContext> {
+  const members = await db
     .select({
       occurrenceId: discoverySourceOccurrences.id,
       sourceId: discoverySourceOccurrences.sourceId,
@@ -272,16 +272,16 @@ function dueWhere(workspaceId: string | undefined) {
  * whose fingerprint drifted (plan, lane, policy, or membership change). The
  * fingerprint doubles as the commit fence, mirroring discovery matching.
  */
-export function claimRoutingBatch(
+export async function claimRoutingBatch(
   db: Db,
   input: { workspaceId?: string; limit: number; leaseMs: number },
-): StoryRoutingClaim[] {
+): Promise<StoryRoutingClaim[]> {
   if (input.limit <= 0) return [];
   const now = Date.now();
-  return db.transaction((tx) => {
+  return await db.transaction(async (tx) => {
     const digests = new Map<string, string>();
     const claims: StoryRoutingClaim[] = [];
-    const candidates = tx
+    const candidates = await tx
       .select()
       .from(canonicalExternalStories)
       .where(dueWhere(input.workspaceId))
@@ -291,15 +291,15 @@ export function claimRoutingBatch(
       if (claims.length >= input.limit) break;
       let digest = digests.get(story.workspaceId);
       if (digest === undefined) {
-        digest = deriveWorkspaceProfilesDigest(tx, story.workspaceId, now);
+        digest = await deriveWorkspaceProfilesDigest(tx, story.workspaceId, now);
         digests.set(story.workspaceId, digest);
       }
-      const fingerprint = deriveStoryRoutingFingerprint(tx, story, digest);
+      const fingerprint = await deriveStoryRoutingFingerprint(tx, story, digest);
       const alreadyCurrent =
         (story.routingState === "routed" || story.routingState === "failed") &&
         story.routingFingerprint === fingerprint;
       if (alreadyCurrent) continue;
-      const claimed = tx
+      const claimed = await tx
         .update(canonicalExternalStories)
         .set({
           routingState: "in_progress",
@@ -325,9 +325,9 @@ export function claimRoutingBatch(
   });
 }
 
-export function markRoutingRetryable(db: Db, claim: StoryRoutingClaim): boolean {
-  return db.transaction((tx) => {
-    const story = tx
+export async function markRoutingRetryable(db: Db, claim: StoryRoutingClaim): Promise<boolean> {
+  return await db.transaction(async (tx) => {
+    const story = await tx
       .select()
       .from(canonicalExternalStories)
       .where(
@@ -340,7 +340,7 @@ export function markRoutingRetryable(db: Db, claim: StoryRoutingClaim): boolean 
       .get();
     if (!story) return false;
     const attempts = story.routingAttempts + 1;
-    tx.update(canonicalExternalStories)
+    await tx.update(canonicalExternalStories)
       .set({
         routingState: attempts >= ROUTING_MAX_ATTEMPTS ? "failed" : "pending",
         routingAttempts: attempts,
@@ -502,7 +502,7 @@ function expiresAtFor(entry: OpportunityMatcherCandidate, now: number): number |
   return now + days * DAY_MS;
 }
 
-function insertOpportunityEvent(
+async function insertOpportunityEvent(
   tx: DbExecutor,
   input: {
     workspaceId: string;
@@ -513,8 +513,8 @@ function insertOpportunityEvent(
     reason?: string | null;
     createdAt: number;
   },
-): void {
-  tx.insert(campaignOpportunityEvents)
+): Promise<void> {
+  await tx.insert(campaignOpportunityEvents)
     .values({
       id: randomUUID(),
       workspaceId: input.workspaceId,
@@ -532,17 +532,17 @@ function insertOpportunityEvent(
  * Commit one story's routing decisions in a single fingerprint-fenced
  * transaction. Drift resets the story to pending and discards the result.
  */
-function commitRoutingResult(
+async function commitRoutingResult(
   db: Db,
   claim: StoryRoutingClaim,
   candidates: CampaignRoutingProfile[],
   validated: ValidatedCandidate[],
   context: StoryRoutingContext,
-): { committed: boolean; opportunitiesCreated: number } {
+): Promise<{ committed: boolean; opportunitiesCreated: number }> {
   const now = Date.now();
   try {
-    return db.transaction((tx) => {
-      const story = tx
+    return await db.transaction(async (tx) => {
+      const story = await tx
         .select()
         .from(canonicalExternalStories)
         .where(
@@ -555,9 +555,9 @@ function commitRoutingResult(
         )
         .get();
       if (!story) throw new RoutingFenceError();
-      const digest = deriveWorkspaceProfilesDigest(tx, claim.workspaceId, now);
-      if (deriveStoryRoutingFingerprint(tx, story, digest) !== claim.fingerprint) {
-        tx.update(canonicalExternalStories)
+      const digest = await deriveWorkspaceProfilesDigest(tx, claim.workspaceId, now);
+      if (await deriveStoryRoutingFingerprint(tx, story, digest) !== claim.fingerprint) {
+        await tx.update(canonicalExternalStories)
           .set({
             routingState: "pending",
             routingLeaseExpiresAt: null,
@@ -573,7 +573,7 @@ function commitRoutingResult(
       // matcher decided under prior revisions — for every candidate campaign
       // this run evaluated, relevant or not.
       for (const profile of candidates) {
-        const stale = tx
+        const stale = await tx
           .select({
             id: campaignOpportunities.id,
             status: campaignOpportunities.status,
@@ -589,11 +589,11 @@ function commitRoutingResult(
           )
           .all();
         for (const row of stale) {
-          tx.update(campaignOpportunities)
+          await tx.update(campaignOpportunities)
             .set({ status: "superseded", updatedAt: now })
             .where(eq(campaignOpportunities.id, row.id))
             .run();
-          insertOpportunityEvent(tx, {
+          await insertOpportunityEvent(tx, {
             workspaceId: claim.workspaceId,
             opportunityId: row.id,
             fromStatus: row.status as OpportunityStatus,
@@ -610,7 +610,7 @@ function commitRoutingResult(
         // must not pile up near-duplicate angles. Terminal rows (dismissed,
         // expired, superseded) do not block a fresh angle, and an identical
         // angle is blocked forever by the partial unique.
-        const open = tx
+        const open = await tx
           .select({ id: campaignOpportunities.id })
           .from(campaignOpportunities)
           .where(
@@ -648,7 +648,7 @@ function commitRoutingResult(
           profile.payload.personaIds.includes(entry.suggestedPersonaId)
             ? entry.suggestedPersonaId
             : null;
-        const inserted = tx
+        const inserted = await tx
           .insert(campaignOpportunities)
           .values({
             id: randomUUID(),
@@ -680,7 +680,7 @@ function commitRoutingResult(
           .get();
         if (!inserted) continue;
         opportunitiesCreated += 1;
-        insertOpportunityEvent(tx, {
+        await insertOpportunityEvent(tx, {
           workspaceId: claim.workspaceId,
           opportunityId: inserted.id,
           fromStatus: null,
@@ -688,7 +688,7 @@ function commitRoutingResult(
           reason: "matcher decision",
           createdAt: now,
         });
-        insertOpportunityEvent(tx, {
+        await insertOpportunityEvent(tx, {
           workspaceId: claim.workspaceId,
           opportunityId: inserted.id,
           fromStatus: "candidate",
@@ -698,7 +698,7 @@ function commitRoutingResult(
         });
       }
 
-      const updated = tx
+      const updated = await tx
         .update(canonicalExternalStories)
         .set({
           routingState: "routed",
@@ -727,10 +727,10 @@ function commitRoutingResult(
 }
 
 /** Sweep open opportunities past their expiry (design lifecycle → expired). */
-export function expireDueOpportunities(db: Db, workspaceId: string): number {
+export async function expireDueOpportunities(db: Db, workspaceId: string): Promise<number> {
   const now = Date.now();
-  return db.transaction((tx) => {
-    const due = tx
+  return await db.transaction(async (tx) => {
+    const due = await tx
       .select({ id: campaignOpportunities.id, status: campaignOpportunities.status })
       .from(campaignOpportunities)
       .where(
@@ -743,11 +743,11 @@ export function expireDueOpportunities(db: Db, workspaceId: string): number {
       )
       .all();
     for (const row of due) {
-      tx.update(campaignOpportunities)
+      await tx.update(campaignOpportunities)
         .set({ status: "expired", updatedAt: now })
         .where(eq(campaignOpportunities.id, row.id))
         .run();
-      insertOpportunityEvent(tx, {
+      await insertOpportunityEvent(tx, {
         workspaceId,
         opportunityId: row.id,
         fromStatus: row.status as OpportunityStatus,
@@ -784,14 +784,14 @@ export async function runOpportunityRouting(
     opportunitiesCreated: 0,
     failures: 0,
   };
-  expireDueOpportunities(db, input.workspaceId);
-  const workspace = getWorkspace(db, input.workspaceId);
+  await expireDueOpportunities(db, input.workspaceId);
+  const workspace = await getWorkspace(db, input.workspaceId);
   if (!workspace) return result;
   // Compiling is cheap and idempotent; doing it before claiming means the
   // claim fingerprints already reflect the current plans/policies.
-  const profiles = currentRoutingProfiles(db, input.workspaceId);
-  if (llmBudgetExhausted(db, input.workspaceId)) return result;
-  const claims = claimRoutingBatch(db, {
+  const profiles = await currentRoutingProfiles(db, input.workspaceId);
+  if (await llmBudgetExhausted(db, input.workspaceId)) return result;
+  const claims = await claimRoutingBatch(db, {
     workspaceId: input.workspaceId,
     limit: input.limit,
     leaseMs: input.leaseMs,
@@ -801,19 +801,19 @@ export async function runOpportunityRouting(
 
   for (const claim of claims) {
     if (input.signal?.aborted) {
-      if (markRoutingRetryable(db, claim)) result.failures += 1;
+      if (await markRoutingRetryable(db, claim)) result.failures += 1;
       continue;
     }
-    const story = db
+    const story = await db
       .select()
       .from(canonicalExternalStories)
       .where(eq(canonicalExternalStories.id, claim.storyId))
       .get();
     if (!story) continue;
-    const context = loadStoryRoutingContext(db, story);
+    const context = await loadStoryRoutingContext(db, story);
     const candidates = selectCandidateProfiles(profiles, context.text, now);
     if (candidates.length === 0) {
-      const committed = commitRoutingResult(db, claim, [], [], context);
+      const committed = await commitRoutingResult(db, claim, [], [], context);
       if (committed.committed) result.storiesRouted += 1;
       continue;
     }
@@ -839,10 +839,10 @@ export async function runOpportunityRouting(
     } catch {
       // Malformed responses, invented IDs, timeouts, aborts, and gateway
       // trouble all land here: retryable, never a stored routing judgment.
-      if (markRoutingRetryable(db, claim)) result.failures += 1;
+      if (await markRoutingRetryable(db, claim)) result.failures += 1;
       continue;
     }
-    const committed = commitRoutingResult(db, claim, candidates, validated, context);
+    const committed = await commitRoutingResult(db, claim, candidates, validated, context);
     if (committed.committed) {
       result.storiesRouted += 1;
       result.opportunitiesCreated += committed.opportunitiesCreated;

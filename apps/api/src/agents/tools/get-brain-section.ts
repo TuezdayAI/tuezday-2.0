@@ -24,7 +24,7 @@ export const getBrainSectionTool: Tool<Input, unknown> = {
   input,
   access: "read",
   async run(ctx, { docType, sectionId, query }) {
-    const { docs } = getBrain(ctx.db, ctx.workspaceId);
+    const { docs } = await getBrain(ctx.db, ctx.workspaceId);
 
     if (sectionId) {
       if (!docType) {

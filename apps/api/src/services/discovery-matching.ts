@@ -57,12 +57,12 @@ interface FingerprintItem {
   contentHash: string;
 }
 
-function fingerprintForItem(
+async function fingerprintForItem(
   db: DbExecutor,
   workspaceId: string,
   item: FingerprintItem,
-): string {
-  const orderedPersonas = db
+): Promise<string> {
+  const orderedPersonas = (await db
     .select({
       id: personas.id,
       name: personas.name,
@@ -72,14 +72,14 @@ function fingerprintForItem(
     .from(personas)
     .where(eq(personas.workspaceId, workspaceId))
     .orderBy(asc(personas.id))
-    .all()
+    .all())
     .map((persona) => ({
       id: persona.id,
       name: persona.name,
       description: persona.description,
       topics: JSON.parse(persona.topicsJson) as string[],
     }));
-  const orderedActiveCampaigns = db
+  const orderedActiveCampaigns = (await db
     .select({
       id: campaigns.id,
       name: campaigns.name,
@@ -94,7 +94,7 @@ function fingerprintForItem(
       ),
     )
     .orderBy(asc(campaigns.id))
-    .all()
+    .all())
     .map((campaign) => ({
       id: campaign.id,
       name: campaign.name,
@@ -138,7 +138,7 @@ function claimIsCurrent(
   );
 }
 
-export function claimMatchingBatch(
+export async function claimMatchingBatch(
   db: Db,
   input: {
     workspaceId?: string;
@@ -146,10 +146,10 @@ export function claimMatchingBatch(
     limit: number;
     leaseMs: number;
   },
-): MatchingClaim[] {
+): Promise<MatchingClaim[]> {
   if (input.limit <= 0) return [];
-  return db.transaction((tx) => {
-    const candidates = tx
+  return await db.transaction(async (tx) => {
+    const candidates = await tx
       .select()
       .from(discoveredItems)
       .where(
@@ -179,12 +179,12 @@ export function claimMatchingBatch(
     const claims: MatchingClaim[] = [];
     for (const candidate of candidates) {
       if (claims.length >= input.limit) break;
-      const fingerprint = fingerprintForItem(
+      const fingerprint = await fingerprintForItem(
         tx,
         candidate.workspaceId,
         candidate,
       );
-      const claimed = tx
+      const claimed = await tx
         .update(discoveredItems)
         .set({
           matchingState: "running",
@@ -240,13 +240,13 @@ export function claimMatchingBatch(
   });
 }
 
-export function heartbeatMatchingClaim(
+export async function heartbeatMatchingClaim(
   db: Db,
   claim: MatchingClaim,
   leaseMs: number,
-): boolean {
+): Promise<boolean> {
   return (
-    db
+    (await db
       .update(discoveredItems)
       .set({
         matchingLeaseExpiresAt: sql`
@@ -255,17 +255,17 @@ export function heartbeatMatchingClaim(
         matchingHeartbeatAt: DATABASE_NOW_MS,
       })
       .where(claimIsCurrent(claim))
-      .run().changes === 1
+      .run()).changes === 1
   );
 }
 
-function markRetryable(
+async function markRetryable(
   db: Db,
   claim: MatchingClaim,
   code: string,
-): boolean {
+): Promise<boolean> {
   return (
-    db
+    (await db
       .update(discoveredItems)
       .set({
         matchingState: "retryable_error",
@@ -275,33 +275,33 @@ function markRetryable(
         matchingError: code,
       })
       .where(claimIsCurrent(claim))
-      .run().changes === 1
+      .run()).changes === 1
   );
 }
 
 class MatchingFenceError extends Error {}
 
-function commitMatchingResult(
+async function commitMatchingResult(
   db: Db,
   claim: MatchingClaim,
   entry: MatchingResponseEntry,
-  context: ReturnType<typeof buildMatchingContext>,
-): boolean {
+  context: Awaited<ReturnType<typeof buildMatchingContext>>,
+): Promise<boolean> {
   try {
-    return db.transaction((tx) => {
-      const item = tx
+    return await db.transaction(async (tx) => {
+      const item = await tx
         .select()
         .from(discoveredItems)
         .where(claimIsCurrent(claim))
         .get();
       if (!item) throw new MatchingFenceError();
-      const currentFingerprint = fingerprintForItem(
+      const currentFingerprint = await fingerprintForItem(
         tx,
         claim.workspaceId,
         item,
       );
       if (currentFingerprint !== claim.inputFingerprint) {
-        const reset = tx
+        const reset = await tx
           .update(discoveredItems)
           .set({
             matchingState: "pending",
@@ -317,14 +317,14 @@ function commitMatchingResult(
         return false;
       }
 
-      const matches = revalidateSignalMatches(
+      const matches = await revalidateSignalMatches(
         tx,
         claim.workspaceId,
         sanitizeEntryMatches(entry, context),
       );
       const best = matches[0];
-      replaceItemMatches(tx, claim.workspaceId, claim.itemId, matches);
-      const updated = tx
+      await replaceItemMatches(tx, claim.workspaceId, claim.itemId, matches);
+      const updated = await tx
         .update(discoveredItems)
         .set({
           score: clampScore(entry.score),
@@ -351,18 +351,21 @@ function commitMatchingResult(
   }
 }
 
-function currentClaimedItems(
+async function currentClaimedItems(
   db: Db,
   claims: MatchingClaim[],
-): Array<{ claim: MatchingClaim; item: DiscoveredItemRow }> {
-  return claims.flatMap((claim) => {
-    const item = db
-      .select()
-      .from(discoveredItems)
-      .where(claimIsCurrent(claim))
-      .get();
-    return item ? [{ claim, item }] : [];
-  });
+): Promise<Array<{ claim: MatchingClaim; item: DiscoveredItemRow }>> {
+  const found = await Promise.all(
+    claims.map(async (claim) => {
+      const item = await db
+        .select()
+        .from(discoveredItems)
+        .where(claimIsCurrent(claim))
+        .get();
+      return item ? [{ claim, item }] : [];
+    }),
+  );
+  return found.flat();
 }
 
 function errorCode(signal: AbortSignal): string {
@@ -383,23 +386,23 @@ export async function runMatchingBatch(
     ...new Set(claims.map((claim) => claim.workspaceId)),
   ];
   for (const workspaceId of workspaceIds) {
-    const workspaceClaims = currentClaimedItems(
+    const workspaceClaims = await currentClaimedItems(
       deps.db,
       claims.filter((claim) => claim.workspaceId === workspaceId),
     );
     if (workspaceClaims.length === 0) continue;
-    const workspace = getWorkspace(deps.db, workspaceId);
+    const workspace = await getWorkspace(deps.db, workspaceId);
     if (!workspace) continue;
     // Budget degradation (Sprint 59): over-budget workspaces skip scoring;
     // items go back to retryable and a later tick picks them up once spend
     // rolls out of the window or the plan changes. Never a mid-run failure.
-    if (llmBudgetExhausted(deps.db, workspaceId)) {
+    if (await llmBudgetExhausted(deps.db, workspaceId)) {
       for (const { claim } of workspaceClaims) {
-        if (markRetryable(deps.db, claim, "llm_budget_exhausted")) retryableErrors += 1;
+        if (await markRetryable(deps.db, claim, "llm_budget_exhausted")) retryableErrors += 1;
       }
       continue;
     }
-    const context = buildMatchingContext(deps.db, workspaceId);
+    const context = await buildMatchingContext(deps.db, workspaceId);
     const itemsBlock = workspaceClaims
       .map(
         ({ item }, index) =>
@@ -412,7 +415,7 @@ export async function runMatchingBatch(
       .join("\n\n");
     const prompt = buildMatchingPrompt({
       workspaceName: workspace.name,
-      digest: brainDigest(deps.db, workspaceId),
+      digest: await brainDigest(deps.db, workspaceId),
       ctx: context,
       itemsBlock,
     });
@@ -420,11 +423,17 @@ export async function runMatchingBatch(
     let heartbeat: ReturnType<typeof setTimeout> | undefined;
     let stopped = false;
     const scheduleHeartbeat = () => {
-      heartbeat = setTimeout(() => {
+      heartbeat = setTimeout(async () => {
         if (stopped) return;
-        const live = workspaceClaims.every(({ claim }) =>
-          heartbeatMatchingClaim(deps.db, claim, deps.leaseMs),
+        // Every claim must still be ours. `every(async …)` would test an array
+        // of promises and always be true, so a lost lease would go unnoticed.
+        const beats = await Promise.all(
+          workspaceClaims.map(async ({ claim }) =>
+            heartbeatMatchingClaim(deps.db, claim, deps.leaseMs),
+          ),
         );
+        if (stopped) return;
+        const live = beats.every(Boolean);
         if (!live) {
           leaseLost.abort(
             Object.assign(new Error("matching_lease_lost"), {
@@ -465,7 +474,7 @@ export async function runMatchingBatch(
             ? errorCode(effectiveSignal)
             : "matching_gateway_failed";
       for (const { claim } of workspaceClaims) {
-        if (markRetryable(deps.db, claim, code)) {
+        if (await markRetryable(deps.db, claim, code)) {
           retryableErrors += 1;
         }
       }
@@ -478,12 +487,12 @@ export async function runMatchingBatch(
     for (const [index, { claim }] of workspaceClaims.entries()) {
       const entry = entries.find((candidate) => candidate.index === index);
       if (!entry) {
-        if (markRetryable(deps.db, claim, "matching_missing_result")) {
+        if (await markRetryable(deps.db, claim, "matching_missing_result")) {
           retryableErrors += 1;
         }
         continue;
       }
-      if (commitMatchingResult(deps.db, claim, entry, context)) {
+      if (await commitMatchingResult(deps.db, claim, entry, context)) {
         ready += 1;
       }
     }

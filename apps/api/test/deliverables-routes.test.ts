@@ -117,14 +117,14 @@ describe("deliverable routes (Sprint 63)", () => {
         payload: { name: "Launch" },
       })
     ).json().id;
-    const revision = createPlanRevision(db, workspaceId, campaignId, planInput, {
+    const revision = await createPlanRevision(db, workspaceId, campaignId, planInput, {
       userId: null,
     });
-    upsertLaneRevision(db, workspaceId, campaignId, revision.id, { ...lane, personaId });
-    activatePlanRevision(db, workspaceId, campaignId, revision.id);
+    await upsertLaneRevision(db, workspaceId, campaignId, revision.id, { ...lane, personaId });
+    await activatePlanRevision(db, workspaceId, campaignId, revision.id);
 
-    db.transaction((tx) => {
-      recordOccurrenceAndResolve(tx, {
+    await db.transaction(async (tx) => {
+      await recordOccurrenceAndResolve(tx, {
         workspaceId,
         source: { id: randomUUID(), type: "rss", name: "Feed" },
         fetchRunId: null,
@@ -138,12 +138,12 @@ describe("deliverable routes (Sprint 63)", () => {
         observedAt: Date.now(),
       });
     });
-    const story = db.select().from(canonicalExternalStories).all()[0]!;
-    const profile = compileRoutingProfile(db, workspaceId, campaignId)!;
-    const occurrenceIds = [...loadStoryRoutingContext(db, story).activeOccurrenceIds];
+    const story = (await db.select().from(canonicalExternalStories).all())[0]!;
+    const profile = (await compileRoutingProfile(db, workspaceId, campaignId))!;
+    const occurrenceIds = [...(await loadStoryRoutingContext(db, story)).activeOccurrenceIds];
     const opportunityId = randomUUID();
     const now = Date.now();
-    db.insert(campaignOpportunities)
+    await db.insert(campaignOpportunities)
       .values({
         id: opportunityId,
         workspaceId,
@@ -172,7 +172,7 @@ describe("deliverable routes (Sprint 63)", () => {
         updatedAt: now,
       })
       .run();
-    packageId = createPackageFromOpportunity(db, workspaceId, opportunityId, {
+    packageId = await createPackageFromOpportunity(db, workspaceId, opportunityId, {
       userId: null,
     });
     await runPackageAssessments(db, dualGateway(), { workspaceId, ...RUN_OPTS });
@@ -182,8 +182,8 @@ describe("deliverable routes (Sprint 63)", () => {
     await app.close();
   });
 
-  function firstDeliverableId(): string {
-    return db.select().from(deliverables).all()[0]!.id;
+  async function firstDeliverableId(): Promise<string> {
+    return (await db.select().from(deliverables).all())[0]!.id;
   }
 
   it("fan-out route creates deliverables from a ready package; 400 otherwise", async () => {
@@ -263,7 +263,7 @@ describe("deliverable routes (Sprint 63)", () => {
       method: "POST",
       url: `/workspaces/${workspaceId}/packages/${packageId}/fan-out`,
     });
-    const deliverableId = firstDeliverableId();
+    const deliverableId = await firstDeliverableId();
 
     // Schema: select without variantId, cancel without reason.
     for (const payload of [{ action: "select" }, { action: "cancel" }]) {
@@ -329,8 +329,8 @@ describe("deliverable routes (Sprint 63)", () => {
   });
 
   it("hides workspaces and deliverables from non-members", async () => {
-    fanOutPackage(db, workspaceId, packageId, { userId: null });
-    const deliverableId = firstDeliverableId();
+    await fanOutPackage(db, workspaceId, packageId, { userId: null });
+    const deliverableId = await firstDeliverableId();
     const outsider = await registerUser(app, "outsider@example.com");
     for (const [method, url] of [
       ["GET", `/workspaces/${workspaceId}/deliverables`],

@@ -7,8 +7,8 @@ import { workspaceCompliance } from "../db/schema";
  * A workspace's CAN-SPAM postal address (Sprint 49). Required before an
  * outreach sequence can activate, and appended to every send's footer.
  */
-export function getCompliance(db: Db, workspaceId: string): WorkspaceCompliance {
-  const row = db
+export async function getCompliance(db: Db, workspaceId: string): Promise<WorkspaceCompliance> {
+  const row = await db
     .select()
     .from(workspaceCompliance)
     .where(eq(workspaceCompliance.workspaceId, workspaceId))
@@ -19,22 +19,22 @@ export function getCompliance(db: Db, workspaceId: string): WorkspaceCompliance 
 }
 
 /** The postal address, or empty string when unset — the send-time footer source. */
-export function getPostalAddress(db: Db, workspaceId: string): string {
-  return getCompliance(db, workspaceId).postalAddress;
+export async function getPostalAddress(db: Db, workspaceId: string): Promise<string> {
+  return (await getCompliance(db, workspaceId)).postalAddress;
 }
 
-export function updateCompliance(
+export async function updateCompliance(
   db: Db,
   workspaceId: string,
   input: UpdateComplianceInput,
-): WorkspaceCompliance {
+): Promise<WorkspaceCompliance> {
   const now = Date.now();
-  db.insert(workspaceCompliance)
+  await db.insert(workspaceCompliance)
     .values({ workspaceId, postalAddress: input.postalAddress, createdAt: now, updatedAt: now })
     .onConflictDoUpdate({
       target: workspaceCompliance.workspaceId,
       set: { postalAddress: input.postalAddress, updatedAt: now },
     })
     .run();
-  return getCompliance(db, workspaceId);
+  return await getCompliance(db, workspaceId);
 }

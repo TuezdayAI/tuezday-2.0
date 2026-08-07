@@ -136,13 +136,13 @@ function outcomeOf(state: string, originalContent: string, content: string): Eva
  * snapshotted rather than joined at read time: a trend line over a case set
  * that silently changes underneath it is worse than no trend line.
  */
-export function buildEvalSuite(
+export async function buildEvalSuite(
   db: Db,
   workspaceId: string,
   input: BuildEvalSuiteInput,
   actor: { userId: string | null },
-): { suite: EvalSuite; cases: EvalCase[] } {
-  const candidates = db
+): Promise<{ suite: EvalSuite; cases: EvalCase[] }> {
+  const candidates = await db
     .select({ draft: drafts, signalContent: signals.content, signalSource: signals.source })
     .from(drafts)
     .innerJoin(signals, eq(drafts.sourceSignalId, signals.id))
@@ -161,7 +161,7 @@ export function buildEvalSuite(
   const now = Date.now();
   const suiteId = randomUUID();
   const draftIds = candidates.map((row) => row.draft.id);
-  const reasons = reasonsFor(db, workspaceId, draftIds);
+  const reasons = await reasonsFor(db, workspaceId, draftIds);
 
   const caseRows: EvalCaseRow[] = candidates.map((row) => ({
     id: randomUUID(),
@@ -193,16 +193,16 @@ export function buildEvalSuite(
     createdByUserId: actor.userId,
     createdAt: now,
   };
-  db.insert(evalSuites).values(suiteRow).run();
-  if (caseRows.length > 0) db.insert(evalCases).values(caseRows).run();
+  await db.insert(evalSuites).values(suiteRow).run();
+  if (caseRows.length > 0) await db.insert(evalCases).values(caseRows).run();
   return { suite: rowToSuite(suiteRow), cases: caseRows.map(rowToCase) };
 }
 
 /** Newest stated reject reason per draft (Sprint 66's `approval_decisions.reason`). */
-function reasonsFor(db: Db, workspaceId: string, draftIds: string[]): Map<string, string> {
+async function reasonsFor(db: Db, workspaceId: string, draftIds: string[]): Promise<Map<string, string>> {
   const found = new Map<string, string>();
   if (draftIds.length === 0) return found;
-  const rows = db
+  const rows = await db
     .select({ draftId: approvalDecisions.draftId, reason: approvalDecisions.reason })
     .from(approvalDecisions)
     .where(
@@ -221,22 +221,22 @@ function reasonsFor(db: Db, workspaceId: string, draftIds: string[]): Map<string
   return found;
 }
 
-export function listEvalSuites(db: Db, workspaceId: string): EvalSuite[] {
-  return db
+export async function listEvalSuites(db: Db, workspaceId: string): Promise<EvalSuite[]> {
+  return (await db
     .select()
     .from(evalSuites)
     .where(eq(evalSuites.workspaceId, workspaceId))
     .orderBy(desc(evalSuites.createdAt))
-    .all()
+    .all())
     .map(rowToSuite);
 }
 
-export function listEvalCases(db: Db, workspaceId: string, suiteId: string): EvalCase[] {
-  return db
+export async function listEvalCases(db: Db, workspaceId: string, suiteId: string): Promise<EvalCase[]> {
+  return (await db
     .select()
     .from(evalCases)
     .where(and(eq(evalCases.workspaceId, workspaceId), eq(evalCases.suiteId, suiteId)))
-    .all()
+    .all())
     .map(rowToCase);
 }
 
@@ -248,25 +248,25 @@ export function listEvalCases(db: Db, workspaceId: string, suiteId: string): Eva
  * System prompt + composed user message + every tool result, for every agent
  * step of a pipeline run. This is the ground a citation has to stand on.
  */
-export function runCorpus(db: Db, pipelineRunId: string): string {
-  const agentRunIds = db
+export async function runCorpus(db: Db, pipelineRunId: string): Promise<string> {
+  const agentRunIds = (await db
     .select({ agentRunId: pipelineRunSteps.agentRunId })
     .from(pipelineRunSteps)
     .where(eq(pipelineRunSteps.runId, pipelineRunId))
-    .all()
+    .all())
     .map((row) => row.agentRunId)
     .filter((id): id is string => id !== null);
   if (agentRunIds.length === 0) return "";
 
   const parts: string[] = [];
-  for (const row of db
+  for (const row of await db
     .select({ system: agentRuns.system, inputMessages: agentRuns.inputMessages })
     .from(agentRuns)
     .where(inArray(agentRuns.id, agentRunIds))
     .all()) {
     parts.push(row.system, row.inputMessages);
   }
-  for (const row of db
+  for (const row of await db
     .select({ result: agentRunSteps.toolResultJson })
     .from(agentRunSteps)
     .where(inArray(agentRunSteps.runId, agentRunIds))
@@ -277,9 +277,9 @@ export function runCorpus(db: Db, pipelineRunId: string): string {
 }
 
 /** Citations the critique step(s) attached to their findings (Sprint 66). */
-export function runCitations(db: Db, pipelineRunId: string): string[] {
+export async function runCitations(db: Db, pipelineRunId: string): Promise<string[]> {
   const citations: string[] = [];
-  for (const row of db
+  for (const row of await db
     .select({ outputJson: pipelineRunSteps.outputJson })
     .from(pipelineRunSteps)
     .where(eq(pipelineRunSteps.runId, pipelineRunId))
@@ -489,7 +489,7 @@ export async function runEvalSuite(
   input: RunEvalSuiteInput,
   actor: { userId: string | null; label: string },
 ): Promise<EvalRunDetail> {
-  const suiteRow = db
+  const suiteRow = await db
     .select()
     .from(evalSuites)
     .where(and(eq(evalSuites.workspaceId, workspaceId), eq(evalSuites.id, input.suiteId)))
@@ -498,14 +498,14 @@ export async function runEvalSuite(
   const suite = rowToSuite(suiteRow);
 
   const definition = input.definitionId
-    ? getPipelineDefinition(db, workspaceId, input.definitionId)
-    : resolvePipelineDefinition(db, { workspaceId, taskKey: suite.taskKey });
+    ? await getPipelineDefinition(db, workspaceId, input.definitionId)
+    : await resolvePipelineDefinition(db, { workspaceId, taskKey: suite.taskKey });
   if (!definition) throw new EvalDefinitionUnavailableError(suite.taskKey);
 
-  const cases = listEvalCases(db, workspaceId, suite.id);
+  const cases = await listEvalCases(db, workspaceId, suite.id);
   const now = Date.now();
   const runId = randomUUID();
-  db.insert(evalRuns)
+  await db.insert(evalRuns)
     .values({
       id: runId,
       workspaceId,
@@ -523,7 +523,7 @@ export async function runEvalSuite(
     })
     .run();
 
-  const bannedClaims = listBannedClaims(db, workspaceId).map((claim) => claim.phrase);
+  const bannedClaims = (await listBannedClaims(db, workspaceId)).map((claim) => claim.phrase);
   const scored: ScoredCase[] = [];
 
   for (const evalCase of cases) {
@@ -539,8 +539,8 @@ export async function runEvalSuite(
     scored.push(scoredCase);
   }
 
-  const metrics = evalRunMetrics(scored, getAutomationComparison(db, workspaceId));
-  db.update(evalRuns)
+  const metrics = evalRunMetrics(scored, await getAutomationComparison(db, workspaceId));
+  await db.update(evalRuns)
     .set({
       status: "succeeded",
       metricsJson: JSON.stringify(metrics),
@@ -550,7 +550,7 @@ export async function runEvalSuite(
     .where(eq(evalRuns.id, runId))
     .run();
 
-  return getEvalRunDetail(db, workspaceId, runId)!;
+  return (await getEvalRunDetail(db, workspaceId, runId))!;
 }
 
 async function replayCase(
@@ -561,7 +561,7 @@ async function replayCase(
     runId: string;
     suite: EvalSuite;
     evalCase: EvalCase;
-    definition: NonNullable<ReturnType<typeof resolvePipelineDefinition>>;
+    definition: NonNullable<Awaited<ReturnType<typeof resolvePipelineDefinition>>>;
     bannedClaims: string[];
     judge: boolean;
     createdBy: string;
@@ -579,22 +579,22 @@ async function replayCase(
     durationMs: 0,
   };
 
-  const fail = (reason: string, costCents = 0): ScoredCase => {
+  const fail = async (reason: string, costCents = 0): Promise<ScoredCase> => {
     const scoredCase: ScoredCase = {
       ...base,
       costCents,
       durationMs: Date.now() - startedAt,
       failureReason: reason,
     };
-    writeCaseResult(db, ctx.runId, evalCase.id, null, null, scoredCase);
+    await writeCaseResult(db, ctx.runId, evalCase.id, null, null, scoredCase);
     return scoredCase;
   };
 
   // The original signal may have been deleted since the case was frozen; the
   // case survives (D-67.2) but it cannot be replayed.
-  if (!evalCase.signalId) return fail("signal_deleted");
+  if (!evalCase.signalId) return await fail("signal_deleted");
 
-  const started = startPipelineRun(db, {
+  const started = await startPipelineRun(db, {
     workspaceId,
     definition: ctx.definition,
     signalId: evalCase.signalId,
@@ -607,25 +607,25 @@ async function replayCase(
   });
   const outcome = await executePipelineRun(db, deps, workspaceId, started.id);
   const costCents = outcome.run.costCents;
-  if (outcome.blocked) return fail(outcome.blocked, costCents);
+  if (outcome.blocked) return await fail(outcome.blocked, costCents);
   if (outcome.run.status !== "succeeded") {
-    return fail(outcome.run.failureReason ?? outcome.run.escalationReason ?? "run_not_succeeded", costCents);
+    return await fail(outcome.run.failureReason ?? outcome.run.escalationReason ?? "run_not_succeeded", costCents);
   }
   const produced = outcome.run.result?.content ?? null;
-  if (!produced) return fail("no_content", costCents);
+  if (!produced) return await fail("no_content", costCents);
 
   const checks = runHardChecks({
     content: produced,
     channel: evalCase.channel,
     bannedClaims: ctx.bannedClaims,
     ctaExpectation: ctx.suite.ctaExpectation,
-    citations: runCitations(db, started.id),
-    corpus: runCorpus(db, started.id),
+    citations: await runCitations(db, started.id),
+    corpus: await runCorpus(db, started.id),
   });
 
   let judge: EvalRubric | null = null;
   if (ctx.judge) {
-    const guidance = resolveChannelGuidance(db, workspaceId, evalCase.channel, {
+    const guidance = await resolveChannelGuidance(db, workspaceId, evalCase.channel, {
       personaId: evalCase.personaId,
       campaignId: evalCase.campaignId,
     });
@@ -654,19 +654,19 @@ async function replayCase(
     durationMs: Date.now() - startedAt,
     failureReason: null,
   };
-  writeCaseResult(db, ctx.runId, evalCase.id, started.id, produced, scoredCase);
+  await writeCaseResult(db, ctx.runId, evalCase.id, started.id, produced, scoredCase);
   return scoredCase;
 }
 
-function writeCaseResult(
+async function writeCaseResult(
   db: Db,
   runId: string,
   caseId: string,
   pipelineRunId: string | null,
   producedContent: string | null,
   scored: ScoredCase,
-): void {
-  db.insert(evalCaseResults)
+): Promise<void> {
+  await db.insert(evalCaseResults)
     .values({
       id: randomUUID(),
       runId,
@@ -685,33 +685,33 @@ function writeCaseResult(
     .run();
 }
 
-export function listEvalRuns(db: Db, workspaceId: string, limit = 20): EvalRun[] {
-  return db
+export async function listEvalRuns(db: Db, workspaceId: string, limit = 20): Promise<EvalRun[]> {
+  return (await db
     .select()
     .from(evalRuns)
     .where(eq(evalRuns.workspaceId, workspaceId))
     .orderBy(desc(evalRuns.createdAt))
     .limit(Math.min(limit, 100))
-    .all()
+    .all())
     .map(rowToRun);
 }
 
-export function getEvalRunDetail(
+export async function getEvalRunDetail(
   db: Db,
   workspaceId: string,
   runId: string,
-): EvalRunDetail | undefined {
-  const row = db
+): Promise<EvalRunDetail | undefined> {
+  const row = await db
     .select()
     .from(evalRuns)
     .where(and(eq(evalRuns.workspaceId, workspaceId), eq(evalRuns.id, runId)))
     .get();
   if (!row) return undefined;
-  const results = db
+  const results = (await db
     .select()
     .from(evalCaseResults)
     .where(eq(evalCaseResults.runId, runId))
-    .all()
+    .all())
     .map(rowToCaseResult);
   return { ...rowToRun(row), results };
 }
@@ -721,37 +721,37 @@ export function getEvalRunDetail(
  * exactly one run per workspace, so re-labelling moves it off whichever run
  * held it before rather than failing on the unique index.
  */
-export function labelBaseline(
+export async function labelBaseline(
   db: Db,
   workspaceId: string,
   runId: string,
   label: string,
-): EvalRun | undefined {
-  const existing = db
+): Promise<EvalRun | undefined> {
+  const existing = await db
     .select()
     .from(evalRuns)
     .where(and(eq(evalRuns.workspaceId, workspaceId), eq(evalRuns.id, runId)))
     .get();
   if (!existing) return undefined;
-  db.transaction((tx) => {
-    tx.update(evalRuns)
+  await db.transaction(async (tx) => {
+    await tx.update(evalRuns)
       .set({ baselineLabel: null })
       .where(and(eq(evalRuns.workspaceId, workspaceId), eq(evalRuns.baselineLabel, label)))
       .run();
-    tx.update(evalRuns).set({ baselineLabel: label }).where(eq(evalRuns.id, runId)).run();
+    await tx.update(evalRuns).set({ baselineLabel: label }).where(eq(evalRuns.id, runId)).run();
   });
-  const updated = db.select().from(evalRuns).where(eq(evalRuns.id, runId)).get();
+  const updated = await db.select().from(evalRuns).where(eq(evalRuns.id, runId)).get();
   return updated ? rowToRun(updated) : undefined;
 }
 
-export function findBaselineRun(
+export async function findBaselineRun(
   db: Db,
   workspaceId: string,
   label?: string,
-): EvalRun | undefined {
+): Promise<EvalRun | undefined> {
   const conditions = [eq(evalRuns.workspaceId, workspaceId), isNotNull(evalRuns.baselineLabel)];
   if (label) conditions.push(eq(evalRuns.baselineLabel, label));
-  const row = db
+  const row = await db
     .select()
     .from(evalRuns)
     .where(and(...conditions))
@@ -761,15 +761,15 @@ export function findBaselineRun(
 }
 
 /** The regression report for one run against a named (or latest) baseline. */
-export function getEvalComparison(
+export async function getEvalComparison(
   db: Db,
   workspaceId: string,
   runId: string,
   baselineLabel?: string,
-): EvalComparison | undefined {
-  const detail = getEvalRunDetail(db, workspaceId, runId);
+): Promise<EvalComparison | undefined> {
+  const detail = await getEvalRunDetail(db, workspaceId, runId);
   if (!detail) return undefined;
-  const baseline = findBaselineRun(db, workspaceId, baselineLabel);
+  const baseline = await findBaselineRun(db, workspaceId, baselineLabel);
   return compareEvalRuns(
     { id: detail.id, metrics: detail.metrics },
     baseline && baseline.id !== detail.id

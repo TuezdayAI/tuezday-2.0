@@ -36,10 +36,10 @@ function senderRow(workspaceId: string, overrides: { killSwitch?: boolean; daily
   };
 }
 
-function seedAction(db: Db, workspaceId: string): string {
+async function seedAction(db: Db, workspaceId: string): Promise<string> {
   const id = randomUUID();
   const now = Date.now();
-  db.insert(externalActions)
+  await db.insert(externalActions)
     .values({
       id,
       workspaceId,
@@ -78,15 +78,15 @@ function seedAction(db: Db, workspaceId: string): string {
   return id;
 }
 
-function seedAcceptedDelivery(
+async function seedAcceptedDelivery(
   db: Db,
   workspaceId: string,
   status: "accepted" | "delivered",
   acceptedAt = Date.now(),
-): void {
-  const actionId = seedAction(db, workspaceId);
+): Promise<void> {
+  const actionId = await seedAction(db, workspaceId);
   const id = randomUUID();
-  db.insert(emailDeliveries)
+  await db.insert(emailDeliveries)
     .values({
       id,
       workspaceId,
@@ -128,7 +128,7 @@ describe("email recipient safety", () => {
     workspaceId = (
       await authed.inject({ method: "POST", url: "/workspaces", payload: { name: "Acme" } })
     ).json().id;
-    db.insert(workspaceEmailSenders).values(senderRow(workspaceId)).run();
+    await db.insert(workspaceEmailSenders).values(senderRow(workspaceId)).run();
   });
 
   afterEach(async () => {
@@ -138,7 +138,7 @@ describe("email recipient safety", () => {
   });
 
   async function putPermission(email: string, status: "allowed" | "suppressed") {
-    return authed.inject({
+    return await authed.inject({
       method: "PUT",
       url: `/workspaces/${workspaceId}/email-permissions/${encodeURIComponent(email)}`,
       payload: { status },
@@ -146,19 +146,19 @@ describe("email recipient safety", () => {
   }
 
   it("blocks unknown and suppressed recipients while explicit allowed recipients pass", async () => {
-    expect(checkEmailRecipientSafety(db, workspaceId, "unknown@example.com")).toMatchObject({
+    expect(await checkEmailRecipientSafety(db, workspaceId, "unknown@example.com")).toMatchObject({
       ok: false,
       code: "permission_unknown",
     });
 
     expect((await putPermission(" ALLOWED@EXAMPLE.COM ", "allowed")).statusCode).toBe(200);
-    expect(checkEmailRecipientSafety(db, workspaceId, "allowed@example.com")).toEqual({
+    expect(await checkEmailRecipientSafety(db, workspaceId, "allowed@example.com")).toEqual({
       ok: true,
       normalizedEmail: "allowed@example.com",
     });
 
     await putPermission("blocked@example.com", "suppressed");
-    expect(checkEmailRecipientSafety(db, workspaceId, "blocked@example.com")).toMatchObject({
+    expect(await checkEmailRecipientSafety(db, workspaceId, "blocked@example.com")).toMatchObject({
       ok: false,
       code: "suppressed",
     });
@@ -172,7 +172,7 @@ describe("email recipient safety", () => {
       status: "suppressed",
     });
     expect(
-      db
+      await db
         .select()
         .from(emailSuppressions)
         .where(
@@ -187,7 +187,7 @@ describe("email recipient safety", () => {
     const allowed = await putPermission("lead@buyer.com", "allowed");
     expect(allowed.json().status).toBe("allowed");
     expect(
-      db
+      await db
         .select()
         .from(emailSuppressions)
         .where(eq(emailSuppressions.normalizedEmail, "lead@buyer.com"))
@@ -203,7 +203,7 @@ describe("email recipient safety", () => {
 
   it("keeps unsubscribe suppression even if permission is later marked allowed", async () => {
     const now = Date.now();
-    db.insert(emailSuppressions)
+    await db.insert(emailSuppressions)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -214,7 +214,7 @@ describe("email recipient safety", () => {
       .run();
     await putPermission("optedout@example.com", "suppressed");
     await putPermission("optedout@example.com", "allowed");
-    expect(checkEmailRecipientSafety(db, workspaceId, "optedout@example.com")).toMatchObject({
+    expect(await checkEmailRecipientSafety(db, workspaceId, "optedout@example.com")).toMatchObject({
       ok: false,
       code: "suppressed",
     });
@@ -228,7 +228,7 @@ describe("email recipient safety", () => {
     });
     expect(update.statusCode).toBe(200);
     expect(update.json()).toEqual({ killSwitch: true, dailyCap: 2 });
-    expect(checkEmailRecipientSafety(db, workspaceId, "unknown@example.com")).toMatchObject({
+    expect(await checkEmailRecipientSafety(db, workspaceId, "unknown@example.com")).toMatchObject({
       ok: false,
       code: "kill_switch_on",
     });
@@ -249,11 +249,11 @@ describe("email recipient safety", () => {
     });
     const utcStart = new Date();
     utcStart.setUTCHours(0, 0, 0, 0);
-    seedAcceptedDelivery(db, workspaceId, "accepted");
-    seedAcceptedDelivery(db, workspaceId, "delivered");
-    seedAcceptedDelivery(db, workspaceId, "delivered", utcStart.getTime() - 1);
+    await seedAcceptedDelivery(db, workspaceId, "accepted");
+    await seedAcceptedDelivery(db, workspaceId, "delivered");
+    await seedAcceptedDelivery(db, workspaceId, "delivered", utcStart.getTime() - 1);
 
-    expect(checkEmailRecipientSafety(db, workspaceId, "allowed@example.com")).toMatchObject({
+    expect(await checkEmailRecipientSafety(db, workspaceId, "allowed@example.com")).toMatchObject({
       ok: false,
       code: "daily_cap_reached",
       count: 2,
@@ -273,14 +273,14 @@ describe("email recipient safety", () => {
     expect(replay.statusCode).toBe(200);
 
     expect(
-      db
+      await db
         .select()
         .from(emailSuppressions)
         .where(eq(emailSuppressions.normalizedEmail, "lead@buyer.com"))
         .get(),
     ).toMatchObject({ reason: "unsubscribe" });
     expect(
-      db
+      await db
         .select()
         .from(emailRecipientPermissions)
         .where(eq(emailRecipientPermissions.normalizedEmail, "lead@buyer.com"))

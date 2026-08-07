@@ -132,13 +132,13 @@ const script = (connectionId: string): ScriptedStep[] => [
   { text: JSON.stringify({ content: "A post about usage-based pricing.", confidence: 90 }) },
 ];
 
-function fixture(posts: Array<Record<string, string>>) {
+async function fixture(posts: Array<Record<string, string>>) {
   const db = createTestDb();
   const connectors = fabric(posts);
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({ id: WORKSPACE_ID, name: "Acting", createdAt: 1, updatedAt: 1 })
     .run();
-  db.insert(signals)
+  await db.insert(signals)
     .values({
       id: SIGNAL_ID,
       workspaceId: WORKSPACE_ID,
@@ -149,7 +149,7 @@ function fixture(posts: Array<Record<string, string>>) {
     })
     .run();
   const connectionId = randomUUID();
-  db.insert(connections)
+  await db.insert(connections)
     .values({
       id: connectionId,
       workspaceId: WORKSPACE_ID,
@@ -160,7 +160,7 @@ function fixture(posts: Array<Record<string, string>>) {
       updatedAt: 1,
     })
     .run();
-  db.insert(drafts)
+  await db.insert(drafts)
     .values({
       id: DRAFT_ID,
       workspaceId: WORKSPACE_ID,
@@ -174,7 +174,7 @@ function fixture(posts: Array<Record<string, string>>) {
       updatedAt: 1,
     })
     .run();
-  ensureWorkspaceActionPolicies(db, WORKSPACE_ID);
+  await ensureWorkspaceActionPolicies(db, WORKSPACE_ID);
   const proposals = createAgentProposals({
     db,
     runtime: createExternalActionRuntime({
@@ -187,9 +187,9 @@ function fixture(posts: Array<Record<string, string>>) {
   return { db, connectionId, proposals };
 }
 
-function setPublishPolicy(db: Db, rule: "autonomous" | "human_required") {
-  const current = listExternalActionPolicies(db, WORKSPACE_ID, "workspace", WORKSPACE_ID);
-  upsertExternalActionPolicies(
+async function setPublishPolicy(db: Db, rule: "autonomous" | "human_required") {
+  const current = await listExternalActionPolicies(db, WORKSPACE_ID, "workspace", WORKSPACE_ID);
+  await upsertExternalActionPolicies(
     db,
     WORKSPACE_ID,
     {
@@ -205,14 +205,14 @@ function setPublishPolicy(db: Db, rule: "autonomous" | "human_required") {
   );
 }
 
-function definitionFor(db: Db): PipelineDefinition {
-  const definition = createPipelineDefinition(
+async function definitionFor(db: Db): Promise<PipelineDefinition> {
+  const definition = await createPipelineDefinition(
     db,
     WORKSPACE_ID,
     { taskKey: "signal_social_post", name: "Acting", description: "", spec: spec() },
     ACTOR,
   );
-  setPipelineStatus(db, WORKSPACE_ID, definition.id, "active");
+  await setPipelineStatus(db, WORKSPACE_ID, definition.id, "active");
   return definition;
 }
 
@@ -222,7 +222,7 @@ async function runEngine(
   definition: PipelineDefinition,
   mode: PipelineRunMode,
 ) {
-  const run = startPipelineRun(db, {
+  const run = await startPipelineRun(db, {
     workspaceId: WORKSPACE_ID,
     definition,
     signalId: SIGNAL_ID,
@@ -230,32 +230,32 @@ async function runEngine(
     mode,
     createdBy: "founder",
   });
-  return executePipelineRun(db, deps, WORKSPACE_ID, run.id);
+  return await executePipelineRun(db, deps, WORKSPACE_ID, run.id);
 }
 
 describe("an agent proposes, and the policy tree gates it (Sprint 69 acceptance)", () => {
   it("parks the agent's publication when the policy says human_required, and stops it dead", async () => {
     const posts: Array<Record<string, string>> = [];
-    const { db, connectionId, proposals } = fixture(posts);
-    setPublishPolicy(db, "human_required");
+    const { db, connectionId, proposals } = await fixture(posts);
+    await setPublishPolicy(db, "human_required");
     const gateway = new ScriptedGateway(script(connectionId));
     const executed = await runEngine(
       db,
       { llm: gateway, evidence: noEvidence, safeFetch: {} as SafeFetchService, proposals },
-      definitionFor(db),
+      await definitionFor(db),
       "live",
     );
     expect(executed.run.status).toBe("succeeded");
 
-    const action = db.select().from(externalActions).all()[0];
+    const action = (await db.select().from(externalActions).all())[0];
     expect(action?.status).toBe("authorization_required");
     // Demonstrably stopped: nothing left the building.
     expect(posts).toHaveLength(0);
-    expect(db.select().from(publications).all()).toHaveLength(0);
+    expect(await db.select().from(publications).all()).toHaveLength(0);
 
     // ...and it is attributable, both directions.
     expect(action?.origin).toBe("agent");
-    const proposal = db.select().from(agentProposals).all()[0];
+    const proposal = (await db.select().from(agentProposals).all())[0];
     expect(proposal?.externalActionId).toBe(action?.id);
     expect(proposal?.rationale).toContain("peaking");
     expect(action?.originRunId).toBe(proposal?.agentRunId);
@@ -263,18 +263,18 @@ describe("an agent proposes, and the policy tree gates it (Sprint 69 acceptance)
 
   it("lets it through when the policy says autonomous, gated exactly as a person's would be", async () => {
     const posts: Array<Record<string, string>> = [];
-    const { db, connectionId, proposals } = fixture(posts);
-    setPublishPolicy(db, "autonomous");
+    const { db, connectionId, proposals } = await fixture(posts);
+    await setPublishPolicy(db, "autonomous");
     const gateway = new ScriptedGateway(script(connectionId));
     await runEngine(
       db,
       { llm: gateway, evidence: noEvidence, safeFetch: {} as SafeFetchService, proposals },
-      definitionFor(db),
+      await definitionFor(db),
       "live",
     );
 
     expect(posts).toHaveLength(1);
-    const action = db.select().from(externalActions).all()[0];
+    const action = (await db.select().from(externalActions).all())[0];
     expect(action?.status).toBe("succeeded");
     // The policy that let it out is the same one a human proposal resolves.
     expect(JSON.parse(action!.policySnapshotJson).effective).toBe("autonomous");
@@ -282,13 +282,13 @@ describe("an agent proposes, and the policy tree gates it (Sprint 69 acceptance)
 
   it("offers the tool in a shadow run but mints nothing (D-69.6)", async () => {
     const posts: Array<Record<string, string>> = [];
-    const { db, connectionId, proposals } = fixture(posts);
-    setPublishPolicy(db, "autonomous");
+    const { db, connectionId, proposals } = await fixture(posts);
+    await setPublishPolicy(db, "autonomous");
     const gateway = new ScriptedGateway(script(connectionId));
     await runEngine(
       db,
       { llm: gateway, evidence: noEvidence, safeFetch: {} as SafeFetchService, proposals },
-      definitionFor(db),
+      await definitionFor(db),
       "shadow",
     );
 
@@ -297,30 +297,30 @@ describe("an agent proposes, and the policy tree gates it (Sprint 69 acceptance)
     expect(declared).toContain("propose_publication");
     // ...and no effect whatsoever, even though the policy was autonomous.
     expect(posts).toHaveLength(0);
-    expect(db.select().from(externalActions).all()).toHaveLength(0);
-    expect(db.select().from(agentProposals).all()).toHaveLength(0);
+    expect(await db.select().from(externalActions).all()).toHaveLength(0);
+    expect(await db.select().from(agentProposals).all()).toHaveLength(0);
   });
 
   it("does not offer the tool at all when no propose seam was injected (D-69.7)", async () => {
     const posts: Array<Record<string, string>> = [];
-    const { db, connectionId } = fixture(posts);
+    const { db, connectionId } = await fixture(posts);
     const gateway = new ScriptedGateway([
       { text: JSON.stringify({ content: "No tools to call.", confidence: 90 }) },
     ]);
     await runEngine(
       db,
       { llm: gateway, evidence: noEvidence, safeFetch: {} as SafeFetchService },
-      definitionFor(db),
+      await definitionFor(db),
       "live",
     );
     expect(connectionId).toBeTruthy();
     expect(gateway.calls[0]!.tools ?? []).toHaveLength(0);
-    expect(db.select().from(externalActions).all()).toHaveLength(0);
+    expect(await db.select().from(externalActions).all()).toHaveLength(0);
   });
 
   it("keeps the read tools untouched by all of this", async () => {
     const posts: Array<Record<string, string>> = [];
-    const { db, proposals } = fixture(posts);
+    const { db, proposals } = await fixture(posts);
     const readSpec = pipelineSpecSchema.parse({
       steps: [
         {
@@ -338,13 +338,13 @@ describe("an agent proposes, and the policy tree gates it (Sprint 69 acceptance)
       ],
       budget: { maxTokens: 100_000 },
     });
-    const definition = createPipelineDefinition(
+    const definition = await createPipelineDefinition(
       db,
       WORKSPACE_ID,
       { taskKey: "signal_social_post", name: "Reading", description: "", spec: readSpec },
       ACTOR,
     );
-    setPipelineStatus(db, WORKSPACE_ID, definition.id, "active");
+    await setPipelineStatus(db, WORKSPACE_ID, definition.id, "active");
     const gateway = new ScriptedGateway([
       { text: JSON.stringify({ content: "Read-only.", confidence: 90 }) },
     ]);
@@ -364,8 +364,8 @@ describe("an agent proposes, and the policy tree gates it (Sprint 69 acceptance)
 describe("the draft an agent writes still meets a human first (D-69.2)", () => {
   it("lands in the approval queue and cannot publish itself", async () => {
     const posts: Array<Record<string, string>> = [];
-    const { db, proposals } = fixture(posts);
-    setPublishPolicy(db, "autonomous");
+    const { db, proposals } = await fixture(posts);
+    await setPublishPolicy(db, "autonomous");
     const written = await proposals.proposeDraft(
       { agentRunId: randomUUID(), workspaceId: WORKSPACE_ID },
       {
@@ -377,7 +377,7 @@ describe("the draft an agent writes still meets a human first (D-69.2)", () => {
     expect(written.ok).toBe(true);
     if (!written.ok) return;
 
-    const draft = db.select().from(drafts).where(eq(drafts.id, written.id!)).get();
+    const draft = await db.select().from(drafts).where(eq(drafts.id, written.id!)).get();
     expect(draft?.state).toBe("pending_review");
 
     // Even under an autonomous publish policy, the agent's own writing cannot

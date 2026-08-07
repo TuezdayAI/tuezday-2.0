@@ -30,8 +30,8 @@ interface RevisionParams extends CampaignParams {
   revisionId: string;
 }
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) void reply.status(404).send({ error: "workspace_not_found" });
   return workspace;
 }
@@ -53,8 +53,8 @@ export function registerCampaignPlanRoutes(app: FastifyInstance, db: Db): void {
   app.get<{ Params: CampaignParams }>(
     "/workspaces/:id/campaigns/:campaignId/plan",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const detail = getCurrentCampaignPlan(db, request.params.id, request.params.campaignId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const detail = await getCurrentCampaignPlan(db, request.params.id, request.params.campaignId);
       if (!detail) return reply.status(404).send({ error: "plan_not_found" });
       return detail;
     },
@@ -63,9 +63,9 @@ export function registerCampaignPlanRoutes(app: FastifyInstance, db: Db): void {
   app.get<{ Params: CampaignParams }>(
     "/workspaces/:id/campaigns/:campaignId/plan/summary",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       try {
-        return getCampaignControlPlaneSummary(db, request.params.id, request.params.campaignId);
+        return await getCampaignControlPlaneSummary(db, request.params.id, request.params.campaignId);
       } catch (error) {
         return sendPlanError(reply, error);
       }
@@ -75,9 +75,9 @@ export function registerCampaignPlanRoutes(app: FastifyInstance, db: Db): void {
   app.get<{ Params: CampaignParams }>(
     "/workspaces/:id/campaigns/:campaignId/plan/workspace",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       try {
-        return getCampaignPlanWorkspace(db, request.params.id, request.params.campaignId);
+        return await getCampaignPlanWorkspace(db, request.params.id, request.params.campaignId);
       } catch (error) {
         return sendPlanError(reply, error);
       }
@@ -87,7 +87,7 @@ export function registerCampaignPlanRoutes(app: FastifyInstance, db: Db): void {
   app.post<{ Params: CampaignParams }>(
     "/workspaces/:id/campaigns/:campaignId/plan/revisions",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = createCampaignPlanRevisionInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -103,7 +103,7 @@ export function registerCampaignPlanRoutes(app: FastifyInstance, db: Db): void {
         return reply
           .status(201)
           .send(
-            createPlanRevision(
+            await createPlanRevision(
               db,
               request.params.id,
               request.params.campaignId,
@@ -120,7 +120,7 @@ export function registerCampaignPlanRoutes(app: FastifyInstance, db: Db): void {
   app.put<{ Params: RevisionParams }>(
     "/workspaces/:id/campaigns/:campaignId/plan/revisions/:revisionId/lanes",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = upsertCampaignLaneRevisionInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -133,7 +133,7 @@ export function registerCampaignPlanRoutes(app: FastifyInstance, db: Db): void {
         });
       }
       try {
-        return upsertLaneRevision(
+        return await upsertLaneRevision(
           db,
           request.params.id,
           request.params.campaignId,
@@ -149,9 +149,9 @@ export function registerCampaignPlanRoutes(app: FastifyInstance, db: Db): void {
   app.post<{ Params: RevisionParams }>(
     "/workspaces/:id/campaigns/:campaignId/plan/revisions/:revisionId/activate",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       try {
-        return activatePlanRevision(
+        return await activatePlanRevision(
           db,
           request.params.id,
           request.params.campaignId,
@@ -166,9 +166,9 @@ export function registerCampaignPlanRoutes(app: FastifyInstance, db: Db): void {
   app.post<{ Params: CampaignParams }>(
     "/workspaces/:id/campaigns/:campaignId/plan/backfill",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       try {
-        return backfillCampaignControlPlane(db, request.params.id, request.params.campaignId);
+        return await backfillCampaignControlPlane(db, request.params.id, request.params.campaignId);
       } catch (error) {
         return sendPlanError(reply, error);
       }

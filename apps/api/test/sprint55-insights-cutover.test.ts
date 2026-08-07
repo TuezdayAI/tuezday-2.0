@@ -59,8 +59,8 @@ let db: Db;
 let app: TuezdayApp;
 let workspaceId: string;
 
-function insertCampaignRow(id: string, name: string, createdAt: number) {
-  db.insert(campaigns)
+async function insertCampaignRow(id: string, name: string, createdAt: number) {
+  await db.insert(campaigns)
     .values({
       id,
       workspaceId,
@@ -82,8 +82,8 @@ function insertCampaignRow(id: string, name: string, createdAt: number) {
     .run();
 }
 
-function insertDraft(id: string, campaignId: string | null, channel: string, state: string) {
-  db.insert(drafts)
+async function insertDraft(id: string, campaignId: string | null, channel: string, state: string) {
+  await db.insert(drafts)
     .values({
       id,
       workspaceId,
@@ -99,14 +99,14 @@ function insertDraft(id: string, campaignId: string | null, channel: string, sta
     .run();
 }
 
-function insertPublication(
+async function insertPublication(
   id: string,
   draftId: string,
   connectionId: string,
   status: string,
   publishedAt: number | null,
 ) {
-  db.insert(publications)
+  await db.insert(publications)
     .values({
       id,
       workspaceId,
@@ -125,7 +125,7 @@ function insertPublication(
     .run();
 }
 
-function insertPubMetric(
+async function insertPubMetric(
   publicationId: string,
   window: "24h" | "7d",
   values: {
@@ -137,7 +137,7 @@ function insertPubMetric(
   },
   capturedAt: number,
 ) {
-  db.insert(publicationMetrics)
+  await db.insert(publicationMetrics)
     .values({
       id: `pm-${publicationId}-${window}`,
       workspaceId,
@@ -167,18 +167,18 @@ beforeAll(async () => {
   });
 
   // --- Campaigns (createdAt fixed so listCampaigns order is deterministic) ---
-  insertCampaignRow(CAMPAIGN_A, "Launch", T_CREATED + 1000);
-  insertCampaignRow(CAMPAIGN_B, "Background", T_CREATED);
+  await insertCampaignRow(CAMPAIGN_A, "Launch", T_CREATED + 1000);
+  await insertCampaignRow(CAMPAIGN_B, "Background", T_CREATED);
 
   // --- Drafts ---------------------------------------------------------------
-  insertDraft("d-li-1", CAMPAIGN_A, "linkedin", "approved");
-  insertDraft("d-li-2", CAMPAIGN_A, "linkedin", "approved");
-  insertDraft("d-x-1", CAMPAIGN_A, "x", "approved");
-  insertDraft("d-ads-1", CAMPAIGN_A, "ads", "approved");
-  insertDraft("d-rej", CAMPAIGN_A, "linkedin", "rejected");
-  insertDraft("d-pend", CAMPAIGN_A, "linkedin", "pending_review");
-  insertDraft("d-b-1", CAMPAIGN_B, "linkedin", "approved");
-  insertDraft("d-nocamp", null, "linkedin", "approved");
+  await insertDraft("d-li-1", CAMPAIGN_A, "linkedin", "approved");
+  await insertDraft("d-li-2", CAMPAIGN_A, "linkedin", "approved");
+  await insertDraft("d-x-1", CAMPAIGN_A, "x", "approved");
+  await insertDraft("d-ads-1", CAMPAIGN_A, "ads", "approved");
+  await insertDraft("d-rej", CAMPAIGN_A, "linkedin", "rejected");
+  await insertDraft("d-pend", CAMPAIGN_A, "linkedin", "pending_review");
+  await insertDraft("d-b-1", CAMPAIGN_B, "linkedin", "approved");
+  await insertDraft("d-nocamp", null, "linkedin", "approved");
 
   // --- Generations (quality ratings) -----------------------------------------
   const genBase = {
@@ -194,7 +194,7 @@ beforeAll(async () => {
     sectionsJson: "[]",
     createdAt: T_CREATED,
   };
-  db.insert(generations)
+  await db.insert(generations)
     .values([
       { ...genBase, id: "gen-1", rating: "accepted" },
       { ...genBase, id: "gen-2", rating: "accepted" },
@@ -205,7 +205,7 @@ beforeAll(async () => {
 
   // --- Publications + platform snapshots -------------------------------------
   const connId = "conn-social-1";
-  db.insert(connections)
+  await db.insert(connections)
     .values({
       id: connId,
       workspaceId,
@@ -218,35 +218,35 @@ beforeAll(async () => {
     })
     .run();
 
-  insertPublication("pub-1", "d-li-1", connId, "published", T_PUBLISHED);
-  insertPublication("pub-2", "d-li-2", connId, "published", T_PUBLISHED);
-  insertPublication("pub-3", "d-x-1", connId, "published", T_PUBLISHED);
-  insertPublication("pub-4", "d-ads-1", connId, "published", T_PUBLISHED);
-  insertPublication("pub-sched", "d-pend", connId, "scheduled", null);
+  await insertPublication("pub-1", "d-li-1", connId, "published", T_PUBLISHED);
+  await insertPublication("pub-2", "d-li-2", connId, "published", T_PUBLISHED);
+  await insertPublication("pub-3", "d-x-1", connId, "published", T_PUBLISHED);
+  await insertPublication("pub-4", "d-ads-1", connId, "published", T_PUBLISHED);
+  await insertPublication("pub-sched", "d-pend", connId, "scheduled", null);
 
   // pub-1 has both windows — the 7d snapshot must win.
-  insertPubMetric(
+  await insertPubMetric(
     "pub-1",
     "24h",
     { likes: 5, comments: 1, shares: 0, impressions: 400, clicks: 10 },
     T_CAPTURED_24H,
   );
-  insertPubMetric(
+  await insertPubMetric(
     "pub-1",
     "7d",
     { likes: 12, comments: 3, shares: 2, impressions: 900, clicks: 25 },
     T_CAPTURED_7D,
   );
   // pub-2: 24h only, with null comments/shares (absence is not zero).
-  insertPubMetric("pub-2", "24h", { likes: 4, impressions: 300, clicks: 8 }, T_CAPTURED_24H);
+  await insertPubMetric("pub-2", "24h", { likes: 4, impressions: 300, clicks: 8 }, T_CAPTURED_24H);
   // pub-3: 7d only, with null comments/clicks.
-  insertPubMetric("pub-3", "7d", { likes: 7, shares: 1, impressions: 500 }, T_CAPTURED_7D);
+  await insertPubMetric("pub-3", "7d", { likes: 7, shares: 1, impressions: 500 }, T_CAPTURED_7D);
   // pub-4 is on the "ads" channel — its organic impressions land in the same
   // channel cell as the paid totals (the legacy mixing Task 5b will fix).
-  insertPubMetric("pub-4", "24h", { likes: 2, impressions: 200 }, T_CAPTURED_24H);
+  await insertPubMetric("pub-4", "24h", { likes: 2, impressions: 200 }, T_CAPTURED_24H);
 
   // --- Paid: two ad campaigns linked to campaign A ----------------------------
-  db.insert(adAccounts)
+  await db.insert(adAccounts)
     .values({
       id: "ad-acc-1",
       workspaceId,
@@ -256,7 +256,7 @@ beforeAll(async () => {
       createdAt: T_CREATED,
     })
     .run();
-  db.insert(adCampaigns)
+  await db.insert(adCampaigns)
     .values([
       {
         id: "ad-camp-1",
@@ -280,7 +280,7 @@ beforeAll(async () => {
       },
     ])
     .run();
-  db.insert(adCampaignMetrics)
+  await db.insert(adCampaignMetrics)
     .values([
       {
         id: "adm-1",
@@ -326,7 +326,7 @@ beforeAll(async () => {
     .run();
 
   // --- Manual engagement readings ---------------------------------------------
-  db.insert(engagementMetrics)
+  await db.insert(engagementMetrics)
     .values([
       // Linked to campaign A drafts — the ONLY rows in A's learningTotals.
       {
@@ -396,7 +396,7 @@ beforeAll(async () => {
     .run();
 
   // --- Outbound + replies -------------------------------------------------------
-  db.insert(launches)
+  await db.insert(launches)
     .values({
       id: "launch-1",
       workspaceId,
@@ -407,7 +407,7 @@ beforeAll(async () => {
       updatedAt: T_CREATED,
     })
     .run();
-  db.insert(launchMessages)
+  await db.insert(launchMessages)
     .values([
       { id: "lm-1", workspaceId, launchId: "launch-1", channel: "email", kind: "broadcast", status: "sent", createdAt: T_CREATED, updatedAt: T_CREATED },
       { id: "lm-2", workspaceId, launchId: "launch-1", channel: "email", kind: "broadcast", status: "sent", createdAt: T_CREATED, updatedAt: T_CREATED },
@@ -415,7 +415,7 @@ beforeAll(async () => {
       { id: "lm-4", workspaceId, launchId: "launch-1", channel: "email", kind: "broadcast", status: "failed", createdAt: T_CREATED, updatedAt: T_CREATED },
     ])
     .run();
-  db.insert(connections)
+  await db.insert(connections)
     .values({
       id: "conn-inbox-1",
       workspaceId,
@@ -438,7 +438,7 @@ beforeAll(async () => {
     createdAt: T_CREATED,
     updatedAt: T_CREATED,
   };
-  db.insert(inboxItems)
+  await db.insert(inboxItems)
     .values([
       { ...inboxBase, id: "inbox-1", externalId: "ie-1", launchMessageId: "lm-1" },
       { ...inboxBase, id: "inbox-2", externalId: "ie-2", launchMessageId: "lm-2" },
@@ -449,7 +449,7 @@ beforeAll(async () => {
 
   // Mirror production boot: the backfill maps every legacy row into the
   // unified fact table (app.ts runs this at startup; fixtures landed after).
-  backfillMetrics(db);
+  await backfillMetrics(db);
 });
 
 afterAll(async () => {
@@ -750,7 +750,7 @@ describe("sprint 55 — a new metric source is one writer", () => {
   it("facts recorded by a brand-new source flow to /insights with no schema change", async () => {
     // Pretend a new YouTube integration captured a publication's cumulative
     // 24h numbers. It is "one writer": a single recordMetrics call.
-    const written = recordMetrics(db, workspaceId, [
+    const written = await recordMetrics(db, workspaceId, [
       {
         subjectType: "publication",
         subjectId: "pub-2",

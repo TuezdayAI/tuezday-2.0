@@ -234,8 +234,8 @@ describe("opportunity routing (Sprint 61)", () => {
     ).json().id;
     campaignA = await createCampaign("Category launch");
     campaignB = await createCampaign("Evergreen founder voice");
-    activatePlan(campaignA);
-    activatePlan(campaignB, { pillars: ["founder lessons", "GTM memory"] });
+    await activatePlan(campaignA);
+    await activatePlan(campaignB, { pillars: ["founder lessons", "GTM memory"] });
   });
 
   afterEach(async () => {
@@ -252,25 +252,25 @@ describe("opportunity routing (Sprint 61)", () => {
     ).json().id;
   }
 
-  function activatePlan(campaignId: string, overrides: Partial<typeof planInput> = {}) {
-    const revision = createPlanRevision(
+  async function activatePlan(campaignId: string, overrides: Partial<typeof planInput> = {}) {
+    const revision = await createPlanRevision(
       db,
       workspaceId,
       campaignId,
       { ...planInput, ...overrides },
       { userId: null },
     );
-    upsertLaneRevision(db, workspaceId, campaignId, revision.id, {
+    await upsertLaneRevision(db, workspaceId, campaignId, revision.id, {
       ...laneInput,
       personaId,
     });
-    activatePlanRevision(db, workspaceId, campaignId, revision.id);
+    await activatePlanRevision(db, workspaceId, campaignId, revision.id);
     return revision;
   }
 
-  function seedStory(title: string, url: string): string {
-    db.transaction((tx) => {
-      recordOccurrenceAndResolve(tx, {
+  async function seedStory(title: string, url: string): Promise<string> {
+    await db.transaction(async (tx) => {
+      await recordOccurrenceAndResolve(tx, {
         workspaceId,
         source: { id: randomUUID(), type: "rss", name: "Feed" },
         fetchRunId: null,
@@ -284,23 +284,23 @@ describe("opportunity routing (Sprint 61)", () => {
         observedAt: Date.now(),
       });
     });
-    return db
+    return (await db
       .select({ id: canonicalExternalStories.id })
       .from(canonicalExternalStories)
       .where(eq(canonicalExternalStories.title, title))
-      .get()!.id;
+      .get())!.id;
   }
 
-  function storyRow(storyId: string) {
-    return db
+  async function storyRow(storyId: string) {
+    return (await db
       .select()
       .from(canonicalExternalStories)
       .where(eq(canonicalExternalStories.id, storyId))
-      .get()!;
+      .get())!;
   }
 
-  function opportunitiesFor(storyId: string) {
-    return db
+  async function opportunitiesFor(storyId: string) {
+    return await db
       .select()
       .from(campaignOpportunities)
       .where(eq(campaignOpportunities.canonicalStoryId, storyId))
@@ -309,7 +309,7 @@ describe("opportunity routing (Sprint 61)", () => {
   }
 
   it("creates independent per-campaign opportunities and is idempotent", async () => {
-    const storyId = seedStory("Buyers hate generic AI output", "https://ex.com/a");
+    const storyId = await seedStory("Buyers hate generic AI output", "https://ex.com/a");
     const llm = matcherGateway((_prompt, campaignIds) =>
       campaignIds.map((id) => relevantEntry(id)),
     );
@@ -317,20 +317,20 @@ describe("opportunity routing (Sprint 61)", () => {
     const run = await runOpportunityRouting(db, llm, { workspaceId, ...RUN_OPTS });
     expect(run.storiesRouted).toBe(1);
     expect(run.opportunitiesCreated).toBe(2);
-    const rows = opportunitiesFor(storyId);
+    const rows = await opportunitiesFor(storyId);
     expect(rows.map((r) => r.campaignId).sort()).toEqual([campaignA, campaignB].sort());
     // Default review band, fit 80 >= 70 → needs_review; judgment immutable.
     expect(rows.every((r) => r.status === "needs_review")).toBe(true);
     expect(rows.every((r) => r.matcherVersion === 1)).toBe(true);
-    expect(storyRow(storyId).routingState).toBe("routed");
+    expect((await storyRow(storyId)).routingState).toBe("routed");
 
     // Creation + policy events per opportunity.
-    const events = db
+    const events = (await db
       .select()
       .from(campaignOpportunityEvents)
       .where(eq(campaignOpportunityEvents.opportunityId, rows[0]!.id))
       .orderBy(asc(campaignOpportunityEvents.createdAt))
-      .all()
+      .all())
       // Same-millisecond pair: creation (fromStatus null) sorts first.
       .sort((a, b) => Number(a.fromStatus !== null) - Number(b.fromStatus !== null));
     expect(events.map((e) => [e.fromStatus, e.toStatus])).toEqual([
@@ -345,33 +345,33 @@ describe("opportunity routing (Sprint 61)", () => {
   });
 
   it("routes with no LLM call when no campaign is eligible", async () => {
-    updateRoutingPolicy(db, workspaceId, campaignA, { band: "off" });
-    updateRoutingPolicy(db, workspaceId, campaignB, { band: "off" });
-    const storyId = seedStory("Off-band story", "https://ex.com/off");
+    await updateRoutingPolicy(db, workspaceId, campaignA, { band: "off" });
+    await updateRoutingPolicy(db, workspaceId, campaignB, { band: "off" });
+    const storyId = await seedStory("Off-band story", "https://ex.com/off");
     const llm = matcherGateway(() => []);
     const run = await runOpportunityRouting(db, llm, { workspaceId, ...RUN_OPTS });
     expect(run.storiesRouted).toBe(1);
     expect(llm.calls).toBe(0);
-    expect(opportunitiesFor(storyId)).toEqual([]);
-    expect(storyRow(storyId).routingState).toBe("routed");
+    expect(await opportunitiesFor(storyId)).toEqual([]);
+    expect((await storyRow(storyId)).routingState).toBe("routed");
   });
 
   it("applies auto_package disposition from the profile snapshot", async () => {
-    updateRoutingPolicy(db, workspaceId, campaignA, { band: "auto_package" });
-    updateRoutingPolicy(db, workspaceId, campaignB, { band: "off" });
-    const storyId = seedStory("Auto-band story about GTM memory", "https://ex.com/auto");
+    await updateRoutingPolicy(db, workspaceId, campaignA, { band: "auto_package" });
+    await updateRoutingPolicy(db, workspaceId, campaignB, { band: "off" });
+    const storyId = await seedStory("Auto-band story about GTM memory", "https://ex.com/auto");
     const llm = matcherGateway((_prompt, campaignIds) =>
       campaignIds.map((id) => relevantEntry(id)),
     );
     await runOpportunityRouting(db, llm, { workspaceId, ...RUN_OPTS });
-    const row = opportunitiesFor(storyId)[0]!;
+    const row = (await opportunitiesFor(storyId))[0]!;
     // fit 80 ≥ 70, confidence 75 ≥ 60, trust 60 ≥ 0 → auto_qualified.
     expect(row.status).toBe("auto_qualified");
     expect(JSON.parse(row.policyJson).band).toBe("auto_package");
   });
 
   it("keeps LLM failures retryable and never stores a no-match", async () => {
-    const storyId = seedStory("Failure story about GTM memory", "https://ex.com/fail");
+    const storyId = await seedStory("Failure story about GTM memory", "https://ex.com/fail");
     // Invented campaign ID passes the schema but fails §9.2 validation.
     const llm = matcherGateway(() => [relevantEntry(randomUUID())]);
 
@@ -379,18 +379,18 @@ describe("opportunity routing (Sprint 61)", () => {
       const run = await runOpportunityRouting(db, llm, { workspaceId, ...RUN_OPTS });
       expect(run.failures).toBe(1);
       expect(run.storiesRouted).toBe(0);
-      const story = storyRow(storyId);
+      const story = await storyRow(storyId);
       expect(story.routingAttempts).toBe(attempt);
       expect(story.routingState).toBe(attempt < ROUTING_MAX_ATTEMPTS ? "pending" : "failed");
     }
-    expect(opportunitiesFor(storyId)).toEqual([]);
+    expect(await opportunitiesFor(storyId)).toEqual([]);
     // Exhausted for this fingerprint: no further claims until inputs change.
     const after = await runOpportunityRouting(db, llm, { workspaceId, ...RUN_OPTS });
     expect(after.storiesConsidered).toBe(0);
   });
 
   it("treats invented occurrence IDs and malformed output as retryable", async () => {
-    const storyId = seedStory("Claim story about GTM memory", "https://ex.com/claims");
+    const storyId = await seedStory("Claim story about GTM memory", "https://ex.com/claims");
     const badClaims = matcherGateway((_prompt, campaignIds) => [
       relevantEntry(campaignIds[0]!, {
         supportedClaims: [{ claim: "Made up", occurrenceIds: [randomUUID()] }],
@@ -398,7 +398,7 @@ describe("opportunity routing (Sprint 61)", () => {
     ]);
     let run = await runOpportunityRouting(db, badClaims, { workspaceId, ...RUN_OPTS });
     expect(run.failures).toBe(1);
-    expect(storyRow(storyId).routingState).toBe("pending");
+    expect((await storyRow(storyId)).routingState).toBe("pending");
 
     const malformed: LlmGateway = {
       async generate() {
@@ -407,13 +407,13 @@ describe("opportunity routing (Sprint 61)", () => {
     };
     run = await runOpportunityRouting(db, malformed, { workspaceId, ...RUN_OPTS });
     expect(run.failures).toBe(1);
-    expect(storyRow(storyId).routingState).toBe("pending");
-    expect(opportunitiesFor(storyId)).toEqual([]);
+    expect((await storyRow(storyId)).routingState).toBe("pending");
+    expect(await opportunitiesFor(storyId)).toEqual([]);
   });
 
   it("validates suggested personas against the profile and stores claims", async () => {
-    updateRoutingPolicy(db, workspaceId, campaignB, { band: "off" });
-    const storyId = seedStory("Persona story about GTM memory", "https://ex.com/persona");
+    await updateRoutingPolicy(db, workspaceId, campaignB, { band: "off" });
+    const storyId = await seedStory("Persona story about GTM memory", "https://ex.com/persona");
     const llm = matcherGateway((_prompt, campaignIds, occurrenceIds) => [
       relevantEntry(campaignIds[0]!, {
         suggestedPersonaId: personaId,
@@ -421,34 +421,34 @@ describe("opportunity routing (Sprint 61)", () => {
       }),
     ]);
     await runOpportunityRouting(db, llm, { workspaceId, ...RUN_OPTS });
-    const row = opportunitiesFor(storyId)[0]!;
+    const row = (await opportunitiesFor(storyId))[0]!;
     expect(row.suggestedPersonaId).toBe(personaId);
     expect(JSON.parse(row.supportedClaimsJson)[0].claim).toBe("Buyers complain");
 
     // An unknown persona is nulled, not failed — it is a recommendation only.
-    const storyId2 = seedStory("Persona story two about GTM memory", "https://ex.com/persona2");
+    const storyId2 = await seedStory("Persona story two about GTM memory", "https://ex.com/persona2");
     const llm2 = matcherGateway((_prompt, campaignIds) => [
       relevantEntry(campaignIds[0]!, { suggestedPersonaId: randomUUID() }),
     ]);
     await runOpportunityRouting(db, llm2, { workspaceId, ...RUN_OPTS });
-    expect(opportunitiesFor(storyId2)[0]!.suggestedPersonaId).toBeNull();
+    expect((await opportunitiesFor(storyId2))[0]!.suggestedPersonaId).toBeNull();
   });
 
   it("supersedes open opportunities when a newer plan revision decides", async () => {
-    updateRoutingPolicy(db, workspaceId, campaignB, { band: "off" });
-    const storyId = seedStory("Supersede story about GTM memory", "https://ex.com/supersede");
+    await updateRoutingPolicy(db, workspaceId, campaignB, { band: "off" });
+    const storyId = await seedStory("Supersede story about GTM memory", "https://ex.com/supersede");
     const llm = matcherGateway((_prompt, campaignIds) =>
       campaignIds.map((id) => relevantEntry(id)),
     );
     await runOpportunityRouting(db, llm, { workspaceId, ...RUN_OPTS });
-    const first = opportunitiesFor(storyId)[0]!;
+    const first = (await opportunitiesFor(storyId))[0]!;
     expect(first.status).toBe("needs_review");
 
     // New plan revision → profile drift → story re-queued and re-decided.
-    activatePlan(campaignA, { pillars: ["GTM memory", "proof"] });
+    await activatePlan(campaignA, { pillars: ["GTM memory", "proof"] });
     const run = await runOpportunityRouting(db, llm, { workspaceId, ...RUN_OPTS });
     expect(run.storiesRouted).toBe(1);
-    const rows = opportunitiesFor(storyId);
+    const rows = await opportunitiesFor(storyId);
     const superseded = rows.find((r) => r.id === first.id)!;
     const fresh = rows.find((r) => r.id !== first.id)!;
     expect(superseded.status).toBe("superseded");
@@ -457,16 +457,16 @@ describe("opportunity routing (Sprint 61)", () => {
   });
 
   it("holds one open decision per story×campaign×revision (drift-noise control)", async () => {
-    updateRoutingPolicy(db, workspaceId, campaignB, { band: "off" });
-    const storyId = seedStory("Noise story about GTM memory", "https://ex.com/noise");
+    await updateRoutingPolicy(db, workspaceId, campaignB, { band: "off" });
+    const storyId = await seedStory("Noise story about GTM memory", "https://ex.com/noise");
     let angleSuffix = "one";
     const llm = matcherGateway((_prompt, campaignIds) => [
       relevantEntry(campaignIds[0]!, { angle: `Different angle ${angleSuffix}` }),
     ]);
     await runOpportunityRouting(db, llm, { workspaceId, ...RUN_OPTS });
     // Membership change (new corroborating occurrence) drifts the fingerprint.
-    db.transaction((tx) => {
-      recordOccurrenceAndResolve(tx, {
+    await db.transaction(async (tx) => {
+      await recordOccurrenceAndResolve(tx, {
         workspaceId,
         source: { id: randomUUID(), type: "rss", name: "Feed 2" },
         fetchRunId: null,
@@ -484,28 +484,28 @@ describe("opportunity routing (Sprint 61)", () => {
     const run = await runOpportunityRouting(db, llm, { workspaceId, ...RUN_OPTS });
     expect(run.storiesRouted).toBe(1);
     // The open needs_review decision stands; no near-duplicate angle row.
-    expect(opportunitiesFor(storyId)).toHaveLength(1);
+    expect(await opportunitiesFor(storyId)).toHaveLength(1);
   });
 
   it("expires open opportunities past their expiry and leaves dismissed alone", async () => {
-    const storyId = seedStory("Expiry story about GTM memory", "https://ex.com/expiry");
+    const storyId = await seedStory("Expiry story about GTM memory", "https://ex.com/expiry");
     const llm = matcherGateway((_prompt, campaignIds) =>
       campaignIds.map((id) => relevantEntry(id)),
     );
     await runOpportunityRouting(db, llm, { workspaceId, ...RUN_OPTS });
-    const rows = opportunitiesFor(storyId);
+    const rows = await opportunitiesFor(storyId);
     const past = Date.now() - 60_000;
-    db.update(campaignOpportunities)
+    await db.update(campaignOpportunities)
       .set({ expiresAt: past })
       .where(eq(campaignOpportunities.id, rows[0]!.id))
       .run();
-    db.update(campaignOpportunities)
+    await db.update(campaignOpportunities)
       .set({ expiresAt: past, status: "dismissed" })
       .where(eq(campaignOpportunities.id, rows[1]!.id))
       .run();
 
-    expect(expireDueOpportunities(db, workspaceId)).toBe(1);
-    const after = opportunitiesFor(storyId);
+    expect(await expireDueOpportunities(db, workspaceId)).toBe(1);
+    const after = await opportunitiesFor(storyId);
     expect(after.find((r) => r.id === rows[0]!.id)!.status).toBe("expired");
     expect(after.find((r) => r.id === rows[1]!.id)!.status).toBe("dismissed");
   });

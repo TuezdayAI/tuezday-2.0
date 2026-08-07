@@ -16,10 +16,10 @@ describe("notifications", () => {
   let db: Db;
   const WS = "ws-1";
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createTestDb();
     process.env.TELEGRAM_BOT_TOKEN = "test-bot-token";
-    db.insert(workspaces).values({ id: WS, name: "Test WS", createdAt: Date.now(), updatedAt: Date.now() }).run();
+    await db.insert(workspaces).values({ id: WS, name: "Test WS", createdAt: Date.now(), updatedAt: Date.now() }).run();
   });
 
   afterEach(() => {
@@ -27,27 +27,27 @@ describe("notifications", () => {
   });
 
   describe("channel CRUD", () => {
-    it("creates, updates, and deletes channels", () => {
+    it("creates, updates, and deletes channels", async () => {
       // Create
-      const c1 = upsertChannel(db, WS, { type: "telegram", target: "12345", enabled: true });
+      const c1 = await upsertChannel(db, WS, { type: "telegram", target: "12345", enabled: true });
       expect(c1.id).toBeDefined();
       expect(c1.type).toBe("telegram");
 
-      const list1 = listChannels(db, WS);
+      const list1 = await listChannels(db, WS);
       expect(list1).toHaveLength(1);
 
       // Update (upsert with same type/target updates enabled)
-      const c2 = upsertChannel(db, WS, { type: "telegram", target: "12345", enabled: false });
+      const c2 = await upsertChannel(db, WS, { type: "telegram", target: "12345", enabled: false });
       expect(c2.id).toBe(c1.id);
       expect(c2.enabled).toBe(false);
 
-      const list2 = listChannels(db, WS);
+      const list2 = await listChannels(db, WS);
       expect(list2).toHaveLength(1);
       expect(list2[0]!.enabled).toBe(false);
 
       // Delete
-      deleteChannel(db, WS, c1.id);
-      expect(listChannels(db, WS)).toHaveLength(0);
+      await deleteChannel(db, WS, c1.id);
+      expect(await listChannels(db, WS)).toHaveLength(0);
     });
   });
 
@@ -90,9 +90,9 @@ describe("notifications", () => {
 
   describe("notifyDraftPending", () => {
     it("fans out to enabled channels and swallows errors", async () => {
-      upsertChannel(db, WS, { type: "telegram", target: "chat1", enabled: true });
-      upsertChannel(db, WS, { type: "email", target: "founder@example.com", enabled: true });
-      upsertChannel(db, WS, { type: "email", target: "off@example.com", enabled: false });
+      await upsertChannel(db, WS, { type: "telegram", target: "chat1", enabled: true });
+      await upsertChannel(db, WS, { type: "email", target: "founder@example.com", enabled: true });
+      await upsertChannel(db, WS, { type: "email", target: "off@example.com", enabled: false });
 
       const fetcher = vi.fn().mockRejectedValue(new Error("Network down"));
       const mailer: Mailer = { send: vi.fn().mockRejectedValue(new Error("SMTP down")) };
@@ -110,7 +110,7 @@ describe("notifications", () => {
       expect(mailer.send).toHaveBeenCalledTimes(1);
 
       // 4 tokens should be minted (2 for telegram, 2 for email)
-      const tokens = db.select().from(approvalActionTokens).all();
+      const tokens = await db.select().from(approvalActionTokens).all();
       expect(tokens).toHaveLength(4);
     });
   });

@@ -82,16 +82,16 @@ interface WorkspaceRef {
 }
 
 /** Connected connections whose provider is a social platform. */
-function socialConnections(db: Db, workspaceId: string) {
-  return listConnections(db, workspaceId).filter((c) => {
+async function socialConnections(db: Db, workspaceId: string) {
+  return (await listConnections(db, workspaceId)).filter((c) => {
     const provider = providerByKey(c.providerKey);
     return c.status === "connected" && !!provider?.categories?.includes("social");
   });
 }
 
 /** Published receipts on a connection that carry a platform post id. */
-function publishedPublications(db: Db, workspaceId: string, connectionId: string) {
-  return db
+async function publishedPublications(db: Db, workspaceId: string, connectionId: string) {
+  return await db
     .select()
     .from(publications)
     .where(
@@ -106,8 +106,8 @@ function publishedPublications(db: Db, workspaceId: string, connectionId: string
 }
 
 /** Ids of replies we've already posted — so the poller never re-ingests our own. */
-function knownPostedReplyIds(db: Db, workspaceId: string): Set<string> {
-  const rows = db
+async function knownPostedReplyIds(db: Db, workspaceId: string): Promise<Set<string>> {
+  const rows = await db
     .select({ id: inboxItems.postedReplyExternalId })
     .from(inboxItems)
     .where(and(eq(inboxItems.workspaceId, workspaceId), isNotNull(inboxItems.postedReplyExternalId)))
@@ -115,9 +115,9 @@ function knownPostedReplyIds(db: Db, workspaceId: string): Set<string> {
   return new Set(rows.map((r) => r.id).filter((id): id is string => !!id));
 }
 
-export function inboxItemExists(db: Db, connectionId: string, externalId: string): boolean {
+export async function inboxItemExists(db: Db, connectionId: string, externalId: string): Promise<boolean> {
   return (
-    db
+    await db
       .select({ id: inboxItems.id })
       .from(inboxItems)
       .where(and(eq(inboxItems.connectionId, connectionId), eq(inboxItems.externalId, externalId)))
@@ -145,10 +145,10 @@ export interface NewInboxItem {
 }
 
 /** Insert an inbound item if we haven't seen it before. Returns true when new. */
-export function insertInboxItem(db: Db, fields: NewInboxItem): boolean {
-  if (inboxItemExists(db, fields.connectionId, fields.externalId)) return false;
+export async function insertInboxItem(db: Db, fields: NewInboxItem): Promise<boolean> {
+  if (await inboxItemExists(db, fields.connectionId, fields.externalId)) return false;
   const now = Date.now();
-  db.insert(inboxItems)
+  await db.insert(inboxItems)
     .values({
       id: randomUUID(),
       ...fields,
@@ -164,8 +164,8 @@ export function insertInboxItem(db: Db, fields: NewInboxItem): boolean {
 }
 
 /** Distinct X recipient handles we've DMed (so we can poll their replies). */
-function outboundDmHandles(db: Db, workspaceId: string): string[] {
-  const rows = db
+async function outboundDmHandles(db: Db, workspaceId: string): Promise<string[]> {
+  const rows = await db
     .select({ handle: launchMessages.recipientHandle })
     .from(launchMessages)
     .where(
@@ -184,12 +184,12 @@ function outboundDmHandles(db: Db, workspaceId: string): string[] {
   return [...handles];
 }
 
-function latestLaunchMessageIdForHandle(
+async function latestLaunchMessageIdForHandle(
   db: Db,
   workspaceId: string,
   handle: string,
-): string | null {
-  const row = db
+): Promise<string | null> {
+  const row = await db
     .select({ id: launchMessages.id })
     .from(launchMessages)
     .where(
@@ -205,8 +205,8 @@ function latestLaunchMessageIdForHandle(
 }
 
 /** Newest inbound DM we've recorded from a handle on this connection. */
-function newestDmCreatedAt(db: Db, connectionId: string, handle: string): number {
-  const row = db
+async function newestDmCreatedAt(db: Db, connectionId: string, handle: string): Promise<number> {
+  const row = await db
     .select({ createdAt: inboxItems.externalCreatedAt })
     .from(inboxItems)
     .where(
@@ -222,9 +222,9 @@ function newestDmCreatedAt(db: Db, connectionId: string, handle: string): number
 }
 
 /** The sent email delivery behind a kind:"email" inbox item (Sprint 47). */
-function deliveryBehindItem(db: Db, item: InboxItem) {
+async function deliveryBehindItem(db: Db, item: InboxItem) {
   if (!item.emailDeliveryId) return undefined;
-  return db
+  return await db
     .select()
     .from(emailDeliveries)
     .where(eq(emailDeliveries.id, item.emailDeliveryId))
@@ -232,33 +232,33 @@ function deliveryBehindItem(db: Db, item: InboxItem) {
 }
 
 /** The original draft behind an inbox item (the post/DM/email it replies to). */
-function draftBehindItem(db: Db, item: InboxItem) {
+async function draftBehindItem(db: Db, item: InboxItem) {
   if (item.publicationId) {
-    const pub = db.select().from(publications).where(eq(publications.id, item.publicationId)).get();
-    if (pub) return db.select().from(drafts).where(eq(drafts.id, pub.draftId)).get();
+    const pub = await db.select().from(publications).where(eq(publications.id, item.publicationId)).get();
+    if (pub) return await db.select().from(drafts).where(eq(drafts.id, pub.draftId)).get();
   }
   if (item.launchMessageId) {
-    const lm = db
+    const lm = await db
       .select()
       .from(launchMessages)
       .where(eq(launchMessages.id, item.launchMessageId))
       .get();
-    if (lm?.draftId) return db.select().from(drafts).where(eq(drafts.id, lm.draftId)).get();
+    if (lm?.draftId) return await db.select().from(drafts).where(eq(drafts.id, lm.draftId)).get();
   }
   if (item.emailDeliveryId) {
-    const delivery = deliveryBehindItem(db, item);
+    const delivery = await deliveryBehindItem(db, item);
     if (delivery) {
       // launch_message deliveries point at the message; drafts are the origin
       // for outbound_draft/pr_draft sends (the Sprint 47 send surface).
       if (delivery.origin === "launch_message") {
-        const lm = db
+        const lm = await db
           .select()
           .from(launchMessages)
           .where(eq(launchMessages.id, delivery.originId))
           .get();
-        if (lm?.draftId) return db.select().from(drafts).where(eq(drafts.id, lm.draftId)).get();
+        if (lm?.draftId) return await db.select().from(drafts).where(eq(drafts.id, lm.draftId)).get();
       } else {
-        return db.select().from(drafts).where(eq(drafts.id, delivery.originId)).get();
+        return await db.select().from(drafts).where(eq(drafts.id, delivery.originId)).get();
       }
     }
   }
@@ -267,17 +267,17 @@ function draftBehindItem(db: Db, item: InboxItem) {
 
 /** Campaign + persona + original-post context for generating a reply. Also
  * consumed by the reply action adapter to resolve policy context. */
-export function replyContext(db: Db, workspaceId: string, item: InboxItem) {
-  const draft = draftBehindItem(db, item);
-  const campaign = draft?.campaignId ? getCampaign(db, workspaceId, draft.campaignId) : undefined;
-  const persona = draft?.personaId ? getPersona(db, workspaceId, draft.personaId) : undefined;
+export async function replyContext(db: Db, workspaceId: string, item: InboxItem) {
+  const draft = await draftBehindItem(db, item);
+  const campaign = draft?.campaignId ? await getCampaign(db, workspaceId, draft.campaignId) : undefined;
+  const persona = draft?.personaId ? await getPersona(db, workspaceId, draft.personaId) : undefined;
   let post: { title: string; content: string } | undefined;
   if (item.publicationId) {
-    const pub = db.select().from(publications).where(eq(publications.id, item.publicationId)).get();
+    const pub = await db.select().from(publications).where(eq(publications.id, item.publicationId)).get();
     if (pub) post = { title: pub.title, content: draft?.content ?? "" };
   } else if (item.emailDeliveryId) {
     // The exact sent email (subject + authorized body) is the conversation anchor.
-    const delivery = deliveryBehindItem(db, item);
+    const delivery = await deliveryBehindItem(db, item);
     if (delivery) post = { title: delivery.subject, content: delivery.text };
     else if (draft) post = { title: "", content: draft.content };
   } else if (draft) {
@@ -290,9 +290,9 @@ export function replyContext(db: Db, workspaceId: string, item: InboxItem) {
 // Engagement metrics
 // ---------------------------------------------------------------------------
 
-function metricExists(db: Db, publicationId: string, window: PublicationMetricWindow): boolean {
+async function metricExists(db: Db, publicationId: string, window: PublicationMetricWindow): Promise<boolean> {
   return (
-    db
+    await db
       .select({ id: publicationMetrics.id })
       .from(publicationMetrics)
       .where(
@@ -302,12 +302,12 @@ function metricExists(db: Db, publicationId: string, window: PublicationMetricWi
   );
 }
 
-export function listPublicationMetrics(
+export async function listPublicationMetrics(
   db: Db,
   workspaceId: string,
   publicationId: string,
-): PublicationMetric[] {
-  return db
+): Promise<PublicationMetric[]> {
+  return (await db
     .select()
     .from(publicationMetrics)
     .where(
@@ -317,13 +317,13 @@ export function listPublicationMetrics(
       ),
     )
     .orderBy(asc(publicationMetrics.capturedAt))
-    .all()
+    .all())
     .map(rowToMetric);
 }
 
 /** All of a workspace's metrics grouped by publication — for the list endpoint. */
-export function metricsByPublication(db: Db, workspaceId: string): Map<string, PublicationMetric[]> {
-  const rows = db
+export async function metricsByPublication(db: Db, workspaceId: string): Promise<Map<string, PublicationMetric[]>> {
+  const rows = await db
     .select()
     .from(publicationMetrics)
     .where(eq(publicationMetrics.workspaceId, workspaceId))
@@ -343,9 +343,9 @@ export function metricsByPublication(db: Db, workspaceId: string): Map<string, P
 // ---------------------------------------------------------------------------
 
 /** Posted replies on a connection on the slot's account-local day. */
-function countConnectionRepliesForDay(db: Db, connectionId: string, dayMs: number): number {
-  const { start, end } = connectionDayBounds(db, connectionId, dayMs);
-  return db
+async function countConnectionRepliesForDay(db: Db, connectionId: string, dayMs: number): Promise<number> {
+  const { start, end } = await connectionDayBounds(db, connectionId, dayMs);
+  return (await db
     .select({ id: inboxItems.id })
     .from(inboxItems)
     .where(
@@ -356,7 +356,7 @@ function countConnectionRepliesForDay(db: Db, connectionId: string, dayMs: numbe
         lt(inboxItems.updatedAt, end),
       ),
     )
-    .all().length;
+    .all()).length;
 }
 
 type ReplyGuardrailCheck =
@@ -366,14 +366,14 @@ type ReplyGuardrailCheck =
 /** Auto-replies obey the kill switch and their own account-local reply budget.
  * Original publications never consume reply capacity. Also consumed by the
  * reply action adapter as a dispatch guardrail. */
-export function checkReplyGuardrails(
+export async function checkReplyGuardrails(
   db: Db,
   settings: SocialAutomationSettings,
   connectionId: string,
   slotMs: number,
-): ReplyGuardrailCheck {
+): Promise<ReplyGuardrailCheck> {
   if (settings.killSwitch) return { ok: false, error: "kill_switch_on" };
-  const used = countConnectionRepliesForDay(db, connectionId, slotMs);
+  const used = await countConnectionRepliesForDay(db, connectionId, slotMs);
   if (used >= settings.perConnectionReplyDailyCap) {
     return { ok: false, error: "connection_cap" };
   }
@@ -391,25 +391,25 @@ async function pollInbox(
 ): Promise<{ polled: number; newItems: number }> {
   let polled = 0;
   let newItems = 0;
-  const posted = knownPostedReplyIds(db, workspace.id);
+  const posted = await knownPostedReplyIds(db, workspace.id);
 
-  for (const conn of socialConnections(db, workspace.id)) {
+  for (const conn of await socialConnections(db, workspace.id)) {
     const provider = providerByKey(conn.providerKey)!;
     const adapter = socialAdapterFor(fabric, provider, conn);
     if (!adapter) continue;
 
     // Comments on our published posts.
     if (adapter.fetchReplies) {
-      for (const pub of publishedPublications(db, workspace.id, conn.id)) {
+      for (const pub of await publishedPublications(db, workspace.id, conn.id)) {
         if (!pub.externalId) continue;
         polled += 1;
         try {
           const replies = await adapter.fetchReplies({ externalId: pub.externalId, target: pub.target });
-          const draft = db.select().from(drafts).where(eq(drafts.id, pub.draftId)).get();
+          const draft = await db.select().from(drafts).where(eq(drafts.id, pub.draftId)).get();
           const channel = (draft?.channel as Channel) ?? "web";
           for (const r of replies) {
             if (posted.has(r.externalId)) continue;
-            const created = insertInboxItem(db, {
+            const created = await insertInboxItem(db, {
               workspaceId: workspace.id,
               connectionId: conn.id,
               providerKey: conn.providerKey,
@@ -435,15 +435,15 @@ async function pollInbox(
 
     // DM replies (X) on outbound conversations.
     if (adapter.fetchDmReplies) {
-      for (const handle of outboundDmHandles(db, workspace.id)) {
+      for (const handle of await outboundDmHandles(db, workspace.id)) {
         polled += 1;
         try {
-          const since = newestDmCreatedAt(db, conn.id, handle);
+          const since = await newestDmCreatedAt(db, conn.id, handle);
           const replies = await adapter.fetchDmReplies({ recipientHandle: handle, sinceMs: since });
-          const launchMessageId = latestLaunchMessageIdForHandle(db, workspace.id, handle);
+          const launchMessageId = await latestLaunchMessageIdForHandle(db, workspace.id, handle);
           for (const r of replies) {
             if (posted.has(r.externalId)) continue;
-            const created = insertInboxItem(db, {
+            const created = await insertInboxItem(db, {
               workspaceId: workspace.id,
               connectionId: conn.id,
               providerKey: conn.providerKey,
@@ -477,18 +477,18 @@ async function refreshEngagement(
   nowMs: number,
 ): Promise<{ metricsCaptured: number }> {
   let metricsCaptured = 0;
-  for (const conn of socialConnections(db, workspace.id)) {
+  for (const conn of await socialConnections(db, workspace.id)) {
     const provider = providerByKey(conn.providerKey)!;
     const adapter = socialAdapterFor(fabric, provider, conn);
     if (!adapter?.fetchEngagement) continue;
-    for (const pub of publishedPublications(db, workspace.id, conn.id)) {
+    for (const pub of await publishedPublications(db, workspace.id, conn.id)) {
       if (!pub.externalId || !pub.publishedAt) continue;
       for (const window of PUBLICATION_METRIC_WINDOWS) {
         const due = pub.publishedAt + WINDOW_MS[window] <= nowMs;
-        if (!due || metricExists(db, pub.id, window)) continue;
+        if (!due || await metricExists(db, pub.id, window)) continue;
         try {
           const eng = await adapter.fetchEngagement({ externalId: pub.externalId, target: pub.target });
-          db.insert(publicationMetrics)
+          await db.insert(publicationMetrics)
             .values({
               id: randomUUID(),
               workspaceId: workspace.id,
@@ -506,7 +506,7 @@ async function refreshEngagement(
           // Sprint 55 dual-write: cumulative facts into the unified table.
           // periodStart is the publication's publishedAt — the window measures
           // cumulative totals since going live, observed at >= 24h/7d of age.
-          recordMetrics(
+          await recordMetrics(
             db,
             workspace.id,
             (
@@ -556,7 +556,7 @@ async function runReplyOrchestrator(
   let repliesGenerated = 0;
   let repliesAutoApproved = 0;
 
-  const items = db
+  const items = (await db
     .select()
     .from(inboxItems)
     .where(
@@ -567,18 +567,18 @@ async function runReplyOrchestrator(
       ),
     )
     .orderBy(asc(inboxItems.externalCreatedAt))
-    .all()
+    .all())
     .map(rowToInboxItem);
 
   // Budget degradation (Sprint 59): items stay unread and a later tick
   // retries them once the workspace's rolling LLM spend frees up.
-  const budgetExhausted = llmBudgetExhausted(db, workspace.id);
+  const budgetExhausted = await llmBudgetExhausted(db, workspace.id);
   for (const item of items) {
     if (budgetExhausted) break;
-    const { campaign, persona, post } = replyContext(db, workspace.id, item);
+    const { campaign, persona, post } = await replyContext(db, workspace.id, item);
     // Auto-reply only on scheduled_auto campaigns (the founder's per-campaign choice).
     if (!campaign || campaign.automationMode !== "scheduled_auto") continue;
-    if (!checkReplyGuardrails(db, settings, item.connectionId, nowMs).ok) continue;
+    if (!(await checkReplyGuardrails(db, settings, item.connectionId, nowMs)).ok) continue;
     try {
       const draft = await generateEngagementReply(
         db,
@@ -589,12 +589,12 @@ async function runReplyOrchestrator(
         { post, persona, campaign },
         SYSTEM_ACTOR,
       );
-      db.update(inboxItems)
+      await db.update(inboxItems)
         .set({ replyDraftId: draft.id, updatedAt: Date.now() })
         .where(eq(inboxItems.id, item.id))
         .run();
       repliesGenerated += 1;
-      applyDraftAction(db, draft, "approve", SYSTEM_ACTOR);
+      await applyDraftAction(db, draft, "approve", SYSTEM_ACTOR);
       repliesAutoApproved += 1;
     } catch {
       // One bad reply never aborts the run.
@@ -616,7 +616,7 @@ export async function postReplyForItem(
   item: InboxItem,
   body: string,
 ): Promise<InboxItem> {
-  const conn = getConnection(db, workspace.id, item.connectionId);
+  const conn = await getConnection(db, workspace.id, item.connectionId);
   const provider = conn ? providerByKey(conn.providerKey) : undefined;
   const adapter =
     conn && provider && conn.status === "connected"
@@ -633,11 +633,11 @@ export async function postReplyForItem(
   if (item.kind === "dm") {
     target = item.authorHandle;
   } else if (item.publicationId) {
-    const pub = db.select().from(publications).where(eq(publications.id, item.publicationId)).get();
+    const pub = await db.select().from(publications).where(eq(publications.id, item.publicationId)).get();
     target = pub?.externalId ?? undefined;
   }
   const result = await adapter.postReply({ parentExternalId: item.externalId, body, target });
-  db.update(inboxItems)
+  await db.update(inboxItems)
     .set({
       status: "replied",
       postedReplyExternalId: result.externalId,
@@ -652,7 +652,7 @@ export async function postReplyForItem(
     externalId: result.externalId,
     url: result.url,
   });
-  return getInboxItem(db, workspace.id, item.id)!;
+  return (await getInboxItem(db, workspace.id, item.id))!;
 }
 
 async function postApprovedReplies(
@@ -663,7 +663,7 @@ async function postApprovedReplies(
   nowMs: number,
 ): Promise<{ repliesPosted: number }> {
   let repliesPosted = 0;
-  const items = db
+  const items = (await db
     .select()
     .from(inboxItems)
     .where(
@@ -673,21 +673,21 @@ async function postApprovedReplies(
         isNull(inboxItems.postedReplyExternalId),
       ),
     )
-    .all()
+    .all())
     .map(rowToInboxItem);
 
   for (const item of items) {
     if (!item.replyDraftId) continue;
-    const draft = getDraft(db, workspace.id, item.replyDraftId);
+    const draft = await getDraft(db, workspace.id, item.replyDraftId);
     if (!draft || draft.state !== "approved") continue;
     // Auto items (scheduled_auto campaign) re-check the cap at post time; a
     // manually-approved reply on any campaign proposes without the cap. A
     // capped/switched-off item is skipped, not failed — it retries next cycle.
-    const { campaign } = replyContext(db, workspace.id, item);
+    const { campaign } = await replyContext(db, workspace.id, item);
     const automated = campaign?.automationMode === "scheduled_auto";
-    if (automated && !checkReplyGuardrails(db, settings, item.connectionId, nowMs).ok) continue;
+    if (automated && !(await checkReplyGuardrails(db, settings, item.connectionId, nowMs)).ok) continue;
     try {
-      const command = prepareReplyAction(db, workspace.id, item.id, {
+      const command = await prepareReplyAction(db, workspace.id, item.id, {
         idempotencyKey: deriveReplyIdempotencyKey(item.id, draft),
         automated,
       });
@@ -704,44 +704,44 @@ async function postApprovedReplies(
 // Public queries + entry points
 // ---------------------------------------------------------------------------
 
-export function listInbox(
+export async function listInbox(
   db: Db,
   workspaceId: string,
   status?: InboxItemStatus,
-): InboxItemWithContext[] {
+): Promise<InboxItemWithContext[]> {
   const conditions = [eq(inboxItems.workspaceId, workspaceId)];
   if (status) conditions.push(eq(inboxItems.status, status));
-  const rows = db
+  const rows = await db
     .select()
     .from(inboxItems)
     .where(and(...conditions))
     .orderBy(desc(inboxItems.externalCreatedAt))
     .all();
-  return rows.map((row) => {
-    const item = rowToInboxItem(row);
-    let replyDraft: InboxItemWithContext["replyDraft"] = null;
-    if (item.replyDraftId) {
-      const d = getDraft(db, workspaceId, item.replyDraftId);
-      if (d) replyDraft = { id: d.id, state: d.state, content: d.content };
-    }
-    let post: InboxItemWithContext["post"] = null;
-    if (item.publicationId) {
-      const pub = db.select().from(publications).where(eq(publications.id, item.publicationId)).get();
-      if (pub) post = { publicationId: pub.id, title: pub.title, url: pub.externalUrl };
-    }
-    let sentEmail: InboxItemWithContext["sentEmail"] = null;
-    if (item.emailDeliveryId) {
-      const delivery = deliveryBehindItem(db, item);
-      if (delivery) {
-        sentEmail = { deliveryId: delivery.id, subject: delivery.subject, sentAt: delivery.acceptedAt };
+  return await Promise.all(rows.map(async (row) => {
+      const item = rowToInboxItem(row);
+      let replyDraft: InboxItemWithContext["replyDraft"] = null;
+      if (item.replyDraftId) {
+        const d = await getDraft(db, workspaceId, item.replyDraftId);
+        if (d) replyDraft = { id: d.id, state: d.state, content: d.content };
       }
-    }
-    return { ...item, replyDraft, post, sentEmail };
-  });
+      let post: InboxItemWithContext["post"] = null;
+      if (item.publicationId) {
+        const pub = await db.select().from(publications).where(eq(publications.id, item.publicationId)).get();
+        if (pub) post = { publicationId: pub.id, title: pub.title, url: pub.externalUrl };
+      }
+      let sentEmail: InboxItemWithContext["sentEmail"] = null;
+      if (item.emailDeliveryId) {
+        const delivery = await deliveryBehindItem(db, item);
+        if (delivery) {
+          sentEmail = { deliveryId: delivery.id, subject: delivery.subject, sentAt: delivery.acceptedAt };
+        }
+      }
+      return { ...item, replyDraft, post, sentEmail };
+    }));
 }
 
-export function getInboxItem(db: Db, workspaceId: string, itemId: string): InboxItem | undefined {
-  const row = db
+export async function getInboxItem(db: Db, workspaceId: string, itemId: string): Promise<InboxItem | undefined> {
+  const row = await db
     .select()
     .from(inboxItems)
     .where(and(eq(inboxItems.workspaceId, workspaceId), eq(inboxItems.id, itemId)))
@@ -749,15 +749,15 @@ export function getInboxItem(db: Db, workspaceId: string, itemId: string): Inbox
   return row ? rowToInboxItem(row) : undefined;
 }
 
-export function setInboxStatus(
+export async function setInboxStatus(
   db: Db,
   workspaceId: string,
   itemId: string,
   status: "read" | "dismissed",
-): InboxItem | undefined {
-  const item = getInboxItem(db, workspaceId, itemId);
+): Promise<InboxItem | undefined> {
+  const item = await getInboxItem(db, workspaceId, itemId);
   if (!item) return undefined;
-  db.update(inboxItems)
+  await db.update(inboxItems)
     .set({ status, updatedAt: Date.now() })
     .where(eq(inboxItems.id, itemId))
     .run();
@@ -777,11 +777,11 @@ export async function generateReplyForItem(
   actor: DraftActor,
 ): Promise<Draft> {
   if (item.replyDraftId) {
-    const existing = getDraft(db, workspace.id, item.replyDraftId);
+    const existing = await getDraft(db, workspace.id, item.replyDraftId);
     if (existing) return existing;
   }
-  assertLlmBudget(db, workspace.id); // manual draft: 402 before the model call (Sprint 59)
-  const { campaign, persona, post } = replyContext(db, workspace.id, item);
+  await assertLlmBudget(db, workspace.id); // manual draft: 402 before the model call (Sprint 59)
+  const { campaign, persona, post } = await replyContext(db, workspace.id, item);
   const draft = await generateEngagementReply(
     db,
     llm,
@@ -791,7 +791,7 @@ export async function generateReplyForItem(
     { post, persona, campaign },
     actor,
   );
-  db.update(inboxItems)
+  await db.update(inboxItems)
     .set({
       replyDraftId: draft.id,
       status: item.status === "unread" ? "read" : item.status,
@@ -830,12 +830,12 @@ export async function runInbox(
   workspaceId: string,
   nowMs: number = Date.now(),
 ): Promise<InboxRunResult> {
-  const workspace = getWorkspace(db, workspaceId);
+  const workspace = await getWorkspace(db, workspaceId);
   if (!workspace) return emptyRun(nowMs);
 
   const poll = await pollInbox(db, fabric, workspace);
   const engagement = await refreshEngagement(db, fabric, workspace, nowMs);
-  const settings = getSocialAutomationSettings(db, workspaceId);
+  const settings = await getSocialAutomationSettings(db, workspaceId);
   const orchestrated = await runReplyOrchestrator(db, llm, evidence, workspace, settings, nowMs);
   const posted = await postApprovedReplies(db, runtime, workspace, settings, nowMs);
 

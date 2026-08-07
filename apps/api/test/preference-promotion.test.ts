@@ -41,8 +41,8 @@ interface RuleOverrides {
   rule?: string;
 }
 
-function addRule(db: Db, overrides: RuleOverrides): string {
-  db.insert(preferenceRules)
+async function addRule(db: Db, overrides: RuleOverrides): Promise<string> {
+  await db.insert(preferenceRules)
     .values({
       id: overrides.id,
       workspaceId: WORKSPACE_ID,
@@ -66,13 +66,13 @@ function addRule(db: Db, overrides: RuleOverrides): string {
   return overrides.id;
 }
 
-function seed(): Db {
+async function seed(): Promise<Db> {
   const db = createTestDb();
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({ id: WORKSPACE_ID, name: "Promote", createdAt: 1, updatedAt: 1 })
     .run();
   // Something for the synthesis to chew on, so it does not throw NothingToLearn.
-  createMetric(db, WORKSPACE_ID, {
+  await createMetric(db, WORKSPACE_ID, {
     channel: "linkedin",
     description: "A post",
     notes: "",
@@ -82,20 +82,20 @@ function seed(): Db {
 }
 
 describe("preference promotion through the weekly synthesis (Sprint 68)", () => {
-  it("promotes only rules the founder re-derived and that actually fired", () => {
-    const db = seed();
-    const ready = addRule(db, { id: uuid(1) });
-    addRule(db, { id: uuid(2), observationCount: 1, rule: "Cut the closing hashtag block" });
-    addRule(db, { id: uuid(3), confidence: 50, rule: "Prefer short paragraphs over long ones" });
-    addRule(db, { id: uuid(4), appliedCount: 0, rule: "Say what changed, not what is trending" });
-    addRule(db, { id: uuid(5), status: "candidate", rule: "Open with a number when you have one" });
+  it("promotes only rules the founder re-derived and that actually fired", async () => {
+    const db = await seed();
+    const ready = await addRule(db, { id: uuid(1) });
+    await addRule(db, { id: uuid(2), observationCount: 1, rule: "Cut the closing hashtag block" });
+    await addRule(db, { id: uuid(3), confidence: 50, rule: "Prefer short paragraphs over long ones" });
+    await addRule(db, { id: uuid(4), appliedCount: 0, rule: "Say what changed, not what is trending" });
+    await addRule(db, { id: uuid(5), status: "candidate", rule: "Open with a number when you have one" });
 
-    expect(listPromotableRules(db, WORKSPACE_ID).map((rule) => rule.id)).toEqual([ready]);
+    expect((await listPromotableRules(db, WORKSPACE_ID)).map((rule) => rule.id)).toEqual([ready]);
   });
 
   it("puts the promotable set in the prompt and records it on the synthesis", async () => {
-    const db = seed();
-    const ready = addRule(db, { id: uuid(1) });
+    const db = await seed();
+    const ready = await addRule(db, { id: uuid(1) });
     const llm = new CapturingGateway();
 
     const synthesis = await synthesizeNow(db, llm, WORKSPACE_ID, "Promote");
@@ -106,47 +106,47 @@ describe("preference promotion through the weekly synthesis (Sprint 68)", () => 
   });
 
   it("promotes them when — and only when — the founder accepts (D-68.7)", async () => {
-    const db = seed();
-    const ready = addRule(db, { id: uuid(1) });
+    const db = await seed();
+    const ready = await addRule(db, { id: uuid(1) });
     const synthesis = await synthesizeNow(db, new CapturingGateway(), WORKSPACE_ID, "Promote");
 
-    expect(getPreferenceRule(db, WORKSPACE_ID, ready)!.status).toBe("active");
-    acceptSynthesis(db, WORKSPACE_ID, synthesis);
+    expect((await getPreferenceRule(db, WORKSPACE_ID, ready))!.status).toBe("active");
+    await acceptSynthesis(db, WORKSPACE_ID, synthesis);
 
-    const promoted = getPreferenceRule(db, WORKSPACE_ID, ready)!;
+    const promoted = (await getPreferenceRule(db, WORKSPACE_ID, ready))!;
     expect(promoted.status).toBe("promoted");
     expect(promoted.promotedAt).not.toBeNull();
   });
 
   it("leaves the rules alone when the founder dismisses the proposal", async () => {
-    const db = seed();
-    const ready = addRule(db, { id: uuid(1) });
+    const db = await seed();
+    const ready = await addRule(db, { id: uuid(1) });
     const synthesis = await synthesizeNow(db, new CapturingGateway(), WORKSPACE_ID, "Promote");
 
-    dismissSynthesis(db, synthesis);
-    expect(getPreferenceRule(db, WORKSPACE_ID, ready)!.status).toBe("active");
+    await dismissSynthesis(db, synthesis);
+    expect((await getPreferenceRule(db, WORKSPACE_ID, ready))!.status).toBe("active");
   });
 
   it("a promoted rule stops being injected — the brain doc carries it now", async () => {
-    const db = seed();
-    const ready = addRule(db, { id: uuid(1) });
+    const db = await seed();
+    const ready = await addRule(db, { id: uuid(1) });
     const synthesis = await synthesizeNow(db, new CapturingGateway(), WORKSPACE_ID, "Promote");
-    acceptSynthesis(db, WORKSPACE_ID, synthesis);
+    await acceptSynthesis(db, WORKSPACE_ID, synthesis);
 
-    const rows = db
+    const rows = await db
       .select()
       .from(preferenceRules)
       .where(eq(preferenceRules.status, "active"))
       .all();
     expect(rows).toHaveLength(0);
-    expect(getPreferenceRule(db, WORKSPACE_ID, ready)!.status).toBe("promoted");
+    expect((await getPreferenceRule(db, WORKSPACE_ID, ready))!.status).toBe("promoted");
   });
 
   it("accepting a pre-Sprint-68 synthesis promotes nothing and does not throw", async () => {
-    const db = seed();
+    const db = await seed();
     const synthesis = await synthesizeNow(db, new CapturingGateway(), WORKSPACE_ID, "Promote");
     const legacy = { ...synthesis, basedOnJson: '{"examples":3}' };
     expect(promotableRuleIdsOf(legacy)).toEqual([]);
-    expect(() => acceptSynthesis(db, WORKSPACE_ID, legacy)).not.toThrow();
+    expect(async () => await acceptSynthesis(db, WORKSPACE_ID, legacy)).not.toThrow();
   });
 });

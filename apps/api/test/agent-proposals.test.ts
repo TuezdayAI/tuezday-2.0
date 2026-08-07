@@ -70,7 +70,7 @@ describe("agent proposals (Sprint 69)", () => {
     ).json().id;
     connectionId = randomUUID();
     const now = Date.now();
-    db.insert(connections)
+    await db.insert(connections)
       .values({
         id: connectionId,
         workspaceId,
@@ -98,10 +98,10 @@ describe("agent proposals (Sprint 69)", () => {
 
   const origin = () => ({ agentRunId: RUN_ID, workspaceId });
 
-  function seedDraft(state: "approved" | "pending_review", personaId: string | null = null) {
+  async function seedDraft(state: "approved" | "pending_review", personaId: string | null = null) {
     const id = randomUUID();
     const now = Date.now();
-    db.insert(drafts)
+    await db.insert(drafts)
       .values({
         id,
         workspaceId,
@@ -129,11 +129,11 @@ describe("agent proposals (Sprint 69)", () => {
     expect(result.targetKind).toBe("draft");
     expect(result.status).toBe("pending_review");
 
-    const draft = getDraft(db, workspaceId, result.id!);
+    const draft = await getDraft(db, workspaceId, result.id!);
     expect(draft?.state).toBe("pending_review");
     // A machine-written draft must never look like a human approval — that is
     // what the Sprint 52 publish gate collapses on.
-    const decisions = db.select().from(agentProposals).all();
+    const decisions = await db.select().from(agentProposals).all();
     expect(decisions).toHaveLength(1);
     expect(decisions[0]!.rationale).toContain("usage-based pricing");
     // Nothing external exists yet: writing is not sending.
@@ -141,7 +141,7 @@ describe("agent proposals (Sprint 69)", () => {
   });
 
   it("refuses to publish a draft a human has not approved", async () => {
-    const draftId = seedDraft("pending_review");
+    const draftId = await seedDraft("pending_review");
     const result = await proposals.proposePublication(origin(), {
       draftId,
       target: "test",
@@ -153,14 +153,14 @@ describe("agent proposals (Sprint 69)", () => {
     // The refusal comes from publishIntent, which was refusing this before an
     // agent existed. No new gate was written for it.
     expect(result.error).toBe("draft_not_approved");
-    expect(db.select().from(agentProposals).all()).toHaveLength(0);
+    expect(await db.select().from(agentProposals).all()).toHaveLength(0);
   });
 
   it("parks a publication when the policy tree says human_required (acceptance)", async () => {
     await putActionPolicy(app, workspaceId, "workspace", workspaceId, {
       publish: "human_required",
     });
-    const draftId = seedDraft("approved");
+    const draftId = await seedDraft("approved");
     const result = await proposals.proposePublication(origin(), {
       draftId,
       target: "test",
@@ -172,16 +172,16 @@ describe("agent proposals (Sprint 69)", () => {
     expect(result.status).toBe("authorization_required");
     expect(posts).toHaveLength(0);
 
-    const action = getExternalAction(db, workspaceId, result.id!)!;
+    const action = (await getExternalAction(db, workspaceId, result.id!))!;
     expect(action.origin).toBe("agent");
     expect(action.originRunId).toBe(RUN_ID);
     // Attributable both ways: the queue names the run, the run lists the action.
-    expect(db.select().from(agentProposals).all()[0]!.externalActionId).toBe(action.id);
+    expect((await db.select().from(agentProposals).all())[0]!.externalActionId).toBe(action.id);
   });
 
   it("lets an autonomous policy dispatch it, exactly as for a person (D-69.1)", async () => {
     await putActionPolicy(app, workspaceId, "workspace", workspaceId, { publish: "autonomous" });
-    const draftId = seedDraft("approved");
+    const draftId = await seedDraft("approved");
     const result = await proposals.proposePublication(origin(), {
       draftId,
       target: "test",
@@ -192,14 +192,14 @@ describe("agent proposals (Sprint 69)", () => {
     if (!result.ok) return;
     expect(result.status).toBe("succeeded");
     expect(posts).toHaveLength(1);
-    expect(db.select().from(publications).all()).toHaveLength(1);
+    expect(await db.select().from(publications).all()).toHaveLength(1);
   });
 
   it("resolves the destination from history and says what to pass when it cannot", async () => {
     await putActionPolicy(app, workspaceId, "workspace", workspaceId, {
       publish: "human_required",
     });
-    const draftId = seedDraft("approved");
+    const draftId = await seedDraft("approved");
     const noHistory = await proposals.proposePublication(origin(), {
       draftId,
       connectionId,
@@ -210,7 +210,7 @@ describe("agent proposals (Sprint 69)", () => {
     expect(noHistory.error).toBe("target_unknown");
     expect(noHistory.hint).toContain("target");
 
-    db.insert(publications)
+    await db.insert(publications)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -242,7 +242,7 @@ describe("agent proposals (Sprint 69)", () => {
     // No persona on the draft, so there is no primary account to route to and
     // no connection was named. It says what is missing instead of guessing.
     const result = await proposals.proposePublication(origin(), {
-      draftId: seedDraft("approved"),
+      draftId: await seedDraft("approved"),
       target: "test",
       rationale: "Publish it somewhere.",
     });
@@ -268,7 +268,7 @@ describe("agent proposals (Sprint 69)", () => {
   it("stops at the daily cap before touching any adapter (D-69.8)", async () => {
     const now = Date.now();
     for (let i = 0; i < AGENT_PROPOSALS_PER_DAY; i += 1) {
-      db.insert(agentProposals)
+      await db.insert(agentProposals)
         .values({
           id: randomUUID(),
           workspaceId,
@@ -283,7 +283,7 @@ describe("agent proposals (Sprint 69)", () => {
         })
         .run();
     }
-    expect(countProposalsToday(db, workspaceId)).toBe(AGENT_PROPOSALS_PER_DAY);
+    expect(await countProposalsToday(db, workspaceId)).toBe(AGENT_PROPOSALS_PER_DAY);
 
     const result = await proposals.proposeDraft(origin(), {
       content: "One more.",
@@ -294,11 +294,11 @@ describe("agent proposals (Sprint 69)", () => {
     if (result.ok) return;
     expect(result.error).toBe("proposal_cap_reached");
     // Nothing was written, not even the draft that would have been "harmless".
-    expect(db.select().from(drafts).all()).toHaveLength(0);
+    expect(await db.select().from(drafts).all()).toHaveLength(0);
   });
 
-  it("counts only the trailing day, so yesterday's proposals do not block today", () => {
-    db.insert(agentProposals)
+  it("counts only the trailing day, so yesterday's proposals do not block today", async () => {
+    await db.insert(agentProposals)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -312,7 +312,7 @@ describe("agent proposals (Sprint 69)", () => {
         createdAt: Date.now() - 48 * 60 * 60 * 1000,
       })
       .run();
-    expect(countProposalsToday(db, workspaceId)).toBe(0);
+    expect(await countProposalsToday(db, workspaceId)).toBe(0);
   });
 
   it("simulates in every non-live mode without writing anything (D-69.6)", async () => {
@@ -325,7 +325,7 @@ describe("agent proposals (Sprint 69)", () => {
     if (!result.ok) return;
     expect(result.simulated).toBe(true);
     expect(result.id).toBeNull();
-    expect(db.select().from(agentProposals).all()).toHaveLength(0);
+    expect(await db.select().from(agentProposals).all()).toHaveLength(0);
     expect(posts).toHaveLength(0);
   });
 });

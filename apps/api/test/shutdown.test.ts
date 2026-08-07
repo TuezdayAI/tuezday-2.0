@@ -59,8 +59,8 @@ describe("createShutdownHandler", () => {
     );
     const { shutdown, exit } = makeDeps(close);
 
-    const first = shutdown("SIGTERM");
-    const second = shutdown("SIGTERM");
+    const first = await shutdown("SIGTERM");
+    const second = await shutdown("SIGTERM");
     resolveClose();
     await Promise.all([first, second]);
 

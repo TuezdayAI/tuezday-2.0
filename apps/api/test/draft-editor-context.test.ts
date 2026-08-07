@@ -56,7 +56,7 @@ describe("draft editor context API", () => {
       })
     ).json();
     const planId = randomUUID();
-    db.insert(campaignPlanRevisions)
+    await db.insert(campaignPlanRevisions)
       .values({
         id: planId,
         workspaceId,
@@ -78,13 +78,13 @@ describe("draft editor context API", () => {
         activatedAt: 200,
       })
       .run();
-    db.update(campaigns)
+    await db.update(campaigns)
       .set({ currentPlanRevisionId: planId })
       .where(eq(campaigns.id, campaign.id))
       .run();
 
     const generationId = randomUUID();
-    db.insert(generations)
+    await db.insert(generations)
       .values({
         id: generationId,
         workspaceId,
@@ -160,7 +160,7 @@ describe("draft editor context API", () => {
       createdAt: 110,
       updatedAt: 110,
     };
-    db.insert(drafts)
+    await db.insert(drafts)
       .values({
         ...baseDraft,
         id: draftId,
@@ -170,7 +170,7 @@ describe("draft editor context API", () => {
         channel: "linkedin",
       })
       .run();
-    db.insert(drafts)
+    await db.insert(drafts)
       .values({
         ...baseDraft,
         id: siblingId,
@@ -180,7 +180,7 @@ describe("draft editor context API", () => {
         channel: "email",
       })
       .run();
-    db.insert(drafts)
+    await db.insert(drafts)
       .values({
         ...baseDraft,
         id: campaignOnlyId,
@@ -191,7 +191,7 @@ describe("draft editor context API", () => {
       })
       .run();
 
-    db.insert(evidenceDocuments)
+    await db.insert(evidenceDocuments)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -208,7 +208,7 @@ describe("draft editor context API", () => {
       .run();
 
     const connectionId = randomUUID();
-    db.insert(connections)
+    await db.insert(connections)
       .values({
         id: connectionId,
         workspaceId,
@@ -228,7 +228,7 @@ describe("draft editor context API", () => {
         updatedAt: 80,
       })
       .run();
-    db.insert(publications)
+    await db.insert(publications)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -296,9 +296,9 @@ describe("draft editor context API", () => {
   });
 
   it("lists external actions scoped to this draft only", async () => {
-    const seedAction = (targetDraftId: string) => {
+    const seedAction = async (targetDraftId: string) => {
       const id = randomUUID();
-      insertExternalAction(db, {
+      await insertExternalAction(db, {
         id,
         workspaceId,
         kind: "publish",
@@ -331,8 +331,8 @@ describe("draft editor context API", () => {
       });
       return id;
     };
-    const mine = seedAction(draftId);
-    seedAction(siblingId); // scoped out — belongs to the sibling draft
+    const mine = await seedAction(draftId);
+    await seedAction(siblingId); // scoped out — belongs to the sibling draft
 
     const response = await app.inject({
       method: "GET",

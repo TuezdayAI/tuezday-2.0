@@ -62,7 +62,7 @@ function rowToVersion(row: PipelineDefinitionVersionRow): PipelineDefinitionVers
   };
 }
 
-function insertDefinition(
+async function insertDefinition(
   tx: DbExecutor,
   input: {
     workspaceId: string;
@@ -75,7 +75,7 @@ function insertDefinition(
   },
   actor: PipelineActor,
   now: number,
-): PipelineDefinitionRow {
+): Promise<PipelineDefinitionRow> {
   const row: PipelineDefinitionRow = {
     id: randomUUID(),
     workspaceId: input.workspaceId,
@@ -91,8 +91,8 @@ function insertDefinition(
     createdAt: now,
     updatedAt: now,
   };
-  tx.insert(pipelineDefinitions).values(row).run();
-  tx.insert(pipelineDefinitionVersions)
+  await tx.insert(pipelineDefinitions).values(row).run();
+  await tx.insert(pipelineDefinitionVersions)
     .values({
       id: randomUUID(),
       definitionId: row.id,
@@ -111,8 +111,8 @@ function insertDefinition(
  * version 1, status `draft`; activation is a founder action. Mirrors the
  * ensureBrainDocs pattern.
  */
-export function ensurePipelineDefinitions(db: Db, workspaceId: string): void {
-  const existing = db
+export async function ensurePipelineDefinitions(db: Db, workspaceId: string): Promise<void> {
+  const existing = await db
     .select({ id: pipelineDefinitions.id })
     .from(pipelineDefinitions)
     .where(
@@ -123,8 +123,8 @@ export function ensurePipelineDefinitions(db: Db, workspaceId: string): void {
     )
     .get();
   if (existing) return;
-  db.transaction((tx) => {
-    insertDefinition(
+  await db.transaction(async (tx) => {
+    await insertDefinition(
       tx,
       {
         workspaceId,
@@ -142,22 +142,22 @@ export function ensurePipelineDefinitions(db: Db, workspaceId: string): void {
   });
 }
 
-export function listPipelineDefinitions(db: Db, workspaceId: string): PipelineDefinition[] {
-  return db
+export async function listPipelineDefinitions(db: Db, workspaceId: string): Promise<PipelineDefinition[]> {
+  return (await db
     .select()
     .from(pipelineDefinitions)
     .where(eq(pipelineDefinitions.workspaceId, workspaceId))
     .orderBy(desc(pipelineDefinitions.createdAt))
-    .all()
+    .all())
     .map(rowToDefinition);
 }
 
-export function getPipelineDefinition(
+export async function getPipelineDefinition(
   db: Db,
   workspaceId: string,
   definitionId: string,
-): PipelineDefinition | undefined {
-  const row = db
+): Promise<PipelineDefinition | undefined> {
+  const row = await db
     .select()
     .from(pipelineDefinitions)
     .where(
@@ -170,31 +170,31 @@ export function getPipelineDefinition(
   return row ? rowToDefinition(row) : undefined;
 }
 
-export function getPipelineDefinitionDetail(
+export async function getPipelineDefinitionDetail(
   db: Db,
   workspaceId: string,
   definitionId: string,
-): PipelineDefinitionDetail | undefined {
-  const definition = getPipelineDefinition(db, workspaceId, definitionId);
+): Promise<PipelineDefinitionDetail | undefined> {
+  const definition = await getPipelineDefinition(db, workspaceId, definitionId);
   if (!definition) return undefined;
-  const versions = db
+  const versions = (await db
     .select()
     .from(pipelineDefinitionVersions)
     .where(eq(pipelineDefinitionVersions.definitionId, definitionId))
     .orderBy(desc(pipelineDefinitionVersions.version))
-    .all()
+    .all())
     .map(rowToVersion);
   return { ...definition, versions };
 }
 
-export function createPipelineDefinition(
+export async function createPipelineDefinition(
   db: Db,
   workspaceId: string,
   input: CreatePipelineDefinitionInput,
   actor: PipelineActor,
-): PipelineDefinition {
-  return db.transaction((tx) => {
-    const row = insertDefinition(
+): Promise<PipelineDefinition> {
+  return await db.transaction(async (tx) => {
+    const row = await insertDefinition(
       tx,
       {
         workspaceId,
@@ -217,15 +217,15 @@ export function createPipelineDefinition(
  * currentVersion, append the version row — the brain-doc pattern with a
  * strict unique on (definitionId, version).
  */
-export function updatePipelineSpec(
+export async function updatePipelineSpec(
   db: Db,
   workspaceId: string,
   definitionId: string,
   input: UpdatePipelineSpecInput,
   actor: PipelineActor,
-): PipelineDefinition {
-  return db.transaction((tx) => {
-    const row = tx
+): Promise<PipelineDefinition> {
+  return await db.transaction(async (tx) => {
+    const row = await tx
       .select()
       .from(pipelineDefinitions)
       .where(
@@ -239,7 +239,7 @@ export function updatePipelineSpec(
     const now = Date.now();
     const nextVersion = row.currentVersion + 1;
     const specJson = JSON.stringify(input.spec);
-    tx.update(pipelineDefinitions)
+    await tx.update(pipelineDefinitions)
       .set({
         name: input.name ?? row.name,
         description: input.description ?? row.description,
@@ -249,7 +249,7 @@ export function updatePipelineSpec(
       })
       .where(eq(pipelineDefinitions.id, definitionId))
       .run();
-    tx.insert(pipelineDefinitionVersions)
+    await tx.insert(pipelineDefinitionVersions)
       .values({
         id: randomUUID(),
         definitionId,
@@ -276,14 +276,14 @@ export function updatePipelineSpec(
  * definition in the same exact scope to `draft` (D-64.2) so at most one
  * definition is active per (workspace, taskKey, campaign, lane).
  */
-export function setPipelineStatus(
+export async function setPipelineStatus(
   db: Db,
   workspaceId: string,
   definitionId: string,
   status: PipelineDefinitionStatus,
-): PipelineDefinition {
-  return db.transaction((tx) => {
-    const row = tx
+): Promise<PipelineDefinition> {
+  return await db.transaction(async (tx) => {
+    const row = await tx
       .select()
       .from(pipelineDefinitions)
       .where(
@@ -296,7 +296,7 @@ export function setPipelineStatus(
     if (!row) throw new PipelineDefinitionNotFoundError(definitionId);
     const now = Date.now();
     if (status === "active") {
-      const siblings = tx
+      const siblings = (await tx
         .select()
         .from(pipelineDefinitions)
         .where(
@@ -306,7 +306,7 @@ export function setPipelineStatus(
             eq(pipelineDefinitions.status, "active"),
           ),
         )
-        .all()
+        .all())
         .filter(
           (candidate) =>
             candidate.id !== row.id &&
@@ -314,13 +314,13 @@ export function setPipelineStatus(
             candidate.laneId === row.laneId,
         );
       for (const sibling of siblings) {
-        tx.update(pipelineDefinitions)
+        await tx.update(pipelineDefinitions)
           .set({ status: "draft", updatedAt: now })
           .where(eq(pipelineDefinitions.id, sibling.id))
           .run();
       }
     }
-    tx.update(pipelineDefinitions)
+    await tx.update(pipelineDefinitions)
       .set({ status, updatedAt: now })
       .where(eq(pipelineDefinitions.id, definitionId))
       .run();
@@ -332,7 +332,7 @@ export function setPipelineStatus(
  * Most specific active definition wins (D-64.2): lane match, then campaign
  * match (no lane binding), then the workspace-scoped default.
  */
-export function resolvePipelineDefinition(
+export async function resolvePipelineDefinition(
   db: Db,
   input: {
     workspaceId: string;
@@ -340,8 +340,8 @@ export function resolvePipelineDefinition(
     campaignId?: string | null;
     laneId?: string | null;
   },
-): PipelineDefinition | undefined {
-  const active = db
+): Promise<PipelineDefinition | undefined> {
+  const active = await db
     .select()
     .from(pipelineDefinitions)
     .where(

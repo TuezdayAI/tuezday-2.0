@@ -63,11 +63,11 @@ export interface CandidateFormat {
  * The formats the assessment judges: distinct (channel, format) pairs of the
  * pinned plan revision's active lanes, annotated from the registry (§8.9).
  */
-export function candidateFormatsFor(
+export async function candidateFormatsFor(
   db: DbExecutor,
   pkg: ContentPackageRow,
-): CandidateFormat[] {
-  const rows = db
+): Promise<CandidateFormat[]> {
+  const rows = await db
     .select({
       channel: campaignLaneRevisions.channel,
       format: campaignLaneRevisions.format,
@@ -102,7 +102,7 @@ export function candidateFormatsFor(
  * operator reassess (D-62.4) — infra failure is never silently retried
  * forever, and never becomes a verdict.
  */
-export function claimAssessmentBatch(
+export async function claimAssessmentBatch(
   db: Db,
   input: {
     workspaceId: string;
@@ -110,12 +110,12 @@ export function claimAssessmentBatch(
     leaseMs: number;
     packageId?: string;
   },
-): AssessmentClaim[] {
+): Promise<AssessmentClaim[]> {
   if (input.limit <= 0) return [];
   const now = Date.now();
-  return db.transaction((tx) => {
+  return await db.transaction(async (tx) => {
     const claims: AssessmentClaim[] = [];
-    const due = tx
+    const due = await tx
       .select()
       .from(contentPackages)
       .where(
@@ -136,7 +136,7 @@ export function claimAssessmentBatch(
       .all();
     for (const pkg of due) {
       if (claims.length >= input.limit) break;
-      const claimed = tx
+      const claimed = await tx
         .update(contentPackages)
         .set({
           assessmentState: "in_progress",
@@ -158,9 +158,9 @@ export function claimAssessmentBatch(
   });
 }
 
-export function markAssessmentRetryable(db: Db, claim: AssessmentClaim): boolean {
-  return db.transaction((tx) => {
-    const pkg = tx
+export async function markAssessmentRetryable(db: Db, claim: AssessmentClaim): Promise<boolean> {
+  return await db.transaction(async (tx) => {
+    const pkg = await tx
       .select()
       .from(contentPackages)
       .where(
@@ -172,7 +172,7 @@ export function markAssessmentRetryable(db: Db, claim: AssessmentClaim): boolean
       .get();
     if (!pkg) return false;
     const attempts = pkg.assessmentAttempts + 1;
-    tx.update(contentPackages)
+    await tx.update(contentPackages)
       .set({
         assessmentState:
           attempts >= ASSESSMENT_MAX_ATTEMPTS ? "failed" : "pending",
@@ -314,15 +314,15 @@ class AssessmentFenceError extends Error {}
  * row, evaluate lane eligibility when sufficient, and move the package
  * through the contracts machine with an audit event.
  */
-export function commitAssessment(
+export async function commitAssessment(
   db: Db,
   claim: AssessmentClaim,
   normalized: NormalizedAssessment,
-): { committed: boolean; status: PackageStatus | null } {
+): Promise<{ committed: boolean; status: PackageStatus | null }> {
   const now = Date.now();
   try {
-    return db.transaction((tx) => {
-      const pkg = tx
+    return await db.transaction(async (tx) => {
+      const pkg = await tx
         .select()
         .from(contentPackages)
         .where(
@@ -336,13 +336,13 @@ export function commitAssessment(
         .get();
       if (!pkg) throw new AssessmentFenceError();
       const version =
-        (tx
+        ((await tx
           .select({ n: sql<number>`MAX(${sufficiencyAssessments.assessmentVersion})` })
           .from(sufficiencyAssessments)
           .where(eq(sufficiencyAssessments.packageId, pkg.id))
-          .get()?.n ?? 0) + 1;
+          .get())?.n ?? 0) + 1;
       const assessmentId = randomUUID();
-      tx.insert(sufficiencyAssessments)
+      await tx.insert(sufficiencyAssessments)
         .values({
           id: assessmentId,
           workspaceId: pkg.workspaceId,
@@ -360,11 +360,11 @@ export function commitAssessment(
           createdAt: now,
         })
         .run();
-      const assessmentRow = tx
+      const assessmentRow = (await tx
         .select()
         .from(sufficiencyAssessments)
         .where(eq(sufficiencyAssessments.id, assessmentId))
-        .get()!;
+        .get())!;
 
       let toStatus: PackageStatus;
       let reason: string;
@@ -375,7 +375,7 @@ export function commitAssessment(
             ? "no source-supported claims"
             : "insufficient evidence for the angle";
       } else {
-        const evaluations = persistLaneEligibility(tx, pkg, assessmentRow, now);
+        const evaluations = await persistLaneEligibility(tx, pkg, assessmentRow, now);
         const eligible = evaluations.filter((e) => e.eligible).length;
         toStatus = eligible > 0 ? "ready" : "blocked";
         reason =
@@ -388,7 +388,7 @@ export function commitAssessment(
       if (!canTransitionPackage("assessing", toStatus)) {
         throw new AssessmentFenceError();
       }
-      tx.update(contentPackages)
+      await tx.update(contentPackages)
         .set({
           status: toStatus,
           assessmentState: "complete",
@@ -404,7 +404,7 @@ export function commitAssessment(
           ),
         )
         .run();
-      insertPackageEvent(tx, {
+      await insertPackageEvent(tx, {
         workspaceId: pkg.workspaceId,
         packageId: pkg.id,
         fromStatus: "assessing",
@@ -427,12 +427,12 @@ export function commitAssessment(
  * whose band is currently auto_package, oldest first. The band defaults to
  * review, and D-61.9's eval-set gate governs when a founder may flip it.
  */
-export function runAutoPackaging(
+export async function runAutoPackaging(
   db: Db,
   input: { workspaceId: string; limit: number },
-): number {
+): Promise<number> {
   if (input.limit <= 0) return 0;
-  const eligible = db
+  const eligible = await db
     .select({ id: campaignOpportunities.id })
     .from(campaignOpportunities)
     .innerJoin(campaigns, eq(campaignOpportunities.campaignId, campaigns.id))
@@ -450,7 +450,7 @@ export function runAutoPackaging(
   let created = 0;
   for (const row of eligible) {
     try {
-      createPackageFromOpportunity(db, input.workspaceId, row.id, {
+      await createPackageFromOpportunity(db, input.workspaceId, row.id, {
         userId: null,
       });
       created += 1;
@@ -487,10 +487,10 @@ export async function runPackageAssessments(
   },
 ): Promise<{ assessed: number; claimed: number; failures: number }> {
   const result = { assessed: 0, claimed: 0, failures: 0 };
-  const workspace = getWorkspace(db, input.workspaceId);
+  const workspace = await getWorkspace(db, input.workspaceId);
   if (!workspace) return result;
-  if (llmBudgetExhausted(db, input.workspaceId)) return result;
-  const claims = claimAssessmentBatch(db, {
+  if (await llmBudgetExhausted(db, input.workspaceId)) return result;
+  const claims = await claimAssessmentBatch(db, {
     workspaceId: input.workspaceId,
     limit: input.limit,
     leaseMs: input.leaseMs,
@@ -499,22 +499,22 @@ export async function runPackageAssessments(
   result.claimed = claims.length;
   for (const claim of claims) {
     if (input.signal?.aborted) {
-      if (markAssessmentRetryable(db, claim)) result.failures += 1;
+      if (await markAssessmentRetryable(db, claim)) result.failures += 1;
       continue;
     }
-    const pkg = db
+    const pkg = await db
       .select()
       .from(contentPackages)
       .where(eq(contentPackages.id, claim.packageId))
       .get();
     if (!pkg) continue;
-    const sources = db
+    const sources = await db
       .select()
       .from(packageSources)
       .where(eq(packageSources.packageId, pkg.id))
       .orderBy(asc(packageSources.createdAt), asc(packageSources.id))
       .all();
-    const plan = db
+    const plan = await db
       .select({
         objective: campaignPlanRevisions.objective,
         kpi: campaignPlanRevisions.kpi,
@@ -527,10 +527,10 @@ export async function runPackageAssessments(
       .where(eq(campaignPlanRevisions.id, pkg.planRevisionId))
       .get();
     if (!plan) {
-      if (markAssessmentRetryable(db, claim)) result.failures += 1;
+      if (await markAssessmentRetryable(db, claim)) result.failures += 1;
       continue;
     }
-    const candidateFormats = candidateFormatsFor(db, pkg);
+    const candidateFormats = await candidateFormatsFor(db, pkg);
     const prompt = buildSufficiencyPrompt({
       workspaceName: workspace.name,
       campaignName: plan.campaignName,
@@ -560,10 +560,10 @@ export async function runPackageAssessments(
     } catch {
       // Malformed responses, invented source ids, timeouts, aborts, and
       // gateway trouble: retryable, never a stored verdict (invariant 2).
-      if (markAssessmentRetryable(db, claim)) result.failures += 1;
+      if (await markAssessmentRetryable(db, claim)) result.failures += 1;
       continue;
     }
-    const committed = commitAssessment(db, claim, normalized);
+    const committed = await commitAssessment(db, claim, normalized);
     if (committed.committed) result.assessed += 1;
   }
   return result;
@@ -589,8 +589,8 @@ export async function runPackagePipeline(
     packagesAssessed: 0,
     failures: 0,
   };
-  if (!getWorkspace(db, input.workspaceId)) return result;
-  result.packagesCreated = runAutoPackaging(db, {
+  if (!await getWorkspace(db, input.workspaceId)) return result;
+  result.packagesCreated = await runAutoPackaging(db, {
     workspaceId: input.workspaceId,
     limit: input.limit,
   });

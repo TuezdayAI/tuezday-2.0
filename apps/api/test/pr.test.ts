@@ -100,9 +100,9 @@ describe("PR & media outreach API", () => {
     ).json();
   }
 
-  function configureNativeEmail(email: string): void {
+  async function configureNativeEmail(email: string): Promise<void> {
     const now = Date.now();
-    db.insert(workspaceEmailSenders).values({
+    await db.insert(workspaceEmailSenders).values({
       workspaceId,
       domain: "example.com",
       fromLocalPart: "press",
@@ -120,7 +120,7 @@ describe("PR & media outreach API", () => {
       createdAt: now,
       updatedAt: now,
     }).run();
-    db.insert(emailRecipientPermissions).values({
+    await db.insert(emailRecipientPermissions).values({
       id: randomUUID(),
       workspaceId,
       normalizedEmail: email,
@@ -438,7 +438,7 @@ describe("PR & media outreach API", () => {
         method: "POST",
         url: `/workspaces/${workspaceId}/drafts/${draft.id}/approve`,
       });
-      configureNativeEmail(contact.email);
+      await configureNativeEmail(contact.email);
       await putActionPolicy(app, workspaceId, "workspace", workspaceId, { send: "autonomous" });
 
       const send = await app.inject({

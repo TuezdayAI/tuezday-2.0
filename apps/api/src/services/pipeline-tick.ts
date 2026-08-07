@@ -39,7 +39,7 @@ export async function runPipelinesTick(
   deps: PipelineEngineDeps,
   options: { batch?: number; workspaceId?: string } = {},
 ): Promise<PipelinesTickResult> {
-  const queued = db
+  const queued = await db
     .select({
       id: pipelineRuns.id,
       workspaceId: pipelineRuns.workspaceId,
@@ -93,13 +93,13 @@ export async function runPipelinesTick(
       executed.run.draftId
     ) {
       const campaign = queuedRun.campaignId
-        ? getCampaign(db, queuedRun.workspaceId, queuedRun.campaignId)
+        ? await getCampaign(db, queuedRun.workspaceId, queuedRun.campaignId)
         : undefined;
-      const settings = getSocialAutomationSettings(db, queuedRun.workspaceId);
+      const settings = await getSocialAutomationSettings(db, queuedRun.workspaceId);
       if (campaign?.automationMode === "scheduled_auto" && !settings.killSwitch) {
-        const draft = getDraft(db, queuedRun.workspaceId, executed.run.draftId);
+        const draft = await getDraft(db, queuedRun.workspaceId, executed.run.draftId);
         if (draft && draft.state === "pending_review") {
-          applyDraftAction(db, draft, "approve", SYSTEM_ACTOR);
+          await applyDraftAction(db, draft, "approve", SYSTEM_ACTOR);
           result.autoApproved += 1;
         }
       }

@@ -16,12 +16,12 @@ import { createTestDb } from "./helpers";
 const MESSAGE_ID = "email_123";
 const RECIPIENT = "lead@buyer.com";
 
-function seedDelivery(db: Db): { workspaceId: string; deliveryId: string } {
+async function seedDelivery(db: Db): Promise<{ workspaceId: string; deliveryId: string }> {
   const workspaceId = randomUUID();
   const actionId = randomUUID();
   const deliveryId = randomUUID();
   const now = Date.now();
-  db.insert(workspaces).values({
+  await db.insert(workspaces).values({
     id: workspaceId,
     name: "Acme",
     websiteUrl: null,
@@ -29,7 +29,7 @@ function seedDelivery(db: Db): { workspaceId: string; deliveryId: string } {
     createdAt: now,
     updatedAt: now,
   }).run();
-  db.insert(externalActions).values({
+  await db.insert(externalActions).values({
     id: actionId,
     workspaceId,
     kind: "send",
@@ -63,7 +63,7 @@ function seedDelivery(db: Db): { workspaceId: string; deliveryId: string } {
     dispatchedAt: now,
     completedAt: now,
   }).run();
-  db.insert(emailDeliveries).values({
+  await db.insert(emailDeliveries).values({
     id: deliveryId,
     workspaceId,
     externalActionId: actionId,
@@ -103,7 +103,7 @@ describe("Resend webhooks", () => {
 
   beforeEach(async () => {
     db = createTestDb();
-    seedDelivery(db);
+    await seedDelivery(db);
     verify = vi.fn((rawBody: string) => JSON.parse(rawBody));
     const verifier: ResendWebhookVerifier = { verify };
     app = await buildApp({ db, resendWebhookVerifier: verifier });
@@ -114,7 +114,7 @@ describe("Resend webhooks", () => {
   });
 
   async function post(rawBody: string, id = "msg_1") {
-    return app.inject({
+    return await app.inject({
       method: "POST",
       url: "/webhooks/resend",
       headers: {
@@ -144,13 +144,13 @@ describe("Resend webhooks", () => {
     });
     const invalid = await post(payload("email.delivered"));
     expect(invalid.statusCode).toBe(400);
-    expect(db.select().from(emailDeliveryEvents).all()).toHaveLength(0);
+    expect(await db.select().from(emailDeliveryEvents).all()).toHaveLength(0);
   });
 
   it("projects bounce outcomes and suppresses the recipient transactionally", async () => {
     await post(payload("email.bounced"));
-    expect(db.select().from(emailDeliveries).get()).toMatchObject({ status: "bounced" });
-    expect(db.select().from(emailSuppressions).get()).toMatchObject({
+    expect(await db.select().from(emailDeliveries).get()).toMatchObject({ status: "bounced" });
+    expect(await db.select().from(emailSuppressions).get()).toMatchObject({
       normalizedEmail: RECIPIENT,
       reason: "bounce",
     });
@@ -161,23 +161,23 @@ describe("Resend webhooks", () => {
     const duplicate = await post(payload("email.delivered"));
     expect(duplicate.statusCode).toBe(200);
     expect(duplicate.json()).toMatchObject({ received: true, duplicate: true });
-    expect(db.select().from(emailDeliveryEvents).all()).toHaveLength(1);
+    expect(await db.select().from(emailDeliveryEvents).all()).toHaveLength(1);
   });
 
   it("stores late verified events without reversing terminal outcomes", async () => {
     await post(payload("email.bounced"), "msg_bounce");
     await post(payload("email.delivered"), "msg_late_delivered");
-    expect(db.select().from(emailDeliveries).get()?.status).toBe("bounced");
-    expect(db.select().from(emailDeliveryEvents).all()).toHaveLength(2);
+    expect((await db.select().from(emailDeliveries).get())?.status).toBe("bounced");
+    expect(await db.select().from(emailDeliveryEvents).all()).toHaveLength(2);
   });
 
   it("acknowledges and stores unknown verified types without changing delivery", async () => {
-    const before = db.select().from(emailDeliveries).get()?.status;
+    const before = (await db.select().from(emailDeliveries).get())?.status;
     const response = await post(payload("email.opened"), "msg_opened");
     expect(response.statusCode).toBe(200);
-    expect(db.select().from(emailDeliveries).get()?.status).toBe(before);
+    expect((await db.select().from(emailDeliveries).get())?.status).toBe(before);
     expect(
-      db.select().from(emailDeliveryEvents).where(eq(emailDeliveryEvents.providerEventId, "msg_opened")).get(),
+      await db.select().from(emailDeliveryEvents).where(eq(emailDeliveryEvents.providerEventId, "msg_opened")).get(),
     ).toMatchObject({ eventType: "email.opened" });
   });
 });

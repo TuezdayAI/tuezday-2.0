@@ -73,7 +73,7 @@ describe("generation quality (Sprint 22)", () => {
   }
 
   describe("settings", () => {
-    beforeEach(() => setup(qualityGateway()));
+    beforeEach(async () => await setup(qualityGateway()));
 
     it("returns review-on / angle-off defaults for a fresh workspace", async () => {
       const res = await app.inject({
@@ -102,7 +102,7 @@ describe("generation quality (Sprint 22)", () => {
   });
 
   describe("dual-LLM pre-review", () => {
-    beforeEach(() => setup(qualityGateway()));
+    beforeEach(async () => await setup(qualityGateway()));
 
     it("attaches both checks with scores and flags a weak draft", async () => {
       const res = await generate();
@@ -155,7 +155,7 @@ describe("generation quality (Sprint 22)", () => {
   });
 
   describe("angle step", () => {
-    beforeEach(() => setup(qualityGateway()));
+    beforeEach(async () => await setup(qualityGateway()));
 
     it("drafts from an explicit angle, surfaced in the trace", async () => {
       const res = await generate({ angle: "the contrarian take" });
@@ -190,7 +190,7 @@ describe("generation quality (Sprint 22)", () => {
   });
 
   describe("review carries to the draft", () => {
-    beforeEach(() => setup(qualityGateway()));
+    beforeEach(async () => await setup(qualityGateway()));
 
     it("copies the generation's review onto the submitted draft", async () => {
       const gen = (await generate()).json();

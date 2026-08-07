@@ -4,8 +4,8 @@ import type { Db } from "../db";
 import type { Mailer } from "../mail/mailer";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) void reply.status(404).send({ error: "workspace_not_found" });
   return workspace;
 }
@@ -13,7 +13,7 @@ function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
 export function registerMailRoutes(app: FastifyInstance, db: Db, mailer: Mailer): void {
   // Prove the mailer seam end-to-end (Resend in prod; logs in dev).
   app.post<{ Params: { id: string } }>("/workspaces/:id/mail/test", async (request, reply) => {
-    const workspace = workspaceOr404(db, request.params.id, reply);
+    const workspace = await workspaceOr404(db, request.params.id, reply);
     if (!workspace) return reply;
     const parsed = sendTestMailInputSchema.safeParse(request.body);
     if (!parsed.success) {

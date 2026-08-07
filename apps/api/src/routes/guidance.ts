@@ -14,8 +14,8 @@ import { getCampaign } from "../services/campaigns";
 import { getPersona } from "../services/personas";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -23,17 +23,17 @@ function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
 }
 
 /** Validate an optional persona/campaign scope against the workspace; 404s via reply. */
-function scopeOr404(
+async function scopeOr404(
   db: Db,
   workspaceId: string,
   scope: { personaId?: string; campaignId?: string },
   reply: FastifyReply,
-): GuidanceScope | undefined {
-  if (scope.personaId && !getPersona(db, workspaceId, scope.personaId)) {
+): Promise<GuidanceScope | undefined> {
+  if (scope.personaId && !await getPersona(db, workspaceId, scope.personaId)) {
     void reply.status(404).send({ error: "persona_not_found" });
     return undefined;
   }
-  if (scope.campaignId && !getCampaign(db, workspaceId, scope.campaignId)) {
+  if (scope.campaignId && !await getCampaign(db, workspaceId, scope.campaignId)) {
     void reply.status(404).send({ error: "campaign_not_found" });
     return undefined;
   }
@@ -42,15 +42,15 @@ function scopeOr404(
 
 export function registerGuidanceRoutes(app: FastifyInstance, db: Db): void {
   app.get<{ Params: { id: string } }>("/workspaces/:id/guidance", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return listChannelGuidance(db, request.params.id);
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return await listChannelGuidance(db, request.params.id);
   });
 
   app.get<{ Params: { id: string } }>(
     "/workspaces/:id/guidance/overrides",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      return listScopedGuidance(db, request.params.id);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      return await listScopedGuidance(db, request.params.id);
     },
   );
 
@@ -58,10 +58,10 @@ export function registerGuidanceRoutes(app: FastifyInstance, db: Db): void {
     Params: { id: string; channel: string };
     Querystring: { personaId?: string; campaignId?: string };
   }>("/workspaces/:id/guidance/:channel/effective", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const channel = asChannel(request.params.channel);
     if (!channel) return reply.status(400).send({ error: "invalid_channel" });
-    const resolved = resolveChannelGuidance(db, request.params.id, channel, {
+    const resolved = await resolveChannelGuidance(db, request.params.id, channel, {
       personaId: request.query.personaId ?? null,
       campaignId: request.query.campaignId ?? null,
     });
@@ -79,7 +79,7 @@ export function registerGuidanceRoutes(app: FastifyInstance, db: Db): void {
   app.put<{ Params: { id: string; channel: string } }>(
     "/workspaces/:id/guidance/:channel",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const channel = asChannel(request.params.channel);
       if (!channel) return reply.status(400).send({ error: "invalid_channel" });
       const parsed = updateGuidanceInputSchema.safeParse(request.body);
@@ -89,9 +89,9 @@ export function registerGuidanceRoutes(app: FastifyInstance, db: Db): void {
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      const scope = scopeOr404(db, request.params.id, parsed.data, reply);
+      const scope = await scopeOr404(db, request.params.id, parsed.data, reply);
       if (!scope) return reply;
-      return setChannelGuidance(db, request.params.id, channel, parsed.data.content, scope);
+      return await setChannelGuidance(db, request.params.id, channel, parsed.data.content, scope);
     },
   );
 
@@ -99,10 +99,10 @@ export function registerGuidanceRoutes(app: FastifyInstance, db: Db): void {
     Params: { id: string; channel: string };
     Querystring: { personaId?: string; campaignId?: string };
   }>("/workspaces/:id/guidance/:channel", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const channel = asChannel(request.params.channel);
     if (!channel) return reply.status(400).send({ error: "invalid_channel" });
-    return resetChannelGuidance(db, request.params.id, channel, {
+    return await resetChannelGuidance(db, request.params.id, channel, {
       personaId: request.query.personaId ?? null,
       campaignId: request.query.campaignId ?? null,
     });

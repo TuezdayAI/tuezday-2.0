@@ -47,12 +47,12 @@ function rowToLaneRevision(row: CampaignLaneRevisionRow): CampaignLaneRevision {
   });
 }
 
-export function listLaneRevisionsForPlan(
+export async function listLaneRevisionsForPlan(
   db: Db,
   workspaceId: string,
   planRevisionId: string,
-): CampaignLaneRevisionView[] {
-  return db
+): Promise<CampaignLaneRevisionView[]> {
+  return (await db
     .select()
     .from(campaignLaneRevisions)
     .where(
@@ -61,7 +61,7 @@ export function listLaneRevisionsForPlan(
         eq(campaignLaneRevisions.planRevisionId, planRevisionId),
       ),
     )
-    .all()
+    .all())
     .map((revision) =>
       campaignLaneRevisionViewSchema.parse({
         ...rowToLaneRevision(revision),
@@ -71,15 +71,15 @@ export function listLaneRevisionsForPlan(
     );
 }
 
-export function upsertLaneRevision(
+export async function upsertLaneRevision(
   db: Db,
   workspaceId: string,
   campaignId: string,
   planRevisionId: string,
   input: UpsertCampaignLaneRevisionInput,
-): CampaignLaneRevision {
+): Promise<CampaignLaneRevision> {
   const parsed = upsertCampaignLaneRevisionInputSchema.parse(input);
-  const plan = db
+  const plan = await db
     .select()
     .from(campaignPlanRevisions)
     .where(
@@ -93,14 +93,14 @@ export function upsertLaneRevision(
   if (!plan) throw new CampaignPlanNotFoundError();
   if (plan.status !== "draft") throw new PlanImmutableError();
 
-  const persona = db
+  const persona = await db
     .select({ id: personas.id })
     .from(personas)
     .where(and(eq(personas.id, parsed.personaId), eq(personas.workspaceId, workspaceId)))
     .get();
   if (!persona) throw new CampaignPlanNotFoundError("The lane persona is not in this workspace.");
   if (parsed.audienceId) {
-    const audience = db
+    const audience = await db
       .select({ id: audiences.id })
       .from(audiences)
       .where(and(eq(audiences.id, parsed.audienceId), eq(audiences.workspaceId, workspaceId)))
@@ -110,7 +110,7 @@ export function upsertLaneRevision(
     }
   }
   if (parsed.publishingConnectionId) {
-    const connection = db
+    const connection = await db
       .select({ id: connections.id })
       .from(connections)
       .where(
@@ -126,9 +126,9 @@ export function upsertLaneRevision(
   }
 
   const now = Date.now();
-  return db.transaction((tx) => {
+  return await db.transaction(async (tx) => {
     let lane = input.laneId
-      ? tx
+      ? await tx
           .select()
           .from(campaignLanes)
           .where(
@@ -139,7 +139,7 @@ export function upsertLaneRevision(
             ),
           )
           .get()
-      : tx
+      : await tx
           .select()
           .from(campaignLanes)
           .where(and(eq(campaignLanes.campaignId, campaignId), eq(campaignLanes.key, input.key)))
@@ -156,10 +156,10 @@ export function upsertLaneRevision(
         createdAt: now,
         updatedAt: now,
       };
-      tx.insert(campaignLanes).values(lane).run();
+      await tx.insert(campaignLanes).values(lane).run();
     }
 
-    const existing = tx
+    const existing = await tx
       .select()
       .from(campaignLaneRevisions)
       .where(
@@ -186,7 +186,7 @@ export function upsertLaneRevision(
       status: parsed.status,
     };
     if (existing) {
-      tx.update(campaignLaneRevisions)
+      await tx.update(campaignLaneRevisions)
         .set(columns)
         .where(eq(campaignLaneRevisions.id, existing.id))
         .run();
@@ -200,7 +200,7 @@ export function upsertLaneRevision(
       ...columns,
       createdAt: now,
     };
-    tx.insert(campaignLaneRevisions).values(row).run();
+    await tx.insert(campaignLaneRevisions).values(row).run();
     return rowToLaneRevision(row);
   });
 }

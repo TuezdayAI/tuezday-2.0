@@ -53,7 +53,7 @@ export interface GenerationClaim {
  * regenerate. Claiming transitions the deliverable to `generating` through
  * the machine with an audit event.
  */
-export function claimGenerationBatch(
+export async function claimGenerationBatch(
   db: Db,
   input: {
     workspaceId: string;
@@ -61,12 +61,12 @@ export function claimGenerationBatch(
     leaseMs: number;
     deliverableId?: string;
   },
-): GenerationClaim[] {
+): Promise<GenerationClaim[]> {
   if (input.limit <= 0) return [];
   const now = Date.now();
-  return db.transaction((tx) => {
+  return await db.transaction(async (tx) => {
     const claims: GenerationClaim[] = [];
-    const due = tx
+    const due = await tx
       .select()
       .from(deliverables)
       .where(
@@ -92,7 +92,7 @@ export function claimGenerationBatch(
       if (claims.length >= input.limit) break;
       const from = row.status as DeliverableProductionStatus;
       if (!canTransitionDeliverable(from, "generating")) continue;
-      const claimed = tx
+      const claimed = await tx
         .update(deliverables)
         .set({
           status: "generating",
@@ -110,7 +110,7 @@ export function claimGenerationBatch(
         )
         .run();
       if (claimed.changes !== 1) continue;
-      insertDeliverableEvent(tx, {
+      await insertDeliverableEvent(tx, {
         workspaceId: input.workspaceId,
         deliverableId: row.id,
         fromStatus: from,
@@ -133,9 +133,9 @@ export function claimGenerationBatch(
  * edge), bump attempts, park `failed` at the cap. Never a stored variant
  * (invariant 7).
  */
-export function markGenerationRetryable(db: Db, claim: GenerationClaim): boolean {
-  return db.transaction((tx) => {
-    const row = tx
+export async function markGenerationRetryable(db: Db, claim: GenerationClaim): Promise<boolean> {
+  return await db.transaction(async (tx) => {
+    const row = await tx
       .select()
       .from(deliverables)
       .where(
@@ -150,7 +150,7 @@ export function markGenerationRetryable(db: Db, claim: GenerationClaim): boolean
     if (!canTransitionDeliverable("generating", "ready")) return false;
     const attempts = row.generationAttempts + 1;
     const now = Date.now();
-    tx.update(deliverables)
+    await tx.update(deliverables)
       .set({
         status: "ready",
         generationState: attempts >= GENERATION_MAX_ATTEMPTS ? "failed" : "pending",
@@ -160,7 +160,7 @@ export function markGenerationRetryable(db: Db, claim: GenerationClaim): boolean
       })
       .where(eq(deliverables.id, claim.deliverableId))
       .run();
-    insertDeliverableEvent(tx, {
+    await insertDeliverableEvent(tx, {
       workspaceId: claim.workspaceId,
       deliverableId: claim.deliverableId,
       fromStatus: "generating",
@@ -191,7 +191,7 @@ class VariantContextUnavailableError extends Error {}
  * the latest assessment's supported claims appended as grounding. Everything
  * that reaches the model is captured in the snapshot inputs.
  */
-export function buildVariantContext(
+export async function buildVariantContext(
   db: Db,
   workspace: { id: string; name: string },
   deliverable: {
@@ -202,9 +202,9 @@ export function buildVariantContext(
     planRevisionId: string;
     angle: string;
   },
-): VariantContext {
+): Promise<VariantContext> {
   if (!deliverable.packageId) throw new VariantContextUnavailableError();
-  const lane = db
+  const lane = await db
     .select()
     .from(campaignLaneRevisions)
     .where(eq(campaignLaneRevisions.id, deliverable.laneRevisionId))
@@ -213,18 +213,18 @@ export function buildVariantContext(
   const capability = formatCapability(lane.channel, lane.format);
   if (!capability) throw new VariantContextUnavailableError();
   const channel = lane.channel as Channel;
-  const persona = getPersona(db, workspace.id, lane.personaId);
-  const campaign = getCampaign(db, workspace.id, deliverable.campaignId);
+  const persona = await getPersona(db, workspace.id, lane.personaId);
+  const campaign = await getCampaign(db, workspace.id, deliverable.campaignId);
   if (!persona || !campaign) throw new VariantContextUnavailableError();
 
-  const sources = db
+  const sources = await db
     .select()
     .from(packageSources)
     .where(eq(packageSources.packageId, deliverable.packageId))
     .orderBy(asc(packageSources.createdAt), asc(packageSources.id))
     .all();
   const trigger = sources.find((source) => source.role === "trigger");
-  const assessment = db
+  const assessment = await db
     .select()
     .from(sufficiencyAssessments)
     .where(eq(sufficiencyAssessments.packageId, deliverable.packageId))
@@ -246,15 +246,15 @@ export function buildVariantContext(
     .filter((block) => block.length > 0)
     .join("\n\n");
 
-  const { docs } = getBrain(db, workspace.id);
+  const { docs } = await getBrain(db, workspace.id);
   const contents = Object.fromEntries(
     docs.map((d) => [d.docType, d.content]),
   ) as BrainContents;
-  const channelGuidance = resolveChannelGuidance(db, workspace.id, channel, {
+  const channelGuidance = await resolveChannelGuidance(db, workspace.id, channel, {
     personaId: persona.id,
     campaignId: campaign.id,
   });
-  const campaignInputs = campaignResolveInputs(db, workspace.id, campaign);
+  const campaignInputs = await campaignResolveInputs(db, workspace.id, campaign);
   const resolved = resolveContext({
     workspaceName: workspace.name,
     docs: contents,
@@ -267,7 +267,7 @@ export function buildVariantContext(
     },
     persona: toResolvePersona(persona),
     ...campaignInputs,
-    account: resolveDraftAccount(db, workspace.id, {
+    account: await resolveDraftAccount(db, workspace.id, {
       personaId: persona.id,
       channel,
     }),
@@ -280,7 +280,7 @@ export function buildVariantContext(
           }
         : undefined,
     angle: deliverable.angle || undefined,
-    ...selectiveContextInputs(db, workspace.id),
+    ...await selectiveContextInputs(db, workspace.id),
   });
   return {
     resolved,
@@ -318,7 +318,7 @@ class GenerationFenceError extends Error {}
  * deliverable to `candidate_ready` with an audit event. Lineage is
  * append-only (invariant 4).
  */
-export function commitVariant(
+export async function commitVariant(
   db: Db,
   claim: GenerationClaim,
   input: {
@@ -329,11 +329,11 @@ export function commitVariant(
     durationMs: number;
     actorUserId: string | null;
   },
-): { committed: boolean; variantId: string | null } {
+): Promise<{ committed: boolean; variantId: string | null }> {
   const now = Date.now();
   try {
-    return db.transaction((tx) => {
-      const row = tx
+    return await db.transaction(async (tx) => {
+      const row = await tx
         .select()
         .from(deliverables)
         .where(
@@ -350,7 +350,7 @@ export function commitVariant(
         throw new GenerationFenceError();
       }
       const snapshotId = randomUUID();
-      tx.insert(contextSnapshots)
+      await tx.insert(contextSnapshots)
         .values({
           id: snapshotId,
           workspaceId: claim.workspaceId,
@@ -364,13 +364,13 @@ export function commitVariant(
         })
         .run();
       const version =
-        (tx
+        ((await tx
           .select({ n: sql<number>`MAX(${variants.variantVersion})` })
           .from(variants)
           .where(eq(variants.deliverableId, claim.deliverableId))
-          .get()?.n ?? 0) + 1;
+          .get())?.n ?? 0) + 1;
       const variantId = randomUUID();
-      tx.insert(variants)
+      await tx.insert(variants)
         .values({
           id: variantId,
           workspaceId: claim.workspaceId,
@@ -386,7 +386,7 @@ export function commitVariant(
           createdAt: now,
         })
         .run();
-      tx.update(deliverables)
+      await tx.update(deliverables)
         .set({
           status: "candidate_ready",
           generationState: "complete",
@@ -402,7 +402,7 @@ export function commitVariant(
           ),
         )
         .run();
-      insertDeliverableEvent(tx, {
+      await insertDeliverableEvent(tx, {
         workspaceId: claim.workspaceId,
         deliverableId: claim.deliverableId,
         fromStatus: "generating",
@@ -441,10 +441,10 @@ export async function runVariantGeneration(
   },
 ): Promise<{ generated: number; claimed: number; failures: number }> {
   const result = { generated: 0, claimed: 0, failures: 0 };
-  const workspace = getWorkspace(db, input.workspaceId);
+  const workspace = await getWorkspace(db, input.workspaceId);
   if (!workspace) return result;
-  if (llmBudgetExhausted(db, input.workspaceId)) return result;
-  const claims = claimGenerationBatch(db, {
+  if (await llmBudgetExhausted(db, input.workspaceId)) return result;
+  const claims = await claimGenerationBatch(db, {
     workspaceId: input.workspaceId,
     limit: input.limit,
     leaseMs: input.leaseMs,
@@ -453,10 +453,10 @@ export async function runVariantGeneration(
   result.claimed = claims.length;
   for (const claim of claims) {
     if (input.signal?.aborted) {
-      if (markGenerationRetryable(db, claim)) result.failures += 1;
+      if (await markGenerationRetryable(db, claim)) result.failures += 1;
       continue;
     }
-    const row = db
+    const row = await db
       .select()
       .from(deliverables)
       .where(eq(deliverables.id, claim.deliverableId))
@@ -465,7 +465,7 @@ export async function runVariantGeneration(
     let context: VariantContext;
     let generated: { text: string; model: string; provider: string; durationMs: number };
     try {
-      context = buildVariantContext(db, workspace, row);
+      context = await buildVariantContext(db, workspace, row);
       const metered = meteredLlm(llm, db, {
         workspaceId: input.workspaceId,
         pipeline: "variant_generation",
@@ -480,10 +480,10 @@ export async function runVariantGeneration(
     } catch {
       // Missing context, timeouts, aborts, and gateway trouble: retryable,
       // never a stored variant (invariant 7).
-      if (markGenerationRetryable(db, claim)) result.failures += 1;
+      if (await markGenerationRetryable(db, claim)) result.failures += 1;
       continue;
     }
-    const committed = commitVariant(db, claim, {
+    const committed = await commitVariant(db, claim, {
       context,
       content: generated.text,
       model: generated.model,
@@ -523,12 +523,12 @@ export async function runDeliverablePipeline(
     staled: 0,
     failures: 0,
   };
-  if (!getWorkspace(db, input.workspaceId)) return result;
-  result.slotsMaterialized = materializePlannedSlots(db, {
+  if (!await getWorkspace(db, input.workspaceId)) return result;
+  result.slotsMaterialized = await materializePlannedSlots(db, {
     workspaceId: input.workspaceId,
     now: input.now,
   });
-  const fanned = fanOutDuePackages(db, {
+  const fanned = await fanOutDuePackages(db, {
     workspaceId: input.workspaceId,
     limit: input.limit,
     now: input.now,
@@ -547,7 +547,7 @@ export async function runDeliverablePipeline(
     result.variantsGenerated = generation.generated;
     result.failures = generation.failures;
   }
-  result.staled = sweepStaleDeliverables(db, {
+  result.staled = await sweepStaleDeliverables(db, {
     workspaceId: input.workspaceId,
     now: input.now,
   });

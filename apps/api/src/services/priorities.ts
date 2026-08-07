@@ -150,13 +150,17 @@ export interface ConnectionImpact {
 const CAMPAIGN_FAILURE_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Derive one strongest operational risk for every active campaign. */
-export function deriveCampaignRisks(
+export async function deriveCampaignRisks(
   db: Db,
   workspaceId: string,
   now: number,
-  executionResults: ExecutionResult[] = listExecutionResults(db, workspaceId, { limit: 200 }),
-): PriorityItem[] {
-  const activeCampaigns = db
+  executionResultsArg?: ExecutionResult[],
+): Promise<PriorityItem[]> {
+  // Resolved in the body: the default is a query, and `await` is illegal in a
+  // parameter default initializer.
+  const executionResults =
+    executionResultsArg ?? (await listExecutionResults(db, workspaceId, { limit: 200 }));
+  const activeCampaigns = await db
     .select()
     .from(campaigns)
     .where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.status, "active")))
@@ -165,7 +169,7 @@ export function deriveCampaignRisks(
 
   for (const campaign of activeCampaigns) {
     const lanes = campaign.currentPlanRevisionId
-      ? db
+      ? await db
           .select({
             name: campaignLaneRevisions.name,
             status: campaignLaneRevisions.status,
@@ -193,7 +197,7 @@ export function deriveCampaignRisks(
         result.at >= now - CAMPAIGN_FAILURE_WINDOW_MS &&
         result.at <= now,
     );
-    const overduePublications = db
+    const overduePublications = await db
       .select({ dueAt: publications.scheduledFor })
       .from(publications)
       .innerJoin(drafts, eq(publications.draftId, drafts.id))
@@ -206,7 +210,7 @@ export function deriveCampaignRisks(
         ),
       )
       .all();
-    const overdueActions = db
+    const overdueActions = await db
       .select({ dueAt: externalActions.requestedFor })
       .from(externalActions)
       .where(
@@ -274,23 +278,23 @@ export function deriveCampaignRisks(
 }
 
 /** Identify only durable, currently-live work that depends on a connection. */
-export function connectionImpact(
+export async function connectionImpact(
   db: Db,
   workspaceId: string,
   connectionId: string,
-): ConnectionImpact {
+): Promise<ConnectionImpact> {
   const campaignIds = new Set<string>();
   const dependencies = new Set<string>();
   const activeCampaignIds = new Set(
-    db
+    (await db
       .select({ id: campaigns.id })
       .from(campaigns)
       .where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.status, "active")))
-      .all()
+      .all())
       .map((row) => row.id),
   );
 
-  const liveLaneRows = db
+  const liveLaneRows = await db
     .select({ campaignId: campaignLanes.campaignId })
     .from(campaignLaneRevisions)
     .innerJoin(campaignLanes, eq(campaignLaneRevisions.laneId, campaignLanes.id))
@@ -309,7 +313,7 @@ export function connectionImpact(
   if (liveLaneRows.length > 0) dependencies.add("active campaign lane");
   for (const row of liveLaneRows) campaignIds.add(row.campaignId);
 
-  const publicationRows = db
+  const publicationRows = await db
     .select({ campaignId: drafts.campaignId })
     .from(publications)
     .innerJoin(drafts, eq(publications.draftId, drafts.id))
@@ -326,7 +330,7 @@ export function connectionImpact(
     if (row.campaignId && activeCampaignIds.has(row.campaignId)) campaignIds.add(row.campaignId);
   }
 
-  const scheduledActionRows = db
+  const scheduledActionRows = await db
     .select({ campaignId: externalActions.campaignId })
     .from(externalActions)
     .where(
@@ -343,7 +347,7 @@ export function connectionImpact(
   }
 
   if (
-    db
+    await db
       .select({ id: personaSocialAccounts.id })
       .from(personaSocialAccounts)
       .where(
@@ -358,7 +362,7 @@ export function connectionImpact(
   }
 
   if (
-    db
+    await db
       .select({ id: discoverySources.id })
       .from(discoverySources)
       .where(
@@ -374,7 +378,7 @@ export function connectionImpact(
   }
 
   if (
-    db
+    await db
       .select({ connectionId: crmSyncSettings.connectionId })
       .from(crmSyncSettings)
       .where(
@@ -388,7 +392,7 @@ export function connectionImpact(
     dependencies.add("CRM sync");
   }
 
-  const accountRows = db
+  const accountRows = await db
     .select({ id: adAccounts.id })
     .from(adAccounts)
     .where(
@@ -397,7 +401,7 @@ export function connectionImpact(
     .all();
   if (accountRows.length > 0) dependencies.add("ad account");
   if (accountRows.length > 0) {
-    const adCampaignRows = db
+    const adCampaignRows = await db
       .select({ campaignId: adLaunches.campaignId })
       .from(adLaunches)
       .innerJoin(adAccounts, eq(adLaunches.adAccountId, adAccounts.id))
@@ -428,14 +432,14 @@ export function connectionImpact(
  * agent inbox ranks. There is now exactly one comparator in the codebase that
  * decides what a founder looks at first, and it lives beside the lanes.
  */
-export function collectPriorityItems(
+export async function collectPriorityItems(
   db: Db,
   workspaceId: string,
   now: number = Date.now(),
-): PriorityItem[] {
+): Promise<PriorityItem[]> {
   const items: PriorityItem[] = [];
 
-  const actions = db
+  const actions = (await db
     .select()
     .from(externalActions)
     .where(
@@ -444,7 +448,7 @@ export function collectPriorityItems(
         inArray(externalActions.status, [...ACTION_ATTENTION_STATUSES]),
       ),
     )
-    .all()
+    .all())
     .map(rowToExternalAction);
   for (const action of actions) items.push(actionItem(action));
 
@@ -452,14 +456,14 @@ export function collectPriorityItems(
   const failedActionIds = new Set(
     actions.filter((action) => action.status === "failed").map((action) => action.id),
   );
-  const executionResults = listExecutionResults(db, workspaceId, { limit: 200 });
+  const executionResults = await listExecutionResults(db, workspaceId, { limit: 200 });
   for (const result of executionResults) {
     if (result.status !== "failed" && result.status !== "partially_failed") continue;
     if ((result.externalActionIds ?? []).some((id) => failedActionIds.has(id))) continue;
     items.push(executionItem(workspaceId, result));
   }
 
-  const campaignRows = db
+  const campaignRows = await db
     .select({ id: campaigns.id, name: campaigns.name, status: campaigns.status })
     .from(campaigns)
     .where(eq(campaigns.workspaceId, workspaceId))
@@ -468,7 +472,7 @@ export function collectPriorityItems(
   const activeCampaignIds = new Set(
     campaignRows.filter((row) => row.status === "active").map((row) => row.id),
   );
-  const pending = db
+  const pending = await db
     .select()
     .from(drafts)
     .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.state, "pending_review")))
@@ -489,7 +493,7 @@ export function collectPriorityItems(
     });
   }
 
-  for (const signal of listSignals(db, workspaceId)) {
+  for (const signal of await listSignals(db, workspaceId)) {
     const candidate = signalPriorityCandidate(
       {
         ...signal,
@@ -502,7 +506,7 @@ export function collectPriorityItems(
     if (candidate) items.push(candidate);
   }
 
-  for (const synthesis of listSyntheses(db, workspaceId)) {
+  for (const synthesis of await listSyntheses(db, workspaceId)) {
     if (synthesis.status !== "proposed") continue;
     items.push({
       id: synthesis.id,
@@ -526,9 +530,9 @@ export function collectPriorityItems(
       .map((action) => action.context.connectionId)
       .filter((id): id is string => id !== null),
   );
-  for (const connection of listConnections(db, workspaceId)) {
+  for (const connection of await listConnections(db, workspaceId)) {
     if (connection.status === "connected" || actionConnectionIds.has(connection.id)) continue;
-    const impact = connectionImpact(db, workspaceId, connection.id);
+    const impact = await connectionImpact(db, workspaceId, connection.id);
     if (impact.dependencies.length === 0) continue;
     const campaignId = impact.campaignIds[0] ?? null;
     items.push({
@@ -546,7 +550,7 @@ export function collectPriorityItems(
     });
   }
 
-  items.push(...deriveCampaignRisks(db, workspaceId, now, executionResults));
+  items.push(...await deriveCampaignRisks(db, workspaceId, now, executionResults));
 
   return items;
 }

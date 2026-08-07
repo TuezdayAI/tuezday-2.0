@@ -91,10 +91,10 @@ describe("outreach reply-driven actions + compliance (Sprint 49)", () => {
     return app.inject({ method: "PUT", url: `/workspaces/${workspaceId}/compliance`, payload: { postalAddress: address } });
   }
 
-  function seedGmailConnection(): string {
+  async function seedGmailConnection(): Promise<string> {
     const id = randomUUID();
     const now = Date.now();
-    db.insert(connections).values({
+    await db.insert(connections).values({
       id, workspaceId, providerKey: "gmail", nangoConnectionId: `nango_${id}`, configJson: "{}",
       displayName: "Gmail", status: "connected", contentProfileJson: "{}", createdAt: now, updatedAt: now,
     }).run();
@@ -102,13 +102,13 @@ describe("outreach reply-driven actions + compliance (Sprint 49)", () => {
   }
 
   async function createMailbox(): Promise<string> {
-    const connectionId = seedGmailConnection();
+    const connectionId = await seedGmailConnection();
     const res = await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/mailboxes`, payload: { connectionId } });
     return res.json().id as string;
   }
 
-  function allow(email: string): void {
-    db.insert(emailRecipientPermissions).values({
+  async function allow(email: string): Promise<void> {
+    await db.insert(emailRecipientPermissions).values({
       id: randomUUID(), workspaceId, normalizedEmail: email.toLowerCase(), status: "allowed", createdAt: Date.now(), updatedAt: Date.now(),
     }).run();
   }
@@ -122,7 +122,7 @@ describe("outreach reply-driven actions + compliance (Sprint 49)", () => {
       await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/audiences`, payload: { name: "A", kind: "static" } })
     ).json().id;
     await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/audiences/${audienceId}/members`, payload: { members: [{ type: "lead", id: leadId }] } });
-    allow(email);
+    await allow(email);
     await setCompliance();
     const seqId = (
       await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/outreach-sequences`, payload: { campaignId, personaId, audienceId, name: "Seq", automationMode: "scheduled_auto" } })
@@ -132,7 +132,7 @@ describe("outreach reply-driven actions + compliance (Sprint 49)", () => {
     await app.inject({ method: "PUT", url: `/workspaces/${workspaceId}/outreach-sequences/${seqId}/mailboxes`, payload: { mailboxIds: [mailboxId] } });
     await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/outreach-sequences/${seqId}/activate` });
     await run(); // step 1 sends → enrollment active
-    const enr = db.select().from(outreachEnrollments).where(eq(outreachEnrollments.sequenceId, seqId)).get()!;
+    const enr = (await db.select().from(outreachEnrollments).where(eq(outreachEnrollments.sequenceId, seqId)).get())!;
     return { seqId, enrollmentId: enr.id };
   }
 
@@ -140,17 +140,17 @@ describe("outreach reply-driven actions + compliance (Sprint 49)", () => {
     return (await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/outreach/run` })).json();
   }
 
-  function seedReply(email: string, label: string | null, sinceMs: number, body = "hi"): void {
-    db.insert(inboxItems).values({
-      id: randomUUID(), workspaceId, connectionId: seedGmailConnection(), providerKey: "gmail",
+  async function seedReply(email: string, label: string | null, sinceMs: number, body = "hi"): Promise<void> {
+    await db.insert(inboxItems).values({
+      id: randomUUID(), workspaceId, connectionId: await seedGmailConnection(), providerKey: "gmail",
       kind: "email", channel: "email", externalId: `in_${randomUUID()}`, authorHandle: email, authorName: "R",
       content: body, status: "unread", replyLabel: label, replyLabeledAt: label ? Date.now() : null,
       externalCreatedAt: sinceMs + 1000, createdAt: Date.now(), updatedAt: Date.now(),
     }).run();
   }
 
-  function enrollment(seqId: string) {
-    return db.select().from(outreachEnrollments).where(eq(outreachEnrollments.sequenceId, seqId)).get()!;
+  async function enrollment(seqId: string) {
+    return (await db.select().from(outreachEnrollments).where(eq(outreachEnrollments.sequenceId, seqId)).get())!;
   }
 
   // --- Compliance -----------------------------------------------------------
@@ -184,43 +184,43 @@ describe("outreach reply-driven actions + compliance (Sprint 49)", () => {
 
   it("unsubscribe reply → suppresses + stops", async () => {
     const { seqId } = await activeSequence("a@acme.io");
-    seedReply("a@acme.io", "unsubscribe_request", enrollment(seqId).lastSentAt!);
+    await seedReply("a@acme.io", "unsubscribe_request", (await enrollment(seqId)).lastSentAt!);
     const result = await run();
     expect(result.stopped).toBe(1);
-    expect(enrollment(seqId).status).toBe("stopped");
-    expect(enrollment(seqId).stoppedReason).toBe("unsubscribed");
-    const sup = db.select().from(emailSuppressions).where(eq(emailSuppressions.workspaceId, workspaceId)).all();
+    expect((await enrollment(seqId)).status).toBe("stopped");
+    expect((await enrollment(seqId)).stoppedReason).toBe("unsubscribed");
+    const sup = await db.select().from(emailSuppressions).where(eq(emailSuppressions.workspaceId, workspaceId)).all();
     expect(sup.some((s) => s.normalizedEmail === "a@acme.io")).toBe(true);
     expect(gmail.sendEmail).toHaveBeenCalledTimes(1); // step 2 never sent
   });
 
   it("bounce reply → suppresses + fails the enrollment", async () => {
     const { seqId } = await activeSequence("a@acme.io");
-    seedReply("a@acme.io", "bounce", enrollment(seqId).lastSentAt!);
+    await seedReply("a@acme.io", "bounce", (await enrollment(seqId)).lastSentAt!);
     await run();
-    expect(enrollment(seqId).status).toBe("failed");
-    expect(enrollment(seqId).stoppedReason).toBe("bounced");
-    const sup = db.select().from(emailSuppressions).where(eq(emailSuppressions.workspaceId, workspaceId)).all();
+    expect((await enrollment(seqId)).status).toBe("failed");
+    expect((await enrollment(seqId)).stoppedReason).toBe("bounced");
+    const sup = await db.select().from(emailSuppressions).where(eq(emailSuppressions.workspaceId, workspaceId)).all();
     expect(sup.some((s) => s.normalizedEmail === "a@acme.io" && s.reason === "bounce")).toBe(true);
   });
 
   it("positive reply → stops + notifies (email channel)", async () => {
     // Configure an email notification channel.
-    db.insert(notificationChannels).values({ id: randomUUID(), workspaceId, type: "email", target: "founder@me.io", enabled: true, createdAt: Date.now() }).run();
+    await db.insert(notificationChannels).values({ id: randomUUID(), workspaceId, type: "email", target: "founder@me.io", enabled: true, createdAt: Date.now() }).run();
     const { seqId } = await activeSequence("a@acme.io");
-    seedReply("a@acme.io", "positive", enrollment(seqId).lastSentAt!, "Very interested, let's talk!");
+    await seedReply("a@acme.io", "positive", (await enrollment(seqId)).lastSentAt!, "Very interested, let's talk!");
     await run();
-    expect(enrollment(seqId).status).toBe("replied");
+    expect((await enrollment(seqId)).status).toBe("replied");
     expect(mailer.send).toHaveBeenCalled();
     expect(mailer.sent.some((m) => m.to === "founder@me.io" && /positive reply/i.test(m.subject))).toBe(true);
   });
 
   it("out-of-office reply → pauses (not stopped) and resumes when no newer reply", async () => {
     const { seqId } = await activeSequence("a@acme.io");
-    const sentAt = enrollment(seqId).lastSentAt!;
-    seedReply("a@acme.io", "out_of_office", sentAt, "I am out of office until next week.");
+    const sentAt = (await enrollment(seqId)).lastSentAt!;
+    await seedReply("a@acme.io", "out_of_office", sentAt, "I am out of office until next week.");
     await run();
-    const paused = enrollment(seqId);
+    const paused = await enrollment(seqId);
     expect(paused.status).toBe("active"); // NOT stopped
     expect(paused.nextDueAt!).toBeGreaterThan(Date.now()); // parked in the future
     expect(paused.lastReplyHandledAt).toBeTruthy();
@@ -229,9 +229,9 @@ describe("outreach reply-driven actions + compliance (Sprint 49)", () => {
 
   it("unclassified reply still stops the chain (safe default)", async () => {
     const { seqId } = await activeSequence("a@acme.io");
-    seedReply("a@acme.io", null, enrollment(seqId).lastSentAt!);
+    await seedReply("a@acme.io", null, (await enrollment(seqId)).lastSentAt!);
     await run();
-    expect(enrollment(seqId).status).toBe("replied");
+    expect((await enrollment(seqId)).status).toBe("replied");
   });
 
   // --- Suppression import ---------------------------------------------------

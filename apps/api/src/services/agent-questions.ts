@@ -61,12 +61,12 @@ export interface ListQuestionsOptions {
   limit?: number;
 }
 
-export function listAgentQuestions(
+export async function listAgentQuestions(
   db: Db,
   workspaceId: string,
   options: ListQuestionsOptions = {},
-): AgentQuestion[] {
-  return db
+): Promise<AgentQuestion[]> {
+  return (await db
     .select()
     .from(agentQuestions)
     .where(
@@ -77,16 +77,16 @@ export function listAgentQuestions(
     )
     .orderBy(desc(agentQuestions.createdAt))
     .limit(Math.min(options.limit ?? 50, 100))
-    .all()
+    .all())
     .map(rowToAgentQuestion);
 }
 
-export function getAgentQuestion(
+export async function getAgentQuestion(
   db: Db,
   workspaceId: string,
   questionId: string,
-): AgentQuestion | undefined {
-  const row = db
+): Promise<AgentQuestion | undefined> {
+  const row = await db
     .select()
     .from(agentQuestions)
     .where(and(eq(agentQuestions.workspaceId, workspaceId), eq(agentQuestions.id, questionId)))
@@ -95,13 +95,13 @@ export function getAgentQuestion(
 }
 
 /** Everything one agent run asked — the Inspector's view of a `needs_human` stop. */
-export function listQuestionsForAgentRun(db: Db, agentRunId: string): AgentQuestion[] {
-  return db
+export async function listQuestionsForAgentRun(db: Db, agentRunId: string): Promise<AgentQuestion[]> {
+  return (await db
     .select()
     .from(agentQuestions)
     .where(eq(agentQuestions.agentRunId, agentRunId))
     .orderBy(asc(agentQuestions.createdAt))
-    .all()
+    .all())
     .map(rowToAgentQuestion);
 }
 
@@ -110,11 +110,11 @@ export function listQuestionsForAgentRun(db: Db, agentRunId: string): AgentQuest
  * step's prompt, so the model usually does not have to re-ask at all — the
  * fingerprint check is the safety net for when it does anyway.
  */
-export function listAnsweredQuestionsForPipelineRun(
+export async function listAnsweredQuestionsForPipelineRun(
   db: Db,
   pipelineRunId: string,
-): AgentQuestion[] {
-  return db
+): Promise<AgentQuestion[]> {
+  return (await db
     .select()
     .from(agentQuestions)
     .where(
@@ -124,16 +124,16 @@ export function listAnsweredQuestionsForPipelineRun(
       ),
     )
     .orderBy(asc(agentQuestions.createdAt))
-    .all()
+    .all())
     .map(rowToAgentQuestion);
 }
 
 /** The question that suspended a run: the newest open one it asked. */
-export function openQuestionForPipelineRun(
+export async function openQuestionForPipelineRun(
   db: Db,
   pipelineRunId: string,
-): AgentQuestion | undefined {
-  const row = db
+): Promise<AgentQuestion | undefined> {
+  const row = await db
     .select()
     .from(agentQuestions)
     .where(
@@ -144,15 +144,15 @@ export function openQuestionForPipelineRun(
   return row ? rowToAgentQuestion(row) : undefined;
 }
 
-export function countOpenQuestions(db: Db, workspaceId: string): number {
+export async function countOpenQuestions(db: Db, workspaceId: string): Promise<number> {
   return (
-    db
+    (await db
       .select({ count: sql<number>`count(*)` })
       .from(agentQuestions)
       .where(
         and(eq(agentQuestions.workspaceId, workspaceId), eq(agentQuestions.status, "open")),
       )
-      .get()?.count ?? 0
+      .get())?.count ?? 0
   );
 }
 
@@ -175,7 +175,7 @@ export function createAgentQuestions({ db }: AgentQuestionsDeps): AgentQuestionS
         ? eq(agentQuestions.pipelineRunId, origin.pipelineRunId)
         : eq(agentQuestions.agentRunId, origin.agentRunId);
 
-      const asked = db
+      const asked = await db
         .select()
         .from(agentQuestions)
         .where(scope)
@@ -206,7 +206,7 @@ export function createAgentQuestions({ db }: AgentQuestionsDeps): AgentQuestionS
           note: `This run has already asked ${asked.length} question(s), which is the limit. Proceed on your best reading, or fail the step and say what is missing.`,
         };
       }
-      if (countOpenQuestions(db, origin.workspaceId) >= AGENT_QUESTIONS_OPEN_MAX) {
+      if (await countOpenQuestions(db, origin.workspaceId) >= AGENT_QUESTIONS_OPEN_MAX) {
         return {
           status: "refused",
           error: "workspace_question_backlog",
@@ -215,7 +215,7 @@ export function createAgentQuestions({ db }: AgentQuestionsDeps): AgentQuestionS
       }
 
       const id = randomUUID();
-      db.insert(agentQuestions)
+      await db.insert(agentQuestions)
         .values({
           id,
           workspaceId: origin.workspaceId,
@@ -274,15 +274,15 @@ export interface AnswerQuestionOutcome {
  * not resume anything: the caller decides that, so the read path, the tests and
  * the eventual queue-based resume all share one writer.
  */
-export function answerAgentQuestion(
+export async function answerAgentQuestion(
   db: Db,
   workspaceId: string,
   questionId: string,
   input: AnswerAgentQuestionInput,
   actor: AnswerActor,
   now = Date.now(),
-): AnswerQuestionOutcome {
-  const existing = getAgentQuestion(db, workspaceId, questionId);
+): Promise<AnswerQuestionOutcome> {
+  const existing = await getAgentQuestion(db, workspaceId, questionId);
   if (!existing) throw new AgentQuestionNotFoundError(questionId);
   if (existing.status !== "open") throw new AgentQuestionAlreadyClosedError(existing.status);
 
@@ -290,7 +290,7 @@ export function answerAgentQuestion(
   // out of their prose. Minted before the update so the question can name it.
   let rule: PreferenceRule | null = null;
   if (input.action === "answer" && input.remember) {
-    rule = upsertPreferenceRule(
+    rule = (await upsertPreferenceRule(
       db,
       workspaceId,
       {
@@ -304,10 +304,10 @@ export function answerAgentQuestion(
         origin: "answered_question",
       },
       now,
-    ).rule;
+    )).rule;
   }
 
-  db.update(agentQuestions)
+  await db.update(agentQuestions)
     .set({
       status: input.action === "answer" ? "answered" : "dismissed",
       answer: input.action === "answer" ? (input.answer ?? null) : null,
@@ -319,5 +319,5 @@ export function answerAgentQuestion(
     .where(eq(agentQuestions.id, questionId))
     .run();
 
-  return { question: getAgentQuestion(db, workspaceId, questionId)!, rule };
+  return { question: (await getAgentQuestion(db, workspaceId, questionId))!, rule };
 }

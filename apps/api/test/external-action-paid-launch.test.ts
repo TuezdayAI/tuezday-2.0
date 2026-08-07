@@ -202,16 +202,16 @@ describe("external-action paid launch boundary", () => {
     app.inject({ method: "PUT", url: `/workspaces/${workspaceId}/ads/settings`, payload });
 
   /** Every authorize/deny decision in the workspace's external-action log. */
-  function decisionRows() {
-    return db
+  async function decisionRows() {
+    return await db
       .select()
       .from(externalActionDecisions)
       .where(eq(externalActionDecisions.workspaceId, workspaceId))
       .all();
   }
 
-  function actionRows() {
-    return db.select().from(externalActions).where(eq(externalActions.workspaceId, workspaceId)).all();
+  async function actionRows() {
+    return await db.select().from(externalActions).where(eq(externalActions.workspaceId, workspaceId)).all();
   }
 
   async function setAutonomous() {
@@ -228,7 +228,7 @@ describe("external-action paid launch boundary", () => {
     const early = await act(id, "launch");
     expect(early.statusCode).toBe(409);
     expect(early.json().error).toBe("launch_not_approved");
-    expect(actionRows()).toHaveLength(0);
+    expect(await actionRows()).toHaveLength(0);
   });
 
   it("queues a human-required launch without provider records, then launches exactly once", async () => {
@@ -248,7 +248,7 @@ describe("external-action paid launch boundary", () => {
     const retry = await act(id, "launch");
     expect(retry.statusCode).toBe(202);
     expect(retry.json().action.id).toBe(submission.action.id);
-    expect(actionRows()).toHaveLength(1);
+    expect(await actionRows()).toHaveLength(1);
 
     const authorized = await authorize(submission.action.id);
     expect(authorized.statusCode).toBe(200);
@@ -293,7 +293,7 @@ describe("external-action paid launch boundary", () => {
     expect(launch.decisions.some((d: { toState: string }) => d.toState === "launched")).toBe(false);
 
     // Exactly one authorization, against the real action, by a real person.
-    const authorizations = decisionRows().filter((r) => r.decision === "authorize");
+    const authorizations = (await decisionRows()).filter((r) => r.decision === "authorize");
     expect(authorizations).toHaveLength(1);
     expect(authorizations[0]).toMatchObject({ actionId, actorHuman: true });
     expect(authorizations[0]!.actorUserId).toBeTruthy();
@@ -308,7 +308,7 @@ describe("external-action paid launch boundary", () => {
   it("marks the queued launch stale when the creative changes", async () => {
     const id = await approvedLaunch();
     const queued = await act(id, "launch");
-    db.update(drafts)
+    await db.update(drafts)
       .set({
         content: "Primary text: Edited angle.\nHeadline: New headline\nDescription: New desc",
         updatedAt: Date.now(),
@@ -345,7 +345,7 @@ describe("external-action paid launch boundary", () => {
     // Exactly one refusal, against the real action, by a real person, with the
     // founder's reason on the record. This is the whole answer to "who refused
     // this spend?" — there is no second place to look.
-    const denials = decisionRows().filter((r) => r.decision === "deny");
+    const denials = (await decisionRows()).filter((r) => r.decision === "deny");
     expect(denials).toHaveLength(1);
     expect(denials[0]).toMatchObject({ actionId, actorHuman: true });
     expect(denials[0]!.actorUserId).toBeTruthy();
@@ -364,7 +364,7 @@ describe("external-action paid launch boundary", () => {
     const again = await act(id, "launch");
     expect(again.statusCode).toBe(202);
     expect(again.json().action.id).not.toBe(actionId);
-    expect(decisionRows().filter((r) => r.decision === "deny")).toHaveLength(1);
+    expect((await decisionRows()).filter((r) => r.decision === "deny")).toHaveLength(1);
   });
 
   // Sprint 54 Task 5 — still true, still the real path, but it now proves more
@@ -388,7 +388,7 @@ describe("external-action paid launch boundary", () => {
     expect(res.json().action.status).toBe("blocked");
     expect(res.json().action.blocker.code).toBe("kill_switch_on");
     expect(res.json().action.authorizedAt).toBeNull();
-    expect(decisionRows()).toHaveLength(0);
+    expect(await decisionRows()).toHaveLength(0);
     expect(state.campaignPosts).toBe(0);
     expect((await getLaunch(id)).status).toBe("approved");
   });
@@ -408,7 +408,7 @@ describe("external-action paid launch boundary", () => {
       expect(res.statusCode).toBe(201);
       expect(res.json().action.status).toBe("blocked");
       expect(res.json().action.blocker.code).toBe("kill_switch_on");
-      expect(decisionRows()).toHaveLength(0);
+      expect(await decisionRows()).toHaveLength(0);
       expect(state.campaignPosts).toBe(0);
       expect((await getLaunch(id)).status).toBe("approved");
     });
@@ -419,7 +419,7 @@ describe("external-action paid launch boundary", () => {
       const queued = await act(first, "launch");
       expect(queued.statusCode).toBe(202);
       expect((await authorize(queued.json().action.id)).json().action.status).toBe("succeeded");
-      const afterFirst = decisionRows().length;
+      const afterFirst = (await decisionRows()).length;
 
       // 500 already committed against a cap of 800; another 500 breaches it.
       const second = await approvedLaunch();
@@ -428,7 +428,7 @@ describe("external-action paid launch boundary", () => {
       expect(blocked.json().action.status).toBe("blocked");
       expect(blocked.json().action.blocker.code).toBe("daily_cap_exceeded");
       // Nobody was asked to authorize spend the cap had already refused.
-      expect(decisionRows()).toHaveLength(afterFirst);
+      expect(await decisionRows()).toHaveLength(afterFirst);
 
       // Pausing the first frees its committed budget — the retry reaches the queue.
       expect((await act(first, "pause")).statusCode).toBe(200);
@@ -464,7 +464,7 @@ describe("external-action paid launch boundary", () => {
     expect(after.externalCampaignId).toBe("cmp_1");
     expect(after.lastError).toContain("graph says no");
     expect(
-      db.select().from(adLaunches).where(eq(adLaunches.id, id)).get()?.externalActionId,
+      (await db.select().from(adLaunches).where(eq(adLaunches.id, id)).get())?.externalActionId,
     ).toBe(failed.json().action.id);
 
     state.failOn = null;

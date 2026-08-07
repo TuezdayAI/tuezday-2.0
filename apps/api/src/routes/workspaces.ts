@@ -40,7 +40,7 @@ export function registerWorkspaceRoutes(
         message: parsed.error.issues.map((i) => i.message).join("; "),
       });
     }
-    const workspace = createWorkspace(db, parsed.data, request.actor.userId);
+    const workspace = await createWorkspace(db, parsed.data, request.actor.userId);
     if (workspace.websiteUrl) {
       // Onboarding Step 2: reading starts the moment the URL lands. The run
       // never throws; failures land in the brand_profiles row.
@@ -51,11 +51,11 @@ export function registerWorkspaceRoutes(
 
   app.get("/workspaces", async (request) =>
     // The worker's system actor polls every workspace; users see their own.
-    request.actor.system ? listWorkspaces(db) : listWorkspacesForUser(db, request.actor.userId!),
+    request.actor.system ? await listWorkspaces(db) : await listWorkspacesForUser(db, request.actor.userId!),
   );
 
   app.get<{ Params: { id: string } }>("/workspaces/:id", async (request, reply) => {
-    const workspace = getWorkspace(db, request.params.id);
+    const workspace = await getWorkspace(db, request.params.id);
     if (!workspace) {
       return reply.status(404).send({ error: "workspace_not_found" });
     }
@@ -76,26 +76,26 @@ export function registerWorkspaceRoutes(
       const target = step as OnboardingCursor;
       const connectIdx = ONBOARDING_CURSORS.indexOf("connect");
       const targetIdx = ONBOARDING_CURSORS.indexOf(target);
-      if (target !== "done" && targetIdx > connectIdx && !hasSocialConnection(db, request.params.id)) {
+      if (target !== "done" && targetIdx > connectIdx && !await hasSocialConnection(db, request.params.id)) {
         return reply.status(409).send({
           error: "needs_social_connection",
           message: "Connect at least one social account (LinkedIn, X, or Instagram) to continue.",
         });
       }
-      const updated = advanceOnboarding(db, request.params.id, target);
+      const updated = await advanceOnboarding(db, request.params.id, target);
       if (!updated) return reply.status(404).send({ error: "workspace_not_found" });
       return updated;
     },
   );
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/analytics-optout", async (request, reply) => {
-    const workspace = getWorkspace(db, request.params.id);
+    const workspace = await getWorkspace(db, request.params.id);
     if (!workspace) return reply.status(404).send({ error: "workspace_not_found" });
-    return { optOut: getAnalyticsOptOut(db, request.params.id) };
+    return { optOut: await getAnalyticsOptOut(db, request.params.id) };
   });
 
   app.put<{ Params: { id: string } }>("/workspaces/:id/analytics-optout", async (request, reply) => {
-    const workspace = getWorkspace(db, request.params.id);
+    const workspace = await getWorkspace(db, request.params.id);
     if (!workspace) return reply.status(404).send({ error: "workspace_not_found" });
     const parsed = setAnalyticsOptOutInputSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -104,18 +104,18 @@ export function registerWorkspaceRoutes(
         message: parsed.error.issues.map((i) => i.message).join("; "),
       });
     }
-    setAnalyticsOptOut(db, request.params.id, parsed.data.optOut);
+    await setAnalyticsOptOut(db, request.params.id, parsed.data.optOut);
     return { optOut: parsed.data.optOut };
   });
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/capabilities", async (request, reply) => {
-    const workspace = getWorkspace(db, request.params.id);
+    const workspace = await getWorkspace(db, request.params.id);
     if (!workspace) return reply.status(404).send({ error: "workspace_not_found" });
     
-    const connections = listConnections(db, request.params.id);
-    const adAccounts = listAdAccounts(db, request.params.id);
-    const drafts = listDrafts(db, request.params.id, "pending_review");
-    const generations = listGenerations(db, request.params.id);
+    const connections = await listConnections(db, request.params.id);
+    const adAccounts = await listAdAccounts(db, request.params.id);
+    const drafts = await listDrafts(db, request.params.id, "pending_review");
+    const generations = await listGenerations(db, request.params.id);
     
     const progress = integrationProgress(CONNECTOR_PROVIDERS, connections);
     return {

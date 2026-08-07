@@ -22,7 +22,7 @@ export function registerPublicApiRoutes(app: TuezdayApp, db: Db): void {
         }
         const actor = request.apiActor!;
         try {
-          const signal = createSignal(db, actor.workspaceId, parsed.data);
+          const signal = await createSignal(db, actor.workspaceId, parsed.data);
           return reply.status(201).send(signal);
         } catch (err) {
           if (err instanceof SignalReferenceNotFoundError) {
@@ -39,7 +39,7 @@ export function registerPublicApiRoutes(app: TuezdayApp, db: Db): void {
       { preHandler: [requireScope("drafts:read")] },
       async (request, reply) => {
         const actor = request.apiActor!;
-        const drafts = listDrafts(db, actor.workspaceId, "pending_review");
+        const drafts = await listDrafts(db, actor.workspaceId, "pending_review");
         return drafts;
       }
     );
@@ -50,11 +50,11 @@ export function registerPublicApiRoutes(app: TuezdayApp, db: Db): void {
       { preHandler: [requireScope("drafts:write")] },
       async (request, reply) => {
         const actor = request.apiActor!;
-        const draft = getDraft(db, actor.workspaceId, request.params.id);
+        const draft = await getDraft(db, actor.workspaceId, request.params.id);
         if (!draft) return reply.status(404).send({ error: "not_found" });
 
         try {
-          const updated = applyDraftAction(
+          const updated = await applyDraftAction(
             db,
             draft,
             "approve",
@@ -77,11 +77,11 @@ export function registerPublicApiRoutes(app: TuezdayApp, db: Db): void {
       { preHandler: [requireScope("drafts:write")] },
       async (request, reply) => {
         const actor = request.apiActor!;
-        const draft = getDraft(db, actor.workspaceId, request.params.id);
+        const draft = await getDraft(db, actor.workspaceId, request.params.id);
         if (!draft) return reply.status(404).send({ error: "not_found" });
 
         try {
-          const updated = applyDraftAction(
+          const updated = await applyDraftAction(
             db,
             draft,
             "reject",
@@ -108,7 +108,7 @@ export function registerPublicApiRoutes(app: TuezdayApp, db: Db): void {
           return reply.status(400).send({ error: "invalid_input" });
         }
         const actor = request.apiActor!;
-        const launch = createLaunch(db, actor.workspaceId, parsed.data);
+        const launch = await createLaunch(db, actor.workspaceId, parsed.data);
         return reply.status(201).send(launch);
       }
     );
@@ -128,7 +128,7 @@ export function registerPublicApiRoutes(app: TuezdayApp, db: Db): void {
         }
 
         // Return workspace-level insights
-        const insights = insightsService.getWorkspaceInsights(db, actor.workspaceId);
+        const insights = await insightsService.getWorkspaceInsights(db, actor.workspaceId);
         return reply.status(200).send(insights);
       }
     );

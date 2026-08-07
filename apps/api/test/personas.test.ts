@@ -328,7 +328,7 @@ describe("personas API", () => {
     const otherAccount = await connectSocial("linkedin", "nango-linkedin-other");
     await assign(persona.id, ceoAccount.id, "linkedin", true);
 
-    const primary = resolvePersonaSocialConnection(db, workspaceId, {
+    const primary = await resolvePersonaSocialConnection(db, workspaceId, {
       personaId: persona.id,
       providerKey: "linkedin",
       channel: "linkedin",
@@ -337,7 +337,7 @@ describe("personas API", () => {
     if (!primary.ok) throw new Error(primary.error);
     expect(primary.connection.id).toBe(ceoAccount.id);
 
-    const mismatch = resolvePersonaSocialConnection(db, workspaceId, {
+    const mismatch = await resolvePersonaSocialConnection(db, workspaceId, {
       personaId: persona.id,
       providerKey: "linkedin",
       channel: "linkedin",
@@ -352,7 +352,7 @@ describe("personas API", () => {
     const persona = await createPersona("CEO");
     const account = await connectSocial("linkedin", "nango-linkedin-manual");
 
-    const missing = resolvePersonaSocialConnection(db, workspaceId, {
+    const missing = await resolvePersonaSocialConnection(db, workspaceId, {
       personaId: persona.id,
       providerKey: "linkedin",
       channel: "linkedin",
@@ -361,7 +361,7 @@ describe("personas API", () => {
     if (missing.ok) throw new Error("expected persona_account_missing");
     expect(missing.error).toBe("persona_account_missing");
 
-    const explicit = resolvePersonaSocialConnection(db, workspaceId, {
+    const explicit = await resolvePersonaSocialConnection(db, workspaceId, {
       personaId: null,
       providerKey: "linkedin",
       channel: "linkedin",

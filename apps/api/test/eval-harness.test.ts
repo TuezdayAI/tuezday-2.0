@@ -135,10 +135,10 @@ describe("Sprint 67 — eval & replay harness", () => {
     return { approvedId: approved.id, editedId: edited.id, rejectedId: rejected.id };
   }
 
-  function activateDefinition(): string {
-    ensurePipelineDefinitions(db, workspaceId);
-    const definition = listPipelineDefinitions(db, workspaceId)[0]!;
-    setPipelineStatus(db, workspaceId, definition.id, "active");
+  async function activateDefinition(): Promise<string> {
+    await ensurePipelineDefinitions(db, workspaceId);
+    const definition = (await listPipelineDefinitions(db, workspaceId))[0]!;
+    await setPipelineStatus(db, workspaceId, definition.id, "active");
     return definition.id;
   }
 
@@ -157,7 +157,7 @@ describe("Sprint 67 — eval & replay harness", () => {
   describe("buildEvalSuite (D-67.2)", () => {
     it("classifies each decided draft by what the founder actually did", async () => {
       await seedHistory();
-      const { suite, cases } = buildEvalSuite(
+      const { suite, cases } = await buildEvalSuite(
         db,
         workspaceId,
         { name: "baseline", channel: "linkedin", ctaExpectation: "any", limit: 20 },
@@ -177,19 +177,19 @@ describe("Sprint 67 — eval & replay harness", () => {
 
     it("survives its source draft being deleted, snapshots intact", async () => {
       const { approvedId } = await seedHistory();
-      const { suite } = buildEvalSuite(
+      const { suite } = await buildEvalSuite(
         db,
         workspaceId,
         { name: "frozen", channel: "linkedin", ctaExpectation: "any", limit: 20 },
         { userId: null },
       );
-      const before = listEvalCases(db, workspaceId, suite.id).find(
+      const before = (await listEvalCases(db, workspaceId, suite.id)).find(
         (entry) => entry.sourceDraftId === approvedId,
       )!;
 
-      db.delete(drafts).where(eq(drafts.id, approvedId)).run();
+      await db.delete(drafts).where(eq(drafts.id, approvedId)).run();
 
-      const after = listEvalCases(db, workspaceId, suite.id).find(
+      const after = (await listEvalCases(db, workspaceId, suite.id)).find(
         (entry) => entry.id === before.id,
       )!;
       // The FK went null; the frozen content did not (D-67.2).
@@ -199,8 +199,8 @@ describe("Sprint 67 — eval & replay harness", () => {
       expect(after.outcome).toBe("approved");
     });
 
-    it("builds an empty suite when the gate has no history", () => {
-      const { suite, cases } = buildEvalSuite(
+    it("builds an empty suite when the gate has no history", async () => {
+      const { suite, cases } = await buildEvalSuite(
         db,
         workspaceId,
         { name: "empty", channel: "linkedin", ctaExpectation: "any", limit: 20 },
@@ -212,7 +212,7 @@ describe("Sprint 67 — eval & replay harness", () => {
 
     it("only takes drafts on the requested channel", async () => {
       await seedHistory();
-      const { suite } = buildEvalSuite(
+      const { suite } = await buildEvalSuite(
         db,
         workspaceId,
         { name: "x-only", channel: "x", ctaExpectation: "any", limit: 20 },
@@ -225,8 +225,8 @@ describe("Sprint 67 — eval & replay harness", () => {
   describe("runEvalSuite", () => {
     it("replays every case and scores it against the founder's decision", async () => {
       await seedHistory();
-      activateDefinition();
-      const { suite } = buildEvalSuite(
+      await activateDefinition();
+      const { suite } = await buildEvalSuite(
         db,
         workspaceId,
         { name: "replay", channel: "linkedin", ctaExpectation: "any", limit: 20 },
@@ -262,9 +262,9 @@ describe("Sprint 67 — eval & replay harness", () => {
 
     it("flags a draft that trips a hard check, which is how it catches a rejection", async () => {
       await seedHistory();
-      activateDefinition();
-      addBannedClaim(db, workspaceId, { phrase: "the only platform that", note: "" });
-      const { suite } = buildEvalSuite(
+      await activateDefinition();
+      await addBannedClaim(db, workspaceId, { phrase: "the only platform that", note: "" });
+      const { suite } = await buildEvalSuite(
         db,
         workspaceId,
         { name: "banned", channel: "linkedin", ctaExpectation: "any", limit: 20 },
@@ -292,8 +292,8 @@ describe("Sprint 67 — eval & replay harness", () => {
 
     it("grounds citations in what that run actually retrieved (D-67.6)", async () => {
       await seedHistory();
-      activateDefinition();
-      const { suite } = buildEvalSuite(
+      await activateDefinition();
+      const { suite } = await buildEvalSuite(
         db,
         workspaceId,
         { name: "citations", channel: "linkedin", ctaExpectation: "any", limit: 20 },
@@ -327,15 +327,15 @@ describe("Sprint 67 — eval & replay harness", () => {
 
     it("records a case whose signal was deleted as a failure, not a pass", async () => {
       await seedHistory();
-      activateDefinition();
-      const { suite, cases } = buildEvalSuite(
+      await activateDefinition();
+      const { suite, cases } = await buildEvalSuite(
         db,
         workspaceId,
         { name: "orphan", channel: "linkedin", ctaExpectation: "any", limit: 20 },
         { userId: null },
       );
       // The case survives its source being deleted (set-null FK); the replay cannot.
-      db.delete(signals).where(eq(signals.id, cases[0]!.signalId!)).run();
+      await db.delete(signals).where(eq(signals.id, cases[0]!.signalId!)).run();
       const { deps } = depsFor([...caseScript(CLEAN), ...caseScript(CLEAN)]);
 
       const run = await runEvalSuite(
@@ -353,7 +353,7 @@ describe("Sprint 67 — eval & replay harness", () => {
 
     it("refuses to run without a suite or an active definition", async () => {
       await seedHistory();
-      const { suite } = buildEvalSuite(
+      const { suite } = await buildEvalSuite(
         db,
         workspaceId,
         { name: "no-definition", channel: "linkedin", ctaExpectation: "any", limit: 20 },
@@ -361,12 +361,12 @@ describe("Sprint 67 — eval & replay harness", () => {
       );
       const { deps } = depsFor([]);
       await expect(
-        runEvalSuite(db, deps, workspaceId, { suiteId: suite.id, judge: false }, { userId: null, label: "f" }),
+        await runEvalSuite(db, deps, workspaceId, { suiteId: suite.id, judge: false }, { userId: null, label: "f" }),
       ).rejects.toBeInstanceOf(EvalDefinitionUnavailableError);
 
-      activateDefinition();
+      await activateDefinition();
       await expect(
-        runEvalSuite(
+        await runEvalSuite(
           db,
           deps,
           workspaceId,
@@ -380,8 +380,8 @@ describe("Sprint 67 — eval & replay harness", () => {
   describe("baselines (D-67.3)", () => {
     async function twoRuns() {
       await seedHistory();
-      activateDefinition();
-      const { suite } = buildEvalSuite(
+      await activateDefinition();
+      const { suite } = await buildEvalSuite(
         db,
         workspaceId,
         { name: "baseline", channel: "linkedin", ctaExpectation: "any", limit: 20 },
@@ -408,20 +408,20 @@ describe("Sprint 67 — eval & replay harness", () => {
     it("labels a run at creation and finds it as the baseline", async () => {
       const { first } = await twoRuns();
       expect(first.baselineLabel).toBe("pre-66");
-      expect(findBaselineRun(db, workspaceId, "pre-66")!.id).toBe(first.id);
+      expect((await findBaselineRun(db, workspaceId, "pre-66"))!.id).toBe(first.id);
     });
 
     it("moves a label rather than failing on the unique index", async () => {
       const { first, second } = await twoRuns();
-      labelBaseline(db, workspaceId, second.id, "pre-66");
-      const runs = listEvalRuns(db, workspaceId);
+      await labelBaseline(db, workspaceId, second.id, "pre-66");
+      const runs = await listEvalRuns(db, workspaceId);
       expect(runs.find((run) => run.id === second.id)!.baselineLabel).toBe("pre-66");
       expect(runs.find((run) => run.id === first.id)!.baselineLabel).toBeNull();
     });
 
     it("compares a later run against the labelled baseline", async () => {
       const { second } = await twoRuns();
-      const comparison = getEvalComparison(db, workspaceId, second.id)!;
+      const comparison = (await getEvalComparison(db, workspaceId, second.id))!;
       expect(comparison.baselineLabel).toBe("pre-66");
       expect(comparison.ok).toBe(true);
       expect(comparison.regressions).toEqual([]);

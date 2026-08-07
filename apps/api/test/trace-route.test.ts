@@ -70,11 +70,11 @@ describe("the trace surface over HTTP (Sprint 71)", () => {
     await app.close();
   });
 
-  function seedDraft(): string {
+  async function seedDraft(): Promise<string> {
     const generationId = randomUUID();
     const draftId = randomUUID();
     const resolved = bundle();
-    db.insert(generations)
+    await db.insert(generations)
       .values({
         id: generationId,
         workspaceId,
@@ -89,7 +89,7 @@ describe("the trace surface over HTTP (Sprint 71)", () => {
         createdAt: 20,
       })
       .run();
-    db.insert(drafts)
+    await db.insert(drafts)
       .values({
         id: draftId,
         workspaceId,
@@ -110,7 +110,7 @@ describe("the trace surface over HTTP (Sprint 71)", () => {
   const traceUrl = (kind: string, id: string) => `/workspaces/${workspaceId}/trace/${kind}/${id}`;
 
   it("serves a draft's trace under the contract", async () => {
-    const draftId = seedDraft();
+    const draftId = await seedDraft();
     const res = await app.inject({ method: "GET", url: traceUrl("draft", draftId) });
     expect(res.statusCode).toBe(200);
     const trace = artifactTraceSchema.parse(res.json());
@@ -132,7 +132,7 @@ describe("the trace surface over HTTP (Sprint 71)", () => {
   });
 
   it("traces a deliverable through its latest variant's context snapshot", async () => {
-    const revision = createPlanRevision(
+    const revision = await createPlanRevision(
       db,
       workspaceId,
       campaignId,
@@ -150,7 +150,7 @@ describe("the trace surface over HTTP (Sprint 71)", () => {
       },
       ACTOR,
     );
-    const lane = upsertLaneRevision(
+    const lane = await upsertLaneRevision(
       db,
       workspaceId,
       campaignId,
@@ -172,10 +172,10 @@ describe("the trace surface over HTTP (Sprint 71)", () => {
         status: "active",
       },
     );
-    activatePlanRevision(db, workspaceId, campaignId, revision.id);
+    await activatePlanRevision(db, workspaceId, campaignId, revision.id);
 
     const deliverableId = randomUUID();
-    db.insert(deliverables)
+    await db.insert(deliverables)
       .values({
         id: deliverableId,
         workspaceId,
@@ -194,7 +194,7 @@ describe("the trace surface over HTTP (Sprint 71)", () => {
       })
       .run();
     const snapshotId = randomUUID();
-    db.insert(contextSnapshots)
+    await db.insert(contextSnapshots)
       .values({
         id: snapshotId,
         workspaceId,
@@ -207,7 +207,7 @@ describe("the trace surface over HTTP (Sprint 71)", () => {
         createdAt: 31,
       })
       .run();
-    db.insert(variants)
+    await db.insert(variants)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -235,8 +235,8 @@ describe("the trace surface over HTTP (Sprint 71)", () => {
   });
 
   it("reports knob usage for the deletion decision", async () => {
-    seedDraft();
-    db.insert(guidanceOverrides)
+    await seedDraft();
+    await db.insert(guidanceOverrides)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -267,7 +267,7 @@ describe("the trace surface over HTTP (Sprint 71)", () => {
   });
 
   it("keeps one workspace's reasoning out of another's", async () => {
-    const draftId = seedDraft();
+    const draftId = await seedDraft();
     const stranger = await registerUser(app, "stranger@test.dev", "Stranger");
     for (const url of [traceUrl("draft", draftId), `/workspaces/${workspaceId}/knob-usage`]) {
       const res = await app.inject({

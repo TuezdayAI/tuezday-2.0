@@ -20,13 +20,13 @@ function sha256(data: string): string {
  * Mint a signed, one-time action token for a draft action (approve/reject).
  * Returns the raw token string. The sha256 is persisted for lookup.
  */
-export function mintActionToken(
+export async function mintActionToken(
   db: Db,
   workspaceId: string,
   draftId: string,
   action: "approve" | "reject",
   ttlMs = 7 * 24 * 60 * 60 * 1000,
-): string {
+): Promise<string> {
   const id = randomUUID();
   const exp = Date.now() + ttlMs;
   const payload = `${id}.${draftId}.${action}.${exp}`;
@@ -34,7 +34,7 @@ export function mintActionToken(
   const raw = Buffer.from(`${payload}.${hmac}`).toString("base64url");
   const tokenHash = sha256(raw);
 
-  db.insert(approvalActionTokens)
+  await db.insert(approvalActionTokens)
     .values({
       id,
       tokenHash,
@@ -57,7 +57,7 @@ export type VerifyResult =
  * Verify and burn a raw action token. Returns the action payload on success,
  * or an error reason. A token can only be used once.
  */
-export function verifyAndBurn(db: Db, raw: string): VerifyResult {
+export async function verifyAndBurn(db: Db, raw: string): Promise<VerifyResult> {
   // Decode and verify HMAC
   let decoded: string;
   try {
@@ -76,7 +76,7 @@ export function verifyAndBurn(db: Db, raw: string): VerifyResult {
 
   // Look up by hash
   const tokenHash = sha256(raw);
-  const row = db
+  const row = await db
     .select()
     .from(approvalActionTokens)
     .where(eq(approvalActionTokens.tokenHash, tokenHash))
@@ -87,7 +87,7 @@ export function verifyAndBurn(db: Db, raw: string): VerifyResult {
   if (Date.now() > row.expiresAt) return { ok: false, error: "expired" };
 
   // Burn: mark as used
-  db.update(approvalActionTokens)
+  await db.update(approvalActionTokens)
     .set({ usedAt: Date.now() })
     .where(eq(approvalActionTokens.id, row.id))
     .run();

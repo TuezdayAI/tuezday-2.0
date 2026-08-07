@@ -107,10 +107,10 @@ describe("outreach sequences (Sprint 48)", () => {
     await app.close();
   });
 
-  function seedMailboxConnection(): string {
+  async function seedMailboxConnection(): Promise<string> {
     const id = randomUUID();
     const now = Date.now();
-    db.insert(connections).values({
+    await db.insert(connections).values({
       id,
       workspaceId,
       providerKey: "gmail",
@@ -127,7 +127,7 @@ describe("outreach sequences (Sprint 48)", () => {
 
   async function createMailbox(address: string): Promise<string> {
     gmail.address = address;
-    const connectionId = seedMailboxConnection();
+    const connectionId = await seedMailboxConnection();
     const res = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/mailboxes`,
@@ -159,8 +159,8 @@ describe("outreach sequences (Sprint 48)", () => {
     return audienceId;
   }
 
-  function allowRecipient(email: string): void {
-    db.insert(emailRecipientPermissions).values({
+  async function allowRecipient(email: string): Promise<void> {
+    await db.insert(emailRecipientPermissions).values({
       id: randomUUID(),
       workspaceId,
       normalizedEmail: email.toLowerCase(),
@@ -213,8 +213,8 @@ describe("outreach sequences (Sprint 48)", () => {
     return res.json();
   }
 
-  function enrollmentsFor(seqId: string) {
-    return db.select().from(outreachEnrollments).where(eq(outreachEnrollments.sequenceId, seqId)).all();
+  async function enrollmentsFor(seqId: string) {
+    return await db.select().from(outreachEnrollments).where(eq(outreachEnrollments.sequenceId, seqId)).all();
   }
 
   // --- CRUD & activation ----------------------------------------------------
@@ -257,12 +257,12 @@ describe("outreach sequences (Sprint 48)", () => {
   it("auto-enrolls segment members and assigns a pooled mailbox", async () => {
     const mailboxId = await createMailbox("sales@gmail.com");
     const leadId = await createLead("a@acme.io");
-    allowRecipient("a@acme.io");
+    await allowRecipient("a@acme.io");
     const seqId = await makeSequence({ audienceId: await staticAudience([leadId]), mailboxIds: [mailboxId] });
 
     const result = await run();
     expect(result.enrolled).toBe(1);
-    const [enr] = enrollmentsFor(seqId);
+    const [enr] = await enrollmentsFor(seqId);
     expect(enr!.recipientEmail).toBe("a@acme.io");
     expect(enr!.mailboxId).toBe(mailboxId);
   });
@@ -271,19 +271,19 @@ describe("outreach sequences (Sprint 48)", () => {
     const mailboxId = await createMailbox("sales@gmail.com");
     const a = await createLead("a@acme.io");
     const b = await createLead("b@acme.io");
-    allowRecipient("a@acme.io");
+    await allowRecipient("a@acme.io");
     // b is suppressed
-    db.insert(emailSuppressions).values({ id: randomUUID(), workspaceId, normalizedEmail: "b@acme.io", reason: "unsubscribe", createdAt: Date.now() }).run();
+    await db.insert(emailSuppressions).values({ id: randomUUID(), workspaceId, normalizedEmail: "b@acme.io", reason: "unsubscribe", createdAt: Date.now() }).run();
 
     // Manual sequences hold enrollments active so the global lock is observable.
     const seq1 = await makeSequence({ audienceId: await staticAudience([a, b]), mailboxIds: [mailboxId], automationMode: "manual" });
     const r1 = await run();
     expect(r1.enrolled).toBe(1); // a only (b suppressed)
-    expect(enrollmentsFor(seq1)).toHaveLength(1);
+    expect(await enrollmentsFor(seq1)).toHaveLength(1);
 
     const seq2 = await makeSequence({ audienceId: await staticAudience([a]), mailboxIds: [mailboxId], automationMode: "manual" });
     await run();
-    expect(enrollmentsFor(seq2)).toHaveLength(0); // a is already active elsewhere
+    expect(await enrollmentsFor(seq2)).toHaveLength(0); // a is already active elsewhere
   });
 
   it("honors the per-sequence daily enrollment cap", async () => {
@@ -291,7 +291,7 @@ describe("outreach sequences (Sprint 48)", () => {
     const leads = [];
     for (let i = 0; i < 3; i++) {
       const id = await createLead(`c${i}@acme.io`);
-      allowRecipient(`c${i}@acme.io`);
+      await allowRecipient(`c${i}@acme.io`);
       leads.push(id);
     }
     const seqId = (
@@ -307,7 +307,7 @@ describe("outreach sequences (Sprint 48)", () => {
 
     const result = await run();
     expect(result.enrolled).toBe(2); // capped
-    expect(enrollmentsFor(seqId)).toHaveLength(2);
+    expect(await enrollmentsFor(seqId)).toHaveLength(2);
   });
 
   // --- Dispatch by automation mode -----------------------------------------
@@ -315,26 +315,26 @@ describe("outreach sequences (Sprint 48)", () => {
   it("scheduled_auto generates, auto-approves, and sends from the mailbox", async () => {
     const mailboxId = await createMailbox("sales@gmail.com");
     const leadId = await createLead("a@acme.io");
-    allowRecipient("a@acme.io");
+    await allowRecipient("a@acme.io");
     const seqId = await makeSequence({ audienceId: await staticAudience([leadId]), mailboxIds: [mailboxId] });
 
     const result = await run();
     expect(result.dispatched).toBe(1);
     expect(gmail.sendEmail).toHaveBeenCalledTimes(1);
-    expect(enrollmentsFor(seqId)[0]!.lastThreadId).toBeTruthy(); // threaded on send
+    expect((await enrollmentsFor(seqId))[0]!.lastThreadId).toBeTruthy(); // threaded on send
     await run(); // completion is finalized on the tick after the last send
-    expect(enrollmentsFor(seqId)[0]!.status).toBe("completed");
+    expect((await enrollmentsFor(seqId))[0]!.status).toBe("completed");
   });
 
   it("human_in_the_loop waits for approval before sending", async () => {
     const mailboxId = await createMailbox("sales@gmail.com");
     const leadId = await createLead("a@acme.io");
-    allowRecipient("a@acme.io");
+    await allowRecipient("a@acme.io");
     const seqId = await makeSequence({ audienceId: await staticAudience([leadId]), mailboxIds: [mailboxId], automationMode: "human_in_the_loop" });
 
     await run();
     expect(gmail.sendEmail).not.toHaveBeenCalled(); // pending review
-    const msg = db.select().from(outreachMessages).where(eq(outreachMessages.workspaceId, workspaceId)).get();
+    const msg = await db.select().from(outreachMessages).where(eq(outreachMessages.workspaceId, workspaceId)).get();
     expect(msg!.status).toBe("pending");
 
     // Approve the draft, then a second run dispatches it.
@@ -347,14 +347,14 @@ describe("outreach sequences (Sprint 48)", () => {
   it("manual mode enrolls but never sends", async () => {
     const mailboxId = await createMailbox("sales@gmail.com");
     const leadId = await createLead("a@acme.io");
-    allowRecipient("a@acme.io");
+    await allowRecipient("a@acme.io");
     const seqId = await makeSequence({ audienceId: await staticAudience([leadId]), mailboxIds: [mailboxId], automationMode: "manual" });
 
     const result = await run();
     expect(result.enrolled).toBe(1);
     expect(result.generated).toBe(0);
     expect(gmail.sendEmail).not.toHaveBeenCalled();
-    expect(enrollmentsFor(seqId)[0]!.status).toBe("active");
+    expect((await enrollmentsFor(seqId))[0]!.status).toBe("active");
   });
 
   // --- Follow-ups + stop-on-reply ------------------------------------------
@@ -362,7 +362,7 @@ describe("outreach sequences (Sprint 48)", () => {
   it("fires a follow-up on delay, threaded, without repeating", async () => {
     const mailboxId = await createMailbox("sales@gmail.com");
     const leadId = await createLead("a@acme.io");
-    allowRecipient("a@acme.io");
+    await allowRecipient("a@acme.io");
     const seqId = await makeSequence({
       audienceId: await staticAudience([leadId]),
       mailboxIds: [mailboxId],
@@ -377,13 +377,13 @@ describe("outreach sequences (Sprint 48)", () => {
     expect(gmail.sendEmail).toHaveBeenCalledTimes(2);
     expect(gmail.sends[1]!.threadId).toBeTruthy();
     await run(); // completion tick
-    expect(enrollmentsFor(seqId)[0]!.status).toBe("completed");
+    expect((await enrollmentsFor(seqId))[0]!.status).toBe("completed");
   });
 
   it("stops the chain when the recipient replies", async () => {
     const mailboxId = await createMailbox("sales@gmail.com");
     const leadId = await createLead("a@acme.io");
-    allowRecipient("a@acme.io");
+    await allowRecipient("a@acme.io");
     const seqId = await makeSequence({
       audienceId: await staticAudience([leadId]),
       mailboxIds: [mailboxId],
@@ -393,12 +393,12 @@ describe("outreach sequences (Sprint 48)", () => {
       ],
     });
     await run(); // step 1 sends
-    const enr = enrollmentsFor(seqId)[0]!;
+    const enr = (await enrollmentsFor(seqId))[0]!;
     // Seed an inbound email reply from the recipient after the send.
-    db.insert(inboxItems).values({
+    await db.insert(inboxItems).values({
       id: randomUUID(),
       workspaceId,
-      connectionId: seedMailboxConnection(),
+      connectionId: await seedMailboxConnection(),
       providerKey: "gmail",
       kind: "email",
       channel: "email",
@@ -413,7 +413,7 @@ describe("outreach sequences (Sprint 48)", () => {
     }).run();
 
     await run(); // should detect the reply and stop
-    const after = enrollmentsFor(seqId)[0]!;
+    const after = (await enrollmentsFor(seqId))[0]!;
     expect(after.status).toBe("replied");
     expect(gmail.sendEmail).toHaveBeenCalledTimes(1); // step 2 never sent
   });
@@ -421,7 +421,7 @@ describe("outreach sequences (Sprint 48)", () => {
   it("lets a leaver finish the chain (removed from segment mid-sequence)", async () => {
     const mailboxId = await createMailbox("sales@gmail.com");
     const leadId = await createLead("a@acme.io");
-    allowRecipient("a@acme.io");
+    await allowRecipient("a@acme.io");
     const audienceId = await staticAudience([leadId]);
     const seqId = await makeSequence({
       audienceId,
@@ -437,7 +437,7 @@ describe("outreach sequences (Sprint 48)", () => {
     await run(); // step 2 still fires despite the leave
     expect(gmail.sendEmail).toHaveBeenCalledTimes(2);
     await run(); // completion tick
-    expect(enrollmentsFor(seqId)[0]!.status).toBe("completed");
+    expect((await enrollmentsFor(seqId))[0]!.status).toBe("completed");
   });
 
   // --- Manual stop + Gmail-only + worker -----------------------------------
@@ -445,7 +445,7 @@ describe("outreach sequences (Sprint 48)", () => {
   it("manual stop halts an active enrollment", async () => {
     const mailboxId = await createMailbox("sales@gmail.com");
     const leadId = await createLead("a@acme.io");
-    allowRecipient("a@acme.io");
+    await allowRecipient("a@acme.io");
     const seqId = await makeSequence({
       audienceId: await staticAudience([leadId]),
       mailboxIds: [mailboxId],
@@ -454,7 +454,7 @@ describe("outreach sequences (Sprint 48)", () => {
     await run();
     const res = await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/outreach-sequences/${seqId}/stop`, payload: { all: true } });
     expect(res.json().stopped).toBe(1);
-    expect(enrollmentsFor(seqId)[0]!.status).toBe("stopped");
+    expect((await enrollmentsFor(seqId))[0]!.status).toBe("stopped");
   });
 
   it("sends for a Gmail-only workspace (no Resend sender row)", async () => {
@@ -462,7 +462,7 @@ describe("outreach sequences (Sprint 48)", () => {
     // enables email (decision 4). Recipient permission is still required.
     const mailboxId = await createMailbox("sales@gmail.com");
     const leadId = await createLead("a@acme.io");
-    allowRecipient("a@acme.io");
+    await allowRecipient("a@acme.io");
     await makeSequence({ audienceId: await staticAudience([leadId]), mailboxIds: [mailboxId] });
     const result = await run();
     expect(result.dispatched).toBe(1);
@@ -481,7 +481,7 @@ describe("outreach sequences (Sprint 48)", () => {
   it("leaves items unsent when generation fails, without aborting the run", async () => {
     const mailboxId = await createMailbox("sales@gmail.com");
     const leadId = await createLead("a@acme.io");
-    allowRecipient("a@acme.io");
+    await allowRecipient("a@acme.io");
     const seqId = await makeSequence({ audienceId: await staticAudience([leadId]), mailboxIds: [mailboxId] });
     generateFails = true;
     const result = await run();
@@ -489,6 +489,6 @@ describe("outreach sequences (Sprint 48)", () => {
     expect(result.dispatched).toBe(0);
     expect(gmail.sendEmail).not.toHaveBeenCalled();
     // The enrollment survives for the next tick.
-    expect(enrollmentsFor(seqId)[0]!.status).toBe("active");
+    expect((await enrollmentsFor(seqId))[0]!.status).toBe("active");
   });
 });

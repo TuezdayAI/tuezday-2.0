@@ -168,7 +168,7 @@ describe("social automation", () => {
   }
 
   async function setAutomation(campaignId: string, automationMode: string, autoDailyCap: number | null = null) {
-    return app.inject({
+    return await app.inject({
       method: "PATCH",
       url: `/workspaces/${workspaceId}/campaigns/${campaignId}/automation`,
       payload: { automationMode, autoDailyCap },
@@ -176,7 +176,7 @@ describe("social automation", () => {
   }
 
   async function setPublishPolicy(campaignId: string, rule: "autonomous" | "human_required") {
-    return putActionPolicy(app, workspaceId, "campaign", campaignId, { publish: rule });
+    return await putActionPolicy(app, workspaceId, "campaign", campaignId, { publish: rule });
   }
 
   async function createSignal(content = "Competitor X launched a feature"): Promise<string> {
@@ -190,12 +190,12 @@ describe("social automation", () => {
   }
 
   /** Seed a signal→campaign match directly (Sprint 45 routing reads these). */
-  function seedMatch(
+  async function seedMatch(
     signalId: string,
     campaignId: string,
     opts: { personaId?: string | null; score?: number } = {},
-  ): void {
-    insertSignalMatch(db, workspaceId, signalId, {
+  ): Promise<void> {
+    await insertSignalMatch(db, workspaceId, signalId, {
       personaId: opts.personaId ?? null,
       campaignId,
       score: opts.score ?? 80,
@@ -226,8 +226,8 @@ describe("social automation", () => {
     return res;
   }
 
-  function seedApprovedDraft(campaignId: string, channel = "linkedin"): string {
-    const draft = submitDraft(
+  async function seedApprovedDraft(campaignId: string, channel = "linkedin"): Promise<string> {
+    const draft = await submitDraft(
       db,
       {
         workspaceId,
@@ -240,7 +240,7 @@ describe("social automation", () => {
       },
       { userId: null, label: "test", human: true },
     );
-    return applyDraftAction(db, draft, "approve", { userId: null, label: "test", human: true }).id;
+    return (await applyDraftAction(db, draft, "approve", { userId: null, label: "test", human: true })).id;
   }
 
   // --- Contracts ------------------------------------------------------------
@@ -353,7 +353,7 @@ describe("social automation", () => {
     const result = await run();
     // manual campaigns are not even in the automated set
     expect(result.results).toHaveLength(0);
-    expect(listDrafts(db, workspaceId)).toHaveLength(0);
+    expect(await listDrafts(db, workspaceId)).toHaveLength(0);
     void id;
   });
 
@@ -361,11 +361,11 @@ describe("social automation", () => {
     const id = await createCampaign(["linkedin", "x"]);
     await setAutomation(id, "human_in_the_loop");
     const signalId = await createSignal();
-    seedMatch(signalId, id);
+    await seedMatch(signalId, id);
 
     const first = await run();
     expect(first.results[0]).toMatchObject({ mode: "human_in_the_loop", generated: 2, autoApproved: 0 });
-    const drafts = listDrafts(db, workspaceId);
+    const drafts = await listDrafts(db, workspaceId);
     expect(drafts).toHaveLength(2);
     expect(drafts.every((d) => d.state === "pending_review")).toBe(true);
     expect(drafts.every((d) => d.campaignId === id && d.sourceSignalId === signalId)).toBe(true);
@@ -374,27 +374,27 @@ describe("social automation", () => {
     // Idempotent — a second run adds nothing for the same signal.
     const second = await run();
     expect(second.results[0].generated).toBe(0);
-    expect(listDrafts(db, workspaceId)).toHaveLength(2);
+    expect(await listDrafts(db, workspaceId)).toHaveLength(2);
 
     // A new matched signal fans out again.
     const secondSignal = await createSignal("Another market signal");
-    seedMatch(secondSignal, id);
+    await seedMatch(secondSignal, id);
     await run();
-    expect(listDrafts(db, workspaceId)).toHaveLength(4);
+    expect(await listDrafts(db, workspaceId)).toHaveLength(4);
   });
 
   it("serializes overlapping workspace automation and commits one automatic draft", async () => {
     const campaignId = await createCampaign(["linkedin"]);
     await setAutomation(campaignId, "scheduled_auto");
     const signalId = await createSignal();
-    seedMatch(signalId, campaignId);
+    await seedMatch(signalId, campaignId);
     const started = deferred<void>();
     const release = deferred<void>();
     const blockingLlm: LlmGateway = {
       async generate() {
         started.resolve();
         await release.promise;
-        return fakeLlm.generate({ prompt: "test" });
+        return await fakeLlm.generate({ prompt: "test" });
       },
     };
     const deps = {
@@ -405,7 +405,7 @@ describe("social automation", () => {
       heartbeatMs: 30_000,
     };
 
-    const first = runAutomationWithLease(
+    const first = await runAutomationWithLease(
       deps,
       workspaceId,
       "owner-a",
@@ -420,11 +420,11 @@ describe("social automation", () => {
     const firstResult = await first;
 
     expect(firstResult.busy || second.busy).toBe(true);
-    const [draft] = listDrafts(db, workspaceId);
+    const [draft] = await listDrafts(db, workspaceId);
     expect(draft).toBeDefined();
     expect(draft).not.toHaveProperty("automationKey");
-    expect(listDrafts(db, workspaceId)).toEqual([draft]);
-    expect(listDecisions(db, draft!.id).map((decision) => decision.action))
+    expect(await listDrafts(db, workspaceId)).toEqual([draft]);
+    expect((await listDecisions(db, draft!.id)).map((decision) => decision.action))
       .toEqual(["submit", "approve"]);
   });
 
@@ -432,7 +432,7 @@ describe("social automation", () => {
     const campaignId = await createCampaign(["linkedin"]);
     await setAutomation(campaignId, "scheduled_auto");
     const signalId = await createSignal();
-    seedMatch(signalId, campaignId);
+    await seedMatch(signalId, campaignId);
     const started = deferred<void>();
     const release = deferred<void>();
     let calls = 0;
@@ -443,7 +443,7 @@ describe("social automation", () => {
           started.resolve();
           await release.promise;
         }
-        return fakeLlm.generate({ prompt: "test" });
+        return await fakeLlm.generate({ prompt: "test" });
       },
     };
     const deps = {
@@ -454,13 +454,13 @@ describe("social automation", () => {
       heartbeatMs: 30_000,
     };
 
-    const staleRun = runAutomationWithLease(
+    const staleRun = await runAutomationWithLease(
       deps,
       workspaceId,
       "owner-stale",
     );
     await started.promise;
-    db.update(taskLeases)
+    await db.update(taskLeases)
       .set({ expiresAt: 0 })
       .run();
     const winner = await runAutomationWithLease(
@@ -474,9 +474,9 @@ describe("social automation", () => {
     expect(winner.busy).toBe(false);
     expect(stale.busy).toBe(false);
     expect(calls).toBeGreaterThanOrEqual(2);
-    const [draft] = listDrafts(db, workspaceId);
-    expect(listDrafts(db, workspaceId)).toEqual([draft]);
-    expect(listDecisions(db, draft!.id).map((decision) => decision.action))
+    const [draft] = await listDrafts(db, workspaceId);
+    expect(await listDrafts(db, workspaceId)).toEqual([draft]);
+    expect((await listDecisions(db, draft!.id)).map((decision) => decision.action))
       .toEqual(["submit", "approve"]);
   });
 
@@ -486,14 +486,14 @@ describe("social automation", () => {
     await setAutomation(campaignId, "scheduled_auto");
     await setPublishPolicy(campaignId, "autonomous");
     const signalId = await createSignal();
-    seedMatch(signalId, campaignId);
+    await seedMatch(signalId, campaignId);
 
     const result = await run();
     expect(result.results[0]).toMatchObject({ mode: "scheduled_auto", generated: 1, autoApproved: 1 });
 
-    const [draft] = listDrafts(db, workspaceId, "approved");
+    const [draft] = await listDrafts(db, workspaceId, "approved");
     expect(draft).toBeTruthy();
-    const decisions = listDecisions(db, draft!.id);
+    const decisions = await listDecisions(db, draft!.id);
     expect(decisions.map((d) => d.action)).toEqual(["submit", "approve"]);
     expect(decisions.every((d) => d.actor === "system")).toBe(true);
 
@@ -529,7 +529,7 @@ describe("social automation", () => {
       await setAutomation(campaignA, "human_in_the_loop");
       await setAutomation(campaignB, "human_in_the_loop");
       const signalId = await createSignal("Agentic coding benchmark released");
-      seedMatch(signalId, campaignA, { personaId, score: 80 });
+      await seedMatch(signalId, campaignA, { personaId, score: 80 });
 
       const result = await run();
       const rowA = result.results.find((r: { campaignId: string }) => r.campaignId === campaignA);
@@ -538,7 +538,7 @@ describe("social automation", () => {
       // The unmatched campaign generates nothing but still reports a result row.
       expect(rowB).toMatchObject({ generated: 0, autoApproved: 0, skipped: 0, blocked: null });
 
-      const drafts = listDrafts(db, workspaceId);
+      const drafts = await listDrafts(db, workspaceId);
       expect(drafts).toHaveLength(1);
       expect(drafts[0]).toMatchObject({
         campaignId: campaignA,
@@ -550,7 +550,7 @@ describe("social automation", () => {
       // Re-running with the same match set adds nothing (hasDraftFor idempotency).
       const again = await run();
       expect(again.results.every((r: { generated: number }) => r.generated === 0)).toBe(true);
-      expect(listDrafts(db, workspaceId)).toHaveLength(1);
+      expect(await listDrafts(db, workspaceId)).toHaveLength(1);
     });
 
     it("uses the highest valid local match instead of a higher foreign-persona row", async () => {
@@ -576,11 +576,11 @@ describe("social automation", () => {
           payload: { name: "Foreign Automation Persona" },
         })
       ).json().id as string;
-      seedMatch(signalId, campaignId, {
+      await seedMatch(signalId, campaignId, {
         personaId: localPersonaId,
         score: 80,
       });
-      seedMatch(signalId, campaignId, {
+      await seedMatch(signalId, campaignId, {
         personaId: foreignPersonaId,
         score: 90,
       });
@@ -593,7 +593,7 @@ describe("social automation", () => {
         skipped: 0,
         blocked: null,
       });
-      expect(listDrafts(db, workspaceId)).toEqual([
+      expect(await listDrafts(db, workspaceId)).toEqual([
         expect.objectContaining({
           campaignId,
           personaId: localPersonaId,
@@ -610,8 +610,8 @@ describe("social automation", () => {
       await setAutomation(campaignA, "human_in_the_loop");
       await setAutomation(campaignB, "human_in_the_loop");
       const signalId = await createSignal("Relevant to both pipelines");
-      seedMatch(signalId, campaignA, { personaId: personaA, score: 80 });
-      seedMatch(signalId, campaignB, { personaId: personaB, score: 70 });
+      await seedMatch(signalId, campaignA, { personaId: personaA, score: 80 });
+      await seedMatch(signalId, campaignB, { personaId: personaB, score: 70 });
 
       const result = await run();
       const rowA = result.results.find((r: { campaignId: string }) => r.campaignId === campaignA);
@@ -619,7 +619,7 @@ describe("social automation", () => {
       expect(rowA).toMatchObject({ generated: 1 });
       expect(rowB).toMatchObject({ generated: 1 });
 
-      const drafts = listDrafts(db, workspaceId);
+      const drafts = await listDrafts(db, workspaceId);
       expect(drafts).toHaveLength(2);
       const byCampaign = new Map(drafts.map((d) => [d.campaignId, d]));
       expect(byCampaign.get(campaignA)?.personaId).toBe(personaA);
@@ -630,11 +630,11 @@ describe("social automation", () => {
       const campaignId = await createCampaign(["linkedin"]);
       await setAutomation(campaignId, "human_in_the_loop");
       const signalId = await createSignal();
-      seedMatch(signalId, campaignId, { score: 30 }); // below the default threshold of 50
+      await seedMatch(signalId, campaignId, { score: 30 }); // below the default threshold of 50
 
       const first = await run();
       expect(first.results[0]).toMatchObject({ generated: 0, autoApproved: 0, skipped: 0, blocked: null });
-      expect(listDrafts(db, workspaceId)).toHaveLength(0);
+      expect(await listDrafts(db, workspaceId)).toHaveLength(0);
 
       const patched = (
         await app.inject({
@@ -648,7 +648,7 @@ describe("social automation", () => {
       // 30 >= 30 — the threshold is inclusive, so the match now qualifies.
       const second = await run();
       expect(second.results[0].generated).toBe(1);
-      expect(listDrafts(db, workspaceId)).toHaveLength(1);
+      expect(await listDrafts(db, workspaceId)).toHaveLength(1);
     });
 
     it("a signal with no matches at all generates nothing", async () => {
@@ -658,7 +658,7 @@ describe("social automation", () => {
 
       const result = await run();
       expect(result.results[0]).toMatchObject({ generated: 0, autoApproved: 0, skipped: 0, blocked: null });
-      expect(listDrafts(db, workspaceId)).toHaveLength(0);
+      expect(await listDrafts(db, workspaceId)).toHaveLength(0);
     });
   });
 
@@ -670,7 +670,7 @@ describe("social automation", () => {
     await setAutomation(autoCampaign, "scheduled_auto");
 
     // Seed an approved auto-draft + cadence, fill once (switch off) → 1 scheduled.
-    seedApprovedDraft(autoCampaign);
+    await seedApprovedDraft(autoCampaign);
     const autoCadence = (await createCadence({ campaignId: autoCampaign, connectionId })).json();
     const firstFill = await app.inject({
       method: "POST",
@@ -696,7 +696,7 @@ describe("social automation", () => {
       url: `/workspaces/${workspaceId}/cadences/${autoCadence.id}/fill`,
     });
     expect(refill.json().filled).toBe(0);
-    const cadencePubs = listDrafts(db, workspaceId); // approved seed draft still exists
+    const cadencePubs = await listDrafts(db, workspaceId); // approved seed draft still exists
     expect(cadencePubs.length).toBeGreaterThan(0);
     const detail = (
       await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/cadences/${autoCadence.id}` })
@@ -705,7 +705,7 @@ describe("social automation", () => {
 
     // A manual campaign's cadence still fills despite the kill switch.
     const manualCampaign = await createCampaign(["linkedin"], "Manual");
-    seedApprovedDraft(manualCampaign);
+    await seedApprovedDraft(manualCampaign);
     const manualCadence = (await createCadence({ campaignId: manualCampaign, connectionId })).json();
     const manualFill = await app.inject({
       method: "POST",
@@ -719,7 +719,7 @@ describe("social automation", () => {
 
     const autoCampaignId = await createCampaign(["linkedin"], "Auto dispatch");
     await setAutomation(autoCampaignId, "scheduled_auto");
-    const autoDraftId = seedApprovedDraft(autoCampaignId);
+    const autoDraftId = await seedApprovedDraft(autoCampaignId);
     const autoCadence = (
       await createCadence({
         campaignId: autoCampaignId,
@@ -729,7 +729,7 @@ describe("social automation", () => {
     ).json();
 
     const manualCampaignId = await createCampaign(["linkedin"], "Manual dispatch");
-    const manualDraftId = seedApprovedDraft(manualCampaignId);
+    const manualDraftId = await seedApprovedDraft(manualCampaignId);
     const manualCadence = (
       await createCadence({
         campaignId: manualCampaignId,
@@ -741,7 +741,7 @@ describe("social automation", () => {
     const autoPublicationId = randomUUID();
     const manualPublicationId = randomUUID();
     const now = Date.now();
-    db.insert(publications)
+    await db.insert(publications)
       .values([
         {
           id: autoPublicationId,
@@ -805,7 +805,7 @@ describe("social automation", () => {
       ]),
     );
     expect(state.posts.map((post) => post.title)).toEqual(["Manual receipt"]);
-    expect(getPublication(db, workspaceId, autoPublicationId)).toMatchObject({
+    expect(await getPublication(db, workspaceId, autoPublicationId)).toMatchObject({
       status: "scheduled",
       lastError: null,
     });
@@ -842,7 +842,7 @@ describe("social automation", () => {
     const connectionId = await connectReddit();
     const campaignId = await createCampaign(["linkedin"], "Auto");
     await setAutomation(campaignId, "scheduled_auto");
-    const draftId = seedApprovedDraft(campaignId);
+    const draftId = await seedApprovedDraft(campaignId);
     const cadence = (await createCadence({ campaignId, connectionId })).json();
     const fillUrl = `/workspaces/${workspaceId}/cadences/${cadence.id}/fill`;
     expect((await app.inject({ method: "POST", url: fillUrl })).json().filled).toBe(1);
@@ -869,11 +869,11 @@ describe("social automation", () => {
     // The stop is on the record, and it is on the record as the system's — an
     // action that ends `cancelled` with nobody behind it is a refusal nobody
     // made, and that flag is what keeps this reversible.
-    const decisions = db
+    const decisions = (await db
       .select()
       .from(externalActionDecisions)
       .where(eq(externalActionDecisions.actionId, stopped[0]!.id))
-      .all()
+      .all())
       .filter((row) => row.decision === "deny");
     expect(decisions).toHaveLength(1);
     expect(decisions[0]).toMatchObject({ actorHuman: false, actorLabel: "system" });
@@ -908,7 +908,7 @@ describe("social automation", () => {
     const campaignId = await createCampaign(["linkedin"]);
     await setAutomation(campaignId, "scheduled_auto", 1); // 1 auto-post per campaign per day
     await setPublishPolicy(campaignId, "autonomous");
-    for (let i = 0; i < 4; i++) seedApprovedDraft(campaignId);
+    for (let i = 0; i < 4; i++) await seedApprovedDraft(campaignId);
     await createCadence({ campaignId, connectionId, name: "9am", timeOfDay: "09:00" });
     await createCadence({ campaignId, connectionId, name: "10am", timeOfDay: "10:00" });
 
@@ -925,7 +925,7 @@ describe("social automation", () => {
       url: `/workspaces/${workspaceId}/automation/settings`,
       payload: { perConnectionDailyCap: 1 },
     });
-    for (let i = 0; i < 4; i++) seedApprovedDraft(campaignId);
+    for (let i = 0; i < 4; i++) await seedApprovedDraft(campaignId);
     await createCadence({ campaignId, connectionId, name: "9am", timeOfDay: "09:00" });
     await createCadence({ campaignId, connectionId, name: "10am", timeOfDay: "10:00" });
 
@@ -947,7 +947,7 @@ describe("social automation", () => {
       url: `/workspaces/${workspaceId}/automation/settings`,
       payload: { perConnectionDailyCap: 1 },
     });
-    for (let i = 0; i < 4; i++) seedApprovedDraft(campaignId);
+    for (let i = 0; i < 4; i++) await seedApprovedDraft(campaignId);
     await createCadence({
       campaignId,
       connectionId,

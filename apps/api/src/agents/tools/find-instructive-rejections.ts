@@ -40,7 +40,7 @@ export const findInstructiveRejectionsTool: Tool<Input, unknown> = {
   input,
   access: "read",
   async run(ctx, { query, taskType, channel, limit }) {
-    const candidates = instructiveExamples(listTrainingExamples(ctx.db, ctx.workspaceId))
+    const candidates = instructiveExamples(await listTrainingExamples(ctx.db, ctx.workspaceId))
       .filter((e) => !taskType || e.taskType === taskType)
       .filter((e) => !channel || e.channel === channel);
     if (candidates.length === 0) {
@@ -68,7 +68,7 @@ export const findInstructiveRejectionsTool: Tool<Input, unknown> = {
     // Sprint 66: explicit reject reasons, newest first per draft.
     const reasonByDraft = new Map<string, string>();
     if (draftIds.length > 0) {
-      const decisionRows = ctx.db
+      const decisionRows = await ctx.db
         .select({
           draftId: approvalDecisions.draftId,
           reason: approvalDecisions.reason,
@@ -94,7 +94,7 @@ export const findInstructiveRejectionsTool: Tool<Input, unknown> = {
     // The human's written editing instructions, where any exist.
     const turnsByDraft = new Map<string, string[]>();
     if (draftIds.length > 0) {
-      const turns = ctx.db
+      const turns = await ctx.db
         .select({
           draftId: draftRevisionTurns.draftId,
           instruction: draftRevisionTurns.instruction,

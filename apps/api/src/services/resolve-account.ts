@@ -15,7 +15,7 @@ import {
  * determined or has an empty content profile — drafting must never fail (or
  * grow noise sections) because account routing didn't resolve.
  */
-export function resolveDraftAccount(
+export async function resolveDraftAccount(
   db: Db,
   workspaceId: string,
   args: {
@@ -24,14 +24,14 @@ export function resolveDraftAccount(
     /** Explicit connection — engagement replies know theirs from the inbox item. */
     connectionId?: string;
   },
-): ResolveAccount | undefined {
+): Promise<ResolveAccount | undefined> {
   let connection: Connection | undefined;
 
   if (args.connectionId) {
-    connection = getConnection(db, workspaceId, args.connectionId);
+    connection = await getConnection(db, workspaceId, args.connectionId);
   } else {
     if (!args.personaId || !providerForSocialChannel(args.channel)) return undefined;
-    const resolution = resolvePersonaSocialConnection(db, workspaceId, {
+    const resolution = await resolvePersonaSocialConnection(db, workspaceId, {
       personaId: args.personaId,
       channel: args.channel,
     });

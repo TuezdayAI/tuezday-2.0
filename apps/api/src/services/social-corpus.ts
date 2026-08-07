@@ -14,16 +14,16 @@ import { listConnections, providerByKey } from "./connections";
 // brain auto-draft (36.4), so keep them the same order of magnitude.
 const MAX_CORPUS_CHARS = 20_000;
 
-function socialConnections(db: Db, workspaceId: string) {
+async function socialConnections(db: Db, workspaceId: string) {
   const social = new Set<string>(SOCIAL_READ_PROVIDERS);
-  return listConnections(db, workspaceId).filter(
+  return (await listConnections(db, workspaceId)).filter(
     (c) => c.status === "connected" && social.has(c.providerKey),
   );
 }
 
 /** True iff the workspace has at least one connected social account (min-1 gate). */
-export function hasSocialConnection(db: Db, workspaceId: string): boolean {
-  return socialConnections(db, workspaceId).length > 0;
+export async function hasSocialConnection(db: Db, workspaceId: string): Promise<boolean> {
+  return (await socialConnections(db, workspaceId)).length > 0;
 }
 
 function profileSection(profile: SocialProfileRead): string {
@@ -47,7 +47,7 @@ export async function readSocialCorpus(
   fabric: ConnectorFabric,
   workspaceId: string,
 ): Promise<SocialCorpus> {
-  const conns = socialConnections(db, workspaceId);
+  const conns = await socialConnections(db, workspaceId);
 
   const entries: SocialCorpusEntry[] = [];
   const sections: string[] = [];

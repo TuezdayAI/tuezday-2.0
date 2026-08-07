@@ -109,7 +109,7 @@ export class AgentRunner {
       (params.tools ?? []).map((tool) => [tool.definition.name, tool]),
     );
 
-    this.db
+    await this.db
       .insert(agentRuns)
       .values({
         id: runId,
@@ -142,8 +142,8 @@ export class AgentRunner {
     let stopReason: AgentStopReason;
     let runError: string | undefined;
 
-    const persistStep = (row: Partial<typeof agentRunSteps.$inferInsert>) => {
-      this.db
+    const persistStep = async (row: Partial<typeof agentRunSteps.$inferInsert>) => {
+      await this.db
         .insert(agentRunSteps)
         .values({
           id: randomUUID(),
@@ -221,7 +221,7 @@ export class AgentRunner {
       usage.costCents += stepCost;
 
       messages.push(step.message);
-      persistStep({
+      await persistStep({
         kind: "model_call",
         messageJson: JSON.stringify(step.message),
         inputTokens: step.usage.inputTokens,
@@ -263,7 +263,7 @@ export class AgentRunner {
             result = await tool.handler(call.arguments);
           } catch (err) {
             if (err instanceof NeedsHumanSignal) {
-              persistStep({
+              await persistStep({
                 kind: "tool_call",
                 toolName: call.name,
                 toolCallId: call.id,
@@ -280,7 +280,7 @@ export class AgentRunner {
           }
         }
 
-        persistStep({
+        await persistStep({
           kind: "tool_call",
           toolName: call.name,
           toolCallId: call.id,
@@ -306,7 +306,7 @@ export class AgentRunner {
       }
     }
 
-    this.db
+    await this.db
       .update(agentRuns)
       .set({
         status: "done",

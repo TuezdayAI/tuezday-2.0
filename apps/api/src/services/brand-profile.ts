@@ -76,24 +76,24 @@ export async function extractBrandProfile(
 // Storage + run state machine
 // ---------------------------------------------------------------------------
 
-function upsertRow(
+async function upsertRow(
   db: Db,
   workspaceId: string,
   values: Partial<typeof brandProfiles.$inferInsert> & { sourceUrl?: string },
-): void {
+): Promise<void> {
   const now = Date.now();
-  const existing = db
+  const existing = await db
     .select({ id: brandProfiles.id })
     .from(brandProfiles)
     .where(eq(brandProfiles.workspaceId, workspaceId))
     .get();
   if (existing) {
-    db.update(brandProfiles)
+    await db.update(brandProfiles)
       .set({ ...values, updatedAt: now })
       .where(eq(brandProfiles.id, existing.id))
       .run();
   } else {
-    db.insert(brandProfiles)
+    await db.insert(brandProfiles)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -109,8 +109,8 @@ function upsertRow(
   }
 }
 
-export function getBrandProfileView(db: Db, workspaceId: string): BrandProfileView {
-  const row = db
+export async function getBrandProfileView(db: Db, workspaceId: string): Promise<BrandProfileView> {
+  const row = await db
     .select()
     .from(brandProfiles)
     .where(eq(brandProfiles.workspaceId, workspaceId))
@@ -137,7 +137,7 @@ export async function runBrandProfile(
   workspaceId: string,
   websiteUrl: string,
 ): Promise<BrandProfileView> {
-  upsertRow(db, workspaceId, {
+  await upsertRow(db, workspaceId, {
     sourceUrl: websiteUrl,
     status: "scraping",
     error: null,
@@ -145,12 +145,12 @@ export async function runBrandProfile(
   });
   try {
     const { corpus } = await scrapeWebsite(websiteUrl, safeFetch);
-    upsertRow(db, workspaceId, { status: "extracting", corpusChars: corpus.length });
+    await upsertRow(db, workspaceId, { status: "extracting", corpusChars: corpus.length });
     const profile = await extractBrandProfile(
       meteredLlm(llm, db, { workspaceId, pipeline: "brand_profile" }),
       corpus,
     );
-    upsertRow(db, workspaceId, { status: "ready", profileJson: JSON.stringify(profile) });
+    await upsertRow(db, workspaceId, { status: "ready", profileJson: JSON.stringify(profile) });
   } catch (err) {
     const message =
       err instanceof SafeFetchError
@@ -161,9 +161,9 @@ export async function runBrandProfile(
         : err instanceof Error
           ? err.message
           : String(err);
-    upsertRow(db, workspaceId, { status: "failed", error: message.slice(0, 500) });
+    await upsertRow(db, workspaceId, { status: "failed", error: message.slice(0, 500) });
   }
-  return getBrandProfileView(db, workspaceId);
+  return await getBrandProfileView(db, workspaceId);
 }
 
 export type UpdateBrandProfileResult =
@@ -171,12 +171,12 @@ export type UpdateBrandProfileResult =
   | { ok: false; reason: "not_ready" };
 
 /** Apply a partial edit to a ready profile (Step 4 verification saves). */
-export function updateBrandProfile(
+export async function updateBrandProfile(
   db: Db,
   workspaceId: string,
   input: UpdateBrandProfileInput,
-): UpdateBrandProfileResult {
-  const row = db
+): Promise<UpdateBrandProfileResult> {
+  const row = await db
     .select()
     .from(brandProfiles)
     .where(eq(brandProfiles.workspaceId, workspaceId))
@@ -190,6 +190,6 @@ export function updateBrandProfile(
     ...input,
     voiceDimensions: { ...current.voiceDimensions, ...(input.voiceDimensions ?? {}) },
   };
-  upsertRow(db, workspaceId, { profileJson: JSON.stringify(merged) });
-  return { ok: true, view: getBrandProfileView(db, workspaceId) };
+  await upsertRow(db, workspaceId, { profileJson: JSON.stringify(merged) });
+  return { ok: true, view: await getBrandProfileView(db, workspaceId) };
 }

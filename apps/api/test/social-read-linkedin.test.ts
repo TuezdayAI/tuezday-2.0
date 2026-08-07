@@ -160,8 +160,8 @@ describe("LinkedInAdapter.readSocialProfile", () => {
       posts: { status: 500, json: { message: "server error" } },
     });
 
-    await expect(adapter.readSocialProfile()).rejects.toThrow(ConnectorFabricError);
-    await expect(adapter.readSocialProfile()).rejects.toThrow(/500/);
+    await expect(await adapter.readSocialProfile()).rejects.toThrow(ConnectorFabricError);
+    await expect(await adapter.readSocialProfile()).rejects.toThrow(/500/);
   });
 
   it("throws ConnectorFabricError on a non-2xx userinfo response", async () => {
@@ -170,7 +170,7 @@ describe("LinkedInAdapter.readSocialProfile", () => {
       posts: { status: 200, json: { elements: [] } },
     });
 
-    await expect(adapter.readSocialProfile()).rejects.toThrow(ConnectorFabricError);
-    await expect(adapter.readSocialProfile()).rejects.toThrow(/401/);
+    await expect(await adapter.readSocialProfile()).rejects.toThrow(ConnectorFabricError);
+    await expect(await adapter.readSocialProfile()).rejects.toThrow(/401/);
   });
 });

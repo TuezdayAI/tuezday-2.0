@@ -218,7 +218,7 @@ describe("governed Meta targeting changes", () => {
     expect(launched.json().action.status).toBe("succeeded");
   });
 
-  afterEach(async () => app.close());
+  afterEach(async () => await app.close());
 
   const propose = (
     targeting: Targeting,
@@ -247,11 +247,11 @@ describe("governed Meta targeting changes", () => {
       status: "authorization_required",
       authorizedAt: null,
     });
-    const row = db
+    const row = (await db
       .select()
       .from(externalActions)
       .where(eq(externalActions.id, proposed.json().action.id))
-      .get()!;
+      .get())!;
     expect(JSON.parse(row.payloadJson).after).toEqual({
       countries: ["DE", "US"],
       ageMin: 25,
@@ -305,7 +305,7 @@ describe("governed Meta targeting changes", () => {
     const noOp = await propose({ countries: ["US"], ageMin: 18, ageMax: 65 });
     expect(noOp.statusCode).toBe(400);
     expect(
-      db.select().from(externalActions).where(eq(externalActions.kind, "targeting_change")).all(),
+      await db.select().from(externalActions).where(eq(externalActions.kind, "targeting_change")).all(),
     ).toHaveLength(0);
   });
 

@@ -77,7 +77,7 @@ describe("workspace email sender domains", () => {
   });
 
   async function putSender(overrides: Record<string, unknown> = {}) {
-    return app.inject({
+    return await app.inject({
       method: "PUT",
       url: `/workspaces/${workspaceId}/email-sender`,
       payload: {

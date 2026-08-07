@@ -395,7 +395,7 @@ describe("resolve API", () => {
     describe("a backfilled campaign (Sprint 53 review, C1)", () => {
       it("carries the overlay into the prompt exactly once", async () => {
         const campaignId = await createStructuredCampaign("Backfilled");
-        backfillMissingCampaignPlans(db);
+        await backfillMissingCampaignPlans(db);
 
         const { bundle, campaign, plan } = await resolve(campaignId);
 
@@ -417,7 +417,7 @@ describe("resolve API", () => {
 
       it("reflects a post-backfill overlay edit, with the plan still the only strategy", async () => {
         const campaignId = await createStructuredCampaign("Edited after backfill");
-        backfillMissingCampaignPlans(db);
+        await backfillMissingCampaignPlans(db);
 
         const editedOverlay = "Additional instruction: cite a customer every time.";
         const editedObjective = "Row objective — typed after the backfill";

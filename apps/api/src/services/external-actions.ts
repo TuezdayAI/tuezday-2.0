@@ -130,7 +130,7 @@ function rowToDecision(row: ExternalActionDecisionRow): ExternalActionDecision {
   };
 }
 
-export function insertExternalAction(db: Db, input: NewExternalActionRecord): ExternalAction {
+export async function insertExternalAction(db: Db, input: NewExternalActionRecord): Promise<ExternalAction> {
   const now = Date.now();
   const row: ExternalActionRow = {
     id: input.id,
@@ -171,16 +171,16 @@ export function insertExternalAction(db: Db, input: NewExternalActionRecord): Ex
     dispatchedAt: null,
     completedAt: null,
   };
-  db.insert(externalActions).values(row).run();
+  await db.insert(externalActions).values(row).run();
   return rowToExternalAction(row);
 }
 
-export function getExternalAction(
+export async function getExternalAction(
   db: Db,
   workspaceId: string,
   actionId: string,
-): ExternalAction | undefined {
-  const row = db
+): Promise<ExternalAction | undefined> {
+  const row = await db
     .select()
     .from(externalActions)
     .where(and(eq(externalActions.workspaceId, workspaceId), eq(externalActions.id, actionId)))
@@ -188,17 +188,17 @@ export function getExternalAction(
   return row ? rowToExternalAction(row) : undefined;
 }
 
-export function listExternalActions(
+export async function listExternalActions(
   db: Db,
   workspaceId: string,
   filters: ExternalActionListFilters,
-): ExternalAction[] {
-  return db
+): Promise<ExternalAction[]> {
+  return (await db
     .select()
     .from(externalActions)
     .where(eq(externalActions.workspaceId, workspaceId))
     .orderBy(desc(externalActions.createdAt))
-    .all()
+    .all())
     .map(rowToExternalAction)
     .filter((action) => !filters.status || action.status === filters.status)
     .filter((action) => !filters.kind || action.kind === filters.kind)
@@ -207,8 +207,8 @@ export function listExternalActions(
     .slice(0, filters.limit);
 }
 
-export function getExternalActionPayload(db: Db, actionId: string): unknown {
-  const row = db
+export async function getExternalActionPayload(db: Db, actionId: string): Promise<unknown> {
+  const row = await db
     .select({ payloadJson: externalActions.payloadJson })
     .from(externalActions)
     .where(eq(externalActions.id, actionId))
@@ -216,12 +216,12 @@ export function getExternalActionPayload(db: Db, actionId: string): unknown {
   return row ? JSON.parse(row.payloadJson) : undefined;
 }
 
-export function findExternalActionByIdempotencyKey(
+export async function findExternalActionByIdempotencyKey(
   db: Db,
   workspaceId: string,
   idempotencyKey: string,
-): ExternalAction | undefined {
-  const row = db
+): Promise<ExternalAction | undefined> {
+  const row = await db
     .select()
     .from(externalActions)
     .where(
@@ -234,14 +234,14 @@ export function findExternalActionByIdempotencyKey(
   return row ? rowToExternalAction(row) : undefined;
 }
 
-export function getExternalActionDetail(
+export async function getExternalActionDetail(
   db: Db,
   workspaceId: string,
   actionId: string,
-): ExternalActionDetail | undefined {
-  const action = getExternalAction(db, workspaceId, actionId);
+): Promise<ExternalActionDetail | undefined> {
+  const action = await getExternalAction(db, workspaceId, actionId);
   if (!action) return undefined;
-  const decisions = db
+  const decisions = (await db
     .select()
     .from(externalActionDecisions)
     .where(
@@ -251,7 +251,7 @@ export function getExternalActionDetail(
       ),
     )
     .orderBy(desc(externalActionDecisions.createdAt))
-    .all()
+    .all())
     .map(rowToDecision);
   return { action, decisions };
 }
@@ -267,14 +267,14 @@ export function getExternalActionDetail(
  * founder types anything there) or from `actorUserId` (the delegated approve
  * links are humans without one).
  */
-export function humanRefusedActionIds(
+export async function humanRefusedActionIds(
   db: Db,
   workspaceId: string,
   actionIds: string[],
-): Set<string> {
+): Promise<Set<string>> {
   if (actionIds.length === 0) return new Set();
   return new Set(
-    db
+    (await db
       .select({ actionId: externalActionDecisions.actionId })
       .from(externalActionDecisions)
       .where(
@@ -285,12 +285,12 @@ export function humanRefusedActionIds(
           inArray(externalActionDecisions.actionId, actionIds),
         ),
       )
-      .all()
+      .all())
       .map((r) => r.actionId),
   );
 }
 
-export function transitionExternalAction(
+export async function transitionExternalAction(
   db: Db,
   workspaceId: string,
   actionId: string,
@@ -302,15 +302,15 @@ export function transitionExternalAction(
     dispatchedAt?: number | null;
     completedAt?: number | null;
   } = {},
-): ExternalAction {
-  const action = getExternalAction(db, workspaceId, actionId);
+): Promise<ExternalAction> {
+  const action = await getExternalAction(db, workspaceId, actionId);
   if (!action) throw new Error("External action not found");
   if (!canTransitionExternalAction(action.status, to)) {
     throw new InvalidExternalActionTransitionError(action.status, to);
   }
   const now = Date.now();
   const execution = options.execution;
-  db.update(externalActions)
+  await db.update(externalActions)
     .set({
       status: to,
       blockerCode: options.blocker?.code ?? null,
@@ -333,22 +333,22 @@ export function transitionExternalAction(
     })
     .where(eq(externalActions.id, actionId))
     .run();
-  return getExternalAction(db, workspaceId, actionId)!;
+  return (await getExternalAction(db, workspaceId, actionId))!;
 }
 
 /** Persist a nonterminal provider receipt without inventing a state transition. */
-export function updateExternalActionExecution(
+export async function updateExternalActionExecution(
   db: Db,
   workspaceId: string,
   actionId: string,
   execution: ExternalActionExecutionRef,
-): ExternalAction {
-  const action = getExternalAction(db, workspaceId, actionId);
+): Promise<ExternalAction> {
+  const action = await getExternalAction(db, workspaceId, actionId);
   if (!action) throw new Error("External action not found");
   if (action.status !== "dispatching") {
     throw new InvalidExternalActionTransitionError(action.status, "dispatching");
   }
-  db.update(externalActions)
+  await db.update(externalActions)
     .set({
       executionKind: execution.kind,
       executionId: execution.id,
@@ -359,17 +359,17 @@ export function updateExternalActionExecution(
       and(eq(externalActions.workspaceId, workspaceId), eq(externalActions.id, actionId)),
     )
     .run();
-  return getExternalAction(db, workspaceId, actionId)!;
+  return (await getExternalAction(db, workspaceId, actionId))!;
 }
 
-export function insertExternalActionDecision(
+export async function insertExternalActionDecision(
   db: Db,
   action: ExternalAction,
   decision: ExternalActionDecisionValue,
   actor: ExternalActionActor & { human: boolean },
   reason: string | null,
-): void {
-  db.insert(externalActionDecisions)
+): Promise<void> {
+  await db.insert(externalActionDecisions)
     .values({
       id: randomUUID(),
       workspaceId: action.workspaceId,
@@ -386,12 +386,12 @@ export function insertExternalActionDecision(
     .run();
 }
 
-export function linkExternalActionSuccessor(
+export async function linkExternalActionSuccessor(
   db: Db,
   actionId: string,
   successorId: string,
-): void {
-  db.update(externalActions)
+): Promise<void> {
+  await db.update(externalActions)
     .set({ supersededByActionId: successorId, updatedAt: Date.now() })
     .where(eq(externalActions.id, actionId))
     .run();
@@ -399,12 +399,12 @@ export function linkExternalActionSuccessor(
 
 /** Actions whose subject or linked draft is this draft — the editor's action
  * history, newest first. */
-export function listExternalActionsForDraft(
+export async function listExternalActionsForDraft(
   db: Db,
   workspaceId: string,
   draftId: string,
-): ExternalAction[] {
-  return db
+): Promise<ExternalAction[]> {
+  return (await db
     .select()
     .from(externalActions)
     .where(
@@ -417,7 +417,7 @@ export function listExternalActionsForDraft(
       ),
     )
     .orderBy(desc(externalActions.createdAt))
-    .all()
+    .all())
     .map(rowToExternalAction);
 }
 
@@ -432,13 +432,13 @@ const TERMINAL_EXTERNAL_ACTION_STATUSES: ReadonlySet<ExternalActionStatus> = new
 /** Completed attempts against one subject — used to derive fresh idempotency
  * keys so a founder can retry a failed/blocked/denied attempt from the owning
  * surface without colliding with the prior durable action. */
-export function countTerminalExternalActionsForSubject(
+export async function countTerminalExternalActionsForSubject(
   db: Db,
   workspaceId: string,
   kind: ExternalActionKind,
   subjectId: string,
-): number {
-  return db
+): Promise<number> {
+  return (await db
     .select({ status: externalActions.status })
     .from(externalActions)
     .where(
@@ -448,18 +448,18 @@ export function countTerminalExternalActionsForSubject(
         eq(externalActions.subjectId, subjectId),
       ),
     )
-    .all()
+    .all())
     .filter((row) => TERMINAL_EXTERNAL_ACTION_STATUSES.has(row.status as ExternalActionStatus))
     .length;
 }
 
-export function listRunnableExternalActions(db: Db, workspaceId: string): ExternalAction[] {
-  return db
+export async function listRunnableExternalActions(db: Db, workspaceId: string): Promise<ExternalAction[]> {
+  return (await db
     .select()
     .from(externalActions)
     .where(eq(externalActions.workspaceId, workspaceId))
     .orderBy(externalActions.createdAt)
-    .all()
+    .all())
     .map(rowToExternalAction)
     .filter(
       (action) =>

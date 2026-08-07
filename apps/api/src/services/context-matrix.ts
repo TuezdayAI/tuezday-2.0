@@ -21,9 +21,9 @@ import { contextMatrixOverrides } from "../db/schema";
  * any `context_matrix_overrides` rows overlaid. Rows with values outside the
  * current vocabularies are ignored rather than trusted.
  */
-export function resolveTaskDocMatrix(db: Db, workspaceId: string): ResolvedTaskDocMatrix {
+export async function resolveTaskDocMatrix(db: Db, workspaceId: string): Promise<ResolvedTaskDocMatrix> {
   const matrix = defaultResolvedMatrix();
-  const rows = db
+  const rows = await db
     .select()
     .from(contextMatrixOverrides)
     .where(eq(contextMatrixOverrides.workspaceId, workspaceId))
@@ -44,14 +44,14 @@ export function resolveTaskDocMatrix(db: Db, workspaceId: string): ResolvedTaskD
 }
 
 /** Flat merged view for the matrix editor: every cell, canonical order. */
-export function listMatrixCells(db: Db, workspaceId: string): MatrixCell[] {
-  const rows = db
+export async function listMatrixCells(db: Db, workspaceId: string): Promise<MatrixCell[]> {
+  const rows = await db
     .select()
     .from(contextMatrixOverrides)
     .where(eq(contextMatrixOverrides.workspaceId, workspaceId))
     .all();
   const updatedAtByCell = new Map(rows.map((r) => [`${r.taskType}:${r.docType}`, r.updatedAt]));
-  const matrix = resolveTaskDocMatrix(db, workspaceId);
+  const matrix = await resolveTaskDocMatrix(db, workspaceId);
   return TASK_TYPES.flatMap((taskType) =>
     MATRIX_DOC_TYPES.map((docType) => ({
       taskType,
@@ -63,15 +63,15 @@ export function listMatrixCells(db: Db, workspaceId: string): MatrixCell[] {
 }
 
 /** Create or update one cell's override; returns the merged cell. */
-export function setMatrixCell(
+export async function setMatrixCell(
   db: Db,
   workspaceId: string,
   taskType: TaskType,
   docType: MatrixDocType,
   input: UpdateMatrixCellInput,
-): MatrixCell {
+): Promise<MatrixCell> {
   const now = Date.now();
-  const existing = db
+  const existing = await db
     .select({ id: contextMatrixOverrides.id })
     .from(contextMatrixOverrides)
     .where(
@@ -84,12 +84,12 @@ export function setMatrixCell(
     .get();
   const reason = input.reason?.trim() || null;
   if (existing) {
-    db.update(contextMatrixOverrides)
+    await db.update(contextMatrixOverrides)
       .set({ mode: input.mode, reason, updatedAt: now })
       .where(eq(contextMatrixOverrides.id, existing.id))
       .run();
   } else {
-    db.insert(contextMatrixOverrides)
+    await db.insert(contextMatrixOverrides)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -113,13 +113,13 @@ export function setMatrixCell(
 }
 
 /** Delete one cell's override; returns the now-default cell. */
-export function resetMatrixCell(
+export async function resetMatrixCell(
   db: Db,
   workspaceId: string,
   taskType: TaskType,
   docType: MatrixDocType,
-): MatrixCell {
-  db.delete(contextMatrixOverrides)
+): Promise<MatrixCell> {
+  await db.delete(contextMatrixOverrides)
     .where(
       and(
         eq(contextMatrixOverrides.workspaceId, workspaceId),

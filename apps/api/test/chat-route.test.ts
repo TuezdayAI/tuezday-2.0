@@ -187,7 +187,7 @@ describe("sending a message", () => {
   it("refuses once the thread's token cap is spent", async () => {
     const { app, workspaceId } = await appWith([]);
     const id = await newThread(app, workspaceId);
-    db.update(chatSessions)
+    await db.update(chatSessions)
       .set({ totalInputTokens: CHAT_THREAD_TOKEN_CAP })
       .where(eq(chatSessions.id, id))
       .run();

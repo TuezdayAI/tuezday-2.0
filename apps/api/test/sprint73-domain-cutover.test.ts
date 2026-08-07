@@ -29,7 +29,7 @@ describe("Sprint 73 domain cutover", () => {
   it("executes every recurring domain only for the workspace carried by its job", async () => {
     const db = createTestDb();
     for (const [index, id] of WORKSPACE_IDS.entries()) {
-      db.insert(workspaces)
+      await db.insert(workspaces)
         .values({
           id,
           name: `Workspace ${index + 1}`,
@@ -108,7 +108,7 @@ describe("Sprint 73 domain cutover", () => {
     >;
     const handlers = createBackgroundJobHandlersFromOperations(operations);
     await expect(
-      handlers.launch_generate(
+      await handlers.launch_generate(
         {
           kind: "launch_generate",
           workspaceId: WORKSPACE_IDS[0],

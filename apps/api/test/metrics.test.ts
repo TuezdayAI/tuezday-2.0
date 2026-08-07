@@ -7,10 +7,10 @@ import { listMetricsForSubject, recordMetric, recordMetrics } from "../src/servi
 import { randomUUID } from "node:crypto";
 import { workspaces } from "../src/db/schema";
 
-function seedWorkspace(db: Db): string {
+async function seedWorkspace(db: Db): Promise<string> {
   const id = randomUUID();
   const now = Date.now();
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({ id, name: "Metrics WS", createdAt: now, updatedAt: now })
     .run();
   return id;
@@ -20,9 +20,9 @@ describe("recordMetric", () => {
   let db: Db;
   let workspaceId: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createTestDb();
-    workspaceId = seedWorkspace(db);
+    workspaceId = await seedWorkspace(db);
   });
 
   const grain = (subjectId: string) =>
@@ -36,64 +36,64 @@ describe("recordMetric", () => {
       capturedAt: 1_754_086_400_000,
     }) as const;
 
-  it("re-recording the same grain updates in place, never duplicates", () => {
+  it("re-recording the same grain updates in place, never duplicates", async () => {
     const subjectId = randomUUID();
-    recordMetric(db, workspaceId, { ...grain(subjectId), value: 100 });
-    recordMetric(db, workspaceId, { ...grain(subjectId), value: 250 });
+    await recordMetric(db, workspaceId, { ...grain(subjectId), value: 100 });
+    await recordMetric(db, workspaceId, { ...grain(subjectId), value: 250 });
 
-    const rows = db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId)).all();
+    const rows = await db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId)).all();
     expect(rows).toHaveLength(1);
     expect(rows[0]!.value).toBe(250);
   });
 
-  it("different grains coexist", () => {
+  it("different grains coexist", async () => {
     const subjectId = randomUUID();
-    recordMetric(db, workspaceId, { ...grain(subjectId), value: 100 });
-    recordMetric(db, workspaceId, { ...grain(subjectId), window: "7d", value: 900 });
-    recordMetric(db, workspaceId, { ...grain(subjectId), metricKey: "clicks", value: 12 });
+    await recordMetric(db, workspaceId, { ...grain(subjectId), value: 100 });
+    await recordMetric(db, workspaceId, { ...grain(subjectId), window: "7d", value: 900 });
+    await recordMetric(db, workspaceId, { ...grain(subjectId), metricKey: "clicks", value: 12 });
 
-    const rows = db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId)).all();
+    const rows = await db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId)).all();
     expect(rows).toHaveLength(3);
   });
 
-  it("a null or undefined value records nothing — absence is not zero", () => {
+  it("a null or undefined value records nothing — absence is not zero", async () => {
     const subjectId = randomUUID();
-    recordMetric(db, workspaceId, { ...grain(subjectId), value: null });
-    recordMetric(db, workspaceId, { ...grain(subjectId), value: undefined });
+    await recordMetric(db, workspaceId, { ...grain(subjectId), value: null });
+    await recordMetric(db, workspaceId, { ...grain(subjectId), value: undefined });
 
-    const rows = db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId)).all();
+    const rows = await db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId)).all();
     expect(rows).toHaveLength(0);
   });
 
   it("refuses vocabulary violations", () => {
     const subjectId = randomUUID();
-    expect(() =>
-      recordMetric(db, workspaceId, { ...grain(subjectId), metricKey: "replies" as never, value: 1 }),
+    expect(async () =>
+      await recordMetric(db, workspaceId, { ...grain(subjectId), metricKey: "replies" as never, value: 1 }),
     ).toThrow();
-    expect(() =>
-      recordMetric(db, workspaceId, { ...grain(subjectId), window: "30d" as never, value: 1 }),
+    expect(async () =>
+      await recordMetric(db, workspaceId, { ...grain(subjectId), window: "30d" as never, value: 1 }),
     ).toThrow();
-    expect(() =>
-      recordMetric(db, workspaceId, { ...grain(subjectId), subjectType: "lane" as never, value: 1 }),
+    expect(async () =>
+      await recordMetric(db, workspaceId, { ...grain(subjectId), subjectType: "lane" as never, value: 1 }),
     ).toThrow();
-    expect(() =>
-      recordMetric(db, workspaceId, { ...grain(subjectId), source: "derived" as never, value: 1 }),
+    expect(async () =>
+      await recordMetric(db, workspaceId, { ...grain(subjectId), source: "derived" as never, value: 1 }),
     ).toThrow();
     // Money is integer cents; no floats.
-    expect(() =>
-      recordMetric(db, workspaceId, { ...grain(subjectId), value: 12.5 }),
+    expect(async () =>
+      await recordMetric(db, workspaceId, { ...grain(subjectId), value: 12.5 }),
     ).toThrow();
   });
 
-  it("recordMetrics skips null values and writes the rest in one call", () => {
+  it("recordMetrics skips null values and writes the rest in one call", async () => {
     const subjectId = randomUUID();
-    const written = recordMetrics(db, workspaceId, [
+    const written = await recordMetrics(db, workspaceId, [
       { ...grain(subjectId), metricKey: "likes", value: 5 },
       { ...grain(subjectId), metricKey: "comments", value: null },
       { ...grain(subjectId), metricKey: "shares", value: 2 },
     ]);
     expect(written).toBe(2);
-    const rows = listMetricsForSubject(db, workspaceId, "publication", subjectId);
+    const rows = await listMetricsForSubject(db, workspaceId, "publication", subjectId);
     expect(rows.map((r) => r.metricKey).sort()).toEqual(["likes", "shares"]);
   });
 });

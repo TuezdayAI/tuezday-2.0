@@ -104,8 +104,8 @@ function fakeFabric(): ConnectorFabric {
   };
 }
 
-function seedReadyProfile(db: Db, workspaceId: string): void {
-  db.insert(brandProfiles)
+async function seedReadyProfile(db: Db, workspaceId: string): Promise<void> {
+  await db.insert(brandProfiles)
     .values({
       id: randomUUID(),
       workspaceId,
@@ -120,14 +120,14 @@ function seedReadyProfile(db: Db, workspaceId: string): void {
     .run();
 }
 
-function setup() {
+async function setup() {
   const db = createTestDb();
-  const { user } = registerAccount(db, {
+  const { user } = await registerAccount(db, {
     email: `bad-${randomUUID()}@test.dev`,
     password: "test-password-1",
     name: "BAD",
   });
-  const ws = createWorkspace(db, { name: "AutoDraft WS" }, user.id);
+  const ws = await createWorkspace(db, { name: "AutoDraft WS" }, user.id);
   return { db, ws };
 }
 
@@ -190,15 +190,15 @@ describe("draftBrain", () => {
 
 describe("runBrainAutoDraft", () => {
   it("drafts all five docs for an empty brain with a ready profile", async () => {
-    const { db, ws } = setup();
-    seedReadyProfile(db, ws.id);
+    const { db, ws } = await setup();
+    await seedReadyProfile(db, ws.id);
 
     const view = await runBrainAutoDraft(db, markerLlm().llm, fakeFabric(), ws.id);
 
     expect(view.insufficient).toBe(false);
     expect(view.drafted.sort()).toEqual([...BRAIN_DOC_TYPES].sort());
     expect(view.skipped).toEqual([]);
-    const brain = getBrain(db, ws.id);
+    const brain = await getBrain(db, ws.id);
     for (const doc of brain.docs) {
       expect(doc.content.trim().length).toBeGreaterThan(0);
     }
@@ -206,22 +206,22 @@ describe("runBrainAutoDraft", () => {
   });
 
   it("never clobbers a pre-edited doc: soul skipped and unchanged", async () => {
-    const { db, ws } = setup();
-    seedReadyProfile(db, ws.id);
+    const { db, ws } = await setup();
+    await seedReadyProfile(db, ws.id);
     const handWritten = "My hand-written soul doc content here with enough words";
-    updateBrainDoc(db, ws.id, "soul", handWritten);
+    await updateBrainDoc(db, ws.id, "soul", handWritten);
 
     const view = await runBrainAutoDraft(db, markerLlm().llm, fakeFabric(), ws.id);
 
     expect(view.insufficient).toBe(false);
     expect(view.skipped).toEqual(["soul"]);
     expect(view.drafted.sort()).toEqual(["history", "icp", "now", "voice"]);
-    const soul = getBrain(db, ws.id).docs.find((d) => d.docType === "soul")!;
+    const soul = (await getBrain(db, ws.id)).docs.find((d) => d.docType === "soul")!;
     expect(soul.content).toBe(handWritten);
   });
 
   it("returns insufficient and writes nothing with no profile and no social", async () => {
-    const { db, ws } = setup();
+    const { db, ws } = await setup();
     const { llm, calls } = markerLlm();
 
     const view = await runBrainAutoDraft(db, llm, fakeFabric(), ws.id);
@@ -237,11 +237,11 @@ describe("runBrainAutoDraft", () => {
   });
 
   it("degrades to an empty social corpus when the social read throws", async () => {
-    const { db, ws } = setup();
-    seedReadyProfile(db, ws.id);
+    const { db, ws } = await setup();
+    await seedReadyProfile(db, ws.id);
     // A connected social account makes readSocialCorpus actually touch the
     // fabric; the exploding proxy then throws out of the read itself.
-    db.insert(connections)
+    await db.insert(connections)
       .values({
         id: randomUUID(),
         workspaceId: ws.id,

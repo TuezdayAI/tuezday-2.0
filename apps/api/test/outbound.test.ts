@@ -80,9 +80,9 @@ describe("outbound API", () => {
     ).json();
   }
 
-  function configureNativeEmail(email: string, allow = true): void {
+  async function configureNativeEmail(email: string, allow = true): Promise<void> {
     const now = Date.now();
-    db.insert(workspaceEmailSenders).values({
+    await db.insert(workspaceEmailSenders).values({
       workspaceId,
       domain: "example.com",
       fromLocalPart: "hello",
@@ -101,7 +101,7 @@ describe("outbound API", () => {
       updatedAt: now,
     }).onConflictDoNothing().run();
     if (!allow) return;
-    db.insert(emailRecipientPermissions).values({
+    await db.insert(emailRecipientPermissions).values({
       id: randomUUID(),
       workspaceId,
       normalizedEmail: email,
@@ -287,7 +287,7 @@ describe("outbound API", () => {
     it("sends one approved lead draft through one idempotent governed action", async () => {
       const lead = await createLead();
       const draft = await approvedDraftForLead(lead.id);
-      configureNativeEmail(lead.email);
+      await configureNativeEmail(lead.email);
       await putActionPolicy(app, workspaceId, "workspace", workspaceId, { send: "autonomous" });
 
       const send = await app.inject({

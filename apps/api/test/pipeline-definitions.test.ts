@@ -21,17 +21,17 @@ const OTHER_CAMPAIGN_ID = "55555555-5555-4555-8555-555555555555";
 const LANE_ID = "44444444-4444-4444-8444-444444444444";
 const ACTOR = { userId: null, label: "founder" };
 
-function fixture() {
+async function fixture() {
   const db = createTestDb();
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({ id: WORKSPACE_ID, name: "Pipelines", createdAt: 1, updatedAt: 1 })
     .run();
   for (const id of [CAMPAIGN_ID, OTHER_CAMPAIGN_ID]) {
-    db.insert(campaigns)
+    await db.insert(campaigns)
       .values({ id, workspaceId: WORKSPACE_ID, name: `Campaign ${id.slice(0, 4)}`, createdAt: 1, updatedAt: 1 })
       .run();
   }
-  db.insert(campaignLanes)
+  await db.insert(campaignLanes)
     .values({
       id: LANE_ID,
       workspaceId: WORKSPACE_ID,
@@ -50,11 +50,11 @@ function spec(): PipelineSpec {
 }
 
 describe("pipeline definitions", () => {
-  it("seeds the reference definition once, as a draft at version 1", () => {
-    const db = fixture();
-    ensurePipelineDefinitions(db, WORKSPACE_ID);
-    ensurePipelineDefinitions(db, WORKSPACE_ID);
-    const definitions = listPipelineDefinitions(db, WORKSPACE_ID);
+  it("seeds the reference definition once, as a draft at version 1", async () => {
+    const db = await fixture();
+    await ensurePipelineDefinitions(db, WORKSPACE_ID);
+    await ensurePipelineDefinitions(db, WORKSPACE_ID);
+    const definitions = await listPipelineDefinitions(db, WORKSPACE_ID);
     expect(definitions).toHaveLength(1);
     expect(definitions[0]).toMatchObject({
       taskKey: "signal_social_post",
@@ -66,19 +66,19 @@ describe("pipeline definitions", () => {
     expect(definitions[0]!.spec.steps.map((step) => step.key)).toEqual(
       REFERENCE_SIGNAL_SOCIAL_POST_SPEC.steps.map((step) => step.key),
     );
-    const detail = getPipelineDefinitionDetail(db, WORKSPACE_ID, definitions[0]!.id)!;
+    const detail = (await getPipelineDefinitionDetail(db, WORKSPACE_ID, definitions[0]!.id))!;
     expect(detail.versions).toHaveLength(1);
     expect(detail.versions[0]).toMatchObject({ version: 1, actorLabel: "system" });
   });
 
-  it("bumps the version and appends history on every spec edit", () => {
-    const db = fixture();
-    ensurePipelineDefinitions(db, WORKSPACE_ID);
-    const definition = listPipelineDefinitions(db, WORKSPACE_ID)[0]!;
+  it("bumps the version and appends history on every spec edit", async () => {
+    const db = await fixture();
+    await ensurePipelineDefinitions(db, WORKSPACE_ID);
+    const definition = (await listPipelineDefinitions(db, WORKSPACE_ID))[0]!;
 
     const edited = spec();
     edited.steps[4]!.loop!.threshold = 85;
-    const updated = updatePipelineSpec(
+    const updated = await updatePipelineSpec(
       db,
       WORKSPACE_ID,
       definition.id,
@@ -89,18 +89,18 @@ describe("pipeline definitions", () => {
     expect(updated.name).toBe("Tightened reference");
     expect(updated.spec.steps[4]!.loop!.threshold).toBe(85);
 
-    const detail = getPipelineDefinitionDetail(db, WORKSPACE_ID, definition.id)!;
+    const detail = (await getPipelineDefinitionDetail(db, WORKSPACE_ID, definition.id))!;
     expect(detail.versions.map((version) => version.version)).toEqual([2, 1]);
     expect(detail.versions[0]!.actorLabel).toBe("founder");
     // History is immutable: version 1 still carries the original threshold.
     expect(detail.versions[1]!.spec.steps[4]!.loop!.threshold).toBe(70);
   });
 
-  it("activation demotes only the active sibling in the same exact scope", () => {
-    const db = fixture();
-    ensurePipelineDefinitions(db, WORKSPACE_ID);
-    const workspaceScoped = listPipelineDefinitions(db, WORKSPACE_ID)[0]!;
-    const campaignScoped = createPipelineDefinition(
+  it("activation demotes only the active sibling in the same exact scope", async () => {
+    const db = await fixture();
+    await ensurePipelineDefinitions(db, WORKSPACE_ID);
+    const workspaceScoped = (await listPipelineDefinitions(db, WORKSPACE_ID))[0]!;
+    const campaignScoped = await createPipelineDefinition(
       db,
       WORKSPACE_ID,
       {
@@ -113,11 +113,11 @@ describe("pipeline definitions", () => {
       ACTOR,
     );
 
-    setPipelineStatus(db, WORKSPACE_ID, workspaceScoped.id, "active");
-    setPipelineStatus(db, WORKSPACE_ID, campaignScoped.id, "active");
+    await setPipelineStatus(db, WORKSPACE_ID, workspaceScoped.id, "active");
+    await setPipelineStatus(db, WORKSPACE_ID, campaignScoped.id, "active");
     // Different scopes — both stay active.
     const statuses = new Map(
-      listPipelineDefinitions(db, WORKSPACE_ID).map((definition) => [
+      (await listPipelineDefinitions(db, WORKSPACE_ID)).map((definition) => [
         definition.id,
         definition.status,
       ]),
@@ -126,15 +126,15 @@ describe("pipeline definitions", () => {
     expect(statuses.get(campaignScoped.id)).toBe("active");
 
     // A second workspace-scoped definition demotes the first on activation.
-    const rival = createPipelineDefinition(
+    const rival = await createPipelineDefinition(
       db,
       WORKSPACE_ID,
       { taskKey: "signal_social_post", name: "Rival", description: "", spec: spec() },
       ACTOR,
     );
-    setPipelineStatus(db, WORKSPACE_ID, rival.id, "active");
+    await setPipelineStatus(db, WORKSPACE_ID, rival.id, "active");
     const after = new Map(
-      listPipelineDefinitions(db, WORKSPACE_ID).map((definition) => [
+      (await listPipelineDefinitions(db, WORKSPACE_ID)).map((definition) => [
         definition.id,
         definition.status,
       ]),
@@ -144,23 +144,23 @@ describe("pipeline definitions", () => {
     expect(after.get(campaignScoped.id)).toBe("active");
   });
 
-  it("resolves the most specific active definition: lane > campaign > workspace", () => {
-    const db = fixture();
+  it("resolves the most specific active definition: lane > campaign > workspace", async () => {
+    const db = await fixture();
     const campaignId = CAMPAIGN_ID;
     const laneId = LANE_ID;
-    const workspaceScoped = createPipelineDefinition(
+    const workspaceScoped = await createPipelineDefinition(
       db,
       WORKSPACE_ID,
       { taskKey: "signal_social_post", name: "Default", description: "", spec: spec() },
       ACTOR,
     );
-    const campaignScoped = createPipelineDefinition(
+    const campaignScoped = await createPipelineDefinition(
       db,
       WORKSPACE_ID,
       { taskKey: "signal_social_post", name: "Campaign", description: "", campaignId, spec: spec() },
       ACTOR,
     );
-    const laneScoped = createPipelineDefinition(
+    const laneScoped = await createPipelineDefinition(
       db,
       WORKSPACE_ID,
       {
@@ -176,34 +176,34 @@ describe("pipeline definitions", () => {
 
     // Nothing active yet.
     expect(
-      resolvePipelineDefinition(db, { workspaceId: WORKSPACE_ID, taskKey: "signal_social_post" }),
+      await resolvePipelineDefinition(db, { workspaceId: WORKSPACE_ID, taskKey: "signal_social_post" }),
     ).toBeUndefined();
 
-    setPipelineStatus(db, WORKSPACE_ID, workspaceScoped.id, "active");
-    setPipelineStatus(db, WORKSPACE_ID, campaignScoped.id, "active");
-    setPipelineStatus(db, WORKSPACE_ID, laneScoped.id, "active");
+    await setPipelineStatus(db, WORKSPACE_ID, workspaceScoped.id, "active");
+    await setPipelineStatus(db, WORKSPACE_ID, campaignScoped.id, "active");
+    await setPipelineStatus(db, WORKSPACE_ID, laneScoped.id, "active");
 
     expect(
-      resolvePipelineDefinition(db, {
+      (await resolvePipelineDefinition(db, {
         workspaceId: WORKSPACE_ID,
         taskKey: "signal_social_post",
         campaignId,
         laneId,
-      })?.id,
+      }))?.id,
     ).toBe(laneScoped.id);
     expect(
-      resolvePipelineDefinition(db, {
+      (await resolvePipelineDefinition(db, {
         workspaceId: WORKSPACE_ID,
         taskKey: "signal_social_post",
         campaignId,
-      })?.id,
+      }))?.id,
     ).toBe(campaignScoped.id);
     expect(
-      resolvePipelineDefinition(db, {
+      (await resolvePipelineDefinition(db, {
         workspaceId: WORKSPACE_ID,
         taskKey: "signal_social_post",
         campaignId: OTHER_CAMPAIGN_ID,
-      })?.id,
+      }))?.id,
     ).toBe(workspaceScoped.id);
   });
 });

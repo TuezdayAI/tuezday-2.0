@@ -198,6 +198,6 @@ export class XAdapter implements SocialAdapter {
     if (!input.target) {
       throw new ConnectorFabricError("X reply needs the recipient handle (target).");
     }
-    return this.sendDm({ recipientHandle: input.target, body: input.body });
+    return await this.sendDm({ recipientHandle: input.target, body: input.body });
   }
 }

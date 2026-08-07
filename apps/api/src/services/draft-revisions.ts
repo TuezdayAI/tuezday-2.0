@@ -26,11 +26,11 @@ export interface CreateRunningTurnInput {
   sourceContent: string;
 }
 
-export function createRunningTurn(
+export async function createRunningTurn(
   db: Db,
   input: CreateRunningTurnInput,
   now = Date.now(),
-): DraftRevisionTurn {
+): Promise<DraftRevisionTurn> {
   const row: DraftRevisionTurnRow = {
     id: randomUUID(),
     requestId: input.requestId,
@@ -49,7 +49,7 @@ export function createRunningTurn(
     createdAt: now,
     completedAt: null,
   };
-  db.insert(draftRevisionTurns).values(row).run();
+  await db.insert(draftRevisionTurns).values(row).run();
   return rowToTurn(row);
 }
 
@@ -61,14 +61,14 @@ export interface CompleteTurnInput {
   durationMs: number;
 }
 
-export function completeTurn(
+export async function completeTurn(
   db: RevisionWriteDb,
   workspaceId: string,
   turnId: string,
   input: CompleteTurnInput,
   now = Date.now(),
-): DraftRevisionTurn {
-  db.update(draftRevisionTurns)
+): Promise<DraftRevisionTurn> {
+  await db.update(draftRevisionTurns)
     .set({
       resultContent: input.resultContent,
       sectionsJson: JSON.stringify(input.contextSections),
@@ -81,19 +81,19 @@ export function completeTurn(
     })
     .where(and(eq(draftRevisionTurns.id, turnId), eq(draftRevisionTurns.workspaceId, workspaceId)))
     .run();
-  const row = getTurn(db, workspaceId, turnId);
+  const row = await getTurn(db, workspaceId, turnId);
   if (!row) throw new Error("draft_revision_turn_not_found");
   return row;
 }
 
-export function failTurn(
+export async function failTurn(
   db: RevisionWriteDb,
   workspaceId: string,
   turnId: string,
   error: string,
   now = Date.now(),
-): DraftRevisionTurn {
-  db.update(draftRevisionTurns)
+): Promise<DraftRevisionTurn> {
+  await db.update(draftRevisionTurns)
     .set({
       resultContent: null,
       status: "failed",
@@ -105,17 +105,17 @@ export function failTurn(
     })
     .where(and(eq(draftRevisionTurns.id, turnId), eq(draftRevisionTurns.workspaceId, workspaceId)))
     .run();
-  const row = getTurn(db, workspaceId, turnId);
+  const row = await getTurn(db, workspaceId, turnId);
   if (!row) throw new Error("draft_revision_turn_not_found");
   return row;
 }
 
-function getTurn(
+async function getTurn(
   db: RevisionWriteDb,
   workspaceId: string,
   turnId: string,
-): DraftRevisionTurn | undefined {
-  const row = db
+): Promise<DraftRevisionTurn | undefined> {
+  const row = await db
     .select()
     .from(draftRevisionTurns)
     .where(and(eq(draftRevisionTurns.workspaceId, workspaceId), eq(draftRevisionTurns.id, turnId)))
@@ -123,13 +123,13 @@ function getTurn(
   return row ? rowToTurn(row) : undefined;
 }
 
-export function getTurnByRequest(
+export async function getTurnByRequest(
   db: Db,
   workspaceId: string,
   draftId: string,
   requestId: string,
-): DraftRevisionTurn | undefined {
-  const row = db
+): Promise<DraftRevisionTurn | undefined> {
+  const row = await db
     .select()
     .from(draftRevisionTurns)
     .where(
@@ -143,12 +143,12 @@ export function getTurnByRequest(
   return row ? rowToTurn(row) : undefined;
 }
 
-export function listRevisionTurns(
+export async function listRevisionTurns(
   db: Db,
   workspaceId: string,
   draftId: string,
-): DraftRevisionTurn[] {
-  return db
+): Promise<DraftRevisionTurn[]> {
+  return (await db
     .select()
     .from(draftRevisionTurns)
     .where(
@@ -158,16 +158,16 @@ export function listRevisionTurns(
       ),
     )
     .orderBy(asc(draftRevisionTurns.createdAt))
-    .all()
+    .all())
     .map(rowToTurn);
 }
 
-export function countCompletedRevisionTurnsSince(
+export async function countCompletedRevisionTurnsSince(
   db: Db,
   workspaceId: string,
   sinceMs: number,
-): number {
-  return db
+): Promise<number> {
+  return (await db
     .select({ id: draftRevisionTurns.id })
     .from(draftRevisionTurns)
     .where(
@@ -177,5 +177,5 @@ export function countCompletedRevisionTurnsSince(
         gte(draftRevisionTurns.completedAt, sinceMs),
       ),
     )
-    .all().length;
+    .all()).length;
 }

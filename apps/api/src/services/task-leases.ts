@@ -22,22 +22,22 @@ function toToken(row: TaskLeaseRow): LeaseToken {
   };
 }
 
-export function databaseNowMs(db: DbExecutor): number {
-  const row = db.get<{ now: number }>(
+export async function databaseNowMs(db: DbExecutor): Promise<number> {
+  const row = await db.get<{ now: number }>(
     sql`SELECT ${DATABASE_NOW_MS} AS now`,
   );
   if (!row) throw new Error("database_clock_unavailable");
   return row.now;
 }
 
-export function claimTaskLease(
+export async function claimTaskLease(
   db: Db,
   key: string,
   owner: string,
   leaseMs: number,
-): LeaseToken | null {
-  return db.transaction((tx) => {
-    const inserted = tx
+): Promise<LeaseToken | null> {
+  return await db.transaction(async (tx) => {
+    const inserted = await tx
       .insert(taskLeases)
       .values({
         key,
@@ -53,7 +53,7 @@ export function claimTaskLease(
       .get();
     if (inserted) return toToken(inserted);
 
-    const reclaimed = tx
+    const reclaimed = await tx
       .update(taskLeases)
       .set({
         owner,
@@ -74,12 +74,12 @@ export function claimTaskLease(
   });
 }
 
-export function heartbeatTaskLease(
+export async function heartbeatTaskLease(
   db: Db,
   token: LeaseToken,
   leaseMs: number,
-): LeaseToken | null {
-  const renewed = db
+): Promise<LeaseToken | null> {
+  const renewed = await db
     .update(taskLeases)
     .set({
       expiresAt: sql`${DATABASE_NOW_MS} + ${leaseMs}`,
@@ -99,8 +99,8 @@ export function heartbeatTaskLease(
   return renewed ? toToken(renewed) : null;
 }
 
-export function releaseTaskLease(db: Db, token: LeaseToken): boolean {
-  const result = db
+export async function releaseTaskLease(db: Db, token: LeaseToken): Promise<boolean> {
+  const result = await db
     .update(taskLeases)
     .set({
       expiresAt: DATABASE_NOW_MS,
@@ -130,7 +130,7 @@ export async function withTaskLease<T>(
     token: LeaseToken;
   }) => Promise<T>,
 ): Promise<{ busy: true } | { busy: false; value: T }> {
-  const initialToken = claimTaskLease(
+  const initialToken = await claimTaskLease(
     db,
     input.key,
     input.owner,
@@ -144,9 +144,9 @@ export async function withTaskLease<T>(
   const controller = new AbortController();
 
   const scheduleHeartbeat = () => {
-    heartbeatTimer = setTimeout(() => {
+    heartbeatTimer = setTimeout(async () => {
       if (stopped) return;
-      const renewed = heartbeatTaskLease(db, latestToken, input.leaseMs);
+      const renewed = await heartbeatTaskLease(db, latestToken, input.leaseMs);
       if (!renewed) {
         controller.abort(
           Object.assign(new Error("lease_lost"), { code: "lease_lost" }),
@@ -168,6 +168,6 @@ export async function withTaskLease<T>(
   } finally {
     stopped = true;
     if (heartbeatTimer) clearTimeout(heartbeatTimer);
-    releaseTaskLease(db, latestToken);
+    await releaseTaskLease(db, latestToken);
   }
 }

@@ -83,9 +83,9 @@ function bundle() {
   });
 }
 
-function seedDraft(db: Db, overrides: Record<string, unknown> = {}) {
+async function seedDraft(db: Db, overrides: Record<string, unknown> = {}) {
   const resolved = bundle();
-  db.insert(generations)
+  await db.insert(generations)
     .values({
       id: GENERATION_ID,
       workspaceId: WORKSPACE_ID,
@@ -100,7 +100,7 @@ function seedDraft(db: Db, overrides: Record<string, unknown> = {}) {
       createdAt: 20,
     })
     .run();
-  db.insert(drafts)
+  await db.insert(drafts)
     .values({
       id: DRAFT_ID,
       workspaceId: WORKSPACE_ID,
@@ -122,12 +122,12 @@ function seedDraft(db: Db, overrides: Record<string, unknown> = {}) {
 describe("the why-this trace (Sprint 71 acceptance)", () => {
   let db: Db;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createTestDb();
-    db.insert(workspaces)
+    await db.insert(workspaces)
       .values({ id: WORKSPACE_ID, name: "Acme", createdAt: 1, updatedAt: 1 })
       .run();
-    db.insert(signals)
+    await db.insert(signals)
       .values({
         id: SIGNAL_ID,
         workspaceId: WORKSPACE_ID,
@@ -139,9 +139,9 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
       .run();
   });
 
-  it("answers 'why did it write this?' from the draft alone", () => {
-    seedDraft(db);
-    const trace = artifactTraceSchema.parse(buildArtifactTrace(db, WORKSPACE_ID, "draft", DRAFT_ID));
+  it("answers 'why did it write this?' from the draft alone", async () => {
+    await seedDraft(db);
+    const trace = artifactTraceSchema.parse(await buildArtifactTrace(db, WORKSPACE_ID, "draft", DRAFT_ID));
 
     // What triggered it…
     expect(trace.origin!.kind).toBe("signal");
@@ -162,9 +162,9 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
     expect(trace.knobs).toHaveLength(9);
   });
 
-  it("shows the excluded sections too, with the reason they lost", () => {
-    seedDraft(db);
-    const trace = buildArtifactTrace(db, WORKSPACE_ID, "draft", DRAFT_ID)!;
+  it("shows the excluded sections too, with the reason they lost", async () => {
+    await seedDraft(db);
+    const trace = (await buildArtifactTrace(db, WORKSPACE_ID, "draft", DRAFT_ID))!;
     const excluded = trace.context.filter((section) => !section.included);
     expect(excluded.length).toBeGreaterThan(0);
     // "Why did it NOT use my campaign?" is the same question and needs the
@@ -172,9 +172,9 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
     expect(excluded.every((section) => section.reason.length > 0)).toBe(true);
   });
 
-  it("links a rule that still exists and admits when one was retired", () => {
-    seedDraft(db);
-    db.insert(preferenceRules)
+  it("links a rule that still exists and admits when one was retired", async () => {
+    await seedDraft(db);
+    await db.insert(preferenceRules)
       .values({
         id: RULE_ID,
         workspaceId: WORKSPACE_ID,
@@ -191,7 +191,7 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
         updatedAt: 5,
       })
       .run();
-    const trace = buildArtifactTrace(db, WORKSPACE_ID, "draft", DRAFT_ID)!;
+    const trace = (await buildArtifactTrace(db, WORKSPACE_ID, "draft", DRAFT_ID))!;
     expect(trace.preferences[0]!.ruleId).toBe(RULE_ID);
     expect(trace.preferences[0]!.confidence).toBe(80);
     // The second rule was never stored — the panel says so rather than
@@ -199,8 +199,8 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
     expect(trace.preferences[1]!.ruleId).toBeNull();
   });
 
-  it("prefers the latest revision's context over the original generation's", () => {
-    seedDraft(db);
+  it("prefers the latest revision's context over the original generation's", async () => {
+    await seedDraft(db);
     const revised = resolveContext({
       workspaceName: "Acme",
       docs: { ...DOCS, voice: "# Voice\nShorter. Sharper. No adjectives." },
@@ -208,7 +208,7 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
       channel: "linkedin",
       matrix: defaultResolvedMatrix(),
     });
-    db.insert(draftRevisionTurns)
+    await db.insert(draftRevisionTurns)
       .values({
         id: randomUUID(),
         requestId: randomUUID(),
@@ -227,7 +227,7 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
         completedAt: 31,
       })
       .run();
-    const trace = buildArtifactTrace(db, WORKSPACE_ID, "draft", DRAFT_ID)!;
+    const trace = (await buildArtifactTrace(db, WORKSPACE_ID, "draft", DRAFT_ID))!;
     // The words on screen came from the revision, so its context is the honest
     // answer — showing the original would explain text nobody can see.
     expect(trace.context.find((s) => s.key === "org:voice")!.excerpt).toContain("No adjectives");
@@ -236,15 +236,15 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
     expect(trace.revisions[0]!.instruction).toBe("Cut the second paragraph.");
   });
 
-  it("flags a priced-not-metered cost rather than presenting it as measured", () => {
-    seedDraft(db);
-    const trace = buildArtifactTrace(db, WORKSPACE_ID, "draft", DRAFT_ID)!;
+  it("flags a priced-not-metered cost rather than presenting it as measured", async () => {
+    await seedDraft(db);
+    const trace = (await buildArtifactTrace(db, WORKSPACE_ID, "draft", DRAFT_ID))!;
     expect(trace.cost!.estimated).toBe(true);
     expect(trace.cost!.inputTokens).toBeGreaterThan(0);
   });
 
-  it("matches the closest plan pillar by wording, and only when a campaign exists", () => {
-    db.insert(campaigns)
+  it("matches the closest plan pillar by wording, and only when a campaign exists", async () => {
+    await db.insert(campaigns)
       .values({
         id: CAMPAIGN_ID,
         workspaceId: WORKSPACE_ID,
@@ -255,21 +255,21 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
         updatedAt: 5,
       })
       .run();
-    seedDraft(db, { campaignId: CAMPAIGN_ID });
-    const trace = buildArtifactTrace(db, WORKSPACE_ID, "draft", DRAFT_ID)!;
+    await seedDraft(db, { campaignId: CAMPAIGN_ID });
+    const trace = (await buildArtifactTrace(db, WORKSPACE_ID, "draft", DRAFT_ID))!;
     expect(trace.plan!.campaignName).toBe("Pricing rewrite");
     expect(trace.plan!.href).toContain(CAMPAIGN_ID);
   });
 
-  it("says plainly when there is no campaign to serve a pillar of", () => {
-    seedDraft(db);
-    expect(buildArtifactTrace(db, WORKSPACE_ID, "draft", DRAFT_ID)!.plan).toBeNull();
+  it("says plainly when there is no campaign to serve a pillar of", async () => {
+    await seedDraft(db);
+    expect((await buildArtifactTrace(db, WORKSPACE_ID, "draft", DRAFT_ID))!.plan).toBeNull();
   });
 
-  it("traces a publication through to the draft that produced the words", () => {
-    seedDraft(db);
+  it("traces a publication through to the draft that produced the words", async () => {
+    await seedDraft(db);
     const connectionId = randomUUID();
-    db.insert(connections)
+    await db.insert(connections)
       .values({
         id: connectionId,
         workspaceId: WORKSPACE_ID,
@@ -281,7 +281,7 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
       })
       .run();
     const publicationId = randomUUID();
-    db.insert(publications)
+    await db.insert(publications)
       .values({
         id: publicationId,
         workspaceId: WORKSPACE_ID,
@@ -297,7 +297,7 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
       })
       .run();
     const trace = artifactTraceSchema.parse(
-      buildArtifactTrace(db, WORKSPACE_ID, "publication", publicationId),
+      await buildArtifactTrace(db, WORKSPACE_ID, "publication", publicationId),
     );
     expect(trace.subject.kind).toBe("publication");
     expect(trace.subject.id).toBe(publicationId);
@@ -306,9 +306,9 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
     expect(trace.context.length).toBeGreaterThan(0);
   });
 
-  it("names the gap when an action was assembled rather than written (D-71.9)", () => {
+  it("names the gap when an action was assembled rather than written (D-71.9)", async () => {
     const actionId = randomUUID();
-    db.insert(externalActions)
+    await db.insert(externalActions)
       .values({
         id: actionId,
         workspaceId: WORKSPACE_ID,
@@ -328,7 +328,7 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
       })
       .run();
     const trace = artifactTraceSchema.parse(
-      buildArtifactTrace(db, WORKSPACE_ID, "external_action", actionId),
+      await buildArtifactTrace(db, WORKSPACE_ID, "external_action", actionId),
     );
     expect(trace.context).toHaveLength(0);
     // A blank panel and "there was never a prompt" are different facts.
@@ -336,10 +336,10 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
     expect(trace.cost).toBeNull();
   });
 
-  it("traces a content action through its draft", () => {
-    seedDraft(db);
+  it("traces a content action through its draft", async () => {
+    await seedDraft(db);
     const actionId = randomUUID();
-    db.insert(externalActions)
+    await db.insert(externalActions)
       .values({
         id: actionId,
         workspaceId: WORKSPACE_ID,
@@ -358,14 +358,14 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
         updatedAt: 50,
       })
       .run();
-    const trace = buildArtifactTrace(db, WORKSPACE_ID, "external_action", actionId)!;
+    const trace = (await buildArtifactTrace(db, WORKSPACE_ID, "external_action", actionId))!;
     expect(trace.subject.kind).toBe("external_action");
     expect(trace.context.length).toBeGreaterThan(0);
     expect(trace.examples.length).toBeGreaterThan(0);
   });
 
-  it("explains an empty context rather than rendering blank", () => {
-    db.insert(drafts)
+  it("explains an empty context rather than rendering blank", async () => {
+    await db.insert(drafts)
       .values({
         id: DRAFT_ID,
         workspaceId: WORKSPACE_ID,
@@ -380,7 +380,7 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
         updatedAt: 21,
       })
       .run();
-    const trace = buildArtifactTrace(db, WORKSPACE_ID, "draft", DRAFT_ID)!;
+    const trace = (await buildArtifactTrace(db, WORKSPACE_ID, "draft", DRAFT_ID))!;
     expect(trace.context).toHaveLength(0);
     expect(trace.contextReason).toContain("outside the generation path");
     expect(trace.origin!.kind).toBe("manual");
@@ -389,11 +389,11 @@ describe("the why-this trace (Sprint 71 acceptance)", () => {
     expect(trace.knobs).toHaveLength(9);
   });
 
-  it("returns nothing for a subject in another workspace", () => {
-    seedDraft(db);
+  it("returns nothing for a subject in another workspace", async () => {
+    await seedDraft(db);
     const other = randomUUID();
-    db.insert(workspaces).values({ id: other, name: "Other", createdAt: 1, updatedAt: 1 }).run();
-    expect(buildArtifactTrace(db, other, "draft", DRAFT_ID)).toBeUndefined();
-    expect(buildArtifactTrace(db, WORKSPACE_ID, "draft", randomUUID())).toBeUndefined();
+    await db.insert(workspaces).values({ id: other, name: "Other", createdAt: 1, updatedAt: 1 }).run();
+    expect(await buildArtifactTrace(db, other, "draft", DRAFT_ID)).toBeUndefined();
+    expect(await buildArtifactTrace(db, WORKSPACE_ID, "draft", randomUUID())).toBeUndefined();
   });
 });

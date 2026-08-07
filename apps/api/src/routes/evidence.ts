@@ -15,8 +15,8 @@ import {
 } from "../services/evidence";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -25,7 +25,7 @@ function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
 
 export function registerEvidenceRoutes(app: FastifyInstance, db: Db, store: EvidenceStore): void {
   app.post<{ Params: { id: string } }>("/workspaces/:id/evidence", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = createEvidenceInputSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({
@@ -52,7 +52,7 @@ export function registerEvidenceRoutes(app: FastifyInstance, db: Db, store: Evid
   });
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/evidence", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const [documents, health] = await Promise.all([
       Promise.resolve(listEvidence(db, request.params.id)),
       store.health(),
@@ -63,8 +63,8 @@ export function registerEvidenceRoutes(app: FastifyInstance, db: Db, store: Evid
   app.delete<{ Params: { id: string; documentId: string } }>(
     "/workspaces/:id/evidence/:documentId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const document = getEvidenceDocument(db, request.params.id, request.params.documentId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const document = await getEvidenceDocument(db, request.params.id, request.params.documentId);
       if (!document) return reply.status(404).send({ error: "evidence_not_found" });
       await deleteEvidence(db, store, document);
       return reply.status(204).send();
@@ -76,9 +76,9 @@ export function registerEvidenceRoutes(app: FastifyInstance, db: Db, store: Evid
   app.get<{ Params: { id: string }; Querystring: { status?: EvidenceCandidateStatus } }>(
     "/workspaces/:id/evidence/candidates",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       return {
-        candidates: listCandidates(db, request.params.id, request.query.status ?? "pending"),
+        candidates: await listCandidates(db, request.params.id, request.query.status ?? "pending"),
       };
     },
   );
@@ -86,16 +86,16 @@ export function registerEvidenceRoutes(app: FastifyInstance, db: Db, store: Evid
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/evidence/candidates/sweep",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      return sweepEvidenceCandidates(db, request.params.id);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      return await sweepEvidenceCandidates(db, request.params.id);
     },
   );
 
   app.post<{ Params: { id: string; candidateId: string } }>(
     "/workspaces/:id/evidence/candidates/:candidateId/accept",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const candidate = getCandidate(db, request.params.id, request.params.candidateId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const candidate = await getCandidate(db, request.params.id, request.params.candidateId);
       if (!candidate) return reply.status(404).send({ error: "candidate_not_found" });
       if (candidate.status !== "pending") {
         return reply.status(409).send({ error: "already_decided" });
@@ -122,13 +122,13 @@ export function registerEvidenceRoutes(app: FastifyInstance, db: Db, store: Evid
   app.post<{ Params: { id: string; candidateId: string } }>(
     "/workspaces/:id/evidence/candidates/:candidateId/dismiss",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const candidate = getCandidate(db, request.params.id, request.params.candidateId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const candidate = await getCandidate(db, request.params.id, request.params.candidateId);
       if (!candidate) return reply.status(404).send({ error: "candidate_not_found" });
       if (candidate.status !== "pending") {
         return reply.status(409).send({ error: "already_decided" });
       }
-      dismissCandidate(db, candidate);
+      await dismissCandidate(db, candidate);
       return reply.status(204).send();
     },
   );

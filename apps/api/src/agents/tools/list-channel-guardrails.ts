@@ -25,7 +25,7 @@ export const listChannelGuardrailsTool: Tool<Input, unknown> = {
   input,
   access: "read",
   async run(ctx, { channel }) {
-    const guidance = listChannelGuidance(ctx.db, ctx.workspaceId)
+    const guidance = (await listChannelGuidance(ctx.db, ctx.workspaceId))
       .filter((g) => !channel || g.channel === channel)
       .map((g) => ({
         channel: g.channel,
@@ -33,7 +33,7 @@ export const listChannelGuardrailsTool: Tool<Input, unknown> = {
         content: compactText(g.content, GUIDANCE_CHARS),
         updatedAt: g.updatedAt,
       }));
-    const scopedOverrides = listScopedGuidance(ctx.db, ctx.workspaceId)
+    const scopedOverrides = (await listScopedGuidance(ctx.db, ctx.workspaceId))
       .filter((o) => !channel || o.channel === channel)
       .map((o) => ({
         channel: o.channel,
@@ -41,12 +41,12 @@ export const listChannelGuardrailsTool: Tool<Input, unknown> = {
         campaignName: o.campaignName ?? null,
         content: compactText(o.content, OVERRIDE_CHARS),
       }));
-    const settings = getSocialAutomationSettings(ctx.db, ctx.workspaceId);
-    const compliance = getCompliance(ctx.db, ctx.workspaceId);
+    const settings = await getSocialAutomationSettings(ctx.db, ctx.workspaceId);
+    const compliance = await getCompliance(ctx.db, ctx.workspaceId);
     // Sprint 67 (D-67.5): the machine-checkable half of the rules. The eval
     // harness fails a draft on these, so a critic that reads them can cite the
     // exact phrase instead of paraphrasing prose guidance.
-    const bannedClaims = listBannedClaims(ctx.db, ctx.workspaceId).map((claim) => ({
+    const bannedClaims = (await listBannedClaims(ctx.db, ctx.workspaceId)).map((claim) => ({
       phrase: claim.phrase,
       note: claim.note,
     }));

@@ -61,14 +61,14 @@ export async function migrateEvidence(
   const nativeCollectionFor = async (workspaceId: string): Promise<string> => {
     const cached = nativeCollections.get(workspaceId);
     if (cached) return cached;
-    const existing = db
+    const existing = await db
       .select()
       .from(evidenceCollections)
       .where(eq(evidenceCollections.workspaceId, workspaceId))
       .get();
     // A native collection id is one our own chunks already use.
     if (existing) {
-      const inUse = db
+      const inUse = await db
         .select()
         .from(evidenceChunks)
         .where(eq(evidenceChunks.collectionId, existing.r2rCollectionId))
@@ -80,12 +80,12 @@ export async function migrateEvidence(
     }
     const nativeId = await store.createCollection(workspaceId);
     if (existing) {
-      db.update(evidenceCollections)
+      await db.update(evidenceCollections)
         .set({ r2rCollectionId: nativeId })
         .where(eq(evidenceCollections.workspaceId, workspaceId))
         .run();
     } else {
-      db.insert(evidenceCollections)
+      await db.insert(evidenceCollections)
         .values({ workspaceId, r2rCollectionId: nativeId, createdAt: Date.now() })
         .run();
     }
@@ -93,11 +93,11 @@ export async function migrateEvidence(
     return nativeId;
   };
 
-  const docs = db.select().from(evidenceDocuments).all();
+  const docs = await db.select().from(evidenceDocuments).all();
   for (const doc of docs) {
     if (doc.status !== "ready" || !doc.r2rDocumentId) continue;
 
-    const alreadyMigrated = db
+    const alreadyMigrated = await db
       .select()
       .from(evidenceChunks)
       .where(eq(evidenceChunks.documentId, doc.r2rDocumentId))
@@ -107,7 +107,7 @@ export async function migrateEvidence(
       continue;
     }
 
-    const candidate = db
+    const candidate = await db
       .select()
       .from(evidenceCandidates)
       .where(eq(evidenceCandidates.evidenceDocumentId, doc.id))
@@ -121,7 +121,7 @@ export async function migrateEvidence(
         title: doc.title,
         error: "content unavailable (candidate missing and R2R had no chunks)",
       });
-      db.update(evidenceDocuments)
+      await db.update(evidenceDocuments)
         .set({
           status: "failed",
           error:
@@ -139,7 +139,7 @@ export async function migrateEvidence(
       collectionId,
       metadata: { workspace_id: doc.workspaceId, kind: doc.kind, migrated_from: doc.r2rDocumentId },
     });
-    db.update(evidenceDocuments)
+    await db.update(evidenceDocuments)
       .set({ r2rDocumentId: nativeDocId })
       .where(eq(evidenceDocuments.id, doc.id))
       .run();

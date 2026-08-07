@@ -78,14 +78,14 @@ function emptyContext(): ScopeRecord["context"] {
   return { campaignId: null, personaId: null, connectionId: null, laneRevisionId: null };
 }
 
-function scopeRecord(
+async function scopeRecord(
   db: Db,
   workspaceId: string,
   scope: ExternalActionPolicyScope,
   scopeId: string,
-): ScopeRecord | undefined {
+): Promise<ScopeRecord | undefined> {
   if (scope === "workspace") {
-    const row = db
+    const row = await db
       .select({ name: workspaces.name })
       .from(workspaces)
       .where(and(eq(workspaces.id, scopeId), eq(workspaces.id, workspaceId)))
@@ -93,7 +93,7 @@ function scopeRecord(
     return row ? { label: row.name, context: emptyContext() } : undefined;
   }
   if (scope === "campaign") {
-    const row = db
+    const row = await db
       .select({ name: campaigns.name })
       .from(campaigns)
       .where(and(eq(campaigns.id, scopeId), eq(campaigns.workspaceId, workspaceId)))
@@ -103,7 +103,7 @@ function scopeRecord(
       : undefined;
   }
   if (scope === "persona") {
-    const row = db
+    const row = await db
       .select({ name: personas.name })
       .from(personas)
       .where(and(eq(personas.id, scopeId), eq(personas.workspaceId, workspaceId)))
@@ -113,7 +113,7 @@ function scopeRecord(
       : undefined;
   }
   if (scope === "connection") {
-    const row = db
+    const row = await db
       .select({
         displayName: connections.displayName,
         externalAccountName: connections.externalAccountName,
@@ -130,7 +130,7 @@ function scopeRecord(
       : undefined;
   }
 
-  const row = db
+  const row = await db
     .select({
       name: campaignLaneRevisions.name,
       key: campaignLaneRevisions.key,
@@ -161,28 +161,28 @@ function scopeRecord(
     : undefined;
 }
 
-function requireScope(
+async function requireScope(
   db: Db,
   workspaceId: string,
   scope: ExternalActionPolicyScope,
   scopeId: string,
-): ScopeRecord {
+): Promise<ScopeRecord> {
   if (scope === "workspace" && scopeId !== workspaceId) {
     throw new ExternalActionPolicyScopeNotFoundError();
   }
-  const record = scopeRecord(db, workspaceId, scope, scopeId);
+  const record = await scopeRecord(db, workspaceId, scope, scopeId);
   if (!record) throw new ExternalActionPolicyScopeNotFoundError();
   return record;
 }
 
-function storedRule(
+async function storedRule(
   db: Db,
   workspaceId: string,
   scope: ExternalActionPolicyScope,
   scopeId: string,
   actionKind: ExternalActionKind,
-): ExternalActionPolicyRule | undefined {
-  return db
+): Promise<ExternalActionPolicyRule | undefined> {
+  return (await db
     .select({ rule: externalActionPolicyRules.rule })
     .from(externalActionPolicyRules)
     .where(
@@ -193,7 +193,7 @@ function storedRule(
         eq(externalActionPolicyRules.actionKind, actionKind),
       ),
     )
-    .get()?.rule as ExternalActionPolicyRule | undefined;
+    .get())?.rule as ExternalActionPolicyRule | undefined;
 }
 
 function contribution(
@@ -205,13 +205,13 @@ function contribution(
   return { scope, scopeId, scopeLabel, rule };
 }
 
-export function resolveExternalActionPolicy(
+export async function resolveExternalActionPolicy(
   db: Db,
   context: ExternalActionPolicyContext,
-): EffectiveExternalActionPolicy {
-  const workspace = requireScope(db, context.workspaceId, "workspace", context.workspaceId);
+): Promise<EffectiveExternalActionPolicy> {
+  const workspace = await requireScope(db, context.workspaceId, "workspace", context.workspaceId);
   const workspaceRule =
-    storedRule(db, context.workspaceId, "workspace", context.workspaceId, context.actionKind) ??
+    await storedRule(db, context.workspaceId, "workspace", context.workspaceId, context.actionKind) ??
     "human_required";
   const contributingRules = [
     contribution("workspace", context.workspaceId, workspace.label, workspaceRule),
@@ -220,9 +220,9 @@ export function resolveExternalActionPolicy(
     workspaceRule === "autonomous" ? "autonomous" : "human_required";
 
   if (context.campaignId) {
-    const record = requireScope(db, context.workspaceId, "campaign", context.campaignId);
+    const record = await requireScope(db, context.workspaceId, "campaign", context.campaignId);
     const rule =
-      storedRule(db, context.workspaceId, "campaign", context.campaignId, context.actionKind) ??
+      await storedRule(db, context.workspaceId, "campaign", context.campaignId, context.actionKind) ??
       "inherit";
     contributingRules.push(contribution("campaign", context.campaignId, record.label, rule));
     if (rule !== "inherit") effective = rule;
@@ -235,9 +235,9 @@ export function resolveExternalActionPolicy(
   ] as const;
   for (const [scope, scopeId] of safetyScopes) {
     if (!scopeId) continue;
-    const record = requireScope(db, context.workspaceId, scope, scopeId);
+    const record = await requireScope(db, context.workspaceId, scope, scopeId);
     const rule =
-      storedRule(db, context.workspaceId, scope, scopeId, context.actionKind) ?? "inherit";
+      await storedRule(db, context.workspaceId, scope, scopeId, context.actionKind) ?? "inherit";
     contributingRules.push(contribution(scope, scopeId, record.label, rule));
     if (rule === "human_required") effective = "human_required";
   }
@@ -245,15 +245,15 @@ export function resolveExternalActionPolicy(
   return { effective, contributingRules };
 }
 
-export function listExternalActionPolicies(
+export async function listExternalActionPolicies(
   db: Db,
   workspaceId: string,
   scope: ExternalActionPolicyScope,
   scopeId: string,
-): ExternalActionPolicyView {
-  const record = requireScope(db, workspaceId, scope, scopeId);
-  ensureWorkspaceActionPolicies(db, workspaceId);
-  const rules = db
+): Promise<ExternalActionPolicyView> {
+  const record = await requireScope(db, workspaceId, scope, scopeId);
+  await ensureWorkspaceActionPolicies(db, workspaceId);
+  const rules = (await db
     .select()
     .from(externalActionPolicyRules)
     .where(
@@ -263,12 +263,12 @@ export function listExternalActionPolicies(
         eq(externalActionPolicyRules.scopeId, scopeId),
       ),
     )
-    .all()
+    .all())
     .map(rowToRule);
-  const effective = EXTERNAL_ACTION_KINDS.map((actionKind) => ({
-    actionKind,
-    policy: resolveExternalActionPolicy(db, { workspaceId, actionKind, ...record.context }),
-  }));
+  const effective = await Promise.all(EXTERNAL_ACTION_KINDS.map(async (actionKind) => ({
+      actionKind,
+      policy: await resolveExternalActionPolicy(db, { workspaceId, actionKind, ...record.context }),
+    })));
   const updatedAt = rules.reduce<number | null>(
     (latest, rule) => (latest === null || rule.updatedAt > latest ? rule.updatedAt : latest),
     null,
@@ -276,19 +276,19 @@ export function listExternalActionPolicies(
   return { scope, scopeId, scopeLabel: record.label, rules, effective, updatedAt };
 }
 
-export function upsertExternalActionPolicies(
+export async function upsertExternalActionPolicies(
   db: Db,
   workspaceId: string,
   input: UpsertExternalActionPoliciesInput,
   actorUserId: string | null,
-): ExternalActionPolicyView {
+): Promise<ExternalActionPolicyView> {
   const parsed = upsertExternalActionPoliciesInputSchema.safeParse(input);
   if (!parsed.success) {
     throw new ExternalActionPolicyInputError(
       parsed.error.issues.map((issue) => issue.message).join("; "),
     );
   }
-  requireScope(db, workspaceId, parsed.data.scope, parsed.data.scopeId);
+  await requireScope(db, workspaceId, parsed.data.scope, parsed.data.scopeId);
   if (
     parsed.data.scope !== "workspace" &&
     parsed.data.scope !== "campaign" &&
@@ -299,7 +299,7 @@ export function upsertExternalActionPolicies(
     );
   }
 
-  const current = listExternalActionPolicies(
+  const current = await listExternalActionPolicies(
     db,
     workspaceId,
     parsed.data.scope,
@@ -309,8 +309,8 @@ export function upsertExternalActionPolicies(
     throw new ExternalActionPolicyConflictError(current);
   }
 
-  db.transaction((tx) => {
-    const existingRows = tx
+  await db.transaction(async (tx) => {
+    const existingRows = await tx
       .select()
       .from(externalActionPolicyRules)
       .where(
@@ -335,19 +335,19 @@ export function upsertExternalActionPolicies(
       const existing = existingByKind.get(write.actionKind);
       if (parsed.data.scope !== "workspace" && write.rule === "inherit") {
         if (existing) {
-          tx.delete(externalActionPolicyRules)
+          await tx.delete(externalActionPolicyRules)
             .where(eq(externalActionPolicyRules.id, existing.id))
             .run();
         }
         continue;
       }
       if (existing) {
-        tx.update(externalActionPolicyRules)
+        await tx.update(externalActionPolicyRules)
           .set({ rule: write.rule, updatedAt: now })
           .where(eq(externalActionPolicyRules.id, existing.id))
           .run();
       } else {
-        tx.insert(externalActionPolicyRules)
+        await tx.insert(externalActionPolicyRules)
           .values({
             id: randomUUID(),
             workspaceId,
@@ -363,11 +363,11 @@ export function upsertExternalActionPolicies(
       }
     }
   });
-  return listExternalActionPolicies(db, workspaceId, parsed.data.scope, parsed.data.scopeId);
+  return await listExternalActionPolicies(db, workspaceId, parsed.data.scope, parsed.data.scopeId);
 }
 
-export function deleteExternalActionPolicy(db: Db, workspaceId: string, ruleId: string): boolean {
-  const row = db
+export async function deleteExternalActionPolicy(db: Db, workspaceId: string, ruleId: string): Promise<boolean> {
+  const row = await db
     .select()
     .from(externalActionPolicyRules)
     .where(
@@ -381,7 +381,7 @@ export function deleteExternalActionPolicy(db: Db, workspaceId: string, ruleId: 
   if (row.scope === "workspace") {
     throw new ExternalActionPolicyInputError("Workspace baseline policies cannot be deleted.");
   }
-  db.delete(externalActionPolicyRules)
+  await db.delete(externalActionPolicyRules)
     .where(eq(externalActionPolicyRules.id, ruleId))
     .run();
   return true;

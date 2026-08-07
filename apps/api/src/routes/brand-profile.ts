@@ -24,7 +24,7 @@ export function registerBrandProfileRoutes(
 ): void {
   app.get<{ Params: { id: string } }>(
     "/workspaces/:id/brand-profile",
-    async (request) => getBrandProfileView(db, request.params.id),
+    async (request) => await getBrandProfileView(db, request.params.id),
   );
 
   // Inline, awaited re-run (deterministic for callers and tests); workspace
@@ -32,7 +32,7 @@ export function registerBrandProfileRoutes(
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/brand-profile/refresh",
     async (request, reply) => {
-      const workspace = getWorkspace(db, request.params.id);
+      const workspace = await getWorkspace(db, request.params.id);
       if (!workspace) return reply.status(404).send({ error: "workspace_not_found" });
       if (!workspace.websiteUrl) {
         return reply.status(400).send({
@@ -40,8 +40,8 @@ export function registerBrandProfileRoutes(
           message: "This workspace has no website URL to read.",
         });
       }
-      assertLlmBudget(db, workspace.id);
-      return runBrandProfile(db, llm, safeFetch, workspace.id, workspace.websiteUrl);
+      await assertLlmBudget(db, workspace.id);
+      return await runBrandProfile(db, llm, safeFetch, workspace.id, workspace.websiteUrl);
     },
   );
 
@@ -55,7 +55,7 @@ export function registerBrandProfileRoutes(
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      const result = updateBrandProfile(db, request.params.id, parsed.data);
+      const result = await updateBrandProfile(db, request.params.id, parsed.data);
       if (!result.ok) {
         return reply.status(409).send({
           error: "profile_not_ready",

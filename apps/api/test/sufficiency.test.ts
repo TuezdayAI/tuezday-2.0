@@ -141,15 +141,15 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
         payload: { name: "Category launch" },
       })
     ).json().id;
-    planRevisionId = activatePlan([{ ...laneInput }]);
+    planRevisionId = await activatePlan([{ ...laneInput }]);
   });
 
   afterEach(async () => {
     await app.close();
   });
 
-  function activatePlan(lanes: Array<typeof laneInput>): string {
-    const revision = createPlanRevision(
+  async function activatePlan(lanes: Array<typeof laneInput>): Promise<string> {
+    const revision = await createPlanRevision(
       db,
       workspaceId,
       campaignId,
@@ -157,18 +157,18 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
       { userId: null },
     );
     for (const lane of lanes) {
-      upsertLaneRevision(db, workspaceId, campaignId, revision.id, {
+      await upsertLaneRevision(db, workspaceId, campaignId, revision.id, {
         ...lane,
         personaId,
       });
     }
-    activatePlanRevision(db, workspaceId, campaignId, revision.id);
+    await activatePlanRevision(db, workspaceId, campaignId, revision.id);
     return revision.id;
   }
 
-  function seedStory(title: string): string {
-    db.transaction((tx) => {
-      recordOccurrenceAndResolve(tx, {
+  async function seedStory(title: string): Promise<string> {
+    await db.transaction(async (tx) => {
+      await recordOccurrenceAndResolve(tx, {
         workspaceId,
         source: { id: randomUUID(), type: "rss", name: "Feed" },
         fetchRunId: null,
@@ -182,28 +182,28 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
         observedAt: Date.now(),
       });
     });
-    return db
+    return (await db
       .select({ id: canonicalExternalStories.id })
       .from(canonicalExternalStories)
       .where(eq(canonicalExternalStories.title, title))
-      .get()!.id;
+      .get())!.id;
   }
 
-  function seedOpportunity(
+  async function seedOpportunity(
     storyId: string,
     angle: string,
     status: "qualified" | "auto_qualified" = "qualified",
-  ): string {
-    const profile = compileRoutingProfile(db, workspaceId, campaignId)!;
-    const story = db
+  ): Promise<string> {
+    const profile = (await compileRoutingProfile(db, workspaceId, campaignId))!;
+    const story = (await db
       .select()
       .from(canonicalExternalStories)
       .where(eq(canonicalExternalStories.id, storyId))
-      .get()!;
-    const occurrenceIds = [...loadStoryRoutingContext(db, story).activeOccurrenceIds];
+      .get())!;
+    const occurrenceIds = [...(await loadStoryRoutingContext(db, story)).activeOccurrenceIds];
     const id = randomUUID();
     const now = Date.now();
-    db.insert(campaignOpportunities)
+    await db.insert(campaignOpportunities)
       .values({
         id,
         workspaceId,
@@ -235,32 +235,32 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
     return id;
   }
 
-  function seedPackage(title: string, angle: string): string {
-    const storyId = seedStory(title);
-    return createPackageFromOpportunity(
+  async function seedPackage(title: string, angle: string): Promise<string> {
+    const storyId = await seedStory(title);
+    return await createPackageFromOpportunity(
       db,
       workspaceId,
-      seedOpportunity(storyId, angle),
+      await seedOpportunity(storyId, angle),
       { userId },
     );
   }
 
-  function packageRow(packageId: string) {
-    return db
+  async function packageRow(packageId: string) {
+    return (await db
       .select()
       .from(contentPackages)
       .where(eq(contentPackages.id, packageId))
-      .get()!;
+      .get())!;
   }
 
   it("assesses a sufficient package into ready with eligibility recorded", async () => {
-    const packageId = seedPackage("Sufficient story", "A grounded angle");
+    const packageId = await seedPackage("Sufficient story", "A grounded angle");
     const llm = sufficiencyGateway((_prompt, sourceIds) => sufficientResponse(sourceIds));
 
     const run = await runPackageAssessments(db, llm, { workspaceId, ...RUN_OPTS });
     expect(run).toMatchObject({ assessed: 1, failures: 0 });
 
-    const detail = getPackageDetail(db, workspaceId, packageId);
+    const detail = await getPackageDetail(db, workspaceId, packageId);
     expect(detail.package.status).toBe("ready");
     expect(detail.package.assessmentState).toBe("complete");
     expect(detail.package.latestVerdict).toBe("sufficient");
@@ -286,7 +286,7 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
   });
 
   it("stores research_needed verdicts as domain state with research actions", async () => {
-    const packageId = seedPackage("Insufficient story", "An ungrounded angle");
+    const packageId = await seedPackage("Insufficient story", "An ungrounded angle");
     const llm = sufficiencyGateway((_prompt, sourceIds) =>
       sufficientResponse(sourceIds, {
         sufficient: false,
@@ -295,7 +295,7 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
       }),
     );
     await runPackageAssessments(db, llm, { workspaceId, ...RUN_OPTS });
-    const detail = getPackageDetail(db, workspaceId, packageId);
+    const detail = await getPackageDetail(db, workspaceId, packageId);
     expect(detail.package.status).toBe("research_needed");
     expect(detail.assessments[0]!.missingFacts).toEqual(["Pricing numbers"]);
     expect(detail.assessments[0]!.researchActions).toEqual([
@@ -306,18 +306,18 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
   });
 
   it("never stores sufficient without a validated supported claim", async () => {
-    const packageId = seedPackage("Claimless story", "A claimless angle");
+    const packageId = await seedPackage("Claimless story", "A claimless angle");
     const llm = sufficiencyGateway((_prompt, sourceIds) =>
       sufficientResponse(sourceIds, { supportedClaims: [] }),
     );
     await runPackageAssessments(db, llm, { workspaceId, ...RUN_OPTS });
-    const detail = getPackageDetail(db, workspaceId, packageId);
+    const detail = await getPackageDetail(db, workspaceId, packageId);
     expect(detail.package.status).toBe("research_needed");
     expect(detail.assessments[0]!.verdict).toBe("research_needed");
   });
 
   it("treats invented source ids as retryable, parking at failed after the cap", async () => {
-    const packageId = seedPackage("Invented story", "An invented angle");
+    const packageId = await seedPackage("Invented story", "An invented angle");
     const llm = sufficiencyGateway(() =>
       sufficientResponse([], {
         supportedClaims: [{ claim: "Made up.", sourceIds: [randomUUID()] }],
@@ -326,7 +326,7 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
     for (let attempt = 1; attempt <= ASSESSMENT_MAX_ATTEMPTS; attempt += 1) {
       const run = await runPackageAssessments(db, llm, { workspaceId, ...RUN_OPTS });
       expect(run.failures).toBe(1);
-      const row = packageRow(packageId);
+      const row = await packageRow(packageId);
       expect(row.assessmentAttempts).toBe(attempt);
       expect(row.assessmentState).toBe(
         attempt >= ASSESSMENT_MAX_ATTEMPTS ? "failed" : "pending",
@@ -335,7 +335,7 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
       expect(row.status).toBe("assessing");
     }
     expect(
-      db
+      await db
         .select()
         .from(sufficiencyAssessments)
         .where(eq(sufficiencyAssessments.packageId, packageId))
@@ -344,17 +344,17 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
     // failed is infra-terminal until an operator reassess resets the queue.
     const parked = await runPackageAssessments(db, llm, { workspaceId, ...RUN_OPTS });
     expect(parked.claimed).toBe(0);
-    decidePackage(db, workspaceId, packageId, {
+    await decidePackage(db, workspaceId, packageId, {
       action: "reassess",
       actorUserId: userId,
     });
-    const reset = packageRow(packageId);
+    const reset = await packageRow(packageId);
     expect(reset.assessmentState).toBe("pending");
     expect(reset.assessmentAttempts).toBe(0);
   });
 
   it("treats malformed model output as retryable", async () => {
-    const packageId = seedPackage("Broken story", "A broken angle");
+    const packageId = await seedPackage("Broken story", "A broken angle");
     const llm: LlmGateway = {
       async generate() {
         return { text: "not json at all", model: "fake", provider: "fake", durationMs: 1 };
@@ -362,13 +362,13 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
     };
     const run = await runPackageAssessments(db, llm, { workspaceId, ...RUN_OPTS });
     expect(run.failures).toBe(1);
-    expect(packageRow(packageId).assessmentState).toBe("pending");
+    expect((await packageRow(packageId)).assessmentState).toBe("pending");
   });
 
   it("blocks media-requiring and unregistered formats with recorded rules", async () => {
     // A fresh plan revision with three lanes: one supported, one carousel
     // (requires media), one unregistered free-string format.
-    planRevisionId = activatePlan([
+    planRevisionId = await activatePlan([
       { ...laneInput },
       {
         ...laneInput,
@@ -385,14 +385,14 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
         format: "tiktok_video",
       },
     ]);
-    const packageId = seedPackage("Media story", "A media angle");
+    const packageId = await seedPackage("Media story", "A media angle");
     const llm = sufficiencyGateway((_prompt, sourceIds) =>
       sufficientResponse(sourceIds, {
         eligibleFormats: ["linkedin_post", "instagram_carousel", "tiktok_video"],
       }),
     );
     await runPackageAssessments(db, llm, { workspaceId, ...RUN_OPTS });
-    const detail = getPackageDetail(db, workspaceId, packageId);
+    const detail = await getPackageDetail(db, workspaceId, packageId);
     expect(detail.package.status).toBe("ready");
     expect(detail.eligibility).toHaveLength(3);
     const byFormat = new Map(detail.eligibility.map((d) => [d.format, d]));
@@ -410,12 +410,12 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
   });
 
   it("blocks the package when sufficiency clears no lane format", async () => {
-    const packageId = seedPackage("Blocked story", "A blocked angle");
+    const packageId = await seedPackage("Blocked story", "A blocked angle");
     const llm = sufficiencyGateway((_prompt, sourceIds) =>
       sufficientResponse(sourceIds, { eligibleFormats: [] }),
     );
     await runPackageAssessments(db, llm, { workspaceId, ...RUN_OPTS });
-    const detail = getPackageDetail(db, workspaceId, packageId);
+    const detail = await getPackageDetail(db, workspaceId, packageId);
     expect(detail.package.status).toBe("blocked");
     expect(detail.eligibility[0]!.eligible).toBe(false);
     expect(
@@ -430,14 +430,14 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
   it("blocks a second package aiming the same angle at the same lane (§9.5)", async () => {
     const llm = sufficiencyGateway((_prompt, sourceIds) => sufficientResponse(sourceIds));
     const angle = "One angle to rule the lane";
-    const first = seedPackage("Repetition story A", angle);
+    const first = await seedPackage("Repetition story A", angle);
     await runPackageAssessments(db, llm, { workspaceId, ...RUN_OPTS });
-    expect(packageRow(first).status).toBe("ready");
+    expect((await packageRow(first)).status).toBe("ready");
 
-    const second = seedPackage("Repetition story B", angle);
-    expect(packageRow(second).novelty).toBe(0);
+    const second = await seedPackage("Repetition story B", angle);
+    expect((await packageRow(second)).novelty).toBe(0);
     await runPackageAssessments(db, llm, { workspaceId, ...RUN_OPTS });
-    const detail = getPackageDetail(db, workspaceId, second);
+    const detail = await getPackageDetail(db, workspaceId, second);
     expect(detail.package.status).toBe("blocked");
     expect(
       detail.eligibility[0]!.checks.find((c) => c.rule === "angle_novel_for_lane")!
@@ -447,58 +447,58 @@ describe("sufficiency & lane eligibility (Sprint 62)", () => {
 
   it("auto-packages only auto_package-band campaigns (D-62.7)", async () => {
     const llm = sufficiencyGateway((_prompt, sourceIds) => sufficientResponse(sourceIds));
-    const storyId = seedStory("Auto story");
-    const opportunityId = seedOpportunity(storyId, "An auto angle", "auto_qualified");
+    const storyId = await seedStory("Auto story");
+    const opportunityId = await seedOpportunity(storyId, "An auto angle", "auto_qualified");
 
     // Band review (default): the pipeline leaves auto_qualified untouched.
     let run = await runPackagePipeline(db, llm, { workspaceId, ...RUN_OPTS });
     expect(run).toMatchObject({ packagesCreated: 0, packagesAssessed: 0 });
 
-    updateRoutingPolicy(db, workspaceId, campaignId, { band: "auto_package" });
+    await updateRoutingPolicy(db, workspaceId, campaignId, { band: "auto_package" });
     run = await runPackagePipeline(db, llm, { workspaceId, ...RUN_OPTS });
     expect(run).toMatchObject({ packagesCreated: 1, packagesAssessed: 1, failures: 0 });
 
-    const opportunity = db
+    const opportunity = (await db
       .select()
       .from(campaignOpportunities)
       .where(eq(campaignOpportunities.id, opportunityId))
-      .get()!;
+      .get())!;
     expect(opportunity.status).toBe("package_created");
-    const pkg = db
+    const pkg = (await db
       .select()
       .from(contentPackages)
       .where(eq(contentPackages.opportunityId, opportunityId))
-      .get()!;
+      .get())!;
     // System actor created it and the assessment already ran.
     expect(pkg.createdByUserId).toBeNull();
     expect(pkg.status).toBe("ready");
   });
 
   it("supports the reassess loop after research_needed (D-62.9)", async () => {
-    const packageId = seedPackage("Loop story", "A loop angle");
+    const packageId = await seedPackage("Loop story", "A loop angle");
     const insufficient = sufficiencyGateway((_prompt, sourceIds) =>
       sufficientResponse(sourceIds, { sufficient: false }),
     );
     await runPackageAssessments(db, insufficient, { workspaceId, ...RUN_OPTS });
-    expect(packageRow(packageId).status).toBe("research_needed");
+    expect((await packageRow(packageId)).status).toBe("research_needed");
 
-    decidePackage(db, workspaceId, packageId, {
+    await decidePackage(db, workspaceId, packageId, {
       action: "reassess",
       actorUserId: userId,
     });
-    expect(packageRow(packageId).status).toBe("assessing");
+    expect((await packageRow(packageId)).status).toBe("assessing");
 
     const sufficient = sufficiencyGateway((_prompt, sourceIds) =>
       sufficientResponse(sourceIds),
     );
     await runPackageAssessments(db, sufficient, { workspaceId, ...RUN_OPTS });
-    const detail = getPackageDetail(db, workspaceId, packageId);
+    const detail = await getPackageDetail(db, workspaceId, packageId);
     expect(detail.package.status).toBe("ready");
     // Versioned, append-only history: both assessments retained.
     expect(detail.assessments.map((a) => a.assessmentVersion)).toEqual([2, 1]);
     // The second assessment re-evaluated eligibility independently.
     expect(
-      db
+      await db
         .select()
         .from(laneEligibilityDecisions)
         .where(eq(laneEligibilityDecisions.packageId, packageId))

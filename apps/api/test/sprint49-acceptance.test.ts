@@ -350,7 +350,7 @@ describe("Sprint 49 founder acceptance", () => {
 
         const connectionId = randomUUID();
         const now = Date.now();
-        dbA.insert(connections)
+        await dbA.insert(connections)
           .values({
             id: connectionId,
             workspaceId,
@@ -386,11 +386,11 @@ describe("Sprint 49 founder acceptance", () => {
         expect(sourceResponse.statusCode, sourceResponse.body).toBe(201);
         const sourceId = sourceResponse.json().id as string;
 
-        reconcileBackgroundSchedules(dbA, queuePolicy);
-        dbA.update(backgroundSchedules)
+        await reconcileBackgroundSchedules(dbA, queuePolicy);
+        await dbA.update(backgroundSchedules)
           .set({ nextRunAt: Date.now() + 86_400_000 })
           .run();
-        enqueueBackgroundJob(dbA, {
+        await enqueueBackgroundJob(dbA, {
           payload: { kind: "discovery", workspaceId },
           idempotencyKey: "sprint49:first-discovery",
           priority: 100,
@@ -405,16 +405,16 @@ describe("Sprint 49 founder acceptance", () => {
         await firstProviderStalled.promise;
 
         expect(
-          dbA
+          await dbA
             .select({ externalId: discoveredItems.externalId })
             .from(discoveredItems)
             .all(),
         ).toEqual([{ externalId: "x:alpha-1" }]);
-        const firstClaim = dbA
+        const firstClaim = (await dbA
           .select()
           .from(discoveryJobs)
           .where(eq(discoveryJobs.sourceId, sourceId))
-          .get()!;
+          .get())!;
         expect(firstClaim).toMatchObject({
           status: "running",
           attempt: 1,
@@ -424,15 +424,15 @@ describe("Sprint 49 founder acceptance", () => {
 
         // Simulate process death after the durable page checkpoint. The old
         // request remains suspended so its eventual write also proves fencing.
-        dbA.update(discoveryJobs)
+        await dbA.update(discoveryJobs)
           .set({ leaseExpiresAt: 0 })
           .where(eq(discoveryJobs.id, firstClaim.id))
           .run();
-        dbA.update(taskLeases)
+        await dbA.update(taskLeases)
           .set({ expiresAt: 0 })
           .where(eq(taskLeases.key, "discovery:scheduler"))
           .run();
-        dbA.update(backgroundJobs)
+        await dbA.update(backgroundJobs)
           .set({ leaseExpiresAt: 0 })
           .where(
             and(
@@ -469,7 +469,7 @@ describe("Sprint 49 founder acceptance", () => {
         await restartedProviderStalled.promise;
 
         expect(
-          dbB
+          await dbB
             .select({ attempt: discoveryJobs.attempt })
             .from(discoveryJobs)
             .where(eq(discoveryJobs.id, firstClaim.id))
@@ -491,11 +491,11 @@ describe("Sprint 49 founder acceptance", () => {
         releaseRestartedProvider.resolve(undefined);
 
         await matchingStarted.promise;
-        const matchingItem = dbB
+        const matchingItem = (await dbB
           .select()
           .from(discoveredItems)
           .where(eq(discoveredItems.matchingState, "running"))
-          .get()!;
+          .get())!;
         const blockedAcceptance = await userB.inject({
           method: "POST",
           url:
@@ -506,7 +506,7 @@ describe("Sprint 49 founder acceptance", () => {
         expect(blockedAcceptance.json()).toMatchObject({
           error: "matching_not_ready",
         });
-        expect(dbB.select().from(signals).all()).toHaveLength(0);
+        expect(await dbB.select().from(signals).all()).toHaveLength(0);
 
         releaseMatching.resolve(undefined);
         const restartedResponse = await restartedTick;
@@ -526,11 +526,11 @@ describe("Sprint 49 founder acceptance", () => {
           lost: 1,
         });
 
-        const occurrences = dbB
+        const occurrences = (await dbB
           .select({ externalId: discoveredItems.externalId })
           .from(discoveredItems)
           .where(eq(discoveredItems.sourceId, sourceId))
-          .all()
+          .all())
           .map((row) => row.externalId)
           .sort();
         expect(occurrences).toEqual([
@@ -542,11 +542,11 @@ describe("Sprint 49 founder acceptance", () => {
           "x:beta-3",
         ]);
         expect(new Set(occurrences)).toHaveLength(6);
-        const source = dbB
+        const source = (await dbB
           .select({ cursorJson: discoverySources.cursorJson })
           .from(discoverySources)
           .where(eq(discoverySources.id, sourceId))
-          .get()!;
+          .get())!;
         const cursor = JSON.parse(source.cursorJson) as {
           targets: Record<
             string,
@@ -570,7 +570,7 @@ describe("Sprint 49 founder acceptance", () => {
           ),
         ).toBe(true);
 
-        const itemMatchesBeforeAccept = dbB
+        const itemMatchesBeforeAccept = await dbB
           .select({
             personaId: discoveredItemMatches.personaId,
             campaignId: discoveredItemMatches.campaignId,
@@ -596,7 +596,7 @@ describe("Sprint 49 founder acceptance", () => {
         });
         expect(accepted.statusCode, accepted.body).toBe(200);
         const signalId = accepted.json().signal.id as string;
-        const copiedMatches = dbB
+        const copiedMatches = await dbB
           .select({
             personaId: signalMatches.personaId,
             campaignId: signalMatches.campaignId,
@@ -608,7 +608,7 @@ describe("Sprint 49 founder acceptance", () => {
           .all();
         expect(copiedMatches).toEqual(itemMatchesBeforeAccept);
 
-        enqueueBackgroundJob(dbB, {
+        await enqueueBackgroundJob(dbB, {
           payload: { kind: "automation", workspaceId },
           idempotencyKey: "sprint49:automation",
           priority: 100,
@@ -638,7 +638,7 @@ describe("Sprint 49 founder acceptance", () => {
           succeeded: 1,
         });
 
-        const automaticDrafts = dbB
+        const automaticDrafts = await dbB
           .select()
           .from(drafts)
           .where(
@@ -655,7 +655,7 @@ describe("Sprint 49 founder acceptance", () => {
           personaId,
         });
         expect(automaticDrafts[0]!.automationKey).not.toBeNull();
-        const decisions = dbB
+        const decisions = await dbB
           .select({ action: approvalDecisions.action })
           .from(approvalDecisions)
           .where(
@@ -670,7 +670,7 @@ describe("Sprint 49 founder acceptance", () => {
           decisions.filter((decision) => decision.action === "approve"),
         ).toHaveLength(1);
         expect(
-          dbB
+          await dbB
             .select({ automationMode: campaigns.automationMode })
             .from(campaigns)
             .where(eq(campaigns.id, campaignId))

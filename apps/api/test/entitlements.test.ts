@@ -23,8 +23,8 @@ describe("entitlements service", () => {
     const { user } = await registerAccount(db, { email: "founder@example.com", password: "password123", name: "Founder" });
     const ws = await createWorkspace(db, { name: "Test WS" }, user.id);
 
-    expect(getPlan(db, ws.id)).toBe("free");
-    expect(getEntitlements(db, ws.id).seats).toBe(1);
+    expect(await getPlan(db, ws.id)).toBe("free");
+    expect((await getEntitlements(db, ws.id)).seats).toBe(1);
   });
 
   test("getUsage counts seats, connectors, and rolling LLM spend from the ledger", async () => {
@@ -33,9 +33,9 @@ describe("entitlements service", () => {
     const { user: u2 } = await registerAccount(db, { email: "u2@test.com", password: "pwd", name: "u2" });
     const ws = await createWorkspace(db, { name: "Test WS" }, u1.id);
 
-    addMember(db, ws.id, u2.id, "member");
+    await addMember(db, ws.id, u2.id, "member");
 
-    db.insert(connections).values({
+    await db.insert(connections).values({
       id: randomUUID(),
       workspaceId: ws.id,
       providerKey: "reddit",
@@ -46,7 +46,7 @@ describe("entitlements service", () => {
       updatedAt: Date.now(),
     }).run();
 
-    recordLlmUsage(db, {
+    await recordLlmUsage(db, {
       workspaceId: ws.id,
       pipeline: "generation",
       model: "unknown-model",
@@ -54,7 +54,7 @@ describe("entitlements service", () => {
       usage: { inputTokens: 1000, outputTokens: 500, cachedTokens: 0 },
       costCentsOverride: 12.5,
     });
-    recordLlmUsage(db, {
+    await recordLlmUsage(db, {
       workspaceId: ws.id,
       pipeline: "review",
       model: "unknown-model",
@@ -63,7 +63,7 @@ describe("entitlements service", () => {
       costCentsOverride: 2.5,
     });
 
-    const usage = getUsage(db, ws.id);
+    const usage = await getUsage(db, ws.id);
     expect(usage.seats).toBe(2);
     expect(usage.connectors).toBe(1);
     expect(usage.monthlyLlmCents).toBe(15);
@@ -75,10 +75,10 @@ describe("entitlements service", () => {
     const ws = await createWorkspace(db, { name: "Test WS" }, user.id);
 
     // Free plan: 50¢ budget. Under it: fine.
-    expect(llmBudgetExhausted(db, ws.id)).toBe(false);
-    assertLlmBudget(db, ws.id);
+    expect(await llmBudgetExhausted(db, ws.id)).toBe(false);
+    await assertLlmBudget(db, ws.id);
 
-    recordLlmUsage(db, {
+    await recordLlmUsage(db, {
       workspaceId: ws.id,
       pipeline: "generation",
       model: "unknown-model",
@@ -87,9 +87,9 @@ describe("entitlements service", () => {
       costCentsOverride: 50,
     });
 
-    expect(llmBudgetExhausted(db, ws.id)).toBe(true);
-    expect(() => assertLlmBudget(db, ws.id)).toThrowError(EntitlementError);
-    expect(() => assertLlmBudget(db, ws.id)).toThrowError(
+    expect(await llmBudgetExhausted(db, ws.id)).toBe(true);
+    expect(async () => await assertLlmBudget(db, ws.id)).toThrowError(EntitlementError);
+    expect(async () => await assertLlmBudget(db, ws.id)).toThrowError(
       "Plan limit reached for monthlyLlmCents (limit 50).",
     );
   });
@@ -100,10 +100,10 @@ describe("entitlements service", () => {
     const ws = await createWorkspace(db, { name: "Test WS" }, user.id);
 
     // Free plan has limit of 1 for seats
-    assertWithinLimit(db, ws.id, "seats", 0); // under limit
+    await assertWithinLimit(db, ws.id, "seats", 0); // under limit
 
-    expect(() => assertWithinLimit(db, ws.id, "seats", 1)).toThrowError(EntitlementError);
-    expect(() => assertWithinLimit(db, ws.id, "seats", 1)).toThrowError("Plan limit reached for seats (limit 1).");
+    expect(async () => await assertWithinLimit(db, ws.id, "seats", 1)).toThrowError(EntitlementError);
+    expect(async () => await assertWithinLimit(db, ws.id, "seats", 1)).toThrowError("Plan limit reached for seats (limit 1).");
   });
 
   test("unlimited (-1) never throws", async () => {
@@ -111,7 +111,7 @@ describe("entitlements service", () => {
     const { user } = await registerAccount(db, { email: "u4@test.com", password: "pwd", name: "u" });
     const ws = await createWorkspace(db, { name: "Test WS" }, user.id);
 
-    db.insert(subscriptions).values({
+    await db.insert(subscriptions).values({
       id: randomUUID(),
       workspaceId: ws.id,
       plan: "scale",
@@ -121,7 +121,7 @@ describe("entitlements service", () => {
     }).run();
 
     // Scale plan has unlimited seats (-1)
-    assertWithinLimit(db, ws.id, "seats", 9999);
+    await assertWithinLimit(db, ws.id, "seats", 9999);
   });
 
   test("BILLING_ENFORCED=false disables throwing", async () => {
@@ -130,7 +130,7 @@ describe("entitlements service", () => {
     const ws = await createWorkspace(db, { name: "Test WS" }, user.id);
 
     process.env.BILLING_ENFORCED = "false";
-    assertWithinLimit(db, ws.id, "seats", 5);
+    await assertWithinLimit(db, ws.id, "seats", 5);
     process.env.BILLING_ENFORCED = "true";
   });
 });

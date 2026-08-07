@@ -34,8 +34,8 @@ const MATCH_REASON_MAX_CHARS = 500;
 const SIGNAL_CONTENT_PROMPT_CHARS = 600;
 
 /** Compact brain summary that fronts every judgment prompt. */
-export function brainDigest(db: Db, workspaceId: string): string {
-  const { docs } = getBrain(db, workspaceId);
+export async function brainDigest(db: Db, workspaceId: string): Promise<string> {
+  const { docs } = await getBrain(db, workspaceId);
   return docs
     .filter((d) => ["soul", "icp", "voice", "now"].includes(d.docType) && d.content.trim())
     .map((d) => `${d.docType.toUpperCase()}: ${d.content.trim().slice(0, DIGEST_CHARS_PER_DOC)}`)
@@ -85,8 +85,8 @@ export interface MatchingContext {
  * Campaign lines show which personas are assigned, so the model can only
  * suggest a persona actually allowed to speak for that campaign.
  */
-export function buildMatchingContext(db: Db, workspaceId: string): MatchingContext {
-  const workspacePersonas = listPersonas(db, workspaceId).sort((left, right) =>
+export async function buildMatchingContext(db: Db, workspaceId: string): Promise<MatchingContext> {
+  const workspacePersonas = (await listPersonas(db, workspaceId)).sort((left, right) =>
     left.id.localeCompare(right.id),
   );
   const personaById = new Map(workspacePersonas.map((p) => [p.id, p]));
@@ -98,7 +98,7 @@ export function buildMatchingContext(db: Db, workspaceId: string): MatchingConte
           : `- ${p.id}: ${p.name}${p.description ? ` (${p.description})` : ""}`,
       )
       .join("\n") || "(no personas yet)";
-  const activeCampaigns = listCampaigns(db, workspaceId)
+  const activeCampaigns = (await listCampaigns(db, workspaceId))
     .filter((campaign) => campaign.status === "active")
     .map((campaign) => ({
       ...campaign,
@@ -203,13 +203,13 @@ export function sanitizeEntryMatches(
 // ---------------------------------------------------------------------------
 
 /** Replace an item's candidate rows (delete-then-insert on every scoring). */
-export function replaceItemMatches(
+export async function replaceItemMatches(
   db: DbExecutor,
   workspaceId: string,
   itemId: string,
   matches: ParsedMatch[],
-): void {
-  db
+): Promise<void> {
+  await db
     .delete(discoveredItemMatches)
     .where(
       and(
@@ -220,19 +220,19 @@ export function replaceItemMatches(
     .run();
   const now = Date.now();
   for (const match of matches) {
-    db.insert(discoveredItemMatches)
+    await db.insert(discoveredItemMatches)
       .values({ id: randomUUID(), workspaceId, itemId, ...match, createdAt: now })
       .run();
   }
 }
 
-export function insertSignalMatch(
+export async function insertSignalMatch(
   db: DbExecutor,
   workspaceId: string,
   signalId: string,
   match: { personaId: string | null; campaignId: string | null; score: number; reason: string },
-): void {
-  db.insert(signalMatches)
+): Promise<void> {
+  await db.insert(signalMatches)
     .values({
       id: randomUUID(),
       workspaceId,
@@ -267,14 +267,14 @@ function toContractMatch(row: ContractMatch): DiscoveredItemMatch {
 }
 
 /** Contract-shaped matches for many items at once (one joined query). */
-export function listItemMatchesForItems(
+export async function listItemMatchesForItems(
   db: DbExecutor,
   workspaceId: string,
   itemIds: string[],
-): Map<string, DiscoveredItemMatch[]> {
+): Promise<Map<string, DiscoveredItemMatch[]>> {
   const map = new Map<string, DiscoveredItemMatch[]>();
   if (itemIds.length === 0) return map;
-  const rows = db
+  const rows = await db
     .select({
       itemId: discoveredItemMatches.itemId,
       rawPersonaId: discoveredItemMatches.personaId,
@@ -328,23 +328,23 @@ export function listItemMatchesForItems(
   return map;
 }
 
-export function listItemMatches(
+export async function listItemMatches(
   db: DbExecutor,
   workspaceId: string,
   itemId: string,
-): DiscoveredItemMatch[] {
-  return listItemMatchesForItems(db, workspaceId, [itemId]).get(itemId) ?? [];
+): Promise<DiscoveredItemMatch[]> {
+  return (await listItemMatchesForItems(db, workspaceId, [itemId])).get(itemId) ?? [];
 }
 
 /** Contract-shaped matches for many signals at once (one joined query). */
-export function listSignalMatchesForSignals(
+export async function listSignalMatchesForSignals(
   db: DbExecutor,
   workspaceId: string,
   signalIds: string[],
-): Map<string, DiscoveredItemMatch[]> {
+): Promise<Map<string, DiscoveredItemMatch[]>> {
   const map = new Map<string, DiscoveredItemMatch[]>();
   if (signalIds.length === 0) return map;
-  const rows = db
+  const rows = await db
     .select({
       signalId: signalMatches.signalId,
       rawPersonaId: signalMatches.personaId,
@@ -398,12 +398,12 @@ export function listSignalMatchesForSignals(
   return map;
 }
 
-export function listSignalMatches(
+export async function listSignalMatches(
   db: DbExecutor,
   workspaceId: string,
   signalId: string,
-): DiscoveredItemMatch[] {
-  return listSignalMatchesForSignals(db, workspaceId, [signalId]).get(signalId) ?? [];
+): Promise<DiscoveredItemMatch[]> {
+  return (await listSignalMatchesForSignals(db, workspaceId, [signalId])).get(signalId) ?? [];
 }
 
 /**
@@ -411,22 +411,22 @@ export function listSignalMatches(
  * time. The gateway call is awaited outside the transaction, so personas,
  * active campaigns, or campaign assignments may have changed meanwhile.
  */
-export function revalidateSignalMatches(
+export async function revalidateSignalMatches(
   db: DbExecutor,
   workspaceId: string,
   matches: ParsedMatch[],
-): ParsedMatch[] {
+): Promise<ParsedMatch[]> {
   if (matches.length === 0) return [];
   const currentPersonaIds = new Set(
-    db
+    (await db
       .select({ id: personas.id })
       .from(personas)
       .where(eq(personas.workspaceId, workspaceId))
-      .all()
+      .all())
       .map((row) => row.id),
   );
   const currentCampaignPersonaIds = new Map(
-    db
+    (await db
       .select({
         id: campaigns.id,
         personaIdsJson: campaigns.personaIdsJson,
@@ -438,7 +438,7 @@ export function revalidateSignalMatches(
           eq(campaigns.status, "active"),
         ),
       )
-      .all()
+      .all())
       .map((row) => [
         row.id,
         new Set(JSON.parse(row.personaIdsJson) as string[]),
@@ -473,18 +473,18 @@ export function revalidateSignalMatches(
  * routes on (a signal can carry two candidate personas for the same campaign —
  * only the best one drives generation).
  */
-export function getBestSignalMatchForCampaign(
+export async function getBestSignalMatchForCampaign(
   db: Db,
   workspaceId: string,
   signalId: string,
   campaignId: string,
-): SignalMatchRow | undefined {
-  const signalExists = db
+): Promise<SignalMatchRow | undefined> {
+  const signalExists = await db
     .select({ id: signals.id })
     .from(signals)
     .where(and(eq(signals.workspaceId, workspaceId), eq(signals.id, signalId)))
     .get();
-  const campaignExists = db
+  const campaignExists = await db
     .select({ id: campaigns.id })
     .from(campaigns)
     .where(
@@ -496,7 +496,7 @@ export function getBestSignalMatchForCampaign(
     .get();
   if (!signalExists || !campaignExists) return undefined;
 
-  const matches = db
+  const matches = await db
     .select()
     .from(signalMatches)
     .where(
@@ -516,7 +516,7 @@ export function getBestSignalMatchForCampaign(
   ];
   const validPersonaIds = new Set(
     personaIds.length
-      ? db
+      ? (await db
           .select({ id: personas.id })
           .from(personas)
           .where(
@@ -525,7 +525,7 @@ export function getBestSignalMatchForCampaign(
               inArray(personas.id, personaIds),
             ),
           )
-          .all()
+          .all())
           .map((row) => row.id)
       : [],
   );
@@ -552,10 +552,10 @@ export async function judgeSignalMatches(
   workspaceId: string,
   content: string,
 ): Promise<ParsedMatch[]> {
-  const ctx = buildMatchingContext(db, workspaceId);
+  const ctx = await buildMatchingContext(db, workspaceId);
   const prompt = buildMatchingPrompt({
-    workspaceName: getWorkspace(db, workspaceId)?.name ?? "this workspace",
-    digest: brainDigest(db, workspaceId),
+    workspaceName: (await getWorkspace(db, workspaceId))?.name ?? "this workspace",
+    digest: await brainDigest(db, workspaceId),
     ctx,
     itemsBlock: `ITEM 0: ${content.slice(0, SIGNAL_CONTENT_PROMPT_CHARS)}`,
   });

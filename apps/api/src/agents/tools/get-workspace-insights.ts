@@ -17,6 +17,6 @@ export const getWorkspaceInsightsTool: Tool<Input, unknown> = {
   input,
   access: "read",
   async run(ctx) {
-    return getWorkspaceInsights(ctx.db, ctx.workspaceId);
+    return await getWorkspaceInsights(ctx.db, ctx.workspaceId);
   },
 };

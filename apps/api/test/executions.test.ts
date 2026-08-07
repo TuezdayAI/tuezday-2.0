@@ -55,7 +55,7 @@ describe("unified execution results", () => {
       })
     ).json().id;
     connectionId = randomUUID();
-    db.insert(connections)
+    await db.insert(connections)
       .values({
         id: connectionId,
         workspaceId,
@@ -71,8 +71,8 @@ describe("unified execution results", () => {
     await app.close();
   });
 
-  function approvedDraft(opts: { campaignId?: string | null } = {}): string {
-    const draft = submitDraft(
+  async function approvedDraft(opts: { campaignId?: string | null } = {}): Promise<string> {
+    const draft = await submitDraft(
       db,
       {
         workspaceId,
@@ -85,13 +85,13 @@ describe("unified execution results", () => {
       },
       { userId: null, label: "test", human: true },
     );
-    return applyDraftAction(db, draft, "approve", { userId: null, label: "test", human: true }).id;
+    return (await applyDraftAction(db, draft, "approve", { userId: null, label: "test", human: true })).id;
   }
 
   /** A minimal governing action row so operational FKs can link to it. */
-  function seedActionRow(kind: "publish" | "send" | "paid_launch" = "publish"): string {
+  async function seedActionRow(kind: "publish" | "send" | "paid_launch" = "publish"): Promise<string> {
     const id = randomUUID();
-    insertExternalAction(db, {
+    await insertExternalAction(db, {
       id,
       workspaceId,
       kind,
@@ -125,16 +125,16 @@ describe("unified execution results", () => {
     return id;
   }
 
-  function seedMutationAction(over: {
+  async function seedMutationAction(over: {
     kind: "budget_change" | "targeting_change";
     status: "succeeded" | "failed" | "stale";
     at: number;
     error?: string | null;
     withReceipt?: boolean;
-  }): string {
+  }): Promise<string> {
     const launchId = randomUUID();
     const id = randomUUID();
-    insertExternalAction(db, {
+    await insertExternalAction(db, {
       id,
       workspaceId,
       kind: over.kind,
@@ -165,7 +165,7 @@ describe("unified execution results", () => {
       supersedesActionId: null,
       draftId: null,
     });
-    db.update(externalActions)
+    await db.update(externalActions)
       .set({
         status: over.status,
         executionKind: over.withReceipt === false ? null : "ad_mutation",
@@ -188,10 +188,10 @@ describe("unified execution results", () => {
     return id;
   }
 
-  function seedEmailDelivery(status: "accepted" | "delivered" | "bounced"): { id: string; actionId: string } {
-    const actionId = seedActionRow("send");
+  async function seedEmailDelivery(status: "accepted" | "delivered" | "bounced"): Promise<{ id: string; actionId: string }> {
+    const actionId = await seedActionRow("send");
     const id = randomUUID();
-    db.insert(emailDeliveries).values({
+    await db.insert(emailDeliveries).values({
       id,
       workspaceId,
       externalActionId: actionId,
@@ -216,7 +216,7 @@ describe("unified execution results", () => {
     return { id, actionId };
   }
 
-  function seedPublication(over: {
+  async function seedPublication(over: {
     id?: string;
     draftId: string;
     status: "scheduled" | "processing" | "published" | "failed";
@@ -224,9 +224,9 @@ describe("unified execution results", () => {
     lastError?: string | null;
     externalUrl?: string | null;
     externalActionId?: string | null;
-  }): string {
+  }): Promise<string> {
     const id = over.id ?? randomUUID();
-    db.insert(publications)
+    await db.insert(publications)
       .values({
         id,
         workspaceId,
@@ -248,7 +248,7 @@ describe("unified execution results", () => {
     return id;
   }
 
-  function seedLaunch(over: {
+  async function seedLaunch(over: {
     name: string;
     campaignId?: string | null;
     at: number;
@@ -257,9 +257,9 @@ describe("unified execution results", () => {
       lastError?: string;
       externalActionId?: string;
     }>;
-  }): string {
+  }): Promise<string> {
     const id = randomUUID();
-    db.insert(launches)
+    await db.insert(launches)
       .values({
         id,
         workspaceId,
@@ -272,7 +272,7 @@ describe("unified execution results", () => {
       })
       .run();
     for (const [index, message] of over.messages.entries()) {
-      db.insert(launchMessages)
+      await db.insert(launchMessages)
         .values({
           id: randomUUID(),
           workspaceId,
@@ -293,16 +293,16 @@ describe("unified execution results", () => {
     return id;
   }
 
-  function seedAdLaunch(over: {
+  async function seedAdLaunch(over: {
     name: string;
     at: number;
     status: "draft" | "approved" | "launched";
     platformStatus?: string | null;
     lastError?: string | null;
     externalActionId?: string | null;
-  }): string {
+  }): Promise<string> {
     const adAccountId = randomUUID();
-    db.insert(adAccounts)
+    await db.insert(adAccounts)
       .values({
         id: adAccountId,
         workspaceId,
@@ -312,13 +312,13 @@ describe("unified execution results", () => {
       })
       .run();
     const id = randomUUID();
-    db.insert(adLaunches)
+    await db.insert(adLaunches)
       .values({
         id,
         workspaceId,
         adAccountId,
         campaignId,
-        creativeDraftId: approvedDraft({ campaignId }),
+        creativeDraftId: await approvedDraft({ campaignId }),
         name: over.name,
         objective: "OUTCOME_TRAFFIC",
         pageId: "123",
@@ -351,21 +351,21 @@ describe("unified execution results", () => {
   }
 
   it("projects processing, published, and failed publications, excluding scheduled receipts", async () => {
-    const campaignDraft = approvedDraft({ campaignId });
-    seedPublication({
+    const campaignDraft = await approvedDraft({ campaignId });
+    await seedPublication({
       draftId: campaignDraft,
       status: "published",
       at: T0 + 2 * HOUR,
       externalUrl: "https://reddit.com/r/startups/c/p1",
     });
-    seedPublication({
-      draftId: approvedDraft(),
+    await seedPublication({
+      draftId: await approvedDraft(),
       status: "failed",
       at: T0 + 3 * HOUR,
       lastError: "RATELIMIT: slow down",
     });
-    seedPublication({ draftId: approvedDraft(), status: "scheduled", at: T0 + 9 * HOUR });
-    seedPublication({ draftId: approvedDraft(), status: "processing", at: T0 + 4 * HOUR });
+    await seedPublication({ draftId: await approvedDraft(), status: "scheduled", at: T0 + 9 * HOUR });
+    await seedPublication({ draftId: await approvedDraft(), status: "processing", at: T0 + 4 * HOUR });
 
     const results = await fetchResults();
     expect(results).toHaveLength(3);
@@ -396,28 +396,28 @@ describe("unified execution results", () => {
   });
 
   it("rolls launch messages up into running, partial, failed, and completed results", async () => {
-    seedLaunch({
+    await seedLaunch({
       name: "All sent",
       at: T0 + 1 * HOUR,
       messages: [{ status: "sent" }, { status: "sent" }, { status: "skipped" }],
     });
-    seedLaunch({
+    await seedLaunch({
       name: "Partial",
       campaignId,
       at: T0 + 2 * HOUR,
       messages: [{ status: "sent" }, { status: "failed", lastError: "bounced" }],
     });
-    seedLaunch({
+    await seedLaunch({
       name: "All failed",
       at: T0 + 3 * HOUR,
       messages: [{ status: "failed", lastError: "no route" }],
     });
-    seedLaunch({
+    await seedLaunch({
       name: "In flight",
       at: T0 + 4 * HOUR,
       messages: [{ status: "sent" }, { status: "pending" }],
     });
-    seedLaunch({
+    await seedLaunch({
       name: "Not dispatched",
       at: T0 + 5 * HOUR,
       messages: [{ status: "pending" }, { status: "pending" }],
@@ -444,19 +444,19 @@ describe("unified execution results", () => {
   });
 
   it("projects launched and failed ad launches, excluding gate states", async () => {
-    seedAdLaunch({
+    await seedAdLaunch({
       name: "Traffic push",
       at: T0 + 1 * HOUR,
       status: "launched",
       platformStatus: "ACTIVE",
     });
-    seedAdLaunch({
+    await seedAdLaunch({
       name: "Blocked spend",
       at: T0 + 2 * HOUR,
       status: "approved",
       lastError: "(#100) Invalid page id",
     });
-    seedAdLaunch({ name: "Still drafting", at: T0 + 3 * HOUR, status: "draft" });
+    await seedAdLaunch({ name: "Still drafting", at: T0 + 3 * HOUR, status: "draft" });
 
     const results = await fetchResults();
     expect(results.map((r) => [r.title, r.status])).toEqual([
@@ -469,18 +469,18 @@ describe("unified execution results", () => {
   });
 
   it("projects only terminal Meta mutation actions with provider receipts", async () => {
-    const budgetAction = seedMutationAction({
+    const budgetAction = await seedMutationAction({
       kind: "budget_change",
       status: "succeeded",
       at: T0 + HOUR,
     });
-    const targetingAction = seedMutationAction({
+    const targetingAction = await seedMutationAction({
       kind: "targeting_change",
       status: "failed",
       at: T0 + 2 * HOUR,
       error: "Meta rejected targeting",
     });
-    seedMutationAction({
+    await seedMutationAction({
       kind: "budget_change",
       status: "stale",
       at: T0 + 3 * HOUR,
@@ -505,9 +505,9 @@ describe("unified execution results", () => {
   });
 
   it("projects governed email delivery progress and terminal outcomes", async () => {
-    const accepted = seedEmailDelivery("accepted");
-    seedEmailDelivery("delivered");
-    seedEmailDelivery("bounced");
+    const accepted = await seedEmailDelivery("accepted");
+    await seedEmailDelivery("delivered");
+    await seedEmailDelivery("bounced");
 
     const results = (await fetchResults()).filter((result) => result.kind === "email_delivery");
     expect(results.map((result) => result.status).sort()).toEqual([
@@ -525,9 +525,9 @@ describe("unified execution results", () => {
   });
 
   it("filters by campaign and honors the limit", async () => {
-    seedPublication({ draftId: approvedDraft({ campaignId }), status: "published", at: T0 + HOUR });
-    seedLaunch({ name: "Scoped", campaignId, at: T0 + 2 * HOUR, messages: [{ status: "sent" }] });
-    seedLaunch({ name: "Unscoped", at: T0 + 3 * HOUR, messages: [{ status: "sent" }] });
+    await seedPublication({ draftId: await approvedDraft({ campaignId }), status: "published", at: T0 + HOUR });
+    await seedLaunch({ name: "Scoped", campaignId, at: T0 + 2 * HOUR, messages: [{ status: "sent" }] });
+    await seedLaunch({ name: "Unscoped", at: T0 + 3 * HOUR, messages: [{ status: "sent" }] });
 
     const scoped = await fetchResults(`?campaign=${campaignId}`);
     expect(scoped.map((r) => r.kind).sort()).toEqual(["launch", "publication"]);
@@ -539,18 +539,18 @@ describe("unified execution results", () => {
   });
 
   it("carries governing action ids on results and keeps legacy rows empty", async () => {
-    const publishAction = seedActionRow("publish");
-    seedPublication({
-      draftId: approvedDraft(),
+    const publishAction = await seedActionRow("publish");
+    await seedPublication({
+      draftId: await approvedDraft(),
       status: "published",
       at: T0 + HOUR,
       externalActionId: publishAction,
     });
-    seedPublication({ draftId: approvedDraft(), status: "published", at: T0 + 2 * HOUR });
+    await seedPublication({ draftId: await approvedDraft(), status: "published", at: T0 + 2 * HOUR });
 
-    const sendA = seedActionRow("send");
-    const sendB = seedActionRow("send");
-    seedLaunch({
+    const sendA = await seedActionRow("send");
+    const sendB = await seedActionRow("send");
+    await seedLaunch({
       name: "Governed launch",
       at: T0 + 3 * HOUR,
       messages: [
@@ -561,8 +561,8 @@ describe("unified execution results", () => {
       ],
     });
 
-    const paidAction = seedActionRow("paid_launch");
-    seedAdLaunch({
+    const paidAction = await seedActionRow("paid_launch");
+    await seedAdLaunch({
       name: "Governed spend",
       at: T0 + 4 * HOUR,
       status: "launched",
@@ -580,14 +580,14 @@ describe("unified execution results", () => {
     expect(legacyPublication?.externalActionIds).toEqual([]);
 
     const launch = results.find((r) => r.kind === "launch");
-    expect(launch?.externalActionIds?.slice().sort()).toEqual([sendA, sendB].sort());
+    expect(launch?.externalActionIds?.slice().sort()).toEqual(await [sendA, sendB].sort());
 
     const adLaunch = results.find((r) => r.kind === "ad_launch");
     expect(adLaunch?.externalActionIds).toEqual([paidAction]);
   });
 
   it("keeps workspaces isolated", async () => {
-    seedLaunch({ name: "Mine", at: T0 + HOUR, messages: [{ status: "sent" }] });
+    await seedLaunch({ name: "Mine", at: T0 + HOUR, messages: [{ status: "sent" }] });
     const other = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Other" } })
     ).json().id;

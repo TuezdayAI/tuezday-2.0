@@ -22,14 +22,14 @@ export interface MatchingInvalidation {
  * have changed. Existing match rows remain available as stale display context
  * until a replacement judgment commits.
  */
-export function invalidateMatching(
+export async function invalidateMatching(
   db: DbExecutor,
   workspaceId: string,
   input: MatchingInvalidation,
-): number {
+): Promise<number> {
   const targetIds = new Set(input.directItemIds);
   if (input.includeReadyNoMatch) {
-    const readyNoMatch = db
+    const readyNoMatch = await db
       .select({ id: discoveredItems.id })
       .from(discoveredItems)
       .leftJoin(
@@ -53,7 +53,7 @@ export function invalidateMatching(
   }
 
   if (targetIds.size === 0) return 0;
-  return db
+  return (await db
     .update(discoveredItems)
     .set({
       matchingState: "pending",
@@ -72,15 +72,15 @@ export function invalidateMatching(
         inArray(discoveredItems.id, [...targetIds]),
       ),
     )
-    .run().changes;
+    .run()).changes;
 }
 
-export function itemIdsForPersona(
+export async function itemIdsForPersona(
   db: DbExecutor,
   workspaceId: string,
   personaId: string,
-): string[] {
-  return db
+): Promise<string[]> {
+  return (await db
     .selectDistinct({ itemId: discoveredItemMatches.itemId })
     .from(discoveredItemMatches)
     .where(
@@ -89,16 +89,16 @@ export function itemIdsForPersona(
         eq(discoveredItemMatches.personaId, personaId),
       ),
     )
-    .all()
+    .all())
     .map((row) => row.itemId);
 }
 
-export function itemIdsForCampaignChange(
+export async function itemIdsForCampaignChange(
   db: DbExecutor,
   workspaceId: string,
   campaignId: string,
   personaIds: string[],
-): string[] {
+): Promise<string[]> {
   const blastRadius =
     personaIds.length > 0
       ? or(
@@ -106,7 +106,7 @@ export function itemIdsForCampaignChange(
           inArray(discoveredItemMatches.personaId, personaIds),
         )
       : eq(discoveredItemMatches.campaignId, campaignId);
-  return db
+  return (await db
     .selectDistinct({ itemId: discoveredItemMatches.itemId })
     .from(discoveredItemMatches)
     .where(
@@ -115,6 +115,6 @@ export function itemIdsForCampaignChange(
         blastRadius,
       ),
     )
-    .all()
+    .all())
     .map((row) => row.itemId);
 }

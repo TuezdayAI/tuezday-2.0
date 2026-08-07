@@ -38,15 +38,15 @@ const USER_ID = "44444444-4444-4444-8444-444444444444";
 const HUMAN: DraftActor = { userId: null, label: "founder", human: true };
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-function fixture() {
+async function fixture() {
   const db = createTestDb();
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({ id: WORKSPACE_ID, name: "Shadow", createdAt: 1, updatedAt: 1 })
     .run();
-  db.insert(users)
+  await db.insert(users)
     .values({ id: USER_ID, email: "founder@example.com", createdAt: 1, updatedAt: 1 })
     .run();
-  db.insert(campaigns)
+  await db.insert(campaigns)
     .values({
       id: CAMPAIGN_ID,
       workspaceId: WORKSPACE_ID,
@@ -58,7 +58,7 @@ function fixture() {
       updatedAt: 1,
     })
     .run();
-  db.insert(signals)
+  await db.insert(signals)
     .values({
       id: SIGNAL_ID,
       workspaceId: WORKSPACE_ID,
@@ -68,7 +68,7 @@ function fixture() {
       createdAt: 2,
     })
     .run();
-  const definition = createPipelineDefinition(
+  const definition = await createPipelineDefinition(
     db,
     WORKSPACE_ID,
     {
@@ -109,8 +109,8 @@ function fixture() {
   return { db, definition };
 }
 
-function legacyDraft(db: Db, content: string, channel = "linkedin") {
-  return submitAutomaticDraft(
+async function legacyDraft(db: Db, content: string, channel = "linkedin") {
+  return (await submitAutomaticDraft(
     db,
     {
       workspaceId: WORKSPACE_ID,
@@ -125,16 +125,16 @@ function legacyDraft(db: Db, content: string, channel = "linkedin") {
       autoApprove: false,
     },
     { userId: null, label: "system", human: false },
-  ).draft;
+  )).draft;
 }
 
-function engineRun(
+async function engineRun(
   db: Db,
   definitionId: string,
   over: Partial<typeof pipelineRuns.$inferInsert> = {},
 ) {
   const id = randomUUID();
-  db.insert(pipelineRuns)
+  await db.insert(pipelineRuns)
     .values({
       id,
       workspaceId: WORKSPACE_ID,
@@ -153,10 +153,10 @@ function engineRun(
 }
 
 describe("shadow pairs", () => {
-  it("lists pairs enriched with draft + proposal and records verdicts", () => {
-    const { db, definition } = fixture();
-    const draft = legacyDraft(db, "The legacy take.");
-    const runId = engineRun(db, definition.id, {
+  it("lists pairs enriched with draft + proposal and records verdicts", async () => {
+    const { db, definition } = await fixture();
+    const draft = await legacyDraft(db, "The legacy take.");
+    const runId = await engineRun(db, definition.id, {
       mode: "shadow",
       status: "succeeded",
       resultJson: JSON.stringify({
@@ -168,7 +168,7 @@ describe("shadow pairs", () => {
         simulated: true,
       }),
     });
-    createShadowPair(db, {
+    await createShadowPair(db, {
       workspaceId: WORKSPACE_ID,
       pairKey: shadowPairKey({
         workspaceId: WORKSPACE_ID,
@@ -183,7 +183,7 @@ describe("shadow pairs", () => {
       runId,
     });
 
-    const [pair] = listShadowPairs(db, WORKSPACE_ID, { reviewed: false });
+    const [pair] = await listShadowPairs(db, WORKSPACE_ID, { reviewed: false });
     expect(pair).toMatchObject({
       draftContent: "The legacy take.",
       draftState: "pending_review",
@@ -192,7 +192,7 @@ describe("shadow pairs", () => {
       verdict: null,
     });
 
-    const reviewed = recordShadowVerdict(
+    const reviewed = await recordShadowVerdict(
       db,
       WORKSPACE_ID,
       pair!.id,
@@ -201,36 +201,36 @@ describe("shadow pairs", () => {
     );
     expect(reviewed).toMatchObject({ verdict: "engine", verdictNotes: "Tighter hook." });
     expect(reviewed!.verdictAt).toBeGreaterThan(0);
-    expect(listShadowPairs(db, WORKSPACE_ID, { reviewed: false })).toHaveLength(0);
-    expect(listShadowPairs(db, WORKSPACE_ID, { reviewed: true })).toHaveLength(1);
+    expect(await listShadowPairs(db, WORKSPACE_ID, { reviewed: false })).toHaveLength(0);
+    expect(await listShadowPairs(db, WORKSPACE_ID, { reviewed: true })).toHaveLength(1);
     expect(
-      recordShadowVerdict(db, WORKSPACE_ID, randomUUID(), { verdict: "tie", notes: "" }, { userId: null }),
+      await recordShadowVerdict(db, WORKSPACE_ID, randomUUID(), { verdict: "tie", notes: "" }, { userId: null }),
     ).toBeUndefined();
   });
 });
 
 describe("automation comparison (D-65.8)", () => {
-  it("aggregates approval rate, edit distance, cost, and shadow tallies per path", () => {
-    const { db, definition } = fixture();
+  it("aggregates approval rate, edit distance, cost, and shadow tallies per path", async () => {
+    const { db, definition } = await fixture();
 
     // Legacy: approved untouched, edited-then-approved (50% rewrite), rejected.
-    const untouched = legacyDraft(db, "aaaaaaaaaa", "linkedin");
-    applyDraftAction(db, untouched, "approve", HUMAN);
-    const edited = legacyDraft(db, "aaaaaaaaaa", "x");
-    const afterEdit = applyDraftAction(db, edited, "edit", HUMAN, "aaaaabbbbb");
-    applyDraftAction(db, afterEdit, "approve", HUMAN);
-    const rejected = legacyDraft(db, "cccc", "email");
-    applyDraftAction(db, rejected, "reject", HUMAN);
+    const untouched = await legacyDraft(db, "aaaaaaaaaa", "linkedin");
+    await applyDraftAction(db, untouched, "approve", HUMAN);
+    const edited = await legacyDraft(db, "aaaaaaaaaa", "x");
+    const afterEdit = await applyDraftAction(db, edited, "edit", HUMAN, "aaaaabbbbb");
+    await applyDraftAction(db, afterEdit, "approve", HUMAN);
+    const rejected = await legacyDraft(db, "cccc", "email");
+    await applyDraftAction(db, rejected, "reject", HUMAN);
     // A stale draft outside the window must not count.
-    const stale = legacyDraft(db, "old", "pr");
-    db.update(draftsTable)
+    const stale = await legacyDraft(db, "old", "pr");
+    await db.update(draftsTable)
       .set({ createdAt: Date.now() - 40 * DAY_MS })
       .where(eq(draftsTable.id, stale.id))
       .run();
 
     // Engine: one live run whose gate draft was approved untouched, plus a
     // failed shadow run and an escalated live run.
-    const engineDraft = submitDraft(
+    const engineDraft = await submitDraft(
       db,
       {
         workspaceId: WORKSPACE_ID,
@@ -244,21 +244,21 @@ describe("automation comparison (D-65.8)", () => {
       },
       { userId: null, label: "automation", human: false },
     );
-    applyDraftAction(db, engineDraft, "approve", HUMAN);
-    engineRun(db, definition.id, {
+    await applyDraftAction(db, engineDraft, "approve", HUMAN);
+    await engineRun(db, definition.id, {
       mode: "live",
       status: "succeeded",
       draftId: engineDraft.id,
       costCents: 10,
     });
-    engineRun(db, definition.id, { mode: "shadow", status: "failed", costCents: 2 });
-    engineRun(db, definition.id, { mode: "live", status: "escalated", costCents: 3 });
+    await engineRun(db, definition.id, { mode: "shadow", status: "failed", costCents: 2 });
+    await engineRun(db, definition.id, { mode: "live", status: "escalated", costCents: 3 });
     // Dry runs are founder experiments — excluded from the A/B.
-    engineRun(db, definition.id, { mode: "dry_run", status: "succeeded", costCents: 99 });
+    await engineRun(db, definition.id, { mode: "dry_run", status: "succeeded", costCents: 99 });
 
     // Legacy cost: signal_draft + review usage only; pipeline_run is engine.
-    const usage = (pipeline: string, costCents: number) =>
-      db
+    const usage = async (pipeline: string, costCents: number) =>
+      await db
         .insert(llmUsageEvents)
         .values({
           id: randomUUID(),
@@ -275,14 +275,14 @@ describe("automation comparison (D-65.8)", () => {
           createdAt: Date.now(),
         })
         .run();
-    usage("signal_draft", 7);
-    usage("review", 3);
-    usage("pipeline_run", 99);
+    await usage("signal_draft", 7);
+    await usage("review", 3);
+    await usage("pipeline_run", 99);
 
     // Shadow pairs: engine win, legacy win, unreviewed.
-    const pairFor = (suffix: string, verdict: "engine" | "legacy" | null) => {
-      const runId = engineRun(db, definition.id, { mode: "shadow", status: "succeeded" });
-      createShadowPair(db, {
+    const pairFor = async (suffix: string, verdict: "engine" | "legacy" | null) => {
+      const runId = await engineRun(db, definition.id, { mode: "shadow", status: "succeeded" });
+      await createShadowPair(db, {
         workspaceId: WORKSPACE_ID,
         pairKey: `k-${suffix}`,
         signalId: SIGNAL_ID,
@@ -292,15 +292,15 @@ describe("automation comparison (D-65.8)", () => {
         runId,
       });
       if (verdict) {
-        const [pair] = listShadowPairs(db, WORKSPACE_ID, { reviewed: false });
-        recordShadowVerdict(db, WORKSPACE_ID, pair!.id, { verdict, notes: "" }, { userId: null });
+        const [pair] = await listShadowPairs(db, WORKSPACE_ID, { reviewed: false });
+        await recordShadowVerdict(db, WORKSPACE_ID, pair!.id, { verdict, notes: "" }, { userId: null });
       }
     };
-    pairFor("a", "engine");
-    pairFor("b", "legacy");
-    pairFor("c", null);
+    await pairFor("a", "engine");
+    await pairFor("b", "legacy");
+    await pairFor("c", null);
 
-    const comparison = getAutomationComparison(db, WORKSPACE_ID);
+    const comparison = await getAutomationComparison(db, WORKSPACE_ID);
     expect(automationComparisonSchema.parse(comparison)).toEqual(comparison);
     expect(comparison.legacy).toEqual({
       drafts: 3,
@@ -336,9 +336,9 @@ describe("automation comparison (D-65.8)", () => {
     });
   });
 
-  it("returns nulls, not zeros, when nothing has been decided", () => {
-    const { db } = fixture();
-    const comparison = getAutomationComparison(db, WORKSPACE_ID);
+  it("returns nulls, not zeros, when nothing has been decided", async () => {
+    const { db } = await fixture();
+    const comparison = await getAutomationComparison(db, WORKSPACE_ID);
     expect(comparison.legacy).toMatchObject({
       drafts: 0,
       approvalRate: null,
@@ -349,9 +349,9 @@ describe("automation comparison (D-65.8)", () => {
 });
 
 describe("rollout decisions (D-65.9)", () => {
-  it("freezes the snapshot, applies the flag, and stays append-only", () => {
-    const { db } = fixture();
-    const adopted = recordRolloutDecision(
+  it("freezes the snapshot, applies the flag, and stays append-only", async () => {
+    const { db } = await fixture();
+    const adopted = await recordRolloutDecision(
       db,
       WORKSPACE_ID,
       { decision: "adopt_engine", rationale: "Engine wins on approvals and cost." },
@@ -363,17 +363,17 @@ describe("rollout decisions (D-65.9)", () => {
       decidedByUserId: USER_ID,
     });
     expect(adopted.metrics.workspaceId).toBe(WORKSPACE_ID);
-    expect(getSocialAutomationSettings(db, WORKSPACE_ID).generationPath).toBe("pipeline");
+    expect((await getSocialAutomationSettings(db, WORKSPACE_ID)).generationPath).toBe("pipeline");
 
-    const kept = recordRolloutDecision(
+    const kept = await recordRolloutDecision(
       db,
       WORKSPACE_ID,
       { decision: "keep_legacy", rationale: "Regression after the model swap." },
       { userId: null },
     );
-    expect(getSocialAutomationSettings(db, WORKSPACE_ID).generationPath).toBe("legacy");
+    expect((await getSocialAutomationSettings(db, WORKSPACE_ID)).generationPath).toBe("legacy");
     // The first decision's snapshot recorded the path at its decision time.
-    const listed = listRolloutDecisions(db, WORKSPACE_ID);
+    const listed = await listRolloutDecisions(db, WORKSPACE_ID);
     expect(listed.map((d) => d.id)).toEqual([kept.id, adopted.id]);
     expect(listed[1]!.metrics.generationPath).toBe("legacy");
   });

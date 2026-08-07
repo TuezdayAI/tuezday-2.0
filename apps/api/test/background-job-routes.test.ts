@@ -122,18 +122,18 @@ describe("internal background job routes", () => {
   });
 
   it("requeues only dead-letter work and preserves its history", async () => {
-    const queued = enqueueBackgroundJob(db, {
+    const queued = await enqueueBackgroundJob(db, {
       payload: { kind: "evidence", workspaceId },
       idempotencyKey: "operator-requeue",
       priority: 100,
     });
-    const [claim] = claimBackgroundJobs(db, {
+    const [claim] = await claimBackgroundJobs(db, {
       owner: "worker-a",
       leaseMs: 30_000,
       limit: 1,
       perWorkspaceLimit: 1,
     });
-    const dead = deadLetterBackgroundJob(db, claim!, "provider rejected")!;
+    const dead = (await deadLetterBackgroundJob(db, claim!, "provider rejected"))!;
 
     const response = await app.inject({
       method: "POST",

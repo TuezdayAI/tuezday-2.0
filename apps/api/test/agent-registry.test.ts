@@ -156,7 +156,7 @@ describe("toAgentTools", () => {
 
   it("drives a registry tool through a full AgentRunner loop", async () => {
     const db = createTestDb();
-    db.insert(workspaces)
+    await db.insert(workspaces)
       .values({ id: "ws-run", name: "Registry", createdAt: 1, updatedAt: 1 })
       .run();
 

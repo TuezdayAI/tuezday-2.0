@@ -103,49 +103,49 @@ export function rowToEnrollment(row: OutreachEnrollmentRow): OutreachEnrollment 
   };
 }
 
-export function getSequenceRow(
+export async function getSequenceRow(
   db: Db,
   workspaceId: string,
   sequenceId: string,
-): OutreachSequenceRow | undefined {
-  return db
+): Promise<OutreachSequenceRow | undefined> {
+  return await db
     .select()
     .from(outreachSequences)
     .where(and(eq(outreachSequences.workspaceId, workspaceId), eq(outreachSequences.id, sequenceId)))
     .get();
 }
 
-function assertRefs(db: Db, workspaceId: string, input: {
+async function assertRefs(db: Db, workspaceId: string, input: {
   campaignId?: string;
   personaId?: string;
   audienceId?: string;
-}): void {
+}): Promise<void> {
   if (input.campaignId !== undefined) {
-    const found = db.select({ id: campaigns.id }).from(campaigns)
+    const found = await db.select({ id: campaigns.id }).from(campaigns)
       .where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.id, input.campaignId))).get();
     if (!found) throw new OutreachSequenceError("campaign_not_found", "Campaign not found.", 404);
   }
   if (input.personaId !== undefined) {
-    const found = db.select({ id: personas.id }).from(personas)
+    const found = await db.select({ id: personas.id }).from(personas)
       .where(and(eq(personas.workspaceId, workspaceId), eq(personas.id, input.personaId))).get();
     if (!found) throw new OutreachSequenceError("persona_not_found", "Persona not found.", 404);
   }
   if (input.audienceId !== undefined) {
-    const found = db.select({ id: audiences.id }).from(audiences)
+    const found = await db.select({ id: audiences.id }).from(audiences)
       .where(and(eq(audiences.workspaceId, workspaceId), eq(audiences.id, input.audienceId))).get();
     if (!found) throw new OutreachSequenceError("audience_not_found", "Audience not found.", 404);
   }
 }
 
-export function createOutreachSequence(
+export async function createOutreachSequence(
   db: Db,
   workspaceId: string,
   input: CreateOutreachSequenceInput,
-): OutreachSequence {
-  assertRefs(db, workspaceId, input);
+): Promise<OutreachSequence> {
+  await assertRefs(db, workspaceId, input);
   const now = Date.now();
   const id = randomUUID();
-  db.insert(outreachSequences).values({
+  await db.insert(outreachSequences).values({
     id,
     workspaceId,
     campaignId: input.campaignId,
@@ -162,37 +162,37 @@ export function createOutreachSequence(
     createdAt: now,
     updatedAt: now,
   }).run();
-  return rowToSequence(getSequenceRow(db, workspaceId, id)!);
+  return rowToSequence((await getSequenceRow(db, workspaceId, id))!);
 }
 
-export function listOutreachSequences(db: Db, workspaceId: string): OutreachSequence[] {
-  return db
+export async function listOutreachSequences(db: Db, workspaceId: string): Promise<OutreachSequence[]> {
+  return (await db
     .select()
     .from(outreachSequences)
     .where(eq(outreachSequences.workspaceId, workspaceId))
     .orderBy(asc(outreachSequences.createdAt))
-    .all()
+    .all())
     .map(rowToSequence);
 }
 
-export function getOutreachSequence(
+export async function getOutreachSequence(
   db: Db,
   workspaceId: string,
   sequenceId: string,
-): OutreachSequence | undefined {
-  const row = getSequenceRow(db, workspaceId, sequenceId);
+): Promise<OutreachSequence | undefined> {
+  const row = await getSequenceRow(db, workspaceId, sequenceId);
   return row ? rowToSequence(row) : undefined;
 }
 
-export function updateOutreachSequence(
+export async function updateOutreachSequence(
   db: Db,
   workspaceId: string,
   sequenceId: string,
   input: UpdateOutreachSequenceInput,
-): OutreachSequence | undefined {
-  if (!getSequenceRow(db, workspaceId, sequenceId)) return undefined;
-  assertRefs(db, workspaceId, input);
-  db.update(outreachSequences).set({
+): Promise<OutreachSequence | undefined> {
+  if (!await getSequenceRow(db, workspaceId, sequenceId)) return undefined;
+  await assertRefs(db, workspaceId, input);
+  await db.update(outreachSequences).set({
     ...(input.name !== undefined ? { name: input.name } : {}),
     ...(input.goal !== undefined ? { goal: input.goal } : {}),
     ...(input.personaId !== undefined ? { personaId: input.personaId } : {}),
@@ -205,19 +205,19 @@ export function updateOutreachSequence(
     ...(input.trackClicks !== undefined ? { trackClicks: input.trackClicks ? 1 : 0 } : {}),
     updatedAt: Date.now(),
   }).where(and(eq(outreachSequences.workspaceId, workspaceId), eq(outreachSequences.id, sequenceId))).run();
-  return rowToSequence(getSequenceRow(db, workspaceId, sequenceId)!);
+  return rowToSequence((await getSequenceRow(db, workspaceId, sequenceId))!);
 }
 
-export function deleteOutreachSequence(db: Db, workspaceId: string, sequenceId: string): boolean {
-  if (!getSequenceRow(db, workspaceId, sequenceId)) return false;
-  db.delete(outreachSequences)
+export async function deleteOutreachSequence(db: Db, workspaceId: string, sequenceId: string): Promise<boolean> {
+  if (!await getSequenceRow(db, workspaceId, sequenceId)) return false;
+  await db.delete(outreachSequences)
     .where(and(eq(outreachSequences.workspaceId, workspaceId), eq(outreachSequences.id, sequenceId)))
     .run();
   return true;
 }
 
-export function listSteps(db: Db, sequenceId: string): OutreachSequenceStepRow[] {
-  return db
+export async function listSteps(db: Db, sequenceId: string): Promise<OutreachSequenceStepRow[]> {
+  return await db
     .select()
     .from(outreachSequenceSteps)
     .where(eq(outreachSequenceSteps.sequenceId, sequenceId))
@@ -225,17 +225,17 @@ export function listSteps(db: Db, sequenceId: string): OutreachSequenceStepRow[]
     .all();
 }
 
-export function setSteps(
+export async function setSteps(
   db: Db,
   workspaceId: string,
   sequenceId: string,
   input: SetOutreachStepsInput,
-): OutreachSequenceStep[] | undefined {
-  if (!getSequenceRow(db, workspaceId, sequenceId)) return undefined;
+): Promise<OutreachSequenceStep[] | undefined> {
+  if (!await getSequenceRow(db, workspaceId, sequenceId)) return undefined;
   const now = Date.now();
-  db.delete(outreachSequenceSteps).where(eq(outreachSequenceSteps.sequenceId, sequenceId)).run();
+  await db.delete(outreachSequenceSteps).where(eq(outreachSequenceSteps.sequenceId, sequenceId)).run();
   for (const step of input.steps) {
-    db.insert(outreachSequenceSteps).values({
+    await db.insert(outreachSequenceSteps).values({
       id: randomUUID(),
       workspaceId,
       sequenceId,
@@ -247,26 +247,26 @@ export function setSteps(
       updatedAt: now,
     }).run();
   }
-  return listSteps(db, sequenceId).map(rowToStep);
+  return (await listSteps(db, sequenceId)).map(rowToStep);
 }
 
-export function listPoolMailboxIds(db: Db, sequenceId: string): string[] {
-  return db
+export async function listPoolMailboxIds(db: Db, sequenceId: string): Promise<string[]> {
+  return (await db
     .select({ mailboxId: outreachSequenceMailboxes.mailboxId })
     .from(outreachSequenceMailboxes)
     .where(eq(outreachSequenceMailboxes.sequenceId, sequenceId))
-    .all()
+    .all())
     .map((r) => r.mailboxId);
 }
 
-export function setMailboxes(
+export async function setMailboxes(
   db: Db,
   workspaceId: string,
   sequenceId: string,
   mailboxIds: string[],
-): string[] | undefined {
-  if (!getSequenceRow(db, workspaceId, sequenceId)) return undefined;
-  const connected = new Set(listConnectedMailboxes(db, workspaceId).map((m) => m.id));
+): Promise<string[] | undefined> {
+  if (!await getSequenceRow(db, workspaceId, sequenceId)) return undefined;
+  const connected = new Set((await listConnectedMailboxes(db, workspaceId)).map((m) => m.id));
   for (const id of mailboxIds) {
     if (!connected.has(id)) {
       throw new OutreachSequenceError(
@@ -276,21 +276,21 @@ export function setMailboxes(
       );
     }
   }
-  db.delete(outreachSequenceMailboxes).where(eq(outreachSequenceMailboxes.sequenceId, sequenceId)).run();
+  await db.delete(outreachSequenceMailboxes).where(eq(outreachSequenceMailboxes.sequenceId, sequenceId)).run();
   for (const mailboxId of new Set(mailboxIds)) {
-    db.insert(outreachSequenceMailboxes).values({ sequenceId, mailboxId }).run();
+    await db.insert(outreachSequenceMailboxes).values({ sequenceId, mailboxId }).run();
   }
-  return listPoolMailboxIds(db, sequenceId);
+  return await listPoolMailboxIds(db, sequenceId);
 }
 
 /** The pooled mailboxes that are still connected (the engine's usable pool). */
-export function connectedPoolMailboxIds(db: Db, workspaceId: string, sequenceId: string): string[] {
-  const connected = new Set(listConnectedMailboxes(db, workspaceId).map((m) => m.id));
-  return listPoolMailboxIds(db, sequenceId).filter((id) => connected.has(id));
+export async function connectedPoolMailboxIds(db: Db, workspaceId: string, sequenceId: string): Promise<string[]> {
+  const connected = new Set((await listConnectedMailboxes(db, workspaceId)).map((m) => m.id));
+  return (await listPoolMailboxIds(db, sequenceId)).filter((id) => connected.has(id));
 }
 
-export function listEnrollments(db: Db, sequenceId: string): OutreachEnrollmentRow[] {
-  return db
+export async function listEnrollments(db: Db, sequenceId: string): Promise<OutreachEnrollmentRow[]> {
+  return await db
     .select()
     .from(outreachEnrollments)
     .where(eq(outreachEnrollments.sequenceId, sequenceId))
@@ -298,72 +298,72 @@ export function listEnrollments(db: Db, sequenceId: string): OutreachEnrollmentR
     .all();
 }
 
-export function setStatus(
+export async function setStatus(
   db: Db,
   workspaceId: string,
   sequenceId: string,
   status: OutreachSequenceStatus,
-): void {
-  db.update(outreachSequences)
+): Promise<void> {
+  await db.update(outreachSequences)
     .set({ status, updatedAt: Date.now() })
     .where(and(eq(outreachSequences.workspaceId, workspaceId), eq(outreachSequences.id, sequenceId)))
     .run();
 }
 
 /** Activation needs ≥1 step, ≥1 connected pooled mailbox, and its refs intact. */
-export function activateOutreachSequence(
+export async function activateOutreachSequence(
   db: Db,
   workspaceId: string,
   sequenceId: string,
-): OutreachSequence {
-  const row = getSequenceRow(db, workspaceId, sequenceId);
+): Promise<OutreachSequence> {
+  const row = await getSequenceRow(db, workspaceId, sequenceId);
   if (!row) throw new OutreachSequenceError("sequence_not_found", "Sequence not found.", 404);
-  if (listSteps(db, sequenceId).length === 0) {
+  if ((await listSteps(db, sequenceId)).length === 0) {
     throw new OutreachSequenceError("not_activatable", "Add at least one step before activating.", 409);
   }
-  if (connectedPoolMailboxIds(db, workspaceId, sequenceId).length === 0) {
+  if ((await connectedPoolMailboxIds(db, workspaceId, sequenceId)).length === 0) {
     throw new OutreachSequenceError("not_activatable", "Add at least one connected mailbox before activating.", 409);
   }
   // CAN-SPAM: a postal address must exist before any cold email goes out.
-  if (!getPostalAddress(db, workspaceId).trim()) {
+  if (!(await getPostalAddress(db, workspaceId)).trim()) {
     throw new OutreachSequenceError(
       "compliance_address_missing",
       "Set your business mailing address before activating an outreach sequence.",
       409,
     );
   }
-  setStatus(db, workspaceId, sequenceId, "active");
-  return rowToSequence(getSequenceRow(db, workspaceId, sequenceId)!);
+  await setStatus(db, workspaceId, sequenceId, "active");
+  return rowToSequence((await getSequenceRow(db, workspaceId, sequenceId))!);
 }
 
-export function pauseOutreachSequence(
+export async function pauseOutreachSequence(
   db: Db,
   workspaceId: string,
   sequenceId: string,
-): OutreachSequence | undefined {
-  if (!getSequenceRow(db, workspaceId, sequenceId)) return undefined;
-  setStatus(db, workspaceId, sequenceId, "paused");
-  return rowToSequence(getSequenceRow(db, workspaceId, sequenceId)!);
+): Promise<OutreachSequence | undefined> {
+  if (!await getSequenceRow(db, workspaceId, sequenceId)) return undefined;
+  await setStatus(db, workspaceId, sequenceId, "paused");
+  return rowToSequence((await getSequenceRow(db, workspaceId, sequenceId))!);
 }
 
-export function getOutreachSequenceDetail(
+export async function getOutreachSequenceDetail(
   db: Db,
   workspaceId: string,
   sequenceId: string,
-): OutreachSequenceDetail | undefined {
-  const row = getSequenceRow(db, workspaceId, sequenceId);
+): Promise<OutreachSequenceDetail | undefined> {
+  const row = await getSequenceRow(db, workspaceId, sequenceId);
   if (!row) return undefined;
   return {
     ...rowToSequence(row),
-    steps: listSteps(db, sequenceId).map(rowToStep),
-    mailboxIds: listPoolMailboxIds(db, sequenceId),
-    enrollments: listEnrollments(db, sequenceId).map(rowToEnrollment),
+    steps: (await listSteps(db, sequenceId)).map(rowToStep),
+    mailboxIds: await listPoolMailboxIds(db, sequenceId),
+    enrollments: (await listEnrollments(db, sequenceId)).map(rowToEnrollment),
   };
 }
 
 /** Active enrollments in the workspace whose person matches (recipientType,recipientId). */
-export function activeEnrollmentKeys(db: Db, workspaceId: string): Set<string> {
-  const rows = db
+export async function activeEnrollmentKeys(db: Db, workspaceId: string): Promise<Set<string>> {
+  const rows = await db
     .select({ t: outreachEnrollments.recipientType, id: outreachEnrollments.recipientId })
     .from(outreachEnrollments)
     .where(and(eq(outreachEnrollments.workspaceId, workspaceId), eq(outreachEnrollments.status, "active")))
@@ -371,14 +371,14 @@ export function activeEnrollmentKeys(db: Db, workspaceId: string): Set<string> {
   return new Set(rows.map((r) => `${r.t}:${r.id}`));
 }
 
-export function stopEnrollments(
+export async function stopEnrollments(
   db: Db,
   ids: string[],
   reason: "manual" | "replied",
-): number {
+): Promise<number> {
   if (ids.length === 0) return 0;
   const now = Date.now();
-  db.update(outreachEnrollments)
+  await db.update(outreachEnrollments)
     .set({
       status: reason === "replied" ? "replied" : "stopped",
       stoppedReason: reason,
@@ -391,7 +391,7 @@ export function stopEnrollments(
 }
 
 /** Manual stop over selectors (enrollmentIds / emails / all active in the sequence). */
-export function stopOutreach(
+export async function stopOutreach(
   db: Db,
   workspaceId: string,
   sequenceId: string,
@@ -401,8 +401,8 @@ export function stopOutreach(
     all?: boolean;
     reason: "manual" | "replied";
   },
-): number {
-  const active = listEnrollments(db, sequenceId).filter((e) => e.status === "active");
+): Promise<number> {
+  const active = (await listEnrollments(db, sequenceId)).filter((e) => e.status === "active");
   const targetIds = new Set<string>();
   if (input.all) active.forEach((e) => targetIds.add(e.id));
   if (input.enrollmentIds?.length) {
@@ -415,7 +415,7 @@ export function stopOutreach(
   }
   // Guard against a stray workspace mismatch on the enrollment rows.
   const scoped = active.filter((e) => e.workspaceId === workspaceId && targetIds.has(e.id)).map((e) => e.id);
-  return stopEnrollments(db, scoped, input.reason);
+  return await stopEnrollments(db, scoped, input.reason);
 }
 
 /**
@@ -423,27 +423,27 @@ export function stopOutreach(
  * / lost. Meeting/won/lost are human-set — no fabricated automation. Scoped to
  * the workspace; returns the updated enrollment, or undefined if not found.
  */
-export function setEnrollmentOutcome(
+export async function setEnrollmentOutcome(
   db: Db,
   workspaceId: string,
   enrollmentId: string,
   outcome: OutreachEnrollmentOutcome,
-): OutreachEnrollment | undefined {
-  const row = db
+): Promise<OutreachEnrollment | undefined> {
+  const row = await db
     .select()
     .from(outreachEnrollments)
     .where(and(eq(outreachEnrollments.workspaceId, workspaceId), eq(outreachEnrollments.id, enrollmentId)))
     .get();
   if (!row) return undefined;
-  db.update(outreachEnrollments)
+  await db.update(outreachEnrollments)
     .set({ outcome, updatedAt: Date.now() })
     .where(and(eq(outreachEnrollments.workspaceId, workspaceId), eq(outreachEnrollments.id, enrollmentId)))
     .run();
   return rowToEnrollment(
-    db
+    (await db
       .select()
       .from(outreachEnrollments)
       .where(and(eq(outreachEnrollments.workspaceId, workspaceId), eq(outreachEnrollments.id, enrollmentId)))
-      .get()!,
+      .get())!,
   );
 }

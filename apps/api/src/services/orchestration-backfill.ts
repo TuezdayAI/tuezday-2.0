@@ -55,14 +55,14 @@ export function getCampaignConfigurationIssues(
     }));
 }
 
-export function getCampaignPlanWorkspace(
+export async function getCampaignPlanWorkspace(
   db: Db,
   workspaceId: string,
   campaignId: string,
-): CampaignPlanWorkspace {
-  const campaign = getCampaign(db, workspaceId, campaignId);
+): Promise<CampaignPlanWorkspace> {
+  const campaign = await getCampaign(db, workspaceId, campaignId);
   if (!campaign) throw new CampaignPlanNotFoundError();
-  const revisions = listCampaignPlanDetails(db, workspaceId, campaignId);
+  const revisions = await listCampaignPlanDetails(db, workspaceId, campaignId);
   const workingRevision =
     revisions.find(({ plan }) => plan.status === "draft") ??
     revisions.find(({ plan }) => plan.id === campaign.currentPlanRevisionId) ??
@@ -74,14 +74,14 @@ export function getCampaignPlanWorkspace(
   });
 }
 
-export function getCampaignControlPlaneSummary(
+export async function getCampaignControlPlaneSummary(
   db: Db,
   workspaceId: string,
   campaignId: string,
-): ControlPlaneSummary {
-  const campaign = getCampaign(db, workspaceId, campaignId);
+): Promise<ControlPlaneSummary> {
+  const campaign = await getCampaign(db, workspaceId, campaignId);
   if (!campaign) throw new CampaignPlanNotFoundError();
-  const detail = getCurrentCampaignPlan(db, workspaceId, campaignId);
+  const detail = await getCurrentCampaignPlan(db, workspaceId, campaignId);
   if (!detail) {
     return {
       planRevision: null,
@@ -96,14 +96,14 @@ export function getCampaignControlPlaneSummary(
   };
 }
 
-export function backfillCampaignControlPlane(
+export async function backfillCampaignControlPlane(
   db: Db,
   workspaceId: string,
   campaignId: string,
-): BackfillResult {
-  const campaign = getCampaign(db, workspaceId, campaignId);
+): Promise<BackfillResult> {
+  const campaign = await getCampaign(db, workspaceId, campaignId);
   if (!campaign) throw new CampaignPlanNotFoundError();
-  const existing = getCurrentCampaignPlan(db, workspaceId, campaignId);
+  const existing = await getCurrentCampaignPlan(db, workspaceId, campaignId);
   if (existing) {
     return {
       status: "already_backfilled",
@@ -112,8 +112,8 @@ export function backfillCampaignControlPlane(
     };
   }
 
-  const campaignAudiences = listCampaignAudiences(db, workspaceId, campaignId);
-  const plan = createPlanRevision(
+  const campaignAudiences = await listCampaignAudiences(db, workspaceId, campaignId);
+  const plan = await createPlanRevision(
     db,
     workspaceId,
     campaignId,
@@ -143,14 +143,14 @@ export function backfillCampaignControlPlane(
   );
 
   const laneChannels = new Set<string>();
-  const cadences = listCadenceRows(db, workspaceId).filter(
+  const cadences = (await listCadenceRows(db, workspaceId)).filter(
     (cadence) => cadence.campaignId === campaignId && cadence.status === "active",
   );
   for (const cadence of cadences) {
     const format = LEGACY_FORMAT_BY_CHANNEL[cadence.channel];
     if (!cadence.personaId || !format) continue;
     const key = `legacy-${cadence.channel}-${cadence.personaId.slice(0, 8)}-${cadence.id.slice(0, 8)}`;
-    upsertLaneRevision(db, workspaceId, campaignId, plan.id, {
+    await upsertLaneRevision(db, workspaceId, campaignId, plan.id, {
       key,
       name: cadence.name,
       personaId: cadence.personaId,
@@ -178,7 +178,7 @@ export function backfillCampaignControlPlane(
     campaign,
     Array.from(laneChannels).map((channel) => ({ channel: channel as Channel, status: "active" as const })),
   );
-  activatePlanRevision(db, workspaceId, campaignId, plan.id);
+  await activatePlanRevision(db, workspaceId, campaignId, plan.id);
   return {
     status: issues.length > 0 ? "needs_configuration" : "backfilled",
     planRevisionId: plan.id,

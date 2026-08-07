@@ -50,13 +50,13 @@ export function rowToChatPin(row: ChatPinRow): ChatPin {
   };
 }
 
-export function listChatPins(db: Db, sessionId: string): ChatPin[] {
-  return db
+export async function listChatPins(db: Db, sessionId: string): Promise<ChatPin[]> {
+  return (await db
     .select()
     .from(chatPins)
     .where(eq(chatPins.sessionId, sessionId))
     .orderBy(asc(chatPins.createdAt))
-    .all()
+    .all())
     .map(rowToChatPin);
 }
 
@@ -70,29 +70,29 @@ export type CreatePinOutcome =
  * stored as a chip that renders nothing — the whole point is that the founder
  * can see what the conversation is looking at.
  */
-function resolveLabel(
+async function resolveLabel(
   db: Db,
   safeFetch: SafeFetchService | undefined,
   workspaceId: string,
   kind: ChatPinKind,
   refId: string,
-): string | null {
+): Promise<string | null> {
   switch (kind) {
     case "campaign":
-      return getCampaign(db, workspaceId, refId)?.name ?? null;
+      return (await getCampaign(db, workspaceId, refId))?.name ?? null;
     case "persona":
-      return getPersona(db, workspaceId, refId)?.name ?? null;
+      return (await getPersona(db, workspaceId, refId))?.name ?? null;
     case "draft": {
-      const draft = getDraft(db, workspaceId, refId);
+      const draft = await getDraft(db, workspaceId, refId);
       return draft ? `${draft.channel} draft` : null;
     }
     case "signal":
-      return getDiscoveredItem(db, workspaceId, refId)?.title ?? null;
+      return (await getDiscoveredItem(db, workspaceId, refId))?.title ?? null;
     case "brain_section": {
       // `<docType>#<sectionId>`, the same anchor a brain citation uses.
       const [docType, sectionId] = refId.split("#");
       if (!docType || !sectionId) return null;
-      const doc = getBrain(db, workspaceId).docs.find((d) => d.docType === docType);
+      const doc = (await getBrain(db, workspaceId)).docs.find((d) => d.docType === docType);
       if (!doc) return null;
       const section = parseDocSections(doc.content).find((s) => s.id === sectionId);
       return section ? `${docType}: ${section.heading}` : null;
@@ -114,36 +114,36 @@ function resolveLabel(
 }
 
 /** Campaign and persona pins are also the thread's scope (D-77.5). */
-function writeThroughScope(db: Db, sessionId: string, kind: ChatPinKind, refId: string | null) {
+async function writeThroughScope(db: Db, sessionId: string, kind: ChatPinKind, refId: string | null) {
   if (kind === "campaign") {
-    db.update(chatSessions)
+    await db.update(chatSessions)
       .set({ campaignId: refId, updatedAt: Date.now() })
       .where(eq(chatSessions.id, sessionId))
       .run();
   }
   if (kind === "persona") {
-    db.update(chatSessions)
+    await db.update(chatSessions)
       .set({ personaId: refId, updatedAt: Date.now() })
       .where(eq(chatSessions.id, sessionId))
       .run();
   }
 }
 
-export function createChatPin(
+export async function createChatPin(
   db: Db,
   safeFetch: SafeFetchService | undefined,
   workspaceId: string,
   sessionId: string,
   input: CreateChatPinInput,
-): CreatePinOutcome {
-  const existing = listChatPins(db, sessionId);
+): Promise<CreatePinOutcome> {
+  const existing = await listChatPins(db, sessionId);
   // Pinning the same thing twice is a no-op, not a second chip — and it must
   // not count against the cap.
   const already = existing.find((p) => p.kind === input.kind && p.refId === input.refId);
   if (already) return { ok: true, pin: already };
   if (existing.length >= CHAT_PINS_MAX) return { ok: false, error: "pin_limit_reached" };
 
-  const resolved = resolveLabel(db, safeFetch, workspaceId, input.kind, input.refId);
+  const resolved = await resolveLabel(db, safeFetch, workspaceId, input.kind, input.refId);
   if (resolved === null) {
     return { ok: false, error: input.kind === "url" ? "invalid_url" : "pin_target_not_found" };
   }
@@ -160,25 +160,25 @@ export function createChatPin(
     label: (input.label?.trim() || resolved).slice(0, 200),
     createdAt: Date.now(),
   };
-  db.insert(chatPins).values(row).run();
-  writeThroughScope(db, sessionId, input.kind, input.refId);
+  await db.insert(chatPins).values(row).run();
+  await writeThroughScope(db, sessionId, input.kind, input.refId);
   return { ok: true, pin: rowToChatPin(row) };
 }
 
-export function deleteChatPin(
+export async function deleteChatPin(
   db: Db,
   workspaceId: string,
   sessionId: string,
   pinId: string,
-): boolean {
-  const row = db
+): Promise<boolean> {
+  const row = await db
     .select()
     .from(chatPins)
     .where(and(eq(chatPins.workspaceId, workspaceId), eq(chatPins.id, pinId)))
     .get();
   if (!row || row.sessionId !== sessionId) return false;
-  db.delete(chatPins).where(eq(chatPins.id, pinId)).run();
-  writeThroughScope(db, sessionId, row.kind as ChatPinKind, null);
+  await db.delete(chatPins).where(eq(chatPins.id, pinId)).run();
+  await writeThroughScope(db, sessionId, row.kind as ChatPinKind, null);
   return true;
 }
 
@@ -221,7 +221,7 @@ export async function renderChatPins(
         // In the bundle already, via scope. Chip only.
         break;
       case "draft": {
-        const draft = getDraft(db, workspaceId, pin.refId);
+        const draft = await getDraft(db, workspaceId, pin.refId);
         if (draft) {
           out.push({
             kind: pin.kind,
@@ -234,7 +234,7 @@ export async function renderChatPins(
         break;
       }
       case "signal": {
-        const item = getDiscoveredItem(db, workspaceId, pin.refId);
+        const item = await getDiscoveredItem(db, workspaceId, pin.refId);
         if (item) {
           out.push({
             kind: pin.kind,
@@ -249,7 +249,7 @@ export async function renderChatPins(
       }
       case "brain_section": {
         const [docType, sectionId] = pin.refId.split("#");
-        const doc = getBrain(db, workspaceId).docs.find((d) => d.docType === docType);
+        const doc = (await getBrain(db, workspaceId)).docs.find((d) => d.docType === docType);
         const section = doc
           ? parseDocSections(doc.content).find((s) => s.id === sectionId)
           : undefined;

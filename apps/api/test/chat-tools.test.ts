@@ -54,10 +54,10 @@ let db: Db;
 let workspaceId: string;
 let ctx: ToolContext;
 
-beforeEach(() => {
+beforeEach(async () => {
   db = createTestDb();
   workspaceId = randomUUID();
-  db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 }).run();
+  await db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 }).run();
   ctx = {
     db,
     evidence: new NoEvidence(),
@@ -91,12 +91,12 @@ describe("inventory reads", () => {
   });
 
   it("list_campaigns returns ids a later tool can use, and filters by status", async () => {
-    const launch = createCampaign(
+    const launch = await createCampaign(
       db,
       workspaceId,
       upsertCampaignInputSchema.parse({ name: "Launch", objective: "Ship it", status: "active" }),
     );
-    createCampaign(
+    await createCampaign(
       db,
       workspaceId,
       upsertCampaignInputSchema.parse({ name: "Old", objective: "Done", status: "archived" }),
@@ -115,7 +115,7 @@ describe("inventory reads", () => {
     const empty = (await listPersonasTool.run(ctx, {})) as { personas: unknown[]; note: string };
     expect(empty.note).toContain("no personas");
 
-    const persona = createPersona(
+    const persona = await createPersona(
       db,
       workspaceId,
       upsertPersonaInputSchema.parse({ name: "Head of Growth", tone: "direct" }),
@@ -127,7 +127,7 @@ describe("inventory reads", () => {
 
 describe("performance reads", () => {
   it("get_campaign_insights returns the available campaigns for an unknown id", async () => {
-    const campaign = createCampaign(
+    const campaign = await createCampaign(
       db,
       workspaceId,
       upsertCampaignInputSchema.parse({ name: "Launch", objective: "Ship it" }),
@@ -141,7 +141,7 @@ describe("performance reads", () => {
   });
 
   it("get_campaign_insights answers for a real campaign", async () => {
-    const campaign = createCampaign(
+    const campaign = await createCampaign(
       db,
       workspaceId,
       upsertCampaignInputSchema.parse({ name: "Launch", objective: "Ship it" }),
@@ -171,14 +171,14 @@ describe("performance reads", () => {
 });
 
 describe("get_metric_summary respects the Sprint 55 window rule", () => {
-  const record = (
+  const record = async (
     subjectId: string,
     value: number,
     window: "1d" | "7d" | "point",
     capturedAt: number,
     periodStart = capturedAt,
   ) =>
-    recordMetric(db, workspaceId, {
+    await recordMetric(db, workspaceId, {
       subjectType: "publication",
       subjectId,
       metricKey: "impressions",
@@ -189,12 +189,12 @@ describe("get_metric_summary respects the Sprint 55 window rule", () => {
       capturedAt,
     });
 
-  it("sums every observation for a PERIODIC window — days add up", () => {
-    record("pub-1", 10, "1d", 1, 1);
-    record("pub-1", 20, "1d", 2, 2);
-    record("pub-2", 5, "1d", 1, 1);
+  it("sums every observation for a PERIODIC window — days add up", async () => {
+    await record("pub-1", 10, "1d", 1, 1);
+    await record("pub-1", 20, "1d", 2, 2);
+    await record("pub-2", 5, "1d", 1, 1);
 
-    const summary = summarizeMetrics(db, workspaceId, {
+    const summary = await summarizeMetrics(db, workspaceId, {
       subjectType: "publication",
       window: "1d",
     });
@@ -207,14 +207,14 @@ describe("get_metric_summary respects the Sprint 55 window rule", () => {
     });
   });
 
-  it("takes ONE reading per subject for a CUMULATIVE window — a lifetime total is not a rate", () => {
+  it("takes ONE reading per subject for a CUMULATIVE window — a lifetime total is not a rate", async () => {
     // The same publication observed twice: 100 then 180. Summing them would
     // report 280 impressions for a post that has had 180.
-    record("pub-1", 100, "7d", 1, 1);
-    record("pub-1", 180, "7d", 2, 2);
-    record("pub-2", 20, "7d", 1, 1);
+    await record("pub-1", 100, "7d", 1, 1);
+    await record("pub-1", 180, "7d", 2, 2);
+    await record("pub-2", 20, "7d", 1, 1);
 
-    const summary = summarizeMetrics(db, workspaceId, {
+    const summary = await summarizeMetrics(db, workspaceId, {
       subjectType: "publication",
       window: "7d",
     });
@@ -224,10 +224,10 @@ describe("get_metric_summary respects the Sprint 55 window rule", () => {
     expect(summary.entries[0]!.observations).toBe(3);
   });
 
-  it("takes the latest reading per subject for a POINT window", () => {
-    record("pub-1", 7, "point", 1, 1);
-    record("pub-1", 9, "point", 2, 2);
-    const summary = summarizeMetrics(db, workspaceId, {
+  it("takes the latest reading per subject for a POINT window", async () => {
+    await record("pub-1", 7, "point", 1, 1);
+    await record("pub-1", 9, "point", 2, 2);
+    const summary = await summarizeMetrics(db, workspaceId, {
       subjectType: "publication",
       window: "point",
     });
@@ -235,17 +235,17 @@ describe("get_metric_summary respects the Sprint 55 window rule", () => {
     expect(summary.entries[0]!.total).toBe(9);
   });
 
-  it("never mixes windows in one number", () => {
-    record("pub-1", 10, "1d", 1, 1);
-    record("pub-1", 500, "7d", 1, 1);
-    const daily = summarizeMetrics(db, workspaceId, { subjectType: "publication", window: "1d" });
+  it("never mixes windows in one number", async () => {
+    await record("pub-1", 10, "1d", 1, 1);
+    await record("pub-1", 500, "7d", 1, 1);
+    const daily = await summarizeMetrics(db, workspaceId, { subjectType: "publication", window: "1d" });
     expect(daily.entries[0]!.total).toBe(10);
   });
 
   it("bounds by sinceDays", async () => {
     const now = Date.now();
-    record("pub-1", 10, "1d", now - 40 * 24 * 60 * 60 * 1000);
-    record("pub-1", 3, "1d", now - 1 * 24 * 60 * 60 * 1000);
+    await record("pub-1", 10, "1d", now - 40 * 24 * 60 * 60 * 1000);
+    await record("pub-1", 3, "1d", now - 1 * 24 * 60 * 60 * 1000);
 
     const recent = (await getMetricSummaryTool.run(ctx, {
       subjectType: "publication",
@@ -265,7 +265,7 @@ describe("get_metric_summary respects the Sprint 55 window rule", () => {
   });
 
   it("carries the interpretation so a model cannot misread the number", async () => {
-    record("pub-1", 5, "7d", 1, 1);
+    await record("pub-1", 5, "7d", 1, 1);
     const result = (await getMetricSummaryTool.run(ctx, {
       subjectType: "publication",
       window: "7d",
@@ -273,9 +273,9 @@ describe("get_metric_summary respects the Sprint 55 window rule", () => {
     expect(result.interpretation).toContain("latest reading");
   });
 
-  it("filters to the requested metric keys", () => {
-    record("pub-1", 5, "1d", 1, 1);
-    recordMetric(db, workspaceId, {
+  it("filters to the requested metric keys", async () => {
+    await record("pub-1", 5, "1d", 1, 1);
+    await recordMetric(db, workspaceId, {
       subjectType: "publication",
       subjectId: "pub-1",
       metricKey: "clicks",
@@ -286,7 +286,7 @@ describe("get_metric_summary respects the Sprint 55 window rule", () => {
       capturedAt: 1,
     });
 
-    const summary = summarizeMetrics(db, workspaceId, {
+    const summary = await summarizeMetrics(db, workspaceId, {
       subjectType: "publication",
       window: "1d",
       metricKeys: ["clicks"],

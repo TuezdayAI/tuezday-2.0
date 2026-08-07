@@ -11,8 +11,8 @@ import { emailDeliveries, outreachTrackingEvents } from "../db/schema";
  * must never create rows out of thin air.
  */
 
-function deliveryWorkspace(db: Db, deliveryId: string): string | null {
-  const row = db
+async function deliveryWorkspace(db: Db, deliveryId: string): Promise<string | null> {
+  const row = await db
     .select({ workspaceId: emailDeliveries.workspaceId })
     .from(emailDeliveries)
     .where(eq(emailDeliveries.id, deliveryId))
@@ -20,10 +20,10 @@ function deliveryWorkspace(db: Db, deliveryId: string): string | null {
   return row?.workspaceId ?? null;
 }
 
-export function recordOpen(db: Db, deliveryId: string, nowMs: number): void {
-  const workspaceId = deliveryWorkspace(db, deliveryId);
+export async function recordOpen(db: Db, deliveryId: string, nowMs: number): Promise<void> {
+  const workspaceId = await deliveryWorkspace(db, deliveryId);
   if (!workspaceId) return;
-  db.update(emailDeliveries)
+  await db.update(emailDeliveries)
     .set({
       openCount: sql`${emailDeliveries.openCount} + 1`,
       openedAt: sql`COALESCE(${emailDeliveries.openedAt}, ${nowMs})`,
@@ -31,7 +31,7 @@ export function recordOpen(db: Db, deliveryId: string, nowMs: number): void {
     })
     .where(eq(emailDeliveries.id, deliveryId))
     .run();
-  db.insert(outreachTrackingEvents)
+  await db.insert(outreachTrackingEvents)
     .values({
       id: randomUUID(),
       workspaceId,
@@ -44,10 +44,10 @@ export function recordOpen(db: Db, deliveryId: string, nowMs: number): void {
     .run();
 }
 
-export function recordClick(db: Db, deliveryId: string, url: string, nowMs: number): void {
-  const workspaceId = deliveryWorkspace(db, deliveryId);
+export async function recordClick(db: Db, deliveryId: string, url: string, nowMs: number): Promise<void> {
+  const workspaceId = await deliveryWorkspace(db, deliveryId);
   if (!workspaceId) return;
-  db.update(emailDeliveries)
+  await db.update(emailDeliveries)
     .set({
       clickCount: sql`${emailDeliveries.clickCount} + 1`,
       firstClickAt: sql`COALESCE(${emailDeliveries.firstClickAt}, ${nowMs})`,
@@ -55,7 +55,7 @@ export function recordClick(db: Db, deliveryId: string, url: string, nowMs: numb
     })
     .where(eq(emailDeliveries.id, deliveryId))
     .run();
-  db.insert(outreachTrackingEvents)
+  await db.insert(outreachTrackingEvents)
     .values({
       id: randomUUID(),
       workspaceId,

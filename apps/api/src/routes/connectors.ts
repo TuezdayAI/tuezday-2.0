@@ -40,8 +40,8 @@ import { getWorkspace } from "../services/workspaces";
 
 type Fetcher = typeof fetch;
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -56,7 +56,7 @@ export function registerConnectorRoutes(
   analytics: AnalyticsSink,
 ): void {
   app.get<{ Params: { id: string } }>("/workspaces/:id/connectors", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const [health, connections] = await Promise.all([
       fabric.health(),
       Promise.resolve(listConnections(db, request.params.id)),
@@ -75,10 +75,10 @@ export function registerConnectorRoutes(
   app.post<{ Params: { id: string; providerKey: string } }>(
     "/workspaces/:id/connectors/:providerKey/oauth/session",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
 
       try {
-        assertWithinLimit(db, request.params.id, "connectors", getUsage(db, request.params.id).connectors);
+        await assertWithinLimit(db, request.params.id, "connectors", (await getUsage(db, request.params.id)).connectors);
       } catch (err) {
         if (err instanceof EntitlementError) {
           return reply.status(402).send({ error: "upgrade_required", key: err.key, limit: err.limit });
@@ -133,7 +133,7 @@ export function registerConnectorRoutes(
   app.post<{ Params: { id: string; providerKey: string }; Body: { connectionId?: string } }>(
     "/workspaces/:id/connectors/:providerKey/oauth/complete",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const provider = providerByKey(request.params.providerKey);
       if (!provider) return reply.status(404).send({ error: "provider_not_found" });
       const nangoConnectionId = request.body?.connectionId?.trim();
@@ -150,7 +150,7 @@ export function registerConnectorRoutes(
           message: "The connector service does not know that connection — run the popup again.",
         });
       }
-      let connection = registerOAuthConnection(
+      let connection = await registerOAuthConnection(
         db,
         request.params.id,
         provider,
@@ -175,24 +175,24 @@ export function registerConnectorRoutes(
         throw err;
       }
 
-      track(db, analytics, {
+      await track(db, analytics, {
         event: "connector.connected",
         distinctId: request.actor.userId!,
         workspaceId: request.params.id,
         properties: { provider: provider.key },
       });
 
-      return reply.status(201).send(getConnection(db, request.params.id, connection.id));
+      return reply.status(201).send(await getConnection(db, request.params.id, connection.id));
     },
   );
 
   app.post<{ Params: { id: string; providerKey: string } }>(
     "/workspaces/:id/connectors/:providerKey/connect",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
 
       try {
-        assertWithinLimit(db, request.params.id, "connectors", getUsage(db, request.params.id).connectors);
+        await assertWithinLimit(db, request.params.id, "connectors", (await getUsage(db, request.params.id)).connectors);
       } catch (err) {
         if (err instanceof EntitlementError) {
           return reply.status(402).send({ error: "upgrade_required", key: err.key, limit: err.limit });
@@ -255,7 +255,7 @@ export function registerConnectorRoutes(
           parsed.data,
         );
 
-        track(db, analytics, {
+        await track(db, analytics, {
           event: "connector.connected",
           distinctId: request.actor.userId!,
           workspaceId: request.params.id,
@@ -275,17 +275,17 @@ export function registerConnectorRoutes(
   app.post<{ Params: { id: string; connectionId: string } }>(
     "/workspaces/:id/connections/:connectionId/test",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const connection = getConnection(db, request.params.id, request.params.connectionId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const connection = await getConnection(db, request.params.id, request.params.connectionId);
       if (!connection) return reply.status(404).send({ error: "connection_not_found" });
-      return testConnection(db, fabric, connection);
+      return await testConnection(db, fabric, connection);
     },
   );
 
   app.patch<{ Params: { id: string; connectionId: string } }>(
     "/workspaces/:id/connections/:connectionId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = updateConnectionInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -293,7 +293,7 @@ export function registerConnectorRoutes(
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      const updated = updateConnection(db, request.params.id, request.params.connectionId, parsed.data);
+      const updated = await updateConnection(db, request.params.id, request.params.connectionId, parsed.data);
       if (!updated) return reply.status(404).send({ error: "connection_not_found" });
       return updated;
     },
@@ -302,7 +302,7 @@ export function registerConnectorRoutes(
   app.put<{ Params: { id: string; connectionId: string } }>(
     "/workspaces/:id/connections/:connectionId/content-profile",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = updateConnectionContentProfileInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -310,7 +310,7 @@ export function registerConnectorRoutes(
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      const updated = setConnectionContentProfile(
+      const updated = await setConnectionContentProfile(
         db,
         request.params.id,
         request.params.connectionId,
@@ -324,8 +324,8 @@ export function registerConnectorRoutes(
   app.delete<{ Params: { id: string; connectionId: string } }>(
     "/workspaces/:id/connections/:connectionId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const connection = getConnection(db, request.params.id, request.params.connectionId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const connection = await getConnection(db, request.params.id, request.params.connectionId);
       if (!connection) return reply.status(404).send({ error: "connection_not_found" });
       await disconnectConnection(db, fabric, connection);
       return reply.status(204).send();
@@ -337,7 +337,7 @@ export function registerConnectorRoutes(
   // -------------------------------------------------------------------------
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/webhooks", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = createWebhookInputSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({
@@ -345,34 +345,34 @@ export function registerConnectorRoutes(
         message: parsed.error.issues.map((i) => i.message).join("; "),
       });
     }
-    return reply.status(201).send(createWebhook(db, request.params.id, parsed.data));
+    return reply.status(201).send(await createWebhook(db, request.params.id, parsed.data));
   });
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/webhooks", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return listWebhooks(db, request.params.id);
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return await listWebhooks(db, request.params.id);
   });
 
   app.patch<{ Params: { id: string; webhookId: string }; Body: { enabled?: boolean } }>(
     "/workspaces/:id/webhooks/:webhookId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const webhook = getWebhook(db, request.params.id, request.params.webhookId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const webhook = await getWebhook(db, request.params.id, request.params.webhookId);
       if (!webhook) return reply.status(404).send({ error: "webhook_not_found" });
       if (typeof request.body?.enabled === "boolean") {
-        setWebhookEnabled(db, webhook.id, request.body.enabled);
+        await setWebhookEnabled(db, webhook.id, request.body.enabled);
       }
-      return getWebhook(db, request.params.id, webhook.id);
+      return await getWebhook(db, request.params.id, webhook.id);
     },
   );
 
   app.delete<{ Params: { id: string; webhookId: string } }>(
     "/workspaces/:id/webhooks/:webhookId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const webhook = getWebhook(db, request.params.id, request.params.webhookId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const webhook = await getWebhook(db, request.params.id, request.params.webhookId);
       if (!webhook) return reply.status(404).send({ error: "webhook_not_found" });
-      deleteWebhook(db, webhook.id);
+      await deleteWebhook(db, webhook.id);
       return reply.status(204).send();
     },
   );
@@ -380,20 +380,20 @@ export function registerConnectorRoutes(
   app.post<{ Params: { id: string; webhookId: string } }>(
     "/workspaces/:id/webhooks/:webhookId/ping",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const webhook = getWebhook(db, request.params.id, request.params.webhookId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const webhook = await getWebhook(db, request.params.id, request.params.webhookId);
       if (!webhook) return reply.status(404).send({ error: "webhook_not_found" });
       await emitEvent(db, fetcher, request.params.id, "webhook.ping", {
         message: "Tuezday webhook test",
         webhookId: webhook.id,
       });
-      const [latest] = listEvents(db, request.params.id, 1);
+      const [latest] = await listEvents(db, request.params.id, 1);
       return latest;
     },
   );
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/events", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return listEvents(db, request.params.id);
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return await listEvents(db, request.params.id);
   });
 }

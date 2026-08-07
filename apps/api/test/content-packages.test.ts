@@ -104,27 +104,27 @@ describe("content packages (Sprint 62)", () => {
         payload: { name: "Category launch" },
       })
     ).json().id;
-    const revision = createPlanRevision(
+    const revision = await createPlanRevision(
       db,
       workspaceId,
       campaignId,
       planInput,
       { userId: null },
     );
-    upsertLaneRevision(db, workspaceId, campaignId, revision.id, {
+    await upsertLaneRevision(db, workspaceId, campaignId, revision.id, {
       ...laneInput,
       personaId,
     });
-    activatePlanRevision(db, workspaceId, campaignId, revision.id);
+    await activatePlanRevision(db, workspaceId, campaignId, revision.id);
   });
 
   afterEach(async () => {
     await app.close();
   });
 
-  function seedStory(title: string): string {
-    db.transaction((tx) => {
-      recordOccurrenceAndResolve(tx, {
+  async function seedStory(title: string): Promise<string> {
+    await db.transaction(async (tx) => {
+      await recordOccurrenceAndResolve(tx, {
         workspaceId,
         source: { id: randomUUID(), type: "rss", name: "Feed" },
         fetchRunId: null,
@@ -138,28 +138,28 @@ describe("content packages (Sprint 62)", () => {
         observedAt: Date.now(),
       });
     });
-    return db
+    return (await db
       .select({ id: canonicalExternalStories.id })
       .from(canonicalExternalStories)
       .where(eq(canonicalExternalStories.title, title))
-      .get()!.id;
+      .get())!.id;
   }
 
-  function seedOpportunity(
+  async function seedOpportunity(
     storyId: string,
     angle: string,
     status: "qualified" | "auto_qualified" | "needs_review" = "qualified",
-  ): string {
-    const profile = compileRoutingProfile(db, workspaceId, campaignId)!;
-    const story = db
+  ): Promise<string> {
+    const profile = (await compileRoutingProfile(db, workspaceId, campaignId))!;
+    const story = (await db
       .select()
       .from(canonicalExternalStories)
       .where(eq(canonicalExternalStories.id, storyId))
-      .get()!;
-    const occurrenceIds = [...loadStoryRoutingContext(db, story).activeOccurrenceIds];
+      .get())!;
+    const occurrenceIds = [...(await loadStoryRoutingContext(db, story)).activeOccurrenceIds];
     const id = randomUUID();
     const now = Date.now();
-    db.insert(campaignOpportunities)
+    await db.insert(campaignOpportunities)
       .values({
         id,
         workspaceId,
@@ -191,22 +191,22 @@ describe("content packages (Sprint 62)", () => {
     return id;
   }
 
-  it("consumes a qualified opportunity: transition, snapshots, novelty, events", () => {
-    const storyId = seedStory("Buyers hate generic AI output");
-    const opportunityId = seedOpportunity(storyId, "Generic output is a memory problem");
+  it("consumes a qualified opportunity: transition, snapshots, novelty, events", async () => {
+    const storyId = await seedStory("Buyers hate generic AI output");
+    const opportunityId = await seedOpportunity(storyId, "Generic output is a memory problem");
 
-    const packageId = createPackageFromOpportunity(db, workspaceId, opportunityId, {
+    const packageId = await createPackageFromOpportunity(db, workspaceId, opportunityId, {
       userId,
     });
 
-    const opportunity = db
+    const opportunity = (await db
       .select()
       .from(campaignOpportunities)
       .where(eq(campaignOpportunities.id, opportunityId))
-      .get()!;
+      .get())!;
     expect(opportunity.status).toBe("package_created");
     expect(opportunity.decidedByUserId).toBe(userId);
-    const oppEvents = db
+    const oppEvents = await db
       .select()
       .from(campaignOpportunityEvents)
       .where(eq(campaignOpportunityEvents.opportunityId, opportunityId))
@@ -216,7 +216,7 @@ describe("content packages (Sprint 62)", () => {
       "package_created",
     ]);
 
-    const detail = getPackageDetail(db, workspaceId, packageId);
+    const detail = await getPackageDetail(db, workspaceId, packageId);
     expect(detail.package.status).toBe("assessing");
     expect(detail.package.assessmentState).toBe("pending");
     expect(detail.package.angle).toBe("Generic output is a memory problem");
@@ -237,61 +237,61 @@ describe("content packages (Sprint 62)", () => {
     ]);
   });
 
-  it("keeps the pairing 1:1 and refuses unqualified opportunities", () => {
-    const storyId = seedStory("Second story");
-    const opportunityId = seedOpportunity(storyId, "An angle");
-    createPackageFromOpportunity(db, workspaceId, opportunityId, { userId });
-    expect(() =>
-      createPackageFromOpportunity(db, workspaceId, opportunityId, { userId }),
+  it("keeps the pairing 1:1 and refuses unqualified opportunities", async () => {
+    const storyId = await seedStory("Second story");
+    const opportunityId = await seedOpportunity(storyId, "An angle");
+    await createPackageFromOpportunity(db, workspaceId, opportunityId, { userId });
+    expect(async () =>
+      await createPackageFromOpportunity(db, workspaceId, opportunityId, { userId }),
     ).toThrow(InvalidOpportunityTransitionError);
 
-    const reviewStory = seedStory("Review story");
-    const reviewOpportunity = seedOpportunity(reviewStory, "Other angle", "needs_review");
-    expect(() =>
-      createPackageFromOpportunity(db, workspaceId, reviewOpportunity, { userId }),
+    const reviewStory = await seedStory("Review story");
+    const reviewOpportunity = await seedOpportunity(reviewStory, "Other angle", "needs_review");
+    expect(async () =>
+      await createPackageFromOpportunity(db, workspaceId, reviewOpportunity, { userId }),
     ).toThrow(InvalidOpportunityTransitionError);
   });
 
-  it("scores novelty deterministically against recent campaign angles", () => {
-    const storyA = seedStory("Novelty story A");
+  it("scores novelty deterministically against recent campaign angles", async () => {
+    const storyA = await seedStory("Novelty story A");
     const angle = "Buyers forget every generic AI draft instantly";
-    createPackageFromOpportunity(db, workspaceId, seedOpportunity(storyA, angle), {
+    await createPackageFromOpportunity(db, workspaceId, await seedOpportunity(storyA, angle), {
       userId,
     });
     // Identical normalized angle → 0.
-    expect(noveltyFor(db, campaignId, angle, angleHashOf(angle), Date.now())).toBe(0);
+    expect(await noveltyFor(db, campaignId, angle, angleHashOf(angle), Date.now())).toBe(0);
     // Heavy token overlap scores low; an unrelated angle stays fully novel.
     const similar = "Buyers forget every generic AI draft";
     expect(
-      noveltyFor(db, campaignId, similar, angleHashOf(similar), Date.now()),
+      await noveltyFor(db, campaignId, similar, angleHashOf(similar), Date.now()),
     ).toBeLessThan(50);
     const unrelated = "Pricing pages convert better with proof";
     expect(
-      noveltyFor(db, campaignId, unrelated, angleHashOf(unrelated), Date.now()),
+      await noveltyFor(db, campaignId, unrelated, angleHashOf(unrelated), Date.now()),
     ).toBe(100);
   });
 
-  it("moves lifecycle only through the contracts machine with audit events", () => {
-    const storyId = seedStory("Lifecycle story");
-    const packageId = createPackageFromOpportunity(
+  it("moves lifecycle only through the contracts machine with audit events", async () => {
+    const storyId = await seedStory("Lifecycle story");
+    const packageId = await createPackageFromOpportunity(
       db,
       workspaceId,
-      seedOpportunity(storyId, "Lifecycle angle"),
+      await seedOpportunity(storyId, "Lifecycle angle"),
       { userId },
     );
-    const cancelled = decidePackage(db, workspaceId, packageId, {
+    const cancelled = await decidePackage(db, workspaceId, packageId, {
       action: "cancel",
       reason: "stale",
       actorUserId: userId,
     });
     expect(cancelled.package.status).toBe("cancelled");
-    expect(() =>
-      decidePackage(db, workspaceId, packageId, {
+    expect(async () =>
+      await decidePackage(db, workspaceId, packageId, {
         action: "reassess",
         actorUserId: userId,
       }),
     ).toThrow(InvalidPackageTransitionError);
-    const events = db
+    const events = await db
       .select()
       .from(contentPackageEvents)
       .where(eq(contentPackageEvents.packageId, packageId))
@@ -305,34 +305,34 @@ describe("content packages (Sprint 62)", () => {
     });
   });
 
-  it("lists with filters and totals", () => {
-    const storyId = seedStory("Listing story");
-    createPackageFromOpportunity(
+  it("lists with filters and totals", async () => {
+    const storyId = await seedStory("Listing story");
+    await createPackageFromOpportunity(
       db,
       workspaceId,
-      seedOpportunity(storyId, "Listing angle"),
+      await seedOpportunity(storyId, "Listing angle"),
       { userId },
     );
-    const all = listPackages(db, workspaceId);
+    const all = await listPackages(db, workspaceId);
     expect(all.total).toBe(1);
     expect(all.packages[0]!.storyTitle).toBe("Listing story");
-    expect(listPackages(db, workspaceId, { status: "cancelled" }).total).toBe(0);
-    expect(listPackages(db, workspaceId, { campaignId }).total).toBe(1);
-    expect(listPackages(db, workspaceId, { campaignId: randomUUID() }).total).toBe(0);
+    expect((await listPackages(db, workspaceId, { status: "cancelled" })).total).toBe(0);
+    expect((await listPackages(db, workspaceId, { campaignId })).total).toBe(1);
+    expect((await listPackages(db, workspaceId, { campaignId: randomUUID() })).total).toBe(0);
   });
 
-  it("keeps package rows and snapshots when the story graph is deleted", () => {
-    const storyId = seedStory("Doomed story");
-    const packageId = createPackageFromOpportunity(
+  it("keeps package rows and snapshots when the story graph is deleted", async () => {
+    const storyId = await seedStory("Doomed story");
+    const packageId = await createPackageFromOpportunity(
       db,
       workspaceId,
-      seedOpportunity(storyId, "Doomed angle"),
+      await seedOpportunity(storyId, "Doomed angle"),
       { userId },
     );
-    db.delete(canonicalExternalStories)
+    await db.delete(canonicalExternalStories)
       .where(eq(canonicalExternalStories.id, storyId))
       .run();
-    const detail = getPackageDetail(db, workspaceId, packageId);
+    const detail = await getPackageDetail(db, workspaceId, packageId);
     expect(detail.package.canonicalStoryId).toBeNull();
     expect(detail.package.opportunityId).toBeNull();
     expect(detail.package.angle).toBe("Doomed angle");

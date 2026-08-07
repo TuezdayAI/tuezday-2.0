@@ -230,19 +230,19 @@ export async function fetchSourceItems(
 ): Promise<RawDiscoveredItem[]> {
   switch (type) {
     case "rss":
-      return fetchRss(config, safeFetch);
+      return await fetchRss(config, safeFetch);
     case "google_news":
-      return fetchGoogleNews(config, safeFetch);
+      return await fetchGoogleNews(config, safeFetch);
     case "reddit":
-      return fetchReddit(config, safeFetch);
+      return await fetchReddit(config, safeFetch);
     case "hacker_news":
-      return fetchHackerNews(config, safeFetch);
+      return await fetchHackerNews(config, safeFetch);
     case "youtube":
-      return fetchYoutube(config, safeFetch);
+      return await fetchYoutube(config, safeFetch);
     case "podcast":
-      return fetchPodcast(config, safeFetch);
+      return await fetchPodcast(config, safeFetch);
     case "funding_news":
-      return fetchFundingNews(config, safeFetch);
+      return await fetchFundingNews(config, safeFetch);
     case "google_trends":
     case "x":
     case "linkedin":

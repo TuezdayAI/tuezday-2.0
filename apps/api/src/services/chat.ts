@@ -76,12 +76,12 @@ export function rowToMessage(row: ChatMessageRow): ChatMessage {
 // Threads
 // ---------------------------------------------------------------------------
 
-export function createSession(
+export async function createSession(
   db: Db,
   workspaceId: string,
   userId: string | null,
   input: CreateChatSessionInput,
-): ChatSession {
+): Promise<ChatSession> {
   const now = Date.now();
   const row: ChatSessionRow = {
     id: randomUUID(),
@@ -99,37 +99,37 @@ export function createSession(
     createdAt: now,
     updatedAt: now,
   };
-  db.insert(chatSessions).values(row).run();
+  await db.insert(chatSessions).values(row).run();
   return rowToSession(row);
 }
 
 /** Threads for a workspace, newest activity first. */
-export function listSessions(db: Db, workspaceId: string): ChatSession[] {
-  return db
+export async function listSessions(db: Db, workspaceId: string): Promise<ChatSession[]> {
+  return (await db
     .select()
     .from(chatSessions)
     .where(eq(chatSessions.workspaceId, workspaceId))
     .orderBy(desc(chatSessions.updatedAt))
-    .all()
+    .all())
     .map(rowToSession);
 }
 
 /** A single workspace-scoped thread, or undefined if missing / cross-workspace. */
-export function getSession(
+export async function getSession(
   db: Db,
   workspaceId: string,
   sessionId: string,
-): ChatSession | undefined {
-  const row = getSessionRow(db, workspaceId, sessionId);
+): Promise<ChatSession | undefined> {
+  const row = await getSessionRow(db, workspaceId, sessionId);
   return row ? rowToSession(row) : undefined;
 }
 
-export function getSessionRow(
+export async function getSessionRow(
   db: Db,
   workspaceId: string,
   sessionId: string,
-): ChatSessionRow | undefined {
-  return db
+): Promise<ChatSessionRow | undefined> {
+  return await db
     .select()
     .from(chatSessions)
     .where(and(eq(chatSessions.workspaceId, workspaceId), eq(chatSessions.id, sessionId)))
@@ -141,13 +141,13 @@ export function getSessionRow(
  * leaves them alone, `null` unbinds them. Changing scope changes which context
  * bundle the next turn resolves — it does not rewrite the transcript.
  */
-export function updateSession(
+export async function updateSession(
   db: Db,
   workspaceId: string,
   sessionId: string,
   input: UpdateChatSessionInput,
-): ChatSession | undefined {
-  const existing = getSession(db, workspaceId, sessionId);
+): Promise<ChatSession | undefined> {
+  const existing = await getSession(db, workspaceId, sessionId);
   if (!existing) return undefined;
 
   const patch: Partial<ChatSessionRow> = { updatedAt: Date.now() };
@@ -157,25 +157,25 @@ export function updateSession(
   if (input.personaId !== undefined) patch.personaId = input.personaId;
   if (input.channel !== undefined) patch.channel = input.channel;
 
-  db.update(chatSessions).set(patch).where(eq(chatSessions.id, sessionId)).run();
-  return getSession(db, workspaceId, sessionId);
+  await db.update(chatSessions).set(patch).where(eq(chatSessions.id, sessionId)).run();
+  return await getSession(db, workspaceId, sessionId);
 }
 
 /** Set the title once, when a thread has none — auto-titling never overwrites. */
-export function setSessionTitleIfEmpty(db: Db, sessionId: string, title: string): void {
+export async function setSessionTitleIfEmpty(db: Db, sessionId: string, title: string): Promise<void> {
   const trimmed = title.trim();
   if (!trimmed) return;
-  db.update(chatSessions)
+  await db.update(chatSessions)
     .set({ title: trimmed })
     .where(and(eq(chatSessions.id, sessionId), eq(chatSessions.title, "")))
     .run();
 }
 
 /** Set the goal once, when a thread has none (D-76.12). */
-export function setSessionGoalIfEmpty(db: Db, sessionId: string, goal: string): void {
+export async function setSessionGoalIfEmpty(db: Db, sessionId: string, goal: string): Promise<void> {
   const trimmed = goal.trim();
   if (!trimmed) return;
-  db.update(chatSessions)
+  await db.update(chatSessions)
     .set({ goal: trimmed })
     .where(and(eq(chatSessions.id, sessionId), eq(chatSessions.goal, "")))
     .run();
@@ -192,8 +192,8 @@ export interface ThreadUsage {
  * makes — the answer, the auto-title, a compaction — passes through here, so
  * the cap counts everything the thread cost, not just its visible answers.
  */
-export function addSessionUsage(db: Db, sessionId: string, usage: ThreadUsage): void {
-  db.update(chatSessions)
+export async function addSessionUsage(db: Db, sessionId: string, usage: ThreadUsage): Promise<void> {
+  await db.update(chatSessions)
     .set({
       totalInputTokens: sql`${chatSessions.totalInputTokens} + ${usage.inputTokens}`,
       totalOutputTokens: sql`${chatSessions.totalOutputTokens} + ${usage.outputTokens}`,
@@ -217,18 +217,18 @@ export function isThreadBudgetExhausted(session: ChatSession): boolean {
   return threadTokens(session) >= CHAT_THREAD_TOKEN_CAP;
 }
 
-export function setCompactedThrough(db: Db, sessionId: string, messageId: string): void {
-  db.update(chatSessions)
+export async function setCompactedThrough(db: Db, sessionId: string, messageId: string): Promise<void> {
+  await db.update(chatSessions)
     .set({ compactedThroughMessageId: messageId })
     .where(eq(chatSessions.id, sessionId))
     .run();
 }
 
-export function deleteSession(db: Db, workspaceId: string, sessionId: string): boolean {
-  const existing = getSession(db, workspaceId, sessionId);
+export async function deleteSession(db: Db, workspaceId: string, sessionId: string): Promise<boolean> {
+  const existing = await getSession(db, workspaceId, sessionId);
   if (!existing) return false;
   // chat_messages cascade on session delete (FK onDelete: cascade).
-  db.delete(chatSessions)
+  await db.delete(chatSessions)
     .where(and(eq(chatSessions.workspaceId, workspaceId), eq(chatSessions.id, sessionId)))
     .run();
   return true;
@@ -243,13 +243,13 @@ export function deleteSession(db: Db, workspaceId: string, sessionId: string): b
  * in one turn (user → tool → assistant) can share a millisecond `createdAt`, so
  * we tie-break on the implicit rowid rather than the random uuid PK.
  */
-export function listMessages(db: Db, sessionId: string): ChatMessage[] {
-  return db
+export async function listMessages(db: Db, sessionId: string): Promise<ChatMessage[]> {
+  return (await db
     .select()
     .from(chatMessages)
     .where(eq(chatMessages.sessionId, sessionId))
     .orderBy(sql`${chatMessages}.rowid asc`)
-    .all()
+    .all())
     .map(rowToMessage);
 }
 
@@ -258,12 +258,12 @@ export function listMessages(db: Db, sessionId: string): ChatMessage[] {
  * compaction, with the compaction summary itself at the head. Before any
  * compaction this is the whole transcript.
  */
-export function listActiveMessages(
+export async function listActiveMessages(
   db: Db,
   sessionId: string,
   compactedThroughMessageId: string | null,
-): ChatMessage[] {
-  const all = listMessages(db, sessionId);
+): Promise<ChatMessage[]> {
+  const all = await listMessages(db, sessionId);
   if (!compactedThroughMessageId) return all;
   const cutoff = all.findIndex((m) => m.id === compactedThroughMessageId);
   // A cutoff we cannot find means the marker is stale (the message was
@@ -292,12 +292,12 @@ export interface AppendMessageInput {
 }
 
 /** Persist one message and bump the thread's updatedAt so lists resort. */
-export function appendMessage(
+export async function appendMessage(
   db: Db,
   workspaceId: string,
   sessionId: string,
   input: AppendMessageInput,
-): ChatMessage {
+): Promise<ChatMessage> {
   const now = Date.now();
   const row: ChatMessageRow = {
     id: randomUUID(),
@@ -320,7 +320,7 @@ export function appendMessage(
     stopReason: input.stopReason ?? null,
     createdAt: now,
   };
-  db.insert(chatMessages).values(row).run();
-  db.update(chatSessions).set({ updatedAt: now }).where(eq(chatSessions.id, sessionId)).run();
+  await db.insert(chatMessages).values(row).run();
+  await db.update(chatSessions).set({ updatedAt: now }).where(eq(chatSessions.id, sessionId)).run();
   return rowToMessage(row);
 }

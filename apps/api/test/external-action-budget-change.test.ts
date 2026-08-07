@@ -181,7 +181,7 @@ describe("governed Meta budget changes", () => {
     expect(launched.json().action.status).toBe("succeeded");
   });
 
-  afterEach(async () => app.close());
+  afterEach(async () => await app.close());
 
   const propose = (dailyBudgetCents: number, idempotencyKey = "55555555-5555-4555-8555-555555555555") =>
     app.inject({
@@ -226,7 +226,7 @@ describe("governed Meta budget changes", () => {
       status: "authorization_required",
       authorizedAt: null,
     });
-    const row = db.select().from(externalActions).where(eq(externalActions.id, proposed.json().action.id)).get()!;
+    const row = (await db.select().from(externalActions).where(eq(externalActions.id, proposed.json().action.id)).get())!;
     expect(JSON.parse(row.payloadJson)).toMatchObject({
       beforeDailyBudgetCents: 500,
       afterDailyBudgetCents: 750,

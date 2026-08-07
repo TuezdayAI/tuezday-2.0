@@ -122,7 +122,7 @@ export async function runBrainAutoDraft(
   fabric: ConnectorFabric,
   workspaceId: string,
 ): Promise<BrainAutoDraftView> {
-  const profileView = getBrandProfileView(db, workspaceId);
+  const profileView = await getBrandProfileView(db, workspaceId);
   const profile = profileView.status === "ready" ? profileView.profile : null;
 
   let socialCorpus: SocialCorpus;
@@ -138,10 +138,10 @@ export async function runBrainAutoDraft(
     { profile, socialCorpus },
   );
   if (result.insufficient) {
-    return { insufficient: true, drafted: [], skipped: [], brain: getBrain(db, workspaceId) };
+    return { insufficient: true, drafted: [], skipped: [], brain: await getBrain(db, workspaceId) };
   }
 
-  const current = getBrain(db, workspaceId);
+  const current = await getBrain(db, workspaceId);
   const contentByType = new Map(current.docs.map((d) => [d.docType, d.content]));
 
   const drafted: BrainDocType[] = [];
@@ -154,11 +154,11 @@ export async function runBrainAutoDraft(
     }
     const draft = result.drafts[docType];
     if (draft && draft.trim()) {
-      updateBrainDoc(db, workspaceId, docType, draft, AUTODRAFT_ACTOR);
+      await updateBrainDoc(db, workspaceId, docType, draft, AUTODRAFT_ACTOR);
       drafted.push(docType);
     }
     // Writable but no draft produced → neither drafted nor skipped.
   }
 
-  return { insufficient: false, drafted, skipped, brain: getBrain(db, workspaceId) };
+  return { insufficient: false, drafted, skipped, brain: await getBrain(db, workspaceId) };
 }

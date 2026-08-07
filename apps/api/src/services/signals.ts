@@ -41,30 +41,30 @@ export class SignalReferenceNotFoundError extends Error {
   }
 }
 
-export function resolveSignalReferences(
+export async function resolveSignalReferences(
   db: Db,
   workspaceId: string,
   input: Pick<CreateSignalInput, "suggestedPersonaId" | "suggestedCampaignId">,
-): void {
+): Promise<void> {
   if (
     input.suggestedPersonaId &&
-    !getPersona(db, workspaceId, input.suggestedPersonaId)
+    !await getPersona(db, workspaceId, input.suggestedPersonaId)
   ) {
     throw new SignalReferenceNotFoundError();
   }
   if (
     input.suggestedCampaignId &&
-    !getCampaign(db, workspaceId, input.suggestedCampaignId)
+    !await getCampaign(db, workspaceId, input.suggestedCampaignId)
   ) {
     throw new SignalReferenceNotFoundError();
   }
 }
 
-export function insertSignalRow(
+export async function insertSignalRow(
   db: DbExecutor,
   workspaceId: string,
   input: CreateSignalInput,
-): SignalRow {
+): Promise<SignalRow> {
   const row: SignalRow = {
     id: randomUUID(),
     workspaceId,
@@ -78,7 +78,7 @@ export function insertSignalRow(
     suggestedCampaignId: null,
     createdAt: Date.now(),
   };
-  db.insert(signals).values(row).run();
+  await db.insert(signals).values(row).run();
   return row;
 }
 
@@ -108,9 +108,9 @@ function explicitIntentMatches(input: CreateSignalInput): ParsedMatch[] {
  * Create a signal without LLM matching (the public API path). Explicit routing
  * still lands as a real score-100 match row rather than as standalone columns.
  */
-export function createSignal(db: Db, workspaceId: string, input: CreateSignalInput): Signal {
-  resolveSignalReferences(db, workspaceId, input);
-  return persistSignalCreation(db, workspaceId, input, explicitIntentMatches(input));
+export async function createSignal(db: Db, workspaceId: string, input: CreateSignalInput): Promise<Signal> {
+  await resolveSignalReferences(db, workspaceId, input);
+  return await persistSignalCreation(db, workspaceId, input, explicitIntentMatches(input));
 }
 
 export interface SignalCreationHooks {
@@ -119,41 +119,43 @@ export interface SignalCreationHooks {
   beforeReturn?(): void;
 }
 
-export function readSignal(
+export async function readSignal(
   db: DbExecutor,
   workspaceId: string,
   signalId: string,
-): Signal | undefined {
-  const row = db
+): Promise<Signal | undefined> {
+  const row = await db
     .select()
     .from(signals)
     .where(and(eq(signals.workspaceId, workspaceId), eq(signals.id, signalId)))
     .get();
-  return row ? rowToSignal(row, listSignalMatches(db, workspaceId, row.id)) : undefined;
+  return row ? rowToSignal(row, await listSignalMatches(db, workspaceId, row.id)) : undefined;
 }
 
-export function persistSignalCreation(
+export async function persistSignalCreation(
   db: Db,
   workspaceId: string,
   input: CreateSignalInput,
   matches: ParsedMatch[],
   hooks?: SignalCreationHooks,
-): Signal {
-  return db.transaction((tx) => {
+): Promise<Signal> {
+  return await db.transaction(async (tx) => {
     const matchesToPersist = hasExplicitRouting(input)
       ? matches
-      : revalidateSignalMatches(tx, workspaceId, matches);
-    const row = insertSignalRow(tx, workspaceId, input);
+      : await revalidateSignalMatches(tx, workspaceId, matches);
+    const row = await insertSignalRow(tx, workspaceId, input);
     hooks?.afterSignalInsert?.();
 
-    matchesToPersist.forEach((match, index) => {
-      insertSignalMatch(tx, workspaceId, row.id, match);
+    // Sequential: the read below depends on every match row existing, and the
+    // hook fires per index in order. `forEach(async …)` would not await.
+    for (const [index, match] of matchesToPersist.entries()) {
+      await insertSignalMatch(tx, workspaceId, row.id, match);
       hooks?.afterMatchInsert?.(index);
-    });
+    }
 
     // No projection write: the suggested* pair is computed on read from the
     // rows just inserted.
-    const created = readSignal(tx, workspaceId, row.id);
+    const created = await readSignal(tx, workspaceId, row.id);
     if (!created) throw new Error("Signal creation did not produce a readable row.");
     hooks?.beforeReturn?.();
     return created;
@@ -174,7 +176,7 @@ export async function createSignalWithMatching(
   input: CreateSignalInput,
   hooks?: SignalCreationHooks,
 ): Promise<Signal> {
-  resolveSignalReferences(db, workspaceId, input);
+  await resolveSignalReferences(db, workspaceId, input);
   let matches: ParsedMatch[];
   if (hasExplicitRouting(input)) {
     // Explicit human intent wins outright — one high-confidence match, no LLM call.
@@ -188,11 +190,11 @@ export async function createSignalWithMatching(
       matches = [];
     }
   }
-  return persistSignalCreation(db, workspaceId, input, matches, hooks);
+  return await persistSignalCreation(db, workspaceId, input, matches, hooks);
 }
 
-export function getSignal(db: Db, workspaceId: string, signalId: string): Signal | undefined {
-  return readSignal(db, workspaceId, signalId);
+export async function getSignal(db: Db, workspaceId: string, signalId: string): Promise<Signal | undefined> {
+  return await readSignal(db, workspaceId, signalId);
 }
 
 export interface SignalDraftSummary {
@@ -206,8 +208,8 @@ export interface SignalWithDrafts extends Signal {
   drafts: SignalDraftSummary[];
 }
 
-export function listSignals(db: Db, workspaceId: string): SignalWithDrafts[] {
-  const signalRows = db
+export async function listSignals(db: Db, workspaceId: string): Promise<SignalWithDrafts[]> {
+  const signalRows = await db
     .select()
     .from(signals)
     .where(eq(signals.workspaceId, workspaceId))
@@ -215,7 +217,7 @@ export function listSignals(db: Db, workspaceId: string): SignalWithDrafts[] {
     .all();
   if (signalRows.length === 0) return [];
 
-  const draftRows = db
+  const draftRows = await db
     .select({
       id: drafts.id,
       state: drafts.state,
@@ -232,7 +234,7 @@ export function listSignals(db: Db, workspaceId: string): SignalWithDrafts[] {
     )
     .all();
 
-  const matchesBySignal = listSignalMatchesForSignals(
+  const matchesBySignal = await listSignalMatchesForSignals(
     db,
     workspaceId,
     signalRows.map((s) => s.id),

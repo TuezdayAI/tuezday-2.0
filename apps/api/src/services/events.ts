@@ -20,11 +20,11 @@ function rowToSubscription(row: WebhookSubscriptionRow): WebhookSubscription {
   return { ...row, eventTypes: JSON.parse(row.eventTypesJson) as EventType[] };
 }
 
-export function createWebhook(
+export async function createWebhook(
   db: Db,
   workspaceId: string,
   input: CreateWebhookInput,
-): WebhookSubscription {
+): Promise<WebhookSubscription> {
   const row: WebhookSubscriptionRow = {
     id: randomUUID(),
     workspaceId,
@@ -34,26 +34,26 @@ export function createWebhook(
     enabled: true,
     createdAt: Date.now(),
   };
-  db.insert(webhookSubscriptions).values(row).run();
+  await db.insert(webhookSubscriptions).values(row).run();
   return rowToSubscription(row);
 }
 
-export function listWebhooks(db: Db, workspaceId: string): WebhookSubscription[] {
-  return db
+export async function listWebhooks(db: Db, workspaceId: string): Promise<WebhookSubscription[]> {
+  return (await db
     .select()
     .from(webhookSubscriptions)
     .where(eq(webhookSubscriptions.workspaceId, workspaceId))
     .orderBy(desc(webhookSubscriptions.createdAt))
-    .all()
+    .all())
     .map(rowToSubscription);
 }
 
-export function getWebhook(
+export async function getWebhook(
   db: Db,
   workspaceId: string,
   webhookId: string,
-): WebhookSubscription | undefined {
-  const row = db
+): Promise<WebhookSubscription | undefined> {
+  const row = await db
     .select()
     .from(webhookSubscriptions)
     .where(eq(webhookSubscriptions.id, webhookId))
@@ -61,15 +61,15 @@ export function getWebhook(
   return row && row.workspaceId === workspaceId ? rowToSubscription(row) : undefined;
 }
 
-export function setWebhookEnabled(db: Db, webhookId: string, enabled: boolean): void {
-  db.update(webhookSubscriptions)
+export async function setWebhookEnabled(db: Db, webhookId: string, enabled: boolean): Promise<void> {
+  await db.update(webhookSubscriptions)
     .set({ enabled })
     .where(eq(webhookSubscriptions.id, webhookId))
     .run();
 }
 
-export function deleteWebhook(db: Db, webhookId: string): void {
-  db.delete(webhookSubscriptions).where(eq(webhookSubscriptions.id, webhookId)).run();
+export async function deleteWebhook(db: Db, webhookId: string): Promise<void> {
+  await db.delete(webhookSubscriptions).where(eq(webhookSubscriptions.id, webhookId)).run();
 }
 
 /**
@@ -91,9 +91,9 @@ export async function emitEvent(
     payloadJson: JSON.stringify(payload),
     createdAt: Date.now(),
   };
-  db.insert(events).values(event).run();
+  await db.insert(events).values(event).run();
 
-  const subscriptions = listWebhooks(db, workspaceId).filter(
+  const subscriptions = (await listWebhooks(db, workspaceId)).filter(
     (s) =>
       s.enabled &&
       (s.eventTypes.includes(type) ||
@@ -129,7 +129,7 @@ export async function emitEvent(
     } catch (err) {
       error = err instanceof Error ? err.message.slice(0, 300) : String(err);
     }
-    db.insert(webhookDeliveries)
+    await db.insert(webhookDeliveries)
       .values({
         id: randomUUID(),
         subscriptionId: subscription.id,
@@ -148,8 +148,8 @@ export interface EventWithDeliveries extends TuezdayEvent {
   deliveries: Array<{ subscriptionId: string; status: string; httpStatus: number | null; error: string | null }>;
 }
 
-export function listEvents(db: Db, workspaceId: string, limit = 50): EventWithDeliveries[] {
-  const eventRows = db
+export async function listEvents(db: Db, workspaceId: string, limit = 50): Promise<EventWithDeliveries[]> {
+  const eventRows = await db
     .select()
     .from(events)
     .where(eq(events.workspaceId, workspaceId))
@@ -158,7 +158,7 @@ export function listEvents(db: Db, workspaceId: string, limit = 50): EventWithDe
     .all();
   if (eventRows.length === 0) return [];
 
-  const deliveryRows = db
+  const deliveryRows = await db
     .select()
     .from(webhookDeliveries)
     .where(

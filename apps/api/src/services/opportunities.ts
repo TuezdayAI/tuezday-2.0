@@ -94,7 +94,7 @@ function joinedSelect(db: DbExecutor) {
     );
 }
 
-export function listOpportunities(
+export async function listOpportunities(
   db: Db,
   workspaceId: string,
   options: {
@@ -104,7 +104,7 @@ export function listOpportunities(
     limit?: number;
     offset?: number;
   } = {},
-): { opportunities: CampaignOpportunity[]; total: number } {
+): Promise<{ opportunities: CampaignOpportunity[]; total: number }> {
   const limit = Math.min(
     Math.max(options.limit ?? OPPORTUNITY_LIST_DEFAULT_LIMIT, 1),
     OPPORTUNITY_LIST_MAX_LIMIT,
@@ -120,23 +120,23 @@ export function listOpportunities(
       ? eq(campaignOpportunities.canonicalStoryId, options.storyId)
       : undefined,
   );
-  const rows = joinedSelect(db)
+  const rows = await joinedSelect(db)
     .where(where)
     .orderBy(desc(campaignOpportunities.createdAt), asc(campaignOpportunities.id))
     .limit(limit)
     .offset(offset)
     .all();
   const total =
-    db
+    (await db
       .select({ n: sql<number>`COUNT(*)` })
       .from(campaignOpportunities)
       .where(where)
-      .get()?.n ?? 0;
+      .get())?.n ?? 0;
   return { opportunities: rows.map(projectOpportunity), total };
 }
 
-function eventRows(db: DbExecutor, opportunityId: string): OpportunityEvent[] {
-  return db
+async function eventRows(db: DbExecutor, opportunityId: string): Promise<OpportunityEvent[]> {
+  return (await db
     .select()
     .from(campaignOpportunityEvents)
     .where(eq(campaignOpportunityEvents.opportunityId, opportunityId))
@@ -147,7 +147,7 @@ function eventRows(db: DbExecutor, opportunityId: string): OpportunityEvent[] {
       sql`${campaignOpportunityEvents.fromStatus} IS NOT NULL`,
       asc(campaignOpportunityEvents.id),
     )
-    .all()
+    .all())
     .map((row) =>
       opportunityEventSchema.parse({
         id: row.id,
@@ -160,12 +160,12 @@ function eventRows(db: DbExecutor, opportunityId: string): OpportunityEvent[] {
     );
 }
 
-export function getOpportunityDetail(
+export async function getOpportunityDetail(
   db: Db,
   workspaceId: string,
   opportunityId: string,
-): OpportunityDetail {
-  const row = joinedSelect(db)
+): Promise<OpportunityDetail> {
+  const row = await joinedSelect(db)
     .where(
       and(
         eq(campaignOpportunities.id, opportunityId),
@@ -174,7 +174,7 @@ export function getOpportunityDetail(
     )
     .get();
   if (!row) throw new OpportunityNotFoundError();
-  const profileRow = db
+  const profileRow = await db
     .select()
     .from(campaignRoutingProfiles)
     .where(eq(campaignRoutingProfiles.id, row.opportunity.routingProfileId))
@@ -183,7 +183,7 @@ export function getOpportunityDetail(
   return {
     opportunity: projectOpportunity(row),
     profile: rowToRoutingProfile(profileRow),
-    events: eventRows(db, opportunityId),
+    events: await eventRows(db, opportunityId),
   };
 }
 
@@ -192,14 +192,14 @@ export function getOpportunityDetail(
  * matcher's judgment fields stay immutable — only lifecycle status, the
  * decision attribution, and the audit trail change.
  */
-export function decideOpportunity(
+export async function decideOpportunity(
   db: Db,
   workspaceId: string,
   opportunityId: string,
   input: { action: OpportunityDecisionAction; reason?: string; actorUserId: string | null },
-): OpportunityDetail {
-  db.transaction((tx) => {
-    const row = tx
+): Promise<OpportunityDetail> {
+  await db.transaction(async (tx) => {
+    const row = await tx
       .select()
       .from(campaignOpportunities)
       .where(
@@ -216,7 +216,7 @@ export function decideOpportunity(
       throw new InvalidOpportunityTransitionError(from, to);
     }
     const now = Date.now();
-    tx.update(campaignOpportunities)
+    await tx.update(campaignOpportunities)
       .set({
         status: to,
         decidedByUserId: input.actorUserId,
@@ -226,7 +226,7 @@ export function decideOpportunity(
       })
       .where(eq(campaignOpportunities.id, opportunityId))
       .run();
-    tx.insert(campaignOpportunityEvents)
+    await tx.insert(campaignOpportunityEvents)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -239,5 +239,5 @@ export function decideOpportunity(
       })
       .run();
   });
-  return getOpportunityDetail(db, workspaceId, opportunityId);
+  return await getOpportunityDetail(db, workspaceId, opportunityId);
 }

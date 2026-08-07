@@ -27,7 +27,7 @@ export const findSimilarApprovedDraftsTool: Tool<Input, unknown> = {
   input,
   access: "read",
   async run(ctx, { query, taskType, channel, limit }) {
-    const candidates = approvedExamples(listTrainingExamples(ctx.db, ctx.workspaceId))
+    const candidates = approvedExamples(await listTrainingExamples(ctx.db, ctx.workspaceId))
       .filter((e) => !taskType || e.taskType === taskType)
       .filter((e) => !channel || e.channel === channel);
     if (candidates.length === 0) {

@@ -157,8 +157,8 @@ interface EngineState {
   latestDraft: string | null;
 }
 
-function loadEngineState(db: Db, run: PipelineRunRow): EngineState {
-  const rows = db
+async function loadEngineState(db: Db, run: PipelineRunRow): Promise<EngineState> {
+  const rows = await db
     .select()
     .from(pipelineRunSteps)
     .where(eq(pipelineRunSteps.runId, run.id))
@@ -188,14 +188,14 @@ function loadEngineState(db: Db, run: PipelineRunRow): EngineState {
   return state;
 }
 
-function insertStepRow(
+async function insertStepRow(
   db: Db,
   run: PipelineRunRow,
   step: { stepKey: string; iteration: number; attempt: number },
   values: Partial<PipelineRunStepRow> = {},
-): string {
+): Promise<string> {
   const id = randomUUID();
-  db.insert(pipelineRunSteps)
+  await db.insert(pipelineRunSteps)
     .values({
       id,
       runId: run.id,
@@ -220,8 +220,8 @@ function insertStepRow(
   return id;
 }
 
-function finishStepRow(db: Db, id: string, values: Partial<PipelineRunStepRow>): void {
-  db.update(pipelineRunSteps)
+async function finishStepRow(db: Db, id: string, values: Partial<PipelineRunStepRow>): Promise<void> {
+  await db.update(pipelineRunSteps)
     .set({ finishedAt: Date.now(), ...values })
     .where(eq(pipelineRunSteps.id, id))
     .run();
@@ -333,7 +333,7 @@ async function runAgentStepPass(
   // at attempt 1 would collide with the row that recorded why it stopped. The
   // per-execution bound below is unchanged; only the numbering carries over.
   const priorAttempts =
-    db
+    (await db
       .select({ used: sql<number>`coalesce(max(${pipelineRunSteps.attempt}), 0)` })
       .from(pipelineRunSteps)
       .where(
@@ -343,12 +343,12 @@ async function runAgentStepPass(
           eq(pipelineRunSteps.iteration, iteration),
         ),
       )
-      .get()?.used ?? 0;
+      .get())?.used ?? 0;
 
   let lastFailure = "unknown";
   for (let pass = 1; pass <= STEP_MAX_ATTEMPTS; pass += 1) {
     const attempt = priorAttempts + pass;
-    const rowId = insertStepRow(db, run, {
+    const rowId = await insertStepRow(db, run, {
       stepKey: step.key,
       iteration,
       attempt,
@@ -407,7 +407,7 @@ async function runAgentStepPass(
     };
 
     if (result.stopReason === "needs_human") {
-      finishStepRow(db, rowId, {
+      await finishStepRow(db, rowId, {
         ...usageValues,
         status: "failed",
         failureReason: "needs_human",
@@ -426,7 +426,7 @@ async function runAgentStepPass(
     if (result.stopReason === "complete") {
       const parsed = outputSchema.safeParse(result.output);
       if (parsed.success) {
-        finishStepRow(db, rowId, {
+        await finishStepRow(db, rowId, {
           ...usageValues,
           status: "succeeded",
           passes: 1,
@@ -435,7 +435,7 @@ async function runAgentStepPass(
         return { output: parsed.data, agentRunId: result.runId, fromCache: false };
       }
       lastFailure = "invalid_output";
-      finishStepRow(db, rowId, {
+      await finishStepRow(db, rowId, {
         ...usageValues,
         status: "failed",
         failureReason: "invalid_output",
@@ -444,7 +444,7 @@ async function runAgentStepPass(
     }
 
     lastFailure = result.stopReason;
-    finishStepRow(db, rowId, {
+    await finishStepRow(db, rowId, {
       ...usageValues,
       status: "failed",
       failureReason: result.stopReason,
@@ -507,12 +507,12 @@ function latestScore(state: EngineState, scoreFrom: string): number | null {
   return parsed.success ? parsed.data.score : null;
 }
 
-function runTotals(db: Db, runId: string): {
-  inputTokens: number;
-  outputTokens: number;
-  costCents: number;
-} {
-  const totals = db
+async function runTotals(db: Db, runId: string): Promise<{
+      inputTokens: number;
+      outputTokens: number;
+      costCents: number;
+    }> {
+  const totals = await db
     .select({
       inputTokens: sql<number>`coalesce(sum(${pipelineRunSteps.inputTokens}), 0)`,
       outputTokens: sql<number>`coalesce(sum(${pipelineRunSteps.outputTokens}), 0)`,
@@ -524,17 +524,17 @@ function runTotals(db: Db, runId: string): {
   return totals ?? { inputTokens: 0, outputTokens: 0, costCents: 0 };
 }
 
-function finishRun(
+async function finishRun(
   db: Db,
   run: PipelineRunRow,
   status: PipelineRunStatus,
   state: EngineState,
   values: Partial<PipelineRunRow> = {},
-): PipelineRun {
+): Promise<PipelineRun> {
   if (!canTransitionPipelineRun("running", status)) {
     throw new InvalidPipelineRunTransitionError("running", status);
   }
-  const totals = runTotals(db, run.id);
+  const totals = await runTotals(db, run.id);
   const patch: Partial<PipelineRunRow> = {
     status,
     checklistJson: JSON.stringify(state.checklist),
@@ -544,8 +544,8 @@ function finishRun(
     ...(status === "escalated" ? {} : { finishedAt: Date.now() }),
     ...values,
   };
-  db.update(pipelineRuns).set(patch).where(eq(pipelineRuns.id, run.id)).run();
-  const updated = db
+  await db.update(pipelineRuns).set(patch).where(eq(pipelineRuns.id, run.id)).run();
+  const updated = await db
     .select()
     .from(pipelineRuns)
     .where(eq(pipelineRuns.id, run.id))
@@ -554,7 +554,7 @@ function finishRun(
 }
 
 /** The propose step (D-64.4/5): deterministic gate handoff, no LLM. */
-function executePropose(
+async function executePropose(
   db: Db,
   run: PipelineRunRow,
   spec: PipelineSpec,
@@ -562,7 +562,7 @@ function executePropose(
   state: EngineState,
   priorExamples: ResolveExamples | null,
   preferences: ResolvePreferences | null,
-): { proposal: ProposalOutput; generationId: string | null; draftId: string | null } | null {
+): Promise<{ proposal: ProposalOutput; generationId: string | null; draftId: string | null } | null> {
   const finalDraft = state.latestDraft;
   if (!finalDraft) return null;
   const taskType = "signal_response" as const;
@@ -641,7 +641,7 @@ function executePropose(
   };
   // Sequential like the legacy signal-draft path: generation first, then the
   // gate submission (submitDraft owns its own transaction).
-  const generation = storeGeneration(db, {
+  const generation = await storeGeneration(db, {
     workspaceId: run.workspaceId,
     taskType,
     channel: run.channel as Channel,
@@ -657,8 +657,8 @@ function executePropose(
   // counts as a rule application. Dry and shadow runs returned above, so an
   // eval replay of eighty historical cases cannot inflate the hit count that
   // promotion and retirement read.
-  recordRuleApplications(db, (preferences?.rules ?? []).map((rule) => rule.id));
-  const draft = submitDraft(
+  await recordRuleApplications(db, (preferences?.rules ?? []).map((rule) => rule.id));
+  const draft = await submitDraft(
     db,
     {
       workspaceId: run.workspaceId,
@@ -703,14 +703,14 @@ export async function executePipelineRun(
   workspaceId: string,
   runId: string,
 ): Promise<ExecutePipelineRunResult> {
-  const existing = db
+  const existing = await db
     .select()
     .from(pipelineRuns)
     .where(and(eq(pipelineRuns.workspaceId, workspaceId), eq(pipelineRuns.id, runId)))
     .get();
   if (!existing) throw new PipelineRunNotFoundError(runId);
 
-  if (llmBudgetExhausted(db, workspaceId)) {
+  if (await llmBudgetExhausted(db, workspaceId)) {
     return { blocked: "llm_budget_exhausted", run: rowToRun(existing) };
   }
 
@@ -718,7 +718,7 @@ export async function executePipelineRun(
   // lease expired (crash recovery). A live concurrent execution wins.
   const now = Date.now();
   const leaseOwner = randomUUID();
-  const claimed = db
+  const claimed = await db
     .update(pipelineRuns)
     .set({
       status: "running",
@@ -738,9 +738,9 @@ export async function executePipelineRun(
   if (claimed.changes === 0) {
     return { blocked: "not_claimable", run: rowToRun(existing) };
   }
-  const run = db.select().from(pipelineRuns).where(eq(pipelineRuns.id, runId)).get()!;
+  const run = (await db.select().from(pipelineRuns).where(eq(pipelineRuns.id, runId)).get())!;
 
-  const versionRow = db
+  const versionRow = await db
     .select()
     .from(pipelineDefinitionVersions)
     .where(
@@ -751,32 +751,32 @@ export async function executePipelineRun(
     )
     .get();
   if (!versionRow) {
-    const state = loadEngineState(db, run);
-    return { run: finishRun(db, run, "failed", state, { failureReason: "definition_version_missing" }) };
+    const state = await loadEngineState(db, run);
+    return { run: await finishRun(db, run, "failed", state, { failureReason: "definition_version_missing" }) };
   }
   const spec = JSON.parse(versionRow.specJson) as PipelineSpec;
 
-  const signal = run.signalId ? getSignal(db, workspaceId, run.signalId) : undefined;
-  const state = loadEngineState(db, run);
+  const signal = run.signalId ? await getSignal(db, workspaceId, run.signalId) : undefined;
+  const state = await loadEngineState(db, run);
   if (!signal) {
-    return { run: finishRun(db, run, "failed", state, { failureReason: "signal_missing" }) };
+    return { run: await finishRun(db, run, "failed", state, { failureReason: "signal_missing" }) };
   }
-  const workspace = getWorkspace(db, workspaceId);
+  const workspace = await getWorkspace(db, workspaceId);
   const workspaceName = workspace?.name ?? "workspace";
   // Sprint 66: retrieved once per run — every draft-output step sees the same
   // few-shot bundle, and the propose step traces exactly what was injected.
-  const priorExamples = retrievePriorExamples(db, workspaceId, {
+  const priorExamples = await retrievePriorExamples(db, workspaceId, {
     query: signal.content,
     channel: run.channel as Channel,
     taskType: "signal_response",
   });
   // Sprint 68: the same treatment for learned preference rules — retrieved
   // once per run, injected into every draft step, traced on the propose step.
-  const preferences = retrievePreferenceRules(db, workspaceId, {
+  const preferences = await retrievePreferenceRules(db, workspaceId, {
     channel: run.channel as Channel,
     taskType: "signal_response",
   });
-  const definitionRow = db
+  const definitionRow = await db
     .select({ name: pipelineDefinitions.name })
     .from(pipelineDefinitions)
     .where(eq(pipelineDefinitions.id, run.definitionId))
@@ -790,7 +790,7 @@ export async function executePipelineRun(
   // Sprint 70: everything this run has already asked and been told. Read once
   // per execution — a question asked mid-execution suspends the run, so no
   // later step in *this* pass can ever see a newer answer than these.
-  const answeredQuestions = listAnsweredQuestionsForPipelineRun(db, run.id);
+  const answeredQuestions = await listAnsweredQuestionsForPipelineRun(db, run.id);
   const deadline = now + RUN_MAX_DURATION_MS;
   // Escalation checks fire only on freshly executed passes: cached passes
   // were either checked before pausing or are the acknowledged pause point.
@@ -806,7 +806,7 @@ export async function executePipelineRun(
     iteration: number,
   ): Promise<StepPassResult | { halted: PipelineRun }> => {
     if (Date.now() >= deadline) {
-      return { halted: finishRun(db, run, "failed", state, { failureReason: "run_timeout" }) };
+      return { halted: await finishRun(db, run, "failed", state, { failureReason: "run_timeout" }) };
     }
     const pass = await runAgentStepPass(
       db,
@@ -827,14 +827,14 @@ export async function executePipelineRun(
     if (pass.failure) {
       if (pass.failure.escalate) {
         return {
-          halted: finishRun(db, run, "escalated", state, {
+          halted: await finishRun(db, run, "escalated", state, {
             pausedAtStepKey: step.key,
             escalationReason: pass.failure.escalate,
           }),
         };
       }
       return {
-        halted: finishRun(db, run, "failed", state, { failureReason: pass.failure.reason }),
+        halted: await finishRun(db, run, "failed", state, { failureReason: pass.failure.reason }),
       };
     }
     iterations.set(step.key, iteration);
@@ -852,13 +852,13 @@ export async function executePipelineRun(
       });
       if (state.usedTokens > spec.budget.maxTokens) {
         return {
-          halted: finishRun(db, run, "failed", state, { failureReason: "budget_exhausted" }),
+          halted: await finishRun(db, run, "failed", state, { failureReason: "budget_exhausted" }),
         };
       }
       const escalate = escalationFor(spec, step, pass.output);
       if (escalate) {
         return {
-          halted: finishRun(db, run, "escalated", state, {
+          halted: await finishRun(db, run, "escalated", state, {
             pausedAtStepKey: step.key,
             escalationReason: escalate,
           }),
@@ -872,12 +872,12 @@ export async function executePipelineRun(
     const step = spec.steps[index]!;
 
     if (step.kind === "propose") {
-      const handoff = executePropose(db, run, spec, step, state, priorExamples, preferences);
+      const handoff = await executePropose(db, run, spec, step, state, priorExamples, preferences);
       if (!handoff) {
-        return { run: finishRun(db, run, "failed", state, { failureReason: "no_draft_produced" }) };
+        return { run: await finishRun(db, run, "failed", state, { failureReason: "no_draft_produced" }) };
       }
-      const rowId = insertStepRow(db, run, { stepKey: step.key, iteration: 1, attempt: 1 });
-      finishStepRow(db, rowId, {
+      const rowId = await insertStepRow(db, run, { stepKey: step.key, iteration: 1, attempt: 1 });
+      await finishStepRow(db, rowId, {
         status: "succeeded",
         passes: 1,
         outputJson: JSON.stringify(handoff.proposal),
@@ -891,7 +891,7 @@ export async function executePipelineRun(
         agentRunId: null,
       });
       return {
-        run: finishRun(db, run, "succeeded", state, {
+        run: await finishRun(db, run, "succeeded", state, {
           resultJson: JSON.stringify(handoff.proposal),
           generationId: handoff.generationId,
           draftId: handoff.draftId,
@@ -907,8 +907,8 @@ export async function executePipelineRun(
           // Never needed: record the skip once so the checklist is complete.
           const alreadySkipped = state.checklist.some((entry) => entry.stepKey === step.key);
           if (!alreadySkipped) {
-            const rowId = insertStepRow(db, run, { stepKey: step.key, iteration: 1, attempt: 1 });
-            finishStepRow(db, rowId, { status: "skipped", passes: 1 });
+            const rowId = await insertStepRow(db, run, { stepKey: step.key, iteration: 1, attempt: 1 });
+            await finishStepRow(db, rowId, { status: "skipped", passes: 1 });
             state.checklist.push({
               stepKey: step.key,
               iteration: 1,
@@ -941,10 +941,10 @@ export async function executePipelineRun(
   }
 
   // A validated spec always ends in propose; reaching here is a spec bug.
-  return { run: finishRun(db, run, "failed", state, { failureReason: "no_propose_step" }) };
+  return { run: await finishRun(db, run, "failed", state, { failureReason: "no_propose_step" }) };
 }
 
-export function listPipelineRuns(
+export async function listPipelineRuns(
   db: Db,
   workspaceId: string,
   options: {
@@ -954,47 +954,47 @@ export function listPipelineRuns(
     limit?: number;
     offset?: number;
   } = {},
-): { runs: PipelineRun[]; total: number } {
+): Promise<{ runs: PipelineRun[]; total: number }> {
   const conditions = [eq(pipelineRuns.workspaceId, workspaceId)];
   if (options.definitionId) conditions.push(eq(pipelineRuns.definitionId, options.definitionId));
   if (options.mode) conditions.push(eq(pipelineRuns.mode, options.mode));
   if (options.status) conditions.push(eq(pipelineRuns.status, options.status));
   const where = and(...conditions);
   const total =
-    db
+    (await db
       .select({ count: sql<number>`count(*)` })
       .from(pipelineRuns)
       .where(where)
-      .get()?.count ?? 0;
-  const runs = db
+      .get())?.count ?? 0;
+  const runs = (await db
     .select()
     .from(pipelineRuns)
     .where(where)
     .orderBy(desc(pipelineRuns.createdAt))
     .limit(Math.min(options.limit ?? 20, 100))
     .offset(options.offset ?? 0)
-    .all()
+    .all())
     .map(rowToRun);
   return { runs, total };
 }
 
-export function getPipelineRunDetail(
+export async function getPipelineRunDetail(
   db: Db,
   workspaceId: string,
   runId: string,
-): PipelineRunDetail | undefined {
-  const row = db
+): Promise<PipelineRunDetail | undefined> {
+  const row = await db
     .select()
     .from(pipelineRuns)
     .where(and(eq(pipelineRuns.workspaceId, workspaceId), eq(pipelineRuns.id, runId)))
     .get();
   if (!row) return undefined;
-  const steps = db
+  const steps = (await db
     .select()
     .from(pipelineRunSteps)
     .where(eq(pipelineRunSteps.runId, runId))
     .orderBy(sql`rowid`)
-    .all()
+    .all())
     .map(rowToStep);
   return { ...rowToRun(row), steps };
 }
@@ -1007,7 +1007,7 @@ export async function decidePipelineRun(
   runId: string,
   input: { action: "resume" | "cancel"; reason?: string },
 ): Promise<ExecutePipelineRunResult> {
-  const row = db
+  const row = await db
     .select()
     .from(pipelineRuns)
     .where(and(eq(pipelineRuns.workspaceId, workspaceId), eq(pipelineRuns.id, runId)))
@@ -1019,7 +1019,7 @@ export async function decidePipelineRun(
     if (!canTransitionPipelineRun(status, "cancelled")) {
       throw new InvalidPipelineRunTransitionError(status, "cancelled");
     }
-    db.update(pipelineRuns)
+    await db.update(pipelineRuns)
       .set({
         status: "cancelled",
         failureReason: `cancelled: ${input.reason ?? ""}`.trim(),
@@ -1029,14 +1029,14 @@ export async function decidePipelineRun(
       })
       .where(eq(pipelineRuns.id, runId))
       .run();
-    const updated = db.select().from(pipelineRuns).where(eq(pipelineRuns.id, runId)).get()!;
+    const updated = (await db.select().from(pipelineRuns).where(eq(pipelineRuns.id, runId)).get())!;
     return { run: rowToRun(updated) };
   }
 
   if (status !== "escalated") {
     throw new InvalidPipelineRunTransitionError(status, "running");
   }
-  return executePipelineRun(db, deps, workspaceId, runId);
+  return await executePipelineRun(db, deps, workspaceId, runId);
 }
 
 /**
@@ -1059,20 +1059,20 @@ export async function runPipelineDryRun(
   if (input.options.signalIds) {
     signalIds = input.options.signalIds;
     for (const signalId of signalIds) {
-      if (!getSignal(db, input.workspaceId, signalId)) {
+      if (!await getSignal(db, input.workspaceId, signalId)) {
         throw new PipelineSignalNotFoundError(signalId);
       }
     }
   } else {
-    signalIds = listSignals(db, input.workspaceId)
+    signalIds = (await listSignals(db, input.workspaceId))
       .slice(0, input.options.limit)
       .map((signal) => signal.id);
   }
 
   const runs: DryRunPipelineResult["runs"] = [];
   for (const signalId of signalIds) {
-    const signal = getSignal(db, input.workspaceId, signalId)!;
-    const started = startPipelineRun(db, {
+    const signal = (await getSignal(db, input.workspaceId, signalId))!;
+    const started = await startPipelineRun(db, {
       workspaceId: input.workspaceId,
       definition: input.definition,
       signalId,

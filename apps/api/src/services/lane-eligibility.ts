@@ -124,13 +124,13 @@ function evaluateLane(
  * Returns the evaluations (idempotent: conflicts on the unique key are
  * skipped — the decision already recorded is authoritative).
  */
-export function persistLaneEligibility(
+export async function persistLaneEligibility(
   tx: DbExecutor,
   pkg: ContentPackageRow,
   assessment: SufficiencyAssessmentRow,
   now: number,
-): LaneEvaluation[] {
-  const lanes: LaneUnderEvaluation[] = tx
+): Promise<LaneEvaluation[]> {
+  const lanes: LaneUnderEvaluation[] = await tx
     .select({
       laneId: campaignLanes.id,
       laneRevisionId: campaignLaneRevisions.id,
@@ -149,7 +149,7 @@ export function persistLaneEligibility(
   // §9.5 rule 5: has any *other* package in this campaign already earned an
   // eligible decision for this angle on one of these lane threads?
   const usedLaneIds = new Set(
-    tx
+    (await tx
       .select({ laneId: laneEligibilityDecisions.laneId })
       .from(laneEligibilityDecisions)
       .innerJoin(
@@ -168,16 +168,16 @@ export function persistLaneEligibility(
           ),
         ),
       )
-      .all()
+      .all())
       .map((row) => row.laneId),
   );
 
   const suggestedPersonaId = pkg.opportunityId
-    ? (tx
+    ? ((await tx
         .select({ value: campaignOpportunities.suggestedPersonaId })
         .from(campaignOpportunities)
         .where(eq(campaignOpportunities.id, pkg.opportunityId))
-        .get()?.value ?? null)
+        .get())?.value ?? null)
     : null;
 
   const assessmentView = {
@@ -196,7 +196,7 @@ export function persistLaneEligibility(
     ),
   );
   for (const evaluation of evaluations) {
-    tx.insert(laneEligibilityDecisions)
+    await tx.insert(laneEligibilityDecisions)
       .values({
         id: randomUUID(),
         workspaceId: pkg.workspaceId,

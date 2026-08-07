@@ -38,17 +38,17 @@ function toClaim(row: DiscoveryJobRow | undefined): DiscoveryJobClaim | null {
  * index is the concurrency boundary; conflict-ignore replaces read-before-write
  * busy checks that race across API processes.
  */
-export function enqueueDueDiscoveryJobs(
+export async function enqueueDueDiscoveryJobs(
   db: Db,
   workspaceId: string,
   sources: DiscoverySource[],
   now: number,
-): number {
+): Promise<number> {
   let queued = 0;
   for (const source of sources) {
     if (!source.enabled || source.status === "reserved") continue;
     if (source.backoffUntil !== null && source.backoffUntil > now) continue;
-    const inserted = db.run(sql`
+    const inserted = await db.run(sql`
       INSERT INTO discovery_jobs (
         id,
         workspace_id,
@@ -102,16 +102,16 @@ export function enqueueDueDiscoveryJobs(
  * Selection and compare-and-swap share one SQLite transaction and database
  * clock so caller time can never steal a live lease.
  */
-export function claimNextDiscoveryJob(
+export async function claimNextDiscoveryJob(
   db: Db,
   input: {
     workspaceId?: string;
     owner: string;
     leaseMs: number;
   },
-): DiscoveryJobClaim | null {
-  return db.transaction((tx) => {
-    const candidate = tx
+): Promise<DiscoveryJobClaim | null> {
+  return await db.transaction(async (tx) => {
+    const candidate = await tx
       .select()
       .from(discoveryJobs)
       .where(
@@ -133,7 +133,7 @@ export function claimNextDiscoveryJob(
       .get();
     if (!candidate) return null;
 
-    const claimed = tx
+    const claimed = await tx
       .update(discoveryJobs)
       .set({
         status: "running",
@@ -166,12 +166,12 @@ export function claimNextDiscoveryJob(
   });
 }
 
-export function heartbeatDiscoveryJob(
+export async function heartbeatDiscoveryJob(
   db: Db,
   claim: DiscoveryJobClaim,
   leaseMs: number,
-): DiscoveryJobClaim | null {
-  const renewed = db
+): Promise<DiscoveryJobClaim | null> {
+  const renewed = await db
     .update(discoveryJobs)
     .set({
       leaseExpiresAt: sql`${DATABASE_NOW_MS} + ${leaseMs}`,
@@ -193,12 +193,12 @@ function liveClaimWhere(claim: DiscoveryJobClaim) {
   );
 }
 
-export function completeDiscoveryJob(
+export async function completeDiscoveryJob(
   db: Db,
   claim: DiscoveryJobClaim,
   counts: { fetchedCount: number; newCount: number },
-): boolean {
-  const result = db
+): Promise<boolean> {
+  const result = await db
     .update(discoveryJobs)
     .set({
       status: "succeeded",
@@ -214,12 +214,12 @@ export function completeDiscoveryJob(
   return result.changes === 1;
 }
 
-export function failDiscoveryJob(
+export async function failDiscoveryJob(
   db: Db,
   claim: DiscoveryJobClaim,
   error: string,
-): boolean {
-  const result = db
+): Promise<boolean> {
+  const result = await db
     .update(discoveryJobs)
     .set({
       status: "failed",

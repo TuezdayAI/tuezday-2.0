@@ -154,7 +154,7 @@ describe("meteredLlm + usage ledger (Sprint 59)", () => {
 
     await metered.generate({ prompt: "draft it" });
 
-    const rows = db.select().from(llmUsageEvents).all();
+    const rows = await db.select().from(llmUsageEvents).all();
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       workspaceId,
@@ -167,27 +167,27 @@ describe("meteredLlm + usage ledger (Sprint 59)", () => {
     });
     // 400 billable input + 600 cached + 100 output at flash rates.
     expect(rows[0]!.costCents).toBeCloseTo((400 * 30 + 600 * 7.5 + 100 * 250) / 1_000_000);
-    expect(sumLlmSpendCents(db, workspaceId, 0)).toBeCloseTo(rows[0]!.costCents);
+    expect(await sumLlmSpendCents(db, workspaceId, 0)).toBeCloseTo(rows[0]!.costCents);
   });
 
   it("a throw never bills, and a result without usage goes unmetered", async () => {
     const db = createTestDb();
     const workspaceId = await workspace(db);
     await expect(
-      meteredLlm(fakeLlm({ fail: true }), db, { workspaceId, pipeline: "review" }).generate({
+      await meteredLlm(fakeLlm({ fail: true }), db, { workspaceId, pipeline: "review" }).generate({
         prompt: "x",
       }),
     ).rejects.toMatchObject({ name: "GatewayError" });
     await meteredLlm(fakeLlm({ usage: false }), db, { workspaceId, pipeline: "review" }).generate({
       prompt: "y",
     });
-    expect(db.select().from(llmUsageEvents).all()).toHaveLength(0);
+    expect(await db.select().from(llmUsageEvents).all()).toHaveLength(0);
   });
 
   it("spendRollup groups by pipeline, sorts by cost, and computes the cache hit rate", async () => {
     const db = createTestDb();
     const workspaceId = await workspace(db);
-    recordLlmUsage(db, {
+    await recordLlmUsage(db, {
       workspaceId,
       pipeline: "generation",
       model: "m",
@@ -195,7 +195,7 @@ describe("meteredLlm + usage ledger (Sprint 59)", () => {
       usage: { inputTokens: 800, outputTokens: 100, cachedTokens: 600 },
       costCentsOverride: 10,
     });
-    recordLlmUsage(db, {
+    await recordLlmUsage(db, {
       workspaceId,
       pipeline: "generation",
       model: "m",
@@ -203,7 +203,7 @@ describe("meteredLlm + usage ledger (Sprint 59)", () => {
       usage: { inputTokens: 200, outputTokens: 50, cachedTokens: 0 },
       costCentsOverride: 2,
     });
-    recordLlmUsage(db, {
+    await recordLlmUsage(db, {
       workspaceId,
       pipeline: "signal_matching",
       model: "m",
@@ -212,7 +212,7 @@ describe("meteredLlm + usage ledger (Sprint 59)", () => {
       costCentsOverride: 30,
     });
 
-    const rollup = spendRollup(db, workspaceId, 0);
+    const rollup = await spendRollup(db, workspaceId, 0);
     expect(rollup.spentCents).toBeCloseTo(42);
     expect(rollup.byPipeline.map((r) => r.pipeline)).toEqual(["signal_matching", "generation"]);
     expect(rollup.byPipeline[1]).toMatchObject({ calls: 2, inputTokens: 1000, cachedTokens: 600 });
@@ -223,7 +223,7 @@ describe("meteredLlm + usage ledger (Sprint 59)", () => {
   it("sumLlmSpendCents respects the window boundary", async () => {
     const db = createTestDb();
     const workspaceId = await workspace(db);
-    recordLlmUsage(db, {
+    await recordLlmUsage(db, {
       workspaceId,
       pipeline: "generation",
       model: "m",
@@ -231,8 +231,8 @@ describe("meteredLlm + usage ledger (Sprint 59)", () => {
       usage: { inputTokens: 0, outputTokens: 0, cachedTokens: 0 },
       costCentsOverride: 7,
     });
-    expect(sumLlmSpendCents(db, workspaceId, Date.now() + 60_000)).toBe(0);
-    expect(sumLlmSpendCents(db, workspaceId, Date.now() - 60_000)).toBeCloseTo(7);
+    expect(await sumLlmSpendCents(db, workspaceId, Date.now() + 60_000)).toBe(0);
+    expect(await sumLlmSpendCents(db, workspaceId, Date.now() - 60_000)).toBeCloseTo(7);
   });
 });
 
@@ -264,7 +264,7 @@ describe("worker degradation at the budget cap (Sprint 59)", () => {
       payload: { automationMode: "human_in_the_loop", autoDailyCap: null },
     });
 
-    recordLlmUsage(db, {
+    await recordLlmUsage(db, {
       workspaceId,
       pipeline: "generation",
       model: "unknown",

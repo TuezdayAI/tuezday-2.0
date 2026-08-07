@@ -70,12 +70,12 @@ export interface ListPreferenceRulesOptions {
   status?: PreferenceRuleStatus;
 }
 
-export function listPreferenceRules(
+export async function listPreferenceRules(
   db: Db,
   workspaceId: string,
   options: ListPreferenceRulesOptions = {},
-): PreferenceRule[] {
-  return db
+): Promise<PreferenceRule[]> {
+  return (await db
     .select()
     .from(preferenceRules)
     .where(
@@ -85,16 +85,16 @@ export function listPreferenceRules(
       ),
     )
     .orderBy(desc(preferenceRules.confidence), desc(preferenceRules.updatedAt))
-    .all()
+    .all())
     .map(rowToPreferenceRule);
 }
 
-export function getPreferenceRule(
+export async function getPreferenceRule(
   db: Db,
   workspaceId: string,
   ruleId: string,
-): PreferenceRule | undefined {
-  const row = db
+): Promise<PreferenceRule | undefined> {
+  const row = await db
     .select()
     .from(preferenceRules)
     .where(and(eq(preferenceRules.workspaceId, workspaceId), eq(preferenceRules.id, ruleId)))
@@ -103,15 +103,15 @@ export function getPreferenceRule(
 }
 
 /** A rule's provenance: the excerpts it was learned from, newest first. */
-export function listRuleEvidence(db: Db, ruleId: string): PreferenceRuleEvidence[] {
-  const rows = db
+export async function listRuleEvidence(db: Db, ruleId: string): Promise<PreferenceRuleEvidence[]> {
+  const rows = await db
     .select()
     .from(preferenceRuleEvidence)
     .where(eq(preferenceRuleEvidence.ruleId, ruleId))
     .orderBy(desc(preferenceRuleEvidence.createdAt))
     .all();
   if (rows.length === 0) return [];
-  const edits = db
+  const edits = await db
     .select()
     .from(preferenceEdits)
     .where(
@@ -155,18 +155,18 @@ export interface UpsertRuleResult {
  * A rule the founder explicitly **disabled** is never revived by a merge — the
  * switch-off has to mean something.
  */
-export function upsertPreferenceRule(
+export async function upsertPreferenceRule(
   db: Db,
   workspaceId: string,
   input: UpsertRuleInput,
   now = Date.now(),
-): UpsertRuleResult {
+): Promise<UpsertRuleResult> {
   const normalized = normalizeRule(input.rule);
-  const existing = db
+  const existing = (await db
     .select()
     .from(preferenceRules)
     .where(eq(preferenceRules.workspaceId, workspaceId))
-    .all()
+    .all())
     .filter(
       (row) =>
         row.scopeTaskType === input.scopeTaskType &&
@@ -184,7 +184,7 @@ export function upsertPreferenceRule(
         : confidence >= PREFERENCE_ACTIVATE_CONFIDENCE
           ? "active"
           : "candidate";
-    db.update(preferenceRules)
+    await db.update(preferenceRules)
       .set({
         confidence,
         observationCount,
@@ -196,8 +196,8 @@ export function upsertPreferenceRule(
       })
       .where(eq(preferenceRules.id, existing.id))
       .run();
-    if (input.evidence) addRuleEvidence(db, existing.id, input.evidence, now);
-    return { rule: getPreferenceRule(db, workspaceId, existing.id)!, merged: true };
+    if (input.evidence) await addRuleEvidence(db, existing.id, input.evidence, now);
+    return { rule: (await getPreferenceRule(db, workspaceId, existing.id))!, merged: true };
   }
 
   const row: PreferenceRuleRow = {
@@ -221,18 +221,18 @@ export function upsertPreferenceRule(
     createdAt: now,
     updatedAt: now,
   };
-  db.insert(preferenceRules).values(row).run();
-  if (input.evidence) addRuleEvidence(db, row.id, input.evidence, now);
+  await db.insert(preferenceRules).values(row).run();
+  if (input.evidence) await addRuleEvidence(db, row.id, input.evidence, now);
   return { rule: rowToPreferenceRule(row), merged: false };
 }
 
-export function addRuleEvidence(
+export async function addRuleEvidence(
   db: Db,
   ruleId: string,
   evidence: { editId: string; excerpt: string },
   now = Date.now(),
-): void {
-  db.insert(preferenceRuleEvidence)
+): Promise<void> {
+  await db.insert(preferenceRuleEvidence)
     .values({
       id: randomUUID(),
       ruleId,
@@ -247,13 +247,13 @@ export function addRuleEvidence(
 }
 
 /** A rule the founder wrote by hand. Active immediately — they are the source of truth. */
-export function createManualRule(
+export async function createManualRule(
   db: Db,
   workspaceId: string,
   input: CreatePreferenceRuleInput,
   now = Date.now(),
-): PreferenceRule {
-  return upsertPreferenceRule(
+): Promise<PreferenceRule> {
+  return (await upsertPreferenceRule(
     db,
     workspaceId,
     {
@@ -265,19 +265,19 @@ export function createManualRule(
       origin: "manual",
     },
     now,
-  ).rule;
+  )).rule;
 }
 
-export function setRuleStatus(
+export async function setRuleStatus(
   db: Db,
   workspaceId: string,
   ruleId: string,
   status: PreferenceRuleStatus,
   now = Date.now(),
-): PreferenceRule | undefined {
-  const existing = getPreferenceRule(db, workspaceId, ruleId);
+): Promise<PreferenceRule | undefined> {
+  const existing = await getPreferenceRule(db, workspaceId, ruleId);
   if (!existing) return undefined;
-  db.update(preferenceRules)
+  await db.update(preferenceRules)
     .set({
       status,
       retiredAt: status === "retired" ? now : null,
@@ -286,11 +286,11 @@ export function setRuleStatus(
     })
     .where(eq(preferenceRules.id, ruleId))
     .run();
-  return getPreferenceRule(db, workspaceId, ruleId);
+  return await getPreferenceRule(db, workspaceId, ruleId);
 }
 
-export function deletePreferenceRule(db: Db, workspaceId: string, ruleId: string): boolean {
-  const result = db
+export async function deletePreferenceRule(db: Db, workspaceId: string, ruleId: string): Promise<boolean> {
+  const result = await db
     .delete(preferenceRules)
     .where(and(eq(preferenceRules.workspaceId, workspaceId), eq(preferenceRules.id, ruleId)))
     .run();
@@ -347,16 +347,16 @@ export function toResolveRule(rule: PreferenceRule): ResolvePreferenceRule {
  * Read-only by contract (D-68.6) — `appliedCount` is a claim that a rule
  * shaped real output, so only a real generation may move it.
  */
-export function retrievePreferenceRules(
+export async function retrievePreferenceRules(
   db: Db,
   workspaceId: string,
   query: PreferenceQuery,
-): ResolvePreferences | null {
-  const ranked = db
+): Promise<ResolvePreferences | null> {
+  const ranked = (await db
     .select()
     .from(preferenceRules)
     .where(and(eq(preferenceRules.workspaceId, workspaceId), eq(preferenceRules.status, "active")))
-    .all()
+    .all())
     .filter((row) => inScope(row, query))
     .sort(
       (a, b) =>
@@ -376,11 +376,11 @@ export function retrievePreferenceRules(
  * `appliedCount`, and both promotion and retirement read it — which is exactly
  * why a preview, the resolver inspector, and the eval harness must not call it.
  */
-export function recordRuleApplications(db: Db, ruleIds: string[], now = Date.now()): void {
+export async function recordRuleApplications(db: Db, ruleIds: string[], now = Date.now()): Promise<void> {
   for (const ruleId of ruleIds) {
-    const row = db.select().from(preferenceRules).where(eq(preferenceRules.id, ruleId)).get();
+    const row = await db.select().from(preferenceRules).where(eq(preferenceRules.id, ruleId)).get();
     if (!row) continue;
-    db.update(preferenceRules)
+    await db.update(preferenceRules)
       .set({ appliedCount: row.appliedCount + 1, lastAppliedAt: now, updatedAt: now })
       .where(eq(preferenceRules.id, ruleId))
       .run();
@@ -397,8 +397,8 @@ export function recordRuleApplications(db: Db, ruleIds: string[], now = Date.now
  * to have shaped at least one generation. Computed before the LLM runs and
  * recorded on the synthesis, so promotion never depends on parsing prose.
  */
-export function listPromotableRules(db: Db, workspaceId: string): PreferenceRule[] {
-  return listPreferenceRules(db, workspaceId, { status: "active" }).filter(
+export async function listPromotableRules(db: Db, workspaceId: string): Promise<PreferenceRule[]> {
+  return (await listPreferenceRules(db, workspaceId, { status: "active" })).filter(
     (rule) =>
       rule.observationCount >= PROMOTE_MIN_OBSERVATIONS &&
       rule.confidence >= PROMOTE_MIN_CONFIDENCE &&
@@ -407,10 +407,10 @@ export function listPromotableRules(db: Db, workspaceId: string): PreferenceRule
 }
 
 /** Mark an accepted synthesis's promotion set: the brain doc now carries them. */
-export function markRulesPromoted(db: Db, ruleIds: string[], now = Date.now()): number {
+export async function markRulesPromoted(db: Db, ruleIds: string[], now = Date.now()): Promise<number> {
   let promoted = 0;
   for (const ruleId of ruleIds) {
-    const result = db
+    const result = await db
       .update(preferenceRules)
       .set({ status: "promoted", promotedAt: now, updatedAt: now })
       .where(and(eq(preferenceRules.id, ruleId), eq(preferenceRules.status, "active")))
@@ -425,13 +425,13 @@ export function markRulesPromoted(db: Db, ruleIds: string[], now = Date.now()): 
  * the window. Retiring on "not re-observed" alone would delete every rule that
  * is working, since a followed rule generates no further corrections.
  */
-export function retireStaleRules(db: Db, workspaceId: string, now = Date.now()): number {
+export async function retireStaleRules(db: Db, workspaceId: string, now = Date.now()): Promise<number> {
   const cutoff = now - RETIRE_AFTER_MS;
-  const stale = db
+  const stale = (await db
     .select()
     .from(preferenceRules)
     .where(eq(preferenceRules.workspaceId, workspaceId))
-    .all()
+    .all())
     .filter(
       (row) =>
         (row.status === "active" || row.status === "candidate") &&
@@ -439,7 +439,7 @@ export function retireStaleRules(db: Db, workspaceId: string, now = Date.now()):
         (row.lastAppliedAt ?? 0) < cutoff,
     );
   for (const row of stale) {
-    db.update(preferenceRules)
+    await db.update(preferenceRules)
       .set({ status: "retired", retiredAt: now, updatedAt: now })
       .where(eq(preferenceRules.id, row.id))
       .run();

@@ -203,17 +203,17 @@ async function autoTitle(
 
     const output = run.output as { title?: unknown; goal?: unknown } | null;
     if (typeof output?.title === "string") {
-      setSessionTitleIfEmpty(db, session.id, output.title.slice(0, 200));
+      await setSessionTitleIfEmpty(db, session.id, output.title.slice(0, 200));
     }
     if (typeof output?.goal === "string") {
-      setSessionGoalIfEmpty(db, session.id, output.goal.slice(0, CHAT_GOAL_MAX_CHARS));
+      await setSessionGoalIfEmpty(db, session.id, output.goal.slice(0, CHAT_GOAL_MAX_CHARS));
     }
   } catch {
     // A thread without a title is a cosmetic loss; failing the turn over it
     // is not. The first user message stands in until a later turn retries.
   }
   if (!session.title.trim()) {
-    setSessionTitleIfEmpty(db, session.id, userMessage.slice(0, 80));
+    await setSessionTitleIfEmpty(db, session.id, userMessage.slice(0, 80));
   }
   return usage;
 }
@@ -238,11 +238,11 @@ export async function runChatTurn(
   onEvent?: (event: ChatStreamEvent) => void,
   options: ChatTurnOptions = {},
 ): Promise<ChatTurnResult | undefined> {
-  const session = getSession(db, workspaceId, sessionId);
+  const session = await getSession(db, workspaceId, sessionId);
   if (!session) return undefined;
   const emit = onEvent ?? (() => {});
 
-  const userRow = appendMessage(db, workspaceId, sessionId, {
+  const userRow = await appendMessage(db, workspaceId, sessionId, {
     role: "user",
     content: userMessage,
   });
@@ -263,10 +263,10 @@ export async function runChatTurn(
 
   // Re-read: auto-titling may have set the goal, which the system prefix and
   // the retrieval query both read.
-  const current = getSession(db, workspaceId, sessionId) ?? session;
-  const sessionRow = getSessionRow(db, workspaceId, sessionId);
+  const current = await getSession(db, workspaceId, sessionId) ?? session;
+  const sessionRow = await getSessionRow(db, workspaceId, sessionId);
 
-  let active = listActiveMessages(db, sessionId, sessionRow?.compactedThroughMessageId ?? null);
+  let active = await listActiveMessages(db, sessionId, sessionRow?.compactedThroughMessageId ?? null);
   const compaction = await maybeCompact(db, llm, current, active);
   if (compaction) {
     addUsage(compaction.usage);
@@ -276,7 +276,7 @@ export async function runChatTurn(
       summarizedThrough: compaction.summarizedThrough,
       agentRunId: compaction.agentRunId,
     });
-    active = listActiveMessages(db, sessionId, compaction.summarizedThrough);
+    active = await listActiveMessages(db, sessionId, compaction.summarizedThrough);
   }
 
   const mayPropose = actorMayPropose(actor);
@@ -427,7 +427,7 @@ export async function runChatTurn(
 
   const answer = answerFor(run.output, run.stopReason, run.error);
   const dedupedCards = dedupeCards(cards);
-  const message = appendMessage(db, workspaceId, sessionId, {
+  const message = await appendMessage(db, workspaceId, sessionId, {
     role: "assistant",
     content: answer,
     citations: dedupeCitations(citations),
@@ -438,21 +438,21 @@ export async function runChatTurn(
     outputTokens: run.usage.outputTokens,
     stopReason: run.stopReason,
   });
-  attachProposalsToMessage(
+  await attachProposalsToMessage(
     db,
     recordedProposals.map((p) => p.id),
     message.id,
   );
 
-  addSessionUsage(db, sessionId, turnUsage);
-  const after = getSession(db, workspaceId, sessionId);
+  await addSessionUsage(db, sessionId, turnUsage);
+  const after = await getSession(db, workspaceId, sessionId);
 
   // Re-read rather than returning what we collected: `messageId` was written
   // after the rows were, and the client renders cards keyed on it.
   const proposals =
     recordedProposals.length === 0
       ? []
-      : listChatProposals(db, sessionId).filter((p) => p.messageId === message.id);
+      : (await listChatProposals(db, sessionId)).filter((p) => p.messageId === message.id);
 
   const result: ChatTurnResult = {
     answer,

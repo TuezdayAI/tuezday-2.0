@@ -16,10 +16,10 @@ import {
 } from "../src/services/discovery-dedupe";
 import { createTestDb } from "./helpers";
 
-function fixture() {
+async function fixture() {
   const db = createTestDb();
   const workspaceId = "workspace-dedupe";
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({
       id: workspaceId,
       name: "Dedupe",
@@ -28,8 +28,8 @@ function fixture() {
     })
     .run();
 
-  function source(id: string) {
-    db.insert(discoverySources)
+  async function source(id: string) {
+    await db.insert(discoverySources)
       .values({
         id,
         workspaceId,
@@ -45,12 +45,12 @@ function fixture() {
       .run();
   }
 
-  function item(
+  async function item(
     id: string,
     sourceId: string,
     overrides: Partial<DiscoveredItemRow> = {},
   ) {
-    db.insert(discoveredItems)
+    await db.insert(discoveredItems)
       .values({
         id,
         workspaceId,
@@ -83,16 +83,16 @@ function fixture() {
       .run();
   }
 
-  source("source-a");
-  source("source-b");
-  source("source-c");
+  await source("source-a");
+  await source("source-b");
+  await source("source-c");
   return { db, workspaceId, source, item };
 }
 
-function canonicalGroup() {
-  const f = fixture();
+async function canonicalGroup() {
+  const f = await fixture();
   const signalId = "signal-canonical";
-  f.item("canonical", "source-a", {
+  await f.item("canonical", "source-a", {
     externalId: "canonical-provider-id",
     title: "Canonical title",
     url: "https://canonical.test/story",
@@ -114,32 +114,32 @@ function canonicalGroup() {
     matchingError: "stale-error",
     createdAt: 10,
   });
-  f.item("survivor-oldest", "source-b", {
+  await f.item("survivor-oldest", "source-b", {
     externalId: "survivor-provider-id",
     duplicateOfId: "canonical",
     status: "duplicate",
     matchingState: "frozen",
     createdAt: 20,
   });
-  f.item("survivor-newer", "source-c", {
+  await f.item("survivor-newer", "source-c", {
     duplicateOfId: "canonical",
     status: "duplicate",
     matchingState: "frozen",
     createdAt: 30,
   });
-  dbMatches(f, "match-a", "canonical", 80);
-  dbMatches(f, "match-b", "canonical", 70);
-  dbMatches(f, "stale-survivor-match", "survivor-oldest", 1);
+  await dbMatches(f, "match-a", "canonical", 80);
+  await dbMatches(f, "match-b", "canonical", 70);
+  await dbMatches(f, "stale-survivor-match", "survivor-oldest", 1);
   return { ...f, signalId };
 }
 
-function dbMatches(
-  f: ReturnType<typeof fixture>,
+async function dbMatches(
+  f: Awaited<ReturnType<typeof fixture>>,
   id: string,
   itemId: string,
   score: number,
 ) {
-  f.db.insert(discoveredItemMatches)
+  await f.db.insert(discoveredItemMatches)
     .values({
       id,
       workspaceId: f.workspaceId,
@@ -154,22 +154,22 @@ function dbMatches(
 }
 
 describe("discovery dedupe source deletion", () => {
-  it("promotes the oldest surviving occurrence without changing its identity", () => {
-    const f = canonicalGroup();
+  it("promotes the oldest surviving occurrence without changing its identity", async () => {
+    const f = await canonicalGroup();
 
     expect(
-      deleteDiscoverySourcePreservingDuplicates(
+      await deleteDiscoverySourcePreservingDuplicates(
         f.db,
         f.workspaceId,
         "source-a",
       ),
     ).toBe(true);
 
-    const promoted = f.db
+    const promoted = (await f.db
       .select()
       .from(discoveredItems)
       .where(eq(discoveredItems.id, "survivor-oldest"))
-      .get()!;
+      .get())!;
     expect(promoted).toMatchObject({
       id: "survivor-oldest",
       workspaceId: f.workspaceId,
@@ -194,27 +194,27 @@ describe("discovery dedupe source deletion", () => {
       matchingHeartbeatAt: null,
     });
     expect(
-      f.db
+      (await f.db
         .select()
         .from(discoveredItemMatches)
-        .all()
+        .all())
         .map((row) => row.itemId)
         .sort(),
     ).toEqual(["survivor-oldest", "survivor-oldest"]);
     expect(
-      f.db
+      (await f.db
         .select()
         .from(discoveredItems)
         .where(eq(discoveredItems.id, "survivor-newer"))
-        .get()!.duplicateOfId,
+        .get())!.duplicateOfId,
     ).toBe("survivor-oldest");
   });
 
   // Sprint 53: the collapse no longer copies the legacy routing columns — it
   // moves the match rows, and routing is projected from those.
-  it("carries routing across a collapse through the moved match rows", () => {
-    const f = canonicalGroup();
-    f.db
+  it("carries routing across a collapse through the moved match rows", async () => {
+    const f = await canonicalGroup();
+    await f.db
       .insert(personas)
       .values({
         id: "persona-live",
@@ -224,7 +224,7 @@ describe("discovery dedupe source deletion", () => {
         updatedAt: 1,
       })
       .run();
-    f.db
+    await f.db
       .insert(campaigns)
       .values({
         id: "campaign-live",
@@ -234,23 +234,23 @@ describe("discovery dedupe source deletion", () => {
         updatedAt: 1,
       })
       .run();
-    f.db
+    await f.db
       .update(discoveredItemMatches)
       .set({ personaId: "persona-live", campaignId: "campaign-live" })
       .where(eq(discoveredItemMatches.id, "match-a"))
       .run();
     // the legacy columns are already gone (as Task 7's migration will leave them)
-    f.db
+    await f.db
       .update(discoveredItems)
       .set({ suggestedPersonaId: null, suggestedCampaignId: null })
       .where(eq(discoveredItems.id, "canonical"))
       .run();
 
     expect(
-      deleteDiscoverySourcePreservingDuplicates(f.db, f.workspaceId, "source-a"),
+      await deleteDiscoverySourcePreservingDuplicates(f.db, f.workspaceId, "source-a"),
     ).toBe(true);
 
-    const promoted = getDiscoveredItem(f.db, f.workspaceId, "survivor-oldest")!;
+    const promoted = (await getDiscoveredItem(f.db, f.workspaceId, "survivor-oldest"))!;
     expect(promoted.matches[0]).toMatchObject({
       personaId: "persona-live",
       campaignId: "campaign-live",
@@ -259,24 +259,24 @@ describe("discovery dedupe source deletion", () => {
     expect(promoted.suggestedPersonaId).toBe("persona-live");
     expect(promoted.suggestedCampaignId).toBe("campaign-live");
     expect(
-      f.db
+      (await f.db
         .select()
         .from(discoveredItems)
         .where(eq(discoveredItems.id, "survivor-oldest"))
-        .get()!.suggestedPersonaId,
+        .get())!.suggestedPersonaId,
     ).toBeNull();
   });
 
-  it("rolls back promotion and repointing when source deletion faults", () => {
-    const f = canonicalGroup();
+  it("rolls back promotion and repointing when source deletion faults", async () => {
+    const f = await canonicalGroup();
     const before = {
-      sources: f.db.select().from(discoverySources).all(),
-      items: f.db.select().from(discoveredItems).all(),
-      matches: f.db.select().from(discoveredItemMatches).all(),
+      sources: await f.db.select().from(discoverySources).all(),
+      items: await f.db.select().from(discoveredItems).all(),
+      matches: await f.db.select().from(discoveredItemMatches).all(),
     };
 
-    expect(() =>
-      deleteDiscoverySourcePreservingDuplicates(
+    expect(async () =>
+      await deleteDiscoverySourcePreservingDuplicates(
         f.db,
         f.workspaceId,
         "source-a",
@@ -288,54 +288,54 @@ describe("discovery dedupe source deletion", () => {
       ),
     ).toThrow("delete fault");
 
-    expect(f.db.select().from(discoverySources).all()).toEqual(
+    expect(await f.db.select().from(discoverySources).all()).toEqual(
       before.sources,
     );
-    expect(f.db.select().from(discoveredItems).all()).toEqual(before.items);
-    expect(f.db.select().from(discoveredItemMatches).all()).toEqual(
+    expect(await f.db.select().from(discoveredItems).all()).toEqual(before.items);
+    expect(await f.db.select().from(discoveredItemMatches).all()).toEqual(
       before.matches,
     );
   });
 
-  it("deleting a duplicate-only source leaves the canonical group intact", () => {
-    const f = canonicalGroup();
+  it("deleting a duplicate-only source leaves the canonical group intact", async () => {
+    const f = await canonicalGroup();
 
     expect(
-      deleteDiscoverySourcePreservingDuplicates(
+      await deleteDiscoverySourcePreservingDuplicates(
         f.db,
         f.workspaceId,
         "source-c",
       ),
     ).toBe(true);
     expect(
-      f.db
+      await f.db
         .select()
         .from(discoveredItems)
         .where(eq(discoveredItems.id, "canonical"))
         .get(),
     ).toBeDefined();
     expect(
-      f.db
+      (await f.db
         .select()
         .from(discoveredItems)
         .where(eq(discoveredItems.id, "survivor-oldest"))
-        .get()!.duplicateOfId,
+        .get())!.duplicateOfId,
     ).toBe("canonical");
   });
 
-  it("normally removes a canonical that has no surviving occurrence", () => {
-    const f = fixture();
-    f.item("only-item", "source-a");
+  it("normally removes a canonical that has no surviving occurrence", async () => {
+    const f = await fixture();
+    await f.item("only-item", "source-a");
 
     expect(
-      deleteDiscoverySourcePreservingDuplicates(
+      await deleteDiscoverySourcePreservingDuplicates(
         f.db,
         f.workspaceId,
         "source-a",
       ),
     ).toBe(true);
     expect(
-      f.db
+      await f.db
         .select()
         .from(discoveredItems)
         .where(eq(discoveredItems.id, "only-item"))
@@ -345,9 +345,9 @@ describe("discovery dedupe source deletion", () => {
 });
 
 describe("legacy dangling duplicate repair", () => {
-  it("promotes deterministically, clears scoring state, and is idempotent", () => {
-    const f = fixture();
-    f.item("dangling-oldest", "source-b", {
+  it("promotes deterministically, clears scoring state, and is idempotent", async () => {
+    const f = await fixture();
+    await f.item("dangling-oldest", "source-b", {
       duplicateOfId: "missing-canonical",
       status: "duplicate",
       score: 75,
@@ -361,7 +361,7 @@ describe("legacy dangling duplicate repair", () => {
       matchingError: "stale",
       createdAt: 20,
     });
-    f.item("dangling-newer", "source-c", {
+    await f.item("dangling-newer", "source-c", {
       duplicateOfId: "missing-canonical",
       status: "duplicate",
       matchingState: "failed",
@@ -371,15 +371,15 @@ describe("legacy dangling duplicate repair", () => {
       matchingError: "stale",
       createdAt: 30,
     });
-    dbMatches(f, "dangling-match", "dangling-newer", 50);
+    await dbMatches(f, "dangling-match", "dangling-newer", 50);
 
-    expect(repairDanglingDuplicateGroups(f.db)).toEqual({
+    expect(await repairDanglingDuplicateGroups(f.db)).toEqual({
       groups: 1,
       promoted: 1,
       repointed: 1,
     });
     expect(
-      f.db
+      await f.db
         .select()
         .from(discoveredItems)
         .where(eq(discoveredItems.id, "dangling-oldest"))
@@ -398,7 +398,7 @@ describe("legacy dangling duplicate repair", () => {
       duplicateOfId: null,
     });
     expect(
-      f.db
+      await f.db
         .select()
         .from(discoveredItems)
         .where(eq(discoveredItems.id, "dangling-newer"))
@@ -412,14 +412,14 @@ describe("legacy dangling duplicate repair", () => {
       matchingError: null,
       duplicateOfId: "dangling-oldest",
     });
-    expect(f.db.select().from(discoveredItemMatches).all()).toEqual([]);
+    expect(await f.db.select().from(discoveredItemMatches).all()).toEqual([]);
 
-    const stableRows = f.db.select().from(discoveredItems).all();
-    expect(repairDanglingDuplicateGroups(f.db)).toEqual({
+    const stableRows = await f.db.select().from(discoveredItems).all();
+    expect(await repairDanglingDuplicateGroups(f.db)).toEqual({
       groups: 0,
       promoted: 0,
       repointed: 0,
     });
-    expect(f.db.select().from(discoveredItems).all()).toEqual(stableRows);
+    expect(await f.db.select().from(discoveredItems).all()).toEqual(stableRows);
   });
 });

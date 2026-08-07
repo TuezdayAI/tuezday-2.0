@@ -30,8 +30,8 @@ import { getWorkspace } from "../services/workspaces";
 
 type Fetcher = typeof fetch;
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -45,12 +45,12 @@ export function registerCrmRoutes(
   fetcher: Fetcher,
 ): void {
   /** Resolve a connected, CRM-capable connection to its adapter, or reply with the error. */
-  function adapterOrReply(
+  async function adapterOrReply(
     workspaceId: string,
     connectionId: string,
     reply: FastifyReply,
-  ): { adapter: CrmAdapter; connection: Connection } | undefined {
-    const connection = getConnection(db, workspaceId, connectionId);
+  ): Promise<{ adapter: CrmAdapter; connection: Connection } | undefined> {
+    const connection = await getConnection(db, workspaceId, connectionId);
     if (!connection) {
       void reply.status(404).send({ error: "connection_not_found" });
       return undefined;
@@ -82,12 +82,12 @@ export function registerCrmRoutes(
   }
 
   /** A CRM-capable connection (any status) for filter config — no live adapter. */
-  function crmConnectionOrReply(
+  async function crmConnectionOrReply(
     workspaceId: string,
     connectionId: string,
     reply: FastifyReply,
-  ): { connection: Connection; provider: ConnectorProvider } | undefined {
-    const connection = getConnection(db, workspaceId, connectionId);
+  ): Promise<{ connection: Connection; provider: ConnectorProvider } | undefined> {
+    const connection = await getConnection(db, workspaceId, connectionId);
     if (!connection) {
       void reply.status(404).send({ error: "connection_not_found" });
       return undefined;
@@ -113,8 +113,8 @@ export function registerCrmRoutes(
   app.get<{ Params: { id: string }; Querystring: { discarded?: string } }>(
     "/workspaces/:id/crm/contacts",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      return listCrmContacts(db, request.params.id, {
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      return await listCrmContacts(db, request.params.id, {
         discarded: request.query.discarded === "true",
       });
     },
@@ -123,8 +123,8 @@ export function registerCrmRoutes(
   app.post<{ Params: { id: string; crmContactId: string } }>(
     "/workspaces/:id/crm/contacts/:crmContactId/discard",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      if (!discardCrmContact(db, request.params.id, request.params.crmContactId)) {
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await discardCrmContact(db, request.params.id, request.params.crmContactId)) {
         return reply.status(404).send({ error: "contact_not_found" });
       }
       return { ok: true };
@@ -134,8 +134,8 @@ export function registerCrmRoutes(
   app.post<{ Params: { id: string; crmContactId: string } }>(
     "/workspaces/:id/crm/contacts/:crmContactId/restore",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      if (!restoreCrmContact(db, request.params.id, request.params.crmContactId)) {
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await restoreCrmContact(db, request.params.id, request.params.crmContactId)) {
         return reply.status(404).send({ error: "contact_not_found" });
       }
       return { ok: true };
@@ -145,11 +145,11 @@ export function registerCrmRoutes(
   app.get<{ Params: { id: string }; Querystring: { connectionId?: string } }>(
     "/workspaces/:id/crm/views",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       if (!request.query.connectionId) {
         return reply.status(400).send({ error: "invalid_input", message: "connectionId is required." });
       }
-      const resolved = adapterOrReply(request.params.id, request.query.connectionId, reply);
+      const resolved = await adapterOrReply(request.params.id, request.query.connectionId, reply);
       if (!resolved) return reply;
       try {
         return await resolved.adapter.listViews();
@@ -162,18 +162,18 @@ export function registerCrmRoutes(
   app.get<{ Params: { id: string }; Querystring: { connectionId?: string } }>(
     "/workspaces/:id/crm/sync-filter",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       if (!request.query.connectionId) {
         return reply.status(400).send({ error: "invalid_input", message: "connectionId is required." });
       }
-      const resolved = crmConnectionOrReply(request.params.id, request.query.connectionId, reply);
+      const resolved = await crmConnectionOrReply(request.params.id, request.query.connectionId, reply);
       if (!resolved) return reply;
-      return getCrmSyncFilter(db, resolved.connection.id);
+      return await getCrmSyncFilter(db, resolved.connection.id);
     },
   );
 
   app.put<{ Params: { id: string } }>("/workspaces/:id/crm/sync-filter", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = crmSyncFilterInputSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({
@@ -181,13 +181,13 @@ export function registerCrmRoutes(
         message: parsed.error.issues.map((i) => i.message).join("; "),
       });
     }
-    const resolved = crmConnectionOrReply(request.params.id, parsed.data.connectionId, reply);
+    const resolved = await crmConnectionOrReply(request.params.id, parsed.data.connectionId, reply);
     if (!resolved) return reply;
-    return setCrmSyncFilter(db, request.params.id, resolved.connection.id, parsed.data.filter);
+    return await setCrmSyncFilter(db, request.params.id, resolved.connection.id, parsed.data.filter);
   });
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/crm/sync", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = crmSyncInputSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({
@@ -195,9 +195,9 @@ export function registerCrmRoutes(
         message: parsed.error.issues.map((i) => i.message).join("; "),
       });
     }
-    const resolved = adapterOrReply(request.params.id, parsed.data.connectionId, reply);
+    const resolved = await adapterOrReply(request.params.id, parsed.data.connectionId, reply);
     if (!resolved) return reply;
-    const filter = getCrmSyncFilter(db, resolved.connection.id);
+    const filter = await getCrmSyncFilter(db, resolved.connection.id);
     try {
       return await syncCrmContacts(
         db,
@@ -214,12 +214,12 @@ export function registerCrmRoutes(
   app.post<{ Params: { id: string; crmContactId: string } }>(
     "/workspaces/:id/crm/contacts/:crmContactId/import-lead",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const contact = getCrmContact(db, request.params.id, request.params.crmContactId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const contact = await getCrmContact(db, request.params.id, request.params.crmContactId);
       if (!contact) return reply.status(404).send({ error: "contact_not_found" });
-      const connection = getConnection(db, request.params.id, contact.connectionId);
+      const connection = await getConnection(db, request.params.id, contact.connectionId);
       const provider = connection ? providerByKey(connection.providerKey) : undefined;
-      const result = importCrmContactAsLead(
+      const result = await importCrmContactAsLead(
         db,
         request.params.id,
         contact,
@@ -234,7 +234,7 @@ export function registerCrmRoutes(
   );
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/crm/push-lead", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = pushLeadInputSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({
@@ -242,11 +242,11 @@ export function registerCrmRoutes(
         message: parsed.error.issues.map((i) => i.message).join("; "),
       });
     }
-    const resolved = adapterOrReply(request.params.id, parsed.data.connectionId, reply);
+    const resolved = await adapterOrReply(request.params.id, parsed.data.connectionId, reply);
     if (!resolved) return reply;
-    const lead = getLead(db, request.params.id, parsed.data.leadId);
+    const lead = await getLead(db, request.params.id, parsed.data.leadId);
     if (!lead) return reply.status(404).send({ error: "lead_not_found" });
-    if (getCrmContactByLead(db, request.params.id, lead.id, resolved.connection.id)) {
+    if (await getCrmContactByLead(db, request.params.id, lead.id, resolved.connection.id)) {
       return reply.status(409).send({
         error: "already_linked",
         message: `${lead.name} is already linked to a contact on this connection.`,
@@ -273,7 +273,7 @@ export function registerCrmRoutes(
   });
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/crm/log-draft", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = logDraftInputSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({
@@ -281,7 +281,7 @@ export function registerCrmRoutes(
         message: parsed.error.issues.map((i) => i.message).join("; "),
       });
     }
-    const draft = getDraft(db, request.params.id, parsed.data.draftId);
+    const draft = await getDraft(db, request.params.id, parsed.data.draftId);
     if (!draft) return reply.status(404).send({ error: "draft_not_found" });
     if (draft.state !== "approved") {
       return reply.status(400).send({
@@ -295,14 +295,14 @@ export function registerCrmRoutes(
         message: "This draft is not tied to a lead.",
       });
     }
-    const contact = getCrmContactByLead(db, request.params.id, draft.leadId);
+    const contact = await getCrmContactByLead(db, request.params.id, draft.leadId);
     if (!contact) {
       return reply.status(400).send({
         error: "lead_not_linked",
         message: "This lead is not linked to a CRM contact yet — push the lead first.",
       });
     }
-    const resolved = adapterOrReply(request.params.id, contact.connectionId, reply);
+    const resolved = await adapterOrReply(request.params.id, contact.connectionId, reply);
     if (!resolved) return reply;
     try {
       await resolved.adapter.createNote(

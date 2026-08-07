@@ -31,10 +31,10 @@ export interface SelectiveContextInputs {
  * workspace's merged task matrix and the per-doc outlines. One helper so no
  * call site can drift to a different selection policy.
  */
-export function selectiveContextInputs(db: Db, workspaceId: string): SelectiveContextInputs {
+export async function selectiveContextInputs(db: Db, workspaceId: string): Promise<SelectiveContextInputs> {
   return {
-    matrix: resolveTaskDocMatrix(db, workspaceId),
-    outlines: getBrainOutlines(db, workspaceId),
+    matrix: await resolveTaskDocMatrix(db, workspaceId),
+    outlines: await getBrainOutlines(db, workspaceId),
   };
 }
 
@@ -53,13 +53,13 @@ export function selectiveContextInputs(db: Db, workspaceId: string): SelectiveCo
  * `CampaignPlanRevision` is a structural superset of `ResolveCampaignPlan`,
  * so the revision passes straight through with no mapping layer.
  */
-export function campaignPlanInput(
+export async function campaignPlanInput(
   db: Db,
   workspaceId: string,
   campaignId: string | null | undefined,
-): ResolveCampaignPlan | undefined {
+): Promise<ResolveCampaignPlan | undefined> {
   if (!campaignId) return undefined;
-  return getCurrentCampaignPlan(db, workspaceId, campaignId)?.plan;
+  return (await getCurrentCampaignPlan(db, workspaceId, campaignId))?.plan;
 }
 
 /**
@@ -76,14 +76,14 @@ export function campaignPlanInput(
  * no revision number, so it renders as "Campaign plan" rather than claiming to
  * be an activated revision N.
  */
-export function campaignPlanPreviewInput(
+export async function campaignPlanPreviewInput(
   db: Db,
   workspaceId: string,
   campaignId: string | null | undefined,
   draft: CreateCampaignPlanRevisionInput | undefined,
-): ResolveCampaignPlan | undefined {
+): Promise<ResolveCampaignPlan | undefined> {
   if (!campaignId) return undefined;
-  if (!draft) return campaignPlanInput(db, workspaceId, campaignId);
+  if (!draft) return await campaignPlanInput(db, workspaceId, campaignId);
   return {
     objective: draft.objective,
     kpi: draft.kpi,
@@ -115,12 +115,12 @@ export interface CampaignResolveInputs {
   campaignPlan: ResolveCampaignPlan | undefined;
 }
 
-export function campaignResolveInputs(
+export async function campaignResolveInputs(
   db: Db,
   workspaceId: string,
   campaign: Campaign | null | undefined,
-): CampaignResolveInputs {
-  const campaignPlan = campaignPlanInput(db, workspaceId, campaign?.id);
+): Promise<CampaignResolveInputs> {
+  const campaignPlan = await campaignPlanInput(db, workspaceId, campaign?.id);
   return {
     campaign: campaign ? composeResolveCampaign(campaign, campaignPlan) : undefined,
     campaignPlan,
@@ -144,12 +144,12 @@ export interface PriorExampleInputs {
   examplesExclusionReason: string | undefined;
 }
 
-export function priorExampleInputs(
+export async function priorExampleInputs(
   db: Db,
   workspaceId: string,
   input: { query: string; channel?: Channel; taskType?: TaskType },
-): PriorExampleInputs {
-  const examples = retrievePriorExamples(db, workspaceId, input) ?? undefined;
+): Promise<PriorExampleInputs> {
+  const examples = await retrievePriorExamples(db, workspaceId, input) ?? undefined;
   return {
     examples,
     examplesExclusionReason: examples
@@ -173,12 +173,12 @@ export interface PreferenceRuleInputs {
   preferencesExclusionReason: string | undefined;
 }
 
-export function preferenceRuleInputs(
+export async function preferenceRuleInputs(
   db: Db,
   workspaceId: string,
   input: { channel?: Channel; taskType?: TaskType },
-): PreferenceRuleInputs {
-  const preferences = retrievePreferenceRules(db, workspaceId, input) ?? undefined;
+): Promise<PreferenceRuleInputs> {
+  const preferences = await retrievePreferenceRules(db, workspaceId, input) ?? undefined;
   return {
     preferences,
     preferencesExclusionReason: preferences
@@ -187,13 +187,13 @@ export function preferenceRuleInputs(
   };
 }
 
-export function campaignResolvePreviewInputs(
+export async function campaignResolvePreviewInputs(
   db: Db,
   workspaceId: string,
   campaign: Campaign | null | undefined,
   draft: CreateCampaignPlanRevisionInput | undefined,
-): CampaignResolveInputs {
-  const campaignPlan = campaignPlanPreviewInput(db, workspaceId, campaign?.id, draft);
+): Promise<CampaignResolveInputs> {
+  const campaignPlan = await campaignPlanPreviewInput(db, workspaceId, campaign?.id, draft);
   return {
     campaign: campaign ? composeResolveCampaign(campaign, campaignPlan) : undefined,
     campaignPlan,

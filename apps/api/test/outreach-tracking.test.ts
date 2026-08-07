@@ -220,10 +220,10 @@ describe("outreach tracking, funnel & outcomes (Sprint 50)", () => {
     await app.close();
   });
 
-  function seedMailboxConnection(): string {
+  async function seedMailboxConnection(): Promise<string> {
     const id = randomUUID();
     const now = Date.now();
-    db.insert(connections).values({
+    await db.insert(connections).values({
       id,
       workspaceId,
       providerKey: "gmail",
@@ -239,7 +239,7 @@ describe("outreach tracking, funnel & outcomes (Sprint 50)", () => {
   }
 
   async function createMailbox(): Promise<string> {
-    const connectionId = seedMailboxConnection();
+    const connectionId = await seedMailboxConnection();
     const res = await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/mailboxes`, payload: { connectionId } });
     expect(res.statusCode).toBe(201);
     return res.json().id as string;
@@ -267,8 +267,8 @@ describe("outreach tracking, funnel & outcomes (Sprint 50)", () => {
     return audienceId;
   }
 
-  function allowRecipient(email: string): void {
-    db.insert(emailRecipientPermissions).values({
+  async function allowRecipient(email: string): Promise<void> {
+    await db.insert(emailRecipientPermissions).values({
       id: randomUUID(),
       workspaceId,
       normalizedEmail: email.toLowerCase(),
@@ -312,13 +312,13 @@ describe("outreach tracking, funnel & outcomes (Sprint 50)", () => {
   async function sendOneStep(track: { trackOpens: boolean; trackClicks: boolean }): Promise<{ seqId: string; deliveryId: string; enrollmentId: string }> {
     const mailboxId = await createMailbox();
     const leadId = await createLead("a@acme.io");
-    allowRecipient("a@acme.io");
+    await allowRecipient("a@acme.io");
     const seqId = await makeSequence({ audienceId: await staticAudience([leadId]), mailboxIds: [mailboxId], ...track });
     const run = await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/outreach/run` });
     expect(run.statusCode).toBe(200);
     expect(gmail.sendEmail).toHaveBeenCalledTimes(1);
-    const delivery = db.select().from(emailDeliveries).where(eq(emailDeliveries.origin, "outreach_step")).get()!;
-    const enrollment = db.select().from(outreachEnrollments).where(eq(outreachEnrollments.sequenceId, seqId)).get()!;
+    const delivery = (await db.select().from(emailDeliveries).where(eq(emailDeliveries.origin, "outreach_step")).get())!;
+    const enrollment = (await db.select().from(outreachEnrollments).where(eq(outreachEnrollments.sequenceId, seqId)).get())!;
     return { seqId, deliveryId: delivery.id, enrollmentId: enrollment.id };
   }
 
@@ -347,10 +347,10 @@ describe("outreach tracking, funnel & outcomes (Sprint 50)", () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers["content-type"]).toBe("image/gif");
     expect(res.headers["cache-control"]).toBe("no-store");
-    const delivery = db.select().from(emailDeliveries).where(eq(emailDeliveries.id, deliveryId)).get()!;
+    const delivery = (await db.select().from(emailDeliveries).where(eq(emailDeliveries.id, deliveryId)).get())!;
     expect(delivery.openCount).toBe(1);
     expect(delivery.openedAt).toBeTruthy();
-    const events = db.select().from(outreachTrackingEvents).where(eq(outreachTrackingEvents.emailDeliveryId, deliveryId)).all();
+    const events = await db.select().from(outreachTrackingEvents).where(eq(outreachTrackingEvents.emailDeliveryId, deliveryId)).all();
     expect(events).toHaveLength(1);
     expect(events[0]!.type).toBe("open");
   });
@@ -361,10 +361,10 @@ describe("outreach tracking, funnel & outcomes (Sprint 50)", () => {
     const res = await app.inject({ method: "GET", url: `/t/c/${token}` });
     expect(res.statusCode).toBe(302);
     expect(res.headers.location).toBe(LINK);
-    const delivery = db.select().from(emailDeliveries).where(eq(emailDeliveries.id, deliveryId)).get()!;
+    const delivery = (await db.select().from(emailDeliveries).where(eq(emailDeliveries.id, deliveryId)).get())!;
     expect(delivery.clickCount).toBe(1);
     expect(delivery.firstClickAt).toBeTruthy();
-    const events = db.select().from(outreachTrackingEvents).where(eq(outreachTrackingEvents.type, "click")).all();
+    const events = await db.select().from(outreachTrackingEvents).where(eq(outreachTrackingEvents.type, "click")).all();
     expect(events).toHaveLength(1);
     expect(events[0]!.targetUrl).toBe(LINK);
   });
@@ -378,10 +378,10 @@ describe("outreach tracking, funnel & outcomes (Sprint 50)", () => {
     // A garbage token records nothing.
     const bad = await app.inject({ method: "GET", url: `/t/o/not-a-real-token` });
     expect(bad.statusCode).toBe(400);
-    const delivery = db.select().from(emailDeliveries).where(eq(emailDeliveries.id, deliveryId)).get()!;
+    const delivery = (await db.select().from(emailDeliveries).where(eq(emailDeliveries.id, deliveryId)).get())!;
     expect(delivery.openCount).toBe(0);
     expect(delivery.clickCount).toBe(0);
-    expect(db.select().from(outreachTrackingEvents).all()).toHaveLength(0);
+    expect(await db.select().from(outreachTrackingEvents).all()).toHaveLength(0);
   });
 
   it("assembles the funnel: sent/opened/clicked/replied/positive + manual outcome", async () => {
@@ -392,10 +392,10 @@ describe("outreach tracking, funnel & outcomes (Sprint 50)", () => {
     await app.inject({ method: "GET", url: `/t/c/${createClickToken(workspaceId, deliveryId, LINK)}` });
 
     // Seed a positive email reply on the delivery.
-    db.insert(inboxItems).values({
+    await db.insert(inboxItems).values({
       id: randomUUID(),
       workspaceId,
-      connectionId: seedMailboxConnection(),
+      connectionId: await seedMailboxConnection(),
       providerKey: "gmail",
       kind: "email",
       channel: "email",

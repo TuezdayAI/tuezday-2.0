@@ -68,10 +68,10 @@ describe("RedditAdapter.readSocialProfile", () => {
   });
 
   it("throws when /api/v1/me fails", async () => {
-    await expect(adapter(fabric({ failMe: true })).readSocialProfile()).rejects.toThrow();
+    await expect(await adapter(fabric({ failMe: true })).readSocialProfile()).rejects.toThrow();
   });
 
   it("throws when the submissions listing fails", async () => {
-    await expect(adapter(fabric({ failPosts: true })).readSocialProfile()).rejects.toThrow();
+    await expect(await adapter(fabric({ failPosts: true })).readSocialProfile()).rejects.toThrow();
   });
 });

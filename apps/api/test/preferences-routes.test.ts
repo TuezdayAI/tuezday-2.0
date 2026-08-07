@@ -206,9 +206,9 @@ describe("preferences API (Sprint 68)", () => {
         url: `/workspaces/${workspaceId}/generations/${generationId}/submit`,
       })
     ).json().id;
-    applyDraftAction(
+    await applyDraftAction(
       db,
-      getDraft(db, workspaceId, draftId)!,
+      (await getDraft(db, workspaceId, draftId))!,
       "edit",
       { userId: null, label: "system", human: false },
       "A machine rewrite that nobody asked for and nothing should learn from.",

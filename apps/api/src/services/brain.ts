@@ -47,8 +47,8 @@ function rowToDoc(row: typeof brainDocuments.$inferSelect): BrainDocument {
  * workspace creation and again on read so workspaces that predate this
  * sprint pick up their docs lazily.
  */
-export function ensureBrainDocs(db: Db, workspaceId: string): void {
-  const existing = db
+export async function ensureBrainDocs(db: Db, workspaceId: string): Promise<void> {
+  const existing = await db
     .select({ docType: brainDocuments.docType })
     .from(brainDocuments)
     .where(eq(brainDocuments.workspaceId, workspaceId))
@@ -57,7 +57,7 @@ export function ensureBrainDocs(db: Db, workspaceId: string): void {
   const now = Date.now();
   for (const docType of BRAIN_DOC_TYPES) {
     if (!have.has(docType)) {
-      db.insert(brainDocuments)
+      await db.insert(brainDocuments)
         .values({ id: randomUUID(), workspaceId, docType, content: "", createdAt: now, updatedAt: now })
         .run();
     }
@@ -69,13 +69,13 @@ export interface BrainView {
   completeness: BrainScore;
 }
 
-export function getBrain(db: Db, workspaceId: string): BrainView {
-  ensureBrainDocs(db, workspaceId);
-  const docs = db
+export async function getBrain(db: Db, workspaceId: string): Promise<BrainView> {
+  await ensureBrainDocs(db, workspaceId);
+  const docs = (await db
     .select()
     .from(brainDocuments)
     .where(eq(brainDocuments.workspaceId, workspaceId))
-    .all()
+    .all())
     .map(rowToDoc)
     .sort((a, b) => CANONICAL_ORDER.get(a.docType)! - CANONICAL_ORDER.get(b.docType)!);
 
@@ -88,19 +88,19 @@ export interface BrainActor {
   label: string;
 }
 
-export function updateBrainDoc(
+export async function updateBrainDoc(
   db: Db,
   workspaceId: string,
   docType: BrainDocType,
   content: string,
   actor: BrainActor | null = null,
-): BrainDocument {
-  ensureBrainDocs(db, workspaceId);
-  const doc = db
+): Promise<BrainDocument> {
+  await ensureBrainDocs(db, workspaceId);
+  const doc = (await db
     .select()
     .from(brainDocuments)
     .where(and(eq(brainDocuments.workspaceId, workspaceId), eq(brainDocuments.docType, docType)))
-    .get()!;
+    .get())!;
 
   const now = Date.now();
   // Sprint 43: every save recomputes the doc's outline. The synchronous write
@@ -108,18 +108,18 @@ export function updateBrainDoc(
   // upgrades them via the LLM afterwards, best-effort.
   const outline = buildFallbackOutline(content, now);
   const outlineJson = outline ? JSON.stringify(outline) : null;
-  db.update(brainDocuments)
+  await db.update(brainDocuments)
     .set({ content, outlineJson, updatedAt: now })
     .where(eq(brainDocuments.id, doc.id))
     .run();
 
-  const latest = db
+  const latest = await db
     .select({ version: brainDocumentVersions.version })
     .from(brainDocumentVersions)
     .where(eq(brainDocumentVersions.documentId, doc.id))
     .orderBy(desc(brainDocumentVersions.version))
     .get();
-  db.insert(brainDocumentVersions)
+  await db.insert(brainDocumentVersions)
     .values({
       id: randomUUID(),
       documentId: doc.id,
@@ -179,11 +179,11 @@ export async function enrichOutlineSummaries(
   workspaceId: string,
   docType: BrainDocType,
 ): Promise<BrainDocument> {
-  const row = db
+  const row = (await db
     .select()
     .from(brainDocuments)
     .where(and(eq(brainDocuments.workspaceId, workspaceId), eq(brainDocuments.docType, docType)))
-    .get()!;
+    .get())!;
   const doc = rowToDoc(row);
   if (!doc.content.trim() || !doc.outline) return doc;
 
@@ -220,7 +220,7 @@ export async function enrichOutlineSummaries(
       };
     }),
   };
-  db.update(brainDocuments)
+  await db.update(brainDocuments)
     .set({ outlineJson: JSON.stringify(outline) })
     .where(eq(brainDocuments.id, row.id))
     .run();
@@ -232,11 +232,11 @@ export async function enrichOutlineSummaries(
  * fallback derived on the fly (docs saved before Sprint 43 have no stored
  * outline — no backfill, no write-on-read).
  */
-export function getBrainOutlines(
+export async function getBrainOutlines(
   db: Db,
   workspaceId: string,
-): Partial<Record<BrainDocType, DocOutline>> {
-  const { docs } = getBrain(db, workspaceId);
+): Promise<Partial<Record<BrainDocType, DocOutline>>> {
+  const { docs } = await getBrain(db, workspaceId);
   const outlines: Partial<Record<BrainDocType, DocOutline>> = {};
   for (const doc of docs) {
     if (!doc.content.trim()) continue;
@@ -245,19 +245,19 @@ export function getBrainOutlines(
   return outlines;
 }
 
-export function listDocVersions(
+export async function listDocVersions(
   db: Db,
   workspaceId: string,
   docType: BrainDocType,
-): BrainDocVersion[] {
-  ensureBrainDocs(db, workspaceId);
-  const doc = db
+): Promise<BrainDocVersion[]> {
+  await ensureBrainDocs(db, workspaceId);
+  const doc = (await db
     .select({ id: brainDocuments.id })
     .from(brainDocuments)
     .where(and(eq(brainDocuments.workspaceId, workspaceId), eq(brainDocuments.docType, docType)))
-    .get()!;
+    .get())!;
 
-  return db
+  return await db
     .select()
     .from(brainDocumentVersions)
     .where(eq(brainDocumentVersions.documentId, doc.id))
@@ -265,8 +265,8 @@ export function listDocVersions(
     .all();
 }
 
-export function exportBrainMarkdown(db: Db, workspaceId: string, workspaceName: string): string {
-  const { docs } = getBrain(db, workspaceId);
+export async function exportBrainMarkdown(db: Db, workspaceId: string, workspaceName: string): Promise<string> {
+  const { docs } = await getBrain(db, workspaceId);
   const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
   return renderBrainMarkdown(workspaceName, contents);
 }

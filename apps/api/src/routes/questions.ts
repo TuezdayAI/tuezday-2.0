@@ -24,8 +24,8 @@ import {
 } from "../services/pipeline-engine";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) void reply.status(404).send({ error: "workspace_not_found" });
   return workspace;
 }
@@ -67,21 +67,21 @@ export function registerQuestionRoutes(
   app.get<{ Params: { id: string }; Querystring: Record<string, unknown> }>(
     "/workspaces/:id/agent-inbox",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = feedQuerySchema.safeParse(request.query);
       if (!parsed.success) return invalidInput(reply, parsed.error.issues);
-      return buildAgentInboxFeed(db, request.params.id, { limit: parsed.data.limit });
+      return await buildAgentInboxFeed(db, request.params.id, { limit: parsed.data.limit });
     },
   );
 
   app.get<{ Params: { id: string }; Querystring: Record<string, unknown> }>(
     "/workspaces/:id/questions",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = listQuerySchema.safeParse(request.query);
       if (!parsed.success) return invalidInput(reply, parsed.error.issues);
       return {
-        questions: listAgentQuestions(db, request.params.id, {
+        questions: await listAgentQuestions(db, request.params.id, {
           status: parsed.data.status as AgentQuestionStatus | undefined,
           limit: parsed.data.limit,
         }),
@@ -92,7 +92,7 @@ export function registerQuestionRoutes(
   app.post<{ Params: { id: string; questionId: string }; Body: unknown }>(
     "/workspaces/:id/questions/:questionId/answer",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = answerAgentQuestionInputSchema.safeParse(request.body ?? {});
       if (!parsed.success) return invalidInput(reply, parsed.error.issues);
 
@@ -108,7 +108,7 @@ export function registerQuestionRoutes(
 
       let outcome;
       try {
-        outcome = answerAgentQuestion(
+        outcome = await answerAgentQuestion(
           db,
           request.params.id,
           request.params.questionId,

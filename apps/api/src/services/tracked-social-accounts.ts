@@ -62,13 +62,13 @@ function rowToAccount(row: TrackedSocialAccountRow): TrackedSocialAccount {
   return { ...row, platform: row.platform as TrackedSocialPlatform };
 }
 
-function findByHandle(
+async function findByHandle(
   db: Db,
   workspaceId: string,
   platform: string,
   handle: string,
-): TrackedSocialAccountRow | undefined {
-  return db
+): Promise<TrackedSocialAccountRow | undefined> {
+  return await db
     .select()
     .from(trackedSocialAccounts)
     .where(
@@ -102,26 +102,26 @@ function trackedAccountIds(configJson: string): string[] {
   }
 }
 
-function invalidateSourcesForTrackedAccount(
+async function invalidateSourcesForTrackedAccount(
   db: Db,
   workspaceId: string,
   accountId: string,
-): void {
-  const affectedSourceIds = db
+): Promise<void> {
+  const affectedSourceIds = (await db
     .select({
       id: discoverySources.id,
       configJson: discoverySources.configJson,
     })
     .from(discoverySources)
     .where(eq(discoverySources.workspaceId, workspaceId))
-    .all()
+    .all())
     .filter((source) =>
       trackedAccountIds(source.configJson).includes(accountId),
     )
     .map((source) => source.id);
   if (affectedSourceIds.length === 0) return;
 
-  db.update(discoverySources)
+  await db.update(discoverySources)
     .set({
       executionVersion: sql`
         ${discoverySources.executionVersion} + 1
@@ -134,7 +134,7 @@ function invalidateSourcesForTrackedAccount(
       ),
     )
     .run();
-  db.update(discoveryJobs)
+  await db.update(discoveryJobs)
     .set({
       status: "skipped",
       finishedAt: Date.now(),
@@ -154,14 +154,14 @@ function invalidateSourcesForTrackedAccount(
     .run();
 }
 
-export function createTrackedSocialAccount(
+export async function createTrackedSocialAccount(
   db: Db,
   workspaceId: string,
   input: CreateTrackedSocialAccountInput,
-): TrackedSocialAccount {
+): Promise<TrackedSocialAccount> {
   const handle = normalizeTrackedHandle(input.platform, input.handle);
   if (!handle) throw new InvalidTrackedHandleError(input.handle);
-  if (findByHandle(db, workspaceId, input.platform, handle)) {
+  if (await findByHandle(db, workspaceId, input.platform, handle)) {
     throw new DuplicateTrackedAccountError(input.platform, handle);
   }
   const now = Date.now();
@@ -180,26 +180,26 @@ export function createTrackedSocialAccount(
     createdAt: now,
     updatedAt: now,
   };
-  db.insert(trackedSocialAccounts).values(row).run();
+  await db.insert(trackedSocialAccounts).values(row).run();
   return rowToAccount(row);
 }
 
-export function listTrackedSocialAccounts(db: Db, workspaceId: string): TrackedSocialAccount[] {
-  return db
+export async function listTrackedSocialAccounts(db: Db, workspaceId: string): Promise<TrackedSocialAccount[]> {
+  return (await db
     .select()
     .from(trackedSocialAccounts)
     .where(eq(trackedSocialAccounts.workspaceId, workspaceId))
     .orderBy(desc(trackedSocialAccounts.createdAt))
-    .all()
+    .all())
     .map(rowToAccount);
 }
 
-export function getTrackedSocialAccount(
+export async function getTrackedSocialAccount(
   db: Db,
   workspaceId: string,
   accountId: string,
-): TrackedSocialAccount | undefined {
-  const row = db
+): Promise<TrackedSocialAccount | undefined> {
+  const row = await db
     .select()
     .from(trackedSocialAccounts)
     .where(
@@ -212,20 +212,20 @@ export function getTrackedSocialAccount(
   return row ? rowToAccount(row) : undefined;
 }
 
-export function updateTrackedSocialAccount(
+export async function updateTrackedSocialAccount(
   db: Db,
   workspaceId: string,
   accountId: string,
   input: UpdateTrackedSocialAccountInput,
-): TrackedSocialAccount | undefined {
-  const existing = getTrackedSocialAccount(db, workspaceId, accountId);
+): Promise<TrackedSocialAccount | undefined> {
+  const existing = await getTrackedSocialAccount(db, workspaceId, accountId);
   if (!existing) return undefined;
 
   let handle = existing.handle;
   if (input.handle !== undefined) {
     handle = normalizeTrackedHandle(existing.platform, input.handle);
     if (!handle) throw new InvalidTrackedHandleError(input.handle);
-    const clash = db
+    const clash = await db
       .select({ id: trackedSocialAccounts.id })
       .from(trackedSocialAccounts)
       .where(
@@ -244,8 +244,8 @@ export function updateTrackedSocialAccount(
   const handleChanged = handle !== existing.handle;
   const executionChanged =
     handleChanged || nextEnabled !== existing.enabled;
-  return db.transaction((tx) => {
-    tx.update(trackedSocialAccounts)
+  return await db.transaction(async (tx) => {
+    await tx.update(trackedSocialAccounts)
       .set({
         handle,
         displayName:
@@ -270,13 +270,13 @@ export function updateTrackedSocialAccount(
       )
       .run();
     if (executionChanged) {
-      invalidateSourcesForTrackedAccount(
+      await invalidateSourcesForTrackedAccount(
         tx as unknown as Db,
         workspaceId,
         accountId,
       );
     }
-    return getTrackedSocialAccount(
+    return await getTrackedSocialAccount(
       tx as unknown as Db,
       workspaceId,
       accountId,
@@ -284,19 +284,19 @@ export function updateTrackedSocialAccount(
   });
 }
 
-export function deleteTrackedSocialAccount(
+export async function deleteTrackedSocialAccount(
   db: Db,
   workspaceId: string,
   accountId: string,
-): boolean {
-  if (!getTrackedSocialAccount(db, workspaceId, accountId)) return false;
-  db.transaction((tx) => {
-    invalidateSourcesForTrackedAccount(
+): Promise<boolean> {
+  if (!await getTrackedSocialAccount(db, workspaceId, accountId)) return false;
+  await db.transaction(async (tx) => {
+    await invalidateSourcesForTrackedAccount(
       tx as unknown as Db,
       workspaceId,
       accountId,
     );
-    tx
+    await tx
       .delete(trackedSocialAccounts)
       .where(
         and(
@@ -313,13 +313,13 @@ export function deleteTrackedSocialAccount(
  * The enabled tracked accounts a source config references — what a connected
  * discovery fetch actually listens to. Unknown/deleted ids are dropped.
  */
-export function resolveTrackedAccounts(
+export async function resolveTrackedAccounts(
   db: DbExecutor,
   workspaceId: string,
   ids: string[],
-): TrackedSocialAccount[] {
+): Promise<TrackedSocialAccount[]> {
   if (ids.length === 0) return [];
-  return db
+  return (await db
     .select()
     .from(trackedSocialAccounts)
     .where(
@@ -329,7 +329,7 @@ export function resolveTrackedAccounts(
         inArray(trackedSocialAccounts.id, ids),
       ),
     )
-    .all()
+    .all())
     .map(rowToAccount);
 }
 
@@ -337,13 +337,13 @@ export function resolveTrackedAccounts(
  * Resolve every requested enabled account inside one workspace. Missing,
  * disabled, and foreign ids are deliberately indistinguishable.
  */
-export function requireTrackedAccounts(
+export async function requireTrackedAccounts(
   db: DbExecutor,
   workspaceId: string,
   ids: readonly string[],
-): TrackedSocialAccount[] {
+): Promise<TrackedSocialAccount[]> {
   const uniqueIds = [...new Set(ids)];
-  const accounts = resolveTrackedAccounts(db, workspaceId, uniqueIds);
+  const accounts = await resolveTrackedAccounts(db, workspaceId, uniqueIds);
   if (accounts.length !== uniqueIds.length) {
     throw new DiscoveryReferenceNotFoundError();
   }

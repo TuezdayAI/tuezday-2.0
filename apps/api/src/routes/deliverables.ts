@@ -27,8 +27,8 @@ import {
 import { DEFAULT_DISCOVERY_POLICY } from "../runtime/operator-policy";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -53,7 +53,7 @@ export function registerDeliverableRoutes(
       offset?: string;
     };
   }>("/workspaces/:id/deliverables", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const { status, campaignId, laneId, limit, offset } = request.query;
     if (
       status !== undefined &&
@@ -79,7 +79,7 @@ export function registerDeliverableRoutes(
           "limit must be a positive integer and offset a non-negative integer",
       });
     }
-    return listDeliverables(db, request.params.id, {
+    return await listDeliverables(db, request.params.id, {
       status: status as DeliverableProductionStatus | undefined,
       campaignId,
       laneId,
@@ -91,9 +91,9 @@ export function registerDeliverableRoutes(
   app.get<{ Params: { id: string; deliverableId: string } }>(
     "/workspaces/:id/deliverables/:deliverableId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       try {
-        return getDeliverableDetail(
+        return await getDeliverableDetail(
           db,
           request.params.id,
           request.params.deliverableId,
@@ -111,9 +111,9 @@ export function registerDeliverableRoutes(
   app.get<{ Params: { id: string; deliverableId: string; variantId: string } }>(
     "/workspaces/:id/deliverables/:deliverableId/variants/:variantId/snapshot",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       try {
-        return getVariantSnapshot(
+        return await getVariantSnapshot(
           db,
           request.params.id,
           request.params.deliverableId,
@@ -135,9 +135,9 @@ export function registerDeliverableRoutes(
   app.post<{ Params: { id: string; packageId: string } }>(
     "/workspaces/:id/packages/:packageId/fan-out",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       try {
-        return fanOutPackage(db, request.params.id, request.params.packageId, {
+        return await fanOutPackage(db, request.params.id, request.params.packageId, {
           userId: actorOf(request).userId,
         });
       } catch (err) {
@@ -159,9 +159,9 @@ export function registerDeliverableRoutes(
   app.post<{ Params: { id: string; deliverableId: string } }>(
     "/workspaces/:id/deliverables/:deliverableId/generate",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       try {
-        getDeliverableDetail(db, request.params.id, request.params.deliverableId);
+        await getDeliverableDetail(db, request.params.id, request.params.deliverableId);
       } catch (err) {
         if (err instanceof DeliverableNotFoundError) {
           return reply.status(404).send({ error: "deliverable_not_found" });
@@ -179,7 +179,7 @@ export function registerDeliverableRoutes(
       if (generated.claimed === 0) {
         return reply.status(409).send({ error: "not_due" });
       }
-      return getDeliverableDetail(
+      return await getDeliverableDetail(
         db,
         request.params.id,
         request.params.deliverableId,
@@ -190,7 +190,7 @@ export function registerDeliverableRoutes(
   app.post<{ Params: { id: string; deliverableId: string } }>(
     "/workspaces/:id/deliverables/:deliverableId/decision",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = deliverableDecisionInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -199,7 +199,7 @@ export function registerDeliverableRoutes(
         });
       }
       try {
-        return decideDeliverable(
+        return await decideDeliverable(
           db,
           request.params.id,
           request.params.deliverableId,
@@ -233,8 +233,8 @@ export function registerDeliverableRoutes(
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/deliverables/run",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      return runDeliverablePipeline(db, llm, {
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      return await runDeliverablePipeline(db, llm, {
         workspaceId: request.params.id,
         limit: DEFAULT_DISCOVERY_POLICY.maxDeliverablesPerTick,
         leaseMs: DEFAULT_DISCOVERY_POLICY.leaseMs,

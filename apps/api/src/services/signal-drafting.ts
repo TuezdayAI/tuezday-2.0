@@ -101,16 +101,16 @@ export async function generateSignalDraft(
     opts.useEvidence ?? true,
   );
 
-  const { docs } = getBrain(db, workspace.id);
+  const { docs } = await getBrain(db, workspace.id);
   const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
-  const channelGuidance = resolveChannelGuidance(db, workspace.id, opts.channel, {
+  const channelGuidance = await resolveChannelGuidance(db, workspace.id, opts.channel, {
     personaId: opts.persona?.id ?? null,
     campaignId: opts.campaign?.id ?? null,
   });
   const personaInput = opts.persona ? toResolvePersona(opts.persona) : undefined;
-  const campaignInputs = campaignResolveInputs(db, workspace.id, opts.campaign);
-  const selective = selectiveContextInputs(db, workspace.id);
-  const preferences = preferenceRuleInputs(db, workspace.id, {
+  const campaignInputs = await campaignResolveInputs(db, workspace.id, opts.campaign);
+  const selective = await selectiveContextInputs(db, workspace.id);
+  const preferences = await preferenceRuleInputs(db, workspace.id, {
     channel: opts.channel,
     taskType: "signal_response",
   });
@@ -126,7 +126,7 @@ export async function generateSignalDraft(
     },
     persona: personaInput,
     ...campaignInputs,
-    account: resolveDraftAccount(db, workspace.id, {
+    account: await resolveDraftAccount(db, workspace.id, {
       personaId: opts.persona?.id,
       channel: opts.channel,
     }),
@@ -136,7 +136,7 @@ export async function generateSignalDraft(
     evidenceExclusionReason: evidenceResolution.exclusionReason,
     // Sprint 66: few-shot from approval history — a traced section, so the
     // "why this" panel can show exactly which prior examples shaped the draft.
-    ...priorExampleInputs(db, workspace.id, {
+    ...await priorExampleInputs(db, workspace.id, {
       query: signal.content,
       channel: opts.channel,
       taskType: "signal_response",
@@ -152,7 +152,7 @@ export async function generateSignalDraft(
     pipeline: "signal_draft",
     campaignId: opts.campaign?.id ?? null,
   }).generate({ prompt: resolved.prompt });
-  const generation = storeGeneration(db, {
+  const generation = await storeGeneration(db, {
     workspaceId: workspace.id,
     taskType: "signal_response",
     channel: opts.channel,
@@ -166,9 +166,9 @@ export async function generateSignalDraft(
   });
   // Sprint 68 (D-68.6): the hit count moves here — after a real generation —
   // and nowhere else. Promotion and retirement both read it.
-  recordRuleApplications(db, (preferences.preferences?.rules ?? []).map((rule) => rule.id));
+  await recordRuleApplications(db, (preferences.preferences?.rules ?? []).map((rule) => rule.id));
 
-  const settings = getGenerationSettings(db, workspace.id);
+  const settings = await getGenerationSettings(db, workspace.id);
   if (settings.reviewEnabled) {
     const review = await runPreReview(
       meteredLlm(llm, db, {
@@ -189,7 +189,7 @@ export async function generateSignalDraft(
       result.text,
       settings.flagThreshold,
     );
-    setGenerationReview(db, workspace.id, generation.id, review);
+    await setGenerationReview(db, workspace.id, generation.id, review);
   }
 
   const input = {
@@ -203,7 +203,7 @@ export async function generateSignalDraft(
     content: result.text,
   };
   return opts.automation
-    ? submitAutomaticDraft(
+    ? await submitAutomaticDraft(
         db,
         {
           ...input,
@@ -212,5 +212,5 @@ export async function generateSignalDraft(
         },
         actor,
       )
-    : submitDraft(db, input, actor);
+    : await submitDraft(db, input, actor);
 }

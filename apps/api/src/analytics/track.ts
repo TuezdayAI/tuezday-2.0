@@ -9,9 +9,9 @@ import type { AnalyticsEventInput, AnalyticsSink } from "./sink";
  * fire-and-forget sink. Wrapped so neither the lookup nor the sink can break a
  * request.
  */
-export function track(db: Db, sink: AnalyticsSink, input: AnalyticsEventInput): void {
+export async function track(db: Db, sink: AnalyticsSink, input: AnalyticsEventInput): Promise<void> {
   try {
-    if (input.workspaceId && getAnalyticsOptOut(db, input.workspaceId)) return;
+    if (input.workspaceId && await getAnalyticsOptOut(db, input.workspaceId)) return;
     sink.capture(input);
   } catch {
     /* analytics is best-effort */

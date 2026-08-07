@@ -74,7 +74,7 @@ describe("Sprint 66 — grounded critic & retrieval few-shot", () => {
   }
 
   async function act(draftId: string, action: string, payload?: Record<string, unknown>) {
-    return app.inject({
+    return await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/drafts/${draftId}/${action}`,
       ...(payload ? { payload } : {}),
@@ -121,9 +121,9 @@ describe("Sprint 66 — grounded critic & retrieval few-shot", () => {
   });
 
   describe("retrievePriorExamples", () => {
-    it("returns null when the workspace has no history", () => {
+    it("returns null when the workspace has no history", async () => {
       expect(
-        retrievePriorExamples(db, workspaceId, { query: "pricing", channel: "linkedin" }),
+        await retrievePriorExamples(db, workspaceId, { query: "pricing", channel: "linkedin" }),
       ).toBeNull();
     });
 
@@ -138,11 +138,11 @@ describe("Sprint 66 — grounded critic & retrieval few-shot", () => {
         (await act(rejected.id, "reject", { reason: "Wrong audience" })).statusCode,
       ).toBe(200);
 
-      const examples = retrievePriorExamples(db, workspaceId, {
+      const examples = (await retrievePriorExamples(db, workspaceId, {
         query: "competitors and pricing pages",
         channel: "linkedin",
         taskType: "signal_response",
-      })!;
+      }))!;
       expect(examples.approved).toHaveLength(1);
       expect(examples.approved[0]!.content).toBe(approved.content);
       expect(examples.approved[0]!.wasEdited).toBe(false);
@@ -163,10 +163,10 @@ describe("Sprint 66 — grounded critic & retrieval few-shot", () => {
       const alsoSilent = await draftFromSignal(s3.id);
       await act(alsoSilent.id, "reject");
 
-      const examples = retrievePriorExamples(db, workspaceId, {
+      const examples = (await retrievePriorExamples(db, workspaceId, {
         query: "pricing",
         channel: "linkedin",
-      })!;
+      }))!;
       expect(examples.rejected).toHaveLength(2);
       expect(examples.rejected[0]!.reason).toBe("No proof point");
     });
@@ -195,19 +195,19 @@ describe("Sprint 66 — grounded critic & retrieval few-shot", () => {
   });
 
   describe("legacy signal→draft path traces the examples section", () => {
-    function sectionsOf(generationId: string): ContextSection[] {
-      const row = db
+    async function sectionsOf(generationId: string): Promise<ContextSection[]> {
+      const row = (await db
         .select({ sectionsJson: generations.sectionsJson })
         .from(generations)
         .where(eq(generations.id, generationId))
-        .get()!;
+        .get())!;
       return JSON.parse(row.sectionsJson) as ContextSection[];
     }
 
     it("excludes with a reason before any history exists, includes after", async () => {
       const s1 = await createSignal("First signal, empty history.");
       const first = await draftFromSignal(s1.id);
-      const firstSection = sectionsOf(first.sourceGenerationId).find(
+      const firstSection = (await sectionsOf(first.sourceGenerationId)).find(
         (s) => s.key === "examples",
       )!;
       expect(firstSection.included).toBe(false);
@@ -216,7 +216,7 @@ describe("Sprint 66 — grounded critic & retrieval few-shot", () => {
       await act(first.id, "approve");
       const s2 = await createSignal("Second signal, history exists.");
       const second = await draftFromSignal(s2.id);
-      const secondSection = sectionsOf(second.sourceGenerationId).find(
+      const secondSection = (await sectionsOf(second.sourceGenerationId)).find(
         (s) => s.key === "examples",
       )!;
       expect(secondSection.included).toBe(true);
@@ -273,13 +273,13 @@ describe("Sprint 66 — grounded critic & retrieval few-shot", () => {
         safeFetch: {} as unknown as SafeFetchService,
       };
       const trigger = await createSignal("Fresh signal: competitor pricing news.");
-      const definition = createPipelineDefinition(
+      const definition = await createPipelineDefinition(
         db,
         workspaceId,
         { taskKey: "signal_social_post", name: "P", description: "", spec: miniSpec },
         { userId: null, label: "founder" },
       );
-      const run = startPipelineRun(db, {
+      const run = await startPipelineRun(db, {
         workspaceId,
         definition,
         signalId: trigger.id,
@@ -299,11 +299,11 @@ describe("Sprint 66 — grounded critic & retrieval few-shot", () => {
       expect(critiqueMessage).not.toContain("Prior examples from approval history");
 
       const sections = JSON.parse(
-        db
+        (await db
           .select({ sectionsJson: generations.sectionsJson })
           .from(generations)
           .where(eq(generations.id, outcome.run.generationId!))
-          .get()!.sectionsJson,
+          .get())!.sectionsJson,
       ) as ContextSection[];
       const provenance = sections.find((s) => s.key === "examples")!;
       expect(provenance.layer).toBe("examples");

@@ -34,14 +34,14 @@ import { buildAuthedApp, createTestDb } from "./helpers";
 const workspaceId = "11111111-1111-4111-8111-111111111111";
 const otherWorkspaceId = "22222222-2222-4222-8222-222222222222";
 
-function fixture(
+async function fixture(
   handler: (path: string) => ProxyJsonResult = () => ({
     status: 404,
     json: {},
   }),
 ) {
   const db = createTestDb();
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values([
       {
         id: workspaceId,
@@ -65,7 +65,7 @@ function fixture(
     },
   } as ConnectorFabric;
 
-  function connection(
+  async function connection(
     providerKey: string,
     options: {
       id?: string;
@@ -77,7 +77,7 @@ function fixture(
     } = {},
   ) {
     const id = options.id ?? randomUUID();
-    db.insert(connections)
+    await db.insert(connections)
       .values({
         id,
         workspaceId: options.workspace ?? workspaceId,
@@ -100,8 +100,8 @@ function fixture(
     return id;
   }
 
-  function account(platform: TrackedSocialPlatform, handle: string) {
-    return createTrackedSocialAccount(db, workspaceId, {
+  async function account(platform: TrackedSocialPlatform, handle: string) {
+    return await createTrackedSocialAccount(db, workspaceId, {
       platform,
       handle,
     });
@@ -111,7 +111,7 @@ function fixture(
 }
 
 describe("tracked account public inputs", () => {
-  it("strips founder-supplied provider ids and clears cache on handle change", () => {
+  it("strips founder-supplied provider ids and clears cache on handle change", async () => {
     expect(
       createTrackedSocialAccountInputSchema.parse({
         platform: "x",
@@ -125,9 +125,9 @@ describe("tracked account public inputs", () => {
       }),
     ).not.toHaveProperty("externalId");
 
-    const f = fixture();
-    const created = f.account("x", "@acme");
-    f.db
+    const f = await fixture();
+    const created = await f.account("x", "@acme");
+    await f.db
       .update(trackedSocialAccounts)
       .set({
         externalId: "cached-id",
@@ -136,12 +136,12 @@ describe("tracked account public inputs", () => {
       })
       .where(eq(trackedSocialAccounts.id, created.id))
       .run();
-    const updated = updateTrackedSocialAccount(
+    const updated = (await updateTrackedSocialAccount(
       f.db,
       workspaceId,
       created.id,
       { handle: "@new_handle" },
-    )!;
+    ))!;
     expect(updated).toMatchObject({
       handle: "new_handle",
       externalId: null,
@@ -153,7 +153,7 @@ describe("tracked account public inputs", () => {
 
 describe("tracked account resolver", () => {
   it("resolves X through the selected connection and persists its id", async () => {
-    const f = fixture((path) =>
+    const f = await fixture((path) =>
       path === "/2/users/by/username/acme"
         ? {
             status: 200,
@@ -161,8 +161,8 @@ describe("tracked account resolver", () => {
           }
         : { status: 404, json: {} },
     );
-    const connectionId = f.connection("twitter");
-    const account = f.account("x", "@Acme");
+    const connectionId = await f.connection("twitter");
+    const account = await f.account("x", "@Acme");
 
     const resolved = await resolveTrackedSocialAccount(
       { db: f.db, fabric: f.fabric },
@@ -181,7 +181,7 @@ describe("tracked account resolver", () => {
   });
 
   it("reuses exact LinkedIn vanity resolution", async () => {
-    const f = fixture((path) =>
+    const f = await fixture((path) =>
       path === "/rest/organizations?q=vanityName&vanityName=acme"
         ? {
             status: 200,
@@ -189,11 +189,11 @@ describe("tracked account resolver", () => {
           }
         : { status: 404, json: {} },
     );
-    const connectionId = f.connection("linkedin");
-    const account = f.account("linkedin", "acme");
+    const connectionId = await f.connection("linkedin");
+    const account = await f.account("linkedin", "acme");
 
     await expect(
-      resolveTrackedSocialAccount(
+      await resolveTrackedSocialAccount(
         { db: f.db, fabric: f.fabric },
         { workspaceId, accountId: account.id, connectionId },
       ),
@@ -204,9 +204,9 @@ describe("tracked account resolver", () => {
   });
 
   it("stores Reddit's normalized handle without a network call", async () => {
-    const f = fixture();
-    const connectionId = f.connection("reddit");
-    const account = f.account("reddit", "r/Startups");
+    const f = await fixture();
+    const connectionId = await f.connection("reddit");
+    const account = await f.account("reddit", "r/Startups");
 
     const resolved = await resolveTrackedSocialAccount(
       { db: f.db, fabric: f.fabric },
@@ -217,23 +217,23 @@ describe("tracked account resolver", () => {
   });
 
   it("allows only the direct Instagram connection's own account", async () => {
-    const f = fixture();
-    const connectionId = f.connection("instagram", {
+    const f = await fixture();
+    const connectionId = await f.connection("instagram", {
       config: { authArchitecture: "instagram_login" },
       externalAccountId: "ig-direct-42",
       externalAccountHandle: "tuezday",
     });
-    const own = f.account("instagram", "@tuezday");
-    const competitor = f.account("instagram", "@rival");
+    const own = await f.account("instagram", "@tuezday");
+    const competitor = await f.account("instagram", "@rival");
 
     await expect(
-      resolveTrackedSocialAccount(
+      await resolveTrackedSocialAccount(
         { db: f.db, fabric: f.fabric },
         { workspaceId, accountId: own.id, connectionId },
       ),
     ).resolves.toMatchObject({ externalId: "ig-direct-42" });
     await expect(
-      resolveTrackedSocialAccount(
+      await resolveTrackedSocialAccount(
         { db: f.db, fabric: f.fabric },
         { workspaceId, accountId: competitor.id, connectionId },
       ),
@@ -241,18 +241,18 @@ describe("tracked account resolver", () => {
   });
 
   it("does not reveal why a connection is unavailable", async () => {
-    const f = fixture();
-    const account = f.account("x", "acme");
+    const f = await fixture();
+    const account = await f.account("x", "acme");
     const candidates = [
       randomUUID(),
-      f.connection("twitter", { workspace: otherWorkspaceId }),
-      f.connection("twitter", { status: "disconnected" }),
-      f.connection("linkedin"),
+      await f.connection("twitter", { workspace: otherWorkspaceId }),
+      await f.connection("twitter", { status: "disconnected" }),
+      await f.connection("linkedin"),
     ];
 
     for (const connectionId of candidates) {
       await expect(
-        resolveTrackedSocialAccount(
+        await resolveTrackedSocialAccount(
           { db: f.db, fabric: f.fabric },
           { workspaceId, accountId: account.id, connectionId },
         ),
@@ -265,9 +265,9 @@ describe("tracked account resolver", () => {
       status: 200,
       json: { data: { id: "x-old" } },
     };
-    const f = fixture(() => response);
-    const connectionId = f.connection("twitter");
-    const account = f.account("x", "acme");
+    const f = await fixture(() => response);
+    const connectionId = await f.connection("twitter");
+    const account = await f.account("x", "acme");
     const first = await resolveTrackedSocialAccount(
       { db: f.db, fabric: f.fabric },
       { workspaceId, accountId: account.id, connectionId },
@@ -275,7 +275,7 @@ describe("tracked account resolver", () => {
 
     response = { status: 404, json: {} };
     await expect(
-      resolveTrackedSocialAccount(
+      await resolveTrackedSocialAccount(
         { db: f.db, fabric: f.fabric },
         {
           workspaceId,
@@ -286,7 +286,7 @@ describe("tracked account resolver", () => {
       ),
     ).rejects.toBeInstanceOf(ProviderCapabilityError);
     expect(
-      getTrackedSocialAccount(f.db, workspaceId, account.id),
+      await getTrackedSocialAccount(f.db, workspaceId, account.id),
     ).toMatchObject({
       externalId: "x-old",
       lastResolvedAt: first.lastResolvedAt,
@@ -298,7 +298,7 @@ describe("tracked account resolver", () => {
       json: { data: { id: "x-new" } },
     };
     await expect(
-      resolveTrackedSocialAccount(
+      await resolveTrackedSocialAccount(
         { db: f.db, fabric: f.fabric },
         {
           workspaceId,
@@ -352,7 +352,7 @@ describe("tracked account resolve route", () => {
       })
     ).json().id;
     const connectionId = randomUUID();
-    db.insert(connections)
+    await db.insert(connections)
       .values({
         id: connectionId,
         workspaceId: routeWorkspaceId,
@@ -372,7 +372,7 @@ describe("tracked account resolve route", () => {
         updatedAt: 1,
       })
       .run();
-    const account = createTrackedSocialAccount(
+    const account = await createTrackedSocialAccount(
       db,
       routeWorkspaceId,
       { platform: "x", handle: "@acme" },

@@ -27,9 +27,9 @@ describe("persisted background schedules", () => {
   let db: Db;
   const t0 = 1_800_000_000_000;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createTestDb();
-    db.insert(workspaces)
+    await db.insert(workspaces)
       .values({
         id: WORKSPACE_ID,
         name: "Scheduled",
@@ -39,15 +39,15 @@ describe("persisted background schedules", () => {
       .run();
   });
 
-  it("creates every recurring schedule once and updates intervals in place", () => {
+  it("creates every recurring schedule once and updates intervals in place", async () => {
     expect(
-      reconcileBackgroundSchedules(db, DEFAULT_BACKGROUND_JOB_POLICY, t0),
+      await reconcileBackgroundSchedules(db, DEFAULT_BACKGROUND_JOB_POLICY, t0),
     ).toBe(BACKGROUND_RECURRING_JOB_KINDS.length);
     expect(
-      reconcileBackgroundSchedules(db, DEFAULT_BACKGROUND_JOB_POLICY, t0 + 1),
+      await reconcileBackgroundSchedules(db, DEFAULT_BACKGROUND_JOB_POLICY, t0 + 1),
     ).toBe(0);
 
-    const rows = db.select().from(backgroundSchedules).all();
+    const rows = await db.select().from(backgroundSchedules).all();
     expect(rows).toHaveLength(BACKGROUND_RECURRING_JOB_KINDS.length);
     expect(new Set(rows.map((row) => row.kind))).toEqual(
       new Set(BACKGROUND_RECURRING_JOB_KINDS),
@@ -61,9 +61,9 @@ describe("persisted background schedules", () => {
         evidence: 45 * 60_000,
       },
     };
-    expect(reconcileBackgroundSchedules(db, changed, t0 + 2)).toBe(0);
+    expect(await reconcileBackgroundSchedules(db, changed, t0 + 2)).toBe(0);
     expect(
-      db
+      await db
         .select()
         .from(backgroundSchedules)
         .where(eq(backgroundSchedules.kind, "evidence"))
@@ -71,25 +71,25 @@ describe("persisted background schedules", () => {
     ).toMatchObject({ intervalMs: 45 * 60_000, nextRunAt: t0 });
   });
 
-  it("atomically admits each due occurrence once with validated payloads", () => {
-    reconcileBackgroundSchedules(db, DEFAULT_BACKGROUND_JOB_POLICY, t0);
+  it("atomically admits each due occurrence once with validated payloads", async () => {
+    await reconcileBackgroundSchedules(db, DEFAULT_BACKGROUND_JOB_POLICY, t0);
 
     expect(
-      admitDueBackgroundSchedules(
+      await admitDueBackgroundSchedules(
         db,
         t0,
         DEFAULT_BACKGROUND_JOB_POLICY.maxAttempts,
       ),
     ).toEqual({ admitted: BACKGROUND_RECURRING_JOB_KINDS.length, scanned: 13 });
     expect(
-      admitDueBackgroundSchedules(
+      await admitDueBackgroundSchedules(
         db,
         t0,
         DEFAULT_BACKGROUND_JOB_POLICY.maxAttempts,
       ),
     ).toEqual({ admitted: 0, scanned: 0 });
 
-    const jobs = db.select().from(backgroundJobs).all();
+    const jobs = await db.select().from(backgroundJobs).all();
     expect(jobs).toHaveLength(BACKGROUND_RECURRING_JOB_KINDS.length);
     for (const job of jobs) {
       expect(backgroundJobPayloadSchema.parse(JSON.parse(job.payloadJson))).toEqual({
@@ -100,41 +100,41 @@ describe("persisted background schedules", () => {
     }
   });
 
-  it("admits one overdue occurrence and advances beyond now without a catch-up storm", () => {
-    reconcileBackgroundSchedules(db, DEFAULT_BACKGROUND_JOB_POLICY, t0);
-    const evidence = db
+  it("admits one overdue occurrence and advances beyond now without a catch-up storm", async () => {
+    await reconcileBackgroundSchedules(db, DEFAULT_BACKGROUND_JOB_POLICY, t0);
+    const evidence = (await db
       .select()
       .from(backgroundSchedules)
       .where(eq(backgroundSchedules.kind, "evidence"))
-      .get()!;
-    db.delete(backgroundSchedules)
+      .get())!;
+    await db.delete(backgroundSchedules)
       .where(eq(backgroundSchedules.id, evidence.id))
       .run();
-    db.update(backgroundSchedules)
+    await db.update(backgroundSchedules)
       .set({ enabled: false })
       .where(eq(backgroundSchedules.workspaceId, WORKSPACE_ID))
       .run();
-    db.insert(backgroundSchedules).values(evidence).run();
+    await db.insert(backgroundSchedules).values(evidence).run();
 
     const now = t0 + evidence.intervalMs * 4 + 123;
     expect(
-      admitDueBackgroundSchedules(db, now, DEFAULT_BACKGROUND_JOB_POLICY.maxAttempts),
+      await admitDueBackgroundSchedules(db, now, DEFAULT_BACKGROUND_JOB_POLICY.maxAttempts),
     ).toEqual({ admitted: 1, scanned: 1 });
-    const advanced = db
+    const advanced = (await db
       .select()
       .from(backgroundSchedules)
       .where(eq(backgroundSchedules.id, evidence.id))
-      .get()!;
+      .get())!;
     expect(advanced.nextRunAt).toBe(t0 + evidence.intervalMs * 5);
     expect(advanced.nextRunAt).toBeGreaterThan(now);
   });
 
-  it("claims prioritised work ahead of scans admitted in the same millisecond", () => {
+  it("claims prioritised work ahead of scans admitted in the same millisecond", async () => {
     // Timestamps have millisecond resolution, so a job enqueued just before a
     // tick admits the recurring scans leaves every row equally "old". The last
     // tiebreaker is a random uuid, so priority is the only thing that can keep
     // interactive work in front of the scans.
-    const launch = enqueueBackgroundJob(db, {
+    const launch = await enqueueBackgroundJob(db, {
       payload: {
         kind: "launch_generate",
         workspaceId: WORKSPACE_ID,
@@ -145,16 +145,16 @@ describe("persisted background schedules", () => {
       idempotencyKey: "launch-generate:v1:priority",
       priority: 1,
     });
-    reconcileBackgroundSchedules(db, DEFAULT_BACKGROUND_JOB_POLICY, t0);
-    admitDueBackgroundSchedules(db, t0);
+    await reconcileBackgroundSchedules(db, DEFAULT_BACKGROUND_JOB_POLICY, t0);
+    await admitDueBackgroundSchedules(db, t0);
     // Collapse every admission onto one already-elapsed instant so that only
     // priority can decide which job is claimed.
     const collapsed = 1_700_000_000_000;
-    db.update(backgroundJobs)
+    await db.update(backgroundJobs)
       .set({ availableAt: collapsed, createdAt: collapsed })
       .run();
 
-    const [claim] = claimBackgroundJobs(db, {
+    const [claim] = await claimBackgroundJobs(db, {
       owner: "worker-a",
       leaseMs: 30_000,
       limit: 1,
@@ -164,9 +164,9 @@ describe("persisted background schedules", () => {
     expect(claim?.kind).toBe("launch_generate");
   });
 
-  it("cascades schedules when a workspace is deleted", () => {
-    reconcileBackgroundSchedules(db, DEFAULT_BACKGROUND_JOB_POLICY, t0);
-    db.delete(workspaces).where(eq(workspaces.id, WORKSPACE_ID)).run();
-    expect(db.select().from(backgroundSchedules).all()).toEqual([]);
+  it("cascades schedules when a workspace is deleted", async () => {
+    await reconcileBackgroundSchedules(db, DEFAULT_BACKGROUND_JOB_POLICY, t0);
+    await db.delete(workspaces).where(eq(workspaces.id, WORKSPACE_ID)).run();
+    expect(await db.select().from(backgroundSchedules).all()).toEqual([]);
   });
 });

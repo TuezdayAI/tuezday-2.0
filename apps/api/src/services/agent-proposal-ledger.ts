@@ -35,13 +35,13 @@ export function rowToAgentProposal(row: AgentProposalRow): AgentProposal {
   };
 }
 
-export function listAgentProposalsForRun(db: Db, agentRunId: string): AgentProposal[] {
-  return db
+export async function listAgentProposalsForRun(db: Db, agentRunId: string): Promise<AgentProposal[]> {
+  return (await db
     .select()
     .from(agentProposals)
     .where(eq(agentProposals.agentRunId, agentRunId))
     .orderBy(desc(agentProposals.createdAt))
-    .all()
+    .all())
     .map(rowToAgentProposal);
 }
 
@@ -50,8 +50,8 @@ export function listAgentProposalsForRun(db: Db, agentRunId: string): AgentPropo
  * every run and every kind — including drafts, which have no external action to
  * carry an origin column and are exactly why this ledger exists (D-69.4).
  */
-export function countProposalsToday(db: Db, workspaceId: string, now = Date.now()): number {
-  return db
+export async function countProposalsToday(db: Db, workspaceId: string, now = Date.now()): Promise<number> {
+  return (await db
     .select({ id: agentProposals.id })
     .from(agentProposals)
     .where(
@@ -60,7 +60,7 @@ export function countProposalsToday(db: Db, workspaceId: string, now = Date.now(
         gte(agentProposals.createdAt, now - DAY_MS),
       ),
     )
-    .all().length;
+    .all()).length;
 }
 
 export interface RecordProposalInput {
@@ -78,7 +78,7 @@ export interface RecordProposalInput {
   chatSessionId?: string | null;
 }
 
-export function recordAgentProposal(db: Db, input: RecordProposalInput): AgentProposal {
+export async function recordAgentProposal(db: Db, input: RecordProposalInput): Promise<AgentProposal> {
   const row: AgentProposalRow = {
     id: randomUUID(),
     workspaceId: input.workspaceId,
@@ -93,6 +93,6 @@ export function recordAgentProposal(db: Db, input: RecordProposalInput): AgentPr
     chatSessionId: input.chatSessionId ?? null,
     createdAt: Date.now(),
   };
-  db.insert(agentProposals).values(row).run();
+  await db.insert(agentProposals).values(row).run();
   return rowToAgentProposal(row);
 }

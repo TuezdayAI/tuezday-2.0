@@ -10,8 +10,8 @@ import {
 } from "../src/services/task-leases";
 import { createTestDb } from "./helpers";
 
-function expireLease(db: ReturnType<typeof createTestDb>, key: string): void {
-  db.update(taskLeases)
+async function expireLease(db: ReturnType<typeof createTestDb>, key: string): Promise<void> {
+  await db.update(taskLeases)
     .set({
       expiresAt: sql`
         CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) - 1
@@ -26,44 +26,44 @@ describe("database-clock task leases", () => {
     vi.useRealTimers();
   });
 
-  it("claims, renews, releases, and reclaims with monotonic fencing versions", () => {
+  it("claims, renews, releases, and reclaims with monotonic fencing versions", async () => {
     const db = createTestDb();
     const before = Date.now();
-    expect(databaseNowMs(db)).toBeGreaterThanOrEqual(before - 1_000);
+    expect(await databaseNowMs(db)).toBeGreaterThanOrEqual(before - 1_000);
 
-    const first = claimTaskLease(db, "discovery:scheduler", "owner-a", 45_000)!;
+    const first = (await claimTaskLease(db, "discovery:scheduler", "owner-a", 45_000))!;
     expect(first.version).toBe(1);
-    expect(first.expiresAt).toBeGreaterThan(databaseNowMs(db));
+    expect(first.expiresAt).toBeGreaterThan(await databaseNowMs(db));
     expect(
-      claimTaskLease(db, first.key, "owner-b", 45_000),
+      await claimTaskLease(db, first.key, "owner-b", 45_000),
     ).toBeNull();
 
-    const renewed = heartbeatTaskLease(db, first, 45_000)!;
+    const renewed = (await heartbeatTaskLease(db, first, 45_000))!;
     expect(renewed).toMatchObject({
       key: first.key,
       owner: first.owner,
       version: first.version,
     });
-    expect(releaseTaskLease(db, { ...renewed, owner: "stale" })).toBe(false);
-    expect(releaseTaskLease(db, renewed)).toBe(true);
+    expect(await releaseTaskLease(db, { ...renewed, owner: "stale" })).toBe(false);
+    expect(await releaseTaskLease(db, renewed)).toBe(true);
 
-    const second = claimTaskLease(db, first.key, "owner-b", 45_000)!;
+    const second = (await claimTaskLease(db, first.key, "owner-b", 45_000))!;
     expect(second.version).toBe(2);
-    expireLease(db, first.key);
-    expect(heartbeatTaskLease(db, second, 45_000)).toBeNull();
+    await expireLease(db, first.key);
+    expect(await heartbeatTaskLease(db, second, 45_000)).toBeNull();
 
-    const third = claimTaskLease(db, first.key, "owner-c", 45_000)!;
+    const third = (await claimTaskLease(db, first.key, "owner-c", 45_000))!;
     expect(third.version).toBe(3);
-    expect(releaseTaskLease(db, second)).toBe(false);
+    expect(await releaseTaskLease(db, second)).toBe(false);
   });
 
   it("returns busy without invoking work when another owner is live", async () => {
     const db = createTestDb();
-    claimTaskLease(db, "automation:scheduler", "owner-a", 45_000);
+    await claimTaskLease(db, "automation:scheduler", "owner-a", 45_000);
     const work = vi.fn(async () => "unexpected");
 
     await expect(
-      withTaskLease(
+      await withTaskLease(
         db,
         {
           key: "automation:scheduler",
@@ -82,7 +82,7 @@ describe("database-clock task leases", () => {
     const db = createTestDb();
     let signalSeen: AbortSignal | undefined;
 
-    const resultPromise = withTaskLease(
+    const resultPromise = await withTaskLease(
       db,
       {
         key: "automation:workspace-1",
@@ -100,7 +100,7 @@ describe("database-clock task leases", () => {
     );
 
     await vi.waitFor(() => expect(signalSeen).toBeDefined());
-    db.update(taskLeases)
+    await db.update(taskLeases)
       .set({ owner: "owner-b" })
       .where(sql`${taskLeases.key} = ${"automation:workspace-1"}`)
       .run();

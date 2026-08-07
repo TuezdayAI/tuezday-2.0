@@ -81,8 +81,8 @@ export interface StartPipelineRunInput {
 }
 
 /** Insert a queued run frozen against the definition's current version. */
-export function startPipelineRun(db: Db, input: StartPipelineRunInput): PipelineRun {
-  const signal = getSignal(db, input.workspaceId, input.signalId);
+export async function startPipelineRun(db: Db, input: StartPipelineRunInput): Promise<PipelineRun> {
+  const signal = await getSignal(db, input.workspaceId, input.signalId);
   if (!signal) throw new PipelineSignalNotFoundError(input.signalId);
   const now = Date.now();
   const row: PipelineRunRow = {
@@ -118,7 +118,7 @@ export function startPipelineRun(db: Db, input: StartPipelineRunInput): Pipeline
     finishedAt: null,
   };
   try {
-    db.insert(pipelineRuns).values(row).run();
+    await db.insert(pipelineRuns).values(row).run();
   } catch (err) {
     if (
       input.idempotencyKey &&

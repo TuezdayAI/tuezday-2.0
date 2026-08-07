@@ -161,7 +161,7 @@ describe("scrapeWebsite", () => {
   });
 
   it("throws when the root page cannot be fetched", async () => {
-    await expect(scrapeWebsite("https://hexalog.com", failingFetcher())).rejects.toThrow();
+    await expect(await scrapeWebsite("https://hexalog.com", failingFetcher())).rejects.toThrow();
   });
 
   it("does not attempt a subpage after a metadata root is blocked", async () => {
@@ -174,7 +174,7 @@ describe("scrapeWebsite", () => {
       };
     });
     await expect(
-      scrapeWebsite("http://169.254.169.254/", safeFetch),
+      await scrapeWebsite("http://169.254.169.254/", safeFetch),
     ).rejects.toMatchObject({ code: "destination_blocked" });
     expect(requests).toHaveLength(1);
   });
@@ -202,7 +202,7 @@ describe("extractBrandProfile", () => {
 
   it("throws BrandExtractError after two unparseable responses", async () => {
     const { llm, calls } = markerLlm(2);
-    await expect(extractBrandProfile(llm, "corpus text")).rejects.toBeInstanceOf(
+    await expect(await extractBrandProfile(llm, "corpus text")).rejects.toBeInstanceOf(
       BrandExtractError,
     );
     expect(calls()).toBe(2);

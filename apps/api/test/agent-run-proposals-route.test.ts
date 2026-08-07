@@ -20,7 +20,7 @@ describe("agent-run inspector carries the proposal ledger (Sprint 69)", () => {
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Acting" } })
     ).json().id;
     runId = randomUUID();
-    db.insert(agentRuns)
+    await db.insert(agentRuns)
       .values({
         id: runId,
         workspaceId,
@@ -41,9 +41,9 @@ describe("agent-run inspector carries the proposal ledger (Sprint 69)", () => {
     await app.close();
   });
 
-  function seedDraft(): string {
+  async function seedDraft(): Promise<string> {
     const id = randomUUID();
-    db.insert(drafts)
+    await db.insert(drafts)
       .values({
         id,
         workspaceId,
@@ -69,8 +69,8 @@ describe("agent-run inspector carries the proposal ledger (Sprint 69)", () => {
   });
 
   it("shows what the run proposed, with the reason it gave", async () => {
-    const draftId = seedDraft();
-    recordAgentProposal(db, {
+    const draftId = await seedDraft();
+    await recordAgentProposal(db, {
       workspaceId,
       agentRunId: runId,
       tool: "propose_draft",
@@ -91,8 +91,8 @@ describe("agent-run inspector carries the proposal ledger (Sprint 69)", () => {
   });
 
   it("keeps the proposal in the trace after its draft is deleted", async () => {
-    const draftId = seedDraft();
-    recordAgentProposal(db, {
+    const draftId = await seedDraft();
+    await recordAgentProposal(db, {
       workspaceId,
       agentRunId: runId,
       tool: "propose_draft",
@@ -101,7 +101,7 @@ describe("agent-run inspector carries the proposal ledger (Sprint 69)", () => {
       summary: "Submitted a linkedin draft for review.",
       rationale: "Worth saying now.",
     });
-    db.delete(drafts).run();
+    await db.delete(drafts).run();
 
     const res = await app.inject({
       method: "GET",

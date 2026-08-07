@@ -54,9 +54,9 @@ const noEvidence: EvidenceStore = {
 
 const emptyDocs: BrainContents = { soul: "", icp: "", voice: "", history: "", now: "" };
 
-function seedWorkspace(): Db {
+async function seedWorkspace(): Promise<Db> {
   const db = createTestDb();
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({ id: WORKSPACE_ID, name: "Memory", createdAt: 1, updatedAt: 1 })
     .run();
   return db;
@@ -177,61 +177,61 @@ describe("preference injection — resolver section (Sprint 68)", () => {
 // --- Retrieval --------------------------------------------------------------
 
 describe("preference retrieval ranking (Sprint 68)", () => {
-  it("returns only active rules, most specific scope first (D-68.5)", () => {
-    const db = seedWorkspace();
-    const global = createManualRule(db, WORKSPACE_ID, {
+  it("returns only active rules, most specific scope first (D-68.5)", async () => {
+    const db = await seedWorkspace();
+    const global = await createManualRule(db, WORKSPACE_ID, {
       rule: "Name the segment, not the persona",
       polarity: "avoid",
     });
-    const scoped = createManualRule(db, WORKSPACE_ID, {
+    const scoped = await createManualRule(db, WORKSPACE_ID, {
       rule: "Never open with a rhetorical question",
       polarity: "avoid",
       scopeChannel: "linkedin",
       scopeTaskType: "signal_response",
     });
-    const offChannel = createManualRule(db, WORKSPACE_ID, {
+    const offChannel = await createManualRule(db, WORKSPACE_ID, {
       rule: "Keep the subject line under nine words",
       polarity: "avoid",
       scopeChannel: "email",
     });
-    setRuleStatus(db, WORKSPACE_ID, offChannel.id, "active");
+    await setRuleStatus(db, WORKSPACE_ID, offChannel.id, "active");
 
-    const retrieved = retrievePreferenceRules(db, WORKSPACE_ID, {
+    const retrieved = (await retrievePreferenceRules(db, WORKSPACE_ID, {
       taskType: "signal_response",
       channel: "linkedin",
-    })!;
+    }))!;
     expect(retrieved.rules.map((rule) => rule.id)).toEqual([scoped.id, global.id]);
     expect(retrieved.rules[0]!.scope).toBe("signal_response on linkedin");
   });
 
-  it("omits a rule the founder switched off", () => {
-    const db = seedWorkspace();
-    const rule = createManualRule(db, WORKSPACE_ID, {
+  it("omits a rule the founder switched off", async () => {
+    const db = await seedWorkspace();
+    const rule = await createManualRule(db, WORKSPACE_ID, {
       rule: "Never open with a rhetorical question",
       polarity: "avoid",
     });
-    setRuleStatus(db, WORKSPACE_ID, rule.id, "disabled");
+    await setRuleStatus(db, WORKSPACE_ID, rule.id, "disabled");
     expect(
-      retrievePreferenceRules(db, WORKSPACE_ID, {
+      await retrievePreferenceRules(db, WORKSPACE_ID, {
         taskType: "signal_response",
         channel: "linkedin",
       }),
     ).toBeNull();
   });
 
-  it("does not move the hit count — retrieval is read-only (D-68.6)", () => {
-    const db = seedWorkspace();
-    createManualRule(db, WORKSPACE_ID, {
+  it("does not move the hit count — retrieval is read-only (D-68.6)", async () => {
+    const db = await seedWorkspace();
+    await createManualRule(db, WORKSPACE_ID, {
       rule: "Never open with a rhetorical question",
       polarity: "avoid",
     });
     for (let i = 0; i < 5; i += 1) {
-      retrievePreferenceRules(db, WORKSPACE_ID, {
+      await retrievePreferenceRules(db, WORKSPACE_ID, {
         taskType: "signal_response",
         channel: "linkedin",
       });
     }
-    expect(listPreferenceRules(db, WORKSPACE_ID)[0]!.appliedCount).toBe(0);
+    expect((await listPreferenceRules(db, WORKSPACE_ID))[0]!.appliedCount).toBe(0);
   });
 });
 
@@ -288,7 +288,7 @@ class ExtractionAndEngineGateway extends ScriptedGateway {
   }
   override async agentStep(params: AgentStepParams): Promise<AgentStepResult> {
     if (params.system?.includes("content pipeline for the workspace")) {
-      return super.agentStep(params);
+      return await super.agentStep(params);
     }
     const next = this.extractions.shift();
     if (next === undefined) throw new GatewayError("provider_error", "no extraction scripted");
@@ -308,7 +308,7 @@ async function runEngineOnce(db: Db, gateway: LlmGateway, definition: PipelineDe
     evidence: noEvidence,
     safeFetch: {} as unknown as SafeFetchService,
   };
-  const run = startPipelineRun(db, {
+  const run = await startPipelineRun(db, {
     workspaceId: WORKSPACE_ID,
     definition,
     signalId: SIGNAL_ID,
@@ -316,13 +316,13 @@ async function runEngineOnce(db: Db, gateway: LlmGateway, definition: PipelineDe
     mode: "live",
     createdBy: "founder",
   });
-  return executePipelineRun(db, deps, WORKSPACE_ID, run.id);
+  return await executePipelineRun(db, deps, WORKSPACE_ID, run.id);
 }
 
 describe("this morning's edit changes this afternoon's generation (Sprint 68 acceptance)", () => {
   it("captures an edit, learns a rule, and the next engine draft step sees it — until it is switched off", async () => {
-    const db = seedWorkspace();
-    db.insert(signals)
+    const db = await seedWorkspace();
+    await db.insert(signals)
       .values({
         id: SIGNAL_ID,
         workspaceId: WORKSPACE_ID,
@@ -332,7 +332,7 @@ describe("this morning's edit changes this afternoon's generation (Sprint 68 acc
         createdAt: 2,
       })
       .run();
-    db.insert(drafts)
+    await db.insert(drafts)
       .values({
         id: DRAFT_ID,
         workspaceId: WORKSPACE_ID,
@@ -347,9 +347,9 @@ describe("this morning's edit changes this afternoon's generation (Sprint 68 acc
       .run();
 
     // 09:00 — the founder rewrites the opening.
-    applyDraftAction(
+    await applyDraftAction(
       db,
-      getDraft(db, WORKSPACE_ID, DRAFT_ID)!,
+      (await getDraft(db, WORKSPACE_ID, DRAFT_ID))!,
       "edit",
       HUMAN,
       "We moved 40 customers to usage-based billing last quarter. Per-seat hid the churn.",
@@ -374,13 +374,13 @@ describe("this morning's edit changes this afternoon's generation (Sprint 68 acc
     expect(extracted.created).toBe(1);
 
     // 14:00 — the next run's draft step is told about it.
-    const definition = createPipelineDefinition(
+    const definition = await createPipelineDefinition(
       db,
       WORKSPACE_ID,
       { taskKey: "signal_social_post", name: "Mini", description: "", spec: miniSpec() },
       ACTOR,
     );
-    setPipelineStatus(db, WORKSPACE_ID, definition.id, "active");
+    await setPipelineStatus(db, WORKSPACE_ID, definition.id, "active");
     const executed = await runEngineOnce(db, gateway, definition);
     expect(executed.run.status).toBe("succeeded");
 
@@ -390,21 +390,21 @@ describe("this morning's edit changes this afternoon's generation (Sprint 68 acc
     expect(draftContext).toContain("Never open with a rhetorical question");
 
     // The application is recorded — only now, on a real live generation.
-    const rule = listPreferenceRules(db, WORKSPACE_ID)[0]!;
+    const rule = (await listPreferenceRules(db, WORKSPACE_ID))[0]!;
     expect(rule.appliedCount).toBe(1);
     expect(rule.lastAppliedAt).not.toBeNull();
 
     // The trace on the produced draft says the rule was applied.
-    const produced = listDrafts(db, WORKSPACE_ID).find((d) => d.id !== DRAFT_ID)!;
+    const produced = (await listDrafts(db, WORKSPACE_ID)).find((d) => d.id !== DRAFT_ID)!;
     expect(produced).toBeDefined();
 
     // 14:05 — the founder disagrees and switches it off. The next run is clean.
-    setRuleStatus(db, WORKSPACE_ID, rule.id, "disabled");
+    await setRuleStatus(db, WORKSPACE_ID, rule.id, "disabled");
     const secondGateway = new ExtractionAndEngineGateway(engineRun("Second engine draft."), []);
     const second = await runEngineOnce(db, secondGateway, definition);
     expect(second.run.status).toBe("succeeded");
     const secondContext = JSON.stringify(secondGateway.calls[0]!.messages);
     expect(secondContext).not.toContain("Learned preferences from your edits");
-    expect(listPreferenceRules(db, WORKSPACE_ID)[0]!.appliedCount).toBe(1);
+    expect((await listPreferenceRules(db, WORKSPACE_ID))[0]!.appliedCount).toBe(1);
   });
 });

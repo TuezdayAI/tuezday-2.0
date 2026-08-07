@@ -45,12 +45,12 @@ const BATCH_SIZE = 200;
  * Size-independent: keyset pagination over `campaigns.id`, and one campaign's
  * failure never aborts the sweep.
  */
-export function backfillMissingCampaignPlans(db: Db): CampaignPlanBackfillSummary {
+export async function backfillMissingCampaignPlans(db: Db): Promise<CampaignPlanBackfillSummary> {
   const summary: CampaignPlanBackfillSummary = { scanned: 0, planned: 0, failed: [] };
   let cursor: string | undefined;
 
   for (;;) {
-    const batch = db
+    const batch = await db
       .select({ id: campaigns.id, workspaceId: campaigns.workspaceId })
       .from(campaigns)
       .where(
@@ -74,7 +74,7 @@ export function backfillMissingCampaignPlans(db: Db): CampaignPlanBackfillSummar
     for (const campaign of batch) {
       summary.scanned += 1;
       try {
-        backfillCampaignControlPlane(db, campaign.workspaceId, campaign.id);
+        await backfillCampaignControlPlane(db, campaign.workspaceId, campaign.id);
         summary.planned += 1;
       } catch (error) {
         summary.failed.push({

@@ -43,8 +43,8 @@ import {
 } from "../services/pipeline-engine";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -79,17 +79,17 @@ export function registerPipelineRoutes(
   const engineDeps: PipelineEngineDeps = deps;
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/pipelines", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    ensurePipelineDefinitions(db, request.params.id);
-    return { definitions: listPipelineDefinitions(db, request.params.id) };
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    await ensurePipelineDefinitions(db, request.params.id);
+    return { definitions: await listPipelineDefinitions(db, request.params.id) };
   });
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/pipelines", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = createPipelineDefinitionInputSchema.safeParse(request.body);
     if (!parsed.success) return invalidInput(reply, parsed.error.issues);
     const actor = actorOf(request);
-    const definition = createPipelineDefinition(db, request.params.id, parsed.data, {
+    const definition = await createPipelineDefinition(db, request.params.id, parsed.data, {
       userId: actor.userId,
       label: actor.label,
     });
@@ -99,8 +99,8 @@ export function registerPipelineRoutes(
   app.get<{ Params: { id: string; pipelineId: string } }>(
     "/workspaces/:id/pipelines/:pipelineId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const detail = getPipelineDefinitionDetail(db, request.params.id, request.params.pipelineId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const detail = await getPipelineDefinitionDetail(db, request.params.id, request.params.pipelineId);
       if (!detail) return reply.status(404).send({ error: "not_found" });
       return detail;
     },
@@ -109,12 +109,12 @@ export function registerPipelineRoutes(
   app.put<{ Params: { id: string; pipelineId: string } }>(
     "/workspaces/:id/pipelines/:pipelineId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = updatePipelineSpecInputSchema.safeParse(request.body);
       if (!parsed.success) return invalidInput(reply, parsed.error.issues);
       const actor = actorOf(request);
       try {
-        return updatePipelineSpec(db, request.params.id, request.params.pipelineId, parsed.data, {
+        return await updatePipelineSpec(db, request.params.id, request.params.pipelineId, parsed.data, {
           userId: actor.userId,
           label: actor.label,
         });
@@ -131,9 +131,9 @@ export function registerPipelineRoutes(
     app.post<{ Params: { id: string; pipelineId: string } }>(
       `/workspaces/:id/pipelines/:pipelineId/${status}`,
       async (request, reply) => {
-        if (!workspaceOr404(db, request.params.id, reply)) return reply;
+        if (!await workspaceOr404(db, request.params.id, reply)) return reply;
         try {
-          return setPipelineStatus(
+          return await setPipelineStatus(
             db,
             request.params.id,
             request.params.pipelineId,
@@ -152,17 +152,17 @@ export function registerPipelineRoutes(
   app.post<{ Params: { id: string; pipelineId: string } }>(
     "/workspaces/:id/pipelines/:pipelineId/run",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const definition = getPipelineDefinition(db, request.params.id, request.params.pipelineId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const definition = await getPipelineDefinition(db, request.params.id, request.params.pipelineId);
       if (!definition) return reply.status(404).send({ error: "not_found" });
       const parsed = runPipelineInputSchema.safeParse(request.body);
       if (!parsed.success) return invalidInput(reply, parsed.error.issues);
-      if (llmBudgetExhausted(db, request.params.id)) {
+      if (await llmBudgetExhausted(db, request.params.id)) {
         return reply.status(409).send({ error: "llm_budget_exhausted" });
       }
       const actor = actorOf(request);
       try {
-        const run = startPipelineRun(db, {
+        const run = await startPipelineRun(db, {
           workspaceId: request.params.id,
           definition,
           signalId: parsed.data.signalId,
@@ -190,12 +190,12 @@ export function registerPipelineRoutes(
   app.post<{ Params: { id: string; pipelineId: string } }>(
     "/workspaces/:id/pipelines/:pipelineId/dry-run",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const definition = getPipelineDefinition(db, request.params.id, request.params.pipelineId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const definition = await getPipelineDefinition(db, request.params.id, request.params.pipelineId);
       if (!definition) return reply.status(404).send({ error: "not_found" });
       const parsed = dryRunPipelineInputSchema.safeParse(request.body ?? {});
       if (!parsed.success) return invalidInput(reply, parsed.error.issues);
-      if (llmBudgetExhausted(db, request.params.id)) {
+      if (await llmBudgetExhausted(db, request.params.id)) {
         return reply.status(409).send({ error: "llm_budget_exhausted" });
       }
       const actor = actorOf(request);
@@ -226,7 +226,7 @@ export function registerPipelineRoutes(
       offset?: string;
     };
   }>("/workspaces/:id/pipeline-runs", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const { mode, status } = request.query;
     if (mode && !PIPELINE_RUN_MODES.includes(mode as PipelineRunMode)) {
       return invalidInput(reply, [{ message: `Unknown mode "${mode}"` }]);
@@ -234,7 +234,7 @@ export function registerPipelineRoutes(
     if (status && !PIPELINE_RUN_STATUSES.includes(status as PipelineRunStatus)) {
       return invalidInput(reply, [{ message: `Unknown status "${status}"` }]);
     }
-    return listPipelineRuns(db, request.params.id, {
+    return await listPipelineRuns(db, request.params.id, {
       definitionId: request.query.definitionId || undefined,
       mode: mode as PipelineRunMode | undefined,
       status: status as PipelineRunStatus | undefined,
@@ -246,8 +246,8 @@ export function registerPipelineRoutes(
   app.get<{ Params: { id: string; runId: string } }>(
     "/workspaces/:id/pipeline-runs/:runId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const detail = getPipelineRunDetail(db, request.params.id, request.params.runId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const detail = await getPipelineRunDetail(db, request.params.id, request.params.runId);
       if (!detail) return reply.status(404).send({ error: "not_found" });
       return detail;
     },
@@ -256,7 +256,7 @@ export function registerPipelineRoutes(
   app.post<{ Params: { id: string; runId: string } }>(
     "/workspaces/:id/pipeline-runs/:runId/decision",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = pipelineRunDecisionInputSchema.safeParse(request.body);
       if (!parsed.success) return invalidInput(reply, parsed.error.issues);
       try {

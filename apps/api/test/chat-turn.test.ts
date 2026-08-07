@@ -65,22 +65,22 @@ function titleStep(): ScriptedStep {
 async function newThread(goal = ""): Promise<string> {
   // userId is null: these tests seed no users table, and the turn attributes
   // its run through the actor label rather than the FK.
-  const session = createSession(db, workspaceId, null, { goal });
+  const session = await createSession(db, workspaceId, null, { goal });
   return session.id;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   db = createTestDb();
   workspaceId = randomUUID();
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 })
     .run();
-  updateBrainDoc(db, workspaceId, "soul", "## Why\n\nWe make GTM legible.\n");
-  campaignId = createCampaign(
+  await updateBrainDoc(db, workspaceId, "soul", "## Why\n\nWe make GTM legible.\n");
+  campaignId = (await createCampaign(
     db,
     workspaceId,
     upsertCampaignInputSchema.parse({ name: "Launch", objective: "Ship the new product" }),
-  ).id;
+  )).id;
 });
 
 // Sprint 78 note: ACTOR carries no workspace role, so `actorMayPropose` is
@@ -169,12 +169,12 @@ describe("a grounded turn", () => {
     const result = await runChatTurn(db, deps(llm), workspaceId, ACTOR, sessionId, "Who do we target?");
 
     expect(result?.agentRunId).toBeTruthy();
-    const run = db.select().from(agentRuns).where(eq(agentRuns.id, result!.agentRunId!)).get();
+    const run = await db.select().from(agentRuns).where(eq(agentRuns.id, result!.agentRunId!)).get();
     expect(run?.task).toBe("chat");
     expect(run?.createdBy).toBe("user:user-1");
     expect(run?.workspaceId).toBe(workspaceId);
 
-    const steps = db
+    const steps = await db
       .select()
       .from(agentRunSteps)
       .where(eq(agentRunSteps.runId, result!.agentRunId!))
@@ -182,7 +182,7 @@ describe("a grounded turn", () => {
     expect(steps.some((s) => s.kind === "tool_call" && s.toolName === "list_personas")).toBe(true);
 
     // The assistant message links to it — this is the Agent Inspector entry.
-    const assistant = listMessages(db, sessionId).find((m) => m.role === "assistant");
+    const assistant = (await listMessages(db, sessionId)).find((m) => m.role === "assistant");
     expect(assistant?.agentRunId).toBe(result!.agentRunId);
   });
 
@@ -292,13 +292,13 @@ describe("thread accounting", () => {
     const sessionId = await newThread();
 
     await runChatTurn(db, deps(llm), workspaceId, ACTOR, sessionId, "First");
-    const afterOne = getSession(db, workspaceId, sessionId)!;
+    const afterOne = (await getSession(db, workspaceId, sessionId))!;
     // Two model calls: the title and the answer.
     expect(afterOne.totalInputTokens).toBe(20);
     expect(afterOne.totalOutputTokens).toBe(10);
 
     await runChatTurn(db, deps(llm), workspaceId, ACTOR, sessionId, "Second");
-    const afterTwo = getSession(db, workspaceId, sessionId)!;
+    const afterTwo = (await getSession(db, workspaceId, sessionId))!;
     // The title is already set, so the second turn is one model call.
     expect(afterTwo.totalInputTokens).toBe(30);
     expect(afterTwo.totalOutputTokens).toBe(15);
@@ -313,21 +313,21 @@ describe("thread accounting", () => {
 
     await runChatTurn(db, deps(llm), workspaceId, ACTOR, sessionId, "I want to launch our product");
 
-    const session = getSession(db, workspaceId, sessionId)!;
+    const session = (await getSession(db, workspaceId, sessionId))!;
     expect(session.title).toBe("Product launch plan");
     expect(session.goal).toBe("Launch across LinkedIn");
   });
 
   it("never overwrites a title or goal the founder set", async () => {
     const llm = new ScriptedGateway([{ text: "Fine." }]);
-    const session = createSession(db, workspaceId, null, {
+    const session = await createSession(db, workspaceId, null, {
       title: "My thread",
       goal: "My goal",
     });
 
     await runChatTurn(db, deps(llm), workspaceId, ACTOR, session.id, "Hello");
 
-    const after = getSession(db, workspaceId, session.id)!;
+    const after = (await getSession(db, workspaceId, session.id))!;
     expect(after.title).toBe("My thread");
     expect(after.goal).toBe("My goal");
     // And with both already set, no title call was made at all.
@@ -336,19 +336,19 @@ describe("thread accounting", () => {
 
   it("reports the thread as exhausted once the cap is spent", async () => {
     const sessionId = await newThread();
-    db.update(chatSessions)
+    await db.update(chatSessions)
       .set({ totalInputTokens: CHAT_THREAD_TOKEN_CAP, totalOutputTokens: 0 })
       .where(eq(chatSessions.id, sessionId))
       .run();
 
-    const session = getSession(db, workspaceId, sessionId)!;
+    const session = (await getSession(db, workspaceId, sessionId))!;
     const { isThreadBudgetExhausted } = await import("../src/services/chat");
     expect(isThreadBudgetExhausted(session)).toBe(true);
   });
 
   it("returns undefined for a thread in another workspace", async () => {
     const other = randomUUID();
-    db.insert(workspaces).values({ id: other, name: "Other", createdAt: 1, updatedAt: 1 }).run();
+    await db.insert(workspaces).values({ id: other, name: "Other", createdAt: 1, updatedAt: 1 }).run();
     const sessionId = await newThread();
 
     const result = await runChatTurn(

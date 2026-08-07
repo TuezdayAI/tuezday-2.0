@@ -45,8 +45,8 @@ function corpusFabric(opts?: { failTwitter?: boolean }): ConnectorFabric {
   };
 }
 
-function seedConnection(db: Db, workspaceId: string, providerKey: string, status = "connected") {
-  db.insert(connections)
+async function seedConnection(db: Db, workspaceId: string, providerKey: string, status = "connected") {
+  await db.insert(connections)
     .values({
       id: randomUUID(),
       workspaceId,
@@ -62,14 +62,14 @@ function seedConnection(db: Db, workspaceId: string, providerKey: string, status
     .run();
 }
 
-function setup() {
+async function setup() {
   const db = createTestDb();
-  const { user } = registerAccount(db, {
+  const { user } = await registerAccount(db, {
     email: `sc-${randomUUID()}@test.dev`,
     password: "test-password-1",
     name: "SC",
   });
-  const ws = createWorkspace(db, { name: "Corpus WS" }, user.id);
+  const ws = await createWorkspace(db, { name: "Corpus WS" }, user.id);
   return { db, ws };
 }
 
@@ -78,19 +78,19 @@ function setup() {
 // ---------------------------------------------------------------------------
 
 describe("hasSocialConnection", () => {
-  it("false with no connections, true with one connected social", () => {
-    const { db, ws } = setup();
-    expect(hasSocialConnection(db, ws.id)).toBe(false);
-    seedConnection(db, ws.id, "slack"); // non-social: still false
-    expect(hasSocialConnection(db, ws.id)).toBe(false);
-    seedConnection(db, ws.id, "twitter");
-    expect(hasSocialConnection(db, ws.id)).toBe(true);
+  it("false with no connections, true with one connected social", async () => {
+    const { db, ws } = await setup();
+    expect(await hasSocialConnection(db, ws.id)).toBe(false);
+    await seedConnection(db, ws.id, "slack"); // non-social: still false
+    expect(await hasSocialConnection(db, ws.id)).toBe(false);
+    await seedConnection(db, ws.id, "twitter");
+    expect(await hasSocialConnection(db, ws.id)).toBe(true);
   });
 
-  it("ignores disconnected social connections", () => {
-    const { db, ws } = setup();
-    seedConnection(db, ws.id, "linkedin", "disconnected");
-    expect(hasSocialConnection(db, ws.id)).toBe(false);
+  it("ignores disconnected social connections", async () => {
+    const { db, ws } = await setup();
+    await seedConnection(db, ws.id, "linkedin", "disconnected");
+    expect(await hasSocialConnection(db, ws.id)).toBe(false);
   });
 });
 
@@ -100,8 +100,8 @@ describe("hasSocialConnection", () => {
 
 describe("readSocialCorpus", () => {
   it("reads a connected twitter account into the corpus", async () => {
-    const { db, ws } = setup();
-    seedConnection(db, ws.id, "twitter");
+    const { db, ws } = await setup();
+    await seedConnection(db, ws.id, "twitter");
     const corpus = await readSocialCorpus(db, corpusFabric(), ws.id);
     expect(corpus.connected).toEqual(["twitter"]);
     expect(corpus.entries).toHaveLength(1);
@@ -112,8 +112,8 @@ describe("readSocialCorpus", () => {
   });
 
   it("isolates a failing provider as an error entry", async () => {
-    const { db, ws } = setup();
-    seedConnection(db, ws.id, "twitter");
+    const { db, ws } = await setup();
+    await seedConnection(db, ws.id, "twitter");
     const corpus = await readSocialCorpus(db, corpusFabric({ failTwitter: true }), ws.id);
     expect(corpus.entries).toHaveLength(1);
     expect(corpus.entries[0]!.profile).toBeNull();
@@ -122,7 +122,7 @@ describe("readSocialCorpus", () => {
   });
 
   it("returns an empty corpus with no social connections", async () => {
-    const { db, ws } = setup();
+    const { db, ws } = await setup();
     const corpus = await readSocialCorpus(db, corpusFabric(), ws.id);
     expect(corpus).toEqual({ connected: [], entries: [], corpus: "" });
   });
@@ -145,7 +145,7 @@ describe("social corpus API + onboarding gate", () => {
     const ws = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "W" } })
     ).json();
-    seedConnection(db, ws.id, "twitter");
+    await seedConnection(db, ws.id, "twitter");
     const res = await app.inject({ method: "GET", url: `/workspaces/${ws.id}/social-corpus` });
     expect(res.statusCode).toBe(200);
     expect(res.json().connected).toEqual(["twitter"]);
@@ -189,7 +189,7 @@ describe("social corpus API + onboarding gate", () => {
     const ws = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "W" } })
     ).json();
-    seedConnection(db, ws.id, "linkedin");
+    await seedConnection(db, ws.id, "linkedin");
     const res = await app.inject({
       method: "PATCH",
       url: `/workspaces/${ws.id}/onboarding`,

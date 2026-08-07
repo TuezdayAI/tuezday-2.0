@@ -75,25 +75,25 @@ interface Seeded {
 
 async function seedWorkspace(marker: string): Promise<Seeded> {
   const workspaceId = randomUUID();
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({ id: workspaceId, name: `WS ${marker}`, createdAt: 1, updatedAt: 1 })
     .run();
 
-  updateBrainDoc(db, workspaceId, "voice", `## Tone\n\nOur tone is ${marker} direct.\n`);
-  const persona = createPersona(
+  await updateBrainDoc(db, workspaceId, "voice", `## Tone\n\nOur tone is ${marker} direct.\n`);
+  const persona = await createPersona(
     db,
     workspaceId,
     upsertPersonaInputSchema.parse({ name: `Persona ${marker}`, tone: marker }),
   );
-  const campaign = createCampaign(
+  const campaign = await createCampaign(
     db,
     workspaceId,
     upsertCampaignInputSchema.parse({ name: `Campaign ${marker}`, objective: `${marker} wins` }),
   );
-  setChannelGuidance(db, workspaceId, "linkedin", `Guidance ${marker}: stay ${marker}.`);
+  await setChannelGuidance(db, workspaceId, "linkedin", `Guidance ${marker}: stay ${marker}.`);
 
   const draftId = randomUUID();
-  db.insert(drafts)
+  await db.insert(drafts)
     .values({
       id: draftId,
       workspaceId,
@@ -106,7 +106,7 @@ async function seedWorkspace(marker: string): Promise<Seeded> {
       updatedAt: 1,
     })
     .run();
-  db.insert(drafts)
+  await db.insert(drafts)
     .values({
       id: randomUUID(),
       workspaceId,
@@ -121,7 +121,7 @@ async function seedWorkspace(marker: string): Promise<Seeded> {
     .run();
 
   const connectionId = randomUUID();
-  db.insert(connections)
+  await db.insert(connections)
     .values({
       id: connectionId,
       workspaceId,
@@ -131,7 +131,7 @@ async function seedWorkspace(marker: string): Promise<Seeded> {
       updatedAt: 1,
     })
     .run();
-  db.insert(publications)
+  await db.insert(publications)
     .values({
       id: randomUUID(),
       workspaceId,
@@ -149,7 +149,7 @@ async function seedWorkspace(marker: string): Promise<Seeded> {
     .run();
 
   const sourceId = randomUUID();
-  db.insert(discoverySources)
+  await db.insert(discoverySources)
     .values({
       id: sourceId,
       workspaceId,
@@ -160,7 +160,7 @@ async function seedWorkspace(marker: string): Promise<Seeded> {
       createdAt: 1,
     })
     .run();
-  db.insert(discoveredItems)
+  await db.insert(discoveredItems)
     .values({
       id: randomUUID(),
       workspaceId,
@@ -182,7 +182,7 @@ async function seedWorkspace(marker: string): Promise<Seeded> {
     collectionId,
     metadata: {},
   });
-  db.insert(evidenceDocuments)
+  await db.insert(evidenceDocuments)
     .values({
       id: randomUUID(),
       workspaceId,
@@ -284,8 +284,8 @@ describe("tenant isolation across every read tool", () => {
   it("a metric rollup counts only its own workspace's rows, and a foreign id rolls up to nothing", async () => {
     // The aggregate leak the marker sweep cannot catch: no name crosses the
     // boundary, just a number that is silently too big.
-    const record = (workspaceId: string, subjectId: string, value: number) =>
-      recordMetric(db, workspaceId, {
+    const record = async (workspaceId: string, subjectId: string, value: number) =>
+      await recordMetric(db, workspaceId, {
         subjectType: "campaign",
         subjectId,
         metricKey: "impressions",
@@ -295,8 +295,8 @@ describe("tenant isolation across every read tool", () => {
         source: "manual",
         capturedAt: 1,
       });
-    record(a.workspaceId, a.campaignId, 100);
-    record(b.workspaceId, b.campaignId, 900);
+    await record(a.workspaceId, a.campaignId, 100);
+    await record(b.workspaceId, b.campaignId, 900);
 
     const own = (await getMetricSummaryTool.run(ctxFor(a.workspaceId), {
       subjectType: "campaign",

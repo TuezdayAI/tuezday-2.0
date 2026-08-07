@@ -108,8 +108,8 @@ export interface KnobConfiguration {
  * One read of every knob table. Hoisted out of the per-resolve path so the
  * report can replay 200 bundles without re-querying six tables 200 times.
  */
-export function readKnobConfiguration(db: Db, workspaceId: string): KnobConfiguration {
-  const written = db
+export async function readKnobConfiguration(db: Db, workspaceId: string): Promise<KnobConfiguration> {
+  const written = await db
     .select({
       count: sql<number>`count(*)`,
       lastAt: sql<number | null>`max(${brainDocuments.updatedAt})`,
@@ -123,7 +123,7 @@ export function readKnobConfiguration(db: Db, workspaceId: string): KnobConfigur
     )
     .get();
 
-  const guidance = db
+  const guidance = await db
     .select({
       scoped: guidanceOverrides.personaId,
       campaignId: guidanceOverrides.campaignId,
@@ -135,7 +135,7 @@ export function readKnobConfiguration(db: Db, workspaceId: string): KnobConfigur
   const unscoped = guidance.filter((row) => !row.scoped && !row.campaignId);
   const scoped = guidance.filter((row) => row.scoped || row.campaignId);
 
-  const matrix = db
+  const matrix = await db
     .select({
       count: sql<number>`count(*)`,
       lastAt: sql<number | null>`max(${contextMatrixOverrides.updatedAt})`,
@@ -144,7 +144,7 @@ export function readKnobConfiguration(db: Db, workspaceId: string): KnobConfigur
     .where(eq(contextMatrixOverrides.workspaceId, workspaceId))
     .get();
 
-  const settings = db
+  const settings = await db
     .select()
     .from(generationSettings)
     .where(eq(generationSettings.workspaceId, workspaceId))
@@ -157,7 +157,7 @@ export function readKnobConfiguration(db: Db, workspaceId: string): KnobConfigur
       settings.angleCount !== 3 ||
       settings.flagThreshold !== 70);
 
-  const overlays = db
+  const overlays = await db
     .select({
       count: sql<number>`count(*)`,
       lastAt: sql<number | null>`max(${designOverlays.updatedAt})`,
@@ -297,14 +297,14 @@ function verdicts(
 }
 
 /** The nine knobs, in precedence order, for one persisted bundle. */
-export function knobStatesForResolve(
+export async function knobStatesForResolve(
   db: Db,
   workspaceId: string,
   sections: ContextSection[],
   meta: KnobResolveMeta = {},
   config?: KnobConfiguration,
-): TraceKnob[] {
-  const resolved = config ?? readKnobConfiguration(db, workspaceId);
+): Promise<TraceKnob[]> {
+  const resolved = config ?? await readKnobConfiguration(db, workspaceId);
   const table = verdicts(sections, meta, resolved);
   return CONTEXT_KNOBS.map((knob) => {
     const verdict = table[knob.key];
@@ -345,15 +345,15 @@ export interface KnobUsageOptions {
  * changed a prompt. `appliedShare` is over `sampledResolves`, never implied
  * over all history (D-71.7).
  */
-export function buildKnobUsageReport(
+export async function buildKnobUsageReport(
   db: Db,
   workspaceId: string,
   options: KnobUsageOptions = {},
-): KnobUsageReport {
+): Promise<KnobUsageReport> {
   const sampleLimit = Math.max(1, Math.min(options.sampleLimit ?? KNOB_USAGE_SAMPLE_LIMIT, 1_000));
-  const config = readKnobConfiguration(db, workspaceId);
+  const config = await readKnobConfiguration(db, workspaceId);
 
-  const rows = db
+  const rows = await db
     .select({
       sectionsJson: generations.sectionsJson,
       taskType: generations.taskType,
@@ -379,7 +379,7 @@ export function buildKnobUsageReport(
     }
     if (!Array.isArray(sections) || sections.length === 0) continue;
     sampled += 1;
-    const states = knobStatesForResolve(
+    const states = await knobStatesForResolve(
       db,
       workspaceId,
       sections,

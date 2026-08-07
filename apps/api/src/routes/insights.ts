@@ -9,8 +9,8 @@ import {
 } from "../services/insights";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -22,10 +22,10 @@ export function registerInsightsRoutes(app: FastifyInstance, db: Db): void {
   app.get<{ Params: { id: string; campaignId: string }; Querystring: { format?: string } }>(
     "/workspaces/:id/campaigns/:campaignId/insights",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const campaign = getCampaign(db, request.params.id, request.params.campaignId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const campaign = await getCampaign(db, request.params.id, request.params.campaignId);
       if (!campaign) return reply.status(404).send({ error: "campaign_not_found" });
-      const insights = getCampaignInsights(db, campaign);
+      const insights = await getCampaignInsights(db, campaign);
       if (request.query.format === "csv") {
         return reply
           .header("Content-Type", "text/csv")
@@ -43,8 +43,8 @@ export function registerInsightsRoutes(app: FastifyInstance, db: Db): void {
   app.get<{ Params: { id: string }; Querystring: { format?: string } }>(
     "/workspaces/:id/insights",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const insights = getWorkspaceInsights(db, request.params.id);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const insights = await getWorkspaceInsights(db, request.params.id);
       if (request.query.format === "csv") {
         return reply
           .header("Content-Type", "text/csv")

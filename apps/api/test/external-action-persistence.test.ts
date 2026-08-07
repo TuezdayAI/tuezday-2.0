@@ -17,19 +17,19 @@ import {
 } from "../src/services/external-action-backfill";
 import { createTestDb } from "./helpers";
 
-function seedWorkspace(db: Db, name = "Action Lab") {
+async function seedWorkspace(db: Db, name = "Action Lab") {
   const now = Date.now();
   const id = randomUUID();
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({ id, name, analyticsOptOut: false, websiteUrl: null, onboardingStep: null, createdAt: now, updatedAt: now })
     .run();
   return id;
 }
 
-function seedCampaign(db: Db, workspaceId: string, automationMode: AutomationMode) {
+async function seedCampaign(db: Db, workspaceId: string, automationMode: AutomationMode) {
   const now = Date.now();
   const id = randomUUID();
-  db.insert(campaigns)
+  await db.insert(campaigns)
     .values({
       id,
       workspaceId,
@@ -55,14 +55,14 @@ function seedCampaign(db: Db, workspaceId: string, automationMode: AutomationMod
   return id;
 }
 
-function rule(
+async function rule(
   db: Db,
   workspaceId: string,
   scope: "workspace" | "campaign",
   scopeId: string,
   actionKind: ExternalActionKind,
 ) {
-  return db
+  return await db
     .select()
     .from(externalActionPolicyRules)
     .where(
@@ -115,14 +115,14 @@ function actionRow(workspaceId: string, idempotencyKey = "publish:one") {
 }
 
 describe("external action persistence", () => {
-  it("creates safe workspace defaults for every action kind idempotently", () => {
+  it("creates safe workspace defaults for every action kind idempotently", async () => {
     const db = createTestDb();
-    const workspaceId = seedWorkspace(db);
+    const workspaceId = await seedWorkspace(db);
 
-    ensureWorkspaceActionPolicies(db, workspaceId);
-    ensureWorkspaceActionPolicies(db, workspaceId);
+    await ensureWorkspaceActionPolicies(db, workspaceId);
+    await ensureWorkspaceActionPolicies(db, workspaceId);
 
-    const rows = db
+    const rows = await db
       .select()
       .from(externalActionPolicyRules)
       .where(eq(externalActionPolicyRules.workspaceId, workspaceId))
@@ -132,63 +132,63 @@ describe("external action persistence", () => {
       .toBe(true);
   });
 
-  it("preserves scheduled-auto execution while gating manual and human-in-loop campaigns", () => {
+  it("preserves scheduled-auto execution while gating manual and human-in-loop campaigns", async () => {
     const db = createTestDb();
-    const workspaceId = seedWorkspace(db);
-    const scheduled = seedCampaign(db, workspaceId, "scheduled_auto");
-    const manual = seedCampaign(db, workspaceId, "manual");
-    const hitl = seedCampaign(db, workspaceId, "human_in_the_loop");
+    const workspaceId = await seedWorkspace(db);
+    const scheduled = await seedCampaign(db, workspaceId, "scheduled_auto");
+    const manual = await seedCampaign(db, workspaceId, "manual");
+    const hitl = await seedCampaign(db, workspaceId, "human_in_the_loop");
 
-    ensureCampaignActionPolicies(db, workspaceId, scheduled, "scheduled_auto");
-    ensureCampaignActionPolicies(db, workspaceId, manual, "manual");
-    ensureCampaignActionPolicies(db, workspaceId, hitl, "human_in_the_loop");
+    await ensureCampaignActionPolicies(db, workspaceId, scheduled, "scheduled_auto");
+    await ensureCampaignActionPolicies(db, workspaceId, manual, "manual");
+    await ensureCampaignActionPolicies(db, workspaceId, hitl, "human_in_the_loop");
 
-    expect(rule(db, workspaceId, "campaign", scheduled, "publish")?.rule).toBe("autonomous");
-    expect(rule(db, workspaceId, "campaign", scheduled, "send")?.rule).toBe("autonomous");
-    expect(rule(db, workspaceId, "campaign", scheduled, "reply")?.rule).toBe("autonomous");
-    expect(rule(db, workspaceId, "campaign", scheduled, "paid_launch")?.rule).toBe("autonomous");
-    expect(rule(db, workspaceId, "campaign", scheduled, "budget_change")?.rule).toBe("human_required");
-    expect(rule(db, workspaceId, "campaign", scheduled, "targeting_change")?.rule).toBe("human_required");
-    expect(rule(db, workspaceId, "campaign", manual, "publish")?.rule).toBe("human_required");
-    expect(rule(db, workspaceId, "campaign", hitl, "publish")?.rule).toBe("human_required");
+    expect((await rule(db, workspaceId, "campaign", scheduled, "publish"))?.rule).toBe("autonomous");
+    expect((await rule(db, workspaceId, "campaign", scheduled, "send"))?.rule).toBe("autonomous");
+    expect((await rule(db, workspaceId, "campaign", scheduled, "reply"))?.rule).toBe("autonomous");
+    expect((await rule(db, workspaceId, "campaign", scheduled, "paid_launch"))?.rule).toBe("autonomous");
+    expect((await rule(db, workspaceId, "campaign", scheduled, "budget_change"))?.rule).toBe("human_required");
+    expect((await rule(db, workspaceId, "campaign", scheduled, "targeting_change"))?.rule).toBe("human_required");
+    expect((await rule(db, workspaceId, "campaign", manual, "publish"))?.rule).toBe("human_required");
+    expect((await rule(db, workspaceId, "campaign", hitl, "publish"))?.rule).toBe("human_required");
   });
 
-  it("backfills every existing workspace and campaign without duplicate rows", () => {
+  it("backfills every existing workspace and campaign without duplicate rows", async () => {
     const db = createTestDb();
-    const firstWorkspace = seedWorkspace(db, "First");
-    const secondWorkspace = seedWorkspace(db, "Second");
-    seedCampaign(db, firstWorkspace, "scheduled_auto");
-    seedCampaign(db, secondWorkspace, "manual");
+    const firstWorkspace = await seedWorkspace(db, "First");
+    const secondWorkspace = await seedWorkspace(db, "Second");
+    await seedCampaign(db, firstWorkspace, "scheduled_auto");
+    await seedCampaign(db, secondWorkspace, "manual");
 
-    backfillExternalActionPolicies(db);
-    backfillExternalActionPolicies(db);
+    await backfillExternalActionPolicies(db);
+    await backfillExternalActionPolicies(db);
 
-    expect(db.select().from(externalActionPolicyRules).all()).toHaveLength(24);
+    expect(await db.select().from(externalActionPolicyRules).all()).toHaveLength(24);
   });
 
-  it("enforces one policy per scope/action and one action per idempotency key", () => {
+  it("enforces one policy per scope/action and one action per idempotency key", async () => {
     const db = createTestDb();
-    const workspaceId = seedWorkspace(db);
-    ensureWorkspaceActionPolicies(db, workspaceId);
-    const existing = rule(db, workspaceId, "workspace", workspaceId, "publish")!;
+    const workspaceId = await seedWorkspace(db);
+    await ensureWorkspaceActionPolicies(db, workspaceId);
+    const existing = (await rule(db, workspaceId, "workspace", workspaceId, "publish"))!;
 
-    expect(() =>
-      db.insert(externalActionPolicyRules).values({ ...existing, id: randomUUID() }).run(),
+    expect(async () =>
+      await db.insert(externalActionPolicyRules).values({ ...existing, id: randomUUID() }).run(),
     ).toThrow();
 
     const first = actionRow(workspaceId);
-    db.insert(externalActions).values(first).run();
-    expect(() =>
-      db.insert(externalActions).values({ ...actionRow(workspaceId), idempotencyKey: first.idempotencyKey }).run(),
+    await db.insert(externalActions).values(first).run();
+    expect(async () =>
+      await db.insert(externalActions).values({ ...actionRow(workspaceId), idempotencyKey: first.idempotencyKey }).run(),
     ).toThrow();
   });
 
-  it("cascades immutable decisions when their action is deleted", () => {
+  it("cascades immutable decisions when their action is deleted", async () => {
     const db = createTestDb();
-    const workspaceId = seedWorkspace(db);
+    const workspaceId = await seedWorkspace(db);
     const action = actionRow(workspaceId);
-    db.insert(externalActions).values(action).run();
-    db.insert(externalActionDecisions)
+    await db.insert(externalActions).values(action).run();
+    await db.insert(externalActionDecisions)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -203,7 +203,7 @@ describe("external action persistence", () => {
       })
       .run();
 
-    db.delete(externalActions).where(eq(externalActions.id, action.id)).run();
-    expect(db.select().from(externalActionDecisions).all()).toEqual([]);
+    await db.delete(externalActions).where(eq(externalActions.id, action.id)).run();
+    expect(await db.select().from(externalActionDecisions).all()).toEqual([]);
   });
 });

@@ -134,7 +134,7 @@ export class InstagramAdapter implements SocialAdapter {
       creationId = parent.id;
     }
 
-    return hasVideo ? this.processing(creationId) : this.publishContainer(creationId);
+    return hasVideo ? this.processing(creationId) : await this.publishContainer(creationId);
   }
 
   async finalizePost(operationId: string): Promise<SocialPublishResult> {
@@ -149,7 +149,7 @@ export class InstagramAdapter implements SocialAdapter {
       throw new ConnectorFabricError(`Instagram container lookup returned ${res.status}.`);
     }
     const status = (res.json as StatusResponse)?.status_code;
-    if (status === "FINISHED") return this.publishContainer(operationId);
+    if (status === "FINISHED") return await this.publishContainer(operationId);
     if (status === "ERROR") {
       throw new ConnectorFabricError("Instagram could not process the video.");
     }

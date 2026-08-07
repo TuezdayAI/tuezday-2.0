@@ -109,7 +109,7 @@ describe("next-action API", () => {
     // channel_connected: a connected social-category connection. Inserted
     // directly — the real connect flow round-trips through Nango.
     const now = Date.now();
-    db.insert(connections)
+    await db.insert(connections)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -124,7 +124,7 @@ describe("next-action API", () => {
     // team_invited: a second member (inserted directly; the invite flow is
     // covered by teams.test.ts).
     const teammate = await registerUser(app, "teammate@test.dev", "Teammate");
-    db.insert(workspaceMembers)
+    await db.insert(workspaceMembers)
       .values({
         id: randomUUID(),
         workspaceId,

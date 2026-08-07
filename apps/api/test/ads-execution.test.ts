@@ -464,7 +464,7 @@ describe("ads execution API (Sprint 20)", () => {
   }
 
   async function createLaunch(overrides: Record<string, unknown> = {}) {
-    return app.inject({
+    return await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/ads/launches`,
       payload: launchPayload(overrides),

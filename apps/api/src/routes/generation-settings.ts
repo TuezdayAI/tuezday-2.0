@@ -7,8 +7,8 @@ import {
 } from "../services/generation-settings";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -19,15 +19,15 @@ export function registerGenerationSettingsRoutes(app: FastifyInstance, db: Db): 
   app.get<{ Params: { id: string } }>(
     "/workspaces/:id/generation-settings",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      return getGenerationSettings(db, request.params.id);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      return await getGenerationSettings(db, request.params.id);
     },
   );
 
   app.put<{ Params: { id: string } }>(
     "/workspaces/:id/generation-settings",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = updateGenerationSettingsInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -35,7 +35,7 @@ export function registerGenerationSettingsRoutes(app: FastifyInstance, db: Db): 
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      return updateGenerationSettings(db, request.params.id, parsed.data);
+      return await updateGenerationSettings(db, request.params.id, parsed.data);
     },
   );
 }

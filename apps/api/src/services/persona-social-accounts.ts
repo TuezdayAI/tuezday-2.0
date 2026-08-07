@@ -18,12 +18,12 @@ function rowToAssignment(row: PersonaSocialAccountRow): PersonaSocialAccount {
   };
 }
 
-export function listPersonaSocialAccounts(
+export async function listPersonaSocialAccounts(
   db: Db,
   workspaceId: string,
   personaId: string,
-): PersonaSocialAccount[] {
-  return db
+): Promise<PersonaSocialAccount[]> {
+  return (await db
     .select()
     .from(personaSocialAccounts)
     .where(
@@ -32,18 +32,18 @@ export function listPersonaSocialAccounts(
         eq(personaSocialAccounts.personaId, personaId),
       ),
     )
-    .all()
+    .all())
     .map(rowToAssignment);
 }
 
-function demotePrimary(
+async function demotePrimary(
   db: Db,
   workspaceId: string,
   personaId: string,
   providerKey: string,
   channel: string,
-): void {
-  db.update(personaSocialAccounts)
+): Promise<void> {
+  await db.update(personaSocialAccounts)
     .set({ isPrimary: false, updatedAt: Date.now() })
     .where(
       and(
@@ -60,18 +60,18 @@ export type AssignmentResult =
   | { ok: true; assignment: PersonaSocialAccount }
   | { ok: false; error: "connection_not_found" | "not_social" };
 
-export function createPersonaSocialAccount(
+export async function createPersonaSocialAccount(
   db: Db,
   workspaceId: string,
   personaId: string,
   input: UpsertPersonaSocialAccountInput,
-): AssignmentResult {
-  const connection = getConnection(db, workspaceId, input.connectionId);
+): Promise<AssignmentResult> {
+  const connection = await getConnection(db, workspaceId, input.connectionId);
   if (!connection) return { ok: false, error: "connection_not_found" };
   const provider = providerByKey(connection.providerKey);
   if (!provider?.categories?.includes("social")) return { ok: false, error: "not_social" };
   if (input.isPrimary) {
-    demotePrimary(db, workspaceId, personaId, connection.providerKey, input.channel);
+    await demotePrimary(db, workspaceId, personaId, connection.providerKey, input.channel);
   }
   const now = Date.now();
   const row: PersonaSocialAccountRow = {
@@ -86,18 +86,18 @@ export function createPersonaSocialAccount(
     createdAt: now,
     updatedAt: now,
   };
-  db.insert(personaSocialAccounts).values(row).run();
+  await db.insert(personaSocialAccounts).values(row).run();
   return { ok: true, assignment: rowToAssignment(row) };
 }
 
-export function updatePersonaSocialAccount(
+export async function updatePersonaSocialAccount(
   db: Db,
   workspaceId: string,
   personaId: string,
   assignmentId: string,
   input: UpsertPersonaSocialAccountInput,
-): AssignmentResult | { ok: false; error: "assignment_not_found" } {
-  const existing = db
+): Promise<AssignmentResult | { ok: false; error: "assignment_not_found" }> {
+  const existing = await db
     .select()
     .from(personaSocialAccounts)
     .where(
@@ -109,14 +109,14 @@ export function updatePersonaSocialAccount(
     )
     .get();
   if (!existing) return { ok: false, error: "assignment_not_found" };
-  const connection = getConnection(db, workspaceId, input.connectionId);
+  const connection = await getConnection(db, workspaceId, input.connectionId);
   if (!connection) return { ok: false, error: "connection_not_found" };
   const provider = providerByKey(connection.providerKey);
   if (!provider?.categories?.includes("social")) return { ok: false, error: "not_social" };
   if (input.isPrimary) {
-    demotePrimary(db, workspaceId, personaId, connection.providerKey, input.channel);
+    await demotePrimary(db, workspaceId, personaId, connection.providerKey, input.channel);
   }
-  db.update(personaSocialAccounts)
+  await db.update(personaSocialAccounts)
     .set({
       connectionId: connection.id,
       providerKey: connection.providerKey,
@@ -135,17 +135,17 @@ export function updatePersonaSocialAccount(
     .run();
   return {
     ok: true,
-    assignment: listPersonaSocialAccounts(db, workspaceId, personaId).find((a) => a.id === assignmentId)!,
+    assignment: (await listPersonaSocialAccounts(db, workspaceId, personaId)).find((a) => a.id === assignmentId)!,
   };
 }
 
-export function deletePersonaSocialAccount(
+export async function deletePersonaSocialAccount(
   db: Db,
   workspaceId: string,
   personaId: string,
   assignmentId: string,
-): boolean {
-  const existing = db
+): Promise<boolean> {
+  const existing = await db
     .select()
     .from(personaSocialAccounts)
     .where(
@@ -157,7 +157,7 @@ export function deletePersonaSocialAccount(
     )
     .get();
   if (!existing) return false;
-  db.delete(personaSocialAccounts)
+  await db.delete(personaSocialAccounts)
     .where(
       and(
         eq(personaSocialAccounts.workspaceId, workspaceId),
@@ -188,7 +188,7 @@ export function providerForSocialChannel(channel: string): string | null {
   return null;
 }
 
-export function resolvePersonaSocialConnection(
+export async function resolvePersonaSocialConnection(
   db: Db,
   workspaceId: string,
   args: {
@@ -197,12 +197,12 @@ export function resolvePersonaSocialConnection(
     channel: string;
     explicitConnectionId?: string;
   },
-): PersonaConnectionResolution {
+): Promise<PersonaConnectionResolution> {
   const providerKey = args.providerKey ?? providerForSocialChannel(args.channel);
   if (!providerKey) return { ok: false, error: "persona_account_missing" };
 
   if (args.explicitConnectionId) {
-    const connection = getConnection(db, workspaceId, args.explicitConnectionId);
+    const connection = await getConnection(db, workspaceId, args.explicitConnectionId);
     if (!connection) return { ok: false, error: "connection_not_found" };
     const provider = providerByKey(connection.providerKey);
     if (
@@ -213,7 +213,7 @@ export function resolvePersonaSocialConnection(
       return { ok: false, error: "persona_account_unavailable" };
     }
     if (!args.personaId) return { ok: true, connection, assignment: null };
-    const assignment = listPersonaSocialAccounts(db, workspaceId, args.personaId).find(
+    const assignment = (await listPersonaSocialAccounts(db, workspaceId, args.personaId)).find(
       (a) => a.connectionId === connection.id && a.providerKey === providerKey && a.channel === args.channel,
     );
     if (!assignment) return { ok: false, error: "persona_account_mismatch" };
@@ -221,12 +221,12 @@ export function resolvePersonaSocialConnection(
   }
 
   if (!args.personaId) return { ok: false, error: "persona_account_missing" };
-  const primaries = listPersonaSocialAccounts(db, workspaceId, args.personaId).filter(
+  const primaries = (await listPersonaSocialAccounts(db, workspaceId, args.personaId)).filter(
     (a) => a.providerKey === providerKey && a.channel === args.channel && a.isPrimary,
   );
   if (primaries.length === 0) return { ok: false, error: "persona_account_missing" };
   if (primaries.length > 1) return { ok: false, error: "persona_account_ambiguous" };
-  const connection = getConnection(db, workspaceId, primaries[0]!.connectionId);
+  const connection = await getConnection(db, workspaceId, primaries[0]!.connectionId);
   const provider = connection ? providerByKey(connection.providerKey) : undefined;
   if (
     !connection ||

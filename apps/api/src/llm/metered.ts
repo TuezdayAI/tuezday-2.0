@@ -27,11 +27,11 @@ export interface MeterContext {
 
 const warnedModels = new Set<string>();
 
-function record(
+async function record(
   db: Db,
   ctx: MeterContext,
   result: { model: string; provider: string; usage?: GenerateResult["usage"] },
-): void {
+): Promise<void> {
   if (!result.usage) return;
   if (!hasPricing(result.model) && !warnedModels.has(result.model)) {
     warnedModels.add(result.model);
@@ -40,7 +40,7 @@ function record(
       `[llm/metered] no pricing entry for model "${result.model}" — its usage is recorded at 0 cents.`,
     );
   }
-  recordLlmUsage(db, {
+  await recordLlmUsage(db, {
     workspaceId: ctx.workspaceId,
     pipeline: ctx.pipeline,
     campaignId: ctx.campaignId ?? null,
@@ -57,7 +57,7 @@ export function meteredLlm(llm: LlmGateway, db: Db, ctx: MeterContext): LlmGatew
   const metered: LlmGateway = {
     async generate(params: GenerateParams): Promise<GenerateResult> {
       const result = await llm.generate(params);
-      record(db, ctx, result);
+      await record(db, ctx, result);
       return result;
     },
   };
@@ -68,7 +68,7 @@ export function meteredLlm(llm: LlmGateway, db: Db, ctx: MeterContext): LlmGatew
   if (llm.agentStep) {
     metered.agentStep = async (params: AgentStepParams): Promise<AgentStepResult> => {
       const result = await llm.agentStep!(params);
-      record(db, ctx, result);
+      await record(db, ctx, result);
       return result;
     };
   }
@@ -78,7 +78,7 @@ export function meteredLlm(llm: LlmGateway, db: Db, ctx: MeterContext): LlmGatew
       onEvent: (event: AgentStepStreamEvent) => void,
     ): Promise<AgentStepResult> => {
       const result = await llm.agentStepStream!(params, onEvent);
-      record(db, ctx, result);
+      await record(db, ctx, result);
       return result;
     };
   }

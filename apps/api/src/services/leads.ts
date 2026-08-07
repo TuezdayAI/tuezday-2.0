@@ -32,13 +32,13 @@ export class OutboundDraftEmailError extends Error {
   }
 }
 
-export function prepareOutboundDraftEmailAction(
+export async function prepareOutboundDraftEmailAction(
   db: Db,
   workspaceId: string,
   draftId: string,
   mailboxId?: string,
-): ExternalActionCommand {
-  const draft = db.select().from(drafts).where(
+): Promise<ExternalActionCommand> {
+  const draft = await db.select().from(drafts).where(
     and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)),
   ).get();
   if (!draft) throw new OutboundDraftEmailError("draft_not_found", "Outbound draft not found.");
@@ -48,11 +48,11 @@ export function prepareOutboundDraftEmailAction(
   if (draft.channel !== "email" || draft.taskType !== "outbound_email") {
     throw new OutboundDraftEmailError("draft_not_email", "This draft is not an outbound email.");
   }
-  if (!draft.leadId || !getLead(db, workspaceId, draft.leadId)) {
+  if (!draft.leadId || !await getLead(db, workspaceId, draft.leadId)) {
     throw new OutboundDraftEmailError("lead_not_found", "This draft is not linked to a current lead.");
   }
   if (mailboxId !== undefined) {
-    const mailbox = getMailbox(db, workspaceId, mailboxId);
+    const mailbox = await getMailbox(db, workspaceId, mailboxId);
     if (!mailbox) {
       throw new OutboundDraftEmailError("mailbox_not_found", "Mailbox not found.");
     }
@@ -63,7 +63,7 @@ export function prepareOutboundDraftEmailAction(
       );
     }
   }
-  return prepareEmailAction(db, workspaceId, {
+  return await prepareEmailAction(db, workspaceId, {
     origin: "outbound_draft",
     originId: draft.id,
     idempotencyKey: deriveEmailSendIdempotencyKey(draft.id, {
@@ -75,7 +75,7 @@ export function prepareOutboundDraftEmailAction(
   });
 }
 
-export function createLead(db: Db, workspaceId: string, input: CreateLeadInput): Lead {
+export async function createLead(db: Db, workspaceId: string, input: CreateLeadInput): Promise<Lead> {
   const row: LeadRow = {
     id: randomUUID(),
     workspaceId,
@@ -87,28 +87,28 @@ export function createLead(db: Db, workspaceId: string, input: CreateLeadInput):
     xHandle: input.xHandle,
     createdAt: Date.now(),
   };
-  db.insert(leads).values(row).run();
+  await db.insert(leads).values(row).run();
   return row;
 }
 
 /** Partial edit of a lead (e.g. setting an X handle). Email is re-lowercased. */
-export function updateLead(
+export async function updateLead(
   db: Db,
   workspaceId: string,
   leadId: string,
   input: UpdateLeadInput,
-): Lead | undefined {
-  if (!getLead(db, workspaceId, leadId)) return undefined;
+): Promise<Lead | undefined> {
+  if (!await getLead(db, workspaceId, leadId)) return undefined;
   const patch: Partial<LeadRow> = { ...input };
   if (input.email !== undefined) patch.email = input.email.toLowerCase();
   if (Object.keys(patch).length > 0) {
-    db.update(leads).set(patch).where(eq(leads.id, leadId)).run();
+    await db.update(leads).set(patch).where(eq(leads.id, leadId)).run();
   }
-  return getLead(db, workspaceId, leadId);
+  return await getLead(db, workspaceId, leadId);
 }
 
-export function listLeads(db: Db, workspaceId: string): Lead[] {
-  return db
+export async function listLeads(db: Db, workspaceId: string): Promise<Lead[]> {
+  return await db
     .select()
     .from(leads)
     .where(eq(leads.workspaceId, workspaceId))
@@ -116,18 +116,18 @@ export function listLeads(db: Db, workspaceId: string): Lead[] {
     .all();
 }
 
-export function getLead(db: Db, workspaceId: string, leadId: string): Lead | undefined {
-  return db
+export async function getLead(db: Db, workspaceId: string, leadId: string): Promise<Lead | undefined> {
+  return await db
     .select()
     .from(leads)
     .where(and(eq(leads.workspaceId, workspaceId), eq(leads.id, leadId)))
     .get();
 }
 
-export function deleteLead(db: Db, workspaceId: string, leadId: string): boolean {
-  if (!getLead(db, workspaceId, leadId)) return false;
-  removeLeadFromAudiences(db, workspaceId, leadId);
-  db.delete(leads).where(eq(leads.id, leadId)).run();
+export async function deleteLead(db: Db, workspaceId: string, leadId: string): Promise<boolean> {
+  if (!await getLead(db, workspaceId, leadId)) return false;
+  await removeLeadFromAudiences(db, workspaceId, leadId);
+  await db.delete(leads).where(eq(leads.id, leadId)).run();
   return true;
 }
 
@@ -190,7 +190,7 @@ const HEADER_ALIASES: Record<string, string> = {
   handle: "xHandle",
 };
 
-export function importLeadsCsv(db: Db, workspaceId: string, csv: string): ImportResult {
+export async function importLeadsCsv(db: Db, workspaceId: string, csv: string): Promise<ImportResult> {
   const lines = csv
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -204,7 +204,7 @@ export function importLeadsCsv(db: Db, workspaceId: string, csv: string): Import
     return { imported: 0, skipped: 0, errors: ['CSV needs an "email" column.'] };
   }
 
-  const existingEmails = new Set(listLeads(db, workspaceId).map((l) => l.email.toLowerCase()));
+  const existingEmails = new Set((await listLeads(db, workspaceId)).map((l) => l.email.toLowerCase()));
   const result: ImportResult = { imported: 0, skipped: 0, errors: [] };
 
   for (const line of lines.slice(1)) {
@@ -231,7 +231,7 @@ export function importLeadsCsv(db: Db, workspaceId: string, csv: string): Import
       result.skipped += 1;
       continue;
     }
-    createLead(db, workspaceId, parsed.data);
+    await createLead(db, workspaceId, parsed.data);
     existingEmails.add(parsed.data.email.toLowerCase());
     result.imported += 1;
   }

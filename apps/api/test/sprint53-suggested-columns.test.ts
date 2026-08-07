@@ -87,11 +87,11 @@ const ITEM_ID = "33333333-3333-4333-8333-333333333333";
 const PERSONA_ID = "44444444-4444-4444-8444-444444444444";
 const CAMPAIGN_ID = "55555555-5555-4555-8555-555555555555";
 
-function seedScorableItem(db: Db): void {
-  db.insert(workspaces)
+async function seedScorableItem(db: Db): Promise<void> {
+  await db.insert(workspaces)
     .values({ id: WORKSPACE_ID, name: "Matching", createdAt: 1, updatedAt: 1 })
     .run();
-  db.insert(personas)
+  await db.insert(personas)
     .values({
       id: PERSONA_ID,
       workspaceId: WORKSPACE_ID,
@@ -100,7 +100,7 @@ function seedScorableItem(db: Db): void {
       updatedAt: 1,
     })
     .run();
-  db.insert(campaigns)
+  await db.insert(campaigns)
     .values({
       id: CAMPAIGN_ID,
       workspaceId: WORKSPACE_ID,
@@ -110,7 +110,7 @@ function seedScorableItem(db: Db): void {
       updatedAt: 1,
     })
     .run();
-  db.insert(discoverySources)
+  await db.insert(discoverySources)
     .values({
       id: SOURCE_ID,
       workspaceId: WORKSPACE_ID,
@@ -129,7 +129,7 @@ function seedScorableItem(db: Db): void {
       createdAt: 1,
     })
     .run();
-  db.insert(discoveredItems)
+  await db.insert(discoveredItems)
     .values({
       id: ITEM_ID,
       workspaceId: WORKSPACE_ID,
@@ -164,7 +164,7 @@ function seedScorableItem(db: Db): void {
 describe("scoring an item (Sprint 53)", () => {
   it("writes the match rows and the score reason, but leaves the legacy columns null", async () => {
     const db = createTestDb();
-    seedScorableItem(db);
+    await seedScorableItem(db);
     const llm: LlmGateway = {
       async generate() {
         return {
@@ -188,7 +188,7 @@ describe("scoring an item (Sprint 53)", () => {
         };
       },
     };
-    const claims = claimMatchingBatch(db, {
+    const claims = await claimMatchingBatch(db, {
       workspaceId: WORKSPACE_ID,
       owner: "owner-a",
       limit: 5,
@@ -204,11 +204,11 @@ describe("scoring an item (Sprint 53)", () => {
     expect(result.ready).toBe(1);
 
     // The stored row keeps the real scoring output …
-    const row = db
+    const row = (await db
       .select()
       .from(discoveredItems)
       .where(eq(discoveredItems.id, ITEM_ID))
-      .get()!;
+      .get())!;
     expect(row.score).toBe(88);
     expect(row.scoreReason).toBe("Fits the launch.");
     expect(row.matchingState).toBe("ready");
@@ -218,7 +218,7 @@ describe("scoring an item (Sprint 53)", () => {
 
     // The match row is where routing actually lives now.
     expect(
-      db
+      await db
         .select()
         .from(discoveredItemMatches)
         .where(eq(discoveredItemMatches.itemId, ITEM_ID))
@@ -226,7 +226,7 @@ describe("scoring an item (Sprint 53)", () => {
     ).toHaveLength(1);
 
     // And the read path still projects it for the UI.
-    const item = getDiscoveredItem(db, WORKSPACE_ID, ITEM_ID)!;
+    const item = (await getDiscoveredItem(db, WORKSPACE_ID, ITEM_ID))!;
     expect(item.suggestedPersonaId).toBe(PERSONA_ID);
     expect(item.suggestedCampaignId).toBe(CAMPAIGN_ID);
   });

@@ -15,6 +15,6 @@ export function registerSocialCorpusRoutes(
 ): void {
   app.get<{ Params: { id: string } }>(
     "/workspaces/:id/social-corpus",
-    async (request) => readSocialCorpus(db, fabric, request.params.id),
+    async (request) => await readSocialCorpus(db, fabric, request.params.id),
   );
 }

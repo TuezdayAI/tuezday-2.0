@@ -270,6 +270,31 @@ sequence of files that produced it.
 
 ---
 
+## 10a. Strategy correction — Stage A ends at the transaction boundary
+
+The §5 plan assumed Stage A could finish with the SQLite suite green. It cannot,
+and the reason is worth recording.
+
+Keeping transactions synchronous requires that **no function reachable from a
+transaction callback** becomes async. That set is not closed: helpers like
+`getDraft`, `getConnection` and `databaseNowMs` are called *both* from inside
+transactions and from ordinary request paths. A helper cannot be sync and async
+at once, so the taint boundary leaks by construction. Holding the line would
+have meant un-promoting most of what Stage A converted, leaving Stage A worth
+almost nothing.
+
+**Correction:** transactions were converted in Stage A as well
+(`stage-a.ts --no-taint`), and the verification checkpoint moved from "green on
+SQLite" to "green on Postgres" — which is the actual acceptance bar in §10
+regardless. The intermediate checkpoint is instead **`npm run typecheck` clean
+with the suite failing only on transactions**, which is exactly what was
+observed: 3,296 tests collect, and all 1,453 failures are the single error
+`Transaction function cannot return a promise`, with **zero** failures of any
+other kind. That is the designed state — the code is now Postgres-shaped and
+SQLite can no longer host it.
+
+---
+
 ## 11. Progress log
 
 - **2026-08-08** — Branch cut from `origin/main@5dbb444` (contains 71/73/75/76/77/78).
@@ -278,3 +303,34 @@ sequence of files that produced it.
   builders are `PromiseLike` on SQLite, async transaction callbacks are rejected
   — which established the two-stage strategy in §5. Founder decisions D-74.1–4
   recorded. Spec written.
+- **2026-08-08** — **Stage A complete.** Baseline captured first (332 files /
+  3,295 tests green in 158s). Codemods under `apps/api/scripts/codemods/`
+  promoted **1,504 functions** to `async` and inserted **~6,700 awaits**,
+  converging to a fixpoint (`0 promoted, 0 wrapped`). `npm run typecheck` is
+  **clean (0 errors)**, down from 2,638 at the first pass.
+
+  Five bug classes were found and fixed along the way — the reason the cascade
+  needed a typed codemod rather than a regex:
+  1. `await` in a **parameter default** (3 sites) — a syntax error that broke
+     the import chain for 160 suites.
+  2. **Import aliases** — a call's symbol for an imported function is the import
+     specifier, so propagation stopped at every module boundary until
+     `getAliasedSymbol()` was used. Fixing it took the error count 489 → 83.
+  3. **Array methods do not await** — 14 sites where `.map/.forEach/.every/
+     .flatMap(async …)` silently produced promises. Two sat *inside*
+     transactions (`signals.ts`, `discovery.ts`) where fire-and-forget inserts
+     raced the read that followed; one (`discovery-matching.ts`) made a lease
+     heartbeat always report success, so a lost lease would never be detected.
+  4. **Deliberately-held promises** — the Sprint 49 crash/restart test assigns a
+     tick and awaits it later on purpose; awaiting at assignment destroyed what
+     the test exists to prove.
+  5. `ReturnType<typeof f>` becoming `Promise<…>` once `f` is async (5 sites,
+     now `Awaited<…>`).
+
+  A read-only detector (`detect-silent.ts`) then swept for promises in positions
+  the typechecker accepts silently — `expect(p)`, `if (p)`, `!p`, `p && x`,
+  templates, ternaries — and found **zero** remaining.
+
+  Per §10a the suite now fails only on transactions: 1,453 failures, every one
+  `Transaction function cannot return a promise`, zero of any other kind.
+  Next: schema → `pg-core`, driver swap, evidence store, test harness.

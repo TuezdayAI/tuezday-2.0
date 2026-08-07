@@ -27,14 +27,14 @@ const PIPELINE_RUN_ID = "33333333-3333-4333-8333-333333333333";
 const USER_ID = "55555555-5555-4555-8555-555555555555";
 const FOUNDER = { userId: USER_ID, label: "Founder" };
 
-function seed(db: Db): void {
-  db.insert(users)
+async function seed(db: Db): Promise<void> {
+  await db.insert(users)
     .values({ id: USER_ID, email: "founder@test.dev", name: "Founder", createdAt: 1, updatedAt: 1 })
     .run();
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({ id: WORKSPACE_ID, name: "Asking", createdAt: 1, updatedAt: 1 })
     .run();
-  db.insert(pipelineDefinitions)
+  await db.insert(pipelineDefinitions)
     .values({
       id: "44444444-4444-4444-8444-444444444444",
       workspaceId: WORKSPACE_ID,
@@ -45,7 +45,7 @@ function seed(db: Db): void {
       updatedAt: 1,
     })
     .run();
-  db.insert(pipelineRuns)
+  await db.insert(pipelineRuns)
     .values({
       id: PIPELINE_RUN_ID,
       workspaceId: WORKSPACE_ID,
@@ -70,9 +70,9 @@ describe("the ask seam (Sprint 70)", () => {
   let db: Db;
   let questions: AgentQuestionService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createTestDb();
-    seed(db);
+    await seed(db);
     questions = createAgentQuestions({ db });
   });
 
@@ -86,7 +86,7 @@ describe("the ask seam (Sprint 70)", () => {
   it("records the question and asks the run to suspend", async () => {
     const result = await questions.ask(origin(), ARGS);
     expect(result.status).toBe("suspend");
-    const stored = openQuestionForPipelineRun(db, PIPELINE_RUN_ID)!;
+    const stored = (await openQuestionForPipelineRun(db, PIPELINE_RUN_ID))!;
     expect(stored.question).toBe(ARGS.question);
     expect(stored.why).toBe(ARGS.why);
     expect(stored.options).toEqual(ARGS.options);
@@ -96,7 +96,7 @@ describe("the ask seam (Sprint 70)", () => {
   it("hands back the answer when the same question is re-asked after a resume (D-70.3)", async () => {
     const first = await questions.ask(origin("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"), ARGS);
     if (first.status !== "suspend") throw new Error("expected a suspension");
-    answerAgentQuestion(
+    await answerAgentQuestion(
       db,
       WORKSPACE_ID,
       first.questionId,
@@ -114,14 +114,14 @@ describe("the ask seam (Sprint 70)", () => {
     if (second.status !== "answered") return;
     expect(second.answer).toBe("No — not until the round is public.");
     // And it did not file a second copy of a question already settled.
-    expect(db.select().from(agentQuestions).all()).toHaveLength(1);
+    expect(await db.select().from(agentQuestions).all()).toHaveLength(1);
   });
 
   it("suspends on the existing row rather than duplicating an unanswered question", async () => {
     const first = await questions.ask(origin(), ARGS);
     const again = await questions.ask(origin(), ARGS);
     expect(again).toEqual(first);
-    expect(db.select().from(agentQuestions).all()).toHaveLength(1);
+    expect(await db.select().from(agentQuestions).all()).toHaveLength(1);
   });
 
   it("counts the cap over the pipeline run, so resumes cannot reset it (D-70.4)", async () => {
@@ -141,12 +141,12 @@ describe("the ask seam (Sprint 70)", () => {
     if (overCap.status !== "refused") return;
     expect(overCap.error).toBe("question_cap_reached");
     // Refused as data, not recorded: a capped run must keep going, not stall.
-    expect(db.select().from(agentQuestions).all()).toHaveLength(AGENT_QUESTIONS_PER_RUN);
+    expect(await db.select().from(agentQuestions).all()).toHaveLength(AGENT_QUESTIONS_PER_RUN);
   });
 
   it("refuses when the workspace already has too many unanswered questions", async () => {
     for (let i = 0; i < AGENT_QUESTIONS_OPEN_MAX; i += 1) {
-      db.insert(agentQuestions)
+      await db.insert(agentQuestions)
         .values({
           id: randomUUID(),
           workspaceId: WORKSPACE_ID,
@@ -163,7 +163,7 @@ describe("the ask seam (Sprint 70)", () => {
         })
         .run();
     }
-    expect(countOpenQuestions(db, WORKSPACE_ID)).toBe(AGENT_QUESTIONS_OPEN_MAX);
+    expect(await countOpenQuestions(db, WORKSPACE_ID)).toBe(AGENT_QUESTIONS_OPEN_MAX);
     const result = await questions.ask(origin(), ARGS);
     expect(result.status).toBe("refused");
     if (result.status !== "refused") return;
@@ -173,7 +173,7 @@ describe("the ask seam (Sprint 70)", () => {
   it("does not re-ask something the founder declined to answer", async () => {
     const first = await questions.ask(origin(), ARGS);
     if (first.status !== "suspend") throw new Error("expected a suspension");
-    answerAgentQuestion(db, WORKSPACE_ID, first.questionId, { action: "dismiss", resume: false }, FOUNDER);
+    await answerAgentQuestion(db, WORKSPACE_ID, first.questionId, { action: "dismiss", resume: false }, FOUNDER);
 
     const again = await questions.ask(origin(), ARGS);
     expect(again.status).toBe("refused");
@@ -185,7 +185,7 @@ describe("the ask seam (Sprint 70)", () => {
     const simulated = simulatedAgentQuestions();
     const result = await simulated.ask(origin(), ARGS);
     expect(result.status).toBe("simulated");
-    expect(db.select().from(agentQuestions).all()).toHaveLength(0);
+    expect(await db.select().from(agentQuestions).all()).toHaveLength(0);
   });
 
   it("fingerprints by meaning, not by punctuation", () => {
@@ -204,9 +204,9 @@ describe("answering an agent question (Sprint 70)", () => {
   let db: Db;
   let questions: AgentQuestionService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createTestDb();
-    seed(db);
+    await seed(db);
     questions = createAgentQuestions({ db });
   });
 
@@ -221,7 +221,7 @@ describe("answering an agent question (Sprint 70)", () => {
 
   it("records who answered and what they said", async () => {
     const id = await open();
-    const { question } = answerAgentQuestion(
+    const { question } = await answerAgentQuestion(
       db,
       WORKSPACE_ID,
       id,
@@ -231,12 +231,12 @@ describe("answering an agent question (Sprint 70)", () => {
     expect(question.status).toBe("answered");
     expect(question.answer).toBe("Yes, name them.");
     expect(question.answeredByLabel).toBe("Founder");
-    expect(listAnsweredQuestionsForPipelineRun(db, PIPELINE_RUN_ID)).toHaveLength(1);
+    expect(await listAnsweredQuestionsForPipelineRun(db, PIPELINE_RUN_ID)).toHaveLength(1);
   });
 
   it("mints a preference rule only when the founder says to keep one (D-70.11)", async () => {
     const plain = await open();
-    answerAgentQuestion(
+    await answerAgentQuestion(
       db,
       WORKSPACE_ID,
       plain,
@@ -244,14 +244,14 @@ describe("answering an agent question (Sprint 70)", () => {
       FOUNDER,
     );
     // The prose of the answer is not parsed into a rule.
-    expect(listPreferenceRules(db, WORKSPACE_ID)).toHaveLength(0);
+    expect(await listPreferenceRules(db, WORKSPACE_ID)).toHaveLength(0);
 
     const kept = await questions.ask(
       { workspaceId: WORKSPACE_ID, agentRunId: randomUUID(), pipelineRunId: null, stepKey: null },
       { ...ARGS, question: "And for the press release?" },
     );
     if (kept.status !== "suspend") throw new Error("expected a suspension");
-    const outcome = answerAgentQuestion(
+    const outcome = await answerAgentQuestion(
       db,
       WORKSPACE_ID,
       kept.questionId,
@@ -274,9 +274,9 @@ describe("answering an agent question (Sprint 70)", () => {
 
   it("refuses to answer the same question twice", async () => {
     const id = await open();
-    answerAgentQuestion(db, WORKSPACE_ID, id, { action: "answer", answer: "Yes.", resume: false }, FOUNDER);
-    expect(() =>
-      answerAgentQuestion(db, WORKSPACE_ID, id, { action: "answer", answer: "No.", resume: false }, FOUNDER),
+    await answerAgentQuestion(db, WORKSPACE_ID, id, { action: "answer", answer: "Yes.", resume: false }, FOUNDER);
+    expect(async () =>
+      await answerAgentQuestion(db, WORKSPACE_ID, id, { action: "answer", answer: "No.", resume: false }, FOUNDER),
     ).toThrow(AgentQuestionAlreadyClosedError);
   });
 });

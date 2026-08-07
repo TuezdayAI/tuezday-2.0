@@ -26,12 +26,12 @@ export class PrDraftEmailError extends Error {
   }
 }
 
-export function preparePrDraftEmailAction(
+export async function preparePrDraftEmailAction(
   db: Db,
   workspaceId: string,
   draftId: string,
-): ExternalActionCommand {
-  const draft = db.select().from(drafts).where(
+): Promise<ExternalActionCommand> {
+  const draft = await db.select().from(drafts).where(
     and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)),
   ).get();
   if (!draft) throw new PrDraftEmailError("draft_not_found", "PR pitch draft not found.");
@@ -41,10 +41,10 @@ export function preparePrDraftEmailAction(
   if (draft.channel !== "pr" || draft.taskType !== "pr_pitch") {
     throw new PrDraftEmailError("draft_not_pitch", "This draft is not a media pitch.");
   }
-  if (!draft.mediaContactId || !getMediaContact(db, workspaceId, draft.mediaContactId)) {
+  if (!draft.mediaContactId || !await getMediaContact(db, workspaceId, draft.mediaContactId)) {
     throw new PrDraftEmailError("contact_not_found", "This pitch is not linked to a current media contact.");
   }
-  return prepareEmailAction(db, workspaceId, {
+  return await prepareEmailAction(db, workspaceId, {
     origin: "pr_draft",
     originId: draft.id,
     idempotencyKey: deriveEmailSendIdempotencyKey(draft.id, {
@@ -59,11 +59,11 @@ function rowToContact(row: MediaContactRow): MediaContact {
   return { ...row, type: row.type as MediaContactType };
 }
 
-export function createMediaContact(
+export async function createMediaContact(
   db: Db,
   workspaceId: string,
   input: CreateMediaContactInput,
-): MediaContact {
+): Promise<MediaContact> {
   const row: MediaContactRow = {
     id: randomUUID(),
     workspaceId,
@@ -75,26 +75,26 @@ export function createMediaContact(
     coverageNotes: input.coverageNotes,
     createdAt: Date.now(),
   };
-  db.insert(mediaContacts).values(row).run();
+  await db.insert(mediaContacts).values(row).run();
   return rowToContact(row);
 }
 
-export function listMediaContacts(db: Db, workspaceId: string): MediaContact[] {
-  return db
+export async function listMediaContacts(db: Db, workspaceId: string): Promise<MediaContact[]> {
+  return (await db
     .select()
     .from(mediaContacts)
     .where(eq(mediaContacts.workspaceId, workspaceId))
     .orderBy(desc(mediaContacts.createdAt))
-    .all()
+    .all())
     .map(rowToContact);
 }
 
-export function getMediaContact(
+export async function getMediaContact(
   db: Db,
   workspaceId: string,
   contactId: string,
-): MediaContact | undefined {
-  const row = db
+): Promise<MediaContact | undefined> {
+  const row = await db
     .select()
     .from(mediaContacts)
     .where(and(eq(mediaContacts.workspaceId, workspaceId), eq(mediaContacts.id, contactId)))
@@ -102,9 +102,9 @@ export function getMediaContact(
   return row ? rowToContact(row) : undefined;
 }
 
-export function deleteMediaContact(db: Db, workspaceId: string, contactId: string): boolean {
-  if (!getMediaContact(db, workspaceId, contactId)) return false;
-  db.delete(mediaContacts).where(eq(mediaContacts.id, contactId)).run();
+export async function deleteMediaContact(db: Db, workspaceId: string, contactId: string): Promise<boolean> {
+  if (!await getMediaContact(db, workspaceId, contactId)) return false;
+  await db.delete(mediaContacts).where(eq(mediaContacts.id, contactId)).run();
   return true;
 }
 
@@ -129,7 +129,7 @@ const HEADER_ALIASES: Record<string, string> = {
   note: "coverageNotes",
 };
 
-export function importMediaContactsCsv(db: Db, workspaceId: string, csv: string): ImportResult {
+export async function importMediaContactsCsv(db: Db, workspaceId: string, csv: string): Promise<ImportResult> {
   const lines = csv
     .split(/\r?\n/)
     .map((l) => l.trim())
@@ -150,7 +150,7 @@ export function importMediaContactsCsv(db: Db, workspaceId: string, csv: string)
   }
 
   const existingEmails = new Set(
-    listMediaContacts(db, workspaceId).map((c) => c.email.toLowerCase()),
+    (await listMediaContacts(db, workspaceId)).map((c) => c.email.toLowerCase()),
   );
   const result: ImportResult = { imported: 0, skipped: 0, errors: [] };
 
@@ -186,7 +186,7 @@ export function importMediaContactsCsv(db: Db, workspaceId: string, csv: string)
       result.skipped += 1;
       continue;
     }
-    createMediaContact(db, workspaceId, parsed.data);
+    await createMediaContact(db, workspaceId, parsed.data);
     existingEmails.add(parsed.data.email.toLowerCase());
     result.imported += 1;
   }

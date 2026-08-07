@@ -13,24 +13,24 @@ import { importAdsCsv } from "../src/services/ads";
 // The connected-sync path ("sync" → source "synced") is asserted inside the
 // existing fabric-driven test in ads.test.ts; here the pure-DB seams are used.
 
-function seedWorkspace(db: Db): string {
+async function seedWorkspace(db: Db): Promise<string> {
   const id = randomUUID();
   const now = Date.now();
-  db.insert(workspaces).values({ id, name: "WS", createdAt: now, updatedAt: now }).run();
+  await db.insert(workspaces).values({ id, name: "WS", createdAt: now, updatedAt: now }).run();
   return id;
 }
 
-function factRows(db: Db, workspaceId: string) {
-  return db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId)).all();
+async function factRows(db: Db, workspaceId: string) {
+  return await db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId)).all();
 }
 
 describe("manual entry dual-write (learning.createMetric)", () => {
-  it("writes the legacy row AND channel-subject point facts, non-null values only", () => {
+  it("writes the legacy row AND channel-subject point facts, non-null values only", async () => {
     const db = createTestDb();
-    const workspaceId = seedWorkspace(db);
+    const workspaceId = await seedWorkspace(db);
     const recordedAt = 1_754_000_000_000;
 
-    createMetric(db, workspaceId, {
+    await createMetric(db, workspaceId, {
       channel: "linkedin",
       description: "Launch post",
       impressions: 900,
@@ -39,7 +39,7 @@ describe("manual entry dual-write (learning.createMetric)", () => {
       recordedAt,
     });
 
-    const legacy = db
+    const legacy = await db
       .select()
       .from(engagementMetrics)
       .where(eq(engagementMetrics.workspaceId, workspaceId))
@@ -47,7 +47,7 @@ describe("manual entry dual-write (learning.createMetric)", () => {
     expect(legacy).toHaveLength(1);
 
     // One fact per observed metric; clicks was absent, so no clicks row.
-    const facts = factRows(db, workspaceId);
+    const facts = await factRows(db, workspaceId);
     expect(facts.map((f) => f.metricKey).sort()).toEqual(["engagements", "impressions"]);
     for (const f of facts) {
       expect(f).toMatchObject({
@@ -60,22 +60,22 @@ describe("manual entry dual-write (learning.createMetric)", () => {
     }
   });
 
-  it("an all-null manual row writes the legacy row and ZERO facts — absence is not zero", () => {
+  it("an all-null manual row writes the legacy row and ZERO facts — absence is not zero", async () => {
     const db = createTestDb();
-    const workspaceId = seedWorkspace(db);
-    createMetric(db, workspaceId, {
+    const workspaceId = await seedWorkspace(db);
+    await createMetric(db, workspaceId, {
       channel: "x",
       description: "prose only",
       notes: "the founder's observation, which feeds the learning prompt",
     });
     expect(
-      db
+      await db
         .select()
         .from(engagementMetrics)
         .where(eq(engagementMetrics.workspaceId, workspaceId))
         .all(),
     ).toHaveLength(1);
-    expect(factRows(db, workspaceId)).toHaveLength(0);
+    expect(await factRows(db, workspaceId)).toHaveLength(0);
   });
 });
 
@@ -95,18 +95,18 @@ describe("ads dual-write (importAdsCsv → upsertMetrics)", () => {
     ],
   });
 
-  it("writes the legacy daily row AND 1d ad_campaign facts; re-import updates in place", () => {
+  it("writes the legacy daily row AND 1d ad_campaign facts; re-import updates in place", async () => {
     const db = createTestDb();
-    const workspaceId = seedWorkspace(db);
+    const workspaceId = await seedWorkspace(db);
 
-    importAdsCsv(db, workspaceId, input(12.5));
+    await importAdsCsv(db, workspaceId, input(12.5));
 
-    const campaign = db
+    const campaign = (await db
       .select()
       .from(adCampaigns)
       .where(eq(adCampaigns.workspaceId, workspaceId))
-      .all()[0]!;
-    let facts = factRows(db, workspaceId);
+      .all())[0]!;
+    let facts = await factRows(db, workspaceId);
     expect(facts.map((f) => f.metricKey).sort()).toEqual([
       "clicks",
       "conversions",
@@ -125,8 +125,8 @@ describe("ads dual-write (importAdsCsv → upsertMetrics)", () => {
     });
 
     // The same day restated with fresher numbers: update, never duplicate.
-    importAdsCsv(db, workspaceId, input(20));
-    facts = factRows(db, workspaceId);
+    await importAdsCsv(db, workspaceId, input(20));
+    facts = await factRows(db, workspaceId);
     expect(facts).toHaveLength(4);
     expect(facts.find((f) => f.metricKey === "spend")!.value).toBe(2000);
   });

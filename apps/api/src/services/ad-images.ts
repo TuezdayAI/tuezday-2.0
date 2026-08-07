@@ -52,9 +52,9 @@ export async function generateAdImage(
   const { db } = deps;
   const started = Date.now();
 
-  assertLlmBudget(db, workspaceId);
+  await assertLlmBudget(db, workspaceId);
 
-  const draft = getDraft(db, workspaceId, draftId);
+  const draft = await getDraft(db, workspaceId, draftId);
   if (!draft) throw new AdImageSourceError("draft_not_found");
   if (draft.taskType !== "meta_ad_creative") {
     throw new AdImageSourceError("Only a meta_ad_creative draft can get an ad image.");
@@ -69,7 +69,7 @@ export async function generateAdImage(
 
   // Spec says channel "meta_ads"; the contracts channel vocabulary has "ads"
   // (import, never redeclare) — so the ads channel scopes design overlays here.
-  const resolved = resolveDesignSystem(db, workspaceId, {
+  const resolved = await resolveDesignSystem(db, workspaceId, {
     channel: "ads",
     personaId: draft.personaId,
     campaignId: draft.campaignId,
@@ -117,7 +117,7 @@ export async function generateAdImage(
     prompt: `Deterministic ad-image render (${AD_IMAGE_SLIDE_SHAPE}) for creative draft ${draftId}. No LLM call on this path.`,
     resolveMode: "draft",
   };
-  storeGeneration(db, {
+  await storeGeneration(db, {
     workspaceId,
     taskType: "meta_ad_creative",
     channel: "ads",
@@ -131,7 +131,7 @@ export async function generateAdImage(
   });
   // Flat ledger event: the design daemon's LLM runs outside our gateway, so
   // ad-image generations stay inside the workspace budget (Sprint 59).
-  recordLlmUsage(db, {
+  await recordLlmUsage(db, {
     workspaceId,
     pipeline: "design_render",
     campaignId: draft.campaignId,
@@ -141,7 +141,7 @@ export async function generateAdImage(
     costCentsOverride: DESIGN_RENDER_FLAT_CENTS,
   });
 
-  const updated = setDraftMedia(db, workspaceId, draftId, [{ url, type: "image" }]);
+  const updated = await setDraftMedia(db, workspaceId, draftId, [{ url, type: "image" }]);
   void actor; // media attach is not a state transition; nothing to log yet
   return updated!;
 }

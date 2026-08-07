@@ -58,13 +58,13 @@ describe("orchestration foundation persistence", () => {
     await app.close();
   });
 
-  it("preserves one stable lane across immutable plan revisions", () => {
+  it("preserves one stable lane across immutable plan revisions", async () => {
     const now = Date.now();
     const firstPlanId = randomUUID();
     const secondPlanId = randomUUID();
     const laneId = randomUUID();
 
-    db.insert(campaignPlanRevisions)
+    await db.insert(campaignPlanRevisions)
       .values({
         id: firstPlanId,
         workspaceId,
@@ -85,7 +85,7 @@ describe("orchestration foundation persistence", () => {
         activatedAt: now,
       })
       .run();
-    db.insert(campaignLanes)
+    await db.insert(campaignLanes)
       .values({
         id: laneId,
         workspaceId,
@@ -97,7 +97,7 @@ describe("orchestration foundation persistence", () => {
         updatedAt: now,
       })
       .run();
-    db.insert(campaignLaneRevisions)
+    await db.insert(campaignLaneRevisions)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -123,7 +123,7 @@ describe("orchestration foundation persistence", () => {
       })
       .run();
 
-    db.insert(campaignPlanRevisions)
+    await db.insert(campaignPlanRevisions)
       .values({
         id: secondPlanId,
         workspaceId,
@@ -144,7 +144,7 @@ describe("orchestration foundation persistence", () => {
         activatedAt: now + 1,
       })
       .run();
-    db.insert(campaignLaneRevisions)
+    await db.insert(campaignLaneRevisions)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -169,14 +169,14 @@ describe("orchestration foundation persistence", () => {
         createdAt: now + 1,
       })
       .run();
-    db.update(campaigns)
+    await db.update(campaigns)
       .set({ currentPlanRevisionId: secondPlanId })
       .where(eq(campaigns.id, campaignId))
       .run();
 
-    const plans = db.select().from(campaignPlanRevisions).all();
-    const laneRevisions = db.select().from(campaignLaneRevisions).all();
-    const campaign = db.select().from(campaigns).get();
+    const plans = await db.select().from(campaignPlanRevisions).all();
+    const laneRevisions = await db.select().from(campaignLaneRevisions).all();
+    const campaign = await db.select().from(campaigns).get();
 
     expect(plans.map((plan) => plan.revision)).toEqual([1, 2]);
     expect(laneRevisions).toHaveLength(2);
@@ -224,47 +224,47 @@ describe("orchestration foundation persistence", () => {
       status: "active" as const,
     };
 
-    it("numbers revisions monotonically and atomically supersedes the active plan", () => {
-      const first = createPlanRevision(db, workspaceId, campaignId, planInput, { userId: null });
-      upsertLaneRevision(db, workspaceId, campaignId, first.id, {
+    it("numbers revisions monotonically and atomically supersedes the active plan", async () => {
+      const first = await createPlanRevision(db, workspaceId, campaignId, planInput, { userId: null });
+      await upsertLaneRevision(db, workspaceId, campaignId, first.id, {
         ...laneInput,
         personaId,
       });
-      const activatedFirst = activatePlanRevision(db, workspaceId, campaignId, first.id);
+      const activatedFirst = await activatePlanRevision(db, workspaceId, campaignId, first.id);
       expect(activatedFirst.plan.status).toBe("active");
 
-      const second = createPlanRevision(
+      const second = await createPlanRevision(
         db,
         workspaceId,
         campaignId,
         { ...planInput, pillars: ["GTM memory", "Proof"] },
         { userId: null },
       );
-      upsertLaneRevision(db, workspaceId, campaignId, second.id, {
+      await upsertLaneRevision(db, workspaceId, campaignId, second.id, {
         ...laneInput,
         personaId,
         plannedQuantity: 3,
       });
-      const activatedSecond = activatePlanRevision(db, workspaceId, campaignId, second.id);
+      const activatedSecond = await activatePlanRevision(db, workspaceId, campaignId, second.id);
 
       expect(second.revision).toBe(2);
       expect(activatedSecond.plan.status).toBe("active");
       expect(
-        db.select().from(campaignPlanRevisions).all().find((plan) => plan.id === first.id)?.status,
+        (await db.select().from(campaignPlanRevisions).all()).find((plan) => plan.id === first.id)?.status,
       ).toBe("superseded");
-      expect(getCurrentCampaignPlan(db, workspaceId, campaignId)?.plan.id).toBe(second.id);
+      expect((await getCurrentCampaignPlan(db, workspaceId, campaignId))?.plan.id).toBe(second.id);
     });
 
-    it("reuses a stable lane key across plan revisions", () => {
-      const first = createPlanRevision(db, workspaceId, campaignId, planInput, { userId: null });
-      const firstLane = upsertLaneRevision(db, workspaceId, campaignId, first.id, {
+    it("reuses a stable lane key across plan revisions", async () => {
+      const first = await createPlanRevision(db, workspaceId, campaignId, planInput, { userId: null });
+      const firstLane = await upsertLaneRevision(db, workspaceId, campaignId, first.id, {
         ...laneInput,
         personaId,
       });
-      activatePlanRevision(db, workspaceId, campaignId, first.id);
+      await activatePlanRevision(db, workspaceId, campaignId, first.id);
 
-      const second = createPlanRevision(db, workspaceId, campaignId, planInput, { userId: null });
-      const secondLane = upsertLaneRevision(db, workspaceId, campaignId, second.id, {
+      const second = await createPlanRevision(db, workspaceId, campaignId, planInput, { userId: null });
+      const secondLane = await upsertLaneRevision(db, workspaceId, campaignId, second.id, {
         ...laneInput,
         personaId,
       });
@@ -273,16 +273,16 @@ describe("orchestration foundation persistence", () => {
       expect(secondLane.id).not.toBe(firstLane.id);
     });
 
-    it("refuses to mutate an active plan", () => {
-      const plan = createPlanRevision(db, workspaceId, campaignId, planInput, { userId: null });
-      upsertLaneRevision(db, workspaceId, campaignId, plan.id, {
+    it("refuses to mutate an active plan", async () => {
+      const plan = await createPlanRevision(db, workspaceId, campaignId, planInput, { userId: null });
+      await upsertLaneRevision(db, workspaceId, campaignId, plan.id, {
         ...laneInput,
         personaId,
       });
-      activatePlanRevision(db, workspaceId, campaignId, plan.id);
+      await activatePlanRevision(db, workspaceId, campaignId, plan.id);
 
-      expect(() =>
-        upsertLaneRevision(db, workspaceId, campaignId, plan.id, {
+      expect(async () =>
+        await upsertLaneRevision(db, workspaceId, campaignId, plan.id, {
           ...laneInput,
           personaId,
           plannedQuantity: 4,
@@ -291,8 +291,8 @@ describe("orchestration foundation persistence", () => {
     });
 
     it("rejects a campaign outside the requested workspace", () => {
-      expect(() =>
-        createPlanRevision(db, randomUUID(), campaignId, planInput, { userId: null }),
+      expect(async () =>
+        await createPlanRevision(db, randomUUID(), campaignId, planInput, { userId: null }),
       ).toThrow(CampaignPlanNotFoundError);
     });
   });
@@ -311,7 +311,7 @@ describe("orchestration foundation persistence", () => {
       });
       const connectionId = randomUUID();
       const now = Date.now();
-      db.insert(connections)
+      await db.insert(connections)
         .values({
           id: connectionId,
           workspaceId,
@@ -325,7 +325,7 @@ describe("orchestration foundation persistence", () => {
           updatedAt: now,
         })
         .run();
-      db.insert(postingCadences)
+      await db.insert(postingCadences)
         .values({
           id: randomUUID(),
           workspaceId,
@@ -344,9 +344,9 @@ describe("orchestration foundation persistence", () => {
         })
         .run();
 
-      const first = backfillCampaignControlPlane(db, workspaceId, campaignId);
-      const second = backfillCampaignControlPlane(db, workspaceId, campaignId);
-      const detail = getCurrentCampaignPlan(db, workspaceId, campaignId);
+      const first = await backfillCampaignControlPlane(db, workspaceId, campaignId);
+      const second = await backfillCampaignControlPlane(db, workspaceId, campaignId);
+      const detail = await getCurrentCampaignPlan(db, workspaceId, campaignId);
 
       expect(first.status).toBe("backfilled");
       expect(first.issues).toEqual([]);
@@ -373,8 +373,8 @@ describe("orchestration foundation persistence", () => {
         },
       });
 
-      const result = backfillCampaignControlPlane(db, workspaceId, campaignId);
-      const summary = getCampaignControlPlaneSummary(db, workspaceId, campaignId);
+      const result = await backfillCampaignControlPlane(db, workspaceId, campaignId);
+      const summary = await getCampaignControlPlaneSummary(db, workspaceId, campaignId);
 
       expect(result.status).toBe("needs_configuration");
       expect(result.issues.map((issue) => issue.code)).toEqual([
@@ -575,7 +575,7 @@ describe("orchestration foundation persistence", () => {
           lanes: [{ key: "founder-linkedin", name: "Founder LinkedIn", status: "active" }],
         },
       ]);
-      expect(db.select().from(campaignLanes).where(eq(campaignLanes.id, firstLane.laneId)).get())
+      expect(await db.select().from(campaignLanes).where(eq(campaignLanes.id, firstLane.laneId)).get())
         .toMatchObject({
           key: "founder-linkedin",
           name: "Founder LinkedIn",
@@ -596,14 +596,14 @@ describe("orchestration foundation persistence", () => {
         plan: { id: firstRevision.id, status: "superseded" },
         lanes: [{ key: "founder-linkedin", name: "Founder LinkedIn", status: "active" }],
       });
-      expect(db.select().from(campaignLanes).where(eq(campaignLanes.id, firstLane.laneId)).get())
+      expect(await db.select().from(campaignLanes).where(eq(campaignLanes.id, firstLane.laneId)).get())
         .toMatchObject({ key: "founder-proof", name: "Founder Proof", status: "retired" });
     });
 
     it("returns structured activation issues for an unavailable connection", async () => {
       const now = Date.now();
       const connectionId = randomUUID();
-      db.insert(connections)
+      await db.insert(connections)
         .values({
           id: connectionId,
           workspaceId,

@@ -48,25 +48,25 @@ describe("campaign plan backfill (Sprint 53)", () => {
     return { app, workspaceId, campaignIds };
   }
 
-  function revisionCount(db: Db, campaignId: string): number {
-    return db
+  async function revisionCount(db: Db, campaignId: string): Promise<number> {
+    return (await db
       .select()
       .from(campaignPlanRevisions)
       .where(eq(campaignPlanRevisions.campaignId, campaignId))
-      .all().length;
+      .all()).length;
   }
 
   it("gives every planless campaign an active plan carrying its legacy strategy", async () => {
     const db = createTestDb();
     const { workspaceId, campaignIds } = await seedCampaigns(db, ["Alpha", "Beta", "Gamma"]);
 
-    const summary = backfillMissingCampaignPlans(db);
+    const summary = await backfillMissingCampaignPlans(db);
     expect(summary.scanned).toBe(3);
     expect(summary.planned).toBe(3);
     expect(summary.failed).toEqual([]);
 
     for (const campaignId of campaignIds) {
-      const detail = getCurrentCampaignPlan(db, workspaceId, campaignId);
+      const detail = await getCurrentCampaignPlan(db, workspaceId, campaignId);
       expect(detail).toBeDefined();
       expect(detail!.plan.status).toBe("active");
       expect(detail!.plan.objective).toMatch(/^Objective for /);
@@ -84,20 +84,20 @@ describe("campaign plan backfill (Sprint 53)", () => {
     const db = createTestDb();
     const { workspaceId, campaignIds } = await seedCampaigns(db, ["Alpha", "Beta"]);
 
-    backfillMissingCampaignPlans(db);
-    const before = campaignIds.map((id) => ({
-      id,
-      revisions: revisionCount(db, id),
-      planId: getCurrentCampaignPlan(db, workspaceId, id)!.plan.id,
-    }));
+    await backfillMissingCampaignPlans(db);
+    const before = await Promise.all(campaignIds.map(async (id) => ({
+          id,
+          revisions: await revisionCount(db, id),
+          planId: (await getCurrentCampaignPlan(db, workspaceId, id))!.plan.id,
+        })));
 
-    const second = backfillMissingCampaignPlans(db);
+    const second = await backfillMissingCampaignPlans(db);
     expect(second.scanned).toBe(0);
     expect(second.planned).toBe(0);
 
     for (const snapshot of before) {
-      expect(revisionCount(db, snapshot.id)).toBe(snapshot.revisions);
-      expect(getCurrentCampaignPlan(db, workspaceId, snapshot.id)!.plan.id).toBe(snapshot.planId);
+      expect(await revisionCount(db, snapshot.id)).toBe(snapshot.revisions);
+      expect((await getCurrentCampaignPlan(db, workspaceId, snapshot.id))!.plan.id).toBe(snapshot.planId);
     }
   });
 
@@ -112,29 +112,29 @@ describe("campaign plan backfill (Sprint 53)", () => {
     });
     expect(created.statusCode).toBe(201);
 
-    const summary = backfillMissingCampaignPlans(db);
+    const summary = await backfillMissingCampaignPlans(db);
     expect(summary.scanned).toBe(0);
     // The draft is still the only revision: the sweep neither activated it nor
     // shoved a machine-made revision beside it.
-    expect(revisionCount(db, campaignId)).toBe(1);
-    expect(getCurrentCampaignPlan(db, workspaceId, campaignId)).toBeUndefined();
+    expect(await revisionCount(db, campaignId)).toBe(1);
+    expect(await getCurrentCampaignPlan(db, workspaceId, campaignId)).toBeUndefined();
   });
 
   it("runs at boot, so an existing database is planned without an operator", async () => {
     const db = createTestDb();
     const { workspaceId, campaignIds } = await seedCampaigns(db, ["Legacy"]);
     const campaignId = campaignIds[0]!;
-    expect(getCurrentCampaignPlan(db, workspaceId, campaignId)).toBeUndefined();
+    expect(await getCurrentCampaignPlan(db, workspaceId, campaignId)).toBeUndefined();
 
     // A later boot of the same database — exactly what a deploy does.
     const rebooted = await buildApp({ db });
     apps.push(rebooted);
-    expect(getCurrentCampaignPlan(db, workspaceId, campaignId)?.plan.status).toBe("active");
-    const afterFirstBoot = revisionCount(db, campaignId);
+    expect((await getCurrentCampaignPlan(db, workspaceId, campaignId))?.plan.status).toBe("active");
+    const afterFirstBoot = await revisionCount(db, campaignId);
 
     const bootedAgain = await buildApp({ db });
     apps.push(bootedAgain);
-    expect(revisionCount(db, campaignId)).toBe(afterFirstBoot);
+    expect(await revisionCount(db, campaignId)).toBe(afterFirstBoot);
   });
 
   it("sweeps every workspace, not just the first", async () => {
@@ -159,10 +159,10 @@ describe("campaign plan backfill (Sprint 53)", () => {
       scoped.push({ workspaceId, campaignId });
     }
 
-    const summary = backfillMissingCampaignPlans(db);
+    const summary = await backfillMissingCampaignPlans(db);
     expect(summary.scanned).toBe(2);
     for (const { workspaceId, campaignId } of scoped) {
-      expect(getCurrentCampaignPlan(db, workspaceId, campaignId)?.plan.status).toBe("active");
+      expect((await getCurrentCampaignPlan(db, workspaceId, campaignId))?.plan.status).toBe("active");
     }
   });
 });

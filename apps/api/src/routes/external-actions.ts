@@ -22,8 +22,8 @@ import {
 } from "../services/external-actions";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) void reply.status(404).send({ error: "workspace_not_found" });
   return workspace;
 }
@@ -69,17 +69,17 @@ export function registerExternalActionRoutes(
     Params: { id: string };
     Querystring: Record<string, unknown>;
   }>("/workspaces/:id/external-actions", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = externalActionListFiltersSchema.safeParse(request.query);
     if (!parsed.success) return invalid(reply, parsed.error.issues);
-    return { actions: listExternalActions(db, request.params.id, parsed.data) };
+    return { actions: await listExternalActions(db, request.params.id, parsed.data) };
   });
 
   app.get<{ Params: { id: string; actionId: string } }>(
     "/workspaces/:id/external-actions/:actionId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const detail = getExternalActionDetail(db, request.params.id, request.params.actionId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const detail = await getExternalActionDetail(db, request.params.id, request.params.actionId);
       return detail ?? reply.status(404).send({ error: "not_found" });
     },
   );
@@ -87,7 +87,7 @@ export function registerExternalActionRoutes(
   app.post<{ Params: { id: string; actionId: string } }>(
     "/workspaces/:id/external-actions/:actionId/authorize",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = authorizeExternalActionInputSchema.safeParse(request.body ?? {});
       if (!parsed.success) return invalid(reply, parsed.error.issues);
       try {
@@ -101,7 +101,7 @@ export function registerExternalActionRoutes(
   app.post<{ Params: { id: string; actionId: string } }>(
     "/workspaces/:id/external-actions/:actionId/deny",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = denyExternalActionInputSchema.safeParse(request.body ?? {});
       if (!parsed.success) return invalid(reply, parsed.error.issues);
       try {
@@ -124,7 +124,7 @@ export function registerExternalActionRoutes(
   app.post<{ Params: { id: string; actionId: string } }>(
     "/workspaces/:id/external-actions/:actionId/cancel",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = cancelExternalActionInputSchema.safeParse(request.body ?? {});
       if (!parsed.success) return invalid(reply, parsed.error.issues);
       try {
@@ -143,7 +143,7 @@ export function registerExternalActionRoutes(
   app.post<{ Params: { id: string; actionId: string } }>(
     "/workspaces/:id/external-actions/:actionId/repropose",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = reproposeExternalActionInputSchema.safeParse(request.body);
       if (!parsed.success) return invalid(reply, parsed.error.issues);
       try {
@@ -162,7 +162,7 @@ export function registerExternalActionRoutes(
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/external-actions/run",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       return { actions: await runtime.run(request.params.id) };
     },
   );

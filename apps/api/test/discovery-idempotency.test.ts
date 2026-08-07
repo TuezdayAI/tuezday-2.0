@@ -30,14 +30,14 @@ import {
 import { CursorInvalidError } from "../src/discovery/connected-adapters";
 import { createTestDb } from "./helpers";
 
-function claimedFixture(
+async function claimedFixture(
   sourceInput: {
     type?: "rss" | "x";
     config?: Record<string, unknown>;
   } = {},
 ) {
   const db = createTestDb();
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({
       id: "workspace-1",
       name: "Idempotency",
@@ -45,7 +45,7 @@ function claimedFixture(
       updatedAt: 1,
     })
     .run();
-  db.insert(discoverySources)
+  await db.insert(discoverySources)
     .values({
       id: "source-1",
       workspaceId: "workspace-1",
@@ -68,22 +68,22 @@ function claimedFixture(
       createdAt: 1,
     })
     .run();
-  enqueueDueDiscoveryJobs(
+  await enqueueDueDiscoveryJobs(
     db,
     "workspace-1",
-    listDiscoverySources(db, "workspace-1"),
+    await listDiscoverySources(db, "workspace-1"),
     1,
   );
-  const claim = claimNextDiscoveryJob(db, {
+  const claim = (await claimNextDiscoveryJob(db, {
     workspaceId: "workspace-1",
     owner: "worker-1",
     leaseMs: 60_000,
-  })!;
-  const source = getDiscoverySourceExecution(
+  }))!;
+  const source = (await getDiscoverySourceExecution(
     db,
     "workspace-1",
     "source-1",
-  )!;
+  ))!;
   const targets = resolveDiscoveryTargets({
     source,
     trackedAccounts: [],
@@ -138,8 +138,8 @@ function sourceBudget() {
   };
 }
 
-function occurrenceCount(db: Db): number {
-  return db.select().from(discoveredItems).all().length;
+async function occurrenceCount(db: Db): Promise<number> {
+  return (await db.select().from(discoveredItems).all()).length;
 }
 
 describe("atomic discovery occurrence checkpoints", () => {
@@ -148,11 +148,11 @@ describe("atomic discovery occurrence checkpoints", () => {
     "afterStoryResolution",
     "afterCanonicalization",
     "beforeCursorUpdate",
-  ] as const)("rolls back the whole page when %s fails", (hook) => {
-    const { db, claim, source, cursor, page } = claimedFixture();
+  ] as const)("rolls back the whole page when %s fails", async (hook) => {
+    const { db, claim, source, cursor, page } = await claimedFixture();
 
-    expect(() =>
-      persistDiscoveryPage(db, {
+    expect(async () =>
+      await persistDiscoveryPage(db, {
         claim,
         source,
         page,
@@ -165,46 +165,46 @@ describe("atomic discovery occurrence checkpoints", () => {
       }),
     ).toThrow(`fault:${hook}`);
 
-    expect(occurrenceCount(db)).toBe(0);
+    expect(await occurrenceCount(db)).toBe(0);
     // Sprint 60 shadow layer rolls back with the page too.
-    expect(db.select().from(discoverySourceOccurrences).all()).toHaveLength(0);
-    expect(db.select().from(canonicalExternalStories).all()).toHaveLength(0);
-    expect(db.select().from(storyOccurrences).all()).toHaveLength(0);
-    const sourceRow = db
+    expect(await db.select().from(discoverySourceOccurrences).all()).toHaveLength(0);
+    expect(await db.select().from(canonicalExternalStories).all()).toHaveLength(0);
+    expect(await db.select().from(storyOccurrences).all()).toHaveLength(0);
+    const sourceRow = (await db
       .select()
       .from(discoverySources)
       .where(eq(discoverySources.id, source.id))
-      .get()!;
+      .get())!;
     expect(sourceRow.cursorJson).toBe("{}");
-    const job = db
+    const job = (await db
       .select()
       .from(discoveryJobs)
       .where(eq(discoveryJobs.id, claim.id))
-      .get()!;
+      .get())!;
     expect(job.fetchedCount).toBe(0);
     expect(job.newCount).toBe(0);
   });
 
-  it("does not let a stale owner mutate occurrences, cursor, or counters", () => {
-    const { db, claim, source, cursor, page } = claimedFixture();
-    db.update(discoveryJobs)
+  it("does not let a stale owner mutate occurrences, cursor, or counters", async () => {
+    const { db, claim, source, cursor, page } = await claimedFixture();
+    await db.update(discoveryJobs)
       .set({ leaseOwner: "new-owner", leaseVersion: claim.leaseVersion + 1 })
       .where(eq(discoveryJobs.id, claim.id))
       .run();
 
     expect(
-      persistDiscoveryPage(db, { claim, source, page, cursor }),
+      await persistDiscoveryPage(db, { claim, source, page, cursor }),
     ).toBeNull();
-    expect(occurrenceCount(db)).toBe(0);
+    expect(await occurrenceCount(db)).toBe(0);
     expect(
-      db
+      (await db
         .select({ cursorJson: discoverySources.cursorJson })
         .from(discoverySources)
         .where(eq(discoverySources.id, source.id))
-        .get()!.cursorJson,
+        .get())!.cursorJson,
     ).toBe("{}");
     expect(
-      db
+      await db
         .select({
           fetchedCount: discoveryJobs.fetchedCount,
           newCount: discoveryJobs.newCount,
@@ -215,19 +215,19 @@ describe("atomic discovery occurrence checkpoints", () => {
     ).toEqual({ fetchedCount: 0, newCount: 0 });
   });
 
-  it("commits one occurrence and ignores a replay of the same stable id", () => {
-    const { db, claim, source, cursor, page } = claimedFixture();
+  it("commits one occurrence and ignores a replay of the same stable id", async () => {
+    const { db, claim, source, cursor, page } = await claimedFixture();
 
     expect(
-      persistDiscoveryPage(db, { claim, source, page, cursor }),
+      await persistDiscoveryPage(db, { claim, source, page, cursor }),
     ).toEqual({ inserted: 1, fetched: 1 });
     expect(
-      persistDiscoveryPage(db, { claim, source, page, cursor }),
+      await persistDiscoveryPage(db, { claim, source, page, cursor }),
     ).toEqual({ inserted: 0, fetched: 1 });
 
-    expect(occurrenceCount(db)).toBe(1);
+    expect(await occurrenceCount(db)).toBe(1);
     expect(
-      db
+      await db
         .select()
         .from(discoveredItems)
         .where(
@@ -240,18 +240,18 @@ describe("atomic discovery occurrence checkpoints", () => {
     ).toHaveLength(1);
   });
 
-  it("rejects an adapter occurrence without a stable external id", () => {
-    const { db, claim, source, cursor, page } = claimedFixture();
+  it("rejects an adapter occurrence without a stable external id", async () => {
+    const { db, claim, source, cursor, page } = await claimedFixture();
     page.items[0]!.externalId = "";
 
-    expect(() =>
-      persistDiscoveryPage(db, { claim, source, page, cursor }),
+    expect(async () =>
+      await persistDiscoveryPage(db, { claim, source, page, cursor }),
     ).toThrow("adapter_missing_external_id");
-    expect(occurrenceCount(db)).toBe(0);
+    expect(await occurrenceCount(db)).toBe(0);
   });
 
   it("fails the claimed job with a stable missing-id code", async () => {
-    const { db, claim } = claimedFixture();
+    const { db, claim } = await claimedFixture();
 
     const result = await runClaimedDiscoverySource(
       {
@@ -281,18 +281,18 @@ describe("atomic discovery occurrence checkpoints", () => {
     );
 
     expect(result.error).toBe("adapter_missing_external_id");
-    expect(occurrenceCount(db)).toBe(0);
+    expect(await occurrenceCount(db)).toBe(0);
     expect(
-      db
+      (await db
         .select({ error: discoveryJobs.error })
         .from(discoveryJobs)
         .where(eq(discoveryJobs.id, claim.id))
-        .get()!.error,
+        .get())!.error,
     ).toBe("adapter_missing_external_id");
   });
 
   it("resumes after a committed checkpoint without duplicating the prior occurrence", async () => {
-    const { db, claim, targets } = claimedFixture({
+    const { db, claim, targets } = await claimedFixture({
       type: "x",
       config: {
         mode: "account_timeline",
@@ -333,19 +333,19 @@ describe("atomic discovery occurrence checkpoints", () => {
       new AbortController().signal,
     );
     expect(firstResult.error).toContain("transport_failed");
-    expect(occurrenceCount(db)).toBe(1);
+    expect(await occurrenceCount(db)).toBe(1);
 
-    enqueueDueDiscoveryJobs(
+    await enqueueDueDiscoveryJobs(
       db,
       "workspace-1",
-      listDiscoverySources(db, "workspace-1"),
+      await listDiscoverySources(db, "workspace-1"),
       2,
     );
-    const retryClaim = claimNextDiscoveryJob(db, {
+    const retryClaim = (await claimNextDiscoveryJob(db, {
       workspaceId: "workspace-1",
       owner: "worker-2",
       leaseMs: 60_000,
-    })!;
+    }))!;
     const visited: string[] = [];
     await runClaimedDiscoverySource(
       {
@@ -380,19 +380,19 @@ describe("atomic discovery occurrence checkpoints", () => {
 
     expect(visited[0]).toBe(targets[1]!.key);
     expect(
-      db
+      (await db
         .select({
           externalId: discoveredItems.externalId,
         })
         .from(discoveredItems)
-        .all()
+        .all())
         .map((row) => row.externalId)
         .sort(),
     ).toEqual(["occurrence-first", "occurrence-second"]);
   });
 
   it("checkpoints a four-page burst and resumes the remaining pages on the next job", async () => {
-    const { db, claim } = claimedFixture({
+    const { db, claim } = await claimedFixture({
       type: "x",
       config: { mode: "query", query: "founder" },
     });
@@ -431,19 +431,19 @@ describe("atomic discovery occurrence checkpoints", () => {
     );
     expect(first.error).toBe("page_budget_exhausted");
     expect(visitedTokens).toEqual([null, "1", "2", "3"]);
-    expect(occurrenceCount(db)).toBe(4);
+    expect(await occurrenceCount(db)).toBe(4);
 
-    enqueueDueDiscoveryJobs(
+    await enqueueDueDiscoveryJobs(
       db,
       "workspace-1",
-      listDiscoverySources(db, "workspace-1"),
+      await listDiscoverySources(db, "workspace-1"),
       Date.now() + 1,
     );
-    const retryClaim = claimNextDiscoveryJob(db, {
+    const retryClaim = (await claimNextDiscoveryJob(db, {
       workspaceId: "workspace-1",
       owner: "worker-2",
       leaseMs: 60_000,
-    })!;
+    }))!;
     const second = await runClaimedDiscoverySource(
       { db, ...unusedSourceDependencies, pageReader },
       retryClaim,
@@ -453,11 +453,11 @@ describe("atomic discovery occurrence checkpoints", () => {
 
     expect(second.error).toBeUndefined();
     expect(visitedTokens).toEqual([null, "1", "2", "3", "4", "5"]);
-    expect(occurrenceCount(db)).toBe(6);
+    expect(await occurrenceCount(db)).toBe(6);
   });
 
   it("replays only the affected target when its provider cursor is rejected", async () => {
-    const { db, claim, cursor, targets } = claimedFixture({
+    const { db, claim, cursor, targets } = await claimedFixture({
       type: "x",
       config: { mode: "query", query: "founder" },
     });
@@ -467,7 +467,7 @@ describe("atomic discovery occurrence checkpoints", () => {
       newestExternalId: "occurrence-newest",
       newestPublishedAt: 5,
     };
-    db.update(discoverySources)
+    await db.update(discoverySources)
       .set({ cursorJson: JSON.stringify(cursor) })
       .where(eq(discoverySources.id, claim.sourceId))
       .run();
@@ -508,6 +508,6 @@ describe("atomic discovery occurrence checkpoints", () => {
 
     expect(result.error).toBeUndefined();
     expect(visitedTokens).toEqual(["expired", null]);
-    expect(occurrenceCount(db)).toBe(1);
+    expect(await occurrenceCount(db)).toBe(1);
   });
 });

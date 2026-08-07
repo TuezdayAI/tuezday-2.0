@@ -224,11 +224,11 @@ export async function buildApp({
   const ownedShutdown = shutdownSignal ? undefined : new AbortController();
   const effectiveShutdownSignal =
     shutdownSignal ?? ownedShutdown!.signal;
-  backfillExternalActionPolicies(db);
+  await backfillExternalActionPolicies(db);
   // Sprint 53: every campaign must own a plan revision before Task 4 removes
   // the legacy structured block from the campaign overlay. Idempotent — only
   // campaigns with no revision at all are candidates.
-  const campaignPlanBackfill = backfillMissingCampaignPlans(db);
+  const campaignPlanBackfill = await backfillMissingCampaignPlans(db);
   if (campaignPlanBackfill.failed.length > 0) {
     // The sweep never retries a failure — its candidate predicate is "no plan
     // revision at all", and a failed activation leaves the draft behind. So a
@@ -243,11 +243,11 @@ export async function buildApp({
       `campaign plan backfill: ${campaignPlanBackfill.failed.length} campaign(s) kept a draft-only plan and still resolve with the legacy strategy fallback`,
     );
   }
-  repairDanglingDuplicateGroups(db);
+  await repairDanglingDuplicateGroups(db);
   // Sprint 55: sweep the three legacy metric stores into the unified fact
   // table. Runs after the dual-write shipped, so it is insert-if-absent and
   // can never overwrite a fresher dual-written value with a staler legacy one.
-  backfillMetrics(db);
+  await backfillMetrics(db);
   const externalActionRuntime = createExternalActionRuntime({
     db,
     adapters: createExternalActionAdapters(db, connectors, fetcher, outboundEmail, gmail),
@@ -324,7 +324,7 @@ export async function buildApp({
   registerPublicApiRoutes(app, db);
 
   app.get("/health", async () => {
-    db.run(sql`select 1`);
+    await db.run(sql`select 1`);
     return { status: "ok", db: "ok" };
   });
 

@@ -116,7 +116,7 @@ export class MetaAdsAdapter implements AdsAdapter, AdsExecutionAdapter {
   }
 
   private async request<T>(path: string): Promise<GraphPage<T>> {
-    return this.get<GraphPage<T>>(path);
+    return await this.get<GraphPage<T>>(path);
   }
 
   private async post<T = Record<string, unknown>>(
@@ -242,7 +242,7 @@ export class MetaAdsAdapter implements AdsAdapter, AdsExecutionAdapter {
     await this.post(`/${GRAPH_VERSION}/${encodeURIComponent(externalAdSetId)}`, {
       daily_budget: dailyBudgetCents,
     });
-    return this.getAdSetState(externalAccountId, externalAdSetId);
+    return await this.getAdSetState(externalAccountId, externalAdSetId);
   }
 
   async updateTargeting(
@@ -257,14 +257,14 @@ export class MetaAdsAdapter implements AdsAdapter, AdsExecutionAdapter {
         age_max: targeting.ageMax,
       },
     });
-    return this.getAdSetState(externalAccountId, externalAdSetId);
+    return await this.getAdSetState(externalAccountId, externalAdSetId);
   }
 
   async createCampaign(
     externalAccountId: string,
     input: { name: string; objective: AdLaunchObjective },
   ): Promise<{ externalId: string }> {
-    return this.createObject(`/${GRAPH_VERSION}/${externalAccountId}/campaigns`, {
+    return await this.createObject(`/${GRAPH_VERSION}/${externalAccountId}/campaigns`, {
       name: input.name,
       objective: input.objective,
       // Born PAUSED — the chain activates the campaign only once it's whole.
@@ -287,7 +287,7 @@ export class MetaAdsAdapter implements AdsAdapter, AdsExecutionAdapter {
       endAt?: number | null;
     },
   ): Promise<{ externalId: string }> {
-    return this.createObject(`/${GRAPH_VERSION}/${externalAccountId}/adsets`, {
+    return await this.createObject(`/${GRAPH_VERSION}/${externalAccountId}/adsets`, {
       name: input.name,
       campaign_id: input.campaignExternalId,
       // Meta's daily_budget is in the account currency's minor units — cents.
@@ -353,7 +353,7 @@ export class MetaAdsAdapter implements AdsAdapter, AdsExecutionAdapter {
       imageHash?: string;
     },
   ): Promise<{ externalId: string }> {
-    return this.createObject(`/${GRAPH_VERSION}/${externalAccountId}/adcreatives`, {
+    return await this.createObject(`/${GRAPH_VERSION}/${externalAccountId}/adcreatives`, {
       name: input.name,
       // Link ad; image_hash (Sprint 41) attaches the generated static image —
       // without it Meta scrapes the link preview image, exactly as before.
@@ -374,7 +374,7 @@ export class MetaAdsAdapter implements AdsAdapter, AdsExecutionAdapter {
     externalAccountId: string,
     input: { name: string; adSetExternalId: string; creativeExternalId: string },
   ): Promise<{ externalId: string }> {
-    return this.createObject(`/${GRAPH_VERSION}/${externalAccountId}/ads`, {
+    return await this.createObject(`/${GRAPH_VERSION}/${externalAccountId}/ads`, {
       name: input.name,
       adset_id: input.adSetExternalId,
       creative: { creative_id: input.creativeExternalId },

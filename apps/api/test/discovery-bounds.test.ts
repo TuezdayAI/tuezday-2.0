@@ -59,13 +59,13 @@ const unusedSafeFetch = {
 
 const unusedFabric = {} as Parameters<typeof runDiscoveryScheduler>[0]["fabric"];
 
-function seedWorkspace(db: Db, id = "workspace-1"): void {
-  db.insert(workspaces)
+async function seedWorkspace(db: Db, id = "workspace-1"): Promise<void> {
+  await db.insert(workspaces)
     .values({ id, name: id, createdAt: 1, updatedAt: 1 })
     .run();
 }
 
-function seedSource(
+async function seedSource(
   db: Db,
   input: {
     id: string;
@@ -73,8 +73,8 @@ function seedSource(
     type?: DiscoverySourceType;
     config?: Record<string, unknown>;
   },
-): void {
-  db.insert(discoverySources)
+): Promise<void> {
+  await db.insert(discoverySources)
     .values({
       id: input.id,
       workspaceId: input.workspaceId ?? "workspace-1",
@@ -282,10 +282,10 @@ describe("connected page accounting", () => {
 describe("tracked target version fences", () => {
   it.each(["update", "delete"] as const)(
     "invalidates leased source work when a tracked target is %s",
-    (operation) => {
+    async (operation) => {
       const db = createTestDb();
-      seedWorkspace(db);
-      db.insert(trackedSocialAccounts)
+      await seedWorkspace(db);
+      await db.insert(trackedSocialAccounts)
         .values({
           id: "account-1",
           workspaceId: "workspace-1",
@@ -302,7 +302,7 @@ describe("tracked target version fences", () => {
           updatedAt: 1,
         })
         .run();
-      seedSource(db, {
+      await seedSource(db, {
         id: "tracked-source",
         type: "x",
         config: {
@@ -310,27 +310,27 @@ describe("tracked target version fences", () => {
           trackedAccountId: "account-1",
         },
       });
-      enqueueDueDiscoveryJobs(
+      await enqueueDueDiscoveryJobs(
         db,
         "workspace-1",
-        listDiscoverySources(db, "workspace-1"),
+        await listDiscoverySources(db, "workspace-1"),
         1,
       );
-      const claim = claimNextDiscoveryJob(db, {
+      const claim = (await claimNextDiscoveryJob(db, {
         workspaceId: "workspace-1",
         owner: "api:tracked-target",
         leaseMs: 45_000,
-      })!;
+      }))!;
 
       if (operation === "update") {
-        updateTrackedSocialAccount(
+        await updateTrackedSocialAccount(
           db,
           "workspace-1",
           "account-1",
           { handle: "after" },
         );
       } else {
-        deleteTrackedSocialAccount(
+        await deleteTrackedSocialAccount(
           db,
           "workspace-1",
           "account-1",
@@ -338,14 +338,14 @@ describe("tracked target version fences", () => {
       }
 
       expect(
-        db
+        (await db
           .select()
           .from(discoverySources)
           .where(eq(discoverySources.id, "tracked-source"))
-          .get()!.executionVersion,
+          .get())!.executionVersion,
       ).toBe(2);
       expect(
-        db
+        await db
           .select()
           .from(discoveryJobs)
           .where(eq(discoveryJobs.id, claim.id))
@@ -366,9 +366,9 @@ describe("bounded leased discovery scheduler", () => {
 
   it("never enqueues a reserved source even when it is enabled", async () => {
     const db = createTestDb();
-    seedWorkspace(db);
-    seedSource(db, { id: "reserved-trends", type: "google_trends" });
-    db.update(discoverySources)
+    await seedWorkspace(db);
+    await seedSource(db, { id: "reserved-trends", type: "google_trends" });
+    await db.update(discoverySources)
       .set({ status: "reserved", enabled: true })
       .where(eq(discoverySources.id, "reserved-trends"))
       .run();
@@ -385,18 +385,18 @@ describe("bounded leased discovery scheduler", () => {
     expect(result.queued).toBe(0);
     expect(result.processed).toBe(0);
     expect(pageCalls).toBe(0);
-    expect(db.select().from(discoveryJobs).all()).toEqual([]);
+    expect(await db.select().from(discoveryJobs).all()).toEqual([]);
   });
 
   it("never enqueues reserved intent even when a provider is configured", async () => {
     const db = createTestDb();
-    seedWorkspace(db);
-    seedSource(db, {
+    await seedWorkspace(db);
+    await seedSource(db, {
       id: "reserved-intent",
       type: "intent",
       config: { query: "market" },
     });
-    db.update(discoverySources)
+    await db.update(discoverySources)
       .set({ status: "reserved", enabled: true })
       .where(eq(discoverySources.id, "reserved-intent"))
       .run();
@@ -420,22 +420,22 @@ describe("bounded leased discovery scheduler", () => {
     expect(result.queued).toBe(0);
     expect(result.processed).toBe(0);
     expect(pageCalls).toBe(0);
-    expect(db.select().from(discoveryJobs).all()).toEqual([]);
+    expect(await db.select().from(discoveryJobs).all()).toEqual([]);
   });
 
   it("returns busy for overlap and makes zero calls from the losing tick", async () => {
     const db = createTestDb();
-    seedWorkspace(db);
-    seedSource(db, { id: "source-1" });
+    await seedWorkspace(db);
+    await seedSource(db, { id: "source-1" });
     const held = deferred<DiscoveryPage>();
     let calls = 0;
     const pageReader: DiscoveryPageReader = async ({ target }) => {
       calls += 1;
-      return held.promise.then((result) => ({ ...result, targetKey: target.key }));
+      return await held.promise.then((result) => ({ ...result, targetKey: target.key }));
     };
     const deps = dependencies(db, pageReader);
 
-    const first = runDiscoveryScheduler(deps, { workspaceId: "workspace-1" });
+    const first = await runDiscoveryScheduler(deps, { workspaceId: "workspace-1" });
     expect(calls).toBe(1);
 
     const overlap = await runDiscoveryScheduler(deps, {
@@ -450,16 +450,16 @@ describe("bounded leased discovery scheduler", () => {
 
   it("claims just in time and admits at most five jobs", async () => {
     const db = createTestDb();
-    seedWorkspace(db);
+    await seedWorkspace(db);
     for (let index = 1; index <= 6; index += 1) {
-      seedSource(db, { id: `source-${index}` });
+      await seedSource(db, { id: `source-${index}` });
     }
     const firstPage = deferred<DiscoveryPage>();
     let calls = 0;
     const pageReader: DiscoveryPageReader = async ({ target }) => {
       calls += 1;
       if (calls === 1) {
-        return firstPage.promise.then((result) => ({
+        return await firstPage.promise.then((result) => ({
           ...result,
           targetKey: target.key,
         }));
@@ -467,22 +467,22 @@ describe("bounded leased discovery scheduler", () => {
       return page(target.key);
     };
 
-    const pending = runDiscoveryScheduler(dependencies(db, pageReader), {
+    const pending = await runDiscoveryScheduler(dependencies(db, pageReader), {
       workspaceId: "workspace-1",
     });
     expect(calls).toBe(1);
     expect(
-      db
+      (await db
         .select()
         .from(discoveryJobs)
-        .all()
+        .all())
         .filter((job) => job.status === "running"),
     ).toHaveLength(1);
     expect(
-      db
+      (await db
         .select()
         .from(discoveryJobs)
-        .all()
+        .all())
         .filter((job) => job.status === "queued"),
     ).toHaveLength(5);
 
@@ -491,18 +491,18 @@ describe("bounded leased discovery scheduler", () => {
     expect(result.processed).toBe(5);
     expect(calls).toBe(5);
     expect(
-      db
+      (await db
         .select()
         .from(discoveryJobs)
-        .all()
+        .all())
         .filter((job) => job.status === "queued"),
     ).toHaveLength(1);
   });
 
   it("applies item, page, call, and byte budgets across all targets", async () => {
     const db = createTestDb();
-    seedWorkspace(db);
-    seedSource(db, {
+    await seedWorkspace(db);
+    await seedSource(db, {
       id: "multi-target",
       type: "x",
       config: {
@@ -570,8 +570,8 @@ describe("bounded leased discovery scheduler", () => {
     "enforces the global %s cap before reading another target",
     async (_label, override, expectedCode) => {
       const db = createTestDb();
-      seedWorkspace(db);
-      seedSource(db, {
+      await seedWorkspace(db);
+      await seedSource(db, {
         id: "bounded-targets",
         type: "x",
         config: {
@@ -603,8 +603,8 @@ describe("bounded leased discovery scheduler", () => {
 
   it("continues after one target has a permission failure", async () => {
     const db = createTestDb();
-    seedWorkspace(db);
-    seedSource(db, {
+    await seedWorkspace(db);
+    await seedSource(db, {
       id: "permission-mix",
       type: "x",
       config: {
@@ -642,8 +642,8 @@ describe("bounded leased discovery scheduler", () => {
   it("aborts the page reader at the source deadline without sleeping", async () => {
     vi.useFakeTimers();
     const db = createTestDb();
-    seedWorkspace(db);
-    seedSource(db, { id: "slow-source" });
+    await seedWorkspace(db);
+    await seedSource(db, { id: "slow-source" });
     let receivedSignal: AbortSignal | undefined;
     const pageReader: DiscoveryPageReader = ({ signal }) => {
       receivedSignal = signal;
@@ -654,7 +654,7 @@ describe("bounded leased discovery scheduler", () => {
       });
     };
 
-    const pending = runDiscoveryScheduler(
+    const pending = await runDiscoveryScheduler(
       dependencies(db, pageReader, {
         policy: policy({
           maxJobsPerTick: 1,
@@ -681,9 +681,9 @@ describe("bounded leased discovery scheduler", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-29T00:00:00.000Z"));
     const db = createTestDb();
-    seedWorkspace(db);
-    seedSource(db, { id: "source-1" });
-    seedSource(db, { id: "source-2" });
+    await seedWorkspace(db);
+    await seedSource(db, { id: "source-1" });
+    await seedSource(db, { id: "source-2" });
     let calls = 0;
     const pageReader: DiscoveryPageReader = async ({ target }) => {
       calls += 1;
@@ -706,18 +706,18 @@ describe("bounded leased discovery scheduler", () => {
     expect(result.budgetExhausted).toBe(true);
     expect(calls).toBe(1);
     expect(
-      db
+      (await db
         .select()
         .from(discoveryJobs)
-        .all()
+        .all())
         .filter((job) => job.status === "queued"),
     ).toHaveLength(1);
   });
 
   it("emits stable safe fields without raw exceptions or cursor tokens", async () => {
     const db = createTestDb();
-    seedWorkspace(db);
-    seedSource(db, { id: "broken-source" });
+    await seedWorkspace(db);
+    await seedSource(db, { id: "broken-source" });
     const events: DiscoveryOperatorEvent[] = [];
     const pageReader: DiscoveryPageReader = async () => {
       throw new Error(
@@ -820,12 +820,12 @@ describe("Fastify discovery shutdown", () => {
     });
     const workspaceId = await addWorkspaceAndSource(app);
 
-    const running = app.inject({
+    const running = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/discovery/run`,
     });
     await started.promise;
-    const closing = app.close();
+    const closing = await app.close();
 
     await aborted.promise;
     expect(receivedSignal?.aborted).toBe(true);
@@ -870,12 +870,12 @@ describe("Fastify discovery shutdown", () => {
     });
     const workspaceId = await addWorkspaceAndSource(app);
 
-    const running = app.inject({
+    const running = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/discovery/run`,
     });
     await started.promise;
-    const closing = app.close();
+    const closing = await app.close();
 
     await aborted.promise;
     expect(receivedSignal?.aborted).toBe(true);

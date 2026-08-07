@@ -137,25 +137,25 @@ export async function runPreReview(
   };
 }
 
-export function setGenerationReview(
+export async function setGenerationReview(
   db: Db,
   workspaceId: string,
   generationId: string,
   review: GenerationReview,
-): void {
-  db.update(generations)
+): Promise<void> {
+  await db.update(generations)
     .set({ reviewJson: JSON.stringify(review) })
     .where(and(eq(generations.workspaceId, workspaceId), eq(generations.id, generationId)))
     .run();
 }
 
-export function setDraftReview(
+export async function setDraftReview(
   db: Db,
   workspaceId: string,
   draftId: string,
   review: GenerationReview,
-): void {
-  db.update(drafts)
+): Promise<void> {
+  await db.update(drafts)
     .set({ reviewJson: JSON.stringify(review) })
     .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)))
     .run();

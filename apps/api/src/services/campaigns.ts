@@ -81,7 +81,7 @@ function inputToColumns(input: UpsertCampaignInput) {
   };
 }
 
-export function createCampaign(
+export async function createCampaign(
   db: Db,
   workspaceId: string,
   input: UpsertCampaignInput,
@@ -89,8 +89,8 @@ export function createCampaign(
    * campaign list can tell a founder which ones an agent drew up (D-77.7).
    * Every existing caller is a person on a route, and keeps `user`. */
   options: { origin?: CampaignOrigin } = {},
-): Campaign {
-  return db.transaction((tx) => {
+): Promise<Campaign> {
+  return await db.transaction(async (tx) => {
     const now = Date.now();
     const row: CampaignRow = {
       id: randomUUID(),
@@ -111,15 +111,15 @@ export function createCampaign(
       createdAt: now,
       updatedAt: now,
     };
-    tx.insert(campaigns).values(row).run();
-    ensureCampaignActionPolicies(
+    await tx.insert(campaigns).values(row).run();
+    await ensureCampaignActionPolicies(
       tx,
       workspaceId,
       row.id,
       input.automationMode,
     );
     if (input.status === "active") {
-      invalidateMatching(tx, workspaceId, {
+      await invalidateMatching(tx, workspaceId, {
         directItemIds: [],
         includeReadyNoMatch: true,
       });
@@ -128,23 +128,23 @@ export function createCampaign(
   });
 }
 
-export function listCampaigns(db: DbExecutor, workspaceId: string): Campaign[] {
-  return db
+export async function listCampaigns(db: DbExecutor, workspaceId: string): Promise<Campaign[]> {
+  return (await db
     .select()
     .from(campaigns)
     .where(eq(campaigns.workspaceId, workspaceId))
     .orderBy(desc(campaigns.createdAt))
-    .all()
+    .all())
     .map(rowToCampaign)
     .sort((a, b) => (a.status === b.status ? 0 : a.status === "active" ? -1 : 1));
 }
 
-export function getCampaign(
+export async function getCampaign(
   db: DbExecutor,
   workspaceId: string,
   campaignId: string,
-): Campaign | undefined {
-  const row = db
+): Promise<Campaign | undefined> {
+  const row = await db
     .select()
     .from(campaigns)
     .where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.id, campaignId)))
@@ -152,14 +152,14 @@ export function getCampaign(
   return row ? rowToCampaign(row) : undefined;
 }
 
-export function updateCampaign(
+export async function updateCampaign(
   db: Db,
   workspaceId: string,
   campaignId: string,
   input: UpsertCampaignInput,
-): Campaign | undefined {
-  return db.transaction((tx) => {
-    const existing = getCampaign(tx, workspaceId, campaignId);
+): Promise<Campaign | undefined> {
+  return await db.transaction(async (tx) => {
+    const existing = await getCampaign(tx, workspaceId, campaignId);
     if (!existing) return undefined;
     const previousPersonaIds = [...existing.personaIds].sort();
     const currentPersonaIds = [...input.personaIds].sort();
@@ -176,7 +176,7 @@ export function updateCampaign(
       ...new Set([...existing.personaIds, ...input.personaIds]),
     ];
     const directItemIds = shouldInvalidate
-      ? itemIdsForCampaignChange(
+      ? await itemIdsForCampaignChange(
           tx,
           workspaceId,
           campaignId,
@@ -184,40 +184,40 @@ export function updateCampaign(
         )
       : [];
 
-    tx.update(campaigns)
+    await tx.update(campaigns)
       .set({ ...inputToColumns(input), updatedAt: Date.now() })
       .where(eq(campaigns.id, campaignId))
       .run();
     if (shouldInvalidate) {
-      invalidateMatching(tx, workspaceId, {
+      await invalidateMatching(tx, workspaceId, {
         directItemIds,
         includeReadyNoMatch: input.status === "active",
       });
     }
-    return getCampaign(tx, workspaceId, campaignId);
+    return await getCampaign(tx, workspaceId, campaignId);
   });
 }
 
-export function deleteCampaign(
+export async function deleteCampaign(
   db: Db,
   workspaceId: string,
   campaignId: string,
-): boolean {
-  return db.transaction((tx) => {
-    const existing = getCampaign(tx, workspaceId, campaignId);
+): Promise<boolean> {
+  return await db.transaction(async (tx) => {
+    const existing = await getCampaign(tx, workspaceId, campaignId);
     if (!existing) return false;
-    const directItemIds = itemIdsForCampaignChange(
+    const directItemIds = await itemIdsForCampaignChange(
       tx,
       workspaceId,
       campaignId,
       existing.personaIds,
     );
-    invalidateMatching(tx, workspaceId, {
+    await invalidateMatching(tx, workspaceId, {
       directItemIds,
       includeReadyNoMatch: false,
     });
-    deleteGuidanceForScope(tx, workspaceId, { campaignId });
-    tx.delete(externalActionPolicyRules)
+    await deleteGuidanceForScope(tx, workspaceId, { campaignId });
+    await tx.delete(externalActionPolicyRules)
       .where(
         and(
           eq(externalActionPolicyRules.workspaceId, workspaceId),
@@ -226,21 +226,21 @@ export function deleteCampaign(
         ),
       )
       .run();
-    tx.delete(campaigns).where(eq(campaigns.id, campaignId)).run();
+    await tx.delete(campaigns).where(eq(campaigns.id, campaignId)).run();
     return true;
   });
 }
 
 /** Set a campaign's automation mode + per-campaign daily cap (Sprint 28). */
-export function setCampaignAutomation(
+export async function setCampaignAutomation(
   db: Db,
   workspaceId: string,
   campaignId: string,
   input: UpdateCampaignAutomationInput,
-): Campaign | undefined {
-  const existing = getCampaign(db, workspaceId, campaignId);
+): Promise<Campaign | undefined> {
+  const existing = await getCampaign(db, workspaceId, campaignId);
   if (!existing) return undefined;
-  db.update(campaigns)
+  await db.update(campaigns)
     .set({
       automationMode: input.automationMode,
       autoDailyCap: input.autoDailyCap,
@@ -248,12 +248,12 @@ export function setCampaignAutomation(
     })
     .where(eq(campaigns.id, campaignId))
     .run();
-  return getCampaign(db, workspaceId, campaignId);
+  return await getCampaign(db, workspaceId, campaignId);
 }
 
 /** Active campaigns whose automation is on (human_in_the_loop or scheduled_auto). */
-export function listAutomatedCampaigns(db: Db, workspaceId: string): Campaign[] {
-  return listCampaigns(db, workspaceId).filter(
+export async function listAutomatedCampaigns(db: Db, workspaceId: string): Promise<Campaign[]> {
+  return (await listCampaigns(db, workspaceId)).filter(
     (c) => c.status === "active" && c.automationMode !== "manual",
   );
 }
@@ -350,8 +350,8 @@ export interface CampaignDetail {
   controlPlane: ControlPlaneSummary;
 }
 
-export function getCampaignDetail(db: Db, campaign: Campaign): CampaignDetail {
-  const rows = db
+export async function getCampaignDetail(db: Db, campaign: Campaign): Promise<CampaignDetail> {
+  const rows = await db
     .select({
       id: drafts.id,
       state: drafts.state,
@@ -377,8 +377,8 @@ export function getCampaignDetail(db: Db, campaign: Campaign): CampaignDetail {
     campaign,
     draftCounts,
     drafts: rows.map((r) => ({ ...r, state: r.state as ApprovalState })),
-    adMetrics: getCampaignAdMetrics(db, campaign),
-    audiences: listCampaignAudiences(db, campaign.workspaceId, campaign.id),
-    controlPlane: getCampaignControlPlaneSummary(db, campaign.workspaceId, campaign.id),
+    adMetrics: await getCampaignAdMetrics(db, campaign),
+    audiences: await listCampaignAudiences(db, campaign.workspaceId, campaign.id),
+    controlPlane: await getCampaignControlPlaneSummary(db, campaign.workspaceId, campaign.id),
   };
 }

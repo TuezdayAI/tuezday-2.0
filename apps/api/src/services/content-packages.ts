@@ -64,14 +64,14 @@ const EXCERPT_MAX_CHARS = 2000;
  * percentage (Jaccard) against angles of packages created for the same
  * campaign inside the novelty window. An identical normalized angle scores 0.
  */
-export function noveltyFor(
+export async function noveltyFor(
   db: DbExecutor,
   campaignId: string,
   angle: string,
   angleHash: string,
   now: number,
-): number {
-  const recent = db
+): Promise<number> {
+  const recent = await db
     .select({ angle: contentPackages.angle, angleHash: contentPackages.angleHash })
     .from(contentPackages)
     .where(
@@ -95,7 +95,7 @@ export function noveltyFor(
   return 100 - maxOverlap;
 }
 
-export function insertPackageEvent(
+export async function insertPackageEvent(
   tx: DbExecutor,
   input: {
     workspaceId: string;
@@ -106,8 +106,8 @@ export function insertPackageEvent(
     reason?: string | null;
     createdAt: number;
   },
-): void {
-  tx.insert(contentPackageEvents)
+): Promise<void> {
+  await tx.insert(contentPackageEvents)
     .values({
       id: randomUUID(),
       workspaceId: input.workspaceId,
@@ -128,15 +128,15 @@ export function insertPackageEvent(
  * package. The opportunity's status fence plus the partial unique make the
  * pairing 1:1 under races. Returns the new package id.
  */
-export function createPackageFromOpportunity(
+export async function createPackageFromOpportunity(
   db: Db,
   workspaceId: string,
   opportunityId: string,
   actor: { userId: string | null },
-): string {
+): Promise<string> {
   const now = Date.now();
-  return db.transaction((tx) => {
-    const opportunity = tx
+  return await db.transaction(async (tx) => {
+    const opportunity = await tx
       .select()
       .from(campaignOpportunities)
       .where(
@@ -151,7 +151,7 @@ export function createPackageFromOpportunity(
     if (!canTransitionOpportunity(from, "package_created")) {
       throw new InvalidOpportunityTransitionError(from, "package_created");
     }
-    const fenced = tx
+    const fenced = await tx
       .update(campaignOpportunities)
       .set({
         status: "package_created",
@@ -170,7 +170,7 @@ export function createPackageFromOpportunity(
     if (fenced.changes !== 1) {
       throw new InvalidOpportunityTransitionError(from, "package_created");
     }
-    tx.insert(campaignOpportunityEvents)
+    await tx.insert(campaignOpportunityEvents)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -184,14 +184,14 @@ export function createPackageFromOpportunity(
       .run();
 
     const packageId = randomUUID();
-    const novelty = noveltyFor(
+    const novelty = await noveltyFor(
       tx,
       opportunity.campaignId,
       opportunity.angle,
       opportunity.angleHash,
       now,
     );
-    tx.insert(contentPackages)
+    await tx.insert(contentPackages)
       .values({
         id: packageId,
         workspaceId,
@@ -214,14 +214,14 @@ export function createPackageFromOpportunity(
     // Trigger source: the canonical story, snapshotted so later mutation or
     // deletion never destroys provenance (design §1.3).
     if (opportunity.canonicalStoryId) {
-      const story = tx
+      const story = await tx
         .select()
         .from(canonicalExternalStories)
         .where(eq(canonicalExternalStories.id, opportunity.canonicalStoryId))
         .get();
       if (story) {
-        const context = loadStoryRoutingContext(tx, story);
-        tx.insert(packageSources)
+        const context = await loadStoryRoutingContext(tx, story);
+        await tx.insert(packageSources)
           .values({
             id: randomUUID(),
             workspaceId,
@@ -257,13 +257,13 @@ export function createPackageFromOpportunity(
       }
     }
     for (const [occurrenceId, citedBy] of claimsByOccurrence) {
-      const occurrence = tx
+      const occurrence = await tx
         .select()
         .from(discoverySourceOccurrences)
         .where(eq(discoverySourceOccurrences.id, occurrenceId))
         .get();
       if (!occurrence) continue;
-      tx.insert(packageSources)
+      await tx.insert(packageSources)
         .values({
           id: randomUUID(),
           workspaceId,
@@ -286,7 +286,7 @@ export function createPackageFromOpportunity(
         .run();
     }
 
-    insertPackageEvent(tx, {
+    await insertPackageEvent(tx, {
       workspaceId,
       packageId,
       fromStatus: null,
@@ -353,7 +353,7 @@ function joinedSelect(db: DbExecutor) {
     );
 }
 
-export function listPackages(
+export async function listPackages(
   db: Db,
   workspaceId: string,
   options: {
@@ -362,7 +362,7 @@ export function listPackages(
     limit?: number;
     offset?: number;
   } = {},
-): { packages: ContentPackage[]; total: number } {
+): Promise<{ packages: ContentPackage[]; total: number }> {
   const limit = Math.min(
     Math.max(options.limit ?? PACKAGE_LIST_DEFAULT_LIMIT, 1),
     PACKAGE_LIST_MAX_LIMIT,
@@ -375,18 +375,18 @@ export function listPackages(
       ? eq(contentPackages.campaignId, options.campaignId)
       : undefined,
   );
-  const rows = joinedSelect(db)
+  const rows = await joinedSelect(db)
     .where(where)
     .orderBy(desc(contentPackages.createdAt), asc(contentPackages.id))
     .limit(limit)
     .offset(offset)
     .all();
   const total =
-    db
+    (await db
       .select({ n: sql<number>`COUNT(*)` })
       .from(contentPackages)
       .where(where)
-      .get()?.n ?? 0;
+      .get())?.n ?? 0;
   return { packages: rows.map(projectPackage), total };
 }
 
@@ -410,13 +410,13 @@ export function projectAssessment(
   });
 }
 
-function sourceRows(db: DbExecutor, packageId: string): PackageSource[] {
-  return db
+async function sourceRows(db: DbExecutor, packageId: string): Promise<PackageSource[]> {
+  return (await db
     .select()
     .from(packageSources)
     .where(eq(packageSources.packageId, packageId))
     .orderBy(asc(packageSources.createdAt), asc(packageSources.id))
-    .all()
+    .all())
     .map((row) =>
       packageSourceSchema.parse({
         id: row.id,
@@ -433,11 +433,11 @@ function sourceRows(db: DbExecutor, packageId: string): PackageSource[] {
     );
 }
 
-function eligibilityRows(
+async function eligibilityRows(
   db: DbExecutor,
   packageId: string,
-): LaneEligibilityDecision[] {
-  return db
+): Promise<LaneEligibilityDecision[]> {
+  return (await db
     .select({
       decision: laneEligibilityDecisions,
       laneName: campaignLanes.name,
@@ -458,7 +458,7 @@ function eligibilityRows(
       asc(laneEligibilityDecisions.createdAt),
       asc(laneEligibilityDecisions.id),
     )
-    .all()
+    .all())
     .map((row) =>
       laneEligibilityDecisionSchema.parse({
         id: row.decision.id,
@@ -477,8 +477,8 @@ function eligibilityRows(
     );
 }
 
-function eventRows(db: DbExecutor, packageId: string): PackageEvent[] {
-  return db
+async function eventRows(db: DbExecutor, packageId: string): Promise<PackageEvent[]> {
+  return (await db
     .select()
     .from(contentPackageEvents)
     .where(eq(contentPackageEvents.packageId, packageId))
@@ -488,7 +488,7 @@ function eventRows(db: DbExecutor, packageId: string): PackageEvent[] {
       sql`${contentPackageEvents.fromStatus} IS NOT NULL`,
       asc(contentPackageEvents.id),
     )
-    .all()
+    .all())
     .map((row) =>
       packageEventSchema.parse({
         id: row.id,
@@ -501,12 +501,12 @@ function eventRows(db: DbExecutor, packageId: string): PackageEvent[] {
     );
 }
 
-export function getPackageDetail(
+export async function getPackageDetail(
   db: Db,
   workspaceId: string,
   packageId: string,
-): PackageDetail {
-  const row = joinedSelect(db)
+): Promise<PackageDetail> {
+  const row = await joinedSelect(db)
     .where(
       and(
         eq(contentPackages.id, packageId),
@@ -515,19 +515,19 @@ export function getPackageDetail(
     )
     .get();
   if (!row) throw new PackageNotFoundError();
-  const assessments = db
+  const assessments = (await db
     .select()
     .from(sufficiencyAssessments)
     .where(eq(sufficiencyAssessments.packageId, packageId))
     .orderBy(desc(sufficiencyAssessments.assessmentVersion))
-    .all()
+    .all())
     .map(projectAssessment);
   return {
     package: projectPackage(row),
-    sources: sourceRows(db, packageId),
+    sources: await sourceRows(db, packageId),
     assessments,
-    eligibility: eligibilityRows(db, packageId),
-    events: eventRows(db, packageId),
+    eligibility: await eligibilityRows(db, packageId),
+    events: await eventRows(db, packageId),
   };
 }
 
@@ -536,7 +536,7 @@ export function getPackageDetail(
  * `reassess` re-opens the sufficiency queue (attempts reset); `cancel` is
  * terminal. Judgment records (assessments, decisions) stay immutable.
  */
-export function decidePackage(
+export async function decidePackage(
   db: Db,
   workspaceId: string,
   packageId: string,
@@ -545,9 +545,9 @@ export function decidePackage(
     reason?: string;
     actorUserId: string | null;
   },
-): PackageDetail {
-  db.transaction((tx) => {
-    const row = tx
+): Promise<PackageDetail> {
+  await db.transaction(async (tx) => {
+    const row = await tx
       .select()
       .from(contentPackages)
       .where(
@@ -570,7 +570,7 @@ export function decidePackage(
       throw new InvalidPackageTransitionError(from, to);
     }
     const now = Date.now();
-    tx.update(contentPackages)
+    await tx.update(contentPackages)
       .set({
         status: to,
         ...(input.action === "reassess"
@@ -584,7 +584,7 @@ export function decidePackage(
       })
       .where(eq(contentPackages.id, packageId))
       .run();
-    insertPackageEvent(tx, {
+    await insertPackageEvent(tx, {
       workspaceId,
       packageId,
       fromStatus: from,
@@ -596,8 +596,8 @@ export function decidePackage(
     // D-63.9: a cancelled package blocks its undelivered deliverables in the
     // same transaction; candidates already generated stay for the operator.
     if (input.action === "cancel") {
-      blockDeliverablesForCancelledPackage(tx, workspaceId, packageId, now);
+      await blockDeliverablesForCancelledPackage(tx, workspaceId, packageId, now);
     }
   });
-  return getPackageDetail(db, workspaceId, packageId);
+  return await getPackageDetail(db, workspaceId, packageId);
 }

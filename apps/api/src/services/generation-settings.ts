@@ -13,8 +13,8 @@ import { generationSettings } from "../db/schema";
  * means "use the defaults" — review ON, angle step OFF (founder decision,
  * 2026-06-17). Booleans map to/from the 0/1 integer columns.
  */
-export function getGenerationSettings(db: Db, workspaceId: string): GenerationSettings {
-  const row = db
+export async function getGenerationSettings(db: Db, workspaceId: string): Promise<GenerationSettings> {
+  const row = await db
     .select()
     .from(generationSettings)
     .where(eq(generationSettings.workspaceId, workspaceId))
@@ -38,12 +38,12 @@ export function getGenerationSettings(db: Db, workspaceId: string): GenerationSe
       };
 }
 
-export function updateGenerationSettings(
+export async function updateGenerationSettings(
   db: Db,
   workspaceId: string,
   patch: UpdateGenerationSettingsInput,
-): GenerationSettings {
-  const current = getGenerationSettings(db, workspaceId);
+): Promise<GenerationSettings> {
+  const current = await getGenerationSettings(db, workspaceId);
   const next: GenerationSettings = {
     workspaceId,
     reviewEnabled: patch.reviewEnabled ?? current.reviewEnabled,
@@ -52,7 +52,7 @@ export function updateGenerationSettings(
     flagThreshold: patch.flagThreshold ?? current.flagThreshold,
     updatedAt: Date.now(),
   };
-  db.insert(generationSettings)
+  await db.insert(generationSettings)
     .values({
       workspaceId,
       reviewEnabled: next.reviewEnabled ? 1 : 0,

@@ -20,8 +20,8 @@ function isDocType(value: string): value is BrainDocType {
   return (BRAIN_DOC_TYPES as readonly string[]).includes(value);
 }
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -30,14 +30,14 @@ function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
 
 export function registerBrainRoutes(app: FastifyInstance, db: Db, llm: LlmGateway): void {
   app.get<{ Params: { id: string } }>("/workspaces/:id/brain", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return getBrain(db, request.params.id);
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return await getBrain(db, request.params.id);
   });
 
   app.put<{ Params: { id: string; docType: string } }>(
     "/workspaces/:id/brain/:docType",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       if (!isDocType(request.params.docType)) {
         return reply.status(400).send({ error: "invalid_doc_type" });
       }
@@ -50,26 +50,26 @@ export function registerBrainRoutes(app: FastifyInstance, db: Db, llm: LlmGatewa
       }
       // Save synchronously (deterministic fallback outline), then upgrade the
       // outline's summaries via the LLM — best-effort, never fails the save.
-      updateBrainDoc(db, request.params.id, request.params.docType, parsed.data.content, actorOf(request));
-      return enrichOutlineSummaries(db, llm, request.params.id, request.params.docType);
+      await updateBrainDoc(db, request.params.id, request.params.docType, parsed.data.content, actorOf(request));
+      return await enrichOutlineSummaries(db, llm, request.params.id, request.params.docType);
     },
   );
 
   app.get<{ Params: { id: string; docType: string } }>(
     "/workspaces/:id/brain/:docType/versions",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       if (!isDocType(request.params.docType)) {
         return reply.status(400).send({ error: "invalid_doc_type" });
       }
-      return listDocVersions(db, request.params.id, request.params.docType);
+      return await listDocVersions(db, request.params.id, request.params.docType);
     },
   );
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/brain/export", async (request, reply) => {
-    const workspace = workspaceOr404(db, request.params.id, reply);
+    const workspace = await workspaceOr404(db, request.params.id, reply);
     if (!workspace) return reply;
-    const markdown = exportBrainMarkdown(db, request.params.id, workspace.name);
+    const markdown = await exportBrainMarkdown(db, request.params.id, workspace.name);
     return reply
       .header("content-type", "text/markdown; charset=utf-8")
       .header(

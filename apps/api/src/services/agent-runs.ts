@@ -88,40 +88,40 @@ function rowToStep(row: AgentRunStepRow): AgentRunStep {
   };
 }
 
-export function listAgentRuns(
+export async function listAgentRuns(
   db: Db,
   workspaceId: string,
   options: { limit?: number; task?: string } = {},
-): AgentRunSummary[] {
+): Promise<AgentRunSummary[]> {
   const conditions = [eq(agentRuns.workspaceId, workspaceId)];
   if (options.task) conditions.push(eq(agentRuns.task, options.task));
-  return db
+  return (await db
     .select()
     .from(agentRuns)
     .where(and(...conditions))
     .orderBy(desc(agentRuns.startedAt))
     .limit(options.limit ?? DEFAULT_LIST_LIMIT)
-    .all()
+    .all())
     .map(rowToSummary);
 }
 
-export function getAgentRunDetail(
+export async function getAgentRunDetail(
   db: Db,
   workspaceId: string,
   runId: string,
-): AgentRunDetail | undefined {
-  const row = db
+): Promise<AgentRunDetail | undefined> {
+  const row = await db
     .select()
     .from(agentRuns)
     .where(and(eq(agentRuns.workspaceId, workspaceId), eq(agentRuns.id, runId)))
     .get();
   if (!row) return undefined;
-  const steps = db
+  const steps = (await db
     .select()
     .from(agentRunSteps)
     .where(eq(agentRunSteps.runId, runId))
     .orderBy(agentRunSteps.stepIndex)
-    .all()
+    .all())
     .map(rowToStep);
   return {
     ...rowToSummary(row),
@@ -132,9 +132,9 @@ export function getAgentRunDetail(
     // Sprint 69: what the run actually proposed. Read from the ledger rather
     // than re-derived from the transcript, so a proposal survives the deletion
     // of the thing it proposed.
-    proposals: listAgentProposalsForRun(db, runId),
+    proposals: await listAgentProposalsForRun(db, runId),
     // Sprint 70: and what it asked. A run that stopped at `needs_human` cannot
     // be read at all without the question that stopped it.
-    questions: listQuestionsForAgentRun(db, runId),
+    questions: await listQuestionsForAgentRun(db, runId),
   };
 }

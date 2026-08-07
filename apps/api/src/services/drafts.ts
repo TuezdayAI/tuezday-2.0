@@ -65,7 +65,7 @@ function rowToDraft(row: DraftRow): Draft {
   };
 }
 
-function logDecision(
+async function logDecision(
   db: DraftWriteDb,
   draft: { id: string; workspaceId: string },
   actor: DraftActor,
@@ -80,9 +80,9 @@ function logDecision(
   contentFingerprint: string | null = null,
   /** Sprint 66 — the human's stated rationale (today: optional on reject). */
   reason: string | null = null,
-): string {
+): Promise<string> {
   const id = randomUUID();
-  db.insert(approvalDecisions)
+  await db.insert(approvalDecisions)
     .values({
       id,
       draftId: draft.id,
@@ -116,12 +116,12 @@ export interface SubmitDraftInput {
   media?: LaunchMedia[] | null;
 }
 
-export function draftForGeneration(
+export async function draftForGeneration(
   db: Db,
   workspaceId: string,
   generationId: string,
-): Draft | undefined {
-  const row = db
+): Promise<Draft | undefined> {
+  const row = await db
     .select()
     .from(drafts)
     .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.sourceGenerationId, generationId)))
@@ -130,41 +130,41 @@ export function draftForGeneration(
 }
 
 /** Create a draft from a generation and submit it into review in one step. */
-export function submitDraft(db: Db, input: SubmitDraftInput, actor: DraftActor): Draft {
-  return db.transaction((tx) => submitDraftInTransaction(tx, input, actor));
+export async function submitDraft(db: Db, input: SubmitDraftInput, actor: DraftActor): Promise<Draft> {
+  return await db.transaction(async (tx) => await submitDraftInTransaction(tx, input, actor));
 }
 
 /**
  * Commit a submitted draft inside a caller-owned transaction. This keeps a
  * generated launch unit (generation, draft, approval receipt, message) atomic.
  */
-export function submitDraftInTransaction(
+export async function submitDraftInTransaction(
   db: DbExecutor,
   input: SubmitDraftInput,
   actor: DraftActor,
-): Draft {
-  const row = insertSubmittedDraft(db, input, actor, null, false);
+): Promise<Draft> {
+  const row = await insertSubmittedDraft(db, input, actor, null, false);
   if (!row) throw new Error("draft_insert_failed");
   return rowToDraft(row);
 }
 
-function insertSubmittedDraft(
+async function insertSubmittedDraft(
   db: DbExecutor,
   input: SubmitDraftInput,
   actor: DraftActor,
   automationKey: string | null,
   ignoreConflict: boolean,
-): DraftRow | null {
+): Promise<DraftRow | null> {
   const now = Date.now();
   const toState = transitionTo("draft", "submit")!;
   // Carry the source generation's pre-review (Sprint 22) onto the draft so the
   // approval queue is self-contained — the review shows in Review without a join.
   const sourceReviewJson = input.sourceGenerationId
-    ? (db
+    ? ((await db
         .select({ reviewJson: generations.reviewJson })
         .from(generations)
         .where(eq(generations.id, input.sourceGenerationId))
-        .get()?.reviewJson ?? null)
+        .get())?.reviewJson ?? null)
     : null;
   const row: DraftRow = {
     id: randomUUID(),
@@ -188,10 +188,10 @@ function insertSubmittedDraft(
   };
   const insert = db.insert(drafts).values(row);
   const inserted = ignoreConflict
-    ? insert.onConflictDoNothing().returning().get()
-    : insert.returning().get();
+    ? await insert.onConflictDoNothing().returning().get()
+    : await insert.returning().get();
   if (!inserted) return null;
-  logDecision(db, row, actor, "submit", "draft", toState);
+  await logDecision(db, row, actor, "submit", "draft", toState);
   return inserted;
 }
 
@@ -216,16 +216,16 @@ export interface AutomaticDraftCommit {
   autoApproved: boolean;
 }
 
-export function submitAutomaticDraft(
+export async function submitAutomaticDraft(
   db: Db,
   input: SubmitDraftInput & {
     automationKey: string;
     autoApprove: boolean;
   },
   actor: DraftActor,
-): AutomaticDraftCommit {
-  return db.transaction((tx) => {
-    const inserted = insertSubmittedDraft(
+): Promise<AutomaticDraftCommit> {
+  return await db.transaction(async (tx) => {
+    const inserted = await insertSubmittedDraft(
       tx,
       input,
       actor,
@@ -233,7 +233,7 @@ export function submitAutomaticDraft(
       true,
     );
     if (!inserted) {
-      const existing = tx
+      const existing = await tx
         .select()
         .from(drafts)
         .where(eq(drafts.automationKey, input.automationKey))
@@ -248,7 +248,7 @@ export function submitAutomaticDraft(
 
     let draft = rowToDraft(inserted);
     if (input.autoApprove) {
-      draft = applyDraftActionInTransaction(
+      draft = await applyDraftActionInTransaction(
         tx,
         draft,
         "approve",
@@ -264,46 +264,46 @@ export function submitAutomaticDraft(
 }
 
 /** Attach rendered visuals to an existing draft (Sprint 41 Part 5). */
-export function setDraftMedia(
+export async function setDraftMedia(
   db: Db,
   workspaceId: string,
   draftId: string,
   media: LaunchMedia[],
-): Draft | undefined {
-  const row = db
+): Promise<Draft | undefined> {
+  const row = await db
     .select()
     .from(drafts)
     .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)))
     .get();
   if (!row) return undefined;
   const now = Date.now();
-  db.update(drafts)
+  await db.update(drafts)
     .set({ mediaJson: media.length > 0 ? JSON.stringify(media) : null, updatedAt: now })
     .where(eq(drafts.id, draftId))
     .run();
   return rowToDraft({ ...row, mediaJson: media.length > 0 ? JSON.stringify(media) : null, updatedAt: now });
 }
 
-export function listDrafts(
+export async function listDrafts(
   db: Db,
   workspaceId: string,
   state?: ApprovalState,
   campaignId?: string,
-): Draft[] {
+): Promise<Draft[]> {
   const conditions = [eq(drafts.workspaceId, workspaceId)];
   if (state) conditions.push(eq(drafts.state, state));
   if (campaignId) conditions.push(eq(drafts.campaignId, campaignId));
-  return db
+  return (await db
     .select()
     .from(drafts)
     .where(and(...conditions))
     .orderBy(desc(drafts.createdAt))
-    .all()
+    .all())
     .map(rowToDraft);
 }
 
-export function getDraft(db: Db, workspaceId: string, draftId: string): Draft | undefined {
-  const row = db
+export async function getDraft(db: Db, workspaceId: string, draftId: string): Promise<Draft | undefined> {
+  const row = await db
     .select()
     .from(drafts)
     .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)))
@@ -311,13 +311,13 @@ export function getDraft(db: Db, workspaceId: string, draftId: string): Draft | 
   return row ? rowToDraft(row) : undefined;
 }
 
-export function listDecisions(db: Db, draftId: string): ApprovalDecision[] {
-  return db
+export async function listDecisions(db: Db, draftId: string): Promise<ApprovalDecision[]> {
+  return (await db
     .select()
     .from(approvalDecisions)
     .where(eq(approvalDecisions.draftId, draftId))
     .orderBy(asc(approvalDecisions.createdAt))
-    .all()
+    .all())
     .map((row) => ({
       ...row,
       action: row.action as ApprovalAction,
@@ -353,12 +353,12 @@ export interface CoveringHumanApproval {
   actorId: string | null;
 }
 
-export function humanApprovalCoveringDraft(
+export async function humanApprovalCoveringDraft(
   db: Db,
   workspaceId: string,
   draftId: string,
-): CoveringHumanApproval | null {
-  const draft = db
+): Promise<CoveringHumanApproval | null> {
+  const draft = await db
     .select({ state: drafts.state, content: drafts.content, mediaJson: drafts.mediaJson })
     .from(drafts)
     .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)))
@@ -366,7 +366,7 @@ export function humanApprovalCoveringDraft(
   if (draft?.state !== "approved") return null;
 
   const approveAction: ApprovalAction = "approve";
-  const latest = db
+  const latest = await db
     .select({
       contentFingerprint: approvalDecisions.contentFingerprint,
       actor: approvalDecisions.actor,
@@ -421,7 +421,7 @@ export interface ApplyDraftActionOptions {
   instruction?: string | null;
 }
 
-export function applyDraftAction(
+export async function applyDraftAction(
   db: Db,
   draft: Draft,
   action: ApprovalAction,
@@ -429,12 +429,12 @@ export function applyDraftAction(
   newContent?: string,
   reason?: string,
   options?: ApplyDraftActionOptions,
-): Draft {
-  return applyDraftActionInTransaction(db, draft, action, actor, newContent, reason, options);
+): Promise<Draft> {
+  return await applyDraftActionInTransaction(db, draft, action, actor, newContent, reason, options);
 }
 
 /** Apply a draft action through either the root DB or an active transaction. */
-export function applyDraftActionInTransaction(
+export async function applyDraftActionInTransaction(
   db: DraftWriteDb,
   draft: Draft,
   action: ApprovalAction,
@@ -442,7 +442,7 @@ export function applyDraftActionInTransaction(
   newContent?: string,
   reason?: string,
   options?: ApplyDraftActionOptions,
-): Draft {
+): Promise<Draft> {
   const toState = transitionTo(draft.state, action);
   if (!toState) throw new InvalidTransitionError(draft.state, action);
 
@@ -462,19 +462,19 @@ export function applyDraftActionInTransaction(
           id: draft.id,
           content,
           mediaJson:
-            db
+            (await db
               .select({ mediaJson: drafts.mediaJson })
               .from(drafts)
               .where(and(eq(drafts.workspaceId, draft.workspaceId), eq(drafts.id, draft.id)))
-              .get()?.mediaJson ?? null,
+              .get())?.mediaJson ?? null,
         })
       : null;
 
-  db.update(drafts)
+  await db.update(drafts)
     .set({ state: toState, content, updatedAt: now })
     .where(eq(drafts.id, draft.id))
     .run();
-  const decisionId = logDecision(
+  const decisionId = await logDecision(
     db,
     draft,
     actor,
@@ -491,7 +491,7 @@ export function applyDraftActionInTransaction(
   // plain insert keyed on the decision id, so it is idempotent and adds no
   // latency to the founder's action.
   if (action === "edit" && actor.human && content !== draft.content) {
-    capturePreferenceEdit(db, {
+    await capturePreferenceEdit(db, {
       workspaceId: draft.workspaceId,
       sourceId: decisionId,
       draftId: draft.id,

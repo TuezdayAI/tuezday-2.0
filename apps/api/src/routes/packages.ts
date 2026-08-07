@@ -23,8 +23,8 @@ import { runPackageAssessments, runPackagePipeline } from "../services/sufficien
 import { DEFAULT_DISCOVERY_POLICY } from "../runtime/operator-policy";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -48,7 +48,7 @@ export function registerPackageRoutes(
       offset?: string;
     };
   }>("/workspaces/:id/packages", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const { status, campaignId, limit, offset } = request.query;
     if (
       status !== undefined &&
@@ -69,7 +69,7 @@ export function registerPackageRoutes(
         message: "limit must be a positive integer and offset a non-negative integer",
       });
     }
-    return listPackages(db, request.params.id, {
+    return await listPackages(db, request.params.id, {
       status: status as PackageStatus | undefined,
       campaignId,
       limit: parsedLimit,
@@ -80,9 +80,9 @@ export function registerPackageRoutes(
   app.get<{ Params: { id: string; packageId: string } }>(
     "/workspaces/:id/packages/:packageId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       try {
-        return getPackageDetail(db, request.params.id, request.params.packageId);
+        return await getPackageDetail(db, request.params.id, request.params.packageId);
       } catch (err) {
         if (err instanceof PackageNotFoundError) {
           return reply.status(404).send({ error: "package_not_found" });
@@ -97,9 +97,9 @@ export function registerPackageRoutes(
   app.post<{ Params: { id: string; opportunityId: string } }>(
     "/workspaces/:id/opportunities/:opportunityId/package",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       try {
-        const packageId = createPackageFromOpportunity(
+        const packageId = await createPackageFromOpportunity(
           db,
           request.params.id,
           request.params.opportunityId,
@@ -107,7 +107,7 @@ export function registerPackageRoutes(
         );
         return reply
           .status(201)
-          .send(getPackageDetail(db, request.params.id, packageId));
+          .send(await getPackageDetail(db, request.params.id, packageId));
       } catch (err) {
         if (err instanceof OpportunityNotFoundError) {
           return reply.status(404).send({ error: "opportunity_not_found" });
@@ -126,7 +126,7 @@ export function registerPackageRoutes(
   app.post<{ Params: { id: string; packageId: string } }>(
     "/workspaces/:id/packages/:packageId/decision",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = packageDecisionInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -135,7 +135,7 @@ export function registerPackageRoutes(
         });
       }
       try {
-        return decidePackage(db, request.params.id, request.params.packageId, {
+        return await decidePackage(db, request.params.id, request.params.packageId, {
           action: parsed.data.action,
           reason: parsed.data.reason,
           actorUserId: actorOf(request).userId,
@@ -160,9 +160,9 @@ export function registerPackageRoutes(
   app.post<{ Params: { id: string; packageId: string } }>(
     "/workspaces/:id/packages/:packageId/assess",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       try {
-        getPackageDetail(db, request.params.id, request.params.packageId);
+        await getPackageDetail(db, request.params.id, request.params.packageId);
       } catch (err) {
         if (err instanceof PackageNotFoundError) {
           return reply.status(404).send({ error: "package_not_found" });
@@ -179,7 +179,7 @@ export function registerPackageRoutes(
       if (assessed.claimed === 0) {
         return reply.status(409).send({ error: "not_due" });
       }
-      return getPackageDetail(db, request.params.id, request.params.packageId);
+      return await getPackageDetail(db, request.params.id, request.params.packageId);
     },
   );
 
@@ -188,8 +188,8 @@ export function registerPackageRoutes(
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/packages/run",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      return runPackagePipeline(db, llm, {
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      return await runPackagePipeline(db, llm, {
         workspaceId: request.params.id,
         limit: DEFAULT_DISCOVERY_POLICY.maxPackagesPerTick,
         leaseMs: DEFAULT_DISCOVERY_POLICY.leaseMs,

@@ -107,7 +107,7 @@ export async function runPreferenceExtraction(
 ): Promise<PreferenceExtractionResult> {
   const now = options.now ?? Date.now();
   const maxGroups = options.maxGroups ?? EXTRACTION_MAX_GROUPS;
-  const pending = listUndigestedEdits(db, workspaceId, EXTRACTION_GROUP_SIZE * maxGroups);
+  const pending = await listUndigestedEdits(db, workspaceId, EXTRACTION_GROUP_SIZE * maxGroups);
   const groups = groupEditsByScope(pending).slice(0, maxGroups);
 
   const result: PreferenceExtractionResult = {
@@ -132,7 +132,7 @@ export async function runPreferenceExtraction(
         // from, not to whichever edit happened to be first in the batch. A
         // rule that claims eight sources when two taught it is not provenance.
         const source = bestSourceEdit(group.edits, candidate.evidence);
-        const upserted = upsertPreferenceRule(
+        const upserted = await upsertPreferenceRule(
           db,
           workspaceId,
           {
@@ -156,10 +156,10 @@ export async function runPreferenceExtraction(
       // A failed extraction costs this batch, not the loop. The edits are
       // still stamped below so the next pass moves on.
     }
-    markEditsDigested(db, editIds, now);
+    await markEditsDigested(db, editIds, now);
   }
 
-  result.retired = retireStaleRules(db, workspaceId, now);
+  result.retired = await retireStaleRules(db, workspaceId, now);
   return result;
 }
 

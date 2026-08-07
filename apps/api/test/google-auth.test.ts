@@ -50,31 +50,31 @@ describe("exchangeCodeForProfile", () => {
 
   it("rejects an unverified email", async () => {
     const fetcher = fetcherFor({ access_token: "at" }, { sub: "g", email: "x@y.com", email_verified: false, name: "" });
-    await expect(exchangeCodeForProfile(fetcher, "c")).rejects.toMatchObject({ code: "email_unverified" });
+    await expect(await exchangeCodeForProfile(fetcher, "c")).rejects.toMatchObject({ code: "email_unverified" });
   });
 });
 
 describe("upsertGoogleUser", () => {
   const profile = { sub: "g-1", email: "founder@acme.com", emailVerified: true as const, name: "Founder" };
 
-  it("creates a password-less user and a usable session for a new email", () => {
+  it("creates a password-less user and a usable session for a new email", async () => {
     const db = createTestDb();
-    const { user, token } = upsertGoogleUser(db, profile);
+    const { user, token } = await upsertGoogleUser(db, profile);
     expect(user.email).toBe("founder@acme.com");
-    expect(sessionUser(db, token)?.id).toBe(user.id); // session works
+    expect((await sessionUser(db, token))?.id).toBe(user.id); // session works
   });
 
-  it("links to an existing email/password account (no duplicate)", () => {
+  it("links to an existing email/password account (no duplicate)", async () => {
     const db = createTestDb();
-    const existing = registerAccount(db, { email: "founder@acme.com", password: "pw-12345", name: "Founder" });
-    const { user } = upsertGoogleUser(db, profile);
+    const existing = await registerAccount(db, { email: "founder@acme.com", password: "pw-12345", name: "Founder" });
+    const { user } = await upsertGoogleUser(db, profile);
     expect(user.id).toBe(existing.user.id); // same account
   });
 
-  it("is idempotent across repeat Google logins", () => {
+  it("is idempotent across repeat Google logins", async () => {
     const db = createTestDb();
-    const first = upsertGoogleUser(db, profile);
-    const second = upsertGoogleUser(db, profile);
+    const first = await upsertGoogleUser(db, profile);
+    const second = await upsertGoogleUser(db, profile);
     expect(second.user.id).toBe(first.user.id);
   });
 });

@@ -22,8 +22,8 @@ import { getDraft } from "../services/drafts";
 import { getWorkspace } from "../services/workspaces";
 import { externalActionError } from "./external-actions";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -43,26 +43,26 @@ export function registerInboxRoutes(
   app.get<{ Params: { id: string }; Querystring: { status?: string } }>(
     "/workspaces/:id/inbox",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const status = request.query.status;
       if (status && !STATUS_FILTERS.has(status)) {
         return reply.status(400).send({ error: "invalid_input", message: "Unknown status filter." });
       }
-      return listInbox(db, request.params.id, status as InboxItemStatus | undefined);
+      return await listInbox(db, request.params.id, status as InboxItemStatus | undefined);
     },
   );
 
   app.patch<{ Params: { id: string; itemId: string } }>(
     "/workspaces/:id/inbox/:itemId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = updateInboxItemStatusInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply
           .status(400)
           .send({ error: "invalid_input", message: parsed.error.issues.map((i) => i.message).join("; ") });
       }
-      const item = setInboxStatus(db, request.params.id, request.params.itemId, parsed.data.status);
+      const item = await setInboxStatus(db, request.params.id, request.params.itemId, parsed.data.status);
       if (!item) return reply.status(404).send({ error: "inbox_item_not_found" });
       return item;
     },
@@ -71,11 +71,11 @@ export function registerInboxRoutes(
   app.post<{ Params: { id: string; itemId: string } }>(
     "/workspaces/:id/inbox/:itemId/reply",
     async (request, reply) => {
-      const workspace = workspaceOr404(db, request.params.id, reply);
+      const workspace = await workspaceOr404(db, request.params.id, reply);
       if (!workspace) return reply;
-      const item = getInboxItem(db, request.params.id, request.params.itemId);
+      const item = await getInboxItem(db, request.params.id, request.params.itemId);
       if (!item) return reply.status(404).send({ error: "inbox_item_not_found" });
-      return generateReplyForItem(db, llm, evidence, workspace, item, actorOf(request));
+      return await generateReplyForItem(db, llm, evidence, workspace, item, actorOf(request));
     },
   );
 
@@ -84,9 +84,9 @@ export function registerInboxRoutes(
   app.post<{ Params: { id: string; itemId: string } }>(
     "/workspaces/:id/inbox/:itemId/post-reply",
     async (request, reply) => {
-      const workspace = workspaceOr404(db, request.params.id, reply);
+      const workspace = await workspaceOr404(db, request.params.id, reply);
       if (!workspace) return reply;
-      const item = getInboxItem(db, request.params.id, request.params.itemId);
+      const item = await getInboxItem(db, request.params.id, request.params.itemId);
       if (!item) return reply.status(404).send({ error: "inbox_item_not_found" });
       if (item.postedReplyExternalId) {
         return reply.status(409).send({ error: "already_replied" });
@@ -94,12 +94,12 @@ export function registerInboxRoutes(
       if (!item.replyDraftId) {
         return reply.status(409).send({ error: "reply_not_approved", message: "Draft a reply first." });
       }
-      const draft = getDraft(db, request.params.id, item.replyDraftId);
+      const draft = await getDraft(db, request.params.id, item.replyDraftId);
       if (!draft || draft.state !== "approved") {
         return reply.status(409).send({ error: "reply_not_approved" });
       }
       try {
-        const command = prepareReplyAction(db, request.params.id, item.id, {
+        const command = await prepareReplyAction(db, request.params.id, item.id, {
           idempotencyKey: deriveReplyIdempotencyKey(item.id, draft),
           automated: false,
         });
@@ -121,7 +121,7 @@ export function registerInboxRoutes(
   );
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/inbox/run", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return runInbox(db, llm, evidence, connectors, runtime, request.params.id);
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return await runInbox(db, llm, evidence, connectors, runtime, request.params.id);
   });
 }

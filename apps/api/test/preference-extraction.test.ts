@@ -48,8 +48,8 @@ const RHETORICAL = {
   evidence: "the founder cut the opening question about seats every time",
 };
 
-function seed(db: Db): void {
-  db.insert(workspaces)
+async function seed(db: Db): Promise<void> {
+  await db.insert(workspaces)
     .values({ id: WORKSPACE_ID, name: "Extract", createdAt: 1, updatedAt: 1 })
     .run();
 }
@@ -61,7 +61,7 @@ function uuid(seed: number): string {
   return `33333333-3333-4333-8333-${hex}`;
 }
 
-function addEdit(
+async function addEdit(
   db: Db,
   overrides: Partial<{
     taskType: string;
@@ -71,9 +71,9 @@ function addEdit(
     instruction: string | null;
     createdAt: number;
   }> = {},
-): string {
+): Promise<string> {
   const id = uuid((counter += 1));
-  db.insert(preferenceEdits)
+  await db.insert(preferenceEdits)
     .values({
       id,
       workspaceId: WORKSPACE_ID,
@@ -94,24 +94,24 @@ function addEdit(
 }
 
 describe("preference extraction (Sprint 68)", () => {
-  it("groups edits by scope so a rule cannot escape the channel it was learned on (D-68.4)", () => {
+  it("groups edits by scope so a rule cannot escape the channel it was learned on (D-68.4)", async () => {
     const db = createTestDb();
-    seed(db);
-    addEdit(db, { channel: "linkedin" });
-    addEdit(db, { channel: "linkedin" });
-    addEdit(db, { channel: "email", taskType: "outbound_email" });
+    await seed(db);
+    await addEdit(db, { channel: "linkedin" });
+    await addEdit(db, { channel: "linkedin" });
+    await addEdit(db, { channel: "email", taskType: "outbound_email" });
 
-    const groups = groupEditsByScope(listPreferenceEdits(db, WORKSPACE_ID));
+    const groups = groupEditsByScope(await listPreferenceEdits(db, WORKSPACE_ID));
     expect(groups).toHaveLength(2);
     expect(groups.map((group) => group.channel).sort()).toEqual(["email", "linkedin"]);
     expect(groups.find((group) => group.channel === "linkedin")!.edits).toHaveLength(2);
   });
 
-  it("shows the model both sides of every diff and the founder's instruction", () => {
+  it("shows the model both sides of every diff and the founder's instruction", async () => {
     const db = createTestDb();
-    seed(db);
-    addEdit(db, { instruction: "stop hedging" });
-    const [group] = groupEditsByScope(listPreferenceEdits(db, WORKSPACE_ID));
+    await seed(db);
+    await addEdit(db, { instruction: "stop hedging" });
+    const [group] = groupEditsByScope(await listPreferenceEdits(db, WORKSPACE_ID));
     const prompt = composeExtractionPrompt(group!);
     expect(prompt).toContain("BEFORE");
     expect(prompt).toContain("AFTER");
@@ -122,14 +122,14 @@ describe("preference extraction (Sprint 68)", () => {
 
   it("creates an active rule scoped to the group, with its evidence", async () => {
     const db = createTestDb();
-    seed(db);
-    addEdit(db);
+    await seed(db);
+    await addEdit(db);
     const llm = new ScriptedTextGateway([extraction([RHETORICAL])]);
 
     const result = await runPreferenceExtraction(db, llm, WORKSPACE_ID);
     expect(result).toMatchObject({ groups: 1, edits: 1, created: 1, merged: 0 });
 
-    const [rule] = listPreferenceRules(db, WORKSPACE_ID);
+    const [rule] = await listPreferenceRules(db, WORKSPACE_ID);
     expect(rule!.rule).toBe(RHETORICAL.rule);
     expect(rule!.status).toBe("active");
     expect(rule!.scopeChannel).toBe("linkedin");
@@ -137,7 +137,7 @@ describe("preference extraction (Sprint 68)", () => {
     expect(rule!.observationCount).toBe(1);
     expect(rule!.origin).toBe("extracted");
 
-    const evidence = listRuleEvidence(db, rule!.id);
+    const evidence = await listRuleEvidence(db, rule!.id);
     expect(evidence).toHaveLength(1);
     expect(evidence[0]!.excerpt).toContain("cut the opening question");
     expect(evidence[0]!.edit).not.toBeNull();
@@ -145,15 +145,15 @@ describe("preference extraction (Sprint 68)", () => {
 
   it("reinforces a restated rule instead of duplicating it", async () => {
     const db = createTestDb();
-    seed(db);
-    addEdit(db);
+    await seed(db);
+    await addEdit(db);
     await runPreferenceExtraction(
       db,
       new ScriptedTextGateway([extraction([RHETORICAL])]),
       WORKSPACE_ID,
     );
 
-    addEdit(db);
+    await addEdit(db);
     const restated = {
       ...RHETORICAL,
       // Same instruction, different wording — the model rarely repeats itself.
@@ -167,7 +167,7 @@ describe("preference extraction (Sprint 68)", () => {
     );
 
     expect(second).toMatchObject({ created: 0, merged: 1 });
-    const rules = listPreferenceRules(db, WORKSPACE_ID);
+    const rules = await listPreferenceRules(db, WORKSPACE_ID);
     expect(rules).toHaveLength(1);
     expect(rules[0]!.observationCount).toBe(2);
     expect(rules[0]!.confidence).toBe(90);
@@ -175,30 +175,30 @@ describe("preference extraction (Sprint 68)", () => {
 
   it("keeps a low-confidence guess out of generation as a candidate (D-68.9)", async () => {
     const db = createTestDb();
-    seed(db);
-    addEdit(db);
+    await seed(db);
+    await addEdit(db);
     await runPreferenceExtraction(
       db,
       new ScriptedTextGateway([extraction([{ ...RHETORICAL, confidence: 40 }])]),
       WORKSPACE_ID,
     );
-    const [rule] = listPreferenceRules(db, WORKSPACE_ID);
+    const [rule] = await listPreferenceRules(db, WORKSPACE_ID);
     expect(rule!.status).toBe("candidate");
   });
 
   it("digests the batch even when the model call fails, so one bad diff cannot wedge the loop", async () => {
     const db = createTestDb();
-    seed(db);
-    addEdit(db);
+    await seed(db);
+    await addEdit(db);
     const result = await runPreferenceExtraction(db, new ThrowingGateway(), WORKSPACE_ID);
     expect(result).toMatchObject({ groups: 1, edits: 1, created: 0, merged: 0 });
-    expect(listPreferenceEdits(db, WORKSPACE_ID)[0]!.digestedAt).not.toBeNull();
+    expect((await listPreferenceEdits(db, WORKSPACE_ID))[0]!.digestedAt).not.toBeNull();
   });
 
   it("never re-reads an edit it already digested", async () => {
     const db = createTestDb();
-    seed(db);
-    addEdit(db);
+    await seed(db);
+    await addEdit(db);
     await runPreferenceExtraction(
       db,
       new ScriptedTextGateway([extraction([RHETORICAL])]),
@@ -211,26 +211,26 @@ describe("preference extraction (Sprint 68)", () => {
       WORKSPACE_ID,
     );
     expect(second.groups).toBe(0);
-    expect(listPreferenceRules(db, WORKSPACE_ID)[0]!.observationCount).toBe(1);
+    expect((await listPreferenceRules(db, WORKSPACE_ID))[0]!.observationCount).toBe(1);
   });
 
   it("treats an empty extraction as a correct answer", async () => {
     const db = createTestDb();
-    seed(db);
-    addEdit(db);
+    await seed(db);
+    await addEdit(db);
     const result = await runPreferenceExtraction(
       db,
       new ScriptedTextGateway([extraction([])]),
       WORKSPACE_ID,
     );
     expect(result.created).toBe(0);
-    expect(listPreferenceRules(db, WORKSPACE_ID)).toHaveLength(0);
-    expect(listPreferenceEdits(db, WORKSPACE_ID)[0]!.digestedAt).not.toBeNull();
+    expect(await listPreferenceRules(db, WORKSPACE_ID)).toHaveLength(0);
+    expect((await listPreferenceEdits(db, WORKSPACE_ID))[0]!.digestedAt).not.toBeNull();
   });
 
-  it("retires a rule only when it stopped being observed AND stopped being applied (D-68.8)", () => {
+  it("retires a rule only when it stopped being observed AND stopped being applied (D-68.8)", async () => {
     const db = createTestDb();
-    seed(db);
+    await seed(db);
     const now = 1_000_000_000_000;
     const stale = now - RETIRE_AFTER_MS - 1;
     const base = {
@@ -249,7 +249,7 @@ describe("preference extraction (Sprint 68)", () => {
       createdAt: stale,
       updatedAt: stale,
     };
-    db.insert(preferenceRules)
+    await db.insert(preferenceRules)
       .values([
         { ...base, id: uuid(900), lastObservedAt: stale, lastAppliedAt: null },
         // Still working: nobody has had to re-teach it, but it fires constantly.
@@ -258,8 +258,8 @@ describe("preference extraction (Sprint 68)", () => {
       ])
       .run();
 
-    expect(retireStaleRules(db, WORKSPACE_ID, now)).toBe(1);
-    const byId = new Map(listPreferenceRules(db, WORKSPACE_ID).map((r) => [r.id, r.status]));
+    expect(await retireStaleRules(db, WORKSPACE_ID, now)).toBe(1);
+    const byId = new Map((await listPreferenceRules(db, WORKSPACE_ID)).map((r) => [r.id, r.status]));
     expect(byId.get(uuid(900))).toBe("retired");
     expect(byId.get(uuid(901))).toBe("active");
     expect(byId.get(uuid(902))).toBe("active");

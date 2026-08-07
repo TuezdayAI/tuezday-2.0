@@ -429,7 +429,7 @@ describe("connected provider pagination", () => {
 
   it("classifies a rejected continuation as an invalid cursor", async () => {
     await expect(
-      connectedPage({
+      await connectedPage({
         source: paginationSource("x", {
           mode: "query",
           query: "gtm",
@@ -478,14 +478,14 @@ describe("connected discovery (Sprint 46)", () => {
     await app.close();
   });
 
-  function insertConnection(
+  async function insertConnection(
     providerKey: string,
     status: "connected" | "disconnected" = "connected",
     wsId = workspaceId,
-  ): string {
+  ): Promise<string> {
     const id = randomUUID();
     const now = Date.now();
-    db.insert(connections)
+    await db.insert(connections)
       .values({
         id,
         workspaceId: wsId,
@@ -508,9 +508,9 @@ describe("connected discovery (Sprint 46)", () => {
     return id;
   }
 
-  function insertDirectInstagramConnection(handle = "tuezday"): string {
-    const id = insertConnection("instagram");
-    db.update(connections)
+  async function insertDirectInstagramConnection(handle = "tuezday"): Promise<string> {
+    const id = await insertConnection("instagram");
+    await db.update(connections)
       .set({
         configJson: JSON.stringify({
           authArchitecture: "instagram_login",
@@ -567,12 +567,12 @@ describe("connected discovery (Sprint 46)", () => {
     return res.json() as Array<Record<string, unknown>>;
   }
 
-  function sourceRow(sourceId: string) {
-    return db.select().from(discoverySources).where(eq(discoverySources.id, sourceId)).get()!;
+  async function sourceRow(sourceId: string) {
+    return (await db.select().from(discoverySources).where(eq(discoverySources.id, sourceId)).get())!;
   }
 
-  function jobsFor(sourceId: string) {
-    return db.select().from(discoveryJobs).where(eq(discoveryJobs.sourceId, sourceId)).all();
+  async function jobsFor(sourceId: string) {
+    return await db.select().from(discoveryJobs).where(eq(discoveryJobs.sourceId, sourceId)).all();
   }
 
   // -------------------------------------------------------------------------
@@ -683,7 +683,7 @@ describe("connected discovery (Sprint 46)", () => {
     });
 
     it("rejects a connection from the wrong provider", async () => {
-      const redditConnection = insertConnection("reddit");
+      const redditConnection = await insertConnection("reddit");
       const res = await createSource(
         { type: "x", config: { mode: "query", query: "gtm" }, connectionId: redditConnection },
         400,
@@ -698,7 +698,7 @@ describe("connected discovery (Sprint 46)", () => {
     });
 
     it("rejects disconnected and unknown connections", async () => {
-      const stale = insertConnection("twitter", "disconnected");
+      const stale = await insertConnection("twitter", "disconnected");
       const res = await createSource(
         { type: "x", config: { mode: "query", query: "gtm" }, connectionId: stale },
         400,
@@ -718,7 +718,7 @@ describe("connected discovery (Sprint 46)", () => {
           payload: { name: "Foreign Connection Workspace" },
         })
       ).json().id as string;
-      const foreignConnectionId = insertConnection(
+      const foreignConnectionId = await insertConnection(
         "twitter",
         "connected",
         otherWorkspaceId,
@@ -735,13 +735,13 @@ describe("connected discovery (Sprint 46)", () => {
     });
 
     it("creates an active connected source with a matching connection", async () => {
-      const connectionId = insertConnection("twitter");
+      const connectionId = await insertConnection("twitter");
       const source = await createSource({
         type: "x",
         config: { mode: "query", query: "agentic gtm" },
         connectionId,
       });
-      db.update(discoverySources)
+      await db.update(discoverySources)
         .set({
           configJson: JSON.stringify({
             ...source.config,
@@ -757,7 +757,7 @@ describe("connected discovery (Sprint 46)", () => {
     });
 
     it("validates connection changes on update too", async () => {
-      const connectionId = insertConnection("twitter");
+      const connectionId = await insertConnection("twitter");
       const source = await createSource({
         type: "x",
         config: { mode: "query", query: "gtm" },
@@ -787,7 +787,7 @@ describe("connected discovery (Sprint 46)", () => {
     ] as const)(
       "rejects a connected %s mode missing its target and preserves the row",
       async (_label, config, message) => {
-        const connectionId = insertConnection("twitter");
+        const connectionId = await insertConnection("twitter");
         const source = await createSource({
           type: "x",
           config: { mode: "query", query: "gtm" },
@@ -802,7 +802,7 @@ describe("connected discovery (Sprint 46)", () => {
 
         expect(update.statusCode).toBe(400);
         expect(update.json()).toEqual({ error: "invalid_input", message });
-        expect(sourceRow(source.id)).toMatchObject({
+        expect(await sourceRow(source.id)).toMatchObject({
           configJson: JSON.stringify(source.config),
           connectionId,
         });
@@ -823,12 +823,12 @@ describe("connected discovery (Sprint 46)", () => {
       ).json().id as string;
       const candidates = [
         {
-          id: insertConnection("twitter", "connected", otherWorkspaceId),
+          id: await insertConnection("twitter", "connected", otherWorkspaceId),
           error: "connection_required",
         },
-        { id: insertConnection("reddit"), error: "wrong_provider" },
+        { id: await insertConnection("reddit"), error: "wrong_provider" },
         {
-          id: insertConnection("twitter", "disconnected"),
+          id: await insertConnection("twitter", "disconnected"),
           error: "connection_disconnected",
         },
       ];
@@ -841,7 +841,7 @@ describe("connected discovery (Sprint 46)", () => {
         });
         expect(update.statusCode).toBe(400);
         expect(update.json().error).toBe(candidate.error);
-        expect(sourceRow(source.id)).toMatchObject({
+        expect(await sourceRow(source.id)).toMatchObject({
           configJson: JSON.stringify(source.config),
           connectionId: null,
           status: "needs_api_key",
@@ -854,7 +854,7 @@ describe("connected discovery (Sprint 46)", () => {
         type: "x",
         config: { query: "gtm" },
       });
-      const connectionId = insertConnection("twitter");
+      const connectionId = await insertConnection("twitter");
 
       const attached = await app.inject({
         method: "PATCH",
@@ -884,7 +884,7 @@ describe("connected discovery (Sprint 46)", () => {
     });
 
     it("rejects foreign, unknown, mixed, and wrong-platform tracked IDs before create", async () => {
-      const connectionId = insertConnection("twitter");
+      const connectionId = await insertConnection("twitter");
       const otherWorkspaceId = (
         await app.inject({
           method: "POST",
@@ -929,11 +929,11 @@ describe("connected discovery (Sprint 46)", () => {
         expect(result.json()).toEqual({ error: "related_object_not_found" });
       }
       expect(foreignResult.json()).toEqual(unknownResult.json());
-      expect(listDiscoverySources(db, workspaceId)).toHaveLength(0);
+      expect(await listDiscoverySources(db, workspaceId)).toHaveLength(0);
     });
 
     it("rejects foreign and unknown tracked IDs on update without changing the source", async () => {
-      const connectionId = insertConnection("twitter");
+      const connectionId = await insertConnection("twitter");
       const valid = await createTrackedAccount(workspaceId, "x", "valid-update-rival");
       const source = await createSource({
         type: "x",
@@ -964,7 +964,7 @@ describe("connected discovery (Sprint 46)", () => {
       expect(unknownResult.statusCode).toBe(404);
       expect(foreignResult.json()).toEqual({ error: "related_object_not_found" });
       expect(foreignResult.json()).toEqual(unknownResult.json());
-      expect(listDiscoverySources(db, workspaceId)).toEqual([
+      expect(await listDiscoverySources(db, workspaceId)).toEqual([
         expect.objectContaining({
           id: source.id,
           config: {
@@ -976,7 +976,7 @@ describe("connected discovery (Sprint 46)", () => {
     });
 
     it("fails connected fetch when a referenced tracked account becomes disabled", async () => {
-      const connectionId = insertConnection("twitter");
+      const connectionId = await insertConnection("twitter");
       const tracked = await createTrackedAccount(workspaceId, "x", "disabled-rival");
       const source = await createSource({
         type: "x",
@@ -1008,7 +1008,7 @@ describe("connected discovery (Sprint 46)", () => {
 
   describe("connected X sources", () => {
     it("fetches recent search results into discovered items", async () => {
-      const connectionId = insertConnection("twitter");
+      const connectionId = await insertConnection("twitter");
       const source = await createSource({
         type: "x",
         config: { mode: "query", query: "agentic gtm" },
@@ -1042,7 +1042,7 @@ describe("connected discovery (Sprint 46)", () => {
     });
 
     it("resolves a tracked account handle before fetching its timeline", async () => {
-      const connectionId = insertConnection("twitter");
+      const connectionId = await insertConnection("twitter");
       const tracked = (
         await app.inject({
           method: "POST",
@@ -1079,7 +1079,7 @@ describe("connected discovery (Sprint 46)", () => {
       expect(item!.externalId).toBe("x:42");
       expect(item!.url).toBe("https://x.com/rivalco/status/42");
       expect(
-        db
+        await db
           .select()
           .from(trackedSocialAccounts)
           .where(eq(trackedSocialAccounts.id, tracked.id))
@@ -1092,7 +1092,7 @@ describe("connected discovery (Sprint 46)", () => {
     });
 
     it("backs off exponentially on 429 without erroring the source", async () => {
-      const connectionId = insertConnection("twitter");
+      const connectionId = await insertConnection("twitter");
       const source = await createSource({
         type: "x",
         config: { mode: "query", query: "gtm" },
@@ -1104,10 +1104,10 @@ describe("connected discovery (Sprint 46)", () => {
       const run = await runDiscoveryRoute();
       expect(run.sources[0]!.error).toBe("rate_limited");
 
-      const row = sourceRow(source.id);
+      const row = await sourceRow(source.id);
       expect(row.status).toBe("active"); // rate limits are not source errors
       expect(row.backoffUntil).toBeGreaterThanOrEqual(before + RATE_LIMIT_BACKOFF_BASE_MS);
-      expect(jobsFor(source.id).at(-1)).toMatchObject({ status: "failed", error: "rate_limited" });
+      expect((await jobsFor(source.id)).at(-1)).toMatchObject({ status: "failed", error: "rate_limited" });
 
       // while in backoff the source is not even enqueued
       const skipped = await runDiscoveryRoute();
@@ -1115,19 +1115,19 @@ describe("connected discovery (Sprint 46)", () => {
       expect(skipped.processed).toBe(0);
 
       // a second consecutive rate limit doubles the wait
-      db.update(discoverySources)
+      await db.update(discoverySources)
         .set({ backoffUntil: null })
         .where(eq(discoverySources.id, source.id))
         .run();
       const secondBefore = Date.now();
       await runDiscoveryRoute();
-      expect(sourceRow(source.id).backoffUntil).toBeGreaterThanOrEqual(
+      expect((await sourceRow(source.id)).backoffUntil).toBeGreaterThanOrEqual(
         secondBefore + 2 * RATE_LIMIT_BACKOFF_BASE_MS,
       );
     });
 
     it("converts a 403 on list timelines into a permission_required source error", async () => {
-      const connectionId = insertConnection("twitter");
+      const connectionId = await insertConnection("twitter");
       const source = await createSource({
         type: "x",
         config: { mode: "list_timeline", listId: "789" },
@@ -1138,7 +1138,7 @@ describe("connected discovery (Sprint 46)", () => {
 
       const run = await runDiscoveryRoute();
       expect(run.sources[0]!.error).toContain("permission_required");
-      const row = sourceRow(source.id);
+      const row = await sourceRow(source.id);
       expect(row.status).toBe("error");
       expect(row.lastError).toContain("permission_required");
       expect(row.lastError).toContain("list.read");
@@ -1151,7 +1151,7 @@ describe("connected discovery (Sprint 46)", () => {
 
   describe("reddit sources", () => {
     it("routes a connected subreddit source through OAuth and keyless through RSS", async () => {
-      const connectionId = insertConnection("reddit");
+      const connectionId = await insertConnection("reddit");
       const connected = await createSource({
         type: "reddit",
         config: { subreddit: "startups" },
@@ -1222,7 +1222,7 @@ describe("connected discovery (Sprint 46)", () => {
 
   describe("permission-gated providers", () => {
     it("resolves a plain LinkedIn company handle before fetching its posts", async () => {
-      const connectionId = insertConnection("linkedin");
+      const connectionId = await insertConnection("linkedin");
       const tracked = await createTrackedAccount(
         workspaceId,
         "linkedin",
@@ -1274,7 +1274,7 @@ describe("connected discovery (Sprint 46)", () => {
       expect(proxyCalls[0]!.headers?.["LinkedIn-Version"]).toBe("202607");
       expect(proxyCalls[1]!.headers?.["LinkedIn-Version"]).toBe("202607");
       expect(
-        db
+        await db
           .select()
           .from(trackedSocialAccounts)
           .where(eq(trackedSocialAccounts.id, tracked.id))
@@ -1287,7 +1287,7 @@ describe("connected discovery (Sprint 46)", () => {
     });
 
     it("fails an unresolvable LinkedIn handle without member or posts fallback", async () => {
-      const connectionId = insertConnection("linkedin");
+      const connectionId = await insertConnection("linkedin");
       const source = await createSource({
         type: "linkedin",
         config: {
@@ -1304,7 +1304,7 @@ describe("connected discovery (Sprint 46)", () => {
       const run = await runDiscoveryRoute();
 
       expect(run.sources[0]!.error).toContain("target_unresolvable");
-      expect(sourceRow(source.id).lastError).toContain(
+      expect((await sourceRow(source.id)).lastError).toContain(
         "target_unresolvable",
       );
       expect(proxyCalls.map((call) => call.path)).toHaveLength(1);
@@ -1318,7 +1318,7 @@ describe("connected discovery (Sprint 46)", () => {
     });
 
     it("marks only the LinkedIn source as permission_required while others succeed", async () => {
-      const connectionId = insertConnection("linkedin");
+      const connectionId = await insertConnection("linkedin");
       const linkedin = await createSource({
         type: "linkedin",
         config: {
@@ -1346,21 +1346,21 @@ describe("connected discovery (Sprint 46)", () => {
         "permission_required",
       );
 
-      const row = sourceRow(linkedin.id);
+      const row = await sourceRow(linkedin.id);
       expect(row.status).toBe("error");
       expect(row.lastError).toContain("permission_required");
       expect(row.lastError).toContain("LinkedIn read scope or author role required");
-      expect(jobsFor(rss.id).at(-1)!.status).toBe("succeeded");
-      expect(jobsFor(linkedin.id).at(-1)!.status).toBe("failed");
+      expect((await jobsFor(rss.id)).at(-1)!.status).toBe("succeeded");
+      expect((await jobsFor(linkedin.id)).at(-1)!.status).toBe("failed");
       expect(JSON.stringify(run)).not.toContain("provider-secret-must-not-escape");
       expect(row.lastError).not.toContain("provider-secret-must-not-escape");
-      expect(jobsFor(linkedin.id).at(-1)!.error).not.toContain(
+      expect((await jobsFor(linkedin.id)).at(-1)!.error).not.toContain(
         "provider-secret-must-not-escape",
       );
     });
 
     it("fails legacy Instagram sources closed with reconnect_required", async () => {
-      const connectionId = insertConnection("instagram");
+      const connectionId = await insertConnection("instagram");
       const instagram = await createSource({
         type: "instagram",
         config: { mode: "hashtag", hashtag: "buildinpublic" },
@@ -1369,13 +1369,13 @@ describe("connected discovery (Sprint 46)", () => {
 
       const run = await runDiscoveryRoute();
       expect(run.sources[0]!.error).toContain("reconnect_required");
-      const row = sourceRow(instagram.id);
+      const row = await sourceRow(instagram.id);
       expect(row.status).toBe("error");
       expect(row.lastError).toContain("reconnect_required");
     });
 
     it("rejects Instagram hashtag and competitor discovery with stable capability errors", async () => {
-      const connectionId = insertDirectInstagramConnection();
+      const connectionId = await insertDirectInstagramConnection();
       const hashtag = await createSource({
         type: "instagram",
         config: { mode: "hashtag", hashtag: "buildinpublic" },
@@ -1399,7 +1399,7 @@ describe("connected discovery (Sprint 46)", () => {
     });
 
     it("fetches only the direct Instagram connection's own media", async () => {
-      const connectionId = insertDirectInstagramConnection();
+      const connectionId = await insertDirectInstagramConnection();
       await createSource({
         type: "instagram",
         config: { mode: "account_timeline", handle: "@tuezday" },
@@ -1447,20 +1447,20 @@ describe("connected discovery (Sprint 46)", () => {
 
   describe("run integration", () => {
     it("fails a source whose connection was disconnected after setup", async () => {
-      const connectionId = insertConnection("twitter");
+      const connectionId = await insertConnection("twitter");
       const source = await createSource({
         type: "x",
         config: { mode: "query", query: "gtm" },
         connectionId,
       });
-      db.update(connections)
+      await db.update(connections)
         .set({ status: "disconnected" })
         .where(eq(connections.id, connectionId))
         .run();
 
       const run = await runDiscoveryRoute();
       expect(run.sources[0]!.error).toBe("connection_disconnected");
-      expect(sourceRow(source.id)).toMatchObject({
+      expect(await sourceRow(source.id)).toMatchObject({
         status: "error",
         lastError: "connection_disconnected",
       });
@@ -1468,7 +1468,7 @@ describe("connected discovery (Sprint 46)", () => {
 
     it("links the same story from connected X and keyless Google News to one canonical item", async () => {
       const story = "Acme raises $10M Series A to build agentic GTM tooling";
-      const connectionId = insertConnection("twitter");
+      const connectionId = await insertConnection("twitter");
       await createSource({
         type: "x",
         config: { mode: "query", query: "acme" },
@@ -1497,7 +1497,7 @@ describe("connected discovery (Sprint 46)", () => {
     });
 
     it("accepts a connected item into a signal with the x source attribution", async () => {
-      const connectionId = insertConnection("twitter");
+      const connectionId = await insertConnection("twitter");
       await createSource({
         type: "x",
         config: { mode: "query", query: "gtm" },
@@ -1510,7 +1510,7 @@ describe("connected discovery (Sprint 46)", () => {
       await runDiscoveryRoute();
 
       const [item] = await listItems("new");
-      db.update(discoveredItems)
+      await db.update(discoveredItems)
         .set({ matchingState: "ready", matchingError: null })
         .where(eq(discoveredItems.id, item!.id as string))
         .run();

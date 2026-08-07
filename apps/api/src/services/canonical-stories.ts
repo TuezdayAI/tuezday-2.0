@@ -148,16 +148,16 @@ export interface OccurrenceIngestResult {
  * conflict means the occurrence — and everything downstream of it — already
  * exists, so the call is a no-op. Runs inside the caller's transaction.
  */
-export function recordOccurrenceAndResolve(
+export async function recordOccurrenceAndResolve(
   tx: DbExecutor,
   input: OccurrenceIngestInput,
-): OccurrenceIngestResult {
+): Promise<OccurrenceIngestResult> {
   const now = Date.now();
   const occurrenceId = randomUUID();
   const normalizedUrlKey = hashUrl(input.item.url);
   const contentFingerprint = hashContent(input.item.title, input.item.summary);
 
-  const insertedOccurrence = tx
+  const insertedOccurrence = await tx
     .insert(discoverySourceOccurrences)
     .values({
       id: occurrenceId,
@@ -200,7 +200,7 @@ export function recordOccurrenceAndResolve(
   let storyId: string | null = null;
   let matchedKind: StoryKeyKind | null = null;
   for (const key of keys) {
-    const owner = tx
+    const owner = await tx
       .select({ storyId: canonicalStoryKeys.storyId })
       .from(canonicalStoryKeys)
       .where(
@@ -222,7 +222,7 @@ export function recordOccurrenceAndResolve(
   let relationship: { kind: StoryOccurrenceRelationshipKind; confidence: number };
   if (storyId && matchedKind) {
     relationship = RELATIONSHIP_BY_KEY_KIND[matchedKind]!;
-    tx.update(canonicalExternalStories)
+    await tx.update(canonicalExternalStories)
       .set({
         firstObservedAt: sql`MIN(${canonicalExternalStories.firstObservedAt}, ${input.observedAt})`,
         lastObservedAt: sql`MAX(${canonicalExternalStories.lastObservedAt}, ${input.observedAt})`,
@@ -234,7 +234,7 @@ export function recordOccurrenceAndResolve(
     storyId = randomUUID();
     storyCreated = true;
     relationship = { kind: "exact", confidence: 100 };
-    tx.insert(canonicalExternalStories)
+    await tx.insert(canonicalExternalStories)
       .values({
         id: storyId,
         workspaceId: input.workspaceId,
@@ -257,7 +257,7 @@ export function recordOccurrenceAndResolve(
   // *different* story stay put — conflicting exact identities never auto-merge
   // stories (ambiguity stays separate rather than guessed).
   for (const key of keys) {
-    tx.insert(canonicalStoryKeys)
+    await tx.insert(canonicalStoryKeys)
       .values({
         id: randomUUID(),
         workspaceId: input.workspaceId,
@@ -276,7 +276,7 @@ export function recordOccurrenceAndResolve(
       .run();
   }
 
-  tx.insert(storyOccurrences)
+  await tx.insert(storyOccurrences)
     .values({
       id: randomUUID(),
       workspaceId: input.workspaceId,
@@ -294,7 +294,7 @@ export function recordOccurrenceAndResolve(
     })
     .run();
 
-  refreshEnrichment(tx, input.workspaceId, storyId);
+  await refreshEnrichment(tx, input.workspaceId, storyId);
   return { occurrenceCreated: true, storyCreated, membershipCreated: true };
 }
 
@@ -303,8 +303,8 @@ interface ActiveMember {
   membership: StoryOccurrenceRow;
 }
 
-function activeMembers(tx: DbExecutor, storyId: string): ActiveMember[] {
-  return tx
+async function activeMembers(tx: DbExecutor, storyId: string): Promise<ActiveMember[]> {
+  return await tx
     .select({
       occurrence: discoverySourceOccurrences,
       membership: storyOccurrences,
@@ -325,12 +325,12 @@ function activeMembers(tx: DbExecutor, storyId: string): ActiveMember[] {
  * changes append a new immutable row (unique on story × fingerprint ×
  * enricher version, design §8.4).
  */
-export function refreshEnrichment(
+export async function refreshEnrichment(
   tx: DbExecutor,
   workspaceId: string,
   storyId: string,
-): void {
-  const members = activeMembers(tx, storyId);
+): Promise<void> {
+  const members = await activeMembers(tx, storyId);
   if (members.length === 0) return;
 
   const fingerprints = members
@@ -351,7 +351,7 @@ export function refreshEnrichment(
     titleVariants,
   };
 
-  const inserted = tx
+  const inserted = await tx
     .insert(storyEnrichments)
     .values({
       id: randomUUID(),
@@ -373,19 +373,19 @@ export function refreshEnrichment(
     .returning({ id: storyEnrichments.id })
     .get();
   if (inserted) {
-    tx.update(canonicalExternalStories)
+    await tx.update(canonicalExternalStories)
       .set({ currentEnrichmentVersion: STORY_ENRICHER_VERSION, updatedAt: Date.now() })
       .where(eq(canonicalExternalStories.id, storyId))
       .run();
   }
 }
 
-function getStoryRow(
+async function getStoryRow(
   tx: DbExecutor,
   workspaceId: string,
   storyId: string,
-): CanonicalExternalStoryRow | undefined {
-  return tx
+): Promise<CanonicalExternalStoryRow | undefined> {
+  return await tx
     .select()
     .from(canonicalExternalStories)
     .where(
@@ -403,22 +403,22 @@ function getStoryRow(
  * repointed; the emptied story is archived with a mergedInto pointer. Nothing
  * is deleted — split reverses it.
  */
-export function mergeStories(
+export async function mergeStories(
   db: Db,
   workspaceId: string,
   input: { storyId: string; intoStoryId: string; actor: StoryActor; reason: string },
-): StoryDetail {
+): Promise<StoryDetail> {
   if (input.storyId === input.intoStoryId) throw new StoryMergeSelfError();
-  return db.transaction((tx) => {
-    const from = getStoryRow(tx, workspaceId, input.storyId);
-    const into = getStoryRow(tx, workspaceId, input.intoStoryId);
+  return await db.transaction(async (tx) => {
+    const from = await getStoryRow(tx, workspaceId, input.storyId);
+    const into = await getStoryRow(tx, workspaceId, input.intoStoryId);
     if (!from || !into) throw new StoryNotFoundError();
     if (into.status === "archived") throw new StoryArchivedError();
 
     const now = Date.now();
-    const members = activeMembers(tx, from.id);
+    const members = await activeMembers(tx, from.id);
     for (const member of members) {
-      tx.update(storyOccurrences)
+      await tx.update(storyOccurrences)
         .set({
           detachedAt: now,
           detachedByUserId: input.actor.userId,
@@ -426,7 +426,7 @@ export function mergeStories(
         })
         .where(eq(storyOccurrences.id, member.membership.id))
         .run();
-      tx.insert(storyOccurrences)
+      await tx.insert(storyOccurrences)
         .values({
           id: randomUUID(),
           workspaceId,
@@ -446,7 +446,7 @@ export function mergeStories(
     }
 
     // Repointing keeps (workspace, kind, hash) untouched, so it can't collide.
-    tx.update(canonicalStoryKeys)
+    await tx.update(canonicalStoryKeys)
       .set({ storyId: into.id })
       .where(
         and(
@@ -456,7 +456,7 @@ export function mergeStories(
       )
       .run();
 
-    tx.update(canonicalExternalStories)
+    await tx.update(canonicalExternalStories)
       .set({
         firstObservedAt: sql`MIN(${canonicalExternalStories.firstObservedAt}, ${from.firstObservedAt})`,
         lastObservedAt: sql`MAX(${canonicalExternalStories.lastObservedAt}, ${from.lastObservedAt})`,
@@ -465,7 +465,7 @@ export function mergeStories(
       .where(eq(canonicalExternalStories.id, into.id))
       .run();
 
-    tx.update(canonicalExternalStories)
+    await tx.update(canonicalExternalStories)
       .set({
         status: "archived",
         archivedAt: now,
@@ -475,8 +475,8 @@ export function mergeStories(
       .where(eq(canonicalExternalStories.id, from.id))
       .run();
 
-    refreshEnrichment(tx, workspaceId, into.id);
-    return storyDetailInTx(tx, workspaceId, into.id);
+    await refreshEnrichment(tx, workspaceId, into.id);
+    return await storyDetailInTx(tx, workspaceId, into.id);
   });
 }
 
@@ -487,13 +487,13 @@ export function mergeStories(
  * matching it) stays with the original story; the operator is asserting these
  * are different stories despite shared identity.
  */
-export function splitOccurrence(
+export async function splitOccurrence(
   db: Db,
   workspaceId: string,
   input: { occurrenceId: string; actor: StoryActor; reason: string },
-): StoryDetail {
-  return db.transaction((tx) => {
-    const occurrence = tx
+): Promise<StoryDetail> {
+  return await db.transaction(async (tx) => {
+    const occurrence = await tx
       .select()
       .from(discoverySourceOccurrences)
       .where(
@@ -504,7 +504,7 @@ export function splitOccurrence(
       )
       .get();
     if (!occurrence) throw new OccurrenceNotFoundError();
-    const membership = tx
+    const membership = await tx
       .select()
       .from(storyOccurrences)
       .where(
@@ -517,7 +517,7 @@ export function splitOccurrence(
     if (!membership) throw new OccurrenceNotFoundError();
 
     const now = Date.now();
-    tx.update(storyOccurrences)
+    await tx.update(storyOccurrences)
       .set({
         detachedAt: now,
         detachedByUserId: input.actor.userId,
@@ -527,7 +527,7 @@ export function splitOccurrence(
       .run();
 
     const newStoryId = randomUUID();
-    tx.insert(canonicalExternalStories)
+    await tx.insert(canonicalExternalStories)
       .values({
         id: newStoryId,
         workspaceId,
@@ -544,7 +544,7 @@ export function splitOccurrence(
         updatedAt: now,
       })
       .run();
-    tx.insert(storyOccurrences)
+    await tx.insert(storyOccurrences)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -562,13 +562,13 @@ export function splitOccurrence(
       })
       .run();
 
-    const remaining = activeMembers(tx, membership.storyId);
+    const remaining = await activeMembers(tx, membership.storyId);
     const remainingKeyHashes = new Set(
       remaining.flatMap((m) => deriveKeys(m.occurrence).map((k) => `${k.kind}:${k.hash}`)),
     );
     for (const key of deriveKeys(occurrence)) {
       if (remainingKeyHashes.has(`${key.kind}:${key.hash}`)) continue;
-      const moved = tx
+      const moved = await tx
         .update(canonicalStoryKeys)
         .set({ storyId: newStoryId })
         .where(
@@ -582,7 +582,7 @@ export function splitOccurrence(
         .run();
       if (moved.changes === 0) {
         // Key owned by another story (or missing): claim only if unowned.
-        tx.insert(canonicalStoryKeys)
+        await tx.insert(canonicalStoryKeys)
           .values({
             id: randomUUID(),
             workspaceId,
@@ -603,12 +603,12 @@ export function splitOccurrence(
     }
 
     if (remaining.length === 0) {
-      tx.update(canonicalExternalStories)
+      await tx.update(canonicalExternalStories)
         .set({ status: "archived", archivedAt: now, updatedAt: now })
         .where(eq(canonicalExternalStories.id, membership.storyId))
         .run();
     } else {
-      tx.update(canonicalExternalStories)
+      await tx.update(canonicalExternalStories)
         .set({
           firstObservedAt: remaining[0]!.occurrence.observedAt,
           lastObservedAt: remaining[remaining.length - 1]!.occurrence.observedAt,
@@ -616,25 +616,25 @@ export function splitOccurrence(
         })
         .where(eq(canonicalExternalStories.id, membership.storyId))
         .run();
-      refreshEnrichment(tx, workspaceId, membership.storyId);
+      await refreshEnrichment(tx, workspaceId, membership.storyId);
     }
 
-    refreshEnrichment(tx, workspaceId, newStoryId);
-    return storyDetailInTx(tx, workspaceId, newStoryId);
+    await refreshEnrichment(tx, workspaceId, newStoryId);
+    return await storyDetailInTx(tx, workspaceId, newStoryId);
   });
 }
 
-export function setStoryStatus(
+export async function setStoryStatus(
   db: Db,
   workspaceId: string,
   storyId: string,
   status: StoryStatus,
-): CanonicalStory {
-  return db.transaction((tx) => {
-    const story = getStoryRow(tx, workspaceId, storyId);
+): Promise<CanonicalStory> {
+  return await db.transaction(async (tx) => {
+    const story = await getStoryRow(tx, workspaceId, storyId);
     if (!story) throw new StoryNotFoundError();
     const now = Date.now();
-    tx.update(canonicalExternalStories)
+    await tx.update(canonicalExternalStories)
       .set({
         status,
         archivedAt: status === "archived" ? (story.archivedAt ?? now) : null,
@@ -642,7 +642,7 @@ export function setStoryStatus(
       })
       .where(eq(canonicalExternalStories.id, storyId))
       .run();
-    return projectStory(tx, getStoryRow(tx, workspaceId, storyId)!);
+    return await projectStory(tx, (await getStoryRow(tx, workspaceId, storyId))!);
   });
 }
 
@@ -653,12 +653,12 @@ export function setStoryStatus(
  * groups converge via shared identity keys — `duplicateOfId` is never read,
  * so dangling groups (P1.9) backfill cleanly too.
  */
-export function backfillCanonicalStories(
+export async function backfillCanonicalStories(
   db: Db,
   workspaceId: string,
-): StoryBackfillResult {
-  return db.transaction((tx) => {
-    const rows = tx
+): Promise<StoryBackfillResult> {
+  return await db.transaction(async (tx) => {
+    const rows = await tx
       .select({ item: discoveredItems, source: discoverySources })
       .from(discoveredItems)
       .innerJoin(discoverySources, eq(discoveredItems.sourceId, discoverySources.id))
@@ -672,7 +672,7 @@ export function backfillCanonicalStories(
       membershipsCreated: 0,
     };
     for (const { item, source } of rows) {
-      const outcome = recordOccurrenceAndResolve(tx, {
+      const outcome = await recordOccurrenceAndResolve(tx, {
         workspaceId,
         source: { id: source.id, type: source.type, name: source.name },
         fetchRunId: null,
@@ -700,11 +700,11 @@ export function backfillCanonicalStories(
 const LIST_DEFAULT_LIMIT = 50;
 export const LIST_MAX_LIMIT = 200;
 
-function projectStory(
+async function projectStory(
   tx: DbExecutor,
   row: CanonicalExternalStoryRow,
-): CanonicalStory {
-  const counts = tx
+): Promise<CanonicalStory> {
+  const counts = await tx
     .select({
       occurrenceCount: sql<number>`COUNT(*)`,
       corroborationCount: sql<number>`COUNT(DISTINCT ${discoverySourceOccurrences.sourceId})`,
@@ -733,18 +733,18 @@ function projectStory(
   };
 }
 
-export function listStories(
+export async function listStories(
   db: Db,
   workspaceId: string,
   options: { status?: StoryStatus; limit?: number; offset?: number } = {},
-): { stories: CanonicalStory[]; total: number } {
+): Promise<{ stories: CanonicalStory[]; total: number }> {
   const limit = Math.min(Math.max(options.limit ?? LIST_DEFAULT_LIMIT, 1), LIST_MAX_LIMIT);
   const offset = Math.max(options.offset ?? 0, 0);
   const where = and(
     eq(canonicalExternalStories.workspaceId, workspaceId),
     options.status ? eq(canonicalExternalStories.status, options.status) : undefined,
   );
-  const rows = db
+  const rows = await db
     .select()
     .from(canonicalExternalStories)
     .where(where)
@@ -753,12 +753,12 @@ export function listStories(
     .offset(offset)
     .all();
   const total =
-    db
+    (await db
       .select({ n: sql<number>`COUNT(*)` })
       .from(canonicalExternalStories)
       .where(where)
-      .get()?.n ?? 0;
-  return { stories: rows.map((row) => projectStory(db, row)), total };
+      .get())?.n ?? 0;
+  return { stories: await Promise.all(rows.map(async (row) => await projectStory(db, row))), total };
 }
 
 function projectOccurrence(
@@ -816,14 +816,14 @@ function projectEnrichment(row: StoryEnrichmentRow): StoryEnrichment {
   };
 }
 
-function storyDetailInTx(
+async function storyDetailInTx(
   tx: DbExecutor,
   workspaceId: string,
   storyId: string,
-): StoryDetail {
-  const row = getStoryRow(tx, workspaceId, storyId);
+): Promise<StoryDetail> {
+  const row = await getStoryRow(tx, workspaceId, storyId);
   if (!row) throw new StoryNotFoundError();
-  const memberships = tx
+  const memberships = await tx
     .select({
       occurrence: discoverySourceOccurrences,
       membership: storyOccurrences,
@@ -836,7 +836,7 @@ function storyDetailInTx(
     .where(eq(storyOccurrences.storyId, storyId))
     .orderBy(asc(discoverySourceOccurrences.observedAt))
     .all();
-  const enrichmentRow = tx
+  const enrichmentRow = await tx
     .select()
     .from(storyEnrichments)
     .where(eq(storyEnrichments.storyId, storyId))
@@ -844,7 +844,7 @@ function storyDetailInTx(
     .limit(1)
     .get();
   return {
-    story: projectStory(tx, row),
+    story: await projectStory(tx, row),
     occurrences: memberships
       .filter((m) => m.membership.detachedAt === null)
       .map((m) => projectOccurrence(m.occurrence, m.membership)),
@@ -856,10 +856,10 @@ function storyDetailInTx(
   };
 }
 
-export function getStoryDetail(
+export async function getStoryDetail(
   db: Db,
   workspaceId: string,
   storyId: string,
-): StoryDetail {
-  return storyDetailInTx(db, workspaceId, storyId);
+): Promise<StoryDetail> {
+  return await storyDetailInTx(db, workspaceId, storyId);
 }

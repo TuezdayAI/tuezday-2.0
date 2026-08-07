@@ -12,8 +12,8 @@ import { workspaceBannedClaims } from "../db/schema";
  * its TOOLS_BY_NAME map. Anything this module imported would be pulled into
  * that half-initialized graph — the Sprint 65 cycle, again.
  */
-export function listBannedClaims(db: Db, workspaceId: string): BannedClaim[] {
-  return db
+export async function listBannedClaims(db: Db, workspaceId: string): Promise<BannedClaim[]> {
+  return await db
     .select()
     .from(workspaceBannedClaims)
     .where(eq(workspaceBannedClaims.workspaceId, workspaceId))
@@ -22,12 +22,12 @@ export function listBannedClaims(db: Db, workspaceId: string): BannedClaim[] {
 }
 
 /** Adding a phrase that already exists is a no-op returning the existing row. */
-export function addBannedClaim(
+export async function addBannedClaim(
   db: Db,
   workspaceId: string,
   input: BannedClaimInput,
-): BannedClaim {
-  const existing = db
+): Promise<BannedClaim> {
+  const existing = await db
     .select()
     .from(workspaceBannedClaims)
     .where(
@@ -45,13 +45,13 @@ export function addBannedClaim(
     note: input.note,
     createdAt: Date.now(),
   };
-  db.insert(workspaceBannedClaims).values(row).run();
+  await db.insert(workspaceBannedClaims).values(row).run();
   return row;
 }
 
 /** True when a row was removed — the route turns a false into a 404. */
-export function removeBannedClaim(db: Db, workspaceId: string, claimId: string): boolean {
-  const result = db
+export async function removeBannedClaim(db: Db, workspaceId: string, claimId: string): Promise<boolean> {
+  const result = await db
     .delete(workspaceBannedClaims)
     .where(
       and(

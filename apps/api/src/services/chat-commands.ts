@@ -101,7 +101,7 @@ export async function runChatCommand(
   if (declared.kind !== "instant") return { ok: false, error: "not_instant" };
 
   const { db } = deps;
-  const userMessage = appendMessage(db, workspaceId, sessionId, {
+  const userMessage = await appendMessage(db, workspaceId, sessionId, {
     role: "user",
     content: argument ? `/${command} ${argument}` : `/${command}`,
   });
@@ -146,7 +146,7 @@ export async function runChatCommand(
   }
 
   const deduped = dedupeCards(cards);
-  const message = appendMessage(db, workspaceId, sessionId, {
+  const message = await appendMessage(db, workspaceId, sessionId, {
     role: "assistant",
     content: summarize(command, deduped, lines),
     citations: dedupeCitations(citations),

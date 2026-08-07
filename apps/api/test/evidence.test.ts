@@ -103,7 +103,7 @@ describe("evidence API", () => {
   });
 
   async function upload(title = "Website copy", content = "Tuezday is the GTM memory layer.") {
-    return app.inject({
+    return await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/evidence`,
       payload: { title, content },
@@ -111,7 +111,7 @@ describe("evidence API", () => {
   }
 
   async function resolve(payload: Record<string, unknown> = {}) {
-    return app.inject({
+    return await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/resolve`,
       payload: { taskType: "linkedin_post", channel: "linkedin", ...payload },
@@ -295,14 +295,14 @@ describe("evidence API", () => {
     }
 
     /** Seed a published post directly (connection + draft + publication). */
-    function seedPublishedPost(title = "Our launch post", content = "We shipped the memory layer.") {
+    async function seedPublishedPost(title = "Our launch post", content = "We shipped the memory layer.") {
       const ts = Date.now();
       const connectionId = randomUUID();
-      db.insert(connections)
+      await db.insert(connections)
         .values({ id: connectionId, workspaceId, providerKey: "reddit", nangoConnectionId: "n-1", createdAt: ts, updatedAt: ts })
         .run();
       const draftId = randomUUID();
-      db.insert(drafts)
+      await db.insert(drafts)
         .values({
           id: draftId,
           workspaceId,
@@ -316,7 +316,7 @@ describe("evidence API", () => {
         })
         .run();
       const pubId = randomUUID();
-      db.insert(publications)
+      await db.insert(publications)
         .values({
           id: pubId,
           workspaceId,
@@ -336,7 +336,7 @@ describe("evidence API", () => {
     }
 
     async function sweep() {
-      return app.inject({
+      return await app.inject({
         method: "POST",
         url: `/workspaces/${workspaceId}/evidence/candidates/sweep`,
       });
@@ -353,7 +353,7 @@ describe("evidence API", () => {
 
     it("proposes every signal and published post once, idempotently", async () => {
       await createSignal();
-      seedPublishedPost();
+      await seedPublishedPost();
 
       expect((await sweep()).json()).toEqual({ signal: { proposed: 1 }, published: { proposed: 1 } });
       // a second sweep proposes nothing new
@@ -366,7 +366,7 @@ describe("evidence API", () => {
 
     it("pulls a signal's source/date and the draft's content into candidates", async () => {
       const signal = await createSignal("Unique churn insight", "reddit");
-      const { content: postContent } = seedPublishedPost("Launch", "Shipped today.");
+      const { content: postContent } = await seedPublishedPost("Launch", "Shipped today.");
       await sweep();
 
       const { candidates } = await listCandidates();
@@ -444,9 +444,9 @@ describe("evidence API", () => {
   });
 
   describe("collection backfill (Sprint 30)", () => {
-    function seedReadyDoc(r2rId: string, title = "Old copy", content = "Legacy website copy.") {
+    async function seedReadyDoc(r2rId: string, title = "Old copy", content = "Legacy website copy.") {
       state.documents.set(r2rId, { title, content, collectionId: "" });
-      db.insert(evidenceDocuments)
+      await db.insert(evidenceDocuments)
         .values({
           id: randomUUID(),
           workspaceId,
@@ -464,7 +464,7 @@ describe("evidence API", () => {
     }
 
     it("attaches pre-existing ready documents to the workspace collection", async () => {
-      seedReadyDoc("r2r-pre");
+      await seedReadyDoc("r2r-pre");
       await backfillCollections(db, store);
 
       const collectionId = state.collections.get(workspaceId);
@@ -473,9 +473,9 @@ describe("evidence API", () => {
     });
 
     it("is graceful when the store is unavailable", async () => {
-      seedReadyDoc("r2r-pre");
+      await seedReadyDoc("r2r-pre");
       state.healthy = false;
-      await expect(backfillCollections(db, store)).resolves.toBeUndefined();
+      await expect(await backfillCollections(db, store)).resolves.toBeUndefined();
     });
   });
 });

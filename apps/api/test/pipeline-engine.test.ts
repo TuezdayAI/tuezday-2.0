@@ -40,12 +40,12 @@ const SIGNAL_ID = "11111111-1111-4111-8111-111111111111";
 const SIGNAL_2_ID = "22222222-2222-4222-8222-222222222222";
 const ACTOR = { userId: null, label: "founder" };
 
-function fixture(script: ScriptedStep[]) {
+async function fixture(script: ScriptedStep[]) {
   const db = createTestDb();
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({ id: WORKSPACE_ID, name: "Engine", createdAt: 1, updatedAt: 1 })
     .run();
-  db.insert(signals)
+  await db.insert(signals)
     .values([
       {
         id: SIGNAL_ID,
@@ -118,8 +118,8 @@ function miniSpec(overrides: Partial<PipelineSpec> = {}): PipelineSpec {
   });
 }
 
-function definitionWith(db: Db, spec: PipelineSpec) {
-  return createPipelineDefinition(
+async function definitionWith(db: Db, spec: PipelineSpec) {
+  return await createPipelineDefinition(
     db,
     WORKSPACE_ID,
     { taskKey: "signal_social_post", name: "Test pipeline", description: "", spec },
@@ -127,8 +127,8 @@ function definitionWith(db: Db, spec: PipelineSpec) {
   );
 }
 
-function startLive(db: Db, definition: ReturnType<typeof definitionWith>, key?: string) {
-  return startPipelineRun(db, {
+async function startLive(db: Db, definition: Awaited<ReturnType<typeof definitionWith>>, key?: string) {
+  return await startPipelineRun(db, {
     workspaceId: WORKSPACE_ID,
     definition,
     signalId: SIGNAL_ID,
@@ -148,7 +148,7 @@ const findingsOut = (score: number, extras: Record<string, unknown> = {}) => ({
 
 describe("pipeline engine", () => {
   it("runs the reference definition end to end and hands the draft to the gate", async () => {
-    const { db, gateway, deps } = fixture([
+    const { db, gateway, deps } = await fixture([
       {
         text: JSON.stringify({
           summary: "Series B in our category.",
@@ -167,8 +167,8 @@ describe("pipeline engine", () => {
       findingsOut(90, { confidence: 88 }),
       // revise is skipped (score 90 ≥ 70); propose is engine-owned — no more calls.
     ]);
-    const definition = definitionWith(db, REFERENCE_SIGNAL_SOCIAL_POST_SPEC);
-    const run = startLive(db, definition);
+    const definition = await definitionWith(db, REFERENCE_SIGNAL_SOCIAL_POST_SPEC);
+    const run = await startLive(db, definition);
     const outcome = await executePipelineRun(db, deps, WORKSPACE_ID, run.id);
 
     expect(outcome.blocked).toBeUndefined();
@@ -193,7 +193,7 @@ describe("pipeline engine", () => {
     ]);
 
     // Gate handoff (D-64.4/5): a pending_review draft + an honest generation trace.
-    const draftRows = db.select().from(drafts).all();
+    const draftRows = await db.select().from(drafts).all();
     expect(draftRows).toHaveLength(1);
     expect(draftRows[0]).toMatchObject({
       state: "pending_review",
@@ -202,7 +202,7 @@ describe("pipeline engine", () => {
       sourceSignalId: SIGNAL_ID,
       content: "Funding follows pain. Here's what buyers actually want.",
     });
-    const generationRows = db.select().from(generations).all();
+    const generationRows = await db.select().from(generations).all();
     expect(generationRows).toHaveLength(1);
     const sections = JSON.parse(generationRows[0]!.sectionsJson) as { key: string }[];
     expect(sections.map((section) => section.key)).toEqual(
@@ -214,7 +214,7 @@ describe("pipeline engine", () => {
     expect(outcome.run.inputTokens).toBeGreaterThan(0);
 
     // Every agent step is an inspectable agent_run labelled pipeline:<step>.
-    const agentTasks = db.select().from(agentRuns).all().map((row) => row.task);
+    const agentTasks = (await db.select().from(agentRuns).all()).map((row) => row.task);
     expect(agentTasks).toEqual([
       "pipeline:research",
       "pipeline:angle",
@@ -224,19 +224,19 @@ describe("pipeline engine", () => {
   });
 
   it("drives the revise loop until the critique score clears the threshold", async () => {
-    const { db, deps } = fixture([
+    const { db, deps } = await fixture([
       draftOut("Post v1"),
       findingsOut(50),
       draftOut("Post v2"),
       findingsOut(85),
     ]);
-    const definition = definitionWith(db, miniSpec());
-    const run = startLive(db, definition);
+    const definition = await definitionWith(db, miniSpec());
+    const run = await startLive(db, definition);
     const outcome = await executePipelineRun(db, deps, WORKSPACE_ID, run.id);
 
     expect(outcome.run.status).toBe("succeeded");
     expect(outcome.run.result).toMatchObject({ content: "Post v2" });
-    const detail = getPipelineRunDetail(db, WORKSPACE_ID, run.id)!;
+    const detail = (await getPipelineRunDetail(db, WORKSPACE_ID, run.id))!;
     const passes = detail.steps.map((step) => `${step.stepKey}#${step.iteration}:${step.status}`);
     expect(passes).toEqual([
       "draft#1:succeeded",
@@ -248,21 +248,21 @@ describe("pipeline engine", () => {
   });
 
   it("escalates on low confidence and resumes from the pause point without re-running steps", async () => {
-    const { db, gateway, deps } = fixture([
+    const { db, gateway, deps } = await fixture([
       draftOut("Tentative post", 40),
       // Resume continues here:
       findingsOut(90),
     ]);
-    const definition = definitionWith(
+    const definition = await definitionWith(
       db,
       miniSpec({ escalation: { minConfidence: 60, onGuardrailUncertain: true } }),
     );
-    const run = startLive(db, definition);
+    const run = await startLive(db, definition);
     const paused = await executePipelineRun(db, deps, WORKSPACE_ID, run.id);
     expect(paused.run.status).toBe("escalated");
     expect(paused.run.pausedAtStepKey).toBe("draft");
     expect(paused.run.escalationReason).toContain("low_confidence:draft");
-    expect(db.select().from(drafts).all()).toHaveLength(0);
+    expect(await db.select().from(drafts).all()).toHaveLength(0);
 
     const resumed = await decidePipelineRun(db, deps, WORKSPACE_ID, run.id, {
       action: "resume",
@@ -272,19 +272,19 @@ describe("pipeline engine", () => {
     expect(resumed.run.escalationReason).toBeNull();
     // The draft step was replayed from cache, not re-executed.
     expect(gateway.calls).toHaveLength(2);
-    expect(db.select().from(drafts).all()).toHaveLength(1);
+    expect(await db.select().from(drafts).all()).toHaveLength(1);
   });
 
   it("escalates on guardrail uncertainty and honours cancel", async () => {
-    const { db, deps } = fixture([
+    const { db, deps } = await fixture([
       draftOut("Post", 90),
       findingsOut(90, { guardrailUncertain: true }),
     ]);
-    const definition = definitionWith(
+    const definition = await definitionWith(
       db,
       miniSpec({ escalation: { onGuardrailUncertain: true } }),
     );
-    const run = startLive(db, definition);
+    const run = await startLive(db, definition);
     const paused = await executePipelineRun(db, deps, WORKSPACE_ID, run.id);
     expect(paused.run.status).toBe("escalated");
     expect(paused.run.escalationReason).toBe("guardrail_uncertain:critique");
@@ -297,42 +297,42 @@ describe("pipeline engine", () => {
     expect(cancelled.run.failureReason).toBe("cancelled: not worth publishing");
 
     await expect(
-      decidePipelineRun(db, deps, WORKSPACE_ID, run.id, { action: "resume" }),
+      await decidePipelineRun(db, deps, WORKSPACE_ID, run.id, { action: "resume" }),
     ).rejects.toBeInstanceOf(InvalidPipelineRunTransitionError);
   });
 
   it("retries an invalid structured output and fails the run at the attempt cap", async () => {
-    const { db, deps } = fixture([
+    const { db, deps } = await fixture([
       { text: JSON.stringify({ wrong: true }) },
       { text: JSON.stringify({ also: "wrong" }) },
     ]);
-    const definition = definitionWith(db, miniSpec());
-    const run = startLive(db, definition);
+    const definition = await definitionWith(db, miniSpec());
+    const run = await startLive(db, definition);
     const outcome = await executePipelineRun(db, deps, WORKSPACE_ID, run.id);
 
     expect(outcome.run.status).toBe("failed");
     expect(outcome.run.failureReason).toBe("step_failed:draft (invalid_output)");
-    const detail = getPipelineRunDetail(db, WORKSPACE_ID, run.id)!;
+    const detail = (await getPipelineRunDetail(db, WORKSPACE_ID, run.id))!;
     expect(detail.steps.map((step) => `${step.attempt}:${step.status}`)).toEqual([
       "1:failed",
       "2:failed",
     ]);
     expect(detail.steps.every((step) => step.failureReason === "invalid_output")).toBe(true);
-    expect(db.select().from(drafts).all()).toHaveLength(0);
+    expect(await db.select().from(drafts).all()).toHaveLength(0);
   });
 
   it("recovers when the retry produces a valid output", async () => {
-    const { db, deps } = fixture([
+    const { db, deps } = await fixture([
       { text: "not even json{" },
       draftOut("Post v1"),
       findingsOut(90),
     ]);
-    const definition = definitionWith(db, miniSpec());
-    const run = startLive(db, definition);
+    const definition = await definitionWith(db, miniSpec());
+    const run = await startLive(db, definition);
     const outcome = await executePipelineRun(db, deps, WORKSPACE_ID, run.id);
 
     expect(outcome.run.status).toBe("succeeded");
-    const detail = getPipelineRunDetail(db, WORKSPACE_ID, run.id)!;
+    const detail = (await getPipelineRunDetail(db, WORKSPACE_ID, run.id))!;
     const draftAttempts = detail.steps.filter((step) => step.stepKey === "draft");
     expect(draftAttempts.map((step) => `${step.attempt}:${step.status}`)).toEqual([
       "1:failed",
@@ -341,42 +341,42 @@ describe("pipeline engine", () => {
   });
 
   it("fails the run when the cumulative token budget is crossed", async () => {
-    const { db, deps } = fixture([
+    const { db, deps } = await fixture([
       { ...draftOut("Expensive post"), usage: { inputTokens: 900, outputTokens: 200 } },
     ]);
-    const definition = definitionWith(db, miniSpec({ budget: { maxTokens: 1_000 } }));
-    const run = startLive(db, definition);
+    const definition = await definitionWith(db, miniSpec({ budget: { maxTokens: 1_000 } }));
+    const run = await startLive(db, definition);
     const outcome = await executePipelineRun(db, deps, WORKSPACE_ID, run.id);
 
     expect(outcome.run.status).toBe("failed");
     expect(outcome.run.failureReason).toBe("budget_exhausted");
-    expect(db.select().from(drafts).all()).toHaveLength(0);
+    expect(await db.select().from(drafts).all()).toHaveLength(0);
   });
 
-  it("dedupes runs by idempotency key", () => {
-    const { db } = fixture([]);
-    const definition = definitionWith(db, miniSpec());
-    startLive(db, definition, "signal:abc");
-    expect(() => startLive(db, definition, "signal:abc")).toThrow(DuplicatePipelineRunError);
+  it("dedupes runs by idempotency key", async () => {
+    const { db } = await fixture([]);
+    const definition = await definitionWith(db, miniSpec());
+    await startLive(db, definition, "signal:abc");
+    expect(async () => await startLive(db, definition, "signal:abc")).toThrow(DuplicatePipelineRunError);
     // No key — repeats are allowed (manual founder re-runs).
-    startLive(db, definition);
-    startLive(db, definition);
+    await startLive(db, definition);
+    await startLive(db, definition);
   });
 
   it("returns unknown-tool data when a step calls outside its allowlist", async () => {
-    const { db, deps } = fixture([
+    const { db, deps } = await fixture([
       { toolCalls: [{ name: "search_evidence", arguments: { query: "anything" } }] },
       draftOut("Post v1"),
       findingsOut(90),
     ]);
     const spec = miniSpec();
     spec.steps[0]!.tools = ["get_campaign_plan"];
-    const definition = definitionWith(db, spec);
-    const run = startLive(db, definition);
+    const definition = await definitionWith(db, spec);
+    const run = await startLive(db, definition);
     const outcome = await executePipelineRun(db, deps, WORKSPACE_ID, run.id);
 
     expect(outcome.run.status).toBe("succeeded");
-    const toolRows = db
+    const toolRows = await db
       .select()
       .from(agentRunSteps)
       .where(eq(agentRunSteps.kind, "tool_call"))
@@ -386,13 +386,13 @@ describe("pipeline engine", () => {
   });
 
   it("dry-runs a definition over historical signals without writing drafts", async () => {
-    const { db, deps } = fixture([
+    const { db, deps } = await fixture([
       draftOut("Dry post for signal 1"),
       findingsOut(90),
       draftOut("Dry post for signal 2"),
       findingsOut(80),
     ]);
-    const definition = definitionWith(db, miniSpec());
+    const definition = await definitionWith(db, miniSpec());
     const result = await runPipelineDryRun(db, deps, {
       workspaceId: WORKSPACE_ID,
       definition,
@@ -407,16 +407,16 @@ describe("pipeline engine", () => {
       expect(entry.status).toBe("succeeded");
       expect(entry.proposal).toMatchObject({ simulated: true, draftId: null });
     }
-    expect(db.select().from(drafts).all()).toHaveLength(0);
-    expect(db.select().from(generations).all()).toHaveLength(0);
+    expect(await db.select().from(drafts).all()).toHaveLength(0);
+    expect(await db.select().from(generations).all()).toHaveLength(0);
 
-    const stored = listPipelineRuns(db, WORKSPACE_ID, { mode: "dry_run" });
+    const stored = await listPipelineRuns(db, WORKSPACE_ID, { mode: "dry_run" });
     expect(stored.total).toBe(2);
     expect(stored.runs.every((run) => run.dryRunBatchId === result.batchId)).toBe(true);
   });
 
   it("acceptance: editing the definition changes behaviour with no code deploy", async () => {
-    const { db, gateway, deps } = fixture([
+    const { db, gateway, deps } = await fixture([
       // Run 1 (version 1, draft tier cheap):
       draftOut("Post v1"),
       findingsOut(90),
@@ -426,8 +426,8 @@ describe("pipeline engine", () => {
       draftOut("Post v2"),
       findingsOut(96),
     ]);
-    const definition = definitionWith(db, miniSpec());
-    const first = startLive(db, definition);
+    const definition = await definitionWith(db, miniSpec());
+    const first = await startLive(db, definition);
     const firstOutcome = await executePipelineRun(db, deps, WORKSPACE_ID, first.id);
     expect(firstOutcome.run.status).toBe("succeeded");
     expect(firstOutcome.run.definitionVersion).toBe(1);
@@ -438,9 +438,9 @@ describe("pipeline engine", () => {
     const edited = miniSpec();
     edited.steps[0]!.tier = "frontier";
     edited.steps[2]!.loop = { scoreFrom: "critique", threshold: 95, maxIterations: 2 };
-    const updated = updatePipelineSpec(db, WORKSPACE_ID, definition.id, { spec: edited }, ACTOR);
+    const updated = await updatePipelineSpec(db, WORKSPACE_ID, definition.id, { spec: edited }, ACTOR);
 
-    const second = startLive(db, updated);
+    const second = await startLive(db, updated);
     const secondOutcome = await executePipelineRun(db, deps, WORKSPACE_ID, second.id);
     expect(secondOutcome.run.status).toBe("succeeded");
     expect(secondOutcome.run.definitionVersion).toBe(2);
@@ -449,7 +449,7 @@ describe("pipeline engine", () => {
     expect(secondOutcome.run.result).toMatchObject({ content: "Post v2" });
 
     // The first run stays pinned to the version it executed.
-    const rows = db.select().from(pipelineRuns).all();
+    const rows = await db.select().from(pipelineRuns).all();
     expect(rows.map((row) => row.definitionVersion).sort()).toEqual([1, 2]);
   });
 });

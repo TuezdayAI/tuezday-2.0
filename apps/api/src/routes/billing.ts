@@ -18,14 +18,14 @@ function ownerOr403(request: FastifyRequest, reply: FastifyReply): boolean {
 
 export function registerBillingRoutes(app: FastifyInstance, db: Db): void {
   app.get<{ Params: { id: string } }>("/workspaces/:id/billing", async (request, reply) => {
-    const workspace = getWorkspace(db, request.params.id);
+    const workspace = await getWorkspace(db, request.params.id);
     if (!workspace) return reply.status(404).send({ error: "workspace_not_found" });
 
     // Spend block (Sprint 59): rolling-window LLM spend by pipeline plus the
     // cache hit rate, all summed from the usage ledger.
     const periodStart = Date.now() - USAGE_WINDOW_MS;
-    const rollup = spendRollup(db, request.params.id, periodStart);
-    const budgetCents = getEntitlements(db, request.params.id).monthlyLlmCents;
+    const rollup = await spendRollup(db, request.params.id, periodStart);
+    const budgetCents = (await getEntitlements(db, request.params.id)).monthlyLlmCents;
     const spend: WorkspaceSpend = {
       periodStart: new Date(periodStart).toISOString(),
       budgetCents,
@@ -36,9 +36,9 @@ export function registerBillingRoutes(app: FastifyInstance, db: Db): void {
     };
 
     return {
-      plan: getPlan(db, request.params.id),
-      entitlements: getEntitlements(db, request.params.id),
-      usage: getUsage(db, request.params.id),
+      plan: await getPlan(db, request.params.id),
+      entitlements: await getEntitlements(db, request.params.id),
+      usage: await getUsage(db, request.params.id),
       spend,
     };
   });
@@ -46,7 +46,7 @@ export function registerBillingRoutes(app: FastifyInstance, db: Db): void {
   app.post<{ Params: { id: string } }>("/workspaces/:id/billing/checkout", async (request, reply) => {
     if (!ownerOr403(request, reply)) return reply;
 
-    const workspace = getWorkspace(db, request.params.id);
+    const workspace = await getWorkspace(db, request.params.id);
     if (!workspace) return reply.status(404).send({ error: "workspace_not_found" });
 
     const parsed = checkoutInputSchema.safeParse(request.body);
@@ -58,7 +58,7 @@ export function registerBillingRoutes(app: FastifyInstance, db: Db): void {
     }
 
     if (!request.actor.userId) return reply.status(401).send({ error: "unauthenticated" });
-    const user = getUser(db, request.actor.userId);
+    const user = await getUser(db, request.actor.userId);
     if (!user) return reply.status(401).send({ error: "unauthenticated" });
 
     // Use current request URL origin to construct success/cancel
@@ -114,7 +114,7 @@ export function registerStripeWebhookRoute(app: FastifyInstance, db: Db): void {
           const plan = session.metadata?.plan;
           
           if (workspaceId && plan) {
-            upsertFromStripe(db, workspaceId, {
+            await upsertFromStripe(db, workspaceId, {
               plan,
               status: "active",
               stripeCustomerId: session.customer,
@@ -129,14 +129,14 @@ export function registerStripeWebhookRoute(app: FastifyInstance, db: Db): void {
           // In real implementation we should lookup the workspaceId by stripeSubscriptionId.
           // For simplicity we will assume it's stored in metadata of the subscription if possible, 
           // but we can query by stripeSubscriptionId using db.
-          const sub = db
+          const sub = await db
             .select()
             .from(subscriptions)
             .where(eq(subscriptions.stripeSubscriptionId, subscription.id))
             .get();
 
           if (sub) {
-            upsertFromStripe(db, sub.workspaceId, {
+            await upsertFromStripe(db, sub.workspaceId, {
               plan: sub.plan,
               status: subscription.status,
               currentPeriodEnd: subscription.current_period_end,

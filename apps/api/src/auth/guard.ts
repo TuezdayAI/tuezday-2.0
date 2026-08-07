@@ -119,7 +119,7 @@ export function registerAuthGuard(app: FastifyInstance, db: Db, workerToken?: st
     if (workerAuthenticated) {
       return reply.status(403).send({ error: "forbidden" });
     }
-    const user = sessionUser(db, token);
+    const user = await sessionUser(db, token);
     if (!user) return reply.status(401).send({ error: "unauthenticated" });
     request.actor = {
       userId: user.id,
@@ -130,12 +130,12 @@ export function registerAuthGuard(app: FastifyInstance, db: Db, workerToken?: st
 
     const params = request.params as { id?: string };
     if (route.startsWith("/workspaces/:id") && params.id) {
-      if (!getWorkspace(db, params.id)) {
+      if (!await getWorkspace(db, params.id)) {
         return reply.status(404).send({ error: "workspace_not_found" });
       }
       const userId = request.actor.userId!;
-      let role = membershipRole(db, params.id, userId);
-      if (!role && claimIfMemberless(db, params.id, userId)) role = "owner";
+      let role = await membershipRole(db, params.id, userId);
+      if (!role && await claimIfMemberless(db, params.id, userId)) role = "owner";
       if (!role) return reply.status(403).send({ error: "not_a_member" });
       request.actor.role = role;
     }

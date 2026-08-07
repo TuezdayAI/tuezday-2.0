@@ -328,9 +328,9 @@ describe("MetaAdsAdapter", () => {
   it("raises ConnectorFabricError on non-2xx responses", async () => {
     const state = graphState();
     state.failStatus = 401;
-    await expect(adapterFor(state).listAdAccounts()).rejects.toThrow(ConnectorFabricError);
+    await expect(await adapterFor(state).listAdAccounts()).rejects.toThrow(ConnectorFabricError);
     await expect(
-      adapterFor(state).listDailyMetrics("act_111", "2026-06-01", "2026-06-02"),
+      await adapterFor(state).listDailyMetrics("act_111", "2026-06-01", "2026-06-02"),
     ).rejects.toThrow(ConnectorFabricError);
   });
 });
@@ -417,7 +417,7 @@ describe("Ads reporting API", () => {
   }
 
   async function importAccounts(connectionId: string) {
-    return app.inject({
+    return await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/ads/accounts/import`,
       payload: { connectionId },
@@ -532,7 +532,7 @@ describe("Ads reporting API", () => {
 
       // Sprint 55 dual-write: the connected sync also lands 1d facts in the
       // unified metrics table, with source "synced".
-      const facts = db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId)).all();
+      const facts = await db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId)).all();
       expect(facts.length).toBeGreaterThan(0);
       for (const f of facts) {
         expect(f.subjectType).toBe("ad_campaign");

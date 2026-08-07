@@ -56,22 +56,22 @@ function rate(n: number, d: number): number {
  * on email_deliveries; replied/positive from the linked inbox items. Meetings/
  * won/lost are the manual per-enrollment outcomes (a separate terminal layer).
  */
-export function getSequenceFunnel(
+export async function getSequenceFunnel(
   db: Db,
   workspaceId: string,
   sequenceId: string,
-): OutreachFunnel | undefined {
-  const sequence = db
+): Promise<OutreachFunnel | undefined> {
+  const sequence = await db
     .select()
     .from(outreachSequences)
     .where(and(eq(outreachSequences.workspaceId, workspaceId), eq(outreachSequences.id, sequenceId)))
     .get();
   if (!sequence) return undefined;
 
-  const persona = db.select({ name: personas.name }).from(personas).where(eq(personas.id, sequence.personaId)).get();
+  const persona = await db.select({ name: personas.name }).from(personas).where(eq(personas.id, sequence.personaId)).get();
 
   // Enrollments of this sequence → their manual outcomes + recipient type.
-  const enrollments = db
+  const enrollments = await db
     .select({
       id: outreachEnrollments.id,
       recipientType: outreachEnrollments.recipientType,
@@ -84,7 +84,7 @@ export function getSequenceFunnel(
 
   // Sent step-messages of those enrollments = the funnel's "sent" denominator.
   const sentMessages = enrollments.length
-    ? db
+    ? await db
         .select({ id: outreachMessages.id, enrollmentId: outreachMessages.enrollmentId, stepNumber: outreachMessages.stepNumber })
         .from(outreachMessages)
         .where(
@@ -98,7 +98,7 @@ export function getSequenceFunnel(
 
   // Deliveries for those messages (origin=outreach_step, originId=message.id).
   const deliveries = sentMessages.length
-    ? db
+    ? await db
         .select({
           id: emailDeliveries.id,
           originId: emailDeliveries.originId,
@@ -119,7 +119,7 @@ export function getSequenceFunnel(
 
   // Email replies on those deliveries.
   const replies = deliveries.length
-    ? db
+    ? await db
         .select({ deliveryId: inboxItems.emailDeliveryId, label: inboxItems.replyLabel })
         .from(inboxItems)
         .where(
@@ -191,12 +191,12 @@ export function getSequenceFunnel(
 }
 
 /** Aggregate outreach funnel across a campaign's sequences, for insights (S34). */
-export function getCampaignOutreachFunnel(
+export async function getCampaignOutreachFunnel(
   db: Db,
   workspaceId: string,
   campaignId: string,
-): CampaignOutreachInsights {
-  const sequences = db
+): Promise<CampaignOutreachInsights> {
+  const sequences = await db
     .select({ id: outreachSequences.id })
     .from(outreachSequences)
     .where(and(eq(outreachSequences.workspaceId, workspaceId), eq(outreachSequences.campaignId, campaignId)))
@@ -204,7 +204,7 @@ export function getCampaignOutreachFunnel(
 
   const agg: FunnelCounts = { ...EMPTY };
   for (const s of sequences) {
-    const f = getSequenceFunnel(db, workspaceId, s.id);
+    const f = await getSequenceFunnel(db, workspaceId, s.id);
     if (!f) continue;
     agg.sent += f.sent;
     agg.opened += f.opened;

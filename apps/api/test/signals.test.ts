@@ -45,7 +45,7 @@ describe("signals API", () => {
   });
 
   async function createSignal(payload: Record<string, unknown> = {}) {
-    return app.inject({
+    return await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/signals`,
       payload: {
@@ -137,10 +137,10 @@ describe("signals API", () => {
         expect(foreign.json()).toEqual({ error: "related_object_not_found" });
         expect(foreign.json()).toEqual(unknown.json());
         expect(
-          db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
+          await db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all(),
         ).toHaveLength(0);
         expect(
-          db
+          await db
             .select()
             .from(signalMatches)
             .where(eq(signalMatches.workspaceId, workspaceId))
@@ -359,7 +359,7 @@ describe("signals API", () => {
         };
 
         await expect(
-          createSignalWithMatching(
+          await createSignalWithMatching(
             db,
             matchingGateway(refs, calls),
             wsId,
@@ -368,10 +368,10 @@ describe("signals API", () => {
           ),
         ).rejects.toThrow(fault);
         expect(
-          db.select().from(signals).where(eq(signals.workspaceId, wsId)).all(),
+          await db.select().from(signals).where(eq(signals.workspaceId, wsId)).all(),
         ).toHaveLength(0);
         expect(
-          db
+          await db
             .select()
             .from(signalMatches)
             .where(eq(signalMatches.workspaceId, wsId))
@@ -401,10 +401,10 @@ describe("signals API", () => {
       );
 
       expect(
-        db.select().from(signals).where(eq(signals.workspaceId, wsId)).all(),
+        await db.select().from(signals).where(eq(signals.workspaceId, wsId)).all(),
       ).toHaveLength(1);
       expect(
-        db
+        await db
           .select()
           .from(signalMatches)
           .where(eq(signalMatches.workspaceId, wsId))
@@ -464,7 +464,7 @@ describe("signals API", () => {
         refs.personaId = personaId;
         refs.campaignId = campaignId;
 
-        const creating = createSignalWithMatching(
+        const creating = await createSignalWithMatching(
           db,
           deferredGateway,
           wsId,
@@ -507,10 +507,10 @@ describe("signals API", () => {
           },
         ]);
         expect(
-          db.select().from(signals).where(eq(signals.workspaceId, wsId)).all(),
+          await db.select().from(signals).where(eq(signals.workspaceId, wsId)).all(),
         ).toHaveLength(1);
         expect(
-          db
+          await db
             .select()
             .from(signalMatches)
             .where(eq(signalMatches.workspaceId, wsId))
@@ -556,15 +556,15 @@ describe("signals API", () => {
       // top-scoring match — nothing is stored on the signal row itself.
       expect(signal.suggestedPersonaId).toBe(personaId);
       expect(signal.suggestedCampaignId).toBe(campaignId);
-      const storedRow = db
+      const storedRow = (await db
         .select()
         .from(signals)
         .where(eq(signals.id, signal.id))
-        .get()!;
+        .get())!;
       expect(storedRow.suggestedPersonaId).toBeNull();
       expect(storedRow.suggestedCampaignId).toBeNull();
       // and it is backed by a real signal_matches row
-      const rows = db
+      const rows = await db
         .select()
         .from(signalMatches)
         .where(eq(signalMatches.signalId, signal.id))
@@ -652,7 +652,7 @@ describe("signals API", () => {
       expect(signalSchema.safeParse(signal).success).toBe(true);
 
       // backed by one real score-100 match row...
-      const rows = db
+      const rows = await db
         .select()
         .from(signalMatches)
         .where(eq(signalMatches.signalId, signal.id))
@@ -661,7 +661,7 @@ describe("signals API", () => {
       expect(rows[0]).toMatchObject({ personaId, campaignId, score: 100 });
 
       // ...with nothing written to the legacy columns...
-      const stored = db.select().from(signals).where(eq(signals.id, signal.id)).get()!;
+      const stored = (await db.select().from(signals).where(eq(signals.id, signal.id)).get())!;
       expect(stored.suggestedPersonaId).toBeNull();
       expect(stored.suggestedCampaignId).toBeNull();
 
@@ -700,7 +700,7 @@ describe("signals API", () => {
       ).json();
       expect(signal.suggestedPersonaId).toBe(personaId);
 
-      db.delete(signalMatches).where(eq(signalMatches.signalId, signal.id)).run();
+      await db.delete(signalMatches).where(eq(signalMatches.signalId, signal.id)).run();
 
       const listed = (
         await matchApp.inject({ method: "GET", url: `/workspaces/${wsId}/signals` })
@@ -761,7 +761,7 @@ describe("signals API", () => {
           payload: { name: "Foreign Signal Match Workspace" },
         })
       ).json().id as string;
-      db.update(signalMatches)
+      await db.update(signalMatches)
         .set({ workspaceId: otherWorkspaceId })
         .where(eq(signalMatches.signalId, signal.id))
         .run();
@@ -802,7 +802,7 @@ describe("signals API", () => {
           payload: { name: "Foreign Parent Persona" },
         })
       ).json();
-      db.update(signalMatches)
+      await db.update(signalMatches)
         .set({ personaId: foreignPersona.id })
         .where(eq(signalMatches.signalId, signal.id))
         .run();

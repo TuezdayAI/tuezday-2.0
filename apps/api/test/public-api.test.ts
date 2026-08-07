@@ -17,15 +17,15 @@ let draftsKey: string;
 beforeAll(async () => {
   db = createTestDb();
   app = await buildAuthedApp({ db });
-  db.insert(workspaces).values({
+  await db.insert(workspaces).values({
     id: WS,
     name: "Public API WS",
     createdAt: Date.now(),
     updatedAt: Date.now(),
   }).run();
 
-  ideasKey = createApiKey(db, WS, { name: "ideas", scopes: ["ideas:write"] }).rawKey;
-  draftsKey = createApiKey(db, WS, { name: "drafts", scopes: ["drafts:read", "drafts:write"] }).rawKey;
+  ideasKey = (await createApiKey(db, WS, { name: "ideas", scopes: ["ideas:write"] })).rawKey;
+  draftsKey = (await createApiKey(db, WS, { name: "drafts", scopes: ["drafts:read", "drafts:write"] })).rawKey;
 });
 
 afterAll(async () => {
@@ -86,10 +86,10 @@ test.each(["persona", "campaign", "both"] as const)(
           payload: { name: "Foreign Campaign", objective: "Stay isolated" },
         })
       ).json().id as string;
-      const key = createApiKey(isolatedDb, targetWorkspaceId, {
+      const key = (await createApiKey(isolatedDb, targetWorkspaceId, {
         name: "isolated-ideas",
         scopes: ["ideas:write"],
-      }).rawKey;
+      })).rawKey;
       const referenceInput = (personaId: string, campaignId: string) => ({
         ...(referenceKind === "persona" || referenceKind === "both"
           ? { suggestedPersonaId: personaId }
@@ -116,14 +116,14 @@ test.each(["persona", "campaign", "both"] as const)(
       expect(foreign.json()).toEqual({ error: "related_object_not_found" });
       expect(foreign.json()).toEqual(unknown.json());
       expect(
-        isolatedDb
+        await isolatedDb
           .select()
           .from(signals)
           .where(eq(signals.workspaceId, targetWorkspaceId))
           .all(),
       ).toHaveLength(0);
       expect(
-        isolatedDb
+        await isolatedDb
           .select()
           .from(signalMatches)
           .where(eq(signalMatches.workspaceId, targetWorkspaceId))
@@ -164,10 +164,10 @@ test("ideas endpoint turns explicit routing into a real score-100 match", async 
         payload: { name: "Launch", objective: "Win fintech VPs", personaIds: [persona.id] },
       })
     ).json();
-    const key = createApiKey(isolatedDb, workspaceId, {
+    const key = (await createApiKey(isolatedDb, workspaceId, {
       name: "routing-ideas",
       scopes: ["ideas:write"],
-    }).rawKey;
+    })).rawKey;
 
     const res = await isolatedApp.inject({
       method: "POST",
@@ -193,7 +193,7 @@ test("ideas endpoint turns explicit routing into a real score-100 match", async 
       score: 100,
     });
 
-    const rows = isolatedDb
+    const rows = await isolatedDb
       .select()
       .from(signalMatches)
       .where(eq(signalMatches.signalId, signal.id))
@@ -205,7 +205,7 @@ test("ideas endpoint turns explicit routing into a real score-100 match", async 
       score: 100,
     });
 
-    const stored = isolatedDb.select().from(signals).where(eq(signals.id, signal.id)).get()!;
+    const stored = (await isolatedDb.select().from(signals).where(eq(signals.id, signal.id)).get())!;
     expect(stored.suggestedPersonaId).toBeNull();
     expect(stored.suggestedCampaignId).toBeNull();
   } finally {
@@ -223,7 +223,7 @@ test("drafts endpoint requires drafts:read", async () => {
 });
 
 test("insights endpoint returns 200", async () => {
-  const insightsKey = createApiKey(db, WS, { name: "insights", scopes: ["analytics:read"] }).rawKey;
+  const insightsKey = (await createApiKey(db, WS, { name: "insights", scopes: ["analytics:read"] })).rawKey;
   const res = await app.inject({
     method: "GET",
     url: "/api/v1/insights",

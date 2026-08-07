@@ -281,7 +281,7 @@ describe("social adapters", () => {
   it("Instagram refuses to publish with no media", async () => {
     const state = platformState();
     await expect(
-      new InstagramAdapter(fakeFabric(state), {
+      await new InstagramAdapter(fakeFabric(state), {
         ...config,
         integrationKey: "tuezday-instagram",
         ...instagramIdentity,
@@ -306,7 +306,7 @@ describe("social adapters", () => {
     const state = platformState();
     state.xFailHandles.add("blocked");
     await expect(
-      new XAdapter(fakeFabric(state), { ...config, integrationKey: "tuezday-twitter" }).sendDm({
+      await new XAdapter(fakeFabric(state), { ...config, integrationKey: "tuezday-twitter" }).sendDm({
         recipientHandle: "blocked",
         body: "hey",
       }),
@@ -406,7 +406,7 @@ describe("targeted launch API", () => {
   }
 
   async function connectSocial(providerKey: string, nangoConnectionId: string): Promise<{ id: string }> {
-    return connect(providerKey, nangoConnectionId);
+    return await connect(providerKey, nangoConnectionId);
   }
 
   async function createPersona(name = "CEO") {
@@ -442,9 +442,9 @@ describe("targeted launch API", () => {
     expect(res.statusCode).toBe(200);
   }
 
-  function configureNativeEmailSender(): void {
+  async function configureNativeEmailSender(): Promise<void> {
     const now = Date.now();
-    db.insert(workspaceEmailSenders).values({
+    await db.insert(workspaceEmailSenders).values({
       workspaceId,
       domain: "example.com",
       fromLocalPart: "hello",
@@ -464,10 +464,10 @@ describe("targeted launch API", () => {
     }).onConflictDoNothing().run();
   }
 
-  function allowNativeEmail(email: string): void {
-    configureNativeEmailSender();
+  async function allowNativeEmail(email: string): Promise<void> {
+    await configureNativeEmailSender();
     const now = Date.now();
-    db.insert(emailRecipientPermissions).values({
+    await db.insert(emailRecipientPermissions).values({
       id: randomUUID(),
       workspaceId,
       normalizedEmail: email,
@@ -487,7 +487,7 @@ describe("targeted launch API", () => {
   }
 
   async function runBackgroundJobs() {
-    return app.inject({
+    return await app.inject({
       method: "POST",
       url: "/internal/background-jobs/tick",
       headers: { authorization: `Bearer ${WORKER_TOKEN}` },
@@ -579,11 +579,11 @@ describe("targeted launch API", () => {
       jobId: expect.any(String),
     });
     expect(generateMock).not.toHaveBeenCalled();
-    const job = db
+    const job = (await db
       .select()
       .from(backgroundJobs)
       .where(eq(backgroundJobs.id, queued.json().jobId))
-      .get()!;
+      .get())!;
     expect(JSON.parse(job.payloadJson)).toMatchObject({
       kind: "launch_generate",
       workspaceId,
@@ -635,18 +635,18 @@ describe("targeted launch API", () => {
     const interrupted = await runBackgroundJobs();
     expect(interrupted.json()).toMatchObject({ claimed: 1, retried: 1 });
     expect((await detail(launch.id)).launch.status).toBe("generating");
-    expect(db.select().from(launchMessages).all()).toHaveLength(1);
-    expect(db.select().from(drafts).all()).toHaveLength(1);
+    expect(await db.select().from(launchMessages).all()).toHaveLength(1);
+    expect(await db.select().from(drafts).all()).toHaveLength(1);
 
-    db.update(backgroundJobs)
+    await db.update(backgroundJobs)
       .set({ availableAt: 0 })
       .where(eq(backgroundJobs.id, queued.json().jobId))
       .run();
     const resumed = await runBackgroundJobs();
     expect(resumed.json()).toMatchObject({ claimed: 1, succeeded: 1 });
     expect((await detail(launch.id)).launch.status).toBe("ready");
-    expect(db.select().from(launchMessages).all()).toHaveLength(2);
-    expect(db.select().from(drafts).all()).toHaveLength(2);
+    expect(await db.select().from(launchMessages).all()).toHaveLength(2);
+    expect(await db.select().from(drafts).all()).toHaveLength(2);
     expect(generateMock).toHaveBeenCalledTimes(3);
   });
 
@@ -684,7 +684,7 @@ describe("targeted launch API", () => {
     // A payload whose tenant is this workspace but whose target belongs to
     // another one must not resolve, even though both ids are real.
     await expect(
-      resumeLaunchGeneration(
+      await resumeLaunchGeneration(
         db,
         fakeLlm,
         {} as never,
@@ -704,7 +704,7 @@ describe("targeted launch API", () => {
     ).json();
     expect(neighbourDetail.launch.status).toBe("draft");
     expect(neighbourDetail.launch.messageCount).toBe(0);
-    expect(db.select().from(launchMessages).all()).toHaveLength(0);
+    expect(await db.select().from(launchMessages).all()).toHaveLength(0);
   });
 
   it("creates, generates, and shapes messages per channel", async () => {
@@ -767,7 +767,7 @@ describe("targeted launch API", () => {
         message.channel === "email" && message.recipientEmail === "alice@acme.com",
     );
     await approveDraft(emailMessage.draftId);
-    allowNativeEmail(emailMessage.recipientEmail);
+    await allowNativeEmail(emailMessage.recipientEmail);
 
     const manual = await app.inject({
       method: "POST",
@@ -784,7 +784,7 @@ describe("targeted launch API", () => {
     const sent = after.messages.find((message: { id: string }) => message.id === emailMessage.id);
     expect(sent.status).toBe("sent");
     expect(sent.externalActionId).toBe(submission.action.id);
-    expect(db.select().from(emailDeliveries).get()).toMatchObject({
+    expect(await db.select().from(emailDeliveries).get()).toMatchObject({
       externalActionId: submission.action.id,
       status: "accepted",
     });
@@ -814,7 +814,7 @@ describe("targeted launch API", () => {
         message.channel === "email" && message.recipientEmail === "alice@acme.com",
     );
     await approveDraft(emailMessage.draftId);
-    configureNativeEmailSender();
+    await configureNativeEmailSender();
 
     const blocked = await app.inject({
       method: "POST",
@@ -827,7 +827,7 @@ describe("targeted launch API", () => {
     });
     expect(emailProvider.send).not.toHaveBeenCalled();
 
-    allowNativeEmail(emailMessage.recipientEmail);
+    await allowNativeEmail(emailMessage.recipientEmail);
     const retried = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/launches/${launchId}/channels/email/dispatch`,
@@ -845,7 +845,7 @@ describe("targeted launch API", () => {
     const before = await detail(launch.id);
     const message = before.messages[0];
     await approveDraft(message.draftId);
-    allowNativeEmail(message.recipientEmail);
+    await allowNativeEmail(message.recipientEmail);
 
     await app.inject({
       method: "POST",
@@ -907,8 +907,8 @@ describe("targeted launch API", () => {
     });
 
     expect(res.statusCode).toBe(200);
-    await expect(publishedConnectionIds()).resolves.toEqual([ceoLinkedIn.id]);
-    await expect(publishedConnectionIds()).resolves.not.toContain(otherLinkedIn.id);
+    await expect(await publishedConnectionIds()).resolves.toEqual([ceoLinkedIn.id]);
+    await expect(await publishedConnectionIds()).resolves.not.toContain(otherLinkedIn.id);
   });
 
   it("requires media for an Instagram dispatch", async () => {
@@ -959,11 +959,11 @@ describe("targeted launch API", () => {
     expect(x.find((m: { recipientName: string }) => m.recipientName === "Alice").status).toBe("sent");
     expect(x.find((m: { recipientName: string }) => m.recipientName === "Bob").status).toBe("failed");
     expect(x.find((m: { recipientName: string }) => m.recipientName === "Carol").status).toBe("skipped");
-    const sentRows = db
+    const sentRows = (await db
       .select()
       .from(launchMessages)
       .where(eq(launchMessages.channel, "x"))
-      .all()
+      .all())
       .filter((row) => row.status === "sent");
     expect(sentRows.map((row) => row.connectionId)).toEqual([connection.id]);
   });

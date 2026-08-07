@@ -77,14 +77,14 @@ function titleStep(): ScriptedStep {
 }
 
 async function newThread(): Promise<string> {
-  return createSession(db, workspaceId, null, {}).id;
+  return (await createSession(db, workspaceId, null, {})).id;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   db = createTestDb();
   workspaceId = randomUUID();
-  db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 }).run();
-  updateBrainDoc(db, workspaceId, "soul", "## Why\n\nWe make GTM legible.\n");
+  await db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 }).run();
+  await updateBrainDoc(db, workspaceId, "soul", "## Why\n\nWe make GTM legible.\n");
 });
 
 describe("who may propose (D-78.3)", () => {
@@ -169,10 +169,10 @@ describe("a propose call records and does not execute", () => {
       (event) => events.push(event),
     );
 
-    expect(db.select().from(drafts).all()).toHaveLength(0);
-    expect(db.select().from(externalActions).all()).toHaveLength(0);
+    expect(await db.select().from(drafts).all()).toHaveLength(0);
+    expect(await db.select().from(externalActions).all()).toHaveLength(0);
 
-    const stored = listChatProposals(db, sessionId);
+    const stored = await listChatProposals(db, sessionId);
     expect(stored).toHaveLength(1);
     expect(stored[0]!.status).toBe("pending");
     // Hung under the answer, so the card renders in the right place.
@@ -198,10 +198,10 @@ describe("a propose call records and does not execute", () => {
       sessionId,
       "Draft a post",
     );
-    const step = db
+    const step = (await db
       .select()
       .from(agentRunSteps)
-      .all()
+      .all())
       .find((s) => s.toolName === "propose_draft")!;
     const result = JSON.parse(step.toolResultJson!) as { note: string; awaitingConfirmation: boolean };
     expect(result.awaitingConfirmation).toBe(true);
@@ -221,7 +221,7 @@ describe("a propose call records and does not execute", () => {
     );
     // The tool was never offered, so the runner rejects the call — and even if
     // it had been, the ToolContext carries no `proposals` service to call.
-    expect(listChatProposals(db, sessionId)).toHaveLength(0);
+    expect(await listChatProposals(db, sessionId)).toHaveLength(0);
   });
 });
 
@@ -255,10 +255,10 @@ describe("untrusted content in a turn that holds write tools", () => {
       "What did the competitor say?",
     );
 
-    const step = db
+    const step = (await db
       .select()
       .from(agentRunSteps)
-      .all()
+      .all())
       .find((s) => s.toolName === "safe_fetch_url")!;
     const stored = JSON.parse(step.toolResultJson!) as {
       untrustedContent: boolean;
@@ -284,12 +284,12 @@ describe("untrusted content in a turn that holds write tools", () => {
       "What did the competitor say?",
     );
 
-    const proposal = listChatProposals(db, sessionId)[0]!;
+    const proposal = (await listChatProposals(db, sessionId))[0]!;
     expect(proposal.quarantined).toBe(true);
     expect(proposal.quarantineReason).toBeTruthy();
     expect(proposal.status).toBe("pending");
     // The acceptance case: "publish immediately" produced no publication.
-    expect(db.select().from(externalActions).all()).toHaveLength(0);
+    expect(await db.select().from(externalActions).all()).toHaveLength(0);
   });
 
   it("leaves a proposal grounded in the workspace's own records unflagged", async () => {
@@ -321,6 +321,6 @@ describe("untrusted content in a turn that holds write tools", () => {
       "Draft the funding post",
     );
 
-    expect(listChatProposals(db, sessionId)[0]!.quarantined).toBe(false);
+    expect((await listChatProposals(db, sessionId))[0]!.quarantined).toBe(false);
   });
 });

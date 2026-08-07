@@ -36,14 +36,14 @@ function normalizeEmail(email: string): string | null {
   return parsed.success ? parsed.data : null;
 }
 
-export function getEmailPermission(
+export async function getEmailPermission(
   db: Db,
   workspaceId: string,
   email: string,
-): EmailRecipientPermission | null {
+): Promise<EmailRecipientPermission | null> {
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail) return null;
-  const row = db
+  const row = await db
     .select()
     .from(emailRecipientPermissions)
     .where(
@@ -64,17 +64,17 @@ export function getEmailPermission(
     : null;
 }
 
-export function updateEmailPermission(
+export async function updateEmailPermission(
   db: Db,
   workspaceId: string,
   email: string,
   input: UpdateEmailPermissionInput,
-): EmailRecipientPermission {
+): Promise<EmailRecipientPermission> {
   const normalizedEmail = normalizedEmailAddressSchema.parse(email);
-  const existing = getEmailPermission(db, workspaceId, normalizedEmail);
+  const existing = await getEmailPermission(db, workspaceId, normalizedEmail);
   const now = Date.now();
-  db.transaction((tx) => {
-    tx.insert(emailRecipientPermissions)
+  await db.transaction(async (tx) => {
+    await tx.insert(emailRecipientPermissions)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -90,7 +90,7 @@ export function updateEmailPermission(
       .run();
 
     if (input.status === "suppressed") {
-      tx.insert(emailSuppressions)
+      await tx.insert(emailSuppressions)
         .values({
           id: randomUUID(),
           workspaceId,
@@ -103,7 +103,7 @@ export function updateEmailPermission(
         })
         .run();
     } else {
-      tx.delete(emailSuppressions)
+      await tx.delete(emailSuppressions)
         .where(
           and(
             eq(emailSuppressions.workspaceId, workspaceId),
@@ -114,15 +114,15 @@ export function updateEmailPermission(
         .run();
     }
   });
-  return getEmailPermission(db, workspaceId, normalizedEmail)!;
+  return (await getEmailPermission(db, workspaceId, normalizedEmail))!;
 }
 
-export function unsubscribeEmailRecipient(db: Db, workspaceId: string, email: string): void {
+export async function unsubscribeEmailRecipient(db: Db, workspaceId: string, email: string): Promise<void> {
   const normalizedEmail = normalizedEmailAddressSchema.parse(email);
   const now = Date.now();
-  const existing = getEmailPermission(db, workspaceId, normalizedEmail);
-  db.transaction((tx) => {
-    tx.insert(emailRecipientPermissions)
+  const existing = await getEmailPermission(db, workspaceId, normalizedEmail);
+  await db.transaction(async (tx) => {
+    await tx.insert(emailRecipientPermissions)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -136,7 +136,7 @@ export function unsubscribeEmailRecipient(db: Db, workspaceId: string, email: st
         set: { status: "suppressed", updatedAt: now },
       })
       .run();
-    tx.insert(emailSuppressions)
+    await tx.insert(emailSuppressions)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -158,11 +158,11 @@ export function unsubscribeEmailRecipient(db: Db, workspaceId: string, email: st
  * single chokepoint checkEmailRecipientSafety blocks on, so the reason is
  * informational (`import`).
  */
-export function importSuppressions(
+export async function importSuppressions(
   db: Db,
   workspaceId: string,
   emails: string[],
-): { imported: number; skipped: number } {
+): Promise<{ imported: number; skipped: number }> {
   const now = Date.now();
   let imported = 0;
   let skipped = 0;
@@ -172,7 +172,7 @@ export function importSuppressions(
       skipped += 1;
       continue;
     }
-    const res = db
+    const res = await db
       .insert(emailSuppressions)
       .values({ id: randomUUID(), workspaceId, normalizedEmail: parsed.data, reason: "import", createdAt: now })
       .onConflictDoNothing()
@@ -184,11 +184,11 @@ export function importSuppressions(
 }
 
 /** Suppressed addresses for the workspace, newest first (for the settings list). */
-export function listSuppressions(
+export async function listSuppressions(
   db: Db,
   workspaceId: string,
-): { normalizedEmail: string; reason: string; createdAt: number }[] {
-  return db
+): Promise<{ normalizedEmail: string; reason: string; createdAt: number }[]> {
+  return (await db
     .select({
       normalizedEmail: emailSuppressions.normalizedEmail,
       reason: emailSuppressions.reason,
@@ -196,12 +196,12 @@ export function listSuppressions(
     })
     .from(emailSuppressions)
     .where(eq(emailSuppressions.workspaceId, workspaceId))
-    .all()
+    .all())
     .sort((a, b) => b.createdAt - a.createdAt);
 }
 
-export function getEmailSafetySettings(db: Db, workspaceId: string): EmailSafetySettings {
-  const row = db
+export async function getEmailSafetySettings(db: Db, workspaceId: string): Promise<EmailSafetySettings> {
+  const row = await db
     .select({ killSwitch: workspaceEmailSenders.killSwitch, dailyCap: workspaceEmailSenders.dailyCap })
     .from(workspaceEmailSenders)
     .where(eq(workspaceEmailSenders.workspaceId, workspaceId))
@@ -211,27 +211,27 @@ export function getEmailSafetySettings(db: Db, workspaceId: string): EmailSafety
   // enabled if it has a connected mailbox — connecting one is the explicit
   // opt-in. With neither, the kill switch stays on (the prior default).
   return {
-    killSwitch: listConnectedMailboxes(db, workspaceId).length === 0,
+    killSwitch: (await listConnectedMailboxes(db, workspaceId)).length === 0,
     dailyCap: 100,
   };
 }
 
-export function updateEmailSafetySettings(
+export async function updateEmailSafetySettings(
   db: Db,
   workspaceId: string,
   input: UpdateEmailSafetyInput,
-): EmailSafetySettings {
-  const existing = db
+): Promise<EmailSafetySettings> {
+  const existing = await db
     .select({ workspaceId: workspaceEmailSenders.workspaceId })
     .from(workspaceEmailSenders)
     .where(eq(workspaceEmailSenders.workspaceId, workspaceId))
     .get();
   if (!existing) throw new EmailSafetyConfigurationError();
-  db.update(workspaceEmailSenders)
+  await db.update(workspaceEmailSenders)
     .set({ killSwitch: input.killSwitch, dailyCap: input.dailyCap, updatedAt: Date.now() })
     .where(eq(workspaceEmailSenders.workspaceId, workspaceId))
     .run();
-  return getEmailSafetySettings(db, workspaceId);
+  return await getEmailSafetySettings(db, workspaceId);
 }
 
 function utcDayStart(now = Date.now()): number {
@@ -240,12 +240,12 @@ function utcDayStart(now = Date.now()): number {
   return start.getTime();
 }
 
-export function checkEmailRecipientSafety(
+export async function checkEmailRecipientSafety(
   db: Db,
   workspaceId: string,
   email: string,
-): EmailRecipientSafetyResult {
-  const settings = getEmailSafetySettings(db, workspaceId);
+): Promise<EmailRecipientSafetyResult> {
+  const settings = await getEmailSafetySettings(db, workspaceId);
   if (settings.killSwitch) {
     return { ok: false, code: "kill_switch_on", message: "Workspace email sending is paused." };
   }
@@ -256,7 +256,7 @@ export function checkEmailRecipientSafety(
   }
 
   const sentToday = Number(
-    db
+    (await db
       .select({ count: sql<number>`count(*)` })
       .from(emailDeliveries)
       .where(
@@ -266,7 +266,7 @@ export function checkEmailRecipientSafety(
           gte(emailDeliveries.acceptedAt, utcDayStart()),
         ),
       )
-      .get()?.count ?? 0,
+      .get())?.count ?? 0,
   );
   if (sentToday >= settings.dailyCap) {
     return {
@@ -278,7 +278,7 @@ export function checkEmailRecipientSafety(
     };
   }
 
-  const suppression = db
+  const suppression = await db
     .select({ id: emailSuppressions.id })
     .from(emailSuppressions)
     .where(
@@ -292,7 +292,7 @@ export function checkEmailRecipientSafety(
     return { ok: false, code: "suppressed", message: "This recipient is suppressed." };
   }
 
-  const permission = getEmailPermission(db, workspaceId, normalizedEmail);
+  const permission = await getEmailPermission(db, workspaceId, normalizedEmail);
   if (permission?.status !== "allowed") {
     return {
       ok: false,

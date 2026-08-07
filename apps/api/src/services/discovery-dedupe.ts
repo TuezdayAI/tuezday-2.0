@@ -19,12 +19,12 @@ export interface DiscoveryDedupeHooks {
   beforeSourceDelete?(): void;
 }
 
-function promoteCanonicalBeforeDelete(
+async function promoteCanonicalBeforeDelete(
   tx: DbExecutor,
   canonical: DiscoveredItemRow,
   survivor: DiscoveredItemRow,
-): number {
-  tx.delete(discoveredItemMatches)
+): Promise<number> {
+  await tx.delete(discoveredItemMatches)
     .where(
       and(
         eq(discoveredItemMatches.workspaceId, survivor.workspaceId),
@@ -32,7 +32,7 @@ function promoteCanonicalBeforeDelete(
       ),
     )
     .run();
-  tx.update(discoveredItemMatches)
+  await tx.update(discoveredItemMatches)
     .set({ itemId: survivor.id })
     .where(
       and(
@@ -41,7 +41,7 @@ function promoteCanonicalBeforeDelete(
       ),
     )
     .run();
-  tx.update(discoveredItems)
+  await tx.update(discoveredItems)
     .set({
       title: canonical.title,
       url: canonical.url,
@@ -70,7 +70,7 @@ function promoteCanonicalBeforeDelete(
       ),
     )
     .run();
-  return tx
+  return (await tx
     .update(discoveredItems)
     .set({
       duplicateOfId: survivor.id,
@@ -88,17 +88,17 @@ function promoteCanonicalBeforeDelete(
         ne(discoveredItems.id, survivor.id),
       ),
     )
-    .run().changes;
+    .run()).changes;
 }
 
-export function deleteDiscoverySourcePreservingDuplicates(
+export async function deleteDiscoverySourcePreservingDuplicates(
   db: Db,
   workspaceId: string,
   sourceId: string,
   hooks: DiscoveryDedupeHooks = {},
-): boolean {
-  return db.transaction((tx) => {
-    const source = tx
+): Promise<boolean> {
+  return await db.transaction(async (tx) => {
+    const source = await tx
       .select({ id: discoverySources.id })
       .from(discoverySources)
       .where(
@@ -110,7 +110,7 @@ export function deleteDiscoverySourcePreservingDuplicates(
       .get();
     if (!source) return false;
 
-    const canonicals = tx
+    const canonicals = await tx
       .select()
       .from(discoveredItems)
       .where(
@@ -122,7 +122,7 @@ export function deleteDiscoverySourcePreservingDuplicates(
       )
       .all();
     for (const canonical of canonicals) {
-      const survivor = tx
+      const survivor = await tx
         .select()
         .from(discoveredItems)
         .where(
@@ -136,13 +136,13 @@ export function deleteDiscoverySourcePreservingDuplicates(
         .limit(1)
         .get();
       if (survivor) {
-        promoteCanonicalBeforeDelete(tx, canonical, survivor);
+        await promoteCanonicalBeforeDelete(tx, canonical, survivor);
       }
     }
 
     hooks.beforeSourceDelete?.();
     return (
-      tx
+      (await tx
         .delete(discoverySources)
         .where(
           and(
@@ -150,16 +150,16 @@ export function deleteDiscoverySourcePreservingDuplicates(
             eq(discoverySources.id, sourceId),
           ),
         )
-        .run().changes === 1
+        .run()).changes === 1
     );
   });
 }
 
-export function repairDanglingDuplicateGroups(
+export async function repairDanglingDuplicateGroups(
   db: Db,
-): { groups: number; promoted: number; repointed: number } {
-  return db.transaction((tx) => {
-    const rows = tx.select().from(discoveredItems).all();
+): Promise<{ groups: number; promoted: number; repointed: number }> {
+  return await db.transaction(async (tx) => {
+    const rows = await tx.select().from(discoveredItems).all();
     const existing = new Set(
       rows.map((row) => JSON.stringify([row.workspaceId, row.id])),
     );
@@ -186,7 +186,7 @@ export function repairDanglingDuplicateGroups(
       );
       const survivor = members[0]!;
       const ids = members.map((row) => row.id);
-      tx.delete(discoveredItemMatches)
+      await tx.delete(discoveredItemMatches)
         .where(
           and(
             eq(discoveredItemMatches.workspaceId, survivor.workspaceId),
@@ -194,7 +194,7 @@ export function repairDanglingDuplicateGroups(
           ),
         )
         .run();
-      tx.update(discoveredItems)
+      await tx.update(discoveredItems)
         .set({
           score: null,
           suggestedPersonaId: null,
@@ -223,7 +223,7 @@ export function repairDanglingDuplicateGroups(
 
       const remainingIds = ids.slice(1);
       if (remainingIds.length > 0) {
-        repointed += tx
+        repointed += (await tx
           .update(discoveredItems)
           .set({
             status: "duplicate",
@@ -240,7 +240,7 @@ export function repairDanglingDuplicateGroups(
               inArray(discoveredItems.id, remainingIds),
             ),
           )
-          .run().changes;
+          .run()).changes;
       }
     }
     return {

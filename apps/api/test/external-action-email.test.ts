@@ -50,10 +50,10 @@ describe("governed email external actions", () => {
   let messageId: string;
   let provider: FakeProvider;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createTestDb();
-    workspaceId = createWorkspace(db, { name: "Acme" }).id;
-    const submitted = submitDraft(db, {
+    workspaceId = (await createWorkspace(db, { name: "Acme" })).id;
+    const submitted = await submitDraft(db, {
       workspaceId,
       sourceGenerationId: randomUUID(),
       campaignId: null,
@@ -64,11 +64,11 @@ describe("governed email external actions", () => {
       personaId: null,
       content: "A useful introduction\nHello from Acme.",
     }, actor);
-    draftId = applyDraftAction(db, submitted, "approve", actor).id;
+    draftId = (await applyDraftAction(db, submitted, "approve", actor)).id;
     const launchId = randomUUID();
     messageId = randomUUID();
     const now = Date.now();
-    db.insert(launches).values({
+    await db.insert(launches).values({
       id: launchId,
       workspaceId,
       name: "Launch",
@@ -77,7 +77,7 @@ describe("governed email external actions", () => {
       createdAt: now,
       updatedAt: now,
     }).run();
-    db.insert(launchMessages).values({
+    await db.insert(launchMessages).values({
       id: messageId,
       workspaceId,
       launchId,
@@ -90,7 +90,7 @@ describe("governed email external actions", () => {
       createdAt: now,
       updatedAt: now,
     }).run();
-    db.insert(workspaceEmailSenders).values({
+    await db.insert(workspaceEmailSenders).values({
       workspaceId,
       domain: "example.com",
       fromLocalPart: "hello",
@@ -108,7 +108,7 @@ describe("governed email external actions", () => {
       createdAt: now,
       updatedAt: now,
     }).run();
-    db.insert(emailRecipientPermissions).values({
+    await db.insert(emailRecipientPermissions).values({
       id: randomUUID(),
       workspaceId,
       normalizedEmail: "lead@buyer.com",
@@ -119,8 +119,8 @@ describe("governed email external actions", () => {
     provider = new FakeProvider();
   });
 
-  function command(key = `email/${randomUUID()}`) {
-    return prepareEmailAction(db, workspaceId, {
+  async function command(key = `email/${randomUUID()}`) {
+    return await prepareEmailAction(db, workspaceId, {
       origin: "launch_message",
       originId: messageId,
       idempotencyKey: key,
@@ -135,7 +135,7 @@ describe("governed email external actions", () => {
   }
 
   it("proposes, authorizes, and accepts one durable provider send", async () => {
-    const proposed = await runtime().propose(command("email/action-1"), actor);
+    const proposed = await runtime().propose(await command("email/action-1"), actor);
     expect(proposed.action.kind).toBe("send");
     expect(proposed.action.subject.destination).toBe("lead@buyer.com");
     const sent = await runtime().authorize(proposed.action.id, workspaceId, actor);
@@ -153,7 +153,7 @@ describe("governed email external actions", () => {
       text: "Hello from Acme.",
       idempotencyKey: `send/${proposed.action.id}`,
     });
-    expect(db.select().from(emailDeliveries).get()).toMatchObject({
+    expect(await db.select().from(emailDeliveries).get()).toMatchObject({
       externalActionId: proposed.action.id,
       status: "accepted",
       providerMessageId: "email_123",
@@ -164,7 +164,7 @@ describe("governed email external actions", () => {
   // draft behind this send was approved by a human in beforeEach, and a send
   // still has to be authorized separately.
   it("keeps the second gate for a send behind a human-approved draft", async () => {
-    const proposed = await runtime().propose(command("email/second-gate"), actor);
+    const proposed = await runtime().propose(await command("email/second-gate"), actor);
     expect(proposed.action.kind).toBe("send");
     expect(proposed.action.status).toBe("authorization_required");
     expect(proposed.action.authorizedAt).toBeNull();
@@ -172,36 +172,36 @@ describe("governed email external actions", () => {
   });
 
   it("blocks unverified senders and unknown recipient permission", async () => {
-    db.update(workspaceEmailSenders).set({ status: "pending" }).where(eq(workspaceEmailSenders.workspaceId, workspaceId)).run();
-    const unverified = await runtime().propose(command(), actor);
+    await db.update(workspaceEmailSenders).set({ status: "pending" }).where(eq(workspaceEmailSenders.workspaceId, workspaceId)).run();
+    const unverified = await runtime().propose(await command(), actor);
     const blockedSender = await runtime().authorize(unverified.action.id, workspaceId, actor);
     expect(blockedSender.action.blocker?.code).toBe("sender_unverified");
 
-    db.update(workspaceEmailSenders).set({ status: "verified" }).where(eq(workspaceEmailSenders.workspaceId, workspaceId)).run();
-    db.delete(emailRecipientPermissions).run();
-    const unknown = await runtime().propose(command(), actor);
+    await db.update(workspaceEmailSenders).set({ status: "verified" }).where(eq(workspaceEmailSenders.workspaceId, workspaceId)).run();
+    await db.delete(emailRecipientPermissions).run();
+    const unknown = await runtime().propose(await command(), actor);
     const blockedRecipient = await runtime().authorize(unknown.action.id, workspaceId, actor);
     expect(blockedRecipient.action.blocker?.code).toBe("permission_unknown");
   });
 
   it("detects origin edits before authorization", async () => {
-    const proposed = await runtime().propose(command(), actor);
-    db.update(drafts).set({ content: "Changed subject\nChanged body", updatedAt: Date.now() }).where(eq(drafts.id, draftId)).run();
-    await expect(runtime().authorize(proposed.action.id, workspaceId, actor)).rejects.toBeInstanceOf(
+    const proposed = await runtime().propose(await command(), actor);
+    await db.update(drafts).set({ content: "Changed subject\nChanged body", updatedAt: Date.now() }).where(eq(drafts.id, draftId)).run();
+    await expect(await runtime().authorize(proposed.action.id, workspaceId, actor)).rejects.toBeInstanceOf(
       StaleExternalActionError,
     );
     expect(provider.send).not.toHaveBeenCalled();
   });
 
   it("recovers a dispatching action with a stored provider receipt without resending", async () => {
-    const proposed = await runtime().propose(command(), actor);
-    transitionExternalAction(db, workspaceId, proposed.action.id, "authorized");
-    transitionExternalAction(db, workspaceId, proposed.action.id, "dispatching");
+    const proposed = await runtime().propose(await command(), actor);
+    await transitionExternalAction(db, workspaceId, proposed.action.id, "authorized");
+    await transitionExternalAction(db, workspaceId, proposed.action.id, "dispatching");
     const deliveryId = randomUUID();
-    const current = command();
+    const current = await command();
     const payload = current.payload as { to: string; subject: string; text: string; replyTo: string | null; from: string; origin: string; originId: string };
     const now = Date.now();
-    db.insert(emailDeliveries).values({
+    await db.insert(emailDeliveries).values({
       id: deliveryId,
       workspaceId,
       externalActionId: proposed.action.id,
@@ -236,10 +236,10 @@ describe("governed email external actions", () => {
         retryable: true,
       }),
     );
-    const proposed = await runtime().propose(command(), actor);
+    const proposed = await runtime().propose(await command(), actor);
     const first = await runtime().authorize(proposed.action.id, workspaceId, actor);
     expect(first.action.status).toBe("dispatching");
-    expect(db.select().from(emailDeliveries).get()?.status).toBe("queued");
+    expect((await db.select().from(emailDeliveries).get())?.status).toBe("queued");
 
     const [retried] = await runtime().run(workspaceId);
     expect(retried?.execution?.status).toBe("accepted");

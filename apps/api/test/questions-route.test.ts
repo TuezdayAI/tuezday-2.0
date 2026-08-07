@@ -103,9 +103,9 @@ describe("the ask lane over HTTP (Sprint 70)", () => {
     await app.close();
   });
 
-  function seedQuestion(overrides: Record<string, unknown> = {}): string {
+  async function seedQuestion(overrides: Record<string, unknown> = {}): Promise<string> {
     const id = randomUUID();
-    db.insert(agentQuestions)
+    await db.insert(agentQuestions)
       .values({
         id,
         workspaceId,
@@ -128,8 +128,8 @@ describe("the ask lane over HTTP (Sprint 70)", () => {
   const answerUrl = (id: string) => `/workspaces/${workspaceId}/questions/${id}/answer`;
 
   it("lists the open questions", async () => {
-    seedQuestion();
-    seedQuestion({ status: "answered", answer: "No.", answeredAt: 2, answeredByLabel: "founder" });
+    await seedQuestion();
+    await seedQuestion({ status: "answered", answer: "No.", answeredAt: 2, answeredByLabel: "founder" });
     const res = await app.inject({
       method: "GET",
       url: `/workspaces/${workspaceId}/questions?status=open`,
@@ -141,7 +141,7 @@ describe("the ask lane over HTTP (Sprint 70)", () => {
   });
 
   it("records an answer and says nothing was resumed when nothing was waiting", async () => {
-    const id = seedQuestion();
+    const id = await seedQuestion();
     const res = await app.inject({
       method: "POST",
       url: answerUrl(id),
@@ -157,11 +157,11 @@ describe("the ask lane over HTTP (Sprint 70)", () => {
   });
 
   it("keeps a rule only when the founder said what to keep (D-70.11)", async () => {
-    const plain = seedQuestion();
+    const plain = await seedQuestion();
     await app.inject({ method: "POST", url: answerUrl(plain), payload: { answer: "Yes, fine." } });
-    expect(listPreferenceRules(db, workspaceId)).toHaveLength(0);
+    expect(await listPreferenceRules(db, workspaceId)).toHaveLength(0);
 
-    const kept = seedQuestion();
+    const kept = await seedQuestion();
     const res = await app.inject({
       method: "POST",
       url: answerUrl(kept),
@@ -175,11 +175,11 @@ describe("the ask lane over HTTP (Sprint 70)", () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().rule.origin).toBe("answered_question");
-    expect(listPreferenceRules(db, workspaceId)).toHaveLength(1);
+    expect(await listPreferenceRules(db, workspaceId)).toHaveLength(1);
   });
 
   it("lets the founder decline without teaching anything", async () => {
-    const id = seedQuestion();
+    const id = await seedQuestion();
     const res = await app.inject({
       method: "POST",
       url: answerUrl(id),
@@ -191,7 +191,7 @@ describe("the ask lane over HTTP (Sprint 70)", () => {
   });
 
   it("refuses an answer with nothing in it, and a second answer to the same question", async () => {
-    const id = seedQuestion();
+    const id = await seedQuestion();
     const empty = await app.inject({ method: "POST", url: answerUrl(id), payload: {} });
     expect(empty.statusCode).toBe(400);
 
@@ -212,15 +212,15 @@ describe("the ask lane over HTTP (Sprint 70)", () => {
 
   it("continues the blocked run in the same click (acceptance)", async () => {
     // A live run that stopped to ask, exactly as the engine leaves it.
-    const definition = createPipelineDefinition(
+    const definition = await createPipelineDefinition(
       db,
       workspaceId,
       { taskKey: "signal_social_post", name: "Asking", description: "", spec: askingSpec() },
       { userId: null, label: "founder" },
     );
-    setPipelineStatus(db, workspaceId, definition.id, "active");
+    await setPipelineStatus(db, workspaceId, definition.id, "active");
     const signalId = randomUUID();
-    db.insert(signals)
+    await db.insert(signals)
       .values({
         id: signalId,
         workspaceId,
@@ -230,7 +230,7 @@ describe("the ask lane over HTTP (Sprint 70)", () => {
         createdAt: 1,
       })
       .run();
-    const run = startPipelineRun(db, {
+    const run = await startPipelineRun(db, {
       workspaceId,
       definition,
       signalId,
@@ -247,7 +247,7 @@ describe("the ask lane over HTTP (Sprint 70)", () => {
       run.id,
     );
     expect(outcome.run.status).toBe("escalated");
-    const question = openQuestionForPipelineRun(db, run.id)!;
+    const question = (await openQuestionForPipelineRun(db, run.id))!;
 
     const res = await app.inject({
       method: "POST",
@@ -260,7 +260,7 @@ describe("the ask lane over HTTP (Sprint 70)", () => {
   });
 
   it("keeps one workspace's questions out of another's", async () => {
-    const id = seedQuestion();
+    const id = await seedQuestion();
     const stranger = await registerUser(app, "stranger@test.dev", "Stranger");
     const list = await app.inject({
       method: "GET",

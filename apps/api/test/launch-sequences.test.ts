@@ -164,7 +164,7 @@ describe("multi-step sequences", () => {
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Seq" } })
     ).json().id;
     const now = Date.now();
-    db.insert(workspaceEmailSenders).values({
+    await db.insert(workspaceEmailSenders).values({
       workspaceId,
       domain: "example.com",
       fromLocalPart: "hello",
@@ -210,7 +210,7 @@ describe("multi-step sequences", () => {
     ).json().id;
     if (allowEmail) {
       const now = Date.now();
-      db.insert(emailRecipientPermissions).values({
+      await db.insert(emailRecipientPermissions).values({
         id: randomUUID(),
         workspaceId,
         normalizedEmail: `${name.toLowerCase()}@acme.com`,
@@ -402,7 +402,7 @@ describe("multi-step sequences", () => {
     const message = emailMessages(d)[0]!;
     expect(message.status).toBe("pending");
     expect(d.sequenceRecipients[0].status).toBe("active");
-    expect(getExternalAction(db, workspaceId, message.externalActionId!)).toMatchObject({
+    expect(await getExternalAction(db, workspaceId, message.externalActionId!)).toMatchObject({
       status: "blocked",
       blocker: { code: "permission_unknown" },
     });
@@ -439,7 +439,7 @@ describe("multi-step sequences", () => {
     let d = await detail(launchId);
     const first = emailMessages(d)[0]!;
     expect(first.status).toBe("pending");
-    expect(getExternalAction(db, workspaceId, first.externalActionId!)).toMatchObject({
+    expect(await getExternalAction(db, workspaceId, first.externalActionId!)).toMatchObject({
       status: "authorization_required",
     });
     expect(emailProvider.send).not.toHaveBeenCalled();
@@ -508,7 +508,7 @@ describe("multi-step sequences", () => {
 
     // Alice replies (Sprint 29 inbox row), after her DM 1 went out.
     const now = Date.now();
-    db.insert(inboxItems)
+    await db.insert(inboxItems)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -595,7 +595,7 @@ describe("multi-step sequences", () => {
   it("the kill switch holds an auto X DM (chain pauses, not errors)", async () => {
     await connectTwitter();
     const now = Date.now();
-    db.insert(socialAutomationSettings)
+    await db.insert(socialAutomationSettings)
       .values({
         workspaceId,
         killSwitch: 1,
@@ -620,7 +620,7 @@ describe("multi-step sequences", () => {
     expect(d.sequenceRecipients[0].status).toBe("active"); // not failed — it retries
 
     // Turn the kill switch off; the held step now dispatches.
-    db.insert(socialAutomationSettings)
+    await db.insert(socialAutomationSettings)
       .values({ workspaceId, killSwitch: 0, perConnectionDailyCap: 10, perCampaignDailyCap: 5, autoReplyEnabled: 0, updatedAt: now })
       .onConflictDoUpdate({ target: socialAutomationSettings.workspaceId, set: { killSwitch: 0 } })
       .run();

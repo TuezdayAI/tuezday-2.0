@@ -30,10 +30,10 @@ function payload(
 describe("durable background job repository", () => {
   let db: Db;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createTestDb();
     const now = Date.now();
-    db.insert(workspaces)
+    await db.insert(workspaces)
       .values([
         { id: WORKSPACE_A, name: "A", createdAt: now, updatedAt: now },
         { id: WORKSPACE_B, name: "B", createdAt: now + 1, updatedAt: now + 1 },
@@ -41,7 +41,7 @@ describe("durable background job repository", () => {
       .run();
   });
 
-  function enqueue(
+  async function enqueue(
     workspaceId: string,
     key: string,
     options: {
@@ -51,7 +51,7 @@ describe("durable background job repository", () => {
       priority?: number;
     } = {},
   ) {
-    return enqueueBackgroundJob(db, {
+    return await enqueueBackgroundJob(db, {
       payload: payload(workspaceId, options.kind),
       idempotencyKey: key,
       availableAt: options.availableAt,
@@ -60,41 +60,41 @@ describe("durable background job repository", () => {
     });
   }
 
-  it("deduplicates only active jobs within a workspace", () => {
-    const first = enqueue(WORKSPACE_A, "daily:evidence");
-    const duplicate = enqueue(WORKSPACE_A, "daily:evidence");
-    const otherWorkspace = enqueue(WORKSPACE_B, "daily:evidence");
+  it("deduplicates only active jobs within a workspace", async () => {
+    const first = await enqueue(WORKSPACE_A, "daily:evidence");
+    const duplicate = await enqueue(WORKSPACE_A, "daily:evidence");
+    const otherWorkspace = await enqueue(WORKSPACE_B, "daily:evidence");
 
     expect(duplicate.id).toBe(first.id);
     expect(otherWorkspace.id).not.toBe(first.id);
-    const [claim] = claimBackgroundJobs(db, {
+    const [claim] = await claimBackgroundJobs(db, {
       owner: "worker-a",
       leaseMs: 30_000,
       limit: 1,
       perWorkspaceLimit: 1,
     });
-    expect(completeBackgroundJob(db, claim!, { ok: true })).toBe(true);
+    expect(await completeBackgroundJob(db, claim!, { ok: true })).toBe(true);
 
-    const nextOccurrence = enqueue(WORKSPACE_A, "daily:evidence");
+    const nextOccurrence = await enqueue(WORKSPACE_A, "daily:evidence");
     expect(nextOccurrence.id).not.toBe(first.id);
     expect(first.activeKey).toBe(`${WORKSPACE_A}:daily:evidence`);
   });
 
   it("validates payload tenant identity and admission bounds", () => {
-    expect(() =>
-      enqueueBackgroundJob(db, {
+    expect(async () =>
+      await enqueueBackgroundJob(db, {
         payload: { kind: "evidence", workspaceId: "not-a-uuid" } as BackgroundJobPayload,
         idempotencyKey: "invalid",
       }),
     ).toThrow();
-    expect(() =>
-      enqueueBackgroundJob(db, {
+    expect(async () =>
+      await enqueueBackgroundJob(db, {
         payload: payload(WORKSPACE_A),
         idempotencyKey: "",
       }),
     ).toThrow("idempotency");
-    expect(() =>
-      enqueueBackgroundJob(db, {
+    expect(async () =>
+      await enqueueBackgroundJob(db, {
         payload: payload(WORKSPACE_A),
         idempotencyKey: "attempts",
         maxAttempts: 0,
@@ -102,10 +102,10 @@ describe("durable background job repository", () => {
     ).toThrow("maxAttempts");
   });
 
-  it("does not claim work before its database availability time", () => {
-    enqueue(WORKSPACE_A, "future", { availableAt: Date.now() + 60_000 });
+  it("does not claim work before its database availability time", async () => {
+    await enqueue(WORKSPACE_A, "future", { availableAt: Date.now() + 60_000 });
     expect(
-      claimBackgroundJobs(db, {
+      await claimBackgroundJobs(db, {
         owner: "worker-a",
         leaseMs: 30_000,
         limit: 1,
@@ -114,12 +114,12 @@ describe("durable background job repository", () => {
     ).toEqual([]);
   });
 
-  it("serves one job per workspace before a noisy tenant receives another", () => {
-    enqueue(WORKSPACE_A, "a-1", { priority: 10 });
-    enqueue(WORKSPACE_A, "a-2", { priority: 10 });
-    enqueue(WORKSPACE_B, "b-1");
+  it("serves one job per workspace before a noisy tenant receives another", async () => {
+    await enqueue(WORKSPACE_A, "a-1", { priority: 10 });
+    await enqueue(WORKSPACE_A, "a-2", { priority: 10 });
+    await enqueue(WORKSPACE_B, "b-1");
 
-    const claims = claimBackgroundJobs(db, {
+    const claims = await claimBackgroundJobs(db, {
       owner: "worker-a",
       leaseMs: 30_000,
       limit: 2,
@@ -132,10 +132,10 @@ describe("durable background job repository", () => {
     );
   });
 
-  it("enforces the per-workspace concurrency cap", () => {
-    enqueue(WORKSPACE_A, "a-1");
-    enqueue(WORKSPACE_A, "a-2");
-    const [running] = claimBackgroundJobs(db, {
+  it("enforces the per-workspace concurrency cap", async () => {
+    await enqueue(WORKSPACE_A, "a-1");
+    await enqueue(WORKSPACE_A, "a-2");
+    const [running] = await claimBackgroundJobs(db, {
       owner: "worker-a",
       leaseMs: 30_000,
       limit: 1,
@@ -144,7 +144,7 @@ describe("durable background job repository", () => {
     expect(running?.workspaceId).toBe(WORKSPACE_A);
 
     expect(
-      claimBackgroundJobs(db, {
+      await claimBackgroundJobs(db, {
         owner: "worker-b",
         leaseMs: 30_000,
         limit: 1,
@@ -153,9 +153,9 @@ describe("durable background job repository", () => {
     ).toEqual([]);
   });
 
-  it("reclaims expired leases with a higher fence and rejects stale writes", () => {
-    enqueue(WORKSPACE_A, "reclaim");
-    const [first] = claimBackgroundJobs(db, {
+  it("reclaims expired leases with a higher fence and rejects stale writes", async () => {
+    await enqueue(WORKSPACE_A, "reclaim");
+    const [first] = await claimBackgroundJobs(db, {
       owner: "worker-a",
       leaseMs: 30_000,
       limit: 1,
@@ -163,38 +163,38 @@ describe("durable background job repository", () => {
     });
     expect(first).toMatchObject({ attempt: 1, leaseVersion: 1 });
 
-    db.update(backgroundJobs)
+    await db.update(backgroundJobs)
       .set({
         leaseExpiresAt: sql`CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER) - 1`,
       })
       .where(eq(backgroundJobs.id, first!.id))
       .run();
 
-    const [second] = claimBackgroundJobs(db, {
+    const [second] = await claimBackgroundJobs(db, {
       owner: "worker-b",
       leaseMs: 30_000,
       limit: 1,
       perWorkspaceLimit: 1,
     });
     expect(second).toMatchObject({ attempt: 2, leaseVersion: 2, leaseOwner: "worker-b" });
-    expect(heartbeatBackgroundJob(db, first!, 30_000)).toBeNull();
-    expect(completeBackgroundJob(db, first!, {})).toBe(false);
-    expect(heartbeatBackgroundJob(db, second!, 30_000)).toMatchObject({
+    expect(await heartbeatBackgroundJob(db, first!, 30_000)).toBeNull();
+    expect(await completeBackgroundJob(db, first!, {})).toBe(false);
+    expect(await heartbeatBackgroundJob(db, second!, 30_000)).toMatchObject({
       id: second!.id,
       leaseVersion: 2,
     });
-    expect(completeBackgroundJob(db, second!, {})).toBe(true);
+    expect(await completeBackgroundJob(db, second!, {})).toBe(true);
   });
 
-  it("retries with deterministic bounded backoff and dead-letters exhausted work", () => {
-    const queued = enqueue(WORKSPACE_A, "retry", { maxAttempts: 2 });
-    const [first] = claimBackgroundJobs(db, {
+  it("retries with deterministic bounded backoff and dead-letters exhausted work", async () => {
+    const queued = await enqueue(WORKSPACE_A, "retry", { maxAttempts: 2 });
+    const [first] = await claimBackgroundJobs(db, {
       owner: "worker-a",
       leaseMs: 30_000,
       limit: 1,
       perWorkspaceLimit: 1,
     });
-    const retried = retryBackgroundJob(db, first!, "provider down", {
+    const retried = await retryBackgroundJob(db, first!, "provider down", {
       baseBackoffMs: 1_000,
       maxBackoffMs: 5_000,
     });
@@ -202,32 +202,32 @@ describe("durable background job repository", () => {
     expect(retried!.availableAt).toBeGreaterThan(Date.now());
     expect(retried!.availableAt - Date.now()).toBeLessThanOrEqual(5_000);
 
-    db.update(backgroundJobs)
+    await db.update(backgroundJobs)
       .set({ availableAt: 0 })
       .where(eq(backgroundJobs.id, queued.id))
       .run();
-    const [second] = claimBackgroundJobs(db, {
+    const [second] = await claimBackgroundJobs(db, {
       owner: "worker-b",
       leaseMs: 30_000,
       limit: 1,
       perWorkspaceLimit: 1,
     });
-    const exhausted = retryBackgroundJob(db, second!, "still down", {
+    const exhausted = await retryBackgroundJob(db, second!, "still down", {
       baseBackoffMs: 1_000,
       maxBackoffMs: 5_000,
     });
     expect(exhausted).toMatchObject({ status: "dead_letter", activeKey: null });
   });
 
-  it("sanitizes diagnostics and requeues a dead letter without deleting history", () => {
-    enqueue(WORKSPACE_A, "dead");
-    const [claim] = claimBackgroundJobs(db, {
+  it("sanitizes diagnostics and requeues a dead letter without deleting history", async () => {
+    await enqueue(WORKSPACE_A, "dead");
+    const [claim] = await claimBackgroundJobs(db, {
       owner: "worker-a",
       leaseMs: 30_000,
       limit: 1,
       perWorkspaceLimit: 1,
     });
-    const dead = deadLetterBackgroundJob(
+    const dead = await deadLetterBackgroundJob(
       db,
       claim!,
       `Authorization: Bearer super-secret-token\n${"x".repeat(2_000)}`,
@@ -236,7 +236,7 @@ describe("durable background job repository", () => {
     expect(dead!.lastError).not.toContain("super-secret-token");
     expect(dead!.lastError!.length).toBeLessThanOrEqual(1_000);
 
-    const requeued = requeueDeadLetter(db, dead!.id);
+    const requeued = await requeueDeadLetter(db, dead!.id);
     expect(requeued).toMatchObject({
       status: "queued",
       attempt: 0,
@@ -244,14 +244,14 @@ describe("durable background job repository", () => {
     });
     expect(requeued!.id).not.toBe(dead!.id);
     expect(
-      db.select().from(backgroundJobs).where(eq(backgroundJobs.id, dead!.id)).get()?.status,
+      (await db.select().from(backgroundJobs).where(eq(backgroundJobs.id, dead!.id)).get())?.status,
     ).toBe("dead_letter");
   });
 
-  it("lists bounded filters and reports queue statistics by kind", () => {
-    enqueue(WORKSPACE_A, "queued", { kind: "evidence" });
-    enqueue(WORKSPACE_B, "running", { kind: "ads" });
-    const [running] = claimBackgroundJobs(db, {
+  it("lists bounded filters and reports queue statistics by kind", async () => {
+    await enqueue(WORKSPACE_A, "queued", { kind: "evidence" });
+    await enqueue(WORKSPACE_B, "running", { kind: "ads" });
+    const [running] = await claimBackgroundJobs(db, {
       owner: "worker-a",
       leaseMs: 30_000,
       limit: 1,
@@ -260,11 +260,11 @@ describe("durable background job repository", () => {
     expect(running).toBeDefined();
     const otherKind = running!.kind === "ads" ? "evidence" : "ads";
 
-    expect(listBackgroundJobs(db, { status: "running", limit: 10 })).toHaveLength(1);
-    expect(listBackgroundJobs(db, { kind: otherKind, limit: 10 })).toHaveLength(1);
-    expect(() => listBackgroundJobs(db, { limit: 0 })).toThrow("limit");
+    expect(await listBackgroundJobs(db, { status: "running", limit: 10 })).toHaveLength(1);
+    expect(await listBackgroundJobs(db, { kind: otherKind, limit: 10 })).toHaveLength(1);
+    expect(async () => await listBackgroundJobs(db, { limit: 0 })).toThrow("limit");
 
-    const stats = getBackgroundQueueStats(db, { perWorkspaceConcurrency: 1 });
+    const stats = await getBackgroundQueueStats(db, { perWorkspaceConcurrency: 1 });
     expect(stats.total).toBe(2);
     expect(stats.running).toBe(1);
     expect(stats.queued).toBe(1);
@@ -273,30 +273,30 @@ describe("durable background job repository", () => {
     expect(stats.byKind.ads + stats.byKind.evidence).toBe(2);
   });
 
-  it("reports terminal execution duration without counting queued time", () => {
-    const queued = enqueue(WORKSPACE_A, "duration", { kind: "evidence" });
-    const [claim] = claimBackgroundJobs(db, {
+  it("reports terminal execution duration without counting queued time", async () => {
+    const queued = await enqueue(WORKSPACE_A, "duration", { kind: "evidence" });
+    const [claim] = await claimBackgroundJobs(db, {
       owner: "worker-a",
       leaseMs: 30_000,
       limit: 1,
       perWorkspaceLimit: 1,
     });
-    db.update(backgroundJobs)
+    await db.update(backgroundJobs)
       .set({ startedAt: sql`${backgroundJobs.startedAt} - 25` })
       .where(eq(backgroundJobs.id, queued.id))
       .run();
-    expect(completeBackgroundJob(db, claim!, { ok: true })).toBe(true);
+    expect(await completeBackgroundJob(db, claim!, { ok: true })).toBe(true);
 
-    const stats = getBackgroundQueueStats(db, { perWorkspaceConcurrency: 1 });
+    const stats = await getBackgroundQueueStats(db, { perWorkspaceConcurrency: 1 });
     expect(stats.averageDurationMs).toBeGreaterThanOrEqual(25);
     expect(stats.saturatedWorkspaces).toBe(0);
   });
 
-  it("cascades queue history when its workspace is deleted", () => {
-    enqueue(WORKSPACE_A, randomUUID());
-    db.delete(workspaces).where(eq(workspaces.id, WORKSPACE_A)).run();
+  it("cascades queue history when its workspace is deleted", async () => {
+    await enqueue(WORKSPACE_A, randomUUID());
+    await db.delete(workspaces).where(eq(workspaces.id, WORKSPACE_A)).run();
     expect(
-      db
+      await db
         .select()
         .from(backgroundJobs)
         .where(and(eq(backgroundJobs.workspaceId, WORKSPACE_A)))

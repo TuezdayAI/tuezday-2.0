@@ -38,8 +38,8 @@ interface OutreachSignal {
   totals: { sequences: number; sent: number; replied: number; positive: number; meetings: number; won: number };
 }
 
-export function gatherOutreachSignal(db: Db, workspaceId: string): OutreachSignal {
-  const sequences = db
+export async function gatherOutreachSignal(db: Db, workspaceId: string): Promise<OutreachSignal> {
+  const sequences = await db
     .select({ id: outreachSequences.id, name: outreachSequences.name })
     .from(outreachSequences)
     .where(eq(outreachSequences.workspaceId, workspaceId))
@@ -47,7 +47,7 @@ export function gatherOutreachSignal(db: Db, workspaceId: string): OutreachSigna
   const lines: string[] = [];
   const totals = { sequences: 0, sent: 0, replied: 0, positive: 0, meetings: 0, won: 0 };
   for (const seq of sequences) {
-    const funnel = getSequenceFunnel(db, workspaceId, seq.id);
+    const funnel = await getSequenceFunnel(db, workspaceId, seq.id);
     if (!funnel || funnel.sent === 0) continue;
     totals.sequences += 1;
     totals.sent += funnel.sent;
@@ -84,13 +84,13 @@ export interface TrainingExample {
   createdAt: number;
 }
 
-export function listTrainingExamples(db: Db, workspaceId: string): TrainingExample[] {
-  const ratedGenerations = db
+export async function listTrainingExamples(db: Db, workspaceId: string): Promise<TrainingExample[]> {
+  const ratedGenerations = (await db
     .select()
     .from(generations)
     .where(and(eq(generations.workspaceId, workspaceId), isNotNull(generations.rating)))
     .orderBy(desc(generations.createdAt))
-    .all()
+    .all())
     // Generations submitted as drafts get their learning signal from the
     // draft decision instead — avoid double counting.
     .map((g) => ({
@@ -108,12 +108,12 @@ export function listTrainingExamples(db: Db, workspaceId: string): TrainingExamp
       createdAt: g.createdAt,
     }));
 
-  const decidedDrafts = db
+  const decidedDrafts = (await db
     .select()
     .from(drafts)
     .where(eq(drafts.workspaceId, workspaceId))
     .orderBy(desc(drafts.createdAt))
-    .all()
+    .all())
     .filter((d) => d.state === "approved" || d.state === "rejected")
     .map((d) => ({
       kind: "decision" as const,
@@ -140,8 +140,8 @@ export interface LearningStats {
   metricsCount: number;
 }
 
-export function learningStats(db: Db, workspaceId: string): LearningStats {
-  const examples = listTrainingExamples(db, workspaceId);
+export async function learningStats(db: Db, workspaceId: string): Promise<LearningStats> {
+  const examples = await listTrainingExamples(db, workspaceId);
   const ratings = { accepted: 0, needs_edit: 0, rejected: 0 } as Record<OutputRating, number>;
   const decisions = { approved: 0, rejected: 0 };
   let editedCount = 0;
@@ -150,11 +150,11 @@ export function learningStats(db: Db, workspaceId: string): LearningStats {
     if (e.kind === "decision" && e.decision) decisions[e.decision] += 1;
     if (e.wasEdited) editedCount += 1;
   }
-  const metricsCount = db
+  const metricsCount = (await db
     .select({ id: engagementMetrics.id })
     .from(engagementMetrics)
     .where(eq(engagementMetrics.workspaceId, workspaceId))
-    .all().length;
+    .all()).length;
   return { ratings, decisions, editedCount, metricsCount };
 }
 
@@ -166,7 +166,7 @@ function rowToMetric(row: EngagementMetricRow): EngagementMetric {
   return { ...row, channel: row.channel as Channel };
 }
 
-export function createMetric(db: Db, workspaceId: string, input: CreateMetricInput): EngagementMetric {
+export async function createMetric(db: Db, workspaceId: string, input: CreateMetricInput): Promise<EngagementMetric> {
   const now = Date.now();
   const row: EngagementMetricRow = {
     id: randomUUID(),
@@ -181,7 +181,7 @@ export function createMetric(db: Db, workspaceId: string, input: CreateMetricInp
     recordedAt: input.recordedAt ?? now,
     createdAt: now,
   };
-  db.insert(engagementMetrics).values(row).run();
+  await db.insert(engagementMetrics).values(row).run();
   // Sprint 55 dual-write: land the observed numbers in the unified fact table.
   // Subject is the channel — a manual reading is a channel-level observation
   // (the optional draft link stays on the legacy row, which is never dropped:
@@ -203,32 +203,32 @@ export function createMetric(db: Db, workspaceId: string, input: CreateMetricInp
       source: "manual" as const,
       capturedAt: row.recordedAt,
     }));
-  recordMetrics(db, workspaceId, factOf("channel", row.channel));
+  await recordMetrics(db, workspaceId, factOf("channel", row.channel));
   // When the reading's draft belongs to a campaign, ALSO record campaign-subject
   // rows — this is what lets campaign-scoped insights read the fact table
   // instead of joining the legacy store through drafts. The campaign is
   // resolved at write time: the observation was made while the draft belonged
   // to this campaign, and a later draft reassignment does not rewrite history.
   if (row.draftId) {
-    const draft = db
+    const draft = await db
       .select({ campaignId: drafts.campaignId })
       .from(drafts)
       .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, row.draftId)))
       .get();
     if (draft?.campaignId) {
-      recordMetrics(db, workspaceId, factOf("campaign", draft.campaignId));
+      await recordMetrics(db, workspaceId, factOf("campaign", draft.campaignId));
     }
   }
   return rowToMetric(row);
 }
 
-export function listMetrics(db: Db, workspaceId: string): EngagementMetric[] {
-  return db
+export async function listMetrics(db: Db, workspaceId: string): Promise<EngagementMetric[]> {
+  return (await db
     .select()
     .from(engagementMetrics)
     .where(eq(engagementMetrics.workspaceId, workspaceId))
     .orderBy(desc(engagementMetrics.recordedAt))
-    .all()
+    .all())
     .map(rowToMetric);
 }
 
@@ -243,22 +243,22 @@ function rowToSynthesis(row: NowSynthesisRow): NowSynthesis {
   return { ...row, status: row.status as SynthesisStatus };
 }
 
-export function listSyntheses(db: Db, workspaceId: string): NowSynthesis[] {
-  return db
+export async function listSyntheses(db: Db, workspaceId: string): Promise<NowSynthesis[]> {
+  return (await db
     .select()
     .from(nowSyntheses)
     .where(eq(nowSyntheses.workspaceId, workspaceId))
     .orderBy(desc(nowSyntheses.createdAt))
-    .all()
+    .all())
     .map(rowToSynthesis);
 }
 
-export function getSynthesis(
+export async function getSynthesis(
   db: Db,
   workspaceId: string,
   synthesisId: string,
-): NowSynthesis | undefined {
-  const row = db
+): Promise<NowSynthesis | undefined> {
+  const row = await db
     .select()
     .from(nowSyntheses)
     .where(and(eq(nowSyntheses.workspaceId, workspaceId), eq(nowSyntheses.id, synthesisId)))
@@ -293,14 +293,14 @@ export async function synthesizeNow(
   workspaceId: string,
   workspaceName: string,
 ): Promise<NowSynthesis> {
-  const stats = learningStats(db, workspaceId);
-  const examples = listTrainingExamples(db, workspaceId);
-  const metrics = listMetrics(db, workspaceId);
+  const stats = await learningStats(db, workspaceId);
+  const examples = await listTrainingExamples(db, workspaceId);
+  const metrics = await listMetrics(db, workspaceId);
   if (examples.length === 0 && metrics.length === 0) {
     throw new NothingToLearnError();
   }
 
-  const { docs } = getBrain(db, workspaceId);
+  const { docs } = await getBrain(db, workspaceId);
   const nowDoc = docs.find((d) => d.docType === "now")?.content.trim() ?? "";
 
   const exampleLines = examples.slice(0, MAX_EXAMPLES_IN_PROMPT).map((e) => {
@@ -318,7 +318,7 @@ export async function synthesizeNow(
 
   // Outreach outcomes (Sprint 50): positive-reply/meeting/won signal by sequence
   // + persona + step, so the synthesis can say which outreach actually converts.
-  const outreach = gatherOutreachSignal(db, workspaceId);
+  const outreach = await gatherOutreachSignal(db, workspaceId);
 
   // Sprint 68 (Move 5): the weekly synthesis changes job. The fast layer has
   // been learning rules from the founder's edits all week; this pass is where
@@ -326,7 +326,7 @@ export async function synthesizeNow(
   // founder-accepts gate as everything else. The set is computed here, before
   // the model runs, and recorded on the synthesis (D-68.7), so promotion never
   // depends on parsing ids back out of prose.
-  const promotable = listPromotableRules(db, workspaceId);
+  const promotable = await listPromotableRules(db, workspaceId);
   const promotableLines = promotable.map(
     (rule) =>
       `- ${rule.polarity === "avoid" ? "Avoid" : "Do"}: ${rule.rule} (observed in ${rule.observationCount} edits, applied ${rule.appliedCount} times)`,
@@ -367,7 +367,7 @@ export async function synthesizeNow(
     createdAt: Date.now(),
     decidedAt: null,
   };
-  db.insert(nowSyntheses).values(row).run();
+  await db.insert(nowSyntheses).values(row).run();
   return rowToSynthesis(row);
 }
 
@@ -393,40 +393,40 @@ export class SynthesisAlreadyDecidedError extends Error {
   }
 }
 
-export function acceptSynthesis(
+export async function acceptSynthesis(
   db: Db,
   workspaceId: string,
   synthesis: NowSynthesis,
   actor: BrainActor | null = null,
-): { synthesis: NowSynthesis; nowContent: string } {
+): Promise<{ synthesis: NowSynthesis; nowContent: string }> {
   if (synthesis.status !== "proposed") throw new SynthesisAlreadyDecidedError(synthesis.status);
 
-  const { docs } = getBrain(db, workspaceId);
+  const { docs } = await getBrain(db, workspaceId);
   const current = docs.find((d) => d.docType === "now")?.content ?? "";
   const date = new Date(synthesis.createdAt).toISOString().slice(0, 10);
   const block = `## Learnings (synthesized ${date})\n\n${synthesis.proposal}`;
   const updated = current.trim() ? `${current.trimEnd()}\n\n${block}` : block;
   // Through the standard brain update path: creates a version like any edit.
-  const doc = updateBrainDoc(db, workspaceId, "now", updated, actor);
+  const doc = await updateBrainDoc(db, workspaceId, "now", updated, actor);
 
   // Sprint 68: the founder just accepted the proposal that carries these rules
   // into the `now` doc, so they stop being fast-layer rules — the resolver
   // already reads the doc. This is the only place a rule becomes `promoted`,
   // and it sits behind the same gate it always did.
-  markRulesPromoted(db, promotableRuleIdsOf(synthesis));
+  await markRulesPromoted(db, promotableRuleIdsOf(synthesis));
 
   const decidedAt = Date.now();
-  db.update(nowSyntheses)
+  await db.update(nowSyntheses)
     .set({ status: "accepted", decidedAt })
     .where(eq(nowSyntheses.id, synthesis.id))
     .run();
   return { synthesis: { ...synthesis, status: "accepted", decidedAt }, nowContent: doc.content };
 }
 
-export function dismissSynthesis(db: Db, synthesis: NowSynthesis): NowSynthesis {
+export async function dismissSynthesis(db: Db, synthesis: NowSynthesis): Promise<NowSynthesis> {
   if (synthesis.status !== "proposed") throw new SynthesisAlreadyDecidedError(synthesis.status);
   const decidedAt = Date.now();
-  db.update(nowSyntheses)
+  await db.update(nowSyntheses)
     .set({ status: "dismissed", decidedAt })
     .where(eq(nowSyntheses.id, synthesis.id))
     .run();

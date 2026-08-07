@@ -68,22 +68,22 @@ function rowToConnection(row: ConnectionRow): Connection {
   };
 }
 
-export function listConnections(db: Db, workspaceId: string): Connection[] {
-  return db
+export async function listConnections(db: Db, workspaceId: string): Promise<Connection[]> {
+  return (await db
     .select()
     .from(connections)
     .where(eq(connections.workspaceId, workspaceId))
     .orderBy(desc(connections.createdAt))
-    .all()
+    .all())
     .map(rowToConnection);
 }
 
-export function getConnection(
+export async function getConnection(
   db: Db,
   workspaceId: string,
   connectionId: string,
-): Connection | undefined {
-  const row = db
+): Promise<Connection | undefined> {
+  const row = await db
     .select()
     .from(connections)
     .where(and(eq(connections.workspaceId, workspaceId), eq(connections.id, connectionId)))
@@ -91,15 +91,15 @@ export function getConnection(
   return row ? rowToConnection(row) : undefined;
 }
 
-export function updateConnection(
+export async function updateConnection(
   db: Db,
   workspaceId: string,
   connectionId: string,
   input: UpdateConnectionInput,
-): Connection | undefined {
-  const existing = getConnection(db, workspaceId, connectionId);
+): Promise<Connection | undefined> {
+  const existing = await getConnection(db, workspaceId, connectionId);
   if (!existing) return undefined;
-  db.update(connections)
+  await db.update(connections)
     .set({
       displayName: input.displayName,
       timezone: input.timezone,
@@ -107,23 +107,23 @@ export function updateConnection(
     })
     .where(and(eq(connections.workspaceId, workspaceId), eq(connections.id, connectionId)))
     .run();
-  return getConnection(db, workspaceId, connectionId);
+  return await getConnection(db, workspaceId, connectionId);
 }
 
 /** Save the per-account content profile (Sprint 44) — what this account posts about. */
-export function setConnectionContentProfile(
+export async function setConnectionContentProfile(
   db: Db,
   workspaceId: string,
   connectionId: string,
   profile: ConnectionContentProfile,
-): Connection | undefined {
-  const existing = getConnection(db, workspaceId, connectionId);
+): Promise<Connection | undefined> {
+  const existing = await getConnection(db, workspaceId, connectionId);
   if (!existing) return undefined;
-  db.update(connections)
+  await db.update(connections)
     .set({ contentProfileJson: JSON.stringify(profile), updatedAt: Date.now() })
     .where(and(eq(connections.workspaceId, workspaceId), eq(connections.id, connectionId)))
     .run();
-  return getConnection(db, workspaceId, connectionId);
+  return await getConnection(db, workspaceId, connectionId);
 }
 
 export function integrationKeyFor(provider: ConnectorProvider): string {
@@ -157,13 +157,13 @@ export function oauthAppCredentials(
  * Register a connection the OAuth popup created. Nango generated the
  * connection id; Tuezday stores one row per distinct Nango connection id.
  */
-export function registerOAuthConnection(
+export async function registerOAuthConnection(
   db: Db,
   workspaceId: string,
   provider: ConnectorProvider,
   nangoConnectionId: string,
-): Connection {
-  const existing = db
+): Promise<Connection> {
+  const existing = await db
     .select()
     .from(connections)
     .where(
@@ -176,7 +176,7 @@ export function registerOAuthConnection(
   const now = Date.now();
 
   if (existing) {
-    db.update(connections)
+    await db.update(connections)
       .set({
         nangoConnectionId,
         status: "connected",
@@ -186,7 +186,7 @@ export function registerOAuthConnection(
       })
       .where(and(eq(connections.workspaceId, workspaceId), eq(connections.id, existing.id)))
       .run();
-    return getConnection(db, workspaceId, existing.id)!;
+    return (await getConnection(db, workspaceId, existing.id))!;
   }
 
   const row: ConnectionRow = {
@@ -208,7 +208,7 @@ export function registerOAuthConnection(
     createdAt: now,
     updatedAt: now,
   };
-  db.insert(connections).values(row).run();
+  await db.insert(connections).values(row).run();
   return rowToConnection(row);
 }
 
@@ -243,7 +243,7 @@ export async function bindInstagramOAuthIdentity(
     !username
   ) {
     const now = Date.now();
-    db.update(connections)
+    await db.update(connections)
       .set({
         status: "error",
         lastError: "reconnect_required",
@@ -264,7 +264,7 @@ export async function bindInstagramOAuthIdentity(
   }
 
   const now = Date.now();
-  db.update(connections)
+  await db.update(connections)
     .set({
       configJson: JSON.stringify({
         ...connection.config,
@@ -287,7 +287,7 @@ export async function bindInstagramOAuthIdentity(
       ),
     )
     .run();
-  return getConnection(db, connection.workspaceId, connection.id)!;
+  return (await getConnection(db, connection.workspaceId, connection.id))!;
 }
 
 /**
@@ -349,7 +349,7 @@ export async function connectProvider(
     createdAt: now,
     updatedAt: now,
   };
-  db.insert(connections).values(row).run();
+  await db.insert(connections).values(row).run();
   return rowToConnection(row);
 }
 
@@ -398,7 +398,7 @@ export async function testConnection(
     result = { ok: false, detail: err instanceof Error ? err.message : String(err) };
   }
 
-  db.update(connections)
+  await db.update(connections)
     .set({
       status: result.ok ? "connected" : "error",
       lastError: result.ok ? null : result.detail.slice(0, 500),
@@ -421,7 +421,7 @@ export async function disconnectConnection(
   } catch {
     // The state row is ours; an unreachable fabric must not block disconnect.
   }
-  db.update(connections)
+  await db.update(connections)
     .set({ status: "disconnected", lastCheckedAt: Date.now() })
     .where(eq(connections.id, connection.id))
     .run();

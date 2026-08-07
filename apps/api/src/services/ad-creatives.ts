@@ -96,8 +96,8 @@ export function withViolations(draft: Draft): AdCreativeSetDraft {
 }
 
 /** Ad creative drafts grouped into variant sets (one set per generation). */
-export function listAdCreativeSets(db: Db, workspaceId: string): AdCreativeSet[] {
-  const rows = db
+export async function listAdCreativeSets(db: Db, workspaceId: string): Promise<AdCreativeSet[]> {
+  const rows = await db
     .select()
     .from(drafts)
     .where(
@@ -109,7 +109,7 @@ export function listAdCreativeSets(db: Db, workspaceId: string): AdCreativeSet[]
     .orderBy(asc(drafts.createdAt))
     .all();
 
-  const campaignById = new Map(listCampaigns(db, workspaceId).map((c) => [c.id, c]));
+  const campaignById = new Map((await listCampaigns(db, workspaceId)).map((c) => [c.id, c]));
   const metricsByCampaign = new Map<string, CampaignAdMetrics | null>();
   const sets = new Map<string, AdCreativeSet>();
 
@@ -122,7 +122,7 @@ export function listAdCreativeSets(db: Db, workspaceId: string): AdCreativeSet[]
       let adMetrics: CampaignAdMetrics | null = null;
       if (campaign) {
         if (!metricsByCampaign.has(campaign.id)) {
-          metricsByCampaign.set(campaign.id, getCampaignAdMetrics(db, campaign));
+          metricsByCampaign.set(campaign.id, await getCampaignAdMetrics(db, campaign));
         }
         adMetrics = metricsByCampaign.get(campaign.id) ?? null;
       }

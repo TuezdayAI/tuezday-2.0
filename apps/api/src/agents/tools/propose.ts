@@ -68,7 +68,7 @@ export const proposeDraftTool: Tool<DraftInput, unknown> = {
     "Submit written content to the founder's approval queue as a draft. Use this when you have written something worth a human reading; it never publishes or sends. Requires the finished content, the channel it is for, and a one-line rationale the founder will see.",
   input: draftInput,
   access: "propose",
-  run: (ctx, args) => propose(ctx, (service, origin) => service.proposeDraft(origin, args)),
+  run: async (ctx, args) => await propose(ctx, (service, origin) => service.proposeDraft(origin, args)),
 };
 
 const publicationInput = toolInputSchemas.propose_publication;
@@ -80,7 +80,7 @@ export const proposePublicationTool: Tool<PublicationInput, unknown> = {
     "Propose publishing an already-approved draft to its social account. The draft must have cleared the approval queue — unapproved content is refused. The workspace's action policy decides whether it posts or waits for a human to authorize it. Routing is resolved for you; pass a target only if asked to.",
   input: publicationInput,
   access: "propose",
-  run: (ctx, args) => propose(ctx, (service, origin) => service.proposePublication(origin, args)),
+  run: async (ctx, args) => await propose(ctx, (service, origin) => service.proposePublication(origin, args)),
 };
 
 const replyInput = toolInputSchemas.propose_reply;
@@ -92,7 +92,7 @@ export const proposeReplyTool: Tool<ReplyInput, unknown> = {
     "Propose posting the approved reply for one inbox item. The reply draft must already exist and be approved. The action policy decides whether it posts or waits for authorization.",
   input: replyInput,
   access: "propose",
-  run: (ctx, args) => propose(ctx, (service, origin) => service.proposeReply(origin, args)),
+  run: async (ctx, args) => await propose(ctx, (service, origin) => service.proposeReply(origin, args)),
 };
 
 const sequenceInput = toolInputSchemas.propose_sequence_step;
@@ -104,7 +104,7 @@ export const proposeSequenceStepTool: Tool<SequenceInput, unknown> = {
     "Propose sending one outbound sequence message that is already drafted and approved. Recipient safety, suppression and the verified sender are checked by the platform, not by you.",
   input: sequenceInput,
   access: "propose",
-  run: (ctx, args) => propose(ctx, (service, origin) => service.proposeSequenceStep(origin, args)),
+  run: async (ctx, args) => await propose(ctx, (service, origin) => service.proposeSequenceStep(origin, args)),
 };
 
 const adInput = toolInputSchemas.propose_ad_mutation;
@@ -116,7 +116,7 @@ export const proposeAdMutationTool: Tool<AdInput, unknown> = {
     "Propose changing a live ad launch: either its daily budget (dailyBudgetCents) or its targeting (countries and/or an age range) — exactly one of the two per call. Spend changes are governed by the workspace's action policy.",
   input: adInput,
   access: "propose",
-  run: (ctx, args) => propose(ctx, (service, origin) => service.proposeAdMutation(origin, args)),
+  run: async (ctx, args) => await propose(ctx, (service, origin) => service.proposeAdMutation(origin, args)),
 };
 
 const campaignInput = toolInputSchemas.propose_campaign;
@@ -137,5 +137,5 @@ export const proposeCampaignTool: Tool<CampaignInput, unknown> = {
     "Create a new campaign as a DRAFT for the founder to review and activate. Use this when the user wants a campaign that does not exist yet. It creates the campaign record only — nothing is generated, published, sent or automated, and the campaign stays inert until a human activates it. Give it a name and as much of the objective, KPI, timeframe, audience, pillars and channels as the conversation actually established; do not invent the rest.",
   input: campaignInput,
   access: "propose",
-  run: (ctx, args) => propose(ctx, (service, origin) => service.proposeCampaign(origin, args)),
+  run: async (ctx, args) => await propose(ctx, (service, origin) => service.proposeCampaign(origin, args)),
 };

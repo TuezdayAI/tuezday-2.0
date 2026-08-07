@@ -635,13 +635,13 @@ async function fetchConnectedProviderPage(
 ): Promise<ProviderPageResult> {
   switch (input.source.type) {
     case "x":
-      return fetchXPage(input);
+      return await fetchXPage(input);
     case "reddit":
-      return fetchRedditPage(input);
+      return await fetchRedditPage(input);
     case "linkedin":
-      return fetchLinkedInPage(input);
+      return await fetchLinkedInPage(input);
     case "instagram":
-      return fetchInstagramPage(input);
+      return await fetchInstagramPage(input);
     default:
       throw new Error(
         `${input.source.type} sources do not support connected fetching.`,

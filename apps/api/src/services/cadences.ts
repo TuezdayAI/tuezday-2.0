@@ -196,22 +196,22 @@ function rowToCadence(row: PostingCadenceRow): PostingCadence {
   };
 }
 
-export function listCadenceRows(db: Db, workspaceId: string): PostingCadence[] {
-  return db
+export async function listCadenceRows(db: Db, workspaceId: string): Promise<PostingCadence[]> {
+  return (await db
     .select()
     .from(postingCadences)
     .where(eq(postingCadences.workspaceId, workspaceId))
     .orderBy(asc(postingCadences.createdAt))
-    .all()
+    .all())
     .map(rowToCadence);
 }
 
-export function getCadence(
+export async function getCadence(
   db: Db,
   workspaceId: string,
   cadenceId: string,
-): PostingCadence | undefined {
-  const row = db
+): Promise<PostingCadence | undefined> {
+  const row = await db
     .select()
     .from(postingCadences)
     .where(and(eq(postingCadences.workspaceId, workspaceId), eq(postingCadences.id, cadenceId)))
@@ -219,11 +219,11 @@ export function getCadence(
   return row ? rowToCadence(row) : undefined;
 }
 
-export function createCadence(
+export async function createCadence(
   db: Db,
   workspaceId: string,
   input: CreatePostingCadenceInput & { connectionId: string },
-): PostingCadence {
+): Promise<PostingCadence> {
   const now = Date.now();
   const row: PostingCadenceRow = {
     id: randomUUID(),
@@ -241,17 +241,17 @@ export function createCadence(
     createdAt: now,
     updatedAt: now,
   };
-  db.insert(postingCadences).values(row).run();
+  await db.insert(postingCadences).values(row).run();
   return rowToCadence(row);
 }
 
-export function updateCadence(
+export async function updateCadence(
   db: Db,
   workspaceId: string,
   cadenceId: string,
   input: UpdatePostingCadenceInput,
-): PostingCadence | undefined {
-  const existing = getCadence(db, workspaceId, cadenceId);
+): Promise<PostingCadence | undefined> {
+  const existing = await getCadence(db, workspaceId, cadenceId);
   if (!existing) return undefined;
   const patch: Partial<PostingCadenceRow> = { updatedAt: Date.now() };
   if (input.name !== undefined) patch.name = input.name;
@@ -264,8 +264,8 @@ export function updateCadence(
   if (input.timeOfDay !== undefined) patch.timeOfDay = input.timeOfDay;
   if (input.timezone !== undefined) patch.timezone = input.timezone;
   if (input.status !== undefined) patch.status = input.status;
-  db.update(postingCadences).set(patch).where(eq(postingCadences.id, cadenceId)).run();
-  return getCadence(db, workspaceId, cadenceId);
+  await db.update(postingCadences).set(patch).where(eq(postingCadences.id, cadenceId)).run();
+  return await getCadence(db, workspaceId, cadenceId);
 }
 
 /**
@@ -273,18 +273,18 @@ export function updateCadence(
  * deleted cadence never fires a surprise post; published history is kept (its
  * cadence link is nulled).
  */
-export function deleteCadence(db: Db, workspaceId: string, cadenceId: string): boolean {
-  const existing = getCadence(db, workspaceId, cadenceId);
+export async function deleteCadence(db: Db, workspaceId: string, cadenceId: string): Promise<boolean> {
+  const existing = await getCadence(db, workspaceId, cadenceId);
   if (!existing) return false;
-  db.delete(publications)
+  await db.delete(publications)
     .where(and(eq(publications.cadenceId, cadenceId), eq(publications.status, "scheduled")))
     .run();
-  db.update(publications)
+  await db.update(publications)
     .set({ cadenceId: null })
     .where(eq(publications.cadenceId, cadenceId))
     .run();
-  cancelPendingActionsForCadence(db, workspaceId, cadenceId, CADENCE_DELETED_REASON);
-  db.delete(postingCadences)
+  await cancelPendingActionsForCadence(db, workspaceId, cadenceId, CADENCE_DELETED_REASON);
+  await db.delete(postingCadences)
     .where(and(eq(postingCadences.workspaceId, workspaceId), eq(postingCadences.id, cadenceId)))
     .run();
   return true;
@@ -295,12 +295,12 @@ export function deleteCadence(db: Db, workspaceId: string, cadenceId: string): b
 // ---------------------------------------------------------------------------
 
 /** Every publish action this cadence has created, in any status. */
-function cadenceActions(db: Db, workspaceId: string, cadenceId: string) {
-  return db
+async function cadenceActions(db: Db, workspaceId: string, cadenceId: string) {
+  return (await db
     .select()
     .from(externalActions)
     .where(and(eq(externalActions.workspaceId, workspaceId), eq(externalActions.kind, "publish")))
-    .all()
+    .all())
     .map((row) => ({
       action: rowToExternalAction(row),
       payload: JSON.parse(row.payloadJson) as { cadenceId?: string | null; draftId?: string },
@@ -309,8 +309,8 @@ function cadenceActions(db: Db, workspaceId: string, cadenceId: string) {
 }
 
 /** This cadence's actions that are still on their way out of the building. */
-function pendingCadenceActions(db: Db, workspaceId: string, cadenceId: string) {
-  return cadenceActions(db, workspaceId, cadenceId).filter(
+async function pendingCadenceActions(db: Db, workspaceId: string, cadenceId: string) {
+  return (await cadenceActions(db, workspaceId, cadenceId)).filter(
     ({ action }) => action.status !== "cancelled" && action.status !== "stale",
   );
 }
@@ -333,17 +333,17 @@ function pendingCadenceActions(db: Db, workspaceId: string, cadenceId: string) {
  * eligible again once the stop is lifted. `stale` actions are excluded for
  * their own reason — superseded by a `repropose`, not refused.
  */
-function slottedDraftIds(db: Db, workspaceId: string, cadenceId: string): Set<string> {
+async function slottedDraftIds(db: Db, workspaceId: string, cadenceId: string): Promise<Set<string>> {
   const ids = new Set(
-    db
+    (await db
       .select({ draftId: publications.draftId })
       .from(publications)
       .where(and(eq(publications.workspaceId, workspaceId), eq(publications.cadenceId, cadenceId)))
-      .all()
+      .all())
       .map((r) => r.draftId),
   );
-  const actions = cadenceActions(db, workspaceId, cadenceId);
-  const humanRefused = humanRefusedActionIds(
+  const actions = await cadenceActions(db, workspaceId, cadenceId);
+  const humanRefused = await humanRefusedActionIds(
     db,
     workspaceId,
     actions.filter(({ action }) => action.status === "cancelled").map(({ action }) => action.id),
@@ -364,26 +364,26 @@ function slottedDraftIds(db: Db, workspaceId: string, cadenceId: string): Set<st
  * approved draft may take the slot. The withdrawn draft cannot come back for
  * it, because it stays in `slottedDraftIds`.
  */
-function takenSlots(db: Db, workspaceId: string, cadenceId: string): Set<number> {
+async function takenSlots(db: Db, workspaceId: string, cadenceId: string): Promise<Set<number>> {
   const slots = new Set(
-    db
+    (await db
       .select({ at: publications.scheduledFor })
       .from(publications)
       .where(and(eq(publications.workspaceId, workspaceId), eq(publications.cadenceId, cadenceId)))
-      .all()
+      .all())
       .map((r) => r.at),
   );
-  for (const { action } of pendingCadenceActions(db, workspaceId, cadenceId)) {
+  for (const { action } of await pendingCadenceActions(db, workspaceId, cadenceId)) {
     if (action.requestedFor !== null) slots.add(action.requestedFor);
   }
   return slots;
 }
 
 /** Approved drafts matching the cadence and not yet slotted, oldest-approved first. */
-export function eligibleDrafts(db: Db, workspaceId: string, cadence: PostingCadence) {
+export async function eligibleDrafts(db: Db, workspaceId: string, cadence: PostingCadence) {
   if (!cadence.campaignId) return [];
-  const slotted = slottedDraftIds(db, workspaceId, cadence.id);
-  return listDrafts(db, workspaceId, "approved", cadence.campaignId)
+  const slotted = await slottedDraftIds(db, workspaceId, cadence.id);
+  return (await listDrafts(db, workspaceId, "approved", cadence.campaignId))
     .filter((d) => d.channel === cadence.channel)
     .filter((d) => !cadence.personaId || d.personaId === cadence.personaId)
     .filter((d) => !slotted.has(d.id))
@@ -410,19 +410,19 @@ export async function fillCadence(
   nowMs: number,
 ): Promise<FillResult> {
   if (cadence.status !== "active" || !cadence.campaignId) return { filled: 0, issues: [] };
-  const connection = getConnection(db, workspaceId, cadence.connectionId);
+  const connection = await getConnection(db, workspaceId, cadence.connectionId);
   if (!connection || connection.status !== "connected") return { filled: 0, issues: [] };
 
   // scheduled_auto cadences post without a human gate, so they run under the
   // social-automation guardrails. manual/human_in_the_loop cadences only ever
   // hold human-approved drafts, so they fill exactly as before (no guardrail).
-  const campaign = getCampaign(db, workspaceId, cadence.campaignId);
+  const campaign = await getCampaign(db, workspaceId, cadence.campaignId);
   const isAuto = campaign?.automationMode === "scheduled_auto";
-  const settings = isAuto ? getSocialAutomationSettings(db, workspaceId) : null;
+  const settings = isAuto ? await getSocialAutomationSettings(db, workspaceId) : null;
   if (isAuto && settings!.killSwitch) {
     // The kill switch is a hard stop: slot nothing and clear this cadence's
     // pending auto-posts so flipping it stops the queue.
-    cancelScheduledPublicationsForCadence(
+    await cancelScheduledPublicationsForCadence(
       db,
       workspaceId,
       cadence.id,
@@ -431,7 +431,7 @@ export async function fillCadence(
     return { filled: 0, issues: [] };
   }
 
-  const taken = takenSlots(db, workspaceId, cadence.id);
+  const taken = await takenSlots(db, workspaceId, cadence.id);
   const detailed = slotsBetweenDetailed(
     cadence,
     nowMs,
@@ -447,7 +447,7 @@ export async function fillCadence(
   const openSlots = detailed.slots.filter((slot) => !taken.has(slot));
   if (openSlots.length === 0) return { filled: 0, issues };
 
-  const queue = eligibleDrafts(db, workspaceId, cadence);
+  const queue = await eligibleDrafts(db, workspaceId, cadence);
   let qi = 0;
   let filled = 0;
   for (const slot of openSlots) {
@@ -455,7 +455,7 @@ export async function fillCadence(
     // Re-check per slot so caps account for posts created earlier in this run;
     // a capped day is skipped while a later, less-busy day can still fill.
     if (isAuto) {
-      const check = checkPostGuardrails(db, settings!, {
+      const check = await checkPostGuardrails(db, settings!, {
         campaign: campaign!,
         connectionId: connection.id,
         slotMs: slot,
@@ -465,7 +465,7 @@ export async function fillCadence(
     while (qi < queue.length) {
       const draft = queue[qi++]!;
       try {
-        const command = preparePublicationAction(
+        const command = await preparePublicationAction(
           db,
           workspaceId,
           draft.id,
@@ -506,13 +506,13 @@ export async function fillCadence(
 
 /** Delete a cadence's not-yet-published (`scheduled`) publications — used to
  * clear pending auto-posts when the kill switch goes on. Published history stays. */
-function cancelScheduledPublicationsForCadence(
+async function cancelScheduledPublicationsForCadence(
   db: Db,
   workspaceId: string,
   cadenceId: string,
   reason: string,
-): void {
-  db.delete(publications)
+): Promise<void> {
+  await db.delete(publications)
     .where(
       and(
         eq(publications.workspaceId, workspaceId),
@@ -521,7 +521,7 @@ function cancelScheduledPublicationsForCadence(
       ),
     )
     .run();
-  cancelPendingActionsForCadence(db, workspaceId, cadenceId, reason);
+  await cancelPendingActionsForCadence(db, workspaceId, cadenceId, reason);
 }
 
 /**
@@ -534,20 +534,20 @@ function cancelScheduledPublicationsForCadence(
  * later fill that this stop was not a founder's "no" — the kill switch is
  * reversible and a withdrawal is not.
  */
-function cancelPendingActionsForCadence(
+async function cancelPendingActionsForCadence(
   db: Db,
   workspaceId: string,
   cadenceId: string,
   reason: string,
-): void {
-  for (const { action } of pendingCadenceActions(db, workspaceId, cadenceId)) {
+): Promise<void> {
+  for (const { action } of await pendingCadenceActions(db, workspaceId, cadenceId)) {
     if (!canTransitionExternalAction(action.status, "cancelled")) continue;
     // These two helpers take `Db`, so they run on the connection rather than on
     // the `tx` handle — same connection, so they are inside this transaction and
     // roll back together (verified).
-    db.transaction(() => {
-      insertExternalActionDecision(db, action, "deny", SYSTEM_ACTOR, reason);
-      transitionExternalAction(db, workspaceId, action.id, "cancelled", {
+    await db.transaction(async () => {
+      await insertExternalActionDecision(db, action, "deny", SYSTEM_ACTOR, reason);
+      await transitionExternalAction(db, workspaceId, action.id, "cancelled", {
         completedAt: Date.now(),
       });
     });
@@ -568,7 +568,7 @@ export async function fillActiveCadences(
   nowMs: number,
 ): Promise<CadenceFillRun[]> {
   const results: CadenceFillRun[] = [];
-  for (const cadence of listCadenceRows(db, workspaceId)) {
+  for (const cadence of await listCadenceRows(db, workspaceId)) {
     if (cadence.status !== "active") continue;
     const result = await fillCadence(db, runtime, workspaceId, cadence, nowMs);
     results.push({ cadenceId: cadence.id, ...result });
@@ -585,18 +585,18 @@ export interface CadenceSummary extends PostingCadence {
   nextSlotAt: number | null;
 }
 
-export function listCadences(db: Db, workspaceId: string, nowMs: number): CadenceSummary[] {
-  return listCadenceRows(db, workspaceId).map((cadence) => {
-    const upcoming =
-      cadence.status === "active"
-        ? slotsBetween(cadence, nowMs, nowMs + CADENCE_HORIZON_DAYS * DAY_MS)
-        : [];
-    return {
-      ...cadence,
-      queuedCount: eligibleDrafts(db, workspaceId, cadence).length,
-      nextSlotAt: upcoming[0] ?? null,
-    };
-  });
+export async function listCadences(db: Db, workspaceId: string, nowMs: number): Promise<CadenceSummary[]> {
+  return await Promise.all((await listCadenceRows(db, workspaceId)).map(async (cadence) => {
+      const upcoming =
+        cadence.status === "active"
+          ? slotsBetween(cadence, nowMs, nowMs + CADENCE_HORIZON_DAYS * DAY_MS)
+          : [];
+      return {
+        ...cadence,
+        queuedCount: (await eligibleDrafts(db, workspaceId, cadence)).length,
+        nextSlotAt: upcoming[0] ?? null,
+      };
+    }));
 }
 
 export interface CadenceDetail extends PostingCadence {
@@ -605,12 +605,12 @@ export interface CadenceDetail extends PostingCadence {
   publications: Publication[];
 }
 
-export function getCadenceDetail(
+export async function getCadenceDetail(
   db: Db,
   workspaceId: string,
   cadence: PostingCadence,
   nowMs: number,
-): CadenceDetail {
+): Promise<CadenceDetail> {
   const upcomingSlots = slotsBetween(
     cadence,
     nowMs,
@@ -618,8 +618,8 @@ export function getCadenceDetail(
   ).slice(0, 20);
   return {
     ...cadence,
-    queuedCount: eligibleDrafts(db, workspaceId, cadence).length,
+    queuedCount: (await eligibleDrafts(db, workspaceId, cadence)).length,
     upcomingSlots,
-    publications: listCadencePublications(db, workspaceId, cadence.id),
+    publications: await listCadencePublications(db, workspaceId, cadence.id),
   };
 }

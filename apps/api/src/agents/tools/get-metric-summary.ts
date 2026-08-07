@@ -20,7 +20,7 @@ export const getMetricSummaryTool: Tool<Input, unknown> = {
   input,
   access: "read",
   async run(ctx, { subjectType, subjectId, metricKeys, window, sinceDays }) {
-    const summary = summarizeMetrics(ctx.db, ctx.workspaceId, {
+    const summary = await summarizeMetrics(ctx.db, ctx.workspaceId, {
       subjectType,
       ...(subjectId ? { subjectId } : {}),
       ...(metricKeys ? { metricKeys } : {}),

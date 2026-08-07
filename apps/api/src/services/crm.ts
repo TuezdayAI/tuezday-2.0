@@ -22,12 +22,12 @@ export interface CrmContactWithLead extends CrmContact {
  * Mirror rows with their linked lead. By default only active contacts;
  * `discarded: true` returns the tombstoned ones (for the restore UI).
  */
-export function listCrmContacts(
+export async function listCrmContacts(
   db: Db,
   workspaceId: string,
   opts: { discarded?: boolean } = {},
-): CrmContactWithLead[] {
-  const rows = db
+): Promise<CrmContactWithLead[]> {
+  const rows = await db
     .select()
     .from(crmContacts)
     .where(
@@ -38,7 +38,7 @@ export function listCrmContacts(
     )
     .orderBy(desc(crmContacts.lastSyncedAt), desc(crmContacts.createdAt))
     .all();
-  const leadById = new Map(listLeads(db, workspaceId).map((l) => [l.id, l]));
+  const leadById = new Map((await listLeads(db, workspaceId)).map((l) => [l.id, l]));
   return rows.map((row) => {
     const lead = row.leadId ? leadById.get(row.leadId) : undefined;
     return { ...rowToCrmContact(row), lead: lead ? { id: lead.id, name: lead.name } : null };
@@ -46,8 +46,8 @@ export function listCrmContacts(
 }
 
 /** Soft-delete a contact locally (tombstone). Returns false if no row matched. */
-export function discardCrmContact(db: Db, workspaceId: string, contactId: string): boolean {
-  const res = db
+export async function discardCrmContact(db: Db, workspaceId: string, contactId: string): Promise<boolean> {
+  const res = await db
     .update(crmContacts)
     .set({ discardedAt: Date.now() })
     .where(and(eq(crmContacts.workspaceId, workspaceId), eq(crmContacts.id, contactId)))
@@ -56,8 +56,8 @@ export function discardCrmContact(db: Db, workspaceId: string, contactId: string
 }
 
 /** Clear a contact's tombstone so the next sync refreshes it again. */
-export function restoreCrmContact(db: Db, workspaceId: string, contactId: string): boolean {
-  const res = db
+export async function restoreCrmContact(db: Db, workspaceId: string, contactId: string): Promise<boolean> {
+  const res = await db
     .update(crmContacts)
     .set({ discardedAt: null })
     .where(and(eq(crmContacts.workspaceId, workspaceId), eq(crmContacts.id, contactId)))
@@ -65,12 +65,12 @@ export function restoreCrmContact(db: Db, workspaceId: string, contactId: string
   return res.changes > 0;
 }
 
-export function getCrmContact(
+export async function getCrmContact(
   db: Db,
   workspaceId: string,
   crmContactId: string,
-): CrmContact | undefined {
-  const row = db
+): Promise<CrmContact | undefined> {
+  const row = await db
     .select()
     .from(crmContacts)
     .where(and(eq(crmContacts.workspaceId, workspaceId), eq(crmContacts.id, crmContactId)))
@@ -78,13 +78,13 @@ export function getCrmContact(
   return row ? rowToCrmContact(row) : undefined;
 }
 
-export function getCrmContactByLead(
+export async function getCrmContactByLead(
   db: Db,
   workspaceId: string,
   leadId: string,
   connectionId?: string,
-): CrmContact | undefined {
-  const row = db
+): Promise<CrmContact | undefined> {
+  const row = await db
     .select()
     .from(crmContacts)
     .where(
@@ -120,7 +120,7 @@ export async function syncCrmContacts(
   filter?: CrmSyncFilter,
 ): Promise<CrmSyncResult> {
   const { contacts, truncated } = await adapter.listContacts(filter);
-  const existing = db
+  const existing = await db
     .select()
     .from(crmContacts)
     .where(and(eq(crmContacts.workspaceId, workspaceId), eq(crmContacts.connectionId, connectionId)))
@@ -135,7 +135,7 @@ export async function syncCrmContacts(
     // A discarded contact is a tombstone — never resurrect or refresh it.
     if (row?.discardedAt != null) continue;
     if (!row) {
-      db.insert(crmContacts)
+      await db.insert(crmContacts)
         .values({
           id: randomUUID(),
           workspaceId,
@@ -158,7 +158,7 @@ export async function syncCrmContacts(
       row.email !== contact.email ||
       row.company !== contact.company ||
       row.role !== contact.role;
-    db.update(crmContacts)
+    await db.update(crmContacts)
       .set({
         name: contact.name,
         email: contact.email,
@@ -181,21 +181,21 @@ export type ImportContactResult =
  * Turn a synced CRM contact into a Tuezday lead. An existing lead with the
  * same email (case-insensitive) is linked instead of duplicated.
  */
-export function importCrmContactAsLead(
+export async function importCrmContactAsLead(
   db: Db,
   workspaceId: string,
   contact: CrmContact,
   providerLabel: string,
-): ImportContactResult {
+): Promise<ImportContactResult> {
   if (contact.leadId) return { ok: false, error: "already_linked" };
   if (!contact.email) return { ok: false, error: "contact_has_no_email" };
 
-  const existing = listLeads(db, workspaceId).find(
+  const existing = (await listLeads(db, workspaceId)).find(
     (l) => l.email.toLowerCase() === contact.email.toLowerCase(),
   );
   const lead =
     existing ??
-    createLead(db, workspaceId, {
+    await createLead(db, workspaceId, {
       name: contact.name || contact.email,
       email: contact.email,
       company: contact.company,
@@ -204,7 +204,7 @@ export function importCrmContactAsLead(
       xHandle: "",
     });
 
-  db.update(crmContacts).set({ leadId: lead.id }).where(eq(crmContacts.id, contact.id)).run();
+  await db.update(crmContacts).set({ leadId: lead.id }).where(eq(crmContacts.id, contact.id)).run();
   return { ok: true, lead, linkedExisting: Boolean(existing) };
 }
 
@@ -239,13 +239,13 @@ export async function pushLeadToCrm(
     lastSyncedAt: now,
     createdAt: now,
   };
-  db.insert(crmContacts).values(row).run();
+  await db.insert(crmContacts).values(row).run();
   return rowToCrmContact(row);
 }
 
 /** The stored sync filter for a connection, or an empty filter (no scoping). */
-export function getCrmSyncFilter(db: Db, connectionId: string): CrmSyncFilter {
-  const row = db
+export async function getCrmSyncFilter(db: Db, connectionId: string): Promise<CrmSyncFilter> {
+  const row = await db
     .select()
     .from(crmSyncSettings)
     .where(eq(crmSyncSettings.connectionId, connectionId))
@@ -256,15 +256,15 @@ export function getCrmSyncFilter(db: Db, connectionId: string): CrmSyncFilter {
 }
 
 /** Upsert the sync filter for a connection. */
-export function setCrmSyncFilter(
+export async function setCrmSyncFilter(
   db: Db,
   workspaceId: string,
   connectionId: string,
   filter: CrmSyncFilter,
-): CrmSyncFilter {
+): Promise<CrmSyncFilter> {
   const now = Date.now();
   const filterJson = JSON.stringify(filter);
-  db.insert(crmSyncSettings)
+  await db.insert(crmSyncSettings)
     .values({ connectionId, workspaceId, filterJson, updatedAt: now })
     .onConflictDoUpdate({ target: crmSyncSettings.connectionId, set: { filterJson, updatedAt: now } })
     .run();
@@ -287,9 +287,9 @@ export async function logPositiveReplyTask(
   snippet: string,
 ): Promise<boolean> {
   try {
-    const contact = getCrmContactByLead(db, workspaceId, leadId);
+    const contact = await getCrmContactByLead(db, workspaceId, leadId);
     if (!contact) return false;
-    const connection = getConnection(db, workspaceId, contact.connectionId);
+    const connection = await getConnection(db, workspaceId, contact.connectionId);
     if (!connection || connection.status !== "connected") return false;
     const provider = providerByKey(connection.providerKey);
     if (!provider?.categories?.includes("crm")) return false;

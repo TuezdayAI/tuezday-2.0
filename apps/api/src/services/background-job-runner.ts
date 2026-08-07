@@ -75,22 +75,22 @@ function mergeSignals(
   };
 }
 
-function transitionOutcome(
+async function transitionOutcome(
   deps: BackgroundJobRunnerDependencies,
   claim: BackgroundJobClaim,
   outcome: BackgroundJobOutcome,
-): ExecutionResult {
+): Promise<ExecutionResult> {
   if (outcome.status === "complete") {
-    return completeBackgroundJob(deps.db, claim, outcome.result)
+    return await completeBackgroundJob(deps.db, claim, outcome.result)
       ? { ...EMPTY_EXECUTION_RESULT, succeeded: 1 }
       : { ...EMPTY_EXECUTION_RESULT, lost: 1 };
   }
   if (outcome.status === "dead_letter") {
-    return deadLetterBackgroundJob(deps.db, claim, outcome.error)
+    return await deadLetterBackgroundJob(deps.db, claim, outcome.error)
       ? { ...EMPTY_EXECUTION_RESULT, deadLettered: 1 }
       : { ...EMPTY_EXECUTION_RESULT, lost: 1 };
   }
-  const row = retryBackgroundJob(deps.db, claim, outcome.error, {
+  const row = await retryBackgroundJob(deps.db, claim, outcome.error, {
     baseBackoffMs: deps.policy.baseBackoffMs,
     maxBackoffMs: deps.policy.maxBackoffMs,
     availableAt: outcome.availableAt,
@@ -110,7 +110,7 @@ async function executeClaim(
   try {
     payload = backgroundJobPayloadSchema.parse(JSON.parse(claim.payloadJson));
   } catch (error) {
-    return deadLetterBackgroundJob(deps.db, claim, error)
+    return await deadLetterBackgroundJob(deps.db, claim, error)
       ? { ...EMPTY_EXECUTION_RESULT, deadLettered: 1 }
       : { ...EMPTY_EXECUTION_RESULT, lost: 1 };
   }
@@ -118,9 +118,9 @@ async function executeClaim(
   const leaseLost = new AbortController();
   const combined = mergeSignals(deps.shutdownSignal, leaseLost.signal);
   let stopped = false;
-  const heartbeat = (): boolean => {
+  const heartbeat = async (): Promise<boolean> => {
     if (stopped || combined.signal.aborted) return false;
-    const renewed = heartbeatBackgroundJob(deps.db, claim, deps.policy.leaseMs);
+    const renewed = await heartbeatBackgroundJob(deps.db, claim, deps.policy.leaseMs);
     if (!renewed) {
       leaseLost.abort(new Error("background_job_lease_lost"));
       return false;
@@ -143,12 +143,12 @@ async function executeClaim(
     if (combined.signal.aborted) {
       return { ...EMPTY_EXECUTION_RESULT, lost: 1 };
     }
-    return transitionOutcome(deps, claim, outcome);
+    return await transitionOutcome(deps, claim, outcome);
   } catch (error) {
     if (combined.signal.aborted) {
       return { ...EMPTY_EXECUTION_RESULT, lost: 1 };
     }
-    return transitionOutcome(deps, claim, {
+    return await transitionOutcome(deps, claim, {
       status: "retry",
       error: error instanceof Error ? error.message : String(error),
     });
@@ -171,13 +171,13 @@ export async function runBackgroundJobTick(
       heartbeatMs: deps.policy.heartbeatMs,
     },
     async () => {
-      const reconciled = reconcileBackgroundSchedules(deps.db, deps.policy);
-      const admission = admitDueBackgroundSchedules(
+      const reconciled = await reconcileBackgroundSchedules(deps.db, deps.policy);
+      const admission = await admitDueBackgroundSchedules(
         deps.db,
         undefined,
         deps.policy.maxAttempts,
       );
-      const claims = claimBackgroundJobs(deps.db, {
+      const claims = await claimBackgroundJobs(deps.db, {
         owner: `${deps.instanceId}:background-job:${randomUUID()}`,
         leaseMs: deps.policy.leaseMs,
         limit: deps.policy.batchSize,
@@ -198,7 +198,7 @@ export async function runBackgroundJobTick(
   }
 
   const executions = await Promise.all(
-    dispatch.value.claims.map((claim) => executeClaim(deps, claim)),
+    dispatch.value.claims.map(async (claim) => executeClaim(deps, claim)),
   );
   const totals = executions.reduce<ExecutionResult>(
     (sum, result) => ({

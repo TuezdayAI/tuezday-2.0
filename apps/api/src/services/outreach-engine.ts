@@ -136,21 +136,21 @@ export function isWithinSendingWindow(window: MailboxSendingWindow, nowMs: numbe
 }
 
 /** A pooled mailbox can send now if connected, within its window, and under cap. */
-function mailboxSendableNow(db: Db, workspaceId: string, mailboxId: string, nowMs: number): boolean {
-  const mailbox = getMailbox(db, workspaceId, mailboxId);
+async function mailboxSendableNow(db: Db, workspaceId: string, mailboxId: string, nowMs: number): Promise<boolean> {
+  const mailbox = await getMailbox(db, workspaceId, mailboxId);
   if (!mailbox || mailbox.status !== "connected") return false;
   if (!isWithinSendingWindow(mailbox.sendingWindow, nowMs)) return false;
-  return mailboxDailySendCount(db, workspaceId, mailboxId, nowMs) < mailbox.dailyCap;
+  return await mailboxDailySendCount(db, workspaceId, mailboxId, nowMs) < mailbox.dailyCap;
 }
 
 /** Pick the pooled mailbox with the fewest sends today (spreads reputation). */
-function leastLoadedMailbox(db: Db, workspaceId: string, sequenceId: string, nowMs: number): string | null {
-  const pool = connectedPoolMailboxIds(db, workspaceId, sequenceId);
+async function leastLoadedMailbox(db: Db, workspaceId: string, sequenceId: string, nowMs: number): Promise<string | null> {
+  const pool = await connectedPoolMailboxIds(db, workspaceId, sequenceId);
   if (pool.length === 0) return null;
   let best = pool[0]!;
-  let bestLoad = mailboxDailySendCount(db, workspaceId, best, nowMs);
+  let bestLoad = await mailboxDailySendCount(db, workspaceId, best, nowMs);
   for (const id of pool.slice(1)) {
-    const load = mailboxDailySendCount(db, workspaceId, id, nowMs);
+    const load = await mailboxDailySendCount(db, workspaceId, id, nowMs);
     if (load < bestLoad) {
       best = id;
       bestLoad = load;
@@ -160,13 +160,13 @@ function leastLoadedMailbox(db: Db, workspaceId: string, sequenceId: string, now
 }
 
 /** An inbound email reply from this recipient since `sinceMs` (S47 email inbox). */
-export function hasInboundEmailReply(
+export async function hasInboundEmailReply(
   db: Db,
   workspaceId: string,
   recipientEmail: string,
   sinceMs: number,
-): boolean {
-  return newestInboundEmailReply(db, workspaceId, recipientEmail, sinceMs) !== null;
+): Promise<boolean> {
+  return await newestInboundEmailReply(db, workspaceId, recipientEmail, sinceMs) !== null;
 }
 
 export interface InboundReplyHit {
@@ -182,14 +182,14 @@ export interface InboundReplyHit {
  * its classification label (Sprint 49) so the engine can act per-label rather
  * than treating every reply as a blunt stop.
  */
-export function newestInboundEmailReply(
+export async function newestInboundEmailReply(
   db: Db,
   workspaceId: string,
   recipientEmail: string,
   sinceMs: number,
-): InboundReplyHit | null {
+): Promise<InboundReplyHit | null> {
   const target = normalize(recipientEmail);
-  const rows = db
+  const rows = (await db
     .select({
       id: inboxItems.id,
       author: inboxItems.authorHandle,
@@ -206,7 +206,7 @@ export function newestInboundEmailReply(
         gte(inboxItems.externalCreatedAt, sinceMs + 1),
       ),
     )
-    .all()
+    .all())
     .filter((r) => normalize(r.author) === target)
     .sort((a, b) => b.at - a.at);
   const newest = rows[0];
@@ -262,7 +262,7 @@ async function handleReplyOutcome(
 
   if (label === "out_of_office") {
     const resumeAt = parseOooResumeAt(reply.content, nowMs);
-    updateEnrollment(ctx.db, enrollment.id, {
+    await updateEnrollment(ctx.db, enrollment.id, {
       nextDueAt: resumeAt,
       lastReplyHandledAt: reply.externalCreatedAt,
     });
@@ -270,8 +270,8 @@ async function handleReplyOutcome(
   }
 
   if (label === "unsubscribe_request") {
-    unsubscribeEmailRecipient(ctx.db, seq.workspaceId, email);
-    updateEnrollment(ctx.db, enrollment.id, {
+    await unsubscribeEmailRecipient(ctx.db, seq.workspaceId, email);
+    await updateEnrollment(ctx.db, enrollment.id, {
       status: "stopped",
       stoppedReason: "unsubscribed",
       nextDueAt: null,
@@ -283,12 +283,12 @@ async function handleReplyOutcome(
 
   if (label === "bounce") {
     // A bounced address is invalid — suppress it, mirroring the Resend rule.
-    ctx.db
+    await ctx.db
       .insert(emailSuppressions)
       .values({ id: randomUUID(), workspaceId: seq.workspaceId, normalizedEmail: normalize(email), reason: "bounce", createdAt: nowMs })
       .onConflictDoNothing()
       .run();
-    updateEnrollment(ctx.db, enrollment.id, {
+    await updateEnrollment(ctx.db, enrollment.id, {
       status: "failed",
       stoppedReason: "bounced",
       nextDueAt: null,
@@ -299,7 +299,7 @@ async function handleReplyOutcome(
   }
 
   // positive, not_interested, other, or unclassified → stop the chain.
-  updateEnrollment(ctx.db, enrollment.id, {
+  await updateEnrollment(ctx.db, enrollment.id, {
     status: "replied",
     stoppedReason: "replied",
     nextDueAt: null,
@@ -323,8 +323,8 @@ async function handleReplyOutcome(
   return "stop";
 }
 
-function isSuppressed(db: Db, workspaceId: string, email: string): boolean {
-  return !!db
+async function isSuppressed(db: Db, workspaceId: string, email: string): Promise<boolean> {
+  return !!await db
     .select({ id: emailSuppressions.id })
     .from(emailSuppressions)
     .where(
@@ -336,35 +336,35 @@ function isSuppressed(db: Db, workspaceId: string, email: string): boolean {
     .get();
 }
 
-function draftRow(db: Db, draftId: string): DraftRow | undefined {
-  return db.select().from(drafts).where(eq(drafts.id, draftId)).get();
+async function draftRow(db: Db, draftId: string): Promise<DraftRow | undefined> {
+  return await db.select().from(drafts).where(eq(drafts.id, draftId)).get();
 }
 
-function messageRow(db: Db, messageId: string): OutreachMessageRow | undefined {
-  return db.select().from(outreachMessages).where(eq(outreachMessages.id, messageId)).get();
+async function messageRow(db: Db, messageId: string): Promise<OutreachMessageRow | undefined> {
+  return await db.select().from(outreachMessages).where(eq(outreachMessages.id, messageId)).get();
 }
 
-function currentMessage(db: Db, enrollmentId: string, stepNumber: number): OutreachMessageRow | undefined {
-  return db
+async function currentMessage(db: Db, enrollmentId: string, stepNumber: number): Promise<OutreachMessageRow | undefined> {
+  return await db
     .select()
     .from(outreachMessages)
     .where(and(eq(outreachMessages.enrollmentId, enrollmentId), eq(outreachMessages.stepNumber, stepNumber)))
     .get();
 }
 
-function priorBodies(db: Db, enrollmentId: string, beforeStep: number): string[] {
-  return db
+async function priorBodies(db: Db, enrollmentId: string, beforeStep: number): Promise<string[]> {
+  return (await db
     .select({ content: drafts.content, step: outreachMessages.stepNumber })
     .from(outreachMessages)
     .innerJoin(drafts, eq(outreachMessages.draftId, drafts.id))
     .where(eq(outreachMessages.enrollmentId, enrollmentId))
-    .all()
+    .all())
     .filter((r) => r.step < beforeStep && r.content.trim().length > 0)
     .map((r) => r.content);
 }
 
-function updateEnrollment(db: Db, id: string, set: Partial<OutreachEnrollmentRow>): void {
-  db.update(outreachEnrollments).set({ ...set, updatedAt: Date.now() }).where(eq(outreachEnrollments.id, id)).run();
+async function updateEnrollment(db: Db, id: string, set: Partial<OutreachEnrollmentRow>): Promise<void> {
+  await db.update(outreachEnrollments).set({ ...set, updatedAt: Date.now() }).where(eq(outreachEnrollments.id, id)).run();
 }
 
 interface GenResult {
@@ -382,11 +382,11 @@ async function generateOutreachStep(
   prior: string[],
   nowMs: number,
 ): Promise<GenResult> {
-  const workspace = getWorkspace(ctx.db, seq.workspaceId)!;
-  const { docs } = getBrain(ctx.db, seq.workspaceId);
+  const workspace = (await getWorkspace(ctx.db, seq.workspaceId))!;
+  const { docs } = await getBrain(ctx.db, seq.workspaceId);
   const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
-  const campaign = getCampaign(ctx.db, seq.workspaceId, seq.campaignId);
-  const persona = getPersona(ctx.db, seq.workspaceId, seq.personaId);
+  const campaign = await getCampaign(ctx.db, seq.workspaceId, seq.campaignId);
+  const persona = await getPersona(ctx.db, seq.workspaceId, seq.personaId);
   const person = ctx.pool.get(`${enrollment.recipientType}:${enrollment.recipientId}`);
 
   const useFollowup = step.stepNumber > 1 || step.instruction.trim().length > 0;
@@ -407,8 +407,8 @@ async function generateOutreachStep(
     true,
   );
 
-  const insertFailed = (message: string): void => {
-    ctx.db.insert(outreachMessages).values({
+  const insertFailed = async (message: string): Promise<void> => {
+    await ctx.db.insert(outreachMessages).values({
       id: randomUUID(),
       workspaceId: seq.workspaceId,
       enrollmentId: enrollment.id,
@@ -425,7 +425,7 @@ async function generateOutreachStep(
   };
 
   try {
-    const channelGuidance = resolveChannelGuidance(ctx.db, seq.workspaceId, "email", {
+    const channelGuidance = await resolveChannelGuidance(ctx.db, seq.workspaceId, "email", {
       personaId: seq.personaId,
       campaignId: seq.campaignId,
     });
@@ -440,15 +440,15 @@ async function generateOutreachStep(
         scope: channelGuidance.scopeLabel,
       },
       persona: persona ? toResolvePersona(persona) : undefined,
-      ...campaignResolveInputs(ctx.db, seq.workspaceId, campaign),
-      account: resolveDraftAccount(ctx.db, seq.workspaceId, { personaId: seq.personaId, channel: "email" }),
+      ...await campaignResolveInputs(ctx.db, seq.workspaceId, campaign),
+      account: await resolveDraftAccount(ctx.db, seq.workspaceId, { personaId: seq.personaId, channel: "email" }),
       lead: {
         name: person?.name ?? enrollment.recipientEmail,
         company: person?.company ?? "",
         role: person?.role ?? "",
         notes: "",
       },
-      ...selectiveContextInputs(ctx.db, seq.workspaceId),
+      ...await selectiveContextInputs(ctx.db, seq.workspaceId),
       evidence: evidenceResolution.evidence,
       evidenceExclusionReason: evidenceResolution.exclusionReason,
       taskInstruction,
@@ -458,7 +458,7 @@ async function generateOutreachStep(
       pipeline: "outreach_step",
       campaignId: seq.campaignId ?? null,
     }).generate({ prompt: resolved.prompt });
-    const generation = storeGeneration(ctx.db, {
+    const generation = await storeGeneration(ctx.db, {
       workspaceId: seq.workspaceId,
       taskType: "outbound_email",
       channel: "email",
@@ -471,7 +471,7 @@ async function generateOutreachStep(
       provider: result.provider,
       durationMs: result.durationMs,
     });
-    const draft = submitDraft(
+    const draft = await submitDraft(
       ctx.db,
       {
         workspaceId: seq.workspaceId,
@@ -486,7 +486,7 @@ async function generateOutreachStep(
       SYSTEM_ACTOR,
     );
     const messageId = randomUUID();
-    ctx.db.insert(outreachMessages).values({
+    await ctx.db.insert(outreachMessages).values({
       id: messageId,
       workspaceId: seq.workspaceId,
       enrollmentId: enrollment.id,
@@ -502,7 +502,7 @@ async function generateOutreachStep(
     }).run();
     return { ok: true, draft, messageId };
   } catch (err) {
-    insertFailed(err instanceof GatewayError ? err.message : err instanceof Error ? err.message : String(err));
+    await insertFailed(err instanceof GatewayError ? err.message : err instanceof Error ? err.message : String(err));
     return { ok: false };
   }
 }
@@ -522,8 +522,8 @@ async function proposeOutreachSend(
   nowMs: number,
 ): Promise<DispatchResult> {
   if (!enrollment.mailboxId) return { sent: false };
-  const message = messageRow(ctx.db, messageId);
-  const draft = message?.draftId ? draftRow(ctx.db, message.draftId) : undefined;
+  const message = await messageRow(ctx.db, messageId);
+  const draft = message?.draftId ? await draftRow(ctx.db, message.draftId) : undefined;
   if (!message || !draft) return { sent: false };
   const baseKey = deriveEmailSendIdempotencyKey(message.id, {
     draftId: draft.id,
@@ -533,7 +533,7 @@ async function proposeOutreachSend(
 
   let submission;
   const existing = message.externalActionId
-    ? getExternalAction(ctx.db, seq.workspaceId, message.externalActionId)
+    ? await getExternalAction(ctx.db, seq.workspaceId, message.externalActionId)
     : undefined;
   if (existing) {
     const retryable = existing.status === "blocked" && RETRYABLE_BLOCKERS.has(existing.blocker?.code ?? "");
@@ -552,7 +552,7 @@ async function proposeOutreachSend(
     );
   } else {
     submission = await ctx.runtime.propose(
-      prepareEmailAction(ctx.db, seq.workspaceId, {
+      await prepareEmailAction(ctx.db, seq.workspaceId, {
         origin: "outreach_step",
         originId: message.id,
         idempotencyKey: baseKey,
@@ -561,11 +561,11 @@ async function proposeOutreachSend(
       SYSTEM_ACTOR,
     );
   }
-  ctx.db.update(outreachMessages)
+  await ctx.db.update(outreachMessages)
     .set({ externalActionId: submission.action.id, updatedAt: Date.now() })
     .where(eq(outreachMessages.id, message.id))
     .run();
-  const after = messageRow(ctx.db, message.id);
+  const after = await messageRow(ctx.db, message.id);
   return {
     sent: submission.action.status === "succeeded" && after?.status === "sent",
     sentAt: after?.sentAt ?? nowMs,
@@ -582,13 +582,13 @@ async function tryDispatch(
   nowMs: number,
   acc: RunAcc,
 ): Promise<void> {
-  if (!enrollment.mailboxId || !mailboxSendableNow(ctx.db, seq.workspaceId, enrollment.mailboxId, nowMs)) {
+  if (!enrollment.mailboxId || !await mailboxSendableNow(ctx.db, seq.workspaceId, enrollment.mailboxId, nowMs)) {
     return; // deferred — the message stays pending, retried next tick
   }
   const d = await proposeOutreachSend(ctx, seq, enrollment, messageId, nowMs);
   if (d.sent) {
     acc.dispatched += 1;
-    updateEnrollment(ctx.db, enrollment.id, {
+    await updateEnrollment(ctx.db, enrollment.id, {
       lastSentAt: d.sentAt ?? nowMs,
       ...(d.threadId ? { lastThreadId: d.threadId } : {}),
     });
@@ -605,11 +605,11 @@ async function startStep(
   acc: RunAcc,
 ): Promise<void> {
   const res = await generateOutreachStep(ctx, seq, enrollment, step, prior, nowMs);
-  updateEnrollment(ctx.db, enrollment.id, { currentStep: step.stepNumber, nextDueAt: null });
+  await updateEnrollment(ctx.db, enrollment.id, { currentStep: step.stepNumber, nextDueAt: null });
   if (!res.ok || !res.messageId || !res.draft) return;
   acc.generated += 1;
   if (seq.automationMode === "scheduled_auto") {
-    applyDraftAction(ctx.db, res.draft, "approve", SYSTEM_ACTOR);
+    await applyDraftAction(ctx.db, res.draft, "approve", SYSTEM_ACTOR);
     await tryDispatch(ctx, seq, enrollment, res.messageId, nowMs, acc);
   }
 }
@@ -632,7 +632,7 @@ async function advanceEnrollment(
   // idempotent so the chain resumes cleanly.
   if (seq.stopOnReply === 1) {
     const since = Math.max(enrollment.lastSentAt ?? enrollment.enrolledAt, enrollment.lastReplyHandledAt ?? 0);
-    const reply = newestInboundEmailReply(ctx.db, seq.workspaceId, enrollment.recipientEmail, since);
+    const reply = await newestInboundEmailReply(ctx.db, seq.workspaceId, enrollment.recipientEmail, since);
     if (reply) {
       const outcome = await handleReplyOutcome(ctx, seq, enrollment, reply, nowMs);
       if (outcome === "stop") acc.stopped += 1;
@@ -646,79 +646,79 @@ async function advanceEnrollment(
     return;
   }
 
-  let cur = currentMessage(ctx.db, enrollment.id, k);
+  let cur = await currentMessage(ctx.db, enrollment.id, k);
   if (!cur) return;
 
-  if (cur.draftId && draftRow(ctx.db, cur.draftId)?.state === "approved" && cur.status === "pending") {
+  if (cur.draftId && (await draftRow(ctx.db, cur.draftId))?.state === "approved" && cur.status === "pending") {
     await tryDispatch(ctx, seq, enrollment, cur.id, nowMs, acc);
-    cur = currentMessage(ctx.db, enrollment.id, k)!;
+    cur = (await currentMessage(ctx.db, enrollment.id, k))!;
   }
 
   if (cur.status === "sent") {
     if (enrollment.lastSentAt !== cur.sentAt) {
-      updateEnrollment(ctx.db, enrollment.id, {
+      await updateEnrollment(ctx.db, enrollment.id, {
         lastSentAt: cur.sentAt,
         ...(cur.providerThreadId ? { lastThreadId: cur.providerThreadId } : {}),
       });
     }
     if (k >= total) {
-      updateEnrollment(ctx.db, enrollment.id, { status: "completed", nextDueAt: null });
+      await updateEnrollment(ctx.db, enrollment.id, { status: "completed", nextDueAt: null });
       acc.completed += 1;
       return;
     }
     const next = steps[k]!; // index k → step number k+1
     const due = (cur.sentAt ?? nowMs) + next.delayHours * HOUR_MS;
     if (nowMs >= due) {
-      await startStep(ctx, seq, enrollment, next, priorBodies(ctx.db, enrollment.id, next.stepNumber), nowMs, acc);
+      await startStep(ctx, seq, enrollment, next, await priorBodies(ctx.db, enrollment.id, next.stepNumber), nowMs, acc);
     } else if (enrollment.nextDueAt !== due) {
-      updateEnrollment(ctx.db, enrollment.id, { nextDueAt: due });
+      await updateEnrollment(ctx.db, enrollment.id, { nextDueAt: due });
     }
   }
 }
 
-function audienceRow(db: Db, workspaceId: string, audienceId: string): AudienceRow | undefined {
-  return db.select().from(audiences).where(and(eq(audiences.workspaceId, workspaceId), eq(audiences.id, audienceId))).get();
+async function audienceRow(db: Db, workspaceId: string, audienceId: string): Promise<AudienceRow | undefined> {
+  return await db.select().from(audiences).where(and(eq(audiences.workspaceId, workspaceId), eq(audiences.id, audienceId))).get();
 }
 
-function enrolledKeysFor(db: Db, sequenceId: string): Set<string> {
+async function enrolledKeysFor(db: Db, sequenceId: string): Promise<Set<string>> {
   return new Set(
-    db
+    (await db
       .select({ t: outreachEnrollments.recipientType, id: outreachEnrollments.recipientId })
       .from(outreachEnrollments)
       .where(eq(outreachEnrollments.sequenceId, sequenceId))
-      .all()
+      .all())
       .map((r) => `${r.t}:${r.id}`),
   );
 }
 
-function activeKeys(db: Db, workspaceId: string): Set<string> {
+async function activeKeys(db: Db, workspaceId: string): Promise<Set<string>> {
   return new Set(
-    db
+    (await db
       .select({ t: outreachEnrollments.recipientType, id: outreachEnrollments.recipientId })
       .from(outreachEnrollments)
       .where(and(eq(outreachEnrollments.workspaceId, workspaceId), eq(outreachEnrollments.status, "active")))
-      .all()
+      .all())
       .map((r) => `${r.t}:${r.id}`),
   );
 }
 
-function enrolledTodayCount(db: Db, sequenceId: string, nowMs: number): number {
-  return db
+async function enrolledTodayCount(db: Db, sequenceId: string, nowMs: number): Promise<number> {
+  return (await db
     .select({ at: outreachEnrollments.enrolledAt })
     .from(outreachEnrollments)
     .where(eq(outreachEnrollments.sequenceId, sequenceId))
-    .all()
+    .all())
     .filter((r) => r.at >= utcDayStart(nowMs)).length;
 }
 
 /** Auto-enroll new segment members that clear the guardrails. */
-function enrollSequence(ctx: RunCtx, seq: OutreachSequenceRow, nowMs: number, acc: RunAcc): void {
-  const row = audienceRow(ctx.db, seq.workspaceId, seq.audienceId);
+async function enrollSequence(ctx: RunCtx, seq: OutreachSequenceRow, nowMs: number, acc: RunAcc): Promise<void> {
+  const row = await audienceRow(ctx.db, seq.workspaceId, seq.audienceId);
   if (!row) return;
-  const members = resolveAudienceMembers(ctx.db, seq.workspaceId, row);
-  const enrolledHere = enrolledKeysFor(ctx.db, seq.id);
-  const active = activeKeys(ctx.db, seq.workspaceId);
-  let remaining = seq.dailyEnrollmentCap - enrolledTodayCount(ctx.db, seq.id, nowMs);
+  const members = await resolveAudienceMembers(ctx.db, seq.workspaceId, row);
+  const enrolledHere = await enrolledKeysFor(ctx.db, seq.id);
+  const active = await activeKeys(ctx.db, seq.workspaceId);
+  let remaining = seq.dailyEnrollmentCap - await enrolledTodayCount(ctx.db, seq.id, nowMs);
 
   for (const member of members) {
     if (remaining <= 0) break;
@@ -726,12 +726,12 @@ function enrollSequence(ctx: RunCtx, seq: OutreachSequenceRow, nowMs: number, ac
     if (enrolledHere.has(key)) continue; // already in this sequence
     if (!member.email) continue;
     if (active.has(key)) continue; // one active sequence per person (workspace-wide)
-    if (isSuppressed(ctx.db, seq.workspaceId, member.email)) continue;
-    const mailboxId = leastLoadedMailbox(ctx.db, seq.workspaceId, seq.id, nowMs);
+    if (await isSuppressed(ctx.db, seq.workspaceId, member.email)) continue;
+    const mailboxId = await leastLoadedMailbox(ctx.db, seq.workspaceId, seq.id, nowMs);
     if (!mailboxId) break; // no usable mailbox → nothing to enroll onto
 
     try {
-      ctx.db.insert(outreachEnrollments).values({
+      await ctx.db.insert(outreachEnrollments).values({
         id: randomUUID(),
         workspaceId: seq.workspaceId,
         sequenceId: seq.id,
@@ -775,11 +775,11 @@ export async function runOutreach(
   const ctx: RunCtx = {
     db,
     ...deps,
-    pool: new Map(loadPeople(db, workspaceId).map((p) => [`${p.type}:${p.id}`, p])),
+    pool: new Map((await loadPeople(db, workspaceId)).map((p) => [`${p.type}:${p.id}`, p])),
   };
   const acc: RunAcc = { enrolled: 0, generated: 0, dispatched: 0, stopped: 0, completed: 0 };
 
-  const activeSequences = db
+  const activeSequences = await db
     .select()
     .from(outreachSequences)
     .where(and(eq(outreachSequences.workspaceId, workspaceId), eq(outreachSequences.status, "active")))
@@ -787,16 +787,16 @@ export async function runOutreach(
 
   // Budget degradation (Sprint 59): enrolling costs nothing, but advancing a
   // step generates. Due steps keep their nextDueAt and resume on a later tick.
-  const budgetExhausted = llmBudgetExhausted(db, workspaceId);
+  const budgetExhausted = await llmBudgetExhausted(db, workspaceId);
 
   for (const seq of activeSequences) {
-    enrollSequence(ctx, seq, nowMs, acc);
+    await enrollSequence(ctx, seq, nowMs, acc);
     if (seq.automationMode === "manual") continue; // enroll only; founder holds
     if (budgetExhausted) continue;
 
-    const steps = listSteps(db, seq.id);
+    const steps = await listSteps(db, seq.id);
     if (steps.length === 0) continue;
-    const active = db
+    const active = await db
       .select()
       .from(outreachEnrollments)
       .where(and(eq(outreachEnrollments.sequenceId, seq.id), eq(outreachEnrollments.status, "active")))
@@ -808,29 +808,29 @@ export async function runOutreach(
         // Never let one enrollment abort the workspace run.
       }
     }
-    maybeComplete(db, workspaceId, seq.id);
+    await maybeComplete(db, workspaceId, seq.id);
   }
 
   return { ...acc, ranAt: nowMs };
 }
 
 /** Flip a sequence to completed once it has enrollments and none are active. */
-function maybeComplete(db: Db, workspaceId: string, sequenceId: string): void {
-  const active = db
+async function maybeComplete(db: Db, workspaceId: string, sequenceId: string): Promise<void> {
+  const active = await db
     .select({ id: outreachEnrollments.id })
     .from(outreachEnrollments)
     .where(and(eq(outreachEnrollments.sequenceId, sequenceId), eq(outreachEnrollments.status, "active")))
     .get();
   if (active) return;
-  const any = db
+  const any = await db
     .select({ id: outreachEnrollments.id })
     .from(outreachEnrollments)
     .where(eq(outreachEnrollments.sequenceId, sequenceId))
     .get();
-  const seq = getSequenceRow(db, workspaceId, sequenceId);
+  const seq = await getSequenceRow(db, workspaceId, sequenceId);
   // Only auto-complete a running sequence that has drained; a live segment can
   // still auto-enroll into an active sequence, so leave `active` alone unless
   // it was explicitly paused-then-drained. We keep it active so new members
   // continue to enroll; completion is a manual/segment-exhausted concern.
-  if (any && seq && seq.status === "paused") setStatus(db, workspaceId, sequenceId, "completed");
+  if (any && seq && seq.status === "paused") await setStatus(db, workspaceId, sequenceId, "completed");
 }

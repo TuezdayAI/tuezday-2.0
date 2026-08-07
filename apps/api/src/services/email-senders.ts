@@ -57,8 +57,8 @@ function statusFromDomain(domain: OutboundEmailDomain): EmailSenderStatus {
   return "pending";
 }
 
-export function getEmailSender(db: Db, workspaceId: string): EmailSender | null {
-  const row = db
+export async function getEmailSender(db: Db, workspaceId: string): Promise<EmailSender | null> {
+  const row = await db
     .select()
     .from(workspaceEmailSenders)
     .where(eq(workspaceEmailSenders.workspaceId, workspaceId))
@@ -66,8 +66,8 @@ export function getEmailSender(db: Db, workspaceId: string): EmailSender | null 
   return row ? rowToSender(row) : null;
 }
 
-function persistProviderFailure(db: Db, workspaceId: string, error: unknown): void {
-  db.update(workspaceEmailSenders)
+async function persistProviderFailure(db: Db, workspaceId: string, error: unknown): Promise<void> {
+  await db.update(workspaceEmailSenders)
     .set({
       status: "failed",
       lastError: errorMessage(error),
@@ -84,7 +84,7 @@ export async function updateEmailSender(
   workspaceId: string,
   input: UpdateEmailSenderInput,
 ): Promise<EmailSender> {
-  const existing = getEmailSender(db, workspaceId);
+  const existing = await getEmailSender(db, workspaceId);
   const domainChanged = existing?.domain !== input.domain;
   const needsProviderDomain = domainChanged || !existing?.providerDomainId;
   const now = Date.now();
@@ -94,7 +94,7 @@ export async function updateEmailSender(
     try {
       providerDomain = await provider.createDomain(input.domain);
     } catch (error) {
-      db.insert(workspaceEmailSenders)
+      await db.insert(workspaceEmailSenders)
         .values({
           workspaceId,
           domain: input.domain,
@@ -154,7 +154,7 @@ export async function updateEmailSender(
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
-  db.insert(workspaceEmailSenders)
+  await db.insert(workspaceEmailSenders)
     .values(values)
     .onConflictDoUpdate({
       target: workspaceEmailSenders.workspaceId,
@@ -173,7 +173,7 @@ export async function updateEmailSender(
       },
     })
     .run();
-  return getEmailSender(db, workspaceId)!;
+  return (await getEmailSender(db, workspaceId))!;
 }
 
 export async function verifyEmailSender(
@@ -181,7 +181,7 @@ export async function verifyEmailSender(
   provider: OutboundEmailProvider,
   workspaceId: string,
 ): Promise<EmailSender> {
-  const sender = getEmailSender(db, workspaceId);
+  const sender = await getEmailSender(db, workspaceId);
   if (!sender?.providerDomainId) {
     throw new EmailSenderLifecycleError("Configure an email sender before verification", {
       code: "sender_not_configured",
@@ -191,15 +191,15 @@ export async function verifyEmailSender(
   try {
     await provider.verifyDomain(sender.providerDomainId);
     const now = Date.now();
-    db.update(workspaceEmailSenders)
+    await db.update(workspaceEmailSenders)
       .set({ status: "pending", lastError: null, lastCheckedAt: now, updatedAt: now })
       .where(eq(workspaceEmailSenders.workspaceId, workspaceId))
       .run();
   } catch (error) {
-    persistProviderFailure(db, workspaceId, error);
+    await persistProviderFailure(db, workspaceId, error);
     throw error;
   }
-  return getEmailSender(db, workspaceId)!;
+  return (await getEmailSender(db, workspaceId))!;
 }
 
 export async function refreshEmailSender(
@@ -207,7 +207,7 @@ export async function refreshEmailSender(
   provider: OutboundEmailProvider,
   workspaceId: string,
 ): Promise<EmailSender> {
-  const sender = getEmailSender(db, workspaceId);
+  const sender = await getEmailSender(db, workspaceId);
   if (!sender?.providerDomainId) {
     throw new EmailSenderLifecycleError("Configure an email sender before checking verification", {
       code: "sender_not_configured",
@@ -217,7 +217,7 @@ export async function refreshEmailSender(
   try {
     const domain = await provider.getDomain(sender.providerDomainId);
     const now = Date.now();
-    db.update(workspaceEmailSenders)
+    await db.update(workspaceEmailSenders)
       .set({
         status: statusFromDomain(domain),
         dnsRecordsJson: JSON.stringify(domain.dnsRecords),
@@ -228,10 +228,10 @@ export async function refreshEmailSender(
       .where(eq(workspaceEmailSenders.workspaceId, workspaceId))
       .run();
   } catch (error) {
-    persistProviderFailure(db, workspaceId, error);
+    await persistProviderFailure(db, workspaceId, error);
     throw error;
   }
-  return getEmailSender(db, workspaceId)!;
+  return (await getEmailSender(db, workspaceId))!;
 }
 
 export class EmailSenderLifecycleError extends Error {

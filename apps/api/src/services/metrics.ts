@@ -58,14 +58,14 @@ function assertVocabulary(input: MetricInput): void {
  * re-sync updates in place rather than duplicating. Returns true when a row
  * was written, false when the value was absent.
  */
-export function recordMetric(db: Db, workspaceId: string, input: MetricInput): boolean {
+export async function recordMetric(db: Db, workspaceId: string, input: MetricInput): Promise<boolean> {
   if (input.value === null || input.value === undefined) return false;
   assertVocabulary(input);
   if (!Number.isInteger(input.value)) {
     throw new Error(`Metric values are integers (cents for money); got ${input.value}`);
   }
   const now = Date.now();
-  db.insert(metrics)
+  await db.insert(metrics)
     .values({
       id: randomUUID(),
       workspaceId,
@@ -99,10 +99,10 @@ export function recordMetric(db: Db, workspaceId: string, input: MetricInput): b
 }
 
 /** Record a batch; absent values are skipped. Returns how many rows were written. */
-export function recordMetrics(db: Db, workspaceId: string, inputs: MetricInput[]): number {
+export async function recordMetrics(db: Db, workspaceId: string, inputs: MetricInput[]): Promise<number> {
   let written = 0;
   for (const input of inputs) {
-    if (recordMetric(db, workspaceId, input)) written += 1;
+    if (await recordMetric(db, workspaceId, input)) written += 1;
   }
   return written;
 }
@@ -112,14 +112,14 @@ export function recordMetrics(db: Db, workspaceId: string, inputs: MetricInput[]
  * because the dual-write may already have recorded a fresher value (the ads
  * sync restates a rolling window every few hours). Returns true when inserted.
  */
-export function recordMetricIfAbsent(db: Db, workspaceId: string, input: MetricInput): boolean {
+export async function recordMetricIfAbsent(db: Db, workspaceId: string, input: MetricInput): Promise<boolean> {
   if (input.value === null || input.value === undefined) return false;
   assertVocabulary(input);
   if (!Number.isInteger(input.value)) {
     throw new Error(`Metric values are integers (cents for money); got ${input.value}`);
   }
   const now = Date.now();
-  const result = db
+  const result = await db
     .insert(metrics)
     .values({
       id: randomUUID(),
@@ -139,13 +139,13 @@ export function recordMetricIfAbsent(db: Db, workspaceId: string, input: MetricI
   return result.changes > 0;
 }
 
-export function listMetricsForSubject(
+export async function listMetricsForSubject(
   db: Db,
   workspaceId: string,
   subjectType: MetricSubjectType,
   subjectId: string,
-): MetricRow[] {
-  return db
+): Promise<MetricRow[]> {
+  return await db
     .select()
     .from(metrics)
     .where(
@@ -214,11 +214,11 @@ const WINDOW_INTERPRETATION: Record<MetricWindowKindValue, string> = {
  * subjects, while a periodic window sums every observation in range. Mixing
  * them would double-count a subject's lifetime total once per capture.
  */
-export function summarizeMetrics(
+export async function summarizeMetrics(
   db: Db,
   workspaceId: string,
   query: MetricSummaryQuery,
-): MetricSummary {
+): Promise<MetricSummary> {
   const windowKind = metricWindowKind(query.window);
   const since =
     query.sinceDays === undefined ? null : Date.now() - query.sinceDays * 24 * 60 * 60 * 1000;
@@ -231,7 +231,7 @@ export function summarizeMetrics(
   if (query.subjectId) conditions.push(eq(metrics.subjectId, query.subjectId));
   if (since !== null) conditions.push(gte(metrics.capturedAt, since));
 
-  const rows = db
+  const rows = await db
     .select()
     .from(metrics)
     .where(and(...conditions))

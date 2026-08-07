@@ -17,14 +17,14 @@ describe("draft revision persistence", () => {
   let workspaceId: string;
   let draftId: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createTestDb();
     workspaceId = randomUUID();
     draftId = randomUUID();
-    db.insert(workspaces)
+    await db.insert(workspaces)
       .values({ id: workspaceId, name: "Editor", createdAt: 1, updatedAt: 1 })
       .run();
-    db.insert(drafts)
+    await db.insert(drafts)
       .values({
         id: draftId,
         workspaceId,
@@ -58,12 +58,12 @@ describe("draft revision persistence", () => {
     };
   }
 
-  it("persists a running turn and completes it with provenance", () => {
-    const running = createRunningTurn(db, runningInput());
+  it("persists a running turn and completes it with provenance", async () => {
+    const running = await createRunningTurn(db, runningInput());
     expect(running.status).toBe("running");
     expect(running.contextSections).toEqual([]);
 
-    const completed = completeTurn(db, workspaceId, running.id, {
+    const completed = await completeTurn(db, workspaceId, running.id, {
       resultContent: "Short",
       contextSections: [
         {
@@ -88,12 +88,12 @@ describe("draft revision persistence", () => {
       model: "fake-model",
       error: null,
     });
-    expect(listRevisionTurns(db, workspaceId, draftId)).toEqual([completed]);
+    expect(await listRevisionTurns(db, workspaceId, draftId)).toEqual([completed]);
   });
 
-  it("marks a turn failed without result metadata", () => {
-    const running = createRunningTurn(db, runningInput());
-    const failed = failTurn(db, workspaceId, running.id, "provider down");
+  it("marks a turn failed without result metadata", async () => {
+    const running = await createRunningTurn(db, runningInput());
+    const failed = await failTurn(db, workspaceId, running.id, "provider down");
     expect(failed).toMatchObject({
       status: "failed",
       error: "provider down",
@@ -102,40 +102,40 @@ describe("draft revision persistence", () => {
     });
   });
 
-  it("finds a turn by its draft-scoped request id", () => {
+  it("finds a turn by its draft-scoped request id", async () => {
     const requestId = randomUUID();
-    const running = createRunningTurn(db, runningInput(requestId));
-    expect(getTurnByRequest(db, workspaceId, draftId, requestId)).toEqual(running);
-    expect(getTurnByRequest(db, workspaceId, draftId, randomUUID())).toBeUndefined();
+    const running = await createRunningTurn(db, runningInput(requestId));
+    expect(await getTurnByRequest(db, workspaceId, draftId, requestId)).toEqual(running);
+    expect(await getTurnByRequest(db, workspaceId, draftId, randomUUID())).toBeUndefined();
   });
 
-  it("enforces one request id per draft", () => {
+  it("enforces one request id per draft", async () => {
     const input = runningInput();
-    createRunningTurn(db, input);
-    expect(() => createRunningTurn(db, input)).toThrow();
+    await createRunningTurn(db, input);
+    expect(async () => await createRunningTurn(db, input)).toThrow();
   });
 
-  it("orders turns oldest first", () => {
-    const first = createRunningTurn(db, runningInput(), 10);
-    const second = createRunningTurn(db, runningInput(), 20);
-    expect(listRevisionTurns(db, workspaceId, draftId).map((turn) => turn.id)).toEqual([
+  it("orders turns oldest first", async () => {
+    const first = await createRunningTurn(db, runningInput(), 10);
+    const second = await createRunningTurn(db, runningInput(), 20);
+    expect((await listRevisionTurns(db, workspaceId, draftId)).map((turn) => turn.id)).toEqual([
       first.id,
       second.id,
     ]);
   });
 
-  it("counts only completed turns since the boundary", () => {
-    const completed = createRunningTurn(db, runningInput(), 100);
-    completeTurn(db, workspaceId, completed.id, {
+  it("counts only completed turns since the boundary", async () => {
+    const completed = await createRunningTurn(db, runningInput(), 100);
+    await completeTurn(db, workspaceId, completed.id, {
       resultContent: "Short",
       contextSections: [],
       model: "fake-model",
       provider: "fake",
       durationMs: 5,
     }, 110);
-    const failed = createRunningTurn(db, runningInput(), 120);
-    failTurn(db, workspaceId, failed.id, "provider down", 130);
-    expect(countCompletedRevisionTurnsSince(db, workspaceId, 105)).toBe(1);
-    expect(countCompletedRevisionTurnsSince(db, workspaceId, 115)).toBe(0);
+    const failed = await createRunningTurn(db, runningInput(), 120);
+    await failTurn(db, workspaceId, failed.id, "provider down", 130);
+    expect(await countCompletedRevisionTurnsSince(db, workspaceId, 105)).toBe(1);
+    expect(await countCompletedRevisionTurnsSince(db, workspaceId, 115)).toBe(0);
   });
 });

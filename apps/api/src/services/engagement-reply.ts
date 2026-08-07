@@ -52,13 +52,13 @@ export async function generateEngagementReply(
     ctx.useEvidence ?? true,
   );
 
-  const { docs } = getBrain(db, workspace.id);
+  const { docs } = await getBrain(db, workspace.id);
   const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
   // Sprint 43: pass the workspace's channel guidance — this path previously
   // fell back to the built-in default even when an override existed.
   // Sprint 44: scope stays workspace-level here — inbox items don't carry a
   // persona; deriving one from the item's connection is deferred (Sprint 45 ⏸).
-  const channelGuidance = resolveChannelGuidance(db, workspace.id, item.channel);
+  const channelGuidance = await resolveChannelGuidance(db, workspace.id, item.channel);
   const resolved = resolveContext({
     workspaceName: workspace.name,
     docs: contents,
@@ -66,13 +66,13 @@ export async function generateEngagementReply(
     channel: item.channel,
     channelGuidance: { content: channelGuidance.content, source: channelGuidance.source },
     persona: ctx.persona ? toResolvePersona(ctx.persona) : undefined,
-    ...campaignResolveInputs(db, workspace.id, ctx.campaign),
+    ...await campaignResolveInputs(db, workspace.id, ctx.campaign),
     // The reply publishes from the same account the inbound item arrived on.
-    account: resolveDraftAccount(db, workspace.id, {
+    account: await resolveDraftAccount(db, workspace.id, {
       channel: item.channel,
       connectionId: item.connectionId,
     }),
-    ...selectiveContextInputs(db, workspace.id),
+    ...await selectiveContextInputs(db, workspace.id),
     conversation: {
       originalPost: ctx.post?.content,
       inboundAuthor: item.authorHandle || item.authorName || "someone",
@@ -89,7 +89,7 @@ export async function generateEngagementReply(
     pipeline: "engagement_reply",
     campaignId: ctx.campaign?.id ?? null,
   }).generate({ prompt: resolved.prompt });
-  const generation = storeGeneration(db, {
+  const generation = await storeGeneration(db, {
     workspaceId: workspace.id,
     taskType: "engagement_reply",
     channel: item.channel,
@@ -102,7 +102,7 @@ export async function generateEngagementReply(
     durationMs: result.durationMs,
   });
 
-  return submitDraft(
+  return await submitDraft(
     db,
     {
       workspaceId: workspace.id,

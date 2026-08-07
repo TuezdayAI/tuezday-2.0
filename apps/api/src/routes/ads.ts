@@ -30,8 +30,8 @@ import { getWorkspace } from "../services/workspaces";
 
 type Fetcher = typeof fetch;
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -43,15 +43,15 @@ function invalidInput(reply: FastifyReply, message: string) {
 }
 
 /** Resolve a connected, ads-capable connection to its adapter. */
-function adsAdapterOrError(
+async function adsAdapterOrError(
   db: Db,
   fabric: ConnectorFabric,
   workspaceId: string,
   connectionId: string,
 ):
-  | { ok: true; adapter: AdsAdapter; connection: Connection }
-  | { ok: false; status: number; error: string; message: string } {
-  const connection = getConnection(db, workspaceId, connectionId);
+  Promise<| { ok: true; adapter: AdsAdapter; connection: Connection }
+          | { ok: false; status: number; error: string; message: string }> {
+  const connection = await getConnection(db, workspaceId, connectionId);
   if (!connection) {
     return { ok: false, status: 404, error: "connection_not_found", message: "No such connection." };
   }
@@ -83,19 +83,19 @@ export function registerAdsRoutes(
   fetcher: Fetcher,
 ): void {
   app.get<{ Params: { id: string } }>("/workspaces/:id/ads/accounts", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return listAdAccounts(db, request.params.id);
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return await listAdAccounts(db, request.params.id);
   });
 
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/ads/accounts/import",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = importAdAccountsInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return invalidInput(reply, parsed.error.issues.map((i) => i.message).join("; "));
       }
-      const resolved = adsAdapterOrError(db, fabric, request.params.id, parsed.data.connectionId);
+      const resolved = await adsAdapterOrError(db, fabric, request.params.id, parsed.data.connectionId);
       if (!resolved.ok) {
         return reply
           .status(resolved.status)
@@ -121,7 +121,7 @@ export function registerAdsRoutes(
     | { ok: true; result: AdsSyncResult }
     | { ok: false; status: number; error: string; message: string }
   > {
-    const account = getAdAccount(db, workspaceId, accountId);
+    const account = await getAdAccount(db, workspaceId, accountId);
     if (!account) {
       return { ok: false, status: 404, error: "account_not_found", message: "No such ad account." };
     }
@@ -133,7 +133,7 @@ export function registerAdsRoutes(
         message: "This account holds CSV imports only — there is nothing to sync from.",
       };
     }
-    const resolved = adsAdapterOrError(db, fabric, workspaceId, account.connectionId);
+    const resolved = await adsAdapterOrError(db, fabric, workspaceId, account.connectionId);
     if (!resolved.ok) return resolved;
     try {
       const result = await syncAdAccount(db, resolved.adapter, workspaceId, account, since, until);
@@ -171,7 +171,7 @@ export function registerAdsRoutes(
   app.post<{ Params: { id: string; accountId: string } }>(
     "/workspaces/:id/ads/accounts/:accountId/sync",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = adsSyncInputSchema.safeParse(request.body ?? {});
       if (!parsed.success) {
         return invalidInput(reply, parsed.error.issues.map((i) => i.message).join("; "));
@@ -191,7 +191,7 @@ export function registerAdsRoutes(
   );
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/ads/sync", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = adsSyncInputSchema.safeParse(request.body ?? {});
     if (!parsed.success) {
       return invalidInput(reply, parsed.error.issues.map((i) => i.message).join("; "));
@@ -201,7 +201,7 @@ export function registerAdsRoutes(
     const until = parsed.data.until ?? range.until;
     const results = [];
     // One bad account never blocks the rest; CSV-only accounts are skipped.
-    for (const account of listAdAccounts(db, request.params.id)) {
+    for (const account of await listAdAccounts(db, request.params.id)) {
       if (!account.connectionId) continue;
       const outcome = await syncOne(request.params.id, account.id, since, until);
       results.push(
@@ -214,7 +214,7 @@ export function registerAdsRoutes(
   });
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/ads/import-csv", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = adsCsvImportInputSchema.safeParse(request.body);
     if (!parsed.success) {
       return invalidInput(
@@ -224,37 +224,37 @@ export function registerAdsRoutes(
           .join("; "),
       );
     }
-    return importAdsCsv(db, request.params.id, parsed.data);
+    return await importAdsCsv(db, request.params.id, parsed.data);
   });
 
   app.get<{ Params: { id: string }; Querystring: { since?: string; until?: string } }>(
     "/workspaces/:id/ads/report",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const range = defaultMetricRange();
       const { since = range.since, until = range.until } = request.query;
       if (!metricDateSchema.safeParse(since).success || !metricDateSchema.safeParse(until).success) {
         return invalidInput(reply, "since/until must be YYYY-MM-DD");
       }
-      return getAdsReport(db, request.params.id, since, until);
+      return await getAdsReport(db, request.params.id, since, until);
     },
   );
 
   app.post<{ Params: { id: string; adCampaignId: string } }>(
     "/workspaces/:id/ads/campaigns/:adCampaignId/link",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = linkAdCampaignInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return invalidInput(reply, parsed.error.issues.map((i) => i.message).join("; "));
       }
-      if (!getAdCampaign(db, request.params.id, request.params.adCampaignId)) {
+      if (!await getAdCampaign(db, request.params.id, request.params.adCampaignId)) {
         return reply.status(404).send({ error: "ad_campaign_not_found" });
       }
-      if (parsed.data.campaignId && !getCampaign(db, request.params.id, parsed.data.campaignId)) {
+      if (parsed.data.campaignId && !await getCampaign(db, request.params.id, parsed.data.campaignId)) {
         return reply.status(404).send({ error: "campaign_not_found" });
       }
-      return linkAdCampaign(db, request.params.id, request.params.adCampaignId, parsed.data.campaignId);
+      return await linkAdCampaign(db, request.params.id, request.params.adCampaignId, parsed.data.campaignId);
     },
   );
 }

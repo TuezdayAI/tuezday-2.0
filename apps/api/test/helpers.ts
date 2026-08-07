@@ -108,7 +108,7 @@ export async function putActionPolicy(
   if (current.statusCode !== 200) return current;
   const expectedUpdatedAt = (current.json() as { updatedAt: number | null }).updatedAt;
   const fallback: ExternalActionPolicyRule = scope === "workspace" ? "human_required" : "inherit";
-  return app.inject({
+  return await app.inject({
     method: "PUT",
     url: `/workspaces/${workspaceId}/external-action-policies`,
     payload: {

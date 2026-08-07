@@ -14,8 +14,8 @@ import { buildArtifactTrace } from "../services/artifact-trace";
 import { buildKnobUsageReport } from "../services/knob-usage";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) void reply.status(404).send({ error: "workspace_not_found" });
   return workspace;
 }
@@ -28,12 +28,12 @@ export function registerTraceRoutes(app: FastifyInstance, db: Db): void {
   app.get<{ Params: { id: string; subjectKind: string; subjectId: string } }>(
     "/workspaces/:id/trace/:subjectKind/:subjectId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const { subjectKind, subjectId } = request.params;
       if (!isTraceSubjectKind(subjectKind)) {
         return reply.status(400).send({ error: "invalid_subject_kind" });
       }
-      const trace = buildArtifactTrace(db, request.params.id, subjectKind, subjectId);
+      const trace = await buildArtifactTrace(db, request.params.id, subjectKind, subjectId);
       if (!trace) return reply.status(404).send({ error: "subject_not_found" });
       return artifactTraceSchema.parse(trace);
     },
@@ -42,7 +42,7 @@ export function registerTraceRoutes(app: FastifyInstance, db: Db): void {
   app.get<{ Params: { id: string }; Querystring: Record<string, unknown> }>(
     "/workspaces/:id/knob-usage",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = knobUsageQuerySchema.safeParse(request.query);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -51,7 +51,7 @@ export function registerTraceRoutes(app: FastifyInstance, db: Db): void {
         });
       }
       return knobUsageReportSchema.parse(
-        buildKnobUsageReport(db, request.params.id, {
+        await buildKnobUsageReport(db, request.params.id, {
           sampleLimit: parsed.data.sampleLimit ?? KNOB_USAGE_SAMPLE_LIMIT,
         }),
       );

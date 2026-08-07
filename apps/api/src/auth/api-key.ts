@@ -23,7 +23,7 @@ export function apiKeyAuth(db: Db) {
     }
 
     const token = authHeader.substring(7);
-    const actor = verifyApiKey(db, token);
+    const actor = await verifyApiKey(db, token);
 
     if (!actor) {
       reply.status(401).send({ error: "unauthorized" });

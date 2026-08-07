@@ -201,15 +201,15 @@ export interface InboxFeedOptions {
  * from here — including the ask lane, which nothing else in the product knows
  * how to rank.
  */
-export function buildAgentInboxFeed(
+export async function buildAgentInboxFeed(
   db: Db,
   workspaceId: string,
   options: InboxFeedOptions = {},
-): AgentInboxFeed {
+): Promise<AgentInboxFeed> {
   const now = options.now ?? Date.now();
   const items: AgentInboxItem[] = [
-    ...collectPriorityItems(db, workspaceId, now).map(laned),
-    ...listAgentQuestions(db, workspaceId, { status: "open" }).map((question) =>
+    ...(await collectPriorityItems(db, workspaceId, now)).map(laned),
+    ...(await listAgentQuestions(db, workspaceId, { status: "open" })).map((question) =>
       questionItem(workspaceId, question),
     ),
     ...setupItems(db, workspaceId, now),
@@ -235,15 +235,15 @@ export function buildAgentInboxFeed(
  * before Sprint 70 — the ask lane and the setup steps removed, and the lane
  * discriminator dropped. `/priorities` and the copilot's queue tool read this.
  */
-export function listWorkspacePriorities(
+export async function listWorkspacePriorities(
   db: Db,
   workspaceId: string,
   limit: number = DEFAULT_LIMIT,
-): PriorityQueue {
+): Promise<PriorityQueue> {
   const now = Date.now();
   const bounded = Math.min(Math.max(limit, 1), MAX_LIMIT);
   const items = rankInboxItems(
-    collectPriorityItems(db, workspaceId, now).map(laned),
+    (await collectPriorityItems(db, workspaceId, now)).map(laned),
     now,
   )
     .slice(0, bounded)

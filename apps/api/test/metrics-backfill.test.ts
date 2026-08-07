@@ -22,24 +22,24 @@ import { backfillMetrics } from "../src/services/metrics-backfill";
 // a fresher dual-written value on the same grain must never be clobbered by
 // a staler legacy one.
 
-function seed(db: Db) {
+async function seed(db: Db) {
   const now = Date.now();
   const workspaceId = randomUUID();
-  db.insert(workspaces).values({ id: workspaceId, name: "WS", createdAt: now, updatedAt: now }).run();
+  await db.insert(workspaces).values({ id: workspaceId, name: "WS", createdAt: now, updatedAt: now }).run();
   return { workspaceId, now };
 }
 
-function facts(db: Db, workspaceId: string) {
-  return db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId)).all();
+async function facts(db: Db, workspaceId: string) {
+  return await db.select().from(metrics).where(eq(metrics.workspaceId, workspaceId)).all();
 }
 
 describe("backfillMetrics", () => {
-  it("maps each store with its real semantics and is idempotent", () => {
+  it("maps each store with its real semantics and is idempotent", async () => {
     const db = createTestDb();
-    const { workspaceId, now } = seed(db);
+    const { workspaceId, now } = await seed(db);
 
     // Legacy manual reading (point) — one null metric, which must produce no row.
-    db.insert(engagementMetrics)
+    await db.insert(engagementMetrics)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -61,7 +61,7 @@ describe("backfillMetrics", () => {
     const publishedAt = now - 2 * 24 * 60 * 60 * 1000;
     const draftId = randomUUID();
     const connId = randomUUID();
-    db.insert(drafts)
+    await db.insert(drafts)
       .values({
         id: draftId,
         workspaceId,
@@ -74,7 +74,7 @@ describe("backfillMetrics", () => {
         updatedAt: publishedAt,
       })
       .run();
-    db.insert(connections)
+    await db.insert(connections)
       .values({
         id: connId,
         workspaceId,
@@ -86,7 +86,7 @@ describe("backfillMetrics", () => {
         updatedAt: publishedAt,
       })
       .run();
-    db.insert(publications)
+    await db.insert(publications)
       .values({
         id: pubId,
         workspaceId,
@@ -102,7 +102,7 @@ describe("backfillMetrics", () => {
         updatedAt: publishedAt,
       })
       .run();
-    db.insert(publicationMetrics)
+    await db.insert(publicationMetrics)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -120,7 +120,7 @@ describe("backfillMetrics", () => {
 
     // Legacy ad daily bucket.
     const accountId = randomUUID();
-    db.insert(adAccounts)
+    await db.insert(adAccounts)
       .values({
         id: accountId,
         workspaceId,
@@ -134,7 +134,7 @@ describe("backfillMetrics", () => {
       })
       .run();
     const adCampaignId = randomUUID();
-    db.insert(adCampaigns)
+    await db.insert(adCampaigns)
       .values({
         id: adCampaignId,
         workspaceId,
@@ -146,7 +146,7 @@ describe("backfillMetrics", () => {
         createdAt: now,
       })
       .run();
-    db.insert(adCampaignMetrics)
+    await db.insert(adCampaignMetrics)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -162,8 +162,8 @@ describe("backfillMetrics", () => {
       })
       .run();
 
-    const first = backfillMetrics(db);
-    const rows = facts(db, workspaceId);
+    const first = await backfillMetrics(db);
+    const rows = await facts(db, workspaceId);
 
     // manual: impressions + clicks (engagements was null → no row)
     const manual = rows.filter((r) => r.subjectType === "channel");
@@ -195,18 +195,18 @@ describe("backfillMetrics", () => {
     }
 
     // Idempotent: run again, nothing changes.
-    const second = backfillMetrics(db);
-    expect(facts(db, workspaceId)).toHaveLength(rows.length);
+    const second = await backfillMetrics(db);
+    expect(await facts(db, workspaceId)).toHaveLength(rows.length);
     expect(second.inserted).toBe(0);
     expect(first.inserted).toBe(rows.length);
   });
 
-  it("never clobbers a fresher dual-written value on the same grain", () => {
+  it("never clobbers a fresher dual-written value on the same grain", async () => {
     const db = createTestDb();
-    const { workspaceId, now } = seed(db);
+    const { workspaceId, now } = await seed(db);
 
     const accountId = randomUUID();
-    db.insert(adAccounts)
+    await db.insert(adAccounts)
       .values({
         id: accountId,
         workspaceId,
@@ -220,7 +220,7 @@ describe("backfillMetrics", () => {
       })
       .run();
     const adCampaignId = randomUUID();
-    db.insert(adCampaigns)
+    await db.insert(adCampaigns)
       .values({
         id: adCampaignId,
         workspaceId,
@@ -233,7 +233,7 @@ describe("backfillMetrics", () => {
       })
       .run();
     // Legacy row holds a STALE value…
-    db.insert(adCampaignMetrics)
+    await db.insert(adCampaignMetrics)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -249,7 +249,7 @@ describe("backfillMetrics", () => {
       })
       .run();
     // …while the dual-write already recorded the fresh one on the same grain.
-    db.insert(metrics)
+    await db.insert(metrics)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -265,9 +265,9 @@ describe("backfillMetrics", () => {
       })
       .run();
 
-    backfillMetrics(db);
+    await backfillMetrics(db);
 
-    const spend = db
+    const spend = await db
       .select()
       .from(metrics)
       .where(and(eq(metrics.workspaceId, workspaceId), eq(metrics.metricKey, "spend")))

@@ -26,7 +26,7 @@ export const listDraftsTool: Tool<Input, unknown> = {
   input,
   access: "read",
   async run(ctx, { state, campaignId, channel, limit }) {
-    const all = listDrafts(ctx.db, ctx.workspaceId, state, campaignId);
+    const all = await listDrafts(ctx.db, ctx.workspaceId, state, campaignId);
     const filtered = channel ? all.filter((d) => d.channel === channel) : all;
     if (filtered.length === 0) {
       return {

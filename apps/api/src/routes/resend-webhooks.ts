@@ -39,7 +39,7 @@ export function registerResendWebhookRoute(
       return reply.status(400).send({ error: "invalid_event" });
     }
     const parsedTime = Date.parse(stringField(root.created_at) ?? "");
-    const result = recordVerifiedEmailEvent(db, {
+    const result = await recordVerifiedEmailEvent(db, {
       providerEventId: id,
       eventType,
       providerMessageId,

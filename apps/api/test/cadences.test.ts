@@ -220,18 +220,18 @@ describe("posting cadences", () => {
    * (the action is authorized at fill time), while a system/auto approval
    * leaves the action waiting at `authorization_required` (D2a).
    */
-  function seedApprovedDraft(opts: {
+  async function seedApprovedDraft(opts: {
     campaignId?: string | null;
     channel?: string;
     personaId?: string | null;
     content?: string;
     approvedBy?: "human" | "system";
-  }): string {
+  }): Promise<string> {
     const approver =
       opts.approvedBy === "system"
         ? { userId: null, label: "system", human: false }
         : { userId: null, label: "test", human: true };
-    const draft = submitDraft(
+    const draft = await submitDraft(
       db,
       {
         workspaceId,
@@ -244,7 +244,7 @@ describe("posting cadences", () => {
       },
       approver,
     );
-    return applyDraftAction(db, draft, "approve", approver).id;
+    return (await applyDraftAction(db, draft, "approve", approver)).id;
   }
 
   function cadencePayload(over: Record<string, unknown> = {}) {
@@ -260,7 +260,7 @@ describe("posting cadences", () => {
   }
 
   async function createCadence(payload: Record<string, unknown>) {
-    return app.inject({ method: "POST", url: `/workspaces/${workspaceId}/cadences`, payload });
+    return await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/cadences`, payload });
   }
 
   async function listPublishActions() {
@@ -445,7 +445,7 @@ describe("posting cadences", () => {
   it("carries campaign identity and failure detail on calendar entries", async () => {
     const connectionId = await connectReddit();
     const campaignId = await createCampaign("Summer Launch");
-    seedApprovedDraft({ campaignId, channel: "linkedin" });
+    await seedApprovedDraft({ campaignId, channel: "linkedin" });
     const cadenceId = (await createCadence(cadencePayload({ campaignId, connectionId }))).json().id;
     const fill = await app.inject({
       method: "POST",
@@ -467,7 +467,7 @@ describe("posting cadences", () => {
     const pub = (
       await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/publications` })
     ).json()[0];
-    db.update(publications)
+    await db.update(publications)
       .set({ status: "failed", lastError: "RATELIMIT: slow down" })
       .where(eq(publications.id, pub.id))
       .run();
@@ -501,7 +501,7 @@ describe("posting cadences", () => {
     const campaignId = await createCampaign("Summer Launch");
     // Auto-approved, so the second gate stays armed (Sprint 52 D2a) and this
     // test still walks the queued → authorized → receipt projection.
-    seedApprovedDraft({ campaignId, channel: "linkedin", approvedBy: "system" });
+    await seedApprovedDraft({ campaignId, channel: "linkedin", approvedBy: "system" });
     const cadenceId = (await createCadence(cadencePayload({ campaignId, connectionId }))).json().id;
     await app.inject({
       method: "POST",
@@ -561,11 +561,11 @@ describe("posting cadences", () => {
       const connectionId = await connectReddit();
       const campaignId = await createCampaign();
       const otherCampaign = await createCampaign("Other");
-      for (let i = 0; i < 3; i++) seedApprovedDraft({ campaignId, channel: "linkedin" });
+      for (let i = 0; i < 3; i++) await seedApprovedDraft({ campaignId, channel: "linkedin" });
       // Decoys that must NOT be slotted:
-      seedApprovedDraft({ campaignId, channel: "email" }); // wrong channel
-      seedApprovedDraft({ campaignId: otherCampaign, channel: "linkedin" }); // wrong campaign
-      submitDraft(
+      await seedApprovedDraft({ campaignId, channel: "email" }); // wrong channel
+      await seedApprovedDraft({ campaignId: otherCampaign, channel: "linkedin" }); // wrong campaign
+      await submitDraft(
         db,
         {
           workspaceId,
@@ -613,13 +613,13 @@ describe("posting cadences", () => {
     it("reports an invalid draft and fills the same slot with the next valid draft", async () => {
       const connectionId = await connectReddit();
       const campaignId = await createCampaign();
-      const invalidDraftId = seedApprovedDraft({
+      const invalidDraftId = await seedApprovedDraft({
         campaignId,
         channel: "linkedin",
         content: "x".repeat(40_001),
       });
       vi.advanceTimersByTime(1);
-      const validDraftId = seedApprovedDraft({
+      const validDraftId = await seedApprovedDraft({
         campaignId,
         channel: "linkedin",
         content: "Valid post title\nA valid body.",
@@ -649,7 +649,7 @@ describe("posting cadences", () => {
       ]);
       expect(body.issues[0].message.length).toBeLessThanOrEqual(500);
       expect(
-        db.select().from(publications).where(eq(publications.draftId, invalidDraftId)).all(),
+        await db.select().from(publications).where(eq(publications.draftId, invalidDraftId)).all(),
       ).toEqual([]);
     });
 
@@ -658,8 +658,8 @@ describe("posting cadences", () => {
       const campaignId = await createCampaign();
       const personaId = await createPersona();
       await assignSocialAccount(personaId, connectionId, "reddit", true);
-      seedApprovedDraft({ campaignId, channel: "linkedin", personaId });
-      seedApprovedDraft({ campaignId, channel: "linkedin", personaId: null }); // different persona
+      await seedApprovedDraft({ campaignId, channel: "linkedin", personaId });
+      await seedApprovedDraft({ campaignId, channel: "linkedin", personaId: null }); // different persona
 
       const scoped = (
         await createCadence(cadencePayload({ campaignId, connectionId, personaId }))
@@ -689,7 +689,7 @@ describe("posting cadences", () => {
     const campaignId = await createCampaign();
     // Auto-approved, so this stays the explicitly-authorized path (Sprint 52
     // D2a). The collapsed one-click path is covered by its own test below.
-    seedApprovedDraft({
+    await seedApprovedDraft({
       campaignId,
       channel: "linkedin",
       content: "Cadence post title\nBody text.",
@@ -752,7 +752,7 @@ describe("posting cadences", () => {
   it("publishes a human-approved draft on cadence without a second click", async () => {
     const connectionId = await connectReddit();
     const campaignId = await createCampaign();
-    const draftId = seedApprovedDraft({
+    const draftId = await seedApprovedDraft({
       campaignId,
       channel: "linkedin",
       content: "Cadence post title\nBody text.",
@@ -794,13 +794,13 @@ describe("posting cadences", () => {
 
     // …and the authorization is attributed to the human who approved, not to
     // the system actor that proposed it.
-    const approval = db
+    const approval = (await db
       .select()
       .from(approvalDecisions)
       .where(eq(approvalDecisions.draftId, draftId))
-      .all()
+      .all())
       .find((row) => row.action === "approve")!;
-    const decisions = db
+    const decisions = await db
       .select()
       .from(externalActionDecisions)
       .where(eq(externalActionDecisions.actionId, action.id))
@@ -832,7 +832,7 @@ describe("posting cadences", () => {
   it("does not re-slot a draft whose collapsed cadence action was withdrawn", async () => {
     const connectionId = await connectReddit();
     const campaignId = await createCampaign();
-    const withdrawnDraftId = seedApprovedDraft({
+    const withdrawnDraftId = await seedApprovedDraft({
       campaignId,
       channel: "linkedin",
       content: "Withdrawn post title\nBody text.",
@@ -866,11 +866,11 @@ describe("posting cadences", () => {
     // What makes this stick is the recorded humanity of the refusal — not the
     // founder's free-text reason, which can say anything, and not the
     // `cancelled` status, which the kill switch also produces.
-    const refusal = db
+    const refusal = (await db
       .select()
       .from(externalActionDecisions)
       .where(eq(externalActionDecisions.actionId, collapsed.id))
-      .all()
+      .all())
       .find((row) => row.decision === "deny")!;
     expect(refusal.actorHuman).toBe(true);
 
@@ -892,7 +892,7 @@ describe("posting cadences", () => {
 
     // …but the cadence is not frozen: a different approved draft still fills.
     vi.setSystemTime(new Date(MONDAY_8AM_UTC.getTime() + 60 * 60 * 1000));
-    const nextDraftId = seedApprovedDraft({
+    const nextDraftId = await seedApprovedDraft({
       campaignId,
       channel: "linkedin",
       content: "Next post title\nBody text.",
@@ -907,7 +907,7 @@ describe("posting cadences", () => {
   it("deleting a cadence cancels its still-scheduled posts", async () => {
     const connectionId = await connectReddit();
     const campaignId = await createCampaign();
-    seedApprovedDraft({ campaignId, channel: "linkedin" });
+    await seedApprovedDraft({ campaignId, channel: "linkedin" });
     const cadenceId = (await createCadence(cadencePayload({ campaignId, connectionId }))).json().id;
     await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/cadences/${cadenceId}/fill` });
     // Collapsed at fill (Sprint 52), so deleting the cadence has to stop an

@@ -208,11 +208,11 @@ function agentStepCall(
     };
   };
   return {
-    first: () => step([userMessage]),
+    first: async () => await step([userMessage]),
     // The failed response rides as an assistant turn so the model sees exactly
     // what it produced next to the error it must fix.
-    repair: (previousText, error) =>
-      step([
+    repair: async (previousText, error) =>
+      await step([
         userMessage,
         { role: "assistant", content: previousText },
         { role: "user", content: repairInstruction(error) },
@@ -226,12 +226,12 @@ function generateCall(llm: LlmGateway, params: GenerateStructuredParams): Transp
     if (params.maxOutputTokens !== undefined) request.maxOutputTokens = params.maxOutputTokens;
     if (params.signal !== undefined) request.signal = params.signal;
     if (params.tier !== undefined) request.tier = params.tier;
-    return llm.generate(request);
+    return await llm.generate(request);
   };
   return {
-    first: () => generate(params.prompt),
-    repair: (previousText, error) =>
-      generate(
+    first: async () => await generate(params.prompt),
+    repair: async (previousText, error) =>
+      await generate(
         [
           params.prompt,
           `Your previous response:\n${previousText}`,

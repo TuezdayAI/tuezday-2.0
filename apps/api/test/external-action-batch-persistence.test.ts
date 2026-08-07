@@ -11,10 +11,10 @@ import {
 } from "../src/db/schema";
 import { createTestDb } from "./helpers";
 
-function seedWorkspace(db: Db, name = "Batch Lab"): string {
+async function seedWorkspace(db: Db, name = "Batch Lab"): Promise<string> {
   const id = randomUUID();
   const now = Date.now();
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({
       id,
       name,
@@ -28,10 +28,10 @@ function seedWorkspace(db: Db, name = "Batch Lab"): string {
   return id;
 }
 
-function seedAction(db: Db, workspaceId: string): string {
+async function seedAction(db: Db, workspaceId: string): Promise<string> {
   const id = randomUUID();
   const now = Date.now();
-  db.insert(externalActions)
+  await db.insert(externalActions)
     .values({
       id,
       workspaceId,
@@ -158,20 +158,20 @@ describe("external action batch persistence", () => {
     );
   });
 
-  it("stores exact immutable preview JSON and nullable item outcomes", () => {
+  it("stores exact immutable preview JSON and nullable item outcomes", async () => {
     const db = createTestDb();
-    const workspaceId = seedWorkspace(db);
-    const actionId = seedAction(db, workspaceId);
+    const workspaceId = await seedWorkspace(db);
+    const actionId = await seedAction(db, workspaceId);
     const batch = batchRow(workspaceId);
     batch.selectionJson = JSON.stringify({ mode: "selected", actionIds: [actionId] });
-    db.insert(externalActionBatches).values(batch).run();
+    await db.insert(externalActionBatches).values(batch).run();
     const item = itemRow(workspaceId, batch.id, actionId);
-    db.insert(externalActionBatchItems).values(item).run();
+    await db.insert(externalActionBatchItems).values(item).run();
 
-    expect(db.select().from(externalActionBatches).get()?.selectionJson).toBe(
+    expect((await db.select().from(externalActionBatches).get())?.selectionJson).toBe(
       batch.selectionJson,
     );
-    expect(db.select().from(externalActionBatchItems).get()).toMatchObject({
+    expect(await db.select().from(externalActionBatchItems).get()).toMatchObject({
       snapshotJson: item.snapshotJson,
       status: "pending",
       submissionJson: null,
@@ -180,11 +180,11 @@ describe("external action batch persistence", () => {
     });
 
     const submissionJson = JSON.stringify({ action: { id: actionId }, execution: null });
-    db.update(externalActionBatchItems)
+    await db.update(externalActionBatchItems)
       .set({ status: "failed", submissionJson, error: "Provider failed", processedAt: 200 })
       .where(eq(externalActionBatchItems.id, item.id))
       .run();
-    expect(db.select().from(externalActionBatchItems).get()).toMatchObject({
+    expect(await db.select().from(externalActionBatchItems).get()).toMatchObject({
       snapshotJson: item.snapshotJson,
       status: "failed",
       submissionJson,
@@ -193,47 +193,47 @@ describe("external action batch persistence", () => {
     });
   });
 
-  it("enforces workspace request idempotency and unique batch membership", () => {
+  it("enforces workspace request idempotency and unique batch membership", async () => {
     const db = createTestDb();
-    const workspaceId = seedWorkspace(db);
-    const otherWorkspaceId = seedWorkspace(db, "Other Batch Lab");
+    const workspaceId = await seedWorkspace(db);
+    const otherWorkspaceId = await seedWorkspace(db, "Other Batch Lab");
     const requestId = randomUUID();
     const batch = batchRow(workspaceId, requestId);
-    db.insert(externalActionBatches).values(batch).run();
-    expect(() =>
-      db.insert(externalActionBatches)
+    await db.insert(externalActionBatches).values(batch).run();
+    expect(async () =>
+      await db.insert(externalActionBatches)
         .values({ ...batchRow(workspaceId, requestId), id: randomUUID() })
         .run(),
     ).toThrow();
-    expect(() =>
-      db.insert(externalActionBatches).values(batchRow(otherWorkspaceId, requestId)).run(),
+    expect(async () =>
+      await db.insert(externalActionBatches).values(batchRow(otherWorkspaceId, requestId)).run(),
     ).not.toThrow();
 
-    const actionId = seedAction(db, workspaceId);
+    const actionId = await seedAction(db, workspaceId);
     const item = itemRow(workspaceId, batch.id, actionId);
-    db.insert(externalActionBatchItems).values(item).run();
-    expect(() =>
-      db.insert(externalActionBatchItems)
+    await db.insert(externalActionBatchItems).values(item).run();
+    expect(async () =>
+      await db.insert(externalActionBatchItems)
         .values({ ...item, id: randomUUID() })
         .run(),
     ).toThrow();
   });
 
-  it("cascades batch deletion but restricts deletion of audited actions", () => {
+  it("cascades batch deletion but restricts deletion of audited actions", async () => {
     const db = createTestDb();
-    const workspaceId = seedWorkspace(db);
-    const actionId = seedAction(db, workspaceId);
+    const workspaceId = await seedWorkspace(db);
+    const actionId = await seedAction(db, workspaceId);
     const batch = batchRow(workspaceId);
-    db.insert(externalActionBatches).values(batch).run();
-    db.insert(externalActionBatchItems).values(itemRow(workspaceId, batch.id, actionId)).run();
+    await db.insert(externalActionBatches).values(batch).run();
+    await db.insert(externalActionBatchItems).values(itemRow(workspaceId, batch.id, actionId)).run();
 
-    expect(() =>
-      db.delete(externalActions).where(eq(externalActions.id, actionId)).run(),
+    expect(async () =>
+      await db.delete(externalActions).where(eq(externalActions.id, actionId)).run(),
     ).toThrow();
-    db.delete(externalActionBatches).where(eq(externalActionBatches.id, batch.id)).run();
-    expect(db.select().from(externalActionBatchItems).all()).toEqual([]);
-    expect(() =>
-      db.delete(externalActions).where(eq(externalActions.id, actionId)).run(),
+    await db.delete(externalActionBatches).where(eq(externalActionBatches.id, batch.id)).run();
+    expect(await db.select().from(externalActionBatchItems).all()).toEqual([]);
+    expect(async () =>
+      await db.delete(externalActions).where(eq(externalActions.id, actionId)).run(),
     ).not.toThrow();
   });
 });

@@ -21,8 +21,8 @@ import {
 } from "../services/learning";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -38,18 +38,18 @@ export function registerLearningRoutes(
   app.get<{ Params: { id: string } }>(
     "/workspaces/:id/learning/examples",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      return listTrainingExamples(db, request.params.id);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      return await listTrainingExamples(db, request.params.id);
     },
   );
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/learning/stats", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return learningStats(db, request.params.id);
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return await learningStats(db, request.params.id);
   });
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/metrics", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = createMetricInputSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({
@@ -57,24 +57,24 @@ export function registerLearningRoutes(
         message: parsed.error.issues.map((i) => i.message).join("; "),
       });
     }
-    if (parsed.data.draftId && !getDraft(db, request.params.id, parsed.data.draftId)) {
+    if (parsed.data.draftId && !await getDraft(db, request.params.id, parsed.data.draftId)) {
       return reply.status(404).send({ error: "draft_not_found" });
     }
-    return reply.status(201).send(createMetric(db, request.params.id, parsed.data));
+    return reply.status(201).send(await createMetric(db, request.params.id, parsed.data));
   });
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/metrics", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return listMetrics(db, request.params.id);
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return await listMetrics(db, request.params.id);
   });
 
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/learning/synthesize",
     async (request, reply) => {
-      const workspace = workspaceOr404(db, request.params.id, reply);
+      const workspace = await workspaceOr404(db, request.params.id, reply);
       if (!workspace) return reply;
       try {
-        assertLlmBudget(db, request.params.id);
+        await assertLlmBudget(db, request.params.id);
         const synthesis = await synthesizeNow(db, llm, request.params.id, workspace.name);
         return reply.status(201).send(synthesis);
       } catch (err) {
@@ -92,19 +92,19 @@ export function registerLearningRoutes(
   app.get<{ Params: { id: string } }>(
     "/workspaces/:id/learning/syntheses",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      return listSyntheses(db, request.params.id);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      return await listSyntheses(db, request.params.id);
     },
   );
 
   app.post<{ Params: { id: string; synthesisId: string } }>(
     "/workspaces/:id/learning/syntheses/:synthesisId/accept",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const synthesis = getSynthesis(db, request.params.id, request.params.synthesisId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const synthesis = await getSynthesis(db, request.params.id, request.params.synthesisId);
       if (!synthesis) return reply.status(404).send({ error: "synthesis_not_found" });
       try {
-        const result = acceptSynthesis(db, request.params.id, synthesis, actorOf(request));
+        const result = await acceptSynthesis(db, request.params.id, synthesis, actorOf(request));
         await emitEvent(db, fetcher, request.params.id, "synthesis.accepted", {
           synthesisId: result.synthesis.id,
           proposal: result.synthesis.proposal,
@@ -122,11 +122,11 @@ export function registerLearningRoutes(
   app.post<{ Params: { id: string; synthesisId: string } }>(
     "/workspaces/:id/learning/syntheses/:synthesisId/dismiss",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const synthesis = getSynthesis(db, request.params.id, request.params.synthesisId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const synthesis = await getSynthesis(db, request.params.id, request.params.synthesisId);
       if (!synthesis) return reply.status(404).send({ error: "synthesis_not_found" });
       try {
-        return dismissSynthesis(db, synthesis);
+        return await dismissSynthesis(db, synthesis);
       } catch (err) {
         if (err instanceof SynthesisAlreadyDecidedError) {
           return reply.status(409).send({ error: "already_decided", message: err.message });

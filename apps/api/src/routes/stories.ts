@@ -22,8 +22,8 @@ import {
 } from "../services/canonical-stories";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -53,7 +53,7 @@ export function registerStoryRoutes(app: FastifyInstance, db: Db): void {
     Params: { id: string };
     Querystring: { status?: string; limit?: string; offset?: string };
   }>("/workspaces/:id/stories", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const { status, limit, offset } = request.query;
     if (status !== undefined && !STORY_STATUSES.includes(status as StoryStatus)) {
       return reply.status(400).send({ error: "invalid_input", message: "unknown status" });
@@ -71,7 +71,7 @@ export function registerStoryRoutes(app: FastifyInstance, db: Db): void {
         message: "limit must be a positive integer and offset a non-negative integer",
       });
     }
-    return listStories(db, request.params.id, {
+    return await listStories(db, request.params.id, {
       status: status as StoryStatus | undefined,
       limit: parsedLimit,
       offset: parsedOffset,
@@ -81,9 +81,9 @@ export function registerStoryRoutes(app: FastifyInstance, db: Db): void {
   app.get<{ Params: { id: string; storyId: string } }>(
     "/workspaces/:id/stories/:storyId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       try {
-        return getStoryDetail(db, request.params.id, request.params.storyId);
+        return await getStoryDetail(db, request.params.id, request.params.storyId);
       } catch (err) {
         return sendStoryError(reply, err);
       }
@@ -93,7 +93,7 @@ export function registerStoryRoutes(app: FastifyInstance, db: Db): void {
   app.patch<{ Params: { id: string; storyId: string } }>(
     "/workspaces/:id/stories/:storyId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = updateStoryInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -102,7 +102,7 @@ export function registerStoryRoutes(app: FastifyInstance, db: Db): void {
         });
       }
       try {
-        return setStoryStatus(db, request.params.id, request.params.storyId, parsed.data.status);
+        return await setStoryStatus(db, request.params.id, request.params.storyId, parsed.data.status);
       } catch (err) {
         return sendStoryError(reply, err);
       }
@@ -112,7 +112,7 @@ export function registerStoryRoutes(app: FastifyInstance, db: Db): void {
   app.post<{ Params: { id: string; storyId: string } }>(
     "/workspaces/:id/stories/:storyId/merge",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = mergeStoryInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -121,7 +121,7 @@ export function registerStoryRoutes(app: FastifyInstance, db: Db): void {
         });
       }
       try {
-        return mergeStories(db, request.params.id, {
+        return await mergeStories(db, request.params.id, {
           storyId: request.params.storyId,
           intoStoryId: parsed.data.intoStoryId,
           actor: actorOf(request),
@@ -136,7 +136,7 @@ export function registerStoryRoutes(app: FastifyInstance, db: Db): void {
   app.post<{ Params: { id: string; occurrenceId: string } }>(
     "/workspaces/:id/stories/occurrences/:occurrenceId/split",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = splitOccurrenceInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -145,7 +145,7 @@ export function registerStoryRoutes(app: FastifyInstance, db: Db): void {
         });
       }
       try {
-        return splitOccurrence(db, request.params.id, {
+        return await splitOccurrence(db, request.params.id, {
           occurrenceId: request.params.occurrenceId,
           actor: actorOf(request),
           reason: parsed.data.reason,
@@ -159,8 +159,8 @@ export function registerStoryRoutes(app: FastifyInstance, db: Db): void {
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/stories/backfill",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      return backfillCanonicalStories(db, request.params.id);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      return await backfillCanonicalStories(db, request.params.id);
     },
   );
 }

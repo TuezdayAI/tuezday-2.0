@@ -149,12 +149,12 @@ function rowToSourceExecution(
   };
 }
 
-export function getDiscoverySourceExecution(
+export async function getDiscoverySourceExecution(
   db: DbExecutor,
   workspaceId: string,
   sourceId: string,
-): DiscoverySourceExecution | undefined {
-  const row = db
+): Promise<DiscoverySourceExecution | undefined> {
+  const row = await db
     .select()
     .from(discoverySources)
     .where(
@@ -262,13 +262,13 @@ export class DiscoverySourceReservedError extends Error {
   }
 }
 
-function validateSourceConnection(
+async function validateSourceConnection(
   db: Db,
   workspaceId: string,
   type: DiscoverySourceType,
   config: DiscoverySourceConfig,
   connectionId: string | null,
-): void {
+): Promise<void> {
   const provider = providerForDiscoverySourceType(type);
   if (!connectionId) {
     if (requiresConnection(type, config)) {
@@ -285,7 +285,7 @@ function validateSourceConnection(
       `${type} sources are keyless and cannot use a connection.`,
     );
   }
-  const connection = getConnection(db, workspaceId, connectionId);
+  const connection = await getConnection(db, workspaceId, connectionId);
   if (!connection) {
     throw new DiscoverySourceConnectionError(
       "connection_required",
@@ -330,13 +330,13 @@ function trackedPlatformForSource(
   }
 }
 
-function requireSourceTrackedAccounts(
+async function requireSourceTrackedAccounts(
   db: DbExecutor,
   workspaceId: string,
   type: DiscoverySourceType,
   config: DiscoverySourceConfig,
-): TrackedSocialAccount[] {
-  const accounts = requireTrackedAccounts(
+): Promise<TrackedSocialAccount[]> {
+  const accounts = await requireTrackedAccounts(
     db,
     workspaceId,
     trackedAccountIds(config),
@@ -351,17 +351,17 @@ function requireSourceTrackedAccounts(
   return accounts;
 }
 
-export function createDiscoverySource(
+export async function createDiscoverySource(
   db: Db,
   workspaceId: string,
   input: CreateDiscoverySourceInput,
-): DiscoverySource {
+): Promise<DiscoverySource> {
   if (isReservedDiscoverySourceType(input.type)) {
     throw new DiscoverySourceReservedError(input.type);
   }
   const connectionId = input.connectionId ?? null;
-  validateSourceConnection(db, workspaceId, input.type, input.config, connectionId);
-  requireSourceTrackedAccounts(db, workspaceId, input.type, input.config);
+  await validateSourceConnection(db, workspaceId, input.type, input.config, connectionId);
+  await requireSourceTrackedAccounts(db, workspaceId, input.type, input.config);
   const runtimeState = deriveDiscoverySourceRuntimeState(
     input.type,
     connectionId,
@@ -381,26 +381,26 @@ export function createDiscoverySource(
     executionVersion: 1,
     createdAt: Date.now(),
   };
-  db.insert(discoverySources).values(row).run();
+  await db.insert(discoverySources).values(row).run();
   return rowToSource(row);
 }
 
-export function listDiscoverySources(db: Db, workspaceId: string): DiscoverySource[] {
-  return db
+export async function listDiscoverySources(db: Db, workspaceId: string): Promise<DiscoverySource[]> {
+  return (await db
     .select()
     .from(discoverySources)
     .where(eq(discoverySources.workspaceId, workspaceId))
     .orderBy(desc(discoverySources.createdAt))
-    .all()
+    .all())
     .map(rowToSource);
 }
 
-export function getDiscoverySource(
+export async function getDiscoverySource(
   db: DbExecutor,
   workspaceId: string,
   sourceId: string,
-): DiscoverySource | undefined {
-  const row = db
+): Promise<DiscoverySource | undefined> {
+  const row = await db
     .select()
     .from(discoverySources)
     .where(and(eq(discoverySources.workspaceId, workspaceId), eq(discoverySources.id, sourceId)))
@@ -447,13 +447,13 @@ export function deriveDiscoverySourceRuntimeState(
   };
 }
 
-export function updateDiscoverySource(
+export async function updateDiscoverySource(
   db: Db,
   workspaceId: string,
   sourceId: string,
   input: UpdateDiscoverySourceInput,
-): DiscoverySource | undefined {
-  const existing = getDiscoverySource(db, workspaceId, sourceId);
+): Promise<DiscoverySource | undefined> {
+  const existing = await getDiscoverySource(db, workspaceId, sourceId);
   if (!existing) return undefined;
   if (
     isReservedDiscoverySourceType(existing.type) &&
@@ -463,14 +463,14 @@ export function updateDiscoverySource(
   }
   const transition = validateDiscoverySourceTransition(existing, input);
   const nextConnectionId = transition.connectionId ?? null;
-  validateSourceConnection(
+  await validateSourceConnection(
     db,
     workspaceId,
     transition.type,
     transition.config,
     nextConnectionId,
   );
-  requireSourceTrackedAccounts(
+  await requireSourceTrackedAccounts(
     db,
     workspaceId,
     transition.type,
@@ -492,8 +492,8 @@ export function updateDiscoverySource(
       nextConnectionId,
     ),
   };
-  return db.transaction((tx) => {
-    tx.update(discoverySources)
+  return await db.transaction(async (tx) => {
+    await tx.update(discoverySources)
       .set(
         executionChanged
           ? {
@@ -512,7 +512,7 @@ export function updateDiscoverySource(
       )
       .run();
     if (executionChanged) {
-      tx.update(discoveryJobs)
+      await tx.update(discoveryJobs)
         .set({
           status: "skipped",
           finishedAt: Date.now(),
@@ -531,12 +531,12 @@ export function updateDiscoverySource(
         )
         .run();
     }
-    return getDiscoverySource(tx, workspaceId, sourceId);
+    return await getDiscoverySource(tx, workspaceId, sourceId);
   });
 }
 
-export function deleteDiscoverySource(db: Db, workspaceId: string, sourceId: string): boolean {
-  return deleteDiscoverySourcePreservingDuplicates(
+export async function deleteDiscoverySource(db: Db, workspaceId: string, sourceId: string): Promise<boolean> {
+  return await deleteDiscoverySourcePreservingDuplicates(
     db,
     workspaceId,
     sourceId,
@@ -572,8 +572,8 @@ function rowToItem(
 }
 
 /** duplicateOfId -> linked-duplicate count, one grouped query per list call. */
-function countDuplicatesByCanonical(db: Db, workspaceId: string): Map<string, number> {
-  const rows = db
+async function countDuplicatesByCanonical(db: Db, workspaceId: string): Promise<Map<string, number>> {
+  const rows = await db
     .select({ duplicateOfId: discoveredItems.duplicateOfId, count: sql<number>`COUNT(*)` })
     .from(discoveredItems)
     .where(
@@ -588,44 +588,44 @@ function countDuplicatesByCanonical(db: Db, workspaceId: string): Map<string, nu
   return map;
 }
 
-export function listDiscoveredItems(
+export async function listDiscoveredItems(
   db: Db,
   workspaceId: string,
   status?: DiscoveredItemStatus,
-): DiscoveredItem[] {
+): Promise<DiscoveredItem[]> {
   const where = status
     ? and(eq(discoveredItems.workspaceId, workspaceId), eq(discoveredItems.status, status))
     : eq(discoveredItems.workspaceId, workspaceId);
-  const rows = db
+  const rows = await db
     .select()
     .from(discoveredItems)
     .where(where)
     .orderBy(sql`${discoveredItems.score} DESC NULLS LAST`, desc(discoveredItems.createdAt))
     .all();
-  const matchesByItem = listItemMatchesForItems(
+  const matchesByItem = await listItemMatchesForItems(
     db,
     workspaceId,
     rows.map((r) => r.id),
   );
-  const duplicateCounts = countDuplicatesByCanonical(db, workspaceId);
+  const duplicateCounts = await countDuplicatesByCanonical(db, workspaceId);
   return rows.map((row) =>
     rowToItem(row, matchesByItem.get(row.id) ?? [], duplicateCounts.get(row.id) ?? 0),
   );
 }
 
-export function getDiscoveredItem(
+export async function getDiscoveredItem(
   db: DbExecutor,
   workspaceId: string,
   itemId: string,
-): DiscoveredItem | undefined {
-  const row = db
+): Promise<DiscoveredItem | undefined> {
+  const row = await db
     .select()
     .from(discoveredItems)
     .where(and(eq(discoveredItems.workspaceId, workspaceId), eq(discoveredItems.id, itemId)))
     .get();
   if (!row) return undefined;
   const duplicateCount =
-    db
+    (await db
       .select({ count: sql<number>`COUNT(*)` })
       .from(discoveredItems)
       .where(
@@ -634,10 +634,10 @@ export function getDiscoveredItem(
           eq(discoveredItems.duplicateOfId, itemId),
         ),
       )
-      .get()?.count ?? 0;
+      .get())?.count ?? 0;
   return rowToItem(
     row,
-    listItemMatches(db, workspaceId, itemId),
+    await listItemMatches(db, workspaceId, itemId),
     duplicateCount,
   );
 }
@@ -650,8 +650,8 @@ export interface DuplicateItemRef {
 }
 
 /** The rows linked to a canonical item — the "seen via N sources" expansion. */
-export function listItemDuplicates(db: Db, workspaceId: string, itemId: string): DuplicateItemRef[] {
-  return db
+export async function listItemDuplicates(db: Db, workspaceId: string, itemId: string): Promise<DuplicateItemRef[]> {
+  return await db
     .select({
       id: discoveredItems.id,
       sourceId: discoveredItems.sourceId,
@@ -704,7 +704,7 @@ export interface DiscoveryAcceptanceHooks {
   afterItemUpdate?(): void;
 }
 
-function requireCurrentMatchReferences(
+async function requireCurrentMatchReferences(
   db: DbExecutor,
   workspaceId: string,
   matches: Array<{
@@ -713,8 +713,8 @@ function requireCurrentMatchReferences(
     score: number;
     reason: string;
   }>,
-): void {
-  const current = revalidateSignalMatches(db, workspaceId, matches);
+): Promise<void> {
+  const current = await revalidateSignalMatches(db, workspaceId, matches);
   if (
     current.length !== matches.length ||
     current.some(
@@ -727,22 +727,22 @@ function requireCurrentMatchReferences(
   }
 }
 
-export function acceptDiscoveredItem(
+export async function acceptDiscoveredItem(
   db: Db,
   workspaceId: string,
   itemId: string,
   hooks?: DiscoveryAcceptanceHooks,
-): { item: DiscoveredItem; signal: Signal } {
-  return db.transaction((tx) => {
-    const item = getDiscoveredItem(tx, workspaceId, itemId);
+): Promise<{ item: DiscoveredItem; signal: Signal }> {
+  return await db.transaction(async (tx) => {
+    const item = await getDiscoveredItem(tx, workspaceId, itemId);
     if (!item) throw new DiscoveryReferenceNotFoundError();
     if (item.status !== "new") throw new ItemNotTriagableError(item.status);
     if (item.matchingState !== "ready") {
       throw new MatchingNotReadyError();
     }
-    const source = getDiscoverySource(tx, workspaceId, item.sourceId);
+    const source = await getDiscoverySource(tx, workspaceId, item.sourceId);
     if (!source) throw new DiscoveryReferenceNotFoundError();
-    const foreignItemMatch = tx
+    const foreignItemMatch = await tx
       .select({ id: discoveredItemMatches.id })
       .from(discoveredItemMatches)
       .where(
@@ -753,7 +753,7 @@ export function acceptDiscoveredItem(
       )
       .get();
     if (foreignItemMatch) throw new DiscoveryReferenceNotFoundError();
-    const itemMatches = tx
+    const itemMatches = await tx
       .select({
         personaId: discoveredItemMatches.personaId,
         campaignId: discoveredItemMatches.campaignId,
@@ -776,20 +776,21 @@ export function acceptDiscoveredItem(
     // projection of `itemMatches` (join-filtered to live personas/campaigns), so
     // there is nothing left to synthesize — validating the raw rows validates
     // the projection too, and any dangling row still blocks acceptance.
-    requireCurrentMatchReferences(tx, workspaceId, itemMatches);
+    await requireCurrentMatchReferences(tx, workspaceId, itemMatches);
 
     const signalInput = {
       content: item.summary ? `${item.title}\n\n${item.summary}` : item.title,
       source: SIGNAL_SOURCE_BY_TYPE[source.type],
       sourceUrl: item.url || undefined,
     };
-    const signalRow = insertSignalRow(tx, workspaceId, signalInput);
+    const signalRow = await insertSignalRow(tx, workspaceId, signalInput);
     hooks?.afterSignalInsert?.();
-    itemMatches.forEach((match, index) => {
-      insertSignalMatch(tx, workspaceId, signalRow.id, match);
+    // Sequential inside the transaction — see the same pattern in signals.ts.
+    for (const [index, match] of itemMatches.entries()) {
+      await insertSignalMatch(tx, workspaceId, signalRow.id, match);
       hooks?.afterMatchInsert?.(index);
-    });
-    tx.update(discoveredItems)
+    }
+    await tx.update(discoveredItems)
       .set({
         status: "accepted",
         signalId: signalRow.id,
@@ -808,7 +809,7 @@ export function acceptDiscoveredItem(
       )
       .run();
     hooks?.afterItemUpdate?.();
-    const signal = readSignal(tx, workspaceId, signalRow.id);
+    const signal = await readSignal(tx, workspaceId, signalRow.id);
     if (!signal) throw new Error("Accepted discovery signal could not be read.");
     return {
       item: {
@@ -824,18 +825,18 @@ export function acceptDiscoveredItem(
   });
 }
 
-export function skipDiscoveredItem(
+export async function skipDiscoveredItem(
   db: Db,
   workspaceId: string,
   item: DiscoveredItem,
-): DiscoveredItem {
-  return db.transaction((tx) => {
-    const current = getDiscoveredItem(tx, workspaceId, item.id);
+): Promise<DiscoveredItem> {
+  return await db.transaction(async (tx) => {
+    const current = await getDiscoveredItem(tx, workspaceId, item.id);
     if (!current) throw new DiscoveryReferenceNotFoundError();
     if (current.status !== "new") {
       throw new ItemNotTriagableError(current.status);
     }
-    tx.update(discoveredItems)
+    await tx.update(discoveredItems)
       .set({
         status: "skipped",
         matchingState: "frozen",
@@ -892,16 +893,16 @@ export { hashContent, hashUrl } from "./discovery-hashing";
  * The oldest canonical (non-duplicate) workspace item sharing this URL or
  * content hash — the row a fresh cross-source copy should link to.
  */
-function findCanonicalItem(
+async function findCanonicalItem(
   db: DbExecutor,
   workspaceId: string,
   urlHash: string | null,
   contentHash: string,
   excludeId?: string,
-): { id: string } | undefined {
+): Promise<{ id: string } | undefined> {
   const hashMatches = [eq(discoveredItems.contentHash, contentHash)];
   if (urlHash) hashMatches.push(eq(discoveredItems.urlHash, urlHash));
-  return db
+  return await db
     .select({ id: discoveredItems.id })
     .from(discoveredItems)
     .where(
@@ -923,8 +924,8 @@ function findCanonicalItem(
 export const RATE_LIMIT_BACKOFF_BASE_MS = 5 * 60 * 1000;
 export const RATE_LIMIT_BACKOFF_MAX_MS = 60 * 60 * 1000;
 
-function rateLimitBackoffMs(db: Db, sourceId: string): number {
-  const recent = db
+async function rateLimitBackoffMs(db: Db, sourceId: string): Promise<number> {
+  const recent = await db
     .select({ status: discoveryJobs.status, error: discoveryJobs.error })
     .from(discoveryJobs)
     .where(and(eq(discoveryJobs.sourceId, sourceId), inArray(discoveryJobs.status, ["succeeded", "failed"])))
@@ -991,7 +992,7 @@ async function defaultDiscoveryPageReader(
   input: Parameters<DiscoveryPageReader>[0],
 ) {
   if (input.source.connectionId) {
-    const connection = getConnection(
+    const connection = await getConnection(
       input.db,
       input.source.workspaceId,
       input.source.connectionId,
@@ -999,7 +1000,7 @@ async function defaultDiscoveryPageReader(
     if (!connection || connection.status !== "connected") {
       throw new Error("connection_disconnected");
     }
-    return fetchConnectedSourcePage({
+    return await fetchConnectedSourcePage({
       source: input.source,
       connection,
       fabric: input.fabric,
@@ -1028,7 +1029,7 @@ async function defaultDiscoveryPageReader(
       decodedBytes: 0,
     };
   }
-  return fetchSourcePage({
+  return await fetchSourcePage({
     source: input.source,
     target: input.target,
     checkpoint: input.checkpoint,
@@ -1039,12 +1040,12 @@ async function defaultDiscoveryPageReader(
   });
 }
 
-function sourceClaimIsLive(
+async function sourceClaimIsLive(
   db: DbExecutor,
   claim: DiscoveryJobClaim,
-): boolean {
+): Promise<boolean> {
   return Boolean(
-    db
+    await db
       .select({ id: discoveryJobs.id })
       .from(discoveryJobs)
       .where(
@@ -1075,7 +1076,7 @@ class DiscoveryCheckpointFenceError extends Error {
   }
 }
 
-export function persistDiscoveryPage(
+export async function persistDiscoveryPage(
   db: Db,
   input: {
     claim: DiscoveryJobClaim;
@@ -1084,7 +1085,7 @@ export function persistDiscoveryPage(
     cursor: DiscoveryCursorV1;
     hooks?: DiscoveryCheckpointHooks;
   },
-): { inserted: number; fetched: number } | null {
+): Promise<{ inserted: number; fetched: number } | null> {
   if (
     input.page.items.some(
       (item) =>
@@ -1096,12 +1097,12 @@ export function persistDiscoveryPage(
   }
 
   try {
-    return db.transaction((tx) => {
+    return await db.transaction(async (tx) => {
       const { claim, source, page, cursor, hooks } = input;
-      if (!sourceClaimIsLive(tx, claim)) {
+      if (!await sourceClaimIsLive(tx, claim)) {
         throw new DiscoveryCheckpointFenceError();
       }
-      const currentSourceRow = tx
+      const currentSourceRow = await tx
         .select()
         .from(discoverySources)
         .where(
@@ -1119,12 +1120,12 @@ export function persistDiscoveryPage(
       const currentSource = rowToSourceExecution(currentSourceRow);
       let currentTargets: ReturnType<typeof targetsForSource>;
       try {
-        const currentTrackedAccounts = requireSourceTrackedAccounts(
+        const currentTrackedAccounts = (await requireSourceTrackedAccounts(
           tx,
           claim.workspaceId,
           currentSource.type,
           currentSource.config,
-        ).map((account) => ({
+        )).map((account) => ({
           id: account.id,
           handle: account.handle,
           externalId: account.externalId,
@@ -1156,7 +1157,7 @@ export function persistDiscoveryPage(
         const id = randomUUID();
         const urlHash = hashUrl(item.url);
         const contentHash = hashContent(item.title, item.summary);
-        const insertedRow = tx
+        const insertedRow = await tx
           .insert(discoveredItems)
           .values({
             id,
@@ -1194,7 +1195,7 @@ export function persistDiscoveryPage(
         // item — including re-fetches and Sprint 45 duplicates — because
         // repeated observation is corroboration, not noise; the occurrence
         // unique key makes true re-deliveries a no-op.
-        recordOccurrenceAndResolve(tx, {
+        await recordOccurrenceAndResolve(tx, {
           workspaceId: claim.workspaceId,
           source: {
             id: source.id,
@@ -1215,7 +1216,7 @@ export function persistDiscoveryPage(
 
         if (!insertedRow) continue;
 
-        const canonical = findCanonicalItem(
+        const canonical = await findCanonicalItem(
           tx,
           claim.workspaceId,
           urlHash,
@@ -1223,7 +1224,7 @@ export function persistDiscoveryPage(
           id,
         );
         if (canonical) {
-          tx.update(discoveredItems)
+          await tx.update(discoveredItems)
             .set({
               status: "duplicate",
               duplicateOfId: canonical.id,
@@ -1240,7 +1241,7 @@ export function persistDiscoveryPage(
       hooks?.afterCanonicalization?.();
       hooks?.beforeCursorUpdate?.();
 
-      const sourceUpdated = tx
+      const sourceUpdated = await tx
         .update(discoverySources)
         .set({
           cursorJson: JSON.stringify(cursor),
@@ -1265,7 +1266,7 @@ export function persistDiscoveryPage(
         throw new DiscoveryCheckpointFenceError();
       }
 
-      const jobUpdated = tx
+      const jobUpdated = await tx
         .update(discoveryJobs)
         .set({
           fetchedCount: sql`
@@ -1294,16 +1295,16 @@ export function persistDiscoveryPage(
   }
 }
 
-function persistPermissionCheckpoint(
+async function persistPermissionCheckpoint(
   db: Db,
   claim: DiscoveryJobClaim,
   source: DiscoverySourceExecution,
   cursor: DiscoveryCursorV1,
-): boolean {
-  return db.transaction((tx) => {
-    if (!sourceClaimIsLive(tx, claim)) return false;
+): Promise<boolean> {
+  return await db.transaction(async (tx) => {
+    if (!await sourceClaimIsLive(tx, claim)) return false;
     return (
-      tx
+      (await tx
         .update(discoverySources)
         .set({
           cursorJson: JSON.stringify(cursor),
@@ -1319,7 +1320,7 @@ function persistPermissionCheckpoint(
             ),
           ),
         )
-        .run().changes === 1
+        .run()).changes === 1
     );
   });
 }
@@ -1410,18 +1411,18 @@ function safeExecutionFailure(
   return { code: "provider_failed", persisted: "provider_failed" };
 }
 
-function writeSourceFailure(
+async function writeSourceFailure(
   db: Db,
   source: DiscoverySourceExecution,
   code: string,
   persistedError = code,
-): void {
+): Promise<void> {
   if (code === "lease_lost" || code === "shutdown") return;
   const failedAt = Date.now();
   if (code === "rate_limited") {
-    db.update(discoverySources)
+    await db.update(discoverySources)
       .set({
-        backoffUntil: failedAt + rateLimitBackoffMs(db, source.id),
+        backoffUntil: failedAt + await rateLimitBackoffMs(db, source.id),
         lastAttemptedAt: failedAt,
       })
       .where(
@@ -1436,7 +1437,7 @@ function writeSourceFailure(
   }
   const isBudget =
     SAFE_EXECUTION_CODES.has(code) && code !== "source_timeout";
-  db.update(discoverySources)
+  await db.update(discoverySources)
     .set({
       status: isBudget ? "active" : "error",
       lastError: persistedError.slice(0, 500),
@@ -1467,13 +1468,13 @@ export async function runClaimedDiscoverySource(
   budget: SourceBudget,
   signal: AbortSignal,
 ): Promise<SourceRunResult> {
-  const initial = getDiscoverySourceExecution(
+  const initial = await getDiscoverySourceExecution(
     deps.db,
     claim.workspaceId,
     claim.sourceId,
   );
   if (!initial) {
-    failDiscoveryJob(deps.db, claim, "source_missing");
+    await failDiscoveryJob(deps.db, claim, "source_missing");
     return resultWithMetrics(
       {
         sourceId: claim.sourceId,
@@ -1494,7 +1495,7 @@ export async function runClaimedDiscoverySource(
     );
   }
   if (initial.executionVersion !== claim.sourceExecutionVersion) {
-    failDiscoveryJob(deps.db, claim, "source_version_changed");
+    await failDiscoveryJob(deps.db, claim, "source_version_changed");
     return resultWithMetrics(
       {
         sourceId: initial.id,
@@ -1523,7 +1524,7 @@ export async function runClaimedDiscoverySource(
   let permissionFailures = 0;
   let trackedAccounts: ResolvedTrackedAccount[];
   try {
-    let referencedAccounts = requireSourceTrackedAccounts(
+    let referencedAccounts = await requireSourceTrackedAccounts(
       deps.db,
       claim.workspaceId,
       initial.type,
@@ -1561,13 +1562,13 @@ export async function runClaimedDiscoverySource(
     }));
   } catch (error) {
     const failure = safeExecutionFailure(error, initial, signal);
-    writeSourceFailure(
+    await writeSourceFailure(
       deps.db,
       initial,
       failure.code,
       failure.persisted,
     );
-    failDiscoveryJob(deps.db, claim, failure.persisted);
+    await failDiscoveryJob(deps.db, claim, failure.persisted);
     return resultWithMetrics(
       {
         sourceId: initial.id,
@@ -1677,7 +1678,7 @@ export async function runClaimedDiscoverySource(
           checkpoint.lastSafeError = "cursor_replay";
           cursor.nextTargetIndex = targetIndex;
           if (
-            !persistPermissionCheckpoint(
+            !await persistPermissionCheckpoint(
               deps.db,
               claim,
               initial,
@@ -1696,7 +1697,7 @@ export async function runClaimedDiscoverySource(
           checkpoint.lastSafeError = "permission_required";
           checkpoint.continuation = null;
           cursor.nextTargetIndex = (targetIndex + 1) % targets.length;
-          if (!persistPermissionCheckpoint(deps.db, claim, initial, cursor)) {
+          if (!await persistPermissionCheckpoint(deps.db, claim, initial, cursor)) {
             terminalCode = "lease_lost";
             break;
           }
@@ -1738,7 +1739,7 @@ export async function runClaimedDiscoverySource(
         nextTargetIndex: (targetIndex + 1) % targets.length,
       });
 
-      const persisted = persistDiscoveryPage(deps.db, {
+      const persisted = await persistDiscoveryPage(deps.db, {
         claim,
         source: initial,
         page: admittedPage,
@@ -1778,17 +1779,17 @@ export async function runClaimedDiscoverySource(
 
   if (terminalCode) {
     const persistedError = terminalPersistedError ?? terminalCode;
-    writeSourceFailure(
+    await writeSourceFailure(
       deps.db,
       initial,
       terminalCode,
       persistedError,
     );
-    if (!failDiscoveryJob(deps.db, claim, persistedError)) {
+    if (!await failDiscoveryJob(deps.db, claim, persistedError)) {
       code = "lease_lost";
     }
   } else if (
-    !completeDiscoveryJob(deps.db, claim, {
+    !await completeDiscoveryJob(deps.db, claim, {
       fetchedCount: admittedItems,
       newCount: insertedItems,
     })
@@ -1838,8 +1839,8 @@ export async function suggestDiscoverySources(
   workspaceId: string,
   workspaceName: string,
 ): Promise<SourceProposal[]> {
-  const digest = brainDigest(db, workspaceId);
-  const personas = listPersonas(db, workspaceId);
+  const digest = await brainDigest(db, workspaceId);
+  const personas = await listPersonas(db, workspaceId);
   const personaList = personas.map((p) => `- ${p.name}: ${p.description}`).join("\n") || "(none)";
 
   const prompt = [

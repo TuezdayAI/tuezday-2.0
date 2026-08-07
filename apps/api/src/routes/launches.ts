@@ -39,8 +39,8 @@ import {
 } from "../services/launch-sequences";
 import { externalActionError } from "./external-actions";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -66,7 +66,7 @@ export function registerLaunchRoutes(
   runtime: ExternalActionRuntime,
 ): void {
   app.post<{ Params: { id: string } }>("/workspaces/:id/launches", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = createLaunchInputSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({
@@ -74,28 +74,28 @@ export function registerLaunchRoutes(
         message: parsed.error.issues.map((i) => i.message).join("; "),
       });
     }
-    if (!getAudience(db, request.params.id, parsed.data.audienceId)) {
+    if (!await getAudience(db, request.params.id, parsed.data.audienceId)) {
       return reply.status(404).send({ error: "audience_not_found" });
     }
-    if (parsed.data.campaignId && !getCampaign(db, request.params.id, parsed.data.campaignId)) {
+    if (parsed.data.campaignId && !await getCampaign(db, request.params.id, parsed.data.campaignId)) {
       return reply.status(404).send({ error: "campaign_not_found" });
     }
-    if (parsed.data.personaId && !getPersona(db, request.params.id, parsed.data.personaId)) {
+    if (parsed.data.personaId && !await getPersona(db, request.params.id, parsed.data.personaId)) {
       return reply.status(404).send({ error: "persona_not_found" });
     }
-    return reply.status(201).send(createLaunch(db, request.params.id, parsed.data));
+    return reply.status(201).send(await createLaunch(db, request.params.id, parsed.data));
   });
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/launches", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return listLaunches(db, request.params.id);
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return await listLaunches(db, request.params.id);
   });
 
   app.get<{ Params: { id: string; launchId: string } }>(
     "/workspaces/:id/launches/:launchId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const detail = getLaunchDetail(db, request.params.id, request.params.launchId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const detail = await getLaunchDetail(db, request.params.id, request.params.launchId);
       if (!detail) return reply.status(404).send({ error: "launch_not_found" });
       return detail;
     },
@@ -104,8 +104,8 @@ export function registerLaunchRoutes(
   app.delete<{ Params: { id: string; launchId: string } }>(
     "/workspaces/:id/launches/:launchId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      if (!deleteLaunch(db, request.params.id, request.params.launchId)) {
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await deleteLaunch(db, request.params.id, request.params.launchId)) {
         return reply.status(404).send({ error: "launch_not_found" });
       }
       return reply.status(204).send();
@@ -115,7 +115,7 @@ export function registerLaunchRoutes(
   app.post<{ Params: { id: string; launchId: string } }>(
     "/workspaces/:id/launches/:launchId/generate",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = generateLaunchInputSchema.safeParse(request.body ?? {});
       if (!parsed.success) {
         return reply.status(400).send({
@@ -123,8 +123,8 @@ export function registerLaunchRoutes(
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      assertLlmBudget(db, request.params.id);
-      const result = enqueueLaunchGeneration(
+      await assertLlmBudget(db, request.params.id);
+      const result = await enqueueLaunchGeneration(
         db,
         request.params.id,
         request.params.launchId,
@@ -143,8 +143,8 @@ export function registerLaunchRoutes(
   app.get<{ Params: { id: string; launchId: string } }>(
     "/workspaces/:id/launches/:launchId/export.csv",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const result = exportLaunchEmail(db, exporter, request.params.id, request.params.launchId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const result = await exportLaunchEmail(db, exporter, request.params.id, request.params.launchId);
       if (!result.ok) {
         const status = result.error === "launch_not_found" ? 404 : 409;
         return reply.status(status).send({ error: result.error });
@@ -159,7 +159,7 @@ export function registerLaunchRoutes(
   app.post<{ Params: { id: string; launchId: string; channel: string } }>(
     "/workspaces/:id/launches/:launchId/channels/:channel/dispatch",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const channel = request.params.channel as LaunchChannel;
       if (!(LAUNCH_CHANNELS as readonly string[]).includes(channel)) {
         return reply.status(404).send({ error: "unknown_channel" });
@@ -201,7 +201,7 @@ export function registerLaunchRoutes(
   app.put<{ Params: { id: string; launchId: string } }>(
     "/workspaces/:id/launches/:launchId/sequence",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = setSequenceInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -209,7 +209,7 @@ export function registerLaunchRoutes(
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      const result = setSequence(db, request.params.id, request.params.launchId, parsed.data);
+      const result = await setSequence(db, request.params.id, request.params.launchId, parsed.data);
       if (!result.ok) {
         const status = result.error === "launch_not_found" ? 404 : 400;
         return reply.status(status).send({ error: result.error });
@@ -222,7 +222,7 @@ export function registerLaunchRoutes(
   app.patch<{ Params: { id: string; launchId: string } }>(
     "/workspaces/:id/launches/:launchId/sequence-config",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = updateLaunchSequenceConfigInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -230,7 +230,7 @@ export function registerLaunchRoutes(
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      const launch = updateLaunchSequenceConfig(
+      const launch = await updateLaunchSequenceConfig(
         db,
         request.params.id,
         request.params.launchId,
@@ -245,7 +245,7 @@ export function registerLaunchRoutes(
   app.post<{ Params: { id: string; launchId: string } }>(
     "/workspaces/:id/launches/:launchId/sequence/start",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const result = await startSequence(
         db,
         llm,
@@ -266,7 +266,7 @@ export function registerLaunchRoutes(
   app.post<{ Params: { id: string; launchId: string } }>(
     "/workspaces/:id/launches/:launchId/sequence/run",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const result = await runLaunchSequence(
         db,
         llm,
@@ -287,7 +287,7 @@ export function registerLaunchRoutes(
   app.post<{ Params: { id: string; launchId: string } }>(
     "/workspaces/:id/launches/:launchId/sequence/stop",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = stopSequenceInputSchema.safeParse(request.body ?? {});
       if (!parsed.success) {
         return reply.status(400).send({
@@ -295,7 +295,7 @@ export function registerLaunchRoutes(
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      const result = stopSequence(db, request.params.id, request.params.launchId, parsed.data);
+      const result = await stopSequence(db, request.params.id, request.params.launchId, parsed.data);
       if (!result.ok) return reply.status(404).send({ error: result.error });
       return { stopped: result.stopped };
     },
@@ -305,8 +305,8 @@ export function registerLaunchRoutes(
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/sequences/run",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      return runSequences(db, llm, evidence, runtime, request.params.id);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      return await runSequences(db, llm, evidence, runtime, request.params.id);
     },
   );
 }

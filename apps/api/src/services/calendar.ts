@@ -33,12 +33,12 @@ export interface CalendarView {
  * Workspace-wide "what's going out when": publications (scheduled/published/
  * failed) in the window plus every active cadence's still-open upcoming slots.
  */
-export function buildCalendar(db: Db, workspaceId: string, fromMs: number, toMs: number): CalendarView {
+export async function buildCalendar(db: Db, workspaceId: string, fromMs: number, toMs: number): Promise<CalendarView> {
   const entries: CalendarEntry[] = [];
 
   // Campaign names for both publication (via draft) and slot (via cadence) entries.
   const campaignNames = new Map<string, string>();
-  for (const row of db
+  for (const row of await db
     .select({ id: campaigns.id, name: campaigns.name })
     .from(campaigns)
     .where(eq(campaigns.workspaceId, workspaceId))
@@ -50,7 +50,7 @@ export function buildCalendar(db: Db, workspaceId: string, fromMs: number, toMs:
     return { campaignId: id, campaignName: id ? (campaignNames.get(id) ?? null) : null };
   };
 
-  const rows = db
+  const rows = await db
     .select({ publication: publications, draft: drafts, cadence: postingCadences })
     .from(publications)
     .leftJoin(drafts, eq(publications.draftId, drafts.id))
@@ -92,17 +92,17 @@ export function buildCalendar(db: Db, workspaceId: string, fromMs: number, toMs:
   // Timed external actions hold their slot until a native receipt is linked;
   // once a publication carries the action id, only the receipt is listed.
   const receiptActionIds = new Set(
-    db
+    (await db
       .select({ externalActionId: publications.externalActionId })
       .from(publications)
       .where(
         and(eq(publications.workspaceId, workspaceId), isNotNull(publications.externalActionId)),
       )
-      .all()
+      .all())
       .map((row) => row.externalActionId)
       .filter((id): id is string => !!id),
   );
-  const actionRows = db
+  const actionRows = await db
     .select()
     .from(externalActions)
     .where(
@@ -144,7 +144,7 @@ export function buildCalendar(db: Db, workspaceId: string, fromMs: number, toMs:
     }
   }
 
-  for (const cadence of listCadenceRows(db, workspaceId)) {
+  for (const cadence of await listCadenceRows(db, workspaceId)) {
     if (cadence.status !== "active") continue;
     const cov = covered.get(cadence.id) ?? new Set<number>();
     for (const at of slotsBetween(cadence, fromMs, toMs)) {

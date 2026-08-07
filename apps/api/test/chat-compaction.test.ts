@@ -26,48 +26,48 @@ let workspaceId: string;
 /** Long enough that a handful of these blow the 60%-of-32k threshold. */
 const LONG = "x ".repeat(3_000);
 
-function seedTranscript(sessionId: string, count: number, body = LONG): ChatMessage[] {
+async function seedTranscript(sessionId: string, count: number, body = LONG): Promise<ChatMessage[]> {
   for (let i = 0; i < count; i++) {
-    appendMessage(db, workspaceId, sessionId, {
+    await appendMessage(db, workspaceId, sessionId, {
       role: i % 2 === 0 ? "user" : "assistant",
       content: `${body} message ${i}`,
     });
   }
-  return listMessages(db, sessionId);
+  return await listMessages(db, sessionId);
 }
 
 function summaryStep(summary: string, pinned: string[] = [], open: string[] = []) {
   return { text: JSON.stringify({ summary, pinnedEntities: pinned, openQuestions: open }) };
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   db = createTestDb();
   workspaceId = randomUUID();
-  db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 }).run();
+  await db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 }).run();
 });
 
 describe("the threshold", () => {
-  it("does not fire on a short conversation", () => {
-    const session = createSession(db, workspaceId, null, {});
-    expect(shouldCompact(seedTranscript(session.id, 4))).toBe(false);
+  it("does not fire on a short conversation", async () => {
+    const session = await createSession(db, workspaceId, null, {});
+    expect(shouldCompact(await seedTranscript(session.id, 4))).toBe(false);
   });
 
-  it("does not fire when everything would be kept verbatim anyway", () => {
-    const session = createSession(db, workspaceId, null, {});
-    const messages = seedTranscript(session.id, CHAT_COMPACTION_KEEP_RECENT);
+  it("does not fire when everything would be kept verbatim anyway", async () => {
+    const session = await createSession(db, workspaceId, null, {});
+    const messages = await seedTranscript(session.id, CHAT_COMPACTION_KEEP_RECENT);
     expect(shouldCompact(messages)).toBe(false);
   });
 
-  it("fires once the transcript outgrows the per-turn budget", () => {
-    const session = createSession(db, workspaceId, null, {});
-    expect(shouldCompact(seedTranscript(session.id, 20))).toBe(true);
+  it("fires once the transcript outgrows the per-turn budget", async () => {
+    const session = await createSession(db, workspaceId, null, {});
+    expect(shouldCompact(await seedTranscript(session.id, 20))).toBe(true);
   });
 });
 
 describe("folding", () => {
   it("summarizes the older turns and keeps the newest verbatim", async () => {
-    const session = createSession(db, workspaceId, null, {});
-    const messages = seedTranscript(session.id, 20);
+    const session = await createSession(db, workspaceId, null, {});
+    const messages = await seedTranscript(session.id, 20);
     const llm = new ScriptedGateway([
       summaryStep("They want a launch campaign.", ["Launch campaign"], ["Which channels?"]),
     ]);
@@ -86,31 +86,31 @@ describe("folding", () => {
   });
 
   it("records the compaction as its own agent_run", async () => {
-    const session = createSession(db, workspaceId, null, {});
-    const messages = seedTranscript(session.id, 20);
+    const session = await createSession(db, workspaceId, null, {});
+    const messages = await seedTranscript(session.id, 20);
     const llm = new ScriptedGateway([summaryStep("Summary.")]);
 
     const result = await maybeCompact(db, llm, session, messages);
 
     expect(result!.agentRunId).toBeTruthy();
-    const run = db.select().from(agentRuns).all().find((r) => r.id === result!.agentRunId);
+    const run = (await db.select().from(agentRuns).all()).find((r) => r.id === result!.agentRunId);
     expect(run?.task).toBe("chat:compaction");
     expect(result!.usage.inputTokens).toBeGreaterThan(0);
   });
 
   it("nothing is deleted — the folded messages stay in the table", async () => {
-    const session = createSession(db, workspaceId, null, {});
-    const messages = seedTranscript(session.id, 20);
+    const session = await createSession(db, workspaceId, null, {});
+    const messages = await seedTranscript(session.id, 20);
 
     await maybeCompact(db, new ScriptedGateway([summaryStep("Summary.")]), session, messages);
 
     // 20 originals plus the compaction row.
-    expect(listMessages(db, session.id)).toHaveLength(21);
+    expect(await listMessages(db, session.id)).toHaveLength(21);
   });
 
   it("the next turn replays the summary plus the kept tail, not the whole history", async () => {
-    const session = createSession(db, workspaceId, null, {});
-    const messages = seedTranscript(session.id, 20);
+    const session = await createSession(db, workspaceId, null, {});
+    const messages = await seedTranscript(session.id, 20);
 
     const result = await maybeCompact(
       db,
@@ -119,10 +119,10 @@ describe("folding", () => {
       messages,
     );
 
-    const row = getSessionRow(db, workspaceId, session.id);
+    const row = await getSessionRow(db, workspaceId, session.id);
     expect(row?.compactedThroughMessageId).toBe(result!.summarizedThrough);
 
-    const active = listActiveMessages(db, session.id, row!.compactedThroughMessageId);
+    const active = await listActiveMessages(db, session.id, row!.compactedThroughMessageId);
     expect(active).toHaveLength(CHAT_COMPACTION_KEEP_RECENT + 1);
     expect(active[0]!.role).toBe("compaction");
     expect(active[0]!.content).toContain("Established: they want a launch.");
@@ -141,8 +141,8 @@ describe("failure never loses a turn", () => {
         throw new GatewayError("provider_error", "down");
       },
     };
-    const session = createSession(db, workspaceId, null, {});
-    const messages = seedTranscript(session.id, 20);
+    const session = await createSession(db, workspaceId, null, {});
+    const messages = await seedTranscript(session.id, 20);
 
     const result = await maybeCompact(db, failing, session, messages);
 
@@ -152,14 +152,14 @@ describe("failure never loses a turn", () => {
     expect(result!.message.content).toContain("could not be summarized");
     expect(result!.message.content).toContain("earlier messages were dropped");
     // And the marker is still set, so the thread stays sendable.
-    expect(getSessionRow(db, workspaceId, session.id)?.compactedThroughMessageId).toBe(
+    expect((await getSessionRow(db, workspaceId, session.id))?.compactedThroughMessageId).toBe(
       result!.summarizedThrough,
     );
   });
 
   it("degrades the same way when the model returns an unusable summary", async () => {
-    const session = createSession(db, workspaceId, null, {});
-    const messages = seedTranscript(session.id, 20);
+    const session = await createSession(db, workspaceId, null, {});
+    const messages = await seedTranscript(session.id, 20);
     const llm = new ScriptedGateway([summaryStep("   ")]);
 
     const result = await maybeCompact(db, llm, session, messages);
@@ -169,10 +169,10 @@ describe("failure never loses a turn", () => {
 });
 
 describe("a stale marker degrades safely", () => {
-  it("replays the whole transcript when the cutoff message is gone", () => {
-    const session = createSession(db, workspaceId, null, {});
-    const messages = seedTranscript(session.id, 6);
-    const active = listActiveMessages(db, session.id, "a-message-that-no-longer-exists");
+  it("replays the whole transcript when the cutoff message is gone", async () => {
+    const session = await createSession(db, workspaceId, null, {});
+    const messages = await seedTranscript(session.id, 6);
+    const active = await listActiveMessages(db, session.id, "a-message-that-no-longer-exists");
     expect(active).toHaveLength(messages.length);
   });
 });

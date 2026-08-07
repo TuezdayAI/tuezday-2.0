@@ -339,9 +339,9 @@ describe("FreshsalesAdapter", () => {
   it("raises ConnectorFabricError on non-2xx responses", async () => {
     const state = freshsalesState();
     state.failStatus = 500;
-    await expect(adapterFor(state).listContacts()).rejects.toThrow(ConnectorFabricError);
+    await expect(await adapterFor(state).listContacts()).rejects.toThrow(ConnectorFabricError);
     await expect(
-      adapterFor(state).createContact({ name: "X", email: "x@x.io" }),
+      await adapterFor(state).createContact({ name: "X", email: "x@x.io" }),
     ).rejects.toThrow(ConnectorFabricError);
   });
 
@@ -439,7 +439,7 @@ describe("CRM read/write API", () => {
   }
 
   async function sync(connectionId: string) {
-    return app.inject({
+    return await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/crm/sync`,
       payload: { connectionId },

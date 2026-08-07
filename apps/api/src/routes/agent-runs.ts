@@ -13,8 +13,8 @@ import type { SafeFetchService } from "../safe-fetch/index";
 import { getAgentRunDetail, listAgentRuns } from "../services/agent-runs";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -41,9 +41,9 @@ export function registerAgentRunRoutes(
   app.get<{ Params: { id: string }; Querystring: { limit?: string; task?: string } }>(
     "/workspaces/:id/agent-runs",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       return {
-        runs: listAgentRuns(db, request.params.id, {
+        runs: await listAgentRuns(db, request.params.id, {
           limit: Number(request.query.limit) || undefined,
           task: request.query.task || undefined,
         }),
@@ -54,8 +54,8 @@ export function registerAgentRunRoutes(
   app.get<{ Params: { id: string; runId: string } }>(
     "/workspaces/:id/agent-runs/:runId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const detail = getAgentRunDetail(db, request.params.id, request.params.runId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const detail = await getAgentRunDetail(db, request.params.id, request.params.runId);
       if (!detail) return reply.status(404).send({ error: "not_found" });
       return detail;
     },
@@ -66,7 +66,7 @@ export function registerAgentRunRoutes(
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/agent-runs/proof",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = proofAgentRunInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({

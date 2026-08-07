@@ -51,7 +51,7 @@ export class FallbackGateway implements LlmGateway {
    * later sprint; until then a Gemini-primary deploy just uses Gemini.
    */
   async agentStep(params: AgentStepParams): Promise<AgentStepResult> {
-    return this.agentCall((provider) => provider.agentStep?.(params));
+    return await this.agentCall((provider) => provider.agentStep?.(params));
   }
 
   async agentStepStream(
@@ -60,7 +60,7 @@ export class FallbackGateway implements LlmGateway {
   ): Promise<AgentStepResult> {
     // A provider with agentStep but no streaming still serves the call —
     // the caller (AgentRunner) treats streaming as an optimization.
-    return this.agentCall(
+    return await this.agentCall(
       (provider) =>
         provider.agentStepStream?.(params, onEvent) ?? provider.agentStep?.(params),
     );
@@ -71,7 +71,7 @@ export class FallbackGateway implements LlmGateway {
   ): Promise<AgentStepResult> {
     let firstError: GatewayError | undefined;
     for (const provider of [this.primary, this.secondary]) {
-      const attempt = invoke(provider);
+      const attempt = await invoke(provider);
       if (!attempt) continue;
       try {
         return await attempt;

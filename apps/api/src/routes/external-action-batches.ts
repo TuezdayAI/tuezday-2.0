@@ -11,8 +11,8 @@ import {
 } from "../services/external-action-batches";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) void reply.status(404).send({ error: "workspace_not_found" });
   return workspace;
 }
@@ -25,7 +25,7 @@ export function registerExternalActionBatchRoutes(
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/external-action-batches",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = createAuthorizationBatchInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -33,7 +33,7 @@ export function registerExternalActionBatchRoutes(
           message: parsed.error.issues.map((issue) => issue.message).join("; "),
         });
       }
-      const detail = createAuthorizationBatchPreview(
+      const detail = await createAuthorizationBatchPreview(
         db,
         request.params.id,
         parsed.data,
@@ -46,9 +46,9 @@ export function registerExternalActionBatchRoutes(
   app.get<{ Params: { id: string; batchId: string } }>(
     "/workspaces/:id/external-action-batches/:batchId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       return (
-        getAuthorizationBatchDetail(db, request.params.id, request.params.batchId) ??
+        await getAuthorizationBatchDetail(db, request.params.id, request.params.batchId) ??
         reply.status(404).send({ error: "not_found" })
       );
     },
@@ -57,7 +57,7 @@ export function registerExternalActionBatchRoutes(
   app.post<{ Params: { id: string; batchId: string } }>(
     "/workspaces/:id/external-action-batches/:batchId/authorize",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       try {
         return await runAuthorizationBatch(
           db,

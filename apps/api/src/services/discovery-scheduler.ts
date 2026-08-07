@@ -99,9 +99,9 @@ async function withDiscoveryJobHeartbeat<T>(
   let stopped = false;
 
   const schedule = () => {
-    timer = setTimeout(() => {
+    timer = setTimeout(async () => {
       if (stopped) return;
-      const renewed = heartbeatDiscoveryJob(
+      const renewed = await heartbeatDiscoveryJob(
         deps.db,
         claim,
         deps.policy.leaseMs,
@@ -143,27 +143,27 @@ function emptyResult(busy: boolean): DiscoverySchedulerResult {
   };
 }
 
-function selectedWorkspaces(
+async function selectedWorkspaces(
   deps: DiscoverySchedulerDependencies,
   workspaceId: string | undefined,
-): Array<{ id: string; name: string }> {
+): Promise<Array<{ id: string; name: string }>> {
   if (workspaceId) {
-    const workspace = deps.db
+    const workspace = await deps.db
       .select({ id: workspaces.id, name: workspaces.name })
       .from(workspaces)
       .where(eq(workspaces.id, workspaceId))
       .get();
     return workspace ? [workspace] : [];
   }
-  return deps.db
+  return await deps.db
     .select({ id: workspaces.id, name: workspaces.name })
     .from(workspaces)
     .all();
 }
 
-function hasQueuedWork(db: Db, workspaceId?: string): boolean {
+async function hasQueuedWork(db: Db, workspaceId?: string): Promise<boolean> {
   return Boolean(
-    db
+    await db
     .select({ id: discoveryJobs.id })
     .from(discoveryJobs)
     .where(
@@ -211,21 +211,21 @@ export async function runDiscoveryScheduler(
         tick.signal,
         shutdownController.signal,
       ]);
-      const workspaceRows = selectedWorkspaces(deps, input.workspaceId);
+      const workspaceRows = await selectedWorkspaces(deps, input.workspaceId);
 
       try {
         const now = Date.now();
         for (const workspace of workspaceRows) {
-          const eligible = listDiscoverySources(
+          const eligible = (await listDiscoverySources(
             deps.db,
             workspace.id,
-          ).filter(
+          )).filter(
             (source) =>
               source.enabled &&
               source.status !== "reserved" &&
               source.status !== "needs_api_key",
           );
-          result.queued += enqueueDueDiscoveryJobs(
+          result.queued += await enqueueDueDiscoveryJobs(
             deps.db,
             workspace.id,
             eligible,
@@ -245,14 +245,14 @@ export async function runDiscoveryScheduler(
             deps.policy.tickTimeoutMs - elapsed <
               meaningfulSourceBudget
           ) {
-            result.budgetExhausted = hasQueuedWork(
+            result.budgetExhausted = await hasQueuedWork(
               deps.db,
               input.workspaceId,
             );
             break;
           }
 
-          const claim = claimNextDiscoveryJob(deps.db, {
+          const claim = await claimNextDiscoveryJob(deps.db, {
             workspaceId: input.workspaceId,
             owner: `${deps.instanceId}:discovery-job:${randomUUID()}`,
             leaseMs: deps.policy.leaseMs,
@@ -281,8 +281,8 @@ export async function runDiscoveryScheduler(
               deps,
               claim,
               AbortSignal.any([tickSignal, sourceDeadline.signal]),
-              (signal) =>
-                runClaimedDiscoverySource(
+              async (signal) =>
+                await runClaimedDiscoverySource(
                   {
                     db: deps.db,
                     safeFetch: deps.safeFetch,
@@ -337,7 +337,7 @@ export async function runDiscoveryScheduler(
 
         if (
           result.processed >= deps.policy.maxJobsPerTick &&
-          hasQueuedWork(deps.db, input.workspaceId)
+          await hasQueuedWork(deps.db, input.workspaceId)
         ) {
           result.budgetExhausted = true;
         }
@@ -345,7 +345,7 @@ export async function runDiscoveryScheduler(
         let matchingRemaining = deps.policy.maxMatchingItemsPerTick;
         for (const workspace of workspaceRows) {
           if (matchingRemaining <= 0 || tickSignal.aborted) break;
-          const claims = claimMatchingBatch(deps.db, {
+          const claims = await claimMatchingBatch(deps.db, {
             workspaceId: workspace.id,
             owner: `${deps.instanceId}:matching:${randomUUID()}`,
             limit: matchingRemaining,

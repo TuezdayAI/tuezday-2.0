@@ -76,16 +76,16 @@ const SEQUENCE_GEN: Record<SequenceChannel, { taskType: TaskType; channel: Chann
 // Row helpers
 // ---------------------------------------------------------------------------
 
-function launchRowById(db: Db, workspaceId: string, launchId: string): LaunchRow | undefined {
-  return db
+async function launchRowById(db: Db, workspaceId: string, launchId: string): Promise<LaunchRow | undefined> {
+  return await db
     .select()
     .from(launches)
     .where(and(eq(launches.workspaceId, workspaceId), eq(launches.id, launchId)))
     .get();
 }
 
-function stepRows(db: Db, launchId: string): SequenceStepRow[] {
-  return db
+async function stepRows(db: Db, launchId: string): Promise<SequenceStepRow[]> {
+  return await db
     .select()
     .from(sequenceSteps)
     .where(eq(sequenceSteps.launchId, launchId))
@@ -104,12 +104,12 @@ function rowToStep(row: SequenceStepRow): SequenceStep {
   };
 }
 
-export function hasSequence(db: Db, launchId: string): boolean {
-  return db.select({ id: sequenceSteps.id }).from(sequenceSteps).where(eq(sequenceSteps.launchId, launchId)).get() !== undefined;
+export async function hasSequence(db: Db, launchId: string): Promise<boolean> {
+  return await db.select({ id: sequenceSteps.id }).from(sequenceSteps).where(eq(sequenceSteps.launchId, launchId)).get() !== undefined;
 }
 
-export function listSequenceSteps(db: Db, launchId: string): SequenceStep[] {
-  return stepRows(db, launchId).map(rowToStep);
+export async function listSequenceSteps(db: Db, launchId: string): Promise<SequenceStep[]> {
+  return (await stepRows(db, launchId)).map(rowToStep);
 }
 
 function totalStepsByChannel(steps: SequenceStepRow[]): Record<string, number> {
@@ -138,38 +138,38 @@ function rowToRecipient(row: SequenceRecipientRow, totalSteps: number): Sequence
   };
 }
 
-export function listSequenceRecipients(db: Db, launchId: string): SequenceRecipient[] {
-  const totals = totalStepsByChannel(stepRows(db, launchId));
-  return db
+export async function listSequenceRecipients(db: Db, launchId: string): Promise<SequenceRecipient[]> {
+  const totals = totalStepsByChannel(await stepRows(db, launchId));
+  return (await db
     .select()
     .from(sequenceRecipients)
     .where(eq(sequenceRecipients.launchId, launchId))
     .orderBy(asc(sequenceRecipients.channel), asc(sequenceRecipients.recipientName))
-    .all()
+    .all())
     .map((r) => rowToRecipient(r, totals[r.channel] ?? 0));
 }
 
-function activeRecipientRows(db: Db, launchId: string): SequenceRecipientRow[] {
-  return db
+async function activeRecipientRows(db: Db, launchId: string): Promise<SequenceRecipientRow[]> {
+  return await db
     .select()
     .from(sequenceRecipients)
     .where(and(eq(sequenceRecipients.launchId, launchId), eq(sequenceRecipients.status, "active")))
     .all();
 }
 
-function updateRecipient(db: Db, id: string, patch: Partial<SequenceRecipientRow>): void {
-  db.update(sequenceRecipients)
+async function updateRecipient(db: Db, id: string, patch: Partial<SequenceRecipientRow>): Promise<void> {
+  await db.update(sequenceRecipients)
     .set({ ...patch, updatedAt: Date.now() })
     .where(eq(sequenceRecipients.id, id))
     .run();
 }
 
-function setLaunchStatus(db: Db, launchId: string, status: LaunchStatus): void {
-  db.update(launches).set({ status, updatedAt: Date.now() }).where(eq(launches.id, launchId)).run();
+async function setLaunchStatus(db: Db, launchId: string, status: LaunchStatus): Promise<void> {
+  await db.update(launches).set({ status, updatedAt: Date.now() }).where(eq(launches.id, launchId)).run();
 }
 
-function currentMessage(db: Db, sequenceRecipientId: string, stepNumber: number) {
-  return db
+async function currentMessage(db: Db, sequenceRecipientId: string, stepNumber: number) {
+  return await db
     .select()
     .from(launchMessages)
     .where(
@@ -181,14 +181,14 @@ function currentMessage(db: Db, sequenceRecipientId: string, stepNumber: number)
     .get();
 }
 
-function draftRow(db: Db, draftId: string | null): DraftRow | undefined {
+async function draftRow(db: Db, draftId: string | null): Promise<DraftRow | undefined> {
   if (!draftId) return undefined;
-  return db.select().from(drafts).where(eq(drafts.id, draftId)).get();
+  return await db.select().from(drafts).where(eq(drafts.id, draftId)).get();
 }
 
 /** The bodies of the recipient's earlier steps, so a follow-up never repeats them. */
-function priorBodies(db: Db, sequenceRecipientId: string, beforeStep: number): string[] {
-  const rows = db
+async function priorBodies(db: Db, sequenceRecipientId: string, beforeStep: number): Promise<string[]> {
+  const rows = await db
     .select({ message: launchMessages, draft: drafts })
     .from(launchMessages)
     .leftJoin(drafts, eq(launchMessages.draftId, drafts.id))
@@ -209,22 +209,22 @@ export type SetSequenceResult =
   | { ok: true; steps: SequenceStep[] }
   | { ok: false; error: "launch_not_found" | "channel_not_in_launch" };
 
-export function setSequence(
+export async function setSequence(
   db: Db,
   workspaceId: string,
   launchId: string,
   input: SetSequenceInput,
-): SetSequenceResult {
-  const launch = launchRowById(db, workspaceId, launchId);
+): Promise<SetSequenceResult> {
+  const launch = await launchRowById(db, workspaceId, launchId);
   if (!launch) return { ok: false, error: "launch_not_found" };
   const launchChannels = JSON.parse(launch.channelsJson) as string[];
   for (const step of input.steps) {
     if (!launchChannels.includes(step.channel)) return { ok: false, error: "channel_not_in_launch" };
   }
   const now = Date.now();
-  db.delete(sequenceSteps).where(eq(sequenceSteps.launchId, launchId)).run();
+  await db.delete(sequenceSteps).where(eq(sequenceSteps.launchId, launchId)).run();
   for (const step of input.steps) {
-    db.insert(sequenceSteps)
+    await db.insert(sequenceSteps)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -238,15 +238,15 @@ export function setSequence(
       })
       .run();
   }
-  return { ok: true, steps: listSequenceSteps(db, launchId) };
+  return { ok: true, steps: await listSequenceSteps(db, launchId) };
 }
 
 // ---------------------------------------------------------------------------
 // Connections + guardrails (X DM auto-send)
 // ---------------------------------------------------------------------------
 
-function resolveXConnection(db: Db, launch: LaunchRow): Connection | undefined {
-  const candidates = listConnections(db, launch.workspaceId).filter(
+async function resolveXConnection(db: Db, launch: LaunchRow): Promise<Connection | undefined> {
+  const candidates = (await listConnections(db, launch.workspaceId)).filter(
     (c) => c.providerKey === "twitter" && c.status === "connected",
   );
   if (launch.xConnectionId) return candidates.find((c) => c.id === launch.xConnectionId);
@@ -255,9 +255,9 @@ function resolveXConnection(db: Db, launch: LaunchRow): Connection | undefined {
 
 /** Sent X DMs on this connection on the given account-local day.
  * Also consumed by the send action adapter as a dispatch guardrail. */
-export function countConnectionDmsForDay(db: Db, connectionId: string, dayMs: number): number {
-  const { start, end } = connectionDayBounds(db, connectionId, dayMs);
-  return db
+export async function countConnectionDmsForDay(db: Db, connectionId: string, dayMs: number): Promise<number> {
+  const { start, end } = await connectionDayBounds(db, connectionId, dayMs);
+  return (await db
     .select({ id: launchMessages.id })
     .from(launchMessages)
     .where(
@@ -269,20 +269,20 @@ export function countConnectionDmsForDay(db: Db, connectionId: string, dayMs: nu
         lt(launchMessages.sentAt, end),
       ),
     )
-    .all().length;
+    .all()).length;
 }
 
 /** A reply we can observe stops the chain. Only X DMs have an inbound feed
  * (Sprint 29 inbox); email has none, so it is stopped manually. */
-export function hasInboundReply(
+export async function hasInboundReply(
   db: Db,
   workspaceId: string,
   handle: string | null,
   sinceMs: number,
-): boolean {
+): Promise<boolean> {
   if (!handle) return false;
   const norm = handle.replace(/^@+/, "").toLowerCase();
-  const rows = db
+  const rows = await db
     .select()
     .from(inboxItems)
     .where(
@@ -342,13 +342,13 @@ async function generateStepMessage(
 ): Promise<GenResult> {
   const channel = recipient.channel as SequenceChannel;
   const gen = SEQUENCE_GEN[channel];
-  const workspace = getWorkspace(ctx.db, launch.workspaceId)!;
-  const { docs } = getBrain(ctx.db, launch.workspaceId);
+  const workspace = (await getWorkspace(ctx.db, launch.workspaceId))!;
+  const { docs } = await getBrain(ctx.db, launch.workspaceId);
   const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
-  const campaign = launch.campaignId ? getCampaign(ctx.db, launch.workspaceId, launch.campaignId) : undefined;
-  const persona = launch.personaId ? getPersona(ctx.db, launch.workspaceId, launch.personaId) : undefined;
+  const campaign = launch.campaignId ? await getCampaign(ctx.db, launch.workspaceId, launch.campaignId) : undefined;
+  const persona = launch.personaId ? await getPersona(ctx.db, launch.workspaceId, launch.personaId) : undefined;
   const personaArg = persona ? toResolvePersona(persona) : undefined;
-  const campaignArgs = campaignResolveInputs(ctx.db, launch.workspaceId, campaign);
+  const campaignArgs = await campaignResolveInputs(ctx.db, launch.workspaceId, campaign);
   const person = ctx.pool.get(`${recipient.recipientType}:${recipient.recipientId}`);
 
   const useFollowup = step.stepNumber > 1 || step.instruction.trim().length > 0;
@@ -369,8 +369,8 @@ async function generateStepMessage(
     true,
   );
 
-  const insertFailed = (message: string): void => {
-    ctx.db
+  const insertFailed = async (message: string): Promise<void> => {
+    await ctx.db
       .insert(launchMessages)
       .values({
         id: randomUUID(),
@@ -404,7 +404,7 @@ async function generateStepMessage(
     // Sprint 43: pass the workspace's channel guidance — this path previously
     // fell back to the built-in default even when an override existed.
     // Sprint 44: scoped to the launch's persona/campaign, most-specific-wins.
-    const channelGuidance = resolveChannelGuidance(ctx.db, launch.workspaceId, gen.channel, {
+    const channelGuidance = await resolveChannelGuidance(ctx.db, launch.workspaceId, gen.channel, {
       personaId: launch.personaId,
       campaignId: launch.campaignId,
     });
@@ -420,7 +420,7 @@ async function generateStepMessage(
       },
       persona: personaArg,
       ...campaignArgs,
-      account: resolveDraftAccount(ctx.db, launch.workspaceId, {
+      account: await resolveDraftAccount(ctx.db, launch.workspaceId, {
         personaId: launch.personaId,
         channel: gen.channel,
       }),
@@ -430,7 +430,7 @@ async function generateStepMessage(
         role: person?.role ?? "",
         notes: "",
       },
-      ...selectiveContextInputs(ctx.db, launch.workspaceId),
+      ...await selectiveContextInputs(ctx.db, launch.workspaceId),
       evidence: evidenceResolution.evidence,
       evidenceExclusionReason: evidenceResolution.exclusionReason,
       taskInstruction,
@@ -440,7 +440,7 @@ async function generateStepMessage(
       pipeline: "launch_sequence",
       campaignId: launch.campaignId ?? null,
     }).generate({ prompt: resolved.prompt });
-    const generation = storeGeneration(ctx.db, {
+    const generation = await storeGeneration(ctx.db, {
       workspaceId: launch.workspaceId,
       taskType: gen.taskType,
       channel: gen.channel,
@@ -453,7 +453,7 @@ async function generateStepMessage(
       provider: result.provider,
       durationMs: result.durationMs,
     });
-    const draft = submitDraft(
+    const draft = await submitDraft(
       ctx.db,
       {
         workspaceId: launch.workspaceId,
@@ -468,7 +468,7 @@ async function generateStepMessage(
       SYSTEM_ACTOR,
     );
     const messageId = randomUUID();
-    ctx.db
+    await ctx.db
       .insert(launchMessages)
       .values({
         id: messageId,
@@ -499,7 +499,7 @@ async function generateStepMessage(
     return { ok: true, draft, messageId };
   } catch (err) {
     // A bad generation never aborts the run — record a failed message and move on.
-    insertFailed(err instanceof GatewayError ? err.message : err instanceof Error ? err.message : String(err));
+    await insertFailed(err instanceof GatewayError ? err.message : err instanceof Error ? err.message : String(err));
     return { ok: false };
   }
 }
@@ -518,8 +518,8 @@ async function proposeEmailSend(
   messageId: string,
   nowMs: number,
 ): Promise<DispatchResult> {
-  const message = ctx.db.select().from(launchMessages).where(eq(launchMessages.id, messageId)).get();
-  const draft = message ? draftRow(ctx.db, message.draftId) : undefined;
+  const message = await ctx.db.select().from(launchMessages).where(eq(launchMessages.id, messageId)).get();
+  const draft = message ? await draftRow(ctx.db, message.draftId) : undefined;
   if (!message || !draft) return { sent: false, error: "message_missing" };
   const baseKey = deriveEmailSendIdempotencyKey(message.id, {
     draftId: draft.id,
@@ -529,7 +529,7 @@ async function proposeEmailSend(
 
   let submission: ExternalActionSubmission;
   const existing = message.externalActionId
-    ? getExternalAction(ctx.db, launch.workspaceId, message.externalActionId)
+    ? await getExternalAction(ctx.db, launch.workspaceId, message.externalActionId)
     : undefined;
   if (existing) {
     const retryableSafetyBlocker =
@@ -540,7 +540,7 @@ async function proposeEmailSend(
     if (!retryableSafetyBlocker) {
       return { sent: message.status === "sent", sentAt: message.sentAt ?? undefined, submission: { action: existing, execution: existing.execution } };
     }
-    if (!checkEmailRecipientSafety(ctx.db, launch.workspaceId, message.recipientEmail).ok) {
+    if (!(await checkEmailRecipientSafety(ctx.db, launch.workspaceId, message.recipientEmail)).ok) {
       return { sent: false, submission: { action: existing, execution: existing.execution } };
     }
     submission = await ctx.runtime.repropose(
@@ -551,7 +551,7 @@ async function proposeEmailSend(
     );
   } else {
     submission = await ctx.runtime.propose(
-      prepareEmailAction(ctx.db, launch.workspaceId, {
+      await prepareEmailAction(ctx.db, launch.workspaceId, {
         origin: "launch_message",
         originId: message.id,
         idempotencyKey: baseKey,
@@ -560,11 +560,11 @@ async function proposeEmailSend(
     );
   }
 
-  ctx.db.update(launchMessages)
+  await ctx.db.update(launchMessages)
     .set({ externalActionId: submission.action.id, updatedAt: Date.now() })
     .where(eq(launchMessages.id, message.id))
     .run();
-  const after = ctx.db.select().from(launchMessages).where(eq(launchMessages.id, message.id)).get();
+  const after = await ctx.db.select().from(launchMessages).where(eq(launchMessages.id, message.id)).get();
   return {
     sent: submission.action.status === "succeeded" && after?.status === "sent",
     sentAt: after?.sentAt ?? nowMs,
@@ -584,9 +584,9 @@ async function proposeXSend(
   enforceGuardrails: boolean,
   nowMs: number,
 ): Promise<DispatchResult> {
-  const conn = resolveXConnection(ctx.db, launch);
+  const conn = await resolveXConnection(ctx.db, launch);
   if (!conn) {
-    ctx.db
+    await ctx.db
       .update(launchMessages)
       .set({ status: "failed", lastError: "No connected X account for this launch.", updatedAt: nowMs })
       .where(eq(launchMessages.id, messageId))
@@ -594,17 +594,17 @@ async function proposeXSend(
     return { sent: false, blocked: "no_connection" };
   }
   if (enforceGuardrails) {
-    const settings = getSocialAutomationSettings(ctx.db, launch.workspaceId);
+    const settings = await getSocialAutomationSettings(ctx.db, launch.workspaceId);
     if (settings.killSwitch) return { sent: false, blocked: "kill_switch_on" };
-    if (countConnectionDmsForDay(ctx.db, conn.id, nowMs) >= settings.perConnectionDailyCap) {
+    if (await countConnectionDmsForDay(ctx.db, conn.id, nowMs) >= settings.perConnectionDailyCap) {
       return { sent: false, blocked: "connection_cap" };
     }
   }
-  const message = ctx.db.select().from(launchMessages).where(eq(launchMessages.id, messageId)).get();
-  const draft = message ? draftRow(ctx.db, message.draftId) : undefined;
+  const message = await ctx.db.select().from(launchMessages).where(eq(launchMessages.id, messageId)).get();
+  const draft = message ? await draftRow(ctx.db, message.draftId) : undefined;
   if (!message || !draft) return { sent: false, error: "message_missing" };
   try {
-    const command = prepareSendAction(ctx.db, launch.workspaceId, launch.id, messageId, {
+    const command = await prepareSendAction(ctx.db, launch.workspaceId, launch.id, messageId, {
       idempotencyKey: deriveSendIdempotencyKey(messageId, {
         connectionId: conn.id,
         draftId: draft.id,
@@ -614,7 +614,7 @@ async function proposeXSend(
       automated: launch.automationMode === "scheduled_auto",
     });
     const submission = await ctx.runtime.propose(command, SYSTEM_ACTOR);
-    const after = ctx.db
+    const after = await ctx.db
       .select()
       .from(launchMessages)
       .where(eq(launchMessages.id, messageId))
@@ -641,11 +641,11 @@ async function startStep(
   acc: RunAcc,
 ): Promise<void> {
   const res = await generateStepMessage(ctx, launch, recipient, step, prior, nowMs);
-  updateRecipient(ctx.db, recipient.id, { currentStep: step.stepNumber, nextDueAt: null });
+  await updateRecipient(ctx.db, recipient.id, { currentStep: step.stepNumber, nextDueAt: null });
   if (!res.ok || !res.draft || !res.messageId) return;
   acc.generated += 1;
   if (launch.automationMode === "scheduled_auto") {
-    applyDraftAction(ctx.db, res.draft, "approve", SYSTEM_ACTOR);
+    await applyDraftAction(ctx.db, res.draft, "approve", SYSTEM_ACTOR);
     acc.autoApproved += 1;
     if (recipient.channel === "x" || recipient.channel === "email") {
       const d = recipient.channel === "x"
@@ -653,7 +653,7 @@ async function startStep(
         : await proposeEmailSend(ctx, launch, res.messageId, nowMs);
       if (d.sent) {
         acc.sent += 1;
-        updateRecipient(ctx.db, recipient.id, { lastSentAt: d.sentAt! });
+        await updateRecipient(ctx.db, recipient.id, { lastSentAt: d.sentAt! });
       }
     }
   }
@@ -674,8 +674,8 @@ async function advanceRecipient(
 
   // Stop-on-reply — only X DMs have an observable inbound reply (Sprint 29).
   if (launch.stopOnReply === 1 && recipient.channel === "x") {
-    if (hasInboundReply(ctx.db, launch.workspaceId, recipient.recipientHandle, recipient.lastSentAt ?? 0)) {
-      updateRecipient(ctx.db, recipient.id, { status: "replied", stoppedReason: "replied", nextDueAt: null });
+    if (await hasInboundReply(ctx.db, launch.workspaceId, recipient.recipientHandle, recipient.lastSentAt ?? 0)) {
+      await updateRecipient(ctx.db, recipient.id, { status: "replied", stoppedReason: "replied", nextDueAt: null });
       acc.stopped += 1;
       return;
     }
@@ -687,7 +687,7 @@ async function advanceRecipient(
     return;
   }
 
-  let cur = currentMessage(ctx.db, recipient.id, k);
+  let cur = await currentMessage(ctx.db, recipient.id, k);
   if (!cur) return; // defensive — nothing generated for the current step yet
 
   // Approved but not sent: a personalized step proposes its send action on this run (in
@@ -697,7 +697,7 @@ async function advanceRecipient(
   // Review while the recipient waits here. Email sends natively through this
   // same durable external-action boundary — there is no second send route
   // (the CSV export is a manual download, never a send or fallback path).
-  if (draftRow(ctx.db, cur.draftId)?.state === "approved" && cur.status === "pending") {
+  if ((await draftRow(ctx.db, cur.draftId))?.state === "approved" && cur.status === "pending") {
     if (recipient.channel === "x" || recipient.channel === "email") {
       const d = recipient.channel === "x"
         ? await proposeXSend(
@@ -710,40 +710,40 @@ async function advanceRecipient(
         : await proposeEmailSend(ctx, launch, cur.id, nowMs);
       if (d.sent) {
         acc.sent += 1;
-        updateRecipient(ctx.db, recipient.id, { lastSentAt: d.sentAt! });
+        await updateRecipient(ctx.db, recipient.id, { lastSentAt: d.sentAt! });
       }
-      cur = currentMessage(ctx.db, recipient.id, k)!;
+      cur = (await currentMessage(ctx.db, recipient.id, k))!;
     }
   }
 
   if (cur.status === "sent") {
-    if (recipient.lastSentAt !== cur.sentAt) updateRecipient(ctx.db, recipient.id, { lastSentAt: cur.sentAt });
+    if (recipient.lastSentAt !== cur.sentAt) await updateRecipient(ctx.db, recipient.id, { lastSentAt: cur.sentAt });
     if (k >= total) {
-      updateRecipient(ctx.db, recipient.id, { status: "completed", nextDueAt: null });
+      await updateRecipient(ctx.db, recipient.id, { status: "completed", nextDueAt: null });
       acc.completed += 1;
       return;
     }
     const next = chanSteps[k]!; // index k → step number k+1
     const due = (cur.sentAt ?? nowMs) + next.delayHours * HOUR_MS;
     if (nowMs >= due) {
-      await startStep(ctx, launch, recipient, next, priorBodies(ctx.db, recipient.id, next.stepNumber), nowMs, acc);
+      await startStep(ctx, launch, recipient, next, await priorBodies(ctx.db, recipient.id, next.stepNumber), nowMs, acc);
     } else if (recipient.nextDueAt !== due) {
-      updateRecipient(ctx.db, recipient.id, { nextDueAt: due });
+      await updateRecipient(ctx.db, recipient.id, { nextDueAt: due });
     }
   }
   // cur pending/failed (awaiting approval, export, or a failed send) → wait.
 }
 
 /** Flip a sequence launch to completed once no recipient is still active. */
-function maybeCompleteSequenceLaunch(db: Db, launchId: string): void {
-  const active = db
+async function maybeCompleteSequenceLaunch(db: Db, launchId: string): Promise<void> {
+  const active = await db
     .select({ id: sequenceRecipients.id })
     .from(sequenceRecipients)
     .where(and(eq(sequenceRecipients.launchId, launchId), eq(sequenceRecipients.status, "active")))
     .get();
   if (!active) {
-    const any = db.select({ id: sequenceRecipients.id }).from(sequenceRecipients).where(eq(sequenceRecipients.launchId, launchId)).get();
-    if (any) setLaunchStatus(db, launchId, "completed");
+    const any = await db.select({ id: sequenceRecipients.id }).from(sequenceRecipients).where(eq(sequenceRecipients.launchId, launchId)).get();
+    if (any) await setLaunchStatus(db, launchId, "completed");
   }
 }
 
@@ -753,24 +753,24 @@ async function runForLaunch(
   nowMs: number,
   acc: RunAcc,
 ): Promise<void> {
-  const steps = stepRows(ctx.db, launch.id);
+  const steps = await stepRows(ctx.db, launch.id);
   if (steps.length === 0) return;
   const byChannel: Record<string, SequenceStepRow[]> = {};
   for (const s of steps) (byChannel[s.channel] ??= []).push(s);
-  for (const recipient of activeRecipientRows(ctx.db, launch.id)) {
+  for (const recipient of await activeRecipientRows(ctx.db, launch.id)) {
     await advanceRecipient(ctx, launch, byChannel, recipient, nowMs, acc);
   }
-  maybeCompleteSequenceLaunch(ctx.db, launch.id);
+  await maybeCompleteSequenceLaunch(ctx.db, launch.id);
 }
 
-function makeCtx(
+async function makeCtx(
   db: Db,
   llm: LlmGateway,
   evidence: EvidenceStore,
   runtime: ExternalActionRuntime,
   workspaceId: string,
-): RunCtx {
-  const pool = new Map(loadPeople(db, workspaceId).map((p) => [`${p.type}:${p.id}`, p]));
+): Promise<RunCtx> {
+  const pool = new Map((await loadPeople(db, workspaceId)).map((p) => [`${p.type}:${p.id}`, p]));
   return { db, llm, evidence, runtime, pool };
 }
 
@@ -792,12 +792,12 @@ export async function startSequence(
   launchId: string,
   nowMs: number = Date.now(),
 ): Promise<StartSequenceResult> {
-  const launch = launchRowById(db, workspaceId, launchId);
+  const launch = await launchRowById(db, workspaceId, launchId);
   if (!launch) return { ok: false, error: "launch_not_found" };
-  const steps = stepRows(db, launchId);
+  const steps = await stepRows(db, launchId);
   if (steps.length === 0) return { ok: false, error: "no_sequence" };
   if (!launch.audienceId) return { ok: false, error: "audience_not_found" };
-  const audience = getAudienceDetail(db, workspaceId, launch.audienceId);
+  const audience = await getAudienceDetail(db, workspaceId, launch.audienceId);
   if (!audience) return { ok: false, error: "audience_not_found" };
 
   const acc = newAcc();
@@ -807,7 +807,7 @@ export async function startSequence(
     for (const member of audience.members) {
       const handle = member.xHandle?.trim();
       if (channel === "x" && !handle) continue; // no handle → not enrolled in the X chain
-      const exists = db
+      const exists = await db
         .select({ id: sequenceRecipients.id })
         .from(sequenceRecipients)
         .where(
@@ -820,7 +820,7 @@ export async function startSequence(
         )
         .get();
       if (exists) continue;
-      db.insert(sequenceRecipients)
+      await db.insert(sequenceRecipients)
         .values({
           id: randomUUID(),
           workspaceId,
@@ -843,10 +843,10 @@ export async function startSequence(
       acc.enrolled += 1;
     }
   }
-  if (launch.status === "draft") setLaunchStatus(db, launchId, "ready");
+  if (launch.status === "draft") await setLaunchStatus(db, launchId, "ready");
 
-  const ctx = makeCtx(db, llm, evidence, runtime, workspaceId);
-  const fresh = launchRowById(db, workspaceId, launchId)!;
+  const ctx = await makeCtx(db, llm, evidence, runtime, workspaceId);
+  const fresh = (await launchRowById(db, workspaceId, launchId))!;
   await runForLaunch(ctx, fresh, now, acc);
   return { ok: true, result: toRunResult(acc, now) };
 }
@@ -861,12 +861,12 @@ export async function runLaunchSequence(
   launchId: string,
   nowMs: number = Date.now(),
 ): Promise<{ ok: true; result: SequenceRunResult } | { ok: false; error: "launch_not_found" | "no_sequence" }> {
-  const launch = launchRowById(db, workspaceId, launchId);
+  const launch = await launchRowById(db, workspaceId, launchId);
   if (!launch) return { ok: false, error: "launch_not_found" };
-  if (stepRows(db, launchId).length === 0) return { ok: false, error: "no_sequence" };
-  assertLlmBudget(db, workspaceId); // manual run: 402 before any generation (Sprint 59)
+  if ((await stepRows(db, launchId)).length === 0) return { ok: false, error: "no_sequence" };
+  await assertLlmBudget(db, workspaceId); // manual run: 402 before any generation (Sprint 59)
   const acc = newAcc();
-  const ctx = makeCtx(db, llm, evidence, runtime, workspaceId);
+  const ctx = await makeCtx(db, llm, evidence, runtime, workspaceId);
   await runForLaunch(ctx, launch, nowMs, acc);
   return { ok: true, result: toRunResult(acc, nowMs) };
 }
@@ -883,20 +883,20 @@ export async function runSequences(
   const acc = newAcc();
   const launchIds = [
     ...new Set(
-      db
+      (await db
         .select({ launchId: sequenceSteps.launchId })
         .from(sequenceSteps)
         .where(eq(sequenceSteps.workspaceId, workspaceId))
-        .all()
+        .all())
         .map((r) => r.launchId),
     ),
   ];
-  const ctx = makeCtx(db, llm, evidence, runtime, workspaceId);
+  const ctx = await makeCtx(db, llm, evidence, runtime, workspaceId);
   // Budget degradation (Sprint 59): advancing generates; due recipients keep
   // their nextDueAt and resume on a later tick once budget frees.
-  const budgetExhausted = llmBudgetExhausted(db, workspaceId);
+  const budgetExhausted = await llmBudgetExhausted(db, workspaceId);
   for (const launchId of launchIds) {
-    const launch = launchRowById(db, workspaceId, launchId);
+    const launch = await launchRowById(db, workspaceId, launchId);
     // Manual launches never advance on the worker tick — the founder drives them
     // with an explicit run. HITL + scheduled_auto auto-advance here.
     if (launch && launch.automationMode !== "manual" && !budgetExhausted) {
@@ -908,14 +908,14 @@ export async function runSequences(
 
 /** Manual stop: mark matching active recipients stopped/replied (email's only
  * stop path; also works as a manual stop on any channel). */
-export function stopSequence(
+export async function stopSequence(
   db: Db,
   workspaceId: string,
   launchId: string,
   input: StopSequenceInput,
-): { ok: true; stopped: number } | { ok: false; error: "launch_not_found" } {
-  if (!launchRowById(db, workspaceId, launchId)) return { ok: false, error: "launch_not_found" };
-  const rows = activeRecipientRows(db, launchId).filter((r) => !input.channel || r.channel === input.channel);
+): Promise<{ ok: true; stopped: number } | { ok: false; error: "launch_not_found" }> {
+  if (!await launchRowById(db, workspaceId, launchId)) return { ok: false, error: "launch_not_found" };
+  const rows = (await activeRecipientRows(db, launchId)).filter((r) => !input.channel || r.channel === input.channel);
   const emailSet = new Set((input.emails ?? []).map((e) => e.toLowerCase()));
   const refSet = new Set((input.recipients ?? []).map((ref) => `${ref.type}:${ref.id}`));
   const status: SequenceRecipientStatus = input.reason === "replied" ? "replied" : "stopped";
@@ -926,7 +926,7 @@ export function stopSequence(
       emailSet.has(r.recipientEmail.toLowerCase()) ||
       refSet.has(`${r.recipientType}:${r.recipientId}`);
     if (!match) continue;
-    updateRecipient(db, r.id, { status, stoppedReason: input.reason, nextDueAt: null });
+    await updateRecipient(db, r.id, { status, stoppedReason: input.reason, nextDueAt: null });
     stopped += 1;
   }
   return { ok: true, stopped };

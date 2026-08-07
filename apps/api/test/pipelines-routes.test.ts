@@ -48,7 +48,7 @@ describe("pipeline routes (Sprint 64)", () => {
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Pipelines" } })
     ).json().id;
-    db.insert(signals)
+    await db.insert(signals)
       .values({
         id: SIGNAL_ID,
         workspaceId,
@@ -128,7 +128,7 @@ describe("pipeline routes (Sprint 64)", () => {
     expect(body.draftId).not.toBeNull();
     expect(body.checklist.map((entry) => entry.stepKey)).toContain("propose");
 
-    const draftRows = db.select().from(drafts).all();
+    const draftRows = await db.select().from(drafts).all();
     expect(draftRows).toHaveLength(1);
     expect(draftRows[0]!.state).toBe("pending_review");
 
@@ -164,7 +164,7 @@ describe("pipeline routes (Sprint 64)", () => {
     const body = dryRun.json();
     expect(body.runs).toHaveLength(1);
     expect(body.runs[0].proposal.simulated).toBe(true);
-    expect(db.select().from(drafts).all()).toHaveLength(0);
+    expect(await db.select().from(drafts).all()).toHaveLength(0);
 
     const list = await app.inject({
       method: "GET",

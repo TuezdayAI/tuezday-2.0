@@ -41,8 +41,8 @@ import { getSignal } from "../services/signals";
 import { getWorkspace } from "../services/workspaces";
 import { externalActionError } from "./external-actions";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -57,7 +57,7 @@ export function registerPrRoutes(
   runtime: ExternalActionRuntime,
 ): void {
   app.post<{ Params: { id: string } }>("/workspaces/:id/media-contacts", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = createMediaContactInputSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({
@@ -65,19 +65,19 @@ export function registerPrRoutes(
         message: parsed.error.issues.map((i) => i.message).join("; "),
       });
     }
-    return reply.status(201).send(createMediaContact(db, request.params.id, parsed.data));
+    return reply.status(201).send(await createMediaContact(db, request.params.id, parsed.data));
   });
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/media-contacts", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return listMediaContacts(db, request.params.id);
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return await listMediaContacts(db, request.params.id);
   });
 
   app.delete<{ Params: { id: string; contactId: string } }>(
     "/workspaces/:id/media-contacts/:contactId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      if (!deleteMediaContact(db, request.params.id, request.params.contactId)) {
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await deleteMediaContact(db, request.params.id, request.params.contactId)) {
         return reply.status(404).send({ error: "media_contact_not_found" });
       }
       return reply.status(204).send();
@@ -87,7 +87,7 @@ export function registerPrRoutes(
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/media-contacts/import",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = importMediaContactsInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -95,12 +95,12 @@ export function registerPrRoutes(
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      return importMediaContactsCsv(db, request.params.id, parsed.data.csv);
+      return await importMediaContactsCsv(db, request.params.id, parsed.data.csv);
     },
   );
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/pr/pitch", async (request, reply) => {
-    const workspace = workspaceOr404(db, request.params.id, reply);
+    const workspace = await workspaceOr404(db, request.params.id, reply);
     if (!workspace) return reply;
     const parsed = prPitchRequestSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -112,31 +112,31 @@ export function registerPrRoutes(
 
     let persona;
     if (parsed.data.personaId) {
-      persona = getPersona(db, request.params.id, parsed.data.personaId);
+      persona = await getPersona(db, request.params.id, parsed.data.personaId);
       if (!persona) return reply.status(404).send({ error: "persona_not_found" });
     }
     let campaign;
     if (parsed.data.campaignId) {
-      campaign = getCampaign(db, request.params.id, parsed.data.campaignId);
+      campaign = await getCampaign(db, request.params.id, parsed.data.campaignId);
       if (!campaign) return reply.status(404).send({ error: "campaign_not_found" });
       const campaignError = campaignExecutionError(campaign);
       if (campaignError) return reply.status(409).send({ error: campaignError });
     }
     let signal;
     if (parsed.data.signalId) {
-      signal = getSignal(db, request.params.id, parsed.data.signalId);
+      signal = await getSignal(db, request.params.id, parsed.data.signalId);
       if (!signal) return reply.status(404).send({ error: "signal_not_found" });
     }
     const contactRecords = [];
     for (const contactId of parsed.data.contactIds) {
-      const contact = getMediaContact(db, request.params.id, contactId);
+      const contact = await getMediaContact(db, request.params.id, contactId);
       if (!contact) {
         return reply.status(404).send({ error: "media_contact_not_found", message: contactId });
       }
       contactRecords.push(contact);
     }
 
-    const { docs } = getBrain(db, request.params.id);
+    const { docs } = await getBrain(db, request.params.id);
     const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
     const evidenceResolution = await retrieveEvidence(
       db,
@@ -151,13 +151,13 @@ export function registerPrRoutes(
       parsed.data.useEvidence ?? true,
     );
     const taskInstruction = composePrPitchInstruction(parsed.data.pitchType);
-    const channelGuidance = resolveChannelGuidance(db, request.params.id, "pr", {
+    const channelGuidance = await resolveChannelGuidance(db, request.params.id, "pr", {
       personaId: parsed.data.personaId ?? null,
       campaignId: parsed.data.campaignId ?? null,
     });
-    const settings = getGenerationSettings(db, request.params.id);
-    const selective = selectiveContextInputs(db, request.params.id);
-    const campaignInputs = campaignResolveInputs(db, request.params.id, campaign);
+    const settings = await getGenerationSettings(db, request.params.id);
+    const selective = await selectiveContextInputs(db, request.params.id);
+    const campaignInputs = await campaignResolveInputs(db, request.params.id, campaign);
 
     const results = [];
     for (const contact of contactRecords) {
@@ -191,13 +191,13 @@ export function registerPrRoutes(
       });
 
       try {
-        assertLlmBudget(db, request.params.id);
+        await assertLlmBudget(db, request.params.id);
         const result = await meteredLlm(llm, db, {
           workspaceId: request.params.id,
           pipeline: "pr_pitch",
           campaignId: parsed.data.campaignId ?? null,
         }).generate({ prompt: resolved.prompt });
-        const generation = storeGeneration(db, {
+        const generation = await storeGeneration(db, {
           workspaceId: request.params.id,
           taskType: "pr_pitch",
           channel: "pr",
@@ -230,9 +230,9 @@ export function registerPrRoutes(
             result.text,
             settings.flagThreshold,
           );
-          setGenerationReview(db, request.params.id, generation.id, review);
+          await setGenerationReview(db, request.params.id, generation.id, review);
         }
-        const draft = submitDraft(db, {
+        const draft = await submitDraft(db, {
           workspaceId: request.params.id,
           sourceGenerationId: generation.id,
           sourceSignalId: signal?.id ?? null,
@@ -258,10 +258,10 @@ export function registerPrRoutes(
   app.post<{ Params: { id: string; draftId: string } }>(
     "/workspaces/:id/pr/drafts/:draftId/send",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       try {
         return await runtime.propose(
-          preparePrDraftEmailAction(db, request.params.id, request.params.draftId),
+          await preparePrDraftEmailAction(db, request.params.id, request.params.draftId),
           actorOf(request),
         );
       } catch (error) {
@@ -277,7 +277,7 @@ export function registerPrRoutes(
   );
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/pr/press-kit", async (request, reply) => {
-    const workspace = workspaceOr404(db, request.params.id, reply);
+    const workspace = await workspaceOr404(db, request.params.id, reply);
     if (!workspace) return reply;
     const parsed = pressKitRequestSchema.safeParse(request.body ?? {});
     if (!parsed.success) {
@@ -289,18 +289,18 @@ export function registerPrRoutes(
 
     let persona;
     if (parsed.data.personaId) {
-      persona = getPersona(db, request.params.id, parsed.data.personaId);
+      persona = await getPersona(db, request.params.id, parsed.data.personaId);
       if (!persona) return reply.status(404).send({ error: "persona_not_found" });
     }
     let campaign;
     if (parsed.data.campaignId) {
-      campaign = getCampaign(db, request.params.id, parsed.data.campaignId);
+      campaign = await getCampaign(db, request.params.id, parsed.data.campaignId);
       if (!campaign) return reply.status(404).send({ error: "campaign_not_found" });
       const campaignError = campaignExecutionError(campaign);
       if (campaignError) return reply.status(409).send({ error: campaignError });
     }
 
-    const { docs } = getBrain(db, request.params.id);
+    const { docs } = await getBrain(db, request.params.id);
     const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
     const evidenceResolution = await retrieveEvidence(
       db,
@@ -313,12 +313,12 @@ export function registerPrRoutes(
       },
       parsed.data.useEvidence ?? true,
     );
-    const channelGuidance = resolveChannelGuidance(db, request.params.id, "pr", {
+    const channelGuidance = await resolveChannelGuidance(db, request.params.id, "pr", {
       personaId: parsed.data.personaId ?? null,
       campaignId: parsed.data.campaignId ?? null,
     });
-    const selective = selectiveContextInputs(db, request.params.id);
-    const campaignInputs = campaignResolveInputs(db, request.params.id, campaign);
+    const selective = await selectiveContextInputs(db, request.params.id);
+    const campaignInputs = await campaignResolveInputs(db, request.params.id, campaign);
     const resolved = resolveContext({
       workspaceName: workspace.name,
       docs: contents,
@@ -338,13 +338,13 @@ export function registerPrRoutes(
     });
 
     try {
-      assertLlmBudget(db, request.params.id);
+      await assertLlmBudget(db, request.params.id);
       const result = await meteredLlm(llm, db, {
         workspaceId: request.params.id,
         pipeline: "press_kit",
         campaignId: parsed.data.campaignId ?? null,
       }).generate({ prompt: resolved.prompt });
-      const generation = storeGeneration(db, {
+      const generation = await storeGeneration(db, {
         workspaceId: request.params.id,
         taskType: "press_boilerplate",
         channel: "pr",
@@ -356,7 +356,7 @@ export function registerPrRoutes(
         provider: result.provider,
         durationMs: result.durationMs,
       });
-      const settings = getGenerationSettings(db, request.params.id);
+      const settings = await getGenerationSettings(db, request.params.id);
       if (settings.reviewEnabled) {
         const review = await runPreReview(
           meteredLlm(llm, db, {
@@ -377,9 +377,9 @@ export function registerPrRoutes(
           result.text,
           settings.flagThreshold,
         );
-        setGenerationReview(db, request.params.id, generation.id, review);
+        await setGenerationReview(db, request.params.id, generation.id, review);
       }
-      const draft = submitDraft(db, {
+      const draft = await submitDraft(db, {
         workspaceId: request.params.id,
         sourceGenerationId: generation.id,
         campaignId: parsed.data.campaignId ?? null,
@@ -400,16 +400,16 @@ export function registerPrRoutes(
   app.get<{ Params: { id: string }; Querystring: { state?: string } }>(
     "/workspaces/:id/pr/export.csv",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const state = (request.query.state ?? "approved") as ApprovalState;
       if (!(APPROVAL_STATES as readonly string[]).includes(state)) {
         return reply.status(400).send({ error: "invalid_state" });
       }
       const contactById = new Map(
-        listMediaContacts(db, request.params.id).map((c) => [c.id, c]),
+        (await listMediaContacts(db, request.params.id)).map((c) => [c.id, c]),
       );
       const nativeDeliveryDraftIds = new Set(
-        db.select({ originId: emailDeliveries.originId })
+        (await db.select({ originId: emailDeliveries.originId })
           .from(emailDeliveries)
           .where(
             and(
@@ -417,10 +417,10 @@ export function registerPrRoutes(
               eq(emailDeliveries.origin, "pr_draft"),
             ),
           )
-          .all()
+          .all())
           .map((delivery) => delivery.originId),
       );
-      const rows = db
+      const rows = await db
         .select()
         .from(drafts)
         .where(

@@ -22,17 +22,17 @@ import { getWorkspace } from "../services/workspaces";
 import { campaigns } from "../db/schema";
 import { and, eq } from "drizzle-orm";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
   return workspace;
 }
 
-function campaignExists(db: Db, workspaceId: string, campaignId: string): boolean {
+async function campaignExists(db: Db, workspaceId: string, campaignId: string): Promise<boolean> {
   return (
-    db
+    await db
       .select({ id: campaigns.id })
       .from(campaigns)
       .where(and(eq(campaigns.id, campaignId), eq(campaigns.workspaceId, workspaceId)))
@@ -57,7 +57,7 @@ export function registerOpportunityRoutes(
       offset?: string;
     };
   }>("/workspaces/:id/opportunities", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const { status, campaignId, storyId, limit, offset } = request.query;
     if (
       status !== undefined &&
@@ -78,7 +78,7 @@ export function registerOpportunityRoutes(
         message: "limit must be a positive integer and offset a non-negative integer",
       });
     }
-    return listOpportunities(db, request.params.id, {
+    return await listOpportunities(db, request.params.id, {
       status: status as OpportunityStatus | undefined,
       campaignId,
       storyId,
@@ -90,9 +90,9 @@ export function registerOpportunityRoutes(
   app.get<{ Params: { id: string; opportunityId: string } }>(
     "/workspaces/:id/opportunities/:opportunityId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       try {
-        return getOpportunityDetail(db, request.params.id, request.params.opportunityId);
+        return await getOpportunityDetail(db, request.params.id, request.params.opportunityId);
       } catch (err) {
         if (err instanceof OpportunityNotFoundError) {
           return reply.status(404).send({ error: "opportunity_not_found" });
@@ -105,7 +105,7 @@ export function registerOpportunityRoutes(
   app.post<{ Params: { id: string; opportunityId: string } }>(
     "/workspaces/:id/opportunities/:opportunityId/decision",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = opportunityDecisionInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -114,7 +114,7 @@ export function registerOpportunityRoutes(
         });
       }
       try {
-        return decideOpportunity(db, request.params.id, request.params.opportunityId, {
+        return await decideOpportunity(db, request.params.id, request.params.opportunityId, {
           action: parsed.data.action,
           reason: parsed.data.reason,
           actorUserId: actorOf(request).userId,
@@ -137,11 +137,11 @@ export function registerOpportunityRoutes(
   app.get<{ Params: { id: string; campaignId: string } }>(
     "/workspaces/:id/campaigns/:campaignId/routing-profile",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      if (!campaignExists(db, request.params.id, request.params.campaignId)) {
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await campaignExists(db, request.params.id, request.params.campaignId)) {
         return reply.status(404).send({ error: "campaign_not_found" });
       }
-      const profile = compileRoutingProfile(
+      const profile = await compileRoutingProfile(
         db,
         request.params.id,
         request.params.campaignId,
@@ -156,7 +156,7 @@ export function registerOpportunityRoutes(
   app.patch<{ Params: { id: string; campaignId: string } }>(
     "/workspaces/:id/campaigns/:campaignId/routing-policy",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = routingPolicyPatchSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -164,10 +164,10 @@ export function registerOpportunityRoutes(
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      if (!campaignExists(db, request.params.id, request.params.campaignId)) {
+      if (!await campaignExists(db, request.params.id, request.params.campaignId)) {
         return reply.status(404).send({ error: "campaign_not_found" });
       }
-      const { profile } = updateRoutingPolicy(
+      const { profile } = await updateRoutingPolicy(
         db,
         request.params.id,
         request.params.campaignId,
@@ -184,8 +184,8 @@ export function registerOpportunityRoutes(
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/opportunities/match",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      return runOpportunityRouting(db, llm, {
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      return await runOpportunityRouting(db, llm, {
         workspaceId: request.params.id,
         limit: DEFAULT_DISCOVERY_POLICY.maxRoutingStoriesPerTick,
         leaseMs: DEFAULT_DISCOVERY_POLICY.leaseMs,

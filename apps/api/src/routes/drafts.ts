@@ -53,8 +53,8 @@ import { notifyDraftPending } from "../services/notifications";
 
 type Fetcher = typeof fetch;
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -73,8 +73,8 @@ export function registerDraftRoutes(
   app.post<{ Params: { id: string; generationId: string } }>(
     "/workspaces/:id/generations/:generationId/submit",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const generation = db
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const generation = await db
         .select()
         .from(generations)
         .where(eq(generations.id, request.params.generationId))
@@ -82,13 +82,13 @@ export function registerDraftRoutes(
       if (!generation || generation.workspaceId !== request.params.id) {
         return reply.status(404).send({ error: "generation_not_found" });
       }
-      if (draftForGeneration(db, request.params.id, generation.id)) {
+      if (await draftForGeneration(db, request.params.id, generation.id)) {
         return reply.status(409).send({
           error: "already_submitted",
           message: "This generation is already in the approval queue.",
         });
       }
-      const draft = submitDraft(db, {
+      const draft = await submitDraft(db, {
         workspaceId: request.params.id,
         sourceGenerationId: generation.id,
         campaignId: generation.campaignId,
@@ -97,7 +97,7 @@ export function registerDraftRoutes(
         personaId: generation.personaId,
         content: generation.output,
       }, actorOf(request));
-      notifyDraftPending(db, mailer, fetcher, draft).catch(() => {});
+      await notifyDraftPending(db, mailer, fetcher, draft).catch(() => {});
       return reply.status(201).send(draft);
     },
   );
@@ -109,22 +109,22 @@ export function registerDraftRoutes(
   app.post<{ Params: { id: string; draftId: string } }>(
     "/workspaces/:id/drafts/:draftId/review",
     async (request, reply) => {
-      const workspace = workspaceOr404(db, request.params.id, reply);
+      const workspace = await workspaceOr404(db, request.params.id, reply);
       if (!workspace) return reply;
-      const draft = getDraft(db, request.params.id, request.params.draftId);
+      const draft = await getDraft(db, request.params.id, request.params.draftId);
       if (!draft) return reply.status(404).send({ error: "draft_not_found" });
 
       const persona = draft.personaId
-        ? getPersona(db, request.params.id, draft.personaId)
+        ? await getPersona(db, request.params.id, draft.personaId)
         : undefined;
       const campaign = draft.campaignId
-        ? getCampaign(db, request.params.id, draft.campaignId)
+        ? await getCampaign(db, request.params.id, draft.campaignId)
         : undefined;
-      const { docs } = getBrain(db, request.params.id);
+      const { docs } = await getBrain(db, request.params.id);
       const contents = Object.fromEntries(
         docs.map((d) => [d.docType, d.content]),
       ) as BrainContents;
-      const settings = getGenerationSettings(db, request.params.id);
+      const settings = await getGenerationSettings(db, request.params.id);
 
       const review = await runPreReview(
         meteredLlm(llm, db, {
@@ -141,12 +141,12 @@ export function registerDraftRoutes(
           // Sprint 53: the shared composer, so the reviewer sees exactly the
           // campaign section the drafter saw — including the legacy-strategy
           // fallback when the campaign has no active plan revision.
-          ...campaignResolveInputs(db, request.params.id, campaign),
+          ...await campaignResolveInputs(db, request.params.id, campaign),
         },
         draft.content,
         settings.flagThreshold,
       );
-      setDraftReview(db, request.params.id, draft.id, review);
+      await setDraftReview(db, request.params.id, draft.id, review);
       return { ...draft, review };
     },
   );
@@ -154,20 +154,20 @@ export function registerDraftRoutes(
   app.get<{ Params: { id: string }; Querystring: { state?: string; campaignId?: string } }>(
     "/workspaces/:id/drafts",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const { state, campaignId } = request.query;
       if (state !== undefined && !(APPROVAL_STATES as readonly string[]).includes(state)) {
         return reply.status(400).send({ error: "invalid_state" });
       }
-      return listDrafts(db, request.params.id, state as ApprovalState | undefined, campaignId);
+      return await listDrafts(db, request.params.id, state as ApprovalState | undefined, campaignId);
     },
   );
 
   app.get<{ Params: { id: string; draftId: string } }>(
     "/workspaces/:id/drafts/:draftId/editor",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const context = getDraftEditorContext(db, request.params.id, request.params.draftId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const context = await getDraftEditorContext(db, request.params.id, request.params.draftId);
       if (!context) return reply.status(404).send({ error: "draft_not_found" });
       return draftEditorContextSchema.parse(context);
     },
@@ -176,7 +176,7 @@ export function registerDraftRoutes(
   app.post<{ Params: { id: string; draftId: string } }>(
     "/workspaces/:id/drafts/:draftId/revise",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = reviseDraftInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -184,11 +184,11 @@ export function registerDraftRoutes(
           message: parsed.error.issues.map((issue) => issue.message).join("; "),
         });
       }
-      if (!getDraft(db, request.params.id, request.params.draftId)) {
+      if (!await getDraft(db, request.params.id, request.params.draftId)) {
         return reply.status(404).send({ error: "draft_not_found" });
       }
       try {
-        const existingTurn = getTurnByRequest(
+        const existingTurn = await getTurnByRequest(
           db,
           request.params.id,
           request.params.draftId,
@@ -204,7 +204,7 @@ export function registerDraftRoutes(
           },
         );
         if (!existingTurn) {
-          track(db, analytics, {
+          await track(db, analytics, {
             event: "review.revision_requested",
             distinctId: request.actor.userId!,
             workspaceId: request.params.id,
@@ -240,10 +240,10 @@ export function registerDraftRoutes(
   app.get<{ Params: { id: string; draftId: string } }>(
     "/workspaces/:id/drafts/:draftId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const draft = getDraft(db, request.params.id, request.params.draftId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const draft = await getDraft(db, request.params.id, request.params.draftId);
       if (!draft) return reply.status(404).send({ error: "draft_not_found" });
-      return { ...draft, decisions: listDecisions(db, draft.id) };
+      return { ...draft, decisions: await listDecisions(db, draft.id) };
     },
   );
 
@@ -252,8 +252,8 @@ export function registerDraftRoutes(
     app.post<{ Params: { id: string; draftId: string } }>(
       `/workspaces/:id/drafts/:draftId/${action}`,
       async (request, reply) => {
-        if (!workspaceOr404(db, request.params.id, reply)) return reply;
-        const draft = getDraft(db, request.params.id, request.params.draftId);
+        if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+        const draft = await getDraft(db, request.params.id, request.params.draftId);
         if (!draft) return reply.status(404).send({ error: "draft_not_found" });
 
         let newContent: string | undefined;
@@ -306,12 +306,12 @@ export function registerDraftRoutes(
         }
 
         try {
-          const updated = applyDraftAction(db, draft, action, actorOf(request), newContent, reason);
+          const updated = await applyDraftAction(db, draft, action, actorOf(request), newContent, reason);
           if (action === "resubmit") {
-            notifyDraftPending(db, mailer, fetcher, updated).catch(() => {});
+            await notifyDraftPending(db, mailer, fetcher, updated).catch(() => {});
           }
           if (action === "approve") {
-            track(db, analytics, {
+            await track(db, analytics, {
               event: "draft.approved",
               distinctId: request.actor.userId!,
               workspaceId: request.params.id,

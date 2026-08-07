@@ -49,7 +49,7 @@ describe("generations API", () => {
   });
 
   async function generate(payload: Record<string, unknown> = {}) {
-    return app.inject({
+    return await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/generate`,
       payload: { taskType: "linkedin_post", channel: "linkedin", ...payload },

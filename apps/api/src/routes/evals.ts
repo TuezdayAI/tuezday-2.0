@@ -26,8 +26,8 @@ import {
 } from "../services/eval-harness";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -51,22 +51,22 @@ export function registerEvalRoutes(app: FastifyInstance, db: Db, deps: EvalRoute
   // --- Banned claims (D-67.5) ------------------------------------------------
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/banned-claims", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return { claims: listBannedClaims(db, request.params.id) };
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return { claims: await listBannedClaims(db, request.params.id) };
   });
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/banned-claims", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = bannedClaimInputSchema.safeParse(request.body);
     if (!parsed.success) return invalidInput(reply, parsed.error.issues);
-    return reply.status(201).send(addBannedClaim(db, request.params.id, parsed.data));
+    return reply.status(201).send(await addBannedClaim(db, request.params.id, parsed.data));
   });
 
   app.delete<{ Params: { id: string; claimId: string } }>(
     "/workspaces/:id/banned-claims/:claimId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      if (!removeBannedClaim(db, request.params.id, request.params.claimId)) {
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await removeBannedClaim(db, request.params.id, request.params.claimId)) {
         return reply.status(404).send({ error: "not_found" });
       }
       return reply.status(204).send();
@@ -76,36 +76,36 @@ export function registerEvalRoutes(app: FastifyInstance, db: Db, deps: EvalRoute
   // --- Suites ----------------------------------------------------------------
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/evals/suites", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return { suites: listEvalSuites(db, request.params.id) };
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return { suites: await listEvalSuites(db, request.params.id) };
   });
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/evals/suites", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = buildEvalSuiteInputSchema.safeParse(request.body ?? {});
     if (!parsed.success) return invalidInput(reply, parsed.error.issues);
     const actor = actorOf(request);
-    const built = buildEvalSuite(db, request.params.id, parsed.data, { userId: actor.userId });
+    const built = await buildEvalSuite(db, request.params.id, parsed.data, { userId: actor.userId });
     return reply.status(201).send(built);
   });
 
   app.get<{ Params: { id: string; suiteId: string } }>(
     "/workspaces/:id/evals/suites/:suiteId/cases",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      return { cases: listEvalCases(db, request.params.id, request.params.suiteId) };
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      return { cases: await listEvalCases(db, request.params.id, request.params.suiteId) };
     },
   );
 
   // --- Runs ------------------------------------------------------------------
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/evals/runs", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return { runs: listEvalRuns(db, request.params.id) };
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return { runs: await listEvalRuns(db, request.params.id) };
   });
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/evals/runs", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = runEvalSuiteInputSchema.safeParse(request.body);
     if (!parsed.success) return invalidInput(reply, parsed.error.issues);
     const actor = actorOf(request);
@@ -130,8 +130,8 @@ export function registerEvalRoutes(app: FastifyInstance, db: Db, deps: EvalRoute
   app.get<{ Params: { id: string; runId: string } }>(
     "/workspaces/:id/evals/runs/:runId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const detail = getEvalRunDetail(db, request.params.id, request.params.runId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const detail = await getEvalRunDetail(db, request.params.id, request.params.runId);
       if (!detail) return reply.status(404).send({ error: "not_found" });
       return detail;
     },
@@ -140,10 +140,10 @@ export function registerEvalRoutes(app: FastifyInstance, db: Db, deps: EvalRoute
   app.post<{ Params: { id: string; runId: string } }>(
     "/workspaces/:id/evals/runs/:runId/baseline",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = labelBaselineInputSchema.safeParse(request.body);
       if (!parsed.success) return invalidInput(reply, parsed.error.issues);
-      const run = labelBaseline(
+      const run = await labelBaseline(
         db,
         request.params.id,
         request.params.runId,
@@ -157,8 +157,8 @@ export function registerEvalRoutes(app: FastifyInstance, db: Db, deps: EvalRoute
   app.get<{ Params: { id: string; runId: string }; Querystring: { baselineLabel?: string } }>(
     "/workspaces/:id/evals/runs/:runId/comparison",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const comparison = getEvalComparison(
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const comparison = await getEvalComparison(
         db,
         request.params.id,
         request.params.runId,

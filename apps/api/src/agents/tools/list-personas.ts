@@ -21,7 +21,7 @@ export const listPersonasTool: Tool<Input, unknown> = {
   input,
   access: "read",
   async run(ctx, { limit }) {
-    const personas = listPersonas(ctx.db, ctx.workspaceId);
+    const personas = await listPersonas(ctx.db, ctx.workspaceId);
     if (personas.length === 0) {
       return { personas: [], note: "This workspace has no personas defined yet." };
     }

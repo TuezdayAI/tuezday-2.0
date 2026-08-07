@@ -40,8 +40,8 @@ import { getPersona, toResolvePersona } from "../services/personas";
 import { campaignResolveInputs, selectiveContextInputs } from "../services/resolve-input";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -57,7 +57,7 @@ export function registerAdCreativeRoutes(
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/ad-creatives/generate",
     async (request, reply) => {
-      const workspace = workspaceOr404(db, request.params.id, reply);
+      const workspace = await workspaceOr404(db, request.params.id, reply);
       if (!workspace) return reply;
       const parsed = generateAdCreativesInputSchema.safeParse(request.body);
       if (!parsed.success) {
@@ -67,17 +67,17 @@ export function registerAdCreativeRoutes(
         });
       }
 
-      const campaign = getCampaign(db, request.params.id, parsed.data.campaignId);
+      const campaign = await getCampaign(db, request.params.id, parsed.data.campaignId);
       if (!campaign) return reply.status(404).send({ error: "campaign_not_found" });
       const campaignError = campaignExecutionError(campaign);
       if (campaignError) return reply.status(409).send({ error: campaignError });
       let persona;
       if (parsed.data.personaId) {
-        persona = getPersona(db, request.params.id, parsed.data.personaId);
+        persona = await getPersona(db, request.params.id, parsed.data.personaId);
         if (!persona) return reply.status(404).send({ error: "persona_not_found" });
       }
 
-      const { docs } = getBrain(db, request.params.id);
+      const { docs } = await getBrain(db, request.params.id);
       const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
       const evidenceResolution = await retrieveEvidence(
         db,
@@ -93,7 +93,7 @@ export function registerAdCreativeRoutes(
 
       const format = AD_CREATIVE_FORMATS[parsed.data.taskType];
       const variantCount = parsed.data.variantCount ?? format.variantCount?.default;
-      const channelGuidance = resolveChannelGuidance(db, request.params.id, "ads", {
+      const channelGuidance = await resolveChannelGuidance(db, request.params.id, "ads", {
         personaId: parsed.data.personaId ?? null,
         campaignId: campaign.id,
       });
@@ -108,16 +108,16 @@ export function registerAdCreativeRoutes(
           scope: channelGuidance.scopeLabel,
         },
         persona: persona ? toResolvePersona(persona) : undefined,
-        ...campaignResolveInputs(db, request.params.id, campaign),
-        ...selectiveContextInputs(db, request.params.id),
+        ...await campaignResolveInputs(db, request.params.id, campaign),
+        ...await selectiveContextInputs(db, request.params.id),
         evidence: evidenceResolution.evidence,
         evidenceExclusionReason: evidenceResolution.exclusionReason,
         taskInstruction: composeAdCreativeInstruction(parsed.data.taskType, variantCount),
         tokenBudget: parsed.data.tokenBudget,
       });
 
-      const store = (output: string, model: string, provider: string, durationMs: number) =>
-        storeGeneration(db, {
+      const store = async (output: string, model: string, provider: string, durationMs: number) =>
+        await storeGeneration(db, {
           workspaceId: request.params.id,
           taskType: parsed.data.taskType,
           channel: "ads",
@@ -133,7 +133,7 @@ export function registerAdCreativeRoutes(
       let variants: string[];
       let generation;
       try {
-        assertLlmBudget(db, request.params.id);
+        await assertLlmBudget(db, request.params.id);
         const adLlm = meteredLlm(llm, db, {
           workspaceId: request.params.id,
           pipeline: "ad_creative",
@@ -144,19 +144,19 @@ export function registerAdCreativeRoutes(
             prompt: resolved.prompt,
           });
           variants = metaAdVariantContents(result.value);
-          generation = store(variants.join("\n---\n"), result.model, result.provider, result.durationMs);
+          generation = await store(variants.join("\n---\n"), result.model, result.provider, result.durationMs);
         } else {
           const result = await generateStructured(adLlm, googleRsaResponseSchema, {
             prompt: resolved.prompt,
           });
           variants = googleRsaContents(result.value);
-          generation = store(variants.join("\n---\n"), result.model, result.provider, result.durationMs);
+          generation = await store(variants.join("\n---\n"), result.model, result.provider, result.durationMs);
         }
       } catch (err) {
         if (err instanceof StructuredOutputError) {
           // Malformed even after the repair retry: store the raw output for
           // inspection and surface the typed failure (pre-58: silent drop).
-          const failed = store(err.rawText, err.model, err.provider, err.durationMs);
+          const failed = await store(err.rawText, err.model, err.provider, err.durationMs);
           return reply.status(502).send({
             error: "generation_unparseable",
             message: `The model's output was not in the ${format.label} format. The generation is stored — try again.`,
@@ -177,17 +177,17 @@ export function registerAdCreativeRoutes(
         });
       }
 
-      const created = variants.map((content) =>
-        submitDraft(db, {
-          workspaceId: request.params.id,
-          sourceGenerationId: generation.id,
-          campaignId: campaign.id,
-          taskType: parsed.data.taskType,
-          channel: "ads",
-          personaId: parsed.data.personaId ?? null,
-          content,
-        }, actorOf(request)),
-      );
+      const created = await Promise.all(variants.map(async (content) =>
+              await submitDraft(db, {
+                workspaceId: request.params.id,
+                sourceGenerationId: generation.id,
+                campaignId: campaign.id,
+                taskType: parsed.data.taskType,
+                channel: "ads",
+                personaId: parsed.data.personaId ?? null,
+                content,
+              }, actorOf(request)),
+            ));
       return reply.status(201).send({
         generationId: generation.id,
         drafts: created.map(withViolations),
@@ -196,15 +196,15 @@ export function registerAdCreativeRoutes(
   );
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/ad-creatives", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return listAdCreativeSets(db, request.params.id);
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return await listAdCreativeSets(db, request.params.id);
   });
 
   app.get<{
     Params: { id: string };
     Querystring: { taskType?: string; state?: string; campaignId?: string };
   }>("/workspaces/:id/ad-creatives/export.csv", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const taskType = request.query.taskType ?? "";
     if (!isAdCreativeTaskType(taskType)) {
       return reply.status(400).send({ error: "invalid_task_type" });
@@ -220,13 +220,13 @@ export function registerAdCreativeRoutes(
       eq(drafts.state, state),
     ];
     if (request.query.campaignId) conditions.push(eq(drafts.campaignId, request.query.campaignId));
-    const rows = db
+    const rows = await db
       .select()
       .from(drafts)
       .where(and(...conditions))
       .all();
 
-    const campaignName = new Map(listCampaigns(db, request.params.id).map((c) => [c.id, c.name]));
+    const campaignName = new Map((await listCampaigns(db, request.params.id)).map((c) => [c.id, c.name]));
     const format = AD_CREATIVE_FORMATS[taskType];
     const columns = format.fields.flatMap((f) =>
       f.maxCount > 1

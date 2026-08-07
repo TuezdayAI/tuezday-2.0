@@ -12,13 +12,13 @@ const SYSTEM = { userId: null, label: "system", human: false };
 const ORIGINAL =
   "Pricing pages are broken. Should you charge per seat? Here is what we learned shipping usage-based billing to 40 customers.";
 
-function fixture(): { db: Db; draftId: string } {
+async function fixture(): Promise<{ db: Db; draftId: string }> {
   const db = createTestDb();
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({ id: WORKSPACE_ID, name: "Capture", createdAt: 1, updatedAt: 1 })
     .run();
   const draftId = "22222222-2222-4222-8222-222222222222";
-  db.insert(drafts)
+  await db.insert(drafts)
     .values({
       id: draftId,
       workspaceId: WORKSPACE_ID,
@@ -35,10 +35,10 @@ function fixture(): { db: Db; draftId: string } {
 }
 
 describe("preference capture (Sprint 68)", () => {
-  it("captures a human edit with both sides of the diff", () => {
-    const { db, draftId } = fixture();
-    const draft = getDraft(db, WORKSPACE_ID, draftId)!;
-    applyDraftAction(
+  it("captures a human edit with both sides of the diff", async () => {
+    const { db, draftId } = await fixture();
+    const draft = (await getDraft(db, WORKSPACE_ID, draftId))!;
+    await applyDraftAction(
       db,
       draft,
       "edit",
@@ -46,7 +46,7 @@ describe("preference capture (Sprint 68)", () => {
       "We shipped usage-based billing to 40 customers. Here is what per-seat pricing hid from us.",
     );
 
-    const edits = listPreferenceEdits(db, WORKSPACE_ID);
+    const edits = await listPreferenceEdits(db, WORKSPACE_ID);
     expect(edits).toHaveLength(1);
     expect(edits[0]!.source).toBe("draft_edit");
     expect(edits[0]!.beforeContent).toBe(ORIGINAL);
@@ -57,10 +57,10 @@ describe("preference capture (Sprint 68)", () => {
     expect(edits[0]!.draftId).toBe(draftId);
   });
 
-  it("records the founder's own words when the edit came through the editor", () => {
-    const { db, draftId } = fixture();
-    const draft = getDraft(db, WORKSPACE_ID, draftId)!;
-    applyDraftAction(
+  it("records the founder's own words when the edit came through the editor", async () => {
+    const { db, draftId } = await fixture();
+    const draft = (await getDraft(db, WORKSPACE_ID, draftId))!;
+    await applyDraftAction(
       db,
       draft,
       "edit",
@@ -70,40 +70,40 @@ describe("preference capture (Sprint 68)", () => {
       { instruction: "Never open with a rhetorical question" },
     );
 
-    const [edit] = listPreferenceEdits(db, WORKSPACE_ID);
+    const [edit] = await listPreferenceEdits(db, WORKSPACE_ID);
     expect(edit!.source).toBe("editor_turn");
     expect(edit!.instruction).toBe("Never open with a rhetorical question");
   });
 
-  it("ignores a machine edit — a system rewrite is not a preference (D-68.2)", () => {
-    const { db, draftId } = fixture();
-    const draft = getDraft(db, WORKSPACE_ID, draftId)!;
-    applyDraftAction(db, draft, "edit", SYSTEM, "A completely different machine-written post.");
-    expect(listPreferenceEdits(db, WORKSPACE_ID)).toHaveLength(0);
+  it("ignores a machine edit — a system rewrite is not a preference (D-68.2)", async () => {
+    const { db, draftId } = await fixture();
+    const draft = (await getDraft(db, WORKSPACE_ID, draftId))!;
+    await applyDraftAction(db, draft, "edit", SYSTEM, "A completely different machine-written post.");
+    expect(await listPreferenceEdits(db, WORKSPACE_ID)).toHaveLength(0);
   });
 
-  it("ignores a whitespace-scale correction", () => {
-    const { db, draftId } = fixture();
-    const draft = getDraft(db, WORKSPACE_ID, draftId)!;
+  it("ignores a whitespace-scale correction", async () => {
+    const { db, draftId } = await fixture();
+    const draft = (await getDraft(db, WORKSPACE_ID, draftId))!;
     // One character in a 120-character post is under PREFERENCE_MIN_EDIT_DISTANCE.
-    applyDraftAction(db, draft, "edit", HUMAN, `${ORIGINAL} `);
-    expect(listPreferenceEdits(db, WORKSPACE_ID)).toHaveLength(0);
+    await applyDraftAction(db, draft, "edit", HUMAN, `${ORIGINAL} `);
+    expect(await listPreferenceEdits(db, WORKSPACE_ID)).toHaveLength(0);
   });
 
-  it("captures nothing for approvals and rejections — this sprint reads edits (D-68.1)", () => {
-    const { db, draftId } = fixture();
-    const draft = getDraft(db, WORKSPACE_ID, draftId)!;
-    applyDraftAction(db, draft, "reject", HUMAN, undefined, "Too generic");
-    expect(listPreferenceEdits(db, WORKSPACE_ID)).toHaveLength(0);
+  it("captures nothing for approvals and rejections — this sprint reads edits (D-68.1)", async () => {
+    const { db, draftId } = await fixture();
+    const draft = (await getDraft(db, WORKSPACE_ID, draftId))!;
+    await applyDraftAction(db, draft, "reject", HUMAN, undefined, "Too generic");
+    expect(await listPreferenceEdits(db, WORKSPACE_ID)).toHaveLength(0);
   });
 
-  it("captures each successive edit separately, oldest first for extraction", () => {
-    const { db, draftId } = fixture();
-    let draft = getDraft(db, WORKSPACE_ID, draftId)!;
-    draft = applyDraftAction(db, draft, "edit", HUMAN, "First rewrite, quite different from it.");
-    applyDraftAction(db, draft, "edit", HUMAN, "Second rewrite, different again from that one.");
+  it("captures each successive edit separately, oldest first for extraction", async () => {
+    const { db, draftId } = await fixture();
+    let draft = (await getDraft(db, WORKSPACE_ID, draftId))!;
+    draft = await applyDraftAction(db, draft, "edit", HUMAN, "First rewrite, quite different from it.");
+    await applyDraftAction(db, draft, "edit", HUMAN, "Second rewrite, different again from that one.");
 
-    const undigested = listUndigestedEdits(db, WORKSPACE_ID, 10);
+    const undigested = await listUndigestedEdits(db, WORKSPACE_ID, 10);
     expect(undigested).toHaveLength(2);
     expect(undigested[0]!.afterContent).toContain("First rewrite");
     expect(undigested[0]!.beforeContent).toBe(ORIGINAL);

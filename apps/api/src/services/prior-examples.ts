@@ -69,10 +69,10 @@ function rankOrRecency(query: string, candidates: TrainingExample[]): TrainingEx
  * stored reject reason (Sprint 66), else the human's conversational-editor
  * instructions — the only written rationale that existed before Sprint 66.
  */
-function reasonsFor(db: Db, workspaceId: string, draftIds: string[]): Map<string, string> {
+async function reasonsFor(db: Db, workspaceId: string, draftIds: string[]): Promise<Map<string, string>> {
   const reasons = new Map<string, string>();
   if (draftIds.length === 0) return reasons;
-  const decisionRows = db
+  const decisionRows = await db
     .select({
       draftId: approvalDecisions.draftId,
       reason: approvalDecisions.reason,
@@ -95,7 +95,7 @@ function reasonsFor(db: Db, workspaceId: string, draftIds: string[]): Map<string
   }
   const missing = draftIds.filter((id) => !reasons.has(id));
   if (missing.length === 0) return reasons;
-  const turns = db
+  const turns = await db
     .select({
       draftId: draftRevisionTurns.draftId,
       instruction: draftRevisionTurns.instruction,
@@ -123,12 +123,12 @@ function reasonsFor(db: Db, workspaceId: string, draftIds: string[]): Map<string
  * first, then similarity. Returns null when the workspace has no usable
  * history under these filters — the caller supplies the exclusion reason.
  */
-export function retrievePriorExamples(
+export async function retrievePriorExamples(
   db: Db,
   workspaceId: string,
   input: PriorExamplesQuery,
-): ResolveExamples | null {
-  const all = listTrainingExamples(db, workspaceId)
+): Promise<ResolveExamples | null> {
+  const all = (await listTrainingExamples(db, workspaceId))
     .filter((e) => !input.taskType || e.taskType === input.taskType)
     .filter((e) => !input.channel || e.channel === input.channel);
 
@@ -140,7 +140,7 @@ export function retrievePriorExamples(
   // Reason lookup is two IN queries — bound the candidate pool so a large
   // workspace never fans a workspace-wide id list into SQLite.
   const rejectedCandidates = rankOrRecency(input.query, all.filter(isInstructive)).slice(0, 20);
-  const reasons = reasonsFor(
+  const reasons = await reasonsFor(
     db,
     workspaceId,
     rejectedCandidates.filter((e) => e.kind === "decision").map((e) => e.id),

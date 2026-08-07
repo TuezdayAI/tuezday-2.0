@@ -28,23 +28,23 @@ import { buildAuthedApp, createTestDb } from "./helpers";
 
 const ACTOR = { userId: null, label: "Founder", human: true };
 
-function seedWorkspace(db: Db, name = "Batch Lab"): string {
+async function seedWorkspace(db: Db, name = "Batch Lab"): Promise<string> {
   const id = randomUUID();
   const now = Date.now();
-  db.insert(workspaces).values({ id, name, createdAt: now, updatedAt: now }).run();
+  await db.insert(workspaces).values({ id, name, createdAt: now, updatedAt: now }).run();
   return id;
 }
 
-function seedCampaign(db: Db, workspaceId: string, name = "Launch"): string {
+async function seedCampaign(db: Db, workspaceId: string, name = "Launch"): Promise<string> {
   const id = randomUUID();
   const now = Date.now();
-  db.insert(campaigns)
+  await db.insert(campaigns)
     .values({ id, workspaceId, name, createdAt: now, updatedAt: now })
     .run();
   return id;
 }
 
-function seedAction(
+async function seedAction(
   db: Db,
   workspaceId: string,
   options: {
@@ -55,12 +55,12 @@ function seedAction(
     createdAt?: number;
     summary?: string;
   } = {},
-): string {
+): Promise<string> {
   const id = randomUUID();
   const createdAt = options.createdAt ?? Date.now();
   const campaignId = options.campaignId ?? null;
   const kind = options.kind ?? "publish";
-  db.insert(externalActions)
+  await db.insert(externalActions)
     .values({
       id,
       workspaceId,
@@ -159,16 +159,16 @@ function runtimeWithAuthorize(
 }
 
 describe("authorization batches", () => {
-  it("snapshots selected actions in caller order with durable exclusions and idempotency", () => {
+  it("snapshots selected actions in caller order with durable exclusions and idempotency", async () => {
     const db = createTestDb();
-    const workspaceId = seedWorkspace(db);
-    const otherWorkspaceId = seedWorkspace(db, "Other Lab");
-    const firstId = seedAction(db, workspaceId, { summary: "First impact" });
-    const staleId = seedAction(db, workspaceId, { status: "succeeded" });
-    const otherId = seedAction(db, otherWorkspaceId);
+    const workspaceId = await seedWorkspace(db);
+    const otherWorkspaceId = await seedWorkspace(db, "Other Lab");
+    const firstId = await seedAction(db, workspaceId, { summary: "First impact" });
+    const staleId = await seedAction(db, workspaceId, { status: "succeeded" });
+    const otherId = await seedAction(db, otherWorkspaceId);
     const requestId = randomUUID();
 
-    const preview = createAuthorizationBatchPreview(
+    const preview = await createAuthorizationBatchPreview(
       db,
       workspaceId,
       { requestId, selection: { mode: "selected", actionIds: [staleId, firstId, otherId] } },
@@ -188,7 +188,7 @@ describe("authorization batches", () => {
     );
     expect(authorizationBatchDetailSchema.parse(preview)).toEqual(preview);
 
-    const retry = createAuthorizationBatchPreview(
+    const retry = await createAuthorizationBatchPreview(
       db,
       workspaceId,
       { requestId, selection: { mode: "selected", actionIds: [firstId] } },
@@ -197,20 +197,20 @@ describe("authorization batches", () => {
     expect(retry).toEqual(preview);
   });
 
-  it("bounds campaign previews at 100 and reports the continuation count", () => {
+  it("bounds campaign previews at 100 and reports the continuation count", async () => {
     const db = createTestDb();
-    const workspaceId = seedWorkspace(db);
-    const campaignId = seedCampaign(db, workspaceId);
-    const ids = Array.from({ length: 112 }, (_, index) =>
-      seedAction(db, workspaceId, {
+    const workspaceId = await seedWorkspace(db);
+    const campaignId = await seedCampaign(db, workspaceId);
+    const ids = await Array.from({ length: 112 }, async (_, index) =>
+      await seedAction(db, workspaceId, {
         campaignId,
         requestedFor: 1_000 + index,
         createdAt: 2_000 + index,
       }),
     );
-    seedAction(db, workspaceId, { campaignId, kind: "reply" });
+    await seedAction(db, workspaceId, { campaignId, kind: "reply" });
 
-    const preview = createAuthorizationBatchPreview(
+    const preview = await createAuthorizationBatchPreview(
       db,
       workspaceId,
       {
@@ -221,7 +221,7 @@ describe("authorization batches", () => {
     );
 
     expect(preview.items).toHaveLength(100);
-    expect(preview.items.map((item) => item.actionId)).toEqual(ids.slice(0, 100));
+    expect(preview.items.map((item) => item.actionId)).toEqual(await ids.slice(0, 100));
     expect(preview.batch.continuationCount).toBe(12);
     expect(preview.batch.includedCount).toBe(100);
     expect(authorizationBatchDetailSchema.parse(preview)).toEqual(preview);
@@ -229,10 +229,10 @@ describe("authorization batches", () => {
 
   it("persists partial outcomes and makes repeated confirmation idempotent", async () => {
     const db = createTestDb();
-    const workspaceId = seedWorkspace(db);
-    const firstId = seedAction(db, workspaceId);
-    const secondId = seedAction(db, workspaceId);
-    const preview = createAuthorizationBatchPreview(
+    const workspaceId = await seedWorkspace(db);
+    const firstId = await seedAction(db, workspaceId);
+    const secondId = await seedAction(db, workspaceId);
+    const preview = await createAuthorizationBatchPreview(
       db,
       workspaceId,
       {
@@ -243,7 +243,7 @@ describe("authorization batches", () => {
     );
     const authorize = vi.fn(async (actionId: string) => {
       if (actionId === secondId) throw new Error("Provider failed");
-      return succeededSubmission(getExternalAction(db, workspaceId, actionId)!);
+      return succeededSubmission((await getExternalAction(db, workspaceId, actionId))!);
     });
     const runtime = runtimeWithAuthorize(authorize);
 
@@ -261,10 +261,10 @@ describe("authorization batches", () => {
 
   it("resumes only pending items after an interrupted running batch", async () => {
     const db = createTestDb();
-    const workspaceId = seedWorkspace(db);
-    const firstId = seedAction(db, workspaceId);
-    const secondId = seedAction(db, workspaceId);
-    const preview = createAuthorizationBatchPreview(
+    const workspaceId = await seedWorkspace(db);
+    const firstId = await seedAction(db, workspaceId);
+    const secondId = await seedAction(db, workspaceId);
+    const preview = await createAuthorizationBatchPreview(
       db,
       workspaceId,
       {
@@ -274,12 +274,12 @@ describe("authorization batches", () => {
       ACTOR,
     );
     const firstItem = preview.items[0]!;
-    const firstSubmission = succeededSubmission(getExternalAction(db, workspaceId, firstId)!);
-    db.update(externalActionBatches)
+    const firstSubmission = succeededSubmission((await getExternalAction(db, workspaceId, firstId))!);
+    await db.update(externalActionBatches)
       .set({ status: "running", confirmedAt: Date.now() })
       .where(eq(externalActionBatches.id, preview.batch.id))
       .run();
-    db.update(externalActionBatchItems)
+    await db.update(externalActionBatchItems)
       .set({
         status: "succeeded",
         submissionJson: JSON.stringify(firstSubmission),
@@ -288,7 +288,7 @@ describe("authorization batches", () => {
       .where(eq(externalActionBatchItems.id, firstItem.id))
       .run();
     const authorize = vi.fn(async (actionId: string) =>
-      succeededSubmission(getExternalAction(db, workspaceId, actionId)!),
+      succeededSubmission((await getExternalAction(db, workspaceId, actionId))!),
     );
 
     const result = await runAuthorizationBatch(
@@ -306,9 +306,9 @@ describe("authorization batches", () => {
 
   it("preserves the coordinator's canonical stale outcome", async () => {
     const db = createTestDb();
-    const workspaceId = seedWorkspace(db);
-    const actionId = seedAction(db, workspaceId);
-    const preview = createAuthorizationBatchPreview(
+    const workspaceId = await seedWorkspace(db);
+    const actionId = await seedAction(db, workspaceId);
+    const preview = await createAuthorizationBatchPreview(
       db,
       workspaceId,
       {
@@ -317,7 +317,7 @@ describe("authorization batches", () => {
       },
       ACTOR,
     );
-    const action = getExternalAction(db, workspaceId, actionId)!;
+    const action = (await getExternalAction(db, workspaceId, actionId))!;
     const staleAction: ExternalAction = {
       ...action,
       status: "stale",
@@ -354,7 +354,7 @@ describe("authorization batches", () => {
     const app = await buildAuthedApp({ db });
     const workspace = await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Route Lab" } });
     const workspaceId = workspace.json().id as string;
-    const staleId = seedAction(db, workspaceId, { status: "succeeded" });
+    const staleId = await seedAction(db, workspaceId, { status: "succeeded" });
     const requestId = randomUUID();
 
     const created = await app.inject({
@@ -382,7 +382,7 @@ describe("authorization batches", () => {
     expect(confirmed.statusCode).toBe(200);
     expect(authorizationBatchDetailSchema.parse(confirmed.json()).batch.status).toBe("failed");
 
-    expect(getAuthorizationBatchDetail(db, randomUUID(), preview.batch.id)).toBeUndefined();
+    expect(await getAuthorizationBatchDetail(db, randomUUID(), preview.batch.id)).toBeUndefined();
     await app.close();
   });
 });

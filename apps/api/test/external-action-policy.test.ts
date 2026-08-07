@@ -37,16 +37,16 @@ describe("external action policy", () => {
     }));
   }
 
-  function replacePolicy(
+  async function replacePolicy(
     scope: "workspace" | "campaign" | "persona" | "connection" | "lane",
     scopeId: string,
     overrides: Partial<Record<ExternalActionKind, "inherit" | "autonomous" | "human_required">>,
   ) {
-    const current = listExternalActionPolicies(db, workspaceId, scope, scopeId);
+    const current = await listExternalActionPolicies(db, workspaceId, scope, scopeId);
     const defaults = scope === "workspace"
       ? Object.fromEntries(EXTERNAL_ACTION_KINDS.map((kind) => [kind, "human_required"]))
       : {};
-    return upsertExternalActionPolicies(
+    return await upsertExternalActionPolicies(
       db,
       workspaceId,
       {
@@ -78,9 +78,9 @@ describe("external action policy", () => {
     await app.close();
   });
 
-  it("uses the safe workspace fallback and lets campaign policy replace it", () => {
+  it("uses the safe workspace fallback and lets campaign policy replace it", async () => {
     expect(
-      resolveExternalActionPolicy(db, {
+      await resolveExternalActionPolicy(db, {
         workspaceId,
         actionKind: "publish",
         campaignId: null,
@@ -93,31 +93,31 @@ describe("external action policy", () => {
       contributingRules: [{ scope: "workspace", scopeId: workspaceId }],
     });
 
-    replacePolicy("campaign", campaignId, { publish: "autonomous" });
+    await replacePolicy("campaign", campaignId, { publish: "autonomous" });
 
     expect(
-      resolveExternalActionPolicy(db, {
+      (await resolveExternalActionPolicy(db, {
         workspaceId,
         actionKind: "publish",
         campaignId,
         personaId: null,
         connectionId: null,
         laneRevisionId: null,
-      }).effective,
+      })).effective,
     ).toBe("autonomous");
   });
 
-  it("lets persona, connection, and lane constraints tighten campaign autonomy", () => {
+  it("lets persona, connection, and lane constraints tighten campaign autonomy", async () => {
     const now = Date.now();
     const personaId = randomUUID();
     const connectionId = randomUUID();
     const planRevisionId = randomUUID();
     const laneId = randomUUID();
     const laneRevisionId = randomUUID();
-    db.insert(personas)
+    await db.insert(personas)
       .values({ id: personaId, workspaceId, name: "Founder", createdAt: now, updatedAt: now })
       .run();
-    db.insert(connections)
+    await db.insert(connections)
       .values({
         id: connectionId,
         workspaceId,
@@ -127,7 +127,7 @@ describe("external action policy", () => {
         updatedAt: now,
       })
       .run();
-    db.insert(campaignPlanRevisions)
+    await db.insert(campaignPlanRevisions)
       .values({
         id: planRevisionId,
         workspaceId,
@@ -137,7 +137,7 @@ describe("external action policy", () => {
         createdAt: now,
       })
       .run();
-    db.insert(campaignLanes)
+    await db.insert(campaignLanes)
       .values({
         id: laneId,
         workspaceId,
@@ -148,7 +148,7 @@ describe("external action policy", () => {
         updatedAt: now,
       })
       .run();
-    db.insert(campaignLaneRevisions)
+    await db.insert(campaignLaneRevisions)
       .values({
         id: laneRevisionId,
         workspaceId,
@@ -163,10 +163,10 @@ describe("external action policy", () => {
       })
       .run();
 
-    replacePolicy("campaign", campaignId, { publish: "autonomous" });
-    replacePolicy("lane", laneRevisionId, { publish: "human_required" });
+    await replacePolicy("campaign", campaignId, { publish: "autonomous" });
+    await replacePolicy("lane", laneRevisionId, { publish: "human_required" });
 
-    const resolved = resolveExternalActionPolicy(db, {
+    const resolved = await resolveExternalActionPolicy(db, {
       workspaceId,
       actionKind: "publish",
       campaignId,
@@ -184,14 +184,14 @@ describe("external action policy", () => {
     ]);
   });
 
-  it("rejects cross-workspace scopes and policies that relax a safety constraint", () => {
+  it("rejects cross-workspace scopes and policies that relax a safety constraint", async () => {
     const now = Date.now();
     const otherWorkspaceId = randomUUID();
     const protectedPersonaId = randomUUID();
-    db.insert(workspaces)
+    await db.insert(workspaces)
       .values({ id: otherWorkspaceId, name: "Other", createdAt: now, updatedAt: now })
       .run();
-    db.insert(personas)
+    await db.insert(personas)
       .values({
         id: protectedPersonaId,
         workspaceId: otherWorkspaceId,
@@ -201,8 +201,8 @@ describe("external action policy", () => {
       })
       .run();
 
-    expect(() =>
-      upsertExternalActionPolicies(
+    expect(async () =>
+      await upsertExternalActionPolicies(
         db,
         workspaceId,
         {
@@ -216,11 +216,11 @@ describe("external action policy", () => {
     ).toThrow(ExternalActionPolicyScopeNotFoundError);
 
     const localPersonaId = randomUUID();
-    db.insert(personas)
+    await db.insert(personas)
       .values({ id: localPersonaId, workspaceId, name: "Sensitive", createdAt: now, updatedAt: now })
       .run();
-    expect(() =>
-      upsertExternalActionPolicies(
+    expect(async () =>
+      await upsertExternalActionPolicies(
         db,
         workspaceId,
         {
@@ -256,7 +256,7 @@ describe("external action policy", () => {
       url: `/workspaces/${workspaceId}/external-action-policies/${ruleId}`,
     });
     expect(deleted.statusCode).toBe(204);
-    expect(deleteExternalActionPolicy(db, workspaceId, ruleId)).toBe(false);
+    expect(await deleteExternalActionPolicy(db, workspaceId, ruleId)).toBe(false);
   });
 
   it("atomically replaces a complete campaign scope and deletes inherited rows", async () => {
@@ -351,16 +351,16 @@ describe("external action policy", () => {
     const coldDb = createTestDb();
     const now = Date.now();
     const coldWorkspaceId = randomUUID();
-    coldDb.insert(workspaces)
+    await coldDb.insert(workspaces)
       .values({ id: coldWorkspaceId, name: "Cold start", createdAt: now, updatedAt: now })
       .run();
 
     const coldApp = await buildAuthedApp({ db: coldDb });
     expect(
-      coldDb
+      (await coldDb
         .select()
         .from(externalActionPolicyRules)
-        .all()
+        .all())
         .filter((row) => row.workspaceId === coldWorkspaceId),
     ).toHaveLength(6);
     await coldApp.close();

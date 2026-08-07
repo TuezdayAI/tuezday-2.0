@@ -13,11 +13,11 @@ function rowToWorkspace<T extends { onboardingStep: string | null }>(
   return { ...row, onboardingStep: row.onboardingStep as OnboardingCursor | null };
 }
 
-export function createWorkspace(
+export async function createWorkspace(
   db: Db,
   input: CreateWorkspaceInput,
   ownerId?: string | null,
-): Workspace {
+): Promise<Workspace> {
   const now = Date.now();
   const row = {
     id: randomUUID(),
@@ -27,21 +27,21 @@ export function createWorkspace(
     createdAt: now,
     updatedAt: now,
   };
-  db.insert(workspaces).values(row).run();
+  await db.insert(workspaces).values(row).run();
   // Every workspace owns its five brain docs from the moment it exists.
-  ensureBrainDocs(db, row.id);
+  await ensureBrainDocs(db, row.id);
   // ...and its org-level default design system (Sprint 41 Part 2).
-  ensureDefaultDesignSystem(db, row.id);
+  await ensureDefaultDesignSystem(db, row.id);
   if (ownerId) {
-    db.insert(workspaceMembers)
+    await db.insert(workspaceMembers)
       .values({ id: randomUUID(), workspaceId: row.id, userId: ownerId, role: "owner", createdAt: now })
       .run();
   }
   return row;
 }
 
-export function listWorkspaces(db: Db): Workspace[] {
-  return db
+export async function listWorkspaces(db: Db): Promise<Workspace[]> {
+  return (await db
     .select({
       id: workspaces.id,
       name: workspaces.name,
@@ -52,7 +52,7 @@ export function listWorkspaces(db: Db): Workspace[] {
     })
     .from(workspaces)
     .orderBy(desc(workspaces.createdAt))
-    .all()
+    .all())
     .map(rowToWorkspace);
 }
 
@@ -62,7 +62,7 @@ export function listWorkspaces(db: Db): Workspace[] {
  * the legacy ones is what lets the founder reach (and silently claim, via
  * `claimIfMemberless`) dev data that predates the membership model.
  */
-export function listWorkspacesForUser(db: Db, userId: string): Workspace[] {
+export async function listWorkspacesForUser(db: Db, userId: string): Promise<Workspace[]> {
   const memberOf = db
     .select({ id: workspaceMembers.workspaceId })
     .from(workspaceMembers)
@@ -70,7 +70,7 @@ export function listWorkspacesForUser(db: Db, userId: string): Workspace[] {
   const everyMemberedWorkspace = db
     .select({ id: workspaceMembers.workspaceId })
     .from(workspaceMembers);
-  return db
+  return (await db
     .select({
       id: workspaces.id,
       name: workspaces.name,
@@ -82,12 +82,12 @@ export function listWorkspacesForUser(db: Db, userId: string): Workspace[] {
     .from(workspaces)
     .where(or(inArray(workspaces.id, memberOf), notInArray(workspaces.id, everyMemberedWorkspace)))
     .orderBy(desc(workspaces.createdAt))
-    .all()
+    .all())
     .map(rowToWorkspace);
 }
 
-export function getWorkspace(db: Db, id: string): Workspace | undefined {
-  const row = db
+export async function getWorkspace(db: Db, id: string): Promise<Workspace | undefined> {
+  const row = await db
     .select({
       id: workspaces.id,
       name: workspaces.name,
@@ -102,8 +102,8 @@ export function getWorkspace(db: Db, id: string): Workspace | undefined {
   return row ? rowToWorkspace(row) : undefined;
 }
 
-export function getAnalyticsOptOut(db: Db, workspaceId: string): boolean {
-  const row = db
+export async function getAnalyticsOptOut(db: Db, workspaceId: string): Promise<boolean> {
+  const row = await db
     .select({ analyticsOptOut: workspaces.analyticsOptOut })
     .from(workspaces)
     .where(eq(workspaces.id, workspaceId))
@@ -111,22 +111,22 @@ export function getAnalyticsOptOut(db: Db, workspaceId: string): boolean {
   return row?.analyticsOptOut ?? false;
 }
 
-export function setAnalyticsOptOut(db: Db, workspaceId: string, optOut: boolean): void {
-  db.update(workspaces)
+export async function setAnalyticsOptOut(db: Db, workspaceId: string, optOut: boolean): Promise<void> {
+  await db.update(workspaces)
     .set({ analyticsOptOut: optOut, updatedAt: Date.now() })
     .where(eq(workspaces.id, workspaceId))
     .run();
 }
 
 /** Move a workspace's onboarding cursor. Returns undefined if it doesn't exist. */
-export function advanceOnboarding(
+export async function advanceOnboarding(
   db: Db,
   id: string,
   step: OnboardingCursor,
-): Workspace | undefined {
-  db.update(workspaces)
+): Promise<Workspace | undefined> {
+  await db.update(workspaces)
     .set({ onboardingStep: step, updatedAt: Date.now() })
     .where(eq(workspaces.id, id))
     .run();
-  return getWorkspace(db, id);
+  return await getWorkspace(db, id);
 }

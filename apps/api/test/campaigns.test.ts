@@ -348,7 +348,7 @@ describe("campaigns API", () => {
     it("composes the free text alone — never the structured block", async () => {
       const created = await createCampaign();
       await activatePlan(created.id, { objective: "Own the phrase GTM amnesia" });
-      const campaign = getCampaign(db, workspaceId, created.id)!;
+      const campaign = (await getCampaign(db, workspaceId, created.id))!;
 
       const overlay = composeCampaignOverlay(campaign);
       expect(overlay).toBe(CAMPAIGN_PAYLOAD.overlay);
@@ -357,18 +357,18 @@ describe("campaigns API", () => {
 
     it("composes the free text alone even with no plan (the composer is plan-blind)", async () => {
       const created = await createCampaign();
-      const campaign = getCampaign(db, workspaceId, created.id)!;
+      const campaign = (await getCampaign(db, workspaceId, created.id))!;
       expect(composeCampaignOverlay(campaign)).toBe(CAMPAIGN_PAYLOAD.overlay);
     });
 
     it("keeps objective/pillars on the resolve campaign for the zoom query", async () => {
       const created = await createCampaign();
       await activatePlan(created.id, { objective: "Own the phrase GTM amnesia" });
-      const campaign = getCampaign(db, workspaceId, created.id)!;
+      const campaign = (await getCampaign(db, workspaceId, created.id))!;
 
       const resolveCampaign = composeResolveCampaign(
         campaign,
-        campaignPlanInput(db, workspaceId, created.id),
+        await campaignPlanInput(db, workspaceId, created.id),
       );
       // Regression guard: composeZoomQuery (packages/brain/src/zoom.ts:57-61)
       // is a separate consumer of these two fields and must not lose them.
@@ -390,8 +390,8 @@ describe("campaigns API", () => {
     describe("no active plan revision → legacy fallback", () => {
       it("carries the structured block plus the free text, flagged for the trace", async () => {
         const created = await createCampaign();
-        const campaign = getCampaign(db, workspaceId, created.id)!;
-        expect(campaignPlanInput(db, workspaceId, created.id)).toBeUndefined();
+        const campaign = (await getCampaign(db, workspaceId, created.id))!;
+        expect(await campaignPlanInput(db, workspaceId, created.id)).toBeUndefined();
 
         const resolveCampaign = composeResolveCampaign(campaign, undefined);
         expect(resolveCampaign.legacyStrategyFallback).toBe(true);
@@ -406,19 +406,19 @@ describe("campaigns API", () => {
 
       it("stops falling back as soon as the campaign has an active plan", async () => {
         const created = await createCampaign();
-        const campaign = getCampaign(db, workspaceId, created.id)!;
+        const campaign = (await getCampaign(db, workspaceId, created.id))!;
         expect(
-          composeResolveCampaign(campaign, campaignPlanInput(db, workspaceId, created.id))
+          composeResolveCampaign(campaign, await campaignPlanInput(db, workspaceId, created.id))
             .legacyStrategyFallback,
         ).toBe(true);
 
         // The Task 3 boot sweep, run explicitly — the same thing that happens
         // to every pre-existing campaign on the next deploy.
-        backfillMissingCampaignPlans(db);
+        await backfillMissingCampaignPlans(db);
 
         const after = composeResolveCampaign(
           campaign,
-          campaignPlanInput(db, workspaceId, created.id),
+          await campaignPlanInput(db, workspaceId, created.id),
         );
         expect(after.legacyStrategyFallback).toBe(false);
         expect(after.overlay).toBe(CAMPAIGN_PAYLOAD.overlay);
@@ -427,11 +427,11 @@ describe("campaigns API", () => {
       it("treats a contentless plan as no plan rather than dropping strategy", async () => {
         const created = await createCampaign();
         await activatePlan(created.id, {});
-        const campaign = getCampaign(db, workspaceId, created.id)!;
+        const campaign = (await getCampaign(db, workspaceId, created.id))!;
 
         const resolveCampaign = composeResolveCampaign(
           campaign,
-          campaignPlanInput(db, workspaceId, created.id),
+          await campaignPlanInput(db, workspaceId, created.id),
         );
         // An activated-but-empty plan composes to an *excluded* plan section, so
         // the fallback must trigger on "the plan section would be empty", not on

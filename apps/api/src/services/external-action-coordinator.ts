@@ -206,13 +206,13 @@ export interface ExternalActionRuntime {
   run(workspaceId: string): Promise<ExternalActionSubmission[]>;
 }
 
-function policyFor(
+async function policyFor(
   db: Db,
   workspaceId: string,
   kind: ExternalActionKind,
   context: ExternalActionContext,
-): EffectiveExternalActionPolicy {
-  return resolveExternalActionPolicy(db, {
+): Promise<EffectiveExternalActionPolicy> {
+  return await resolveExternalActionPolicy(db, {
     workspaceId,
     actionKind: kind,
     campaignId: context.campaignId,
@@ -297,12 +297,12 @@ export function createExternalActionRuntime({
   ): Promise<Revalidation> {
     let intent: ExternalActionIntent;
     try {
-      intent = await adapter.revalidate(action, getExternalActionPayload(db, action.id));
+      intent = await adapter.revalidate(action, await getExternalActionPayload(db, action.id));
     } catch (error) {
       if (error instanceof ExternalActionPreparationError) return { revalidated: false };
       throw error;
     }
-    const policy = policyFor(db, action.workspaceId, action.kind, intent.context);
+    const policy = await policyFor(db, action.workspaceId, action.kind, intent.context);
     return {
       revalidated: true,
       intent,
@@ -317,8 +317,8 @@ export function createExternalActionRuntime({
     return !current.revalidated || current.value !== action.fingerprint;
   }
 
-  function stale(action: ExternalAction): ExternalAction {
-    return transitionExternalAction(db, action.workspaceId, action.id, "stale", {
+  async function stale(action: ExternalAction): Promise<ExternalAction> {
+    return await transitionExternalAction(db, action.workspaceId, action.id, "stale", {
       blocker: {
         code: "subject_changed",
         message: "The subject, destination, timing, context, or effective policy changed.",
@@ -329,11 +329,11 @@ export function createExternalActionRuntime({
   }
 
   async function dispatch(actionId: string, workspaceId: string): Promise<ExternalActionSubmission> {
-    let action = getExternalAction(db, workspaceId, actionId);
+    let action = await getExternalAction(db, workspaceId, actionId);
     if (!action) throw new ExternalActionNotFoundError();
     const adapter = adapters[action.kind];
     if (!adapter) {
-      action = transitionExternalAction(db, workspaceId, action.id, "blocked", {
+      action = await transitionExternalAction(db, workspaceId, action.id, "blocked", {
         blocker: unavailableAdapterBlocker(action.kind),
         completedAt: Date.now(),
       });
@@ -347,18 +347,18 @@ export function createExternalActionRuntime({
       // the durable adapter to resolve rather than throwing an illegal
       // transition out of the runner.
       return submission(
-        canTransitionExternalAction(action.status, "stale") ? stale(action) : action,
+        canTransitionExternalAction(action.status, "stale") ? await stale(action) : action,
       );
     }
 
-    const payload = getExternalActionPayload(db, action.id);
+    const payload = await getExternalActionPayload(db, action.id);
     const blocker = await adapter.guard(action, payload);
     if (blocker) {
       // An in-flight provider operation cannot truthfully move backward to
       // blocked. Keep it dispatching and retry after the reversible condition
       // (for example the kill switch) clears.
       if (action.status === "dispatching") return submission(action);
-      action = transitionExternalAction(db, workspaceId, action.id, "blocked", {
+      action = await transitionExternalAction(db, workspaceId, action.id, "blocked", {
         blocker,
         completedAt: Date.now(),
       });
@@ -366,13 +366,13 @@ export function createExternalActionRuntime({
     }
     if (action.requestedFor !== null && action.requestedFor > Date.now()) {
       if (action.status !== "scheduled") {
-        action = transitionExternalAction(db, workspaceId, action.id, "scheduled");
+        action = await transitionExternalAction(db, workspaceId, action.id, "scheduled");
       }
       return submission(action);
     }
 
     if (action.status !== "dispatching") {
-      action = transitionExternalAction(db, workspaceId, action.id, "dispatching", {
+      action = await transitionExternalAction(db, workspaceId, action.id, "dispatching", {
         dispatchedAt: Date.now(),
       });
     }
@@ -383,8 +383,8 @@ export function createExternalActionRuntime({
         !receipt.error &&
         (receipt.status === "processing" || receipt.status === "scheduled");
       action = inFlightPublication
-        ? updateExternalActionExecution(db, workspaceId, action.id, receipt)
-        : transitionExternalAction(
+        ? await updateExternalActionExecution(db, workspaceId, action.id, receipt)
+        : await transitionExternalAction(
             db,
             workspaceId,
             action.id,
@@ -394,7 +394,7 @@ export function createExternalActionRuntime({
     } catch {
       // A thrown adapter error has an unknown outcome. Keep the action dispatching
       // so the durable adapter can recover or retry with the same idempotency key.
-      action = getExternalAction(db, workspaceId, action.id)!;
+      action = (await getExternalAction(db, workspaceId, action.id))!;
     }
     return submission(action);
   }
@@ -414,15 +414,15 @@ export function createExternalActionRuntime({
     // the status it is withdrawing from — which only this function has read.
     reasonFor: (action: ExternalAction) => string | null,
   ): Promise<ExternalActionSubmission> {
-    const action = getExternalAction(db, workspaceId, actionId);
+    const action = await getExternalAction(db, workspaceId, actionId);
     if (!action) throw new ExternalActionNotFoundError();
     if (!canTransitionExternalAction(action.status, "cancelled")) {
       throw new InvalidExternalActionTransitionError(action.status, "cancelled");
     }
     const reason = reasonFor(action);
     const now = Date.now();
-    db.transaction((tx) => {
-      tx.insert(externalActionDecisions)
+    await db.transaction(async (tx) => {
+      await tx.insert(externalActionDecisions)
         .values({
           id: randomUUID(),
           workspaceId,
@@ -437,12 +437,12 @@ export function createExternalActionRuntime({
           createdAt: now,
         })
         .run();
-      tx.update(externalActions)
+      await tx.update(externalActions)
         .set({ status: "cancelled", completedAt: now, updatedAt: now })
         .where(eq(externalActions.id, actionId))
         .run();
     });
-    return submission(getExternalAction(db, workspaceId, actionId)!);
+    return submission((await getExternalAction(db, workspaceId, actionId))!);
   }
 
   async function proposeWithLineage(
@@ -463,14 +463,14 @@ export function createExternalActionRuntime({
       requestedFor: command.requestedFor ?? null,
       links: { draftId: command.links?.draftId ?? null },
     };
-    const policy = policyFor(db, command.workspaceId, command.kind, intent.context);
+    const policy = await policyFor(db, command.workspaceId, command.kind, intent.context);
     const fingerprint = fingerprintExternalActionIntent(
       command.workspaceId,
       command.kind,
       intent,
       policy,
     );
-    const existing = findExternalActionByIdempotencyKey(
+    const existing = await findExternalActionByIdempotencyKey(
       db,
       command.workspaceId,
       command.idempotencyKey,
@@ -482,7 +482,7 @@ export function createExternalActionRuntime({
       return submission(existing);
     }
 
-    let action = insertExternalAction(db, {
+    let action = await insertExternalAction(db, {
       id: randomUUID(),
       workspaceId: command.workspaceId,
       kind: command.kind,
@@ -500,11 +500,11 @@ export function createExternalActionRuntime({
       supersedesActionId,
       draftId: intent.links?.draftId ?? null,
     });
-    if (supersedesActionId) linkExternalActionSuccessor(db, supersedesActionId, action.id);
+    if (supersedesActionId) await linkExternalActionSuccessor(db, supersedesActionId, action.id);
 
     const adapter = adapters[action.kind];
     if (!adapter) {
-      action = transitionExternalAction(db, action.workspaceId, action.id, "blocked", {
+      action = await transitionExternalAction(db, action.workspaceId, action.id, "blocked", {
         blocker: unavailableAdapterBlocker(action.kind),
         completedAt: Date.now(),
       });
@@ -519,7 +519,7 @@ export function createExternalActionRuntime({
       ? await adapter.guardAtProposal(action, intent.payload)
       : null;
     if (proposalBlocker) {
-      action = transitionExternalAction(db, action.workspaceId, action.id, "blocked", {
+      action = await transitionExternalAction(db, action.workspaceId, action.id, "blocked", {
         blocker: proposalBlocker,
         completedAt: Date.now(),
       });
@@ -549,10 +549,10 @@ export function createExternalActionRuntime({
         draftId !== null &&
         canTransitionExternalAction(action.status, "authorized");
       const approval = collapsible
-        ? humanApprovalCoveringDraft(db, action.workspaceId, draftId!)
+        ? await humanApprovalCoveringDraft(db, action.workspaceId, draftId!)
         : null;
       if (!approval) {
-        action = transitionExternalAction(
+        action = await transitionExternalAction(
           db,
           action.workspaceId,
           action.id,
@@ -569,8 +569,8 @@ export function createExternalActionRuntime({
       // governance record. `dispatch()` stays outside the transaction.
       const collapsedAt = Date.now();
       const collapsedActionId = action.id;
-      db.transaction((tx) => {
-        tx.insert(externalActionDecisions)
+      await db.transaction(async (tx) => {
+        await tx.insert(externalActionDecisions)
           .values({
             id: randomUUID(),
             workspaceId: action.workspaceId,
@@ -586,7 +586,7 @@ export function createExternalActionRuntime({
             createdAt: collapsedAt,
           })
           .run();
-        tx.update(externalActions)
+        await tx.update(externalActions)
           .set({ status: "authorized", authorizedAt: collapsedAt, updatedAt: collapsedAt })
           .where(eq(externalActions.id, collapsedActionId))
           .run();
@@ -597,32 +597,32 @@ export function createExternalActionRuntime({
       // distinct event so `review.action_authorized` keeps meaning "someone
       // pressed Authorize"; total authorizations is the sum of the two.
       if (approval.actorId) {
-        track(db, analytics, {
+        await track(db, analytics, {
           event: "review.action_authorized_collapsed",
           distinctId: approval.actorId,
           workspaceId: action.workspaceId,
           properties: { action_id: collapsedActionId, action_kind: action.kind },
         });
       }
-      return dispatch(collapsedActionId, action.workspaceId);
+      return await dispatch(collapsedActionId, action.workspaceId);
     }
-    action = transitionExternalAction(db, action.workspaceId, action.id, "authorized", {
+    action = await transitionExternalAction(db, action.workspaceId, action.id, "authorized", {
       authorizedAt: Date.now(),
     });
-    return dispatch(action.id, action.workspaceId);
+    return await dispatch(action.id, action.workspaceId);
   }
 
   return {
-    propose(command, actor) {
-      return proposeWithLineage(command, actor, null);
+    async propose(command, actor) {
+      return await proposeWithLineage(command, actor, null);
     },
 
-    proposeForReview(command, actor) {
-      return proposeWithLineage(command, actor, null, true);
+    async proposeForReview(command, actor) {
+      return await proposeWithLineage(command, actor, null, true);
     },
 
     async authorize(actionId, workspaceId, actor) {
-      const action = getExternalAction(db, workspaceId, actionId);
+      const action = await getExternalAction(db, workspaceId, actionId);
       if (!action) throw new ExternalActionNotFoundError();
       if (!canTransitionExternalAction(action.status, "authorized")) {
         throw new InvalidExternalActionTransitionError(action.status, "authorized");
@@ -630,11 +630,11 @@ export function createExternalActionRuntime({
       const adapter = adapters[action.kind];
       if (!adapter) throw new InvalidExternalActionTransitionError(action.status, "blocked");
       const current = await currentFingerprint(action, adapter);
-      if (diverged(action, current)) throw new StaleExternalActionError(stale(action));
+      if (diverged(action, current)) throw new StaleExternalActionError(await stale(action));
 
       const now = Date.now();
-      db.transaction((tx) => {
-        tx.insert(externalActionDecisions)
+      await db.transaction(async (tx) => {
+        await tx.insert(externalActionDecisions)
           .values({
             id: randomUUID(),
             workspaceId,
@@ -649,34 +649,34 @@ export function createExternalActionRuntime({
             createdAt: now,
           })
           .run();
-        tx.update(externalActions)
+        await tx.update(externalActions)
           .set({ status: "authorized", authorizedAt: now, updatedAt: now })
           .where(eq(externalActions.id, actionId))
           .run();
       });
       if (actor.userId) {
-        track(db, analytics, {
+        await track(db, analytics, {
           event: "review.action_authorized",
           distinctId: actor.userId,
           workspaceId,
           properties: { action_id: actionId, action_kind: action.kind },
         });
       }
-      return dispatch(actionId, workspaceId);
+      return await dispatch(actionId, workspaceId);
     },
 
-    deny(actionId, workspaceId, actor, reason) {
-      return recordCancellation(actionId, workspaceId, actor, () => reason);
+    async deny(actionId, workspaceId, actor, reason) {
+      return await recordCancellation(actionId, workspaceId, actor, () => reason);
     },
 
-    cancel(actionId, workspaceId, actor, reason) {
-      return recordCancellation(actionId, workspaceId, actor, (action) =>
+    async cancel(actionId, workspaceId, actor, reason) {
+      return await recordCancellation(actionId, workspaceId, actor, (action) =>
         withdrawalReason(action.status, reason),
       );
     },
 
     async repropose(actionId, workspaceId, idempotencyKey, actor) {
-      const action = getExternalAction(db, workspaceId, actionId);
+      const action = await getExternalAction(db, workspaceId, actionId);
       if (!action) throw new ExternalActionNotFoundError();
       if (action.status !== "stale" && action.status !== "blocked") {
         throw new InvalidExternalActionTransitionError(action.status, "proposed");
@@ -685,7 +685,7 @@ export function createExternalActionRuntime({
       let intent: ExternalActionIntent;
       if (adapter) {
         try {
-          intent = await adapter.revalidate(action, getExternalActionPayload(db, action.id));
+          intent = await adapter.revalidate(action, await getExternalActionPayload(db, action.id));
         } catch (error) {
           // "Re-propose with the current content" cannot rebuild an intent the
           // world no longer supports. Nothing is re-marked: a `stale` action is
@@ -705,12 +705,12 @@ export function createExternalActionRuntime({
         intent = {
           subject: action.subject,
           context: action.context,
-          payload: getExternalActionPayload(db, action.id),
+          payload: await getExternalActionPayload(db, action.id),
           requestedFor: action.requestedFor,
           links: { draftId: action.subject.kind === "draft" ? action.subject.id : null },
         };
       }
-      return proposeWithLineage(
+      return await proposeWithLineage(
         {
           workspaceId,
           kind: action.kind,
@@ -724,11 +724,11 @@ export function createExternalActionRuntime({
 
     async run(workspaceId) {
       const results: ExternalActionSubmission[] = [];
-      for (const action of listRunnableExternalActions(db, workspaceId)) {
+      for (const action of await listRunnableExternalActions(db, workspaceId)) {
         try {
           results.push(await dispatch(action.id, workspaceId));
         } catch {
-          const durable = getExternalAction(db, workspaceId, action.id);
+          const durable = await getExternalAction(db, workspaceId, action.id);
           if (durable) results.push(submission(durable));
         }
       }

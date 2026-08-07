@@ -78,8 +78,8 @@ function withContext(
   };
 }
 
-export function listLaunches(db: Db, workspaceId: string): AdLaunchWithContext[] {
-  const rows = db
+export async function listLaunches(db: Db, workspaceId: string): Promise<AdLaunchWithContext[]> {
+  const rows = await db
     .select({ launch: adLaunches, account: adAccounts, draft: drafts })
     .from(adLaunches)
     .leftJoin(adAccounts, eq(adLaunches.adAccountId, adAccounts.id))
@@ -92,8 +92,8 @@ export function listLaunches(db: Db, workspaceId: string): AdLaunchWithContext[]
   );
 }
 
-export function getLaunch(db: Db, workspaceId: string, launchId: string): AdLaunch | undefined {
-  const row = db
+export async function getLaunch(db: Db, workspaceId: string, launchId: string): Promise<AdLaunch | undefined> {
+  const row = await db
     .select()
     .from(adLaunches)
     .where(and(eq(adLaunches.workspaceId, workspaceId), eq(adLaunches.id, launchId)))
@@ -101,12 +101,12 @@ export function getLaunch(db: Db, workspaceId: string, launchId: string): AdLaun
   return row ? rowToLaunch(row) : undefined;
 }
 
-export function getLaunchWithContext(
+export async function getLaunchWithContext(
   db: Db,
   workspaceId: string,
   launchId: string,
-): AdLaunchWithContext | undefined {
-  const row = db
+): Promise<AdLaunchWithContext | undefined> {
+  const row = await db
     .select({ launch: adLaunches, account: adAccounts, draft: drafts })
     .from(adLaunches)
     .leftJoin(adAccounts, eq(adLaunches.adAccountId, adAccounts.id))
@@ -116,12 +116,12 @@ export function getLaunchWithContext(
   return row ? withContext(row.launch, row.account ?? undefined, row.draft?.content) : undefined;
 }
 
-export function createLaunch(
+export async function createLaunch(
   db: Db,
   workspaceId: string,
   input: CreateAdLaunchInput,
   campaignId: string | null,
-): AdLaunch {
+): Promise<AdLaunch> {
   const now = Date.now();
   const row: AdLaunchRow = {
     id: randomUUID(),
@@ -153,16 +153,16 @@ export function createLaunch(
     createdAt: now,
     updatedAt: now,
   };
-  db.insert(adLaunches).values(row).run();
+  await db.insert(adLaunches).values(row).run();
   return rowToLaunch(row);
 }
 
-export function updateLaunch(
+export async function updateLaunch(
   db: Db,
   launch: AdLaunch,
   patch: Partial<CreateAdLaunchInput>,
   campaignId: string | null,
-): AdLaunch {
+): Promise<AdLaunch> {
   const set: Partial<AdLaunchRow> = { updatedAt: Date.now() };
   if (patch.adAccountId !== undefined) set.adAccountId = patch.adAccountId;
   if (patch.creativeDraftId !== undefined) {
@@ -179,17 +179,17 @@ export function updateLaunch(
   if (patch.countries !== undefined) set.countriesJson = JSON.stringify(patch.countries);
   if (patch.ageMin !== undefined) set.ageMin = patch.ageMin;
   if (patch.ageMax !== undefined) set.ageMax = patch.ageMax;
-  db.update(adLaunches).set(set).where(eq(adLaunches.id, launch.id)).run();
-  return getLaunch(db, launch.workspaceId, launch.id)!;
+  await db.update(adLaunches).set(set).where(eq(adLaunches.id, launch.id)).run();
+  return (await getLaunch(db, launch.workspaceId, launch.id))!;
 }
 
 /** Persist a provider-confirmed targeting mutation on the local launch projection. */
-export function persistLaunchTargeting(
+export async function persistLaunchTargeting(
   db: Db,
   launchId: string,
   targeting: { countries: string[]; ageMin: number; ageMax: number },
-): void {
-  db.update(adLaunches)
+): Promise<void> {
+  await db.update(adLaunches)
     .set({
       countriesJson: JSON.stringify(targeting.countries),
       ageMin: targeting.ageMin,
@@ -200,8 +200,8 @@ export function persistLaunchTargeting(
     .run();
 }
 
-export function deleteLaunch(db: Db, launchId: string): void {
-  db.delete(adLaunches).where(eq(adLaunches.id, launchId)).run();
+export async function deleteLaunch(db: Db, launchId: string): Promise<void> {
+  await db.delete(adLaunches).where(eq(adLaunches.id, launchId)).run();
 }
 
 /**
@@ -221,15 +221,15 @@ export function deleteLaunch(db: Db, launchId: string): void {
  * with `human: false`. It is gone; do not reintroduce a launch/authorization
  * verb into this table.
  */
-export function recordSetupGateDecision(
+export async function recordSetupGateDecision(
   db: Db,
   launch: { id: string; workspaceId: string },
   actor: DraftActor,
   action: AdLaunchAction,
   fromState: AdLaunchStatus,
   toState: AdLaunchStatus,
-): void {
-  db.insert(adLaunchDecisions)
+): Promise<void> {
+  await db.insert(adLaunchDecisions)
     .values({
       id: randomUUID(),
       launchId: launch.id,
@@ -250,13 +250,13 @@ export function recordSetupGateDecision(
  * `approved → launched` transition; they are history and are surfaced as such,
  * never as an answer to who authorized spend.
  */
-export function listSetupGateDecisions(db: Db, launchId: string): AdLaunchDecision[] {
-  return db
+export async function listSetupGateDecisions(db: Db, launchId: string): Promise<AdLaunchDecision[]> {
+  return (await db
     .select()
     .from(adLaunchDecisions)
     .where(eq(adLaunchDecisions.launchId, launchId))
     .orderBy(asc(adLaunchDecisions.createdAt))
-    .all()
+    .all())
     .map((row) => ({
       ...row,
       action: row.action as AdLaunchDecisionAction,
@@ -298,19 +298,19 @@ export function nextGateState(
 }
 
 /** Apply a gate action; throws InvalidLaunchTransitionError when illegal. */
-export function applyLaunchAction(
+export async function applyLaunchAction(
   db: Db,
   launch: AdLaunch,
   action: AdLaunchAction,
   actor: DraftActor,
-): AdLaunch {
+): Promise<AdLaunch> {
   const toState = nextGateState(launch.status, action);
   if (!toState) throw new InvalidLaunchTransitionError(launch.status, action);
-  db.update(adLaunches)
+  await db.update(adLaunches)
     .set({ status: toState, updatedAt: Date.now() })
     .where(eq(adLaunches.id, launch.id))
     .run();
-  recordSetupGateDecision(db, launch, actor, action, launch.status, toState);
+  await recordSetupGateDecision(db, launch, actor, action, launch.status, toState);
   return { ...launch, status: toState };
 }
 
@@ -318,26 +318,26 @@ export function applyLaunchAction(
 // Guardrails
 // ---------------------------------------------------------------------------
 
-export function getAdSettings(db: Db, workspaceId: string): AdSettings {
-  const row = db.select().from(adSettings).where(eq(adSettings.workspaceId, workspaceId)).get();
+export async function getAdSettings(db: Db, workspaceId: string): Promise<AdSettings> {
+  const row = await db.select().from(adSettings).where(eq(adSettings.workspaceId, workspaceId)).get();
   return row
     ? { workspaceId, dailyCapCents: row.dailyCapCents, killSwitch: row.killSwitch === 1, updatedAt: row.updatedAt }
     : { workspaceId, dailyCapCents: 5000, killSwitch: false, updatedAt: 0 };
 }
 
-export function updateAdSettings(
+export async function updateAdSettings(
   db: Db,
   workspaceId: string,
   patch: { dailyCapCents?: number; killSwitch?: boolean },
-): AdSettings {
-  const current = getAdSettings(db, workspaceId);
+): Promise<AdSettings> {
+  const current = await getAdSettings(db, workspaceId);
   const next: AdSettings = {
     workspaceId,
     dailyCapCents: patch.dailyCapCents ?? current.dailyCapCents,
     killSwitch: patch.killSwitch ?? current.killSwitch,
     updatedAt: Date.now(),
   };
-  db.insert(adSettings)
+  await db.insert(adSettings)
     .values({ ...next, killSwitch: next.killSwitch ? 1 : 0 })
     .onConflictDoUpdate({
       target: adSettings.workspaceId,
@@ -359,12 +359,12 @@ export function isSpending(launch: AdLaunch): boolean {
   return launch.status === "launched" && !NOT_SPENDING.has(launch.platformStatus ?? "ACTIVE");
 }
 
-export function listSpendingLaunches(db: Db, workspaceId: string): AdLaunch[] {
-  return db
+export async function listSpendingLaunches(db: Db, workspaceId: string): Promise<AdLaunch[]> {
+  return (await db
     .select()
     .from(adLaunches)
     .where(and(eq(adLaunches.workspaceId, workspaceId), eq(adLaunches.status, "launched")))
-    .all()
+    .all())
     .map(rowToLaunch)
     .filter(isSpending);
 }
@@ -377,8 +377,8 @@ export type GuardrailCheck =
  * The check run at the moments money can start flowing — launch and resume.
  * The cap bounds committed daily budgets, not observed spend.
  */
-export function checkSpendGuardrails(db: Db, launch: AdLaunch): GuardrailCheck {
-  const settings = getAdSettings(db, launch.workspaceId);
+export async function checkSpendGuardrails(db: Db, launch: AdLaunch): Promise<GuardrailCheck> {
+  const settings = await getAdSettings(db, launch.workspaceId);
   if (settings.killSwitch) {
     return {
       ok: false,
@@ -386,7 +386,7 @@ export function checkSpendGuardrails(db: Db, launch: AdLaunch): GuardrailCheck {
       message: "The workspace kill switch is on — turn it off in Ads settings before spending.",
     };
   }
-  const committed = listSpendingLaunches(db, launch.workspaceId)
+  const committed = (await listSpendingLaunches(db, launch.workspaceId))
     .filter((other) => other.id !== launch.id)
     .reduce((sum, other) => sum + other.dailyBudgetCents, 0);
   if (committed + launch.dailyBudgetCents > settings.dailyCapCents) {
@@ -403,8 +403,8 @@ export function checkSpendGuardrails(db: Db, launch: AdLaunch): GuardrailCheck {
 // Launch + platform status
 // ---------------------------------------------------------------------------
 
-function persist(db: Db, launchId: string, set: Partial<AdLaunchRow>): void {
-  db.update(adLaunches)
+async function persist(db: Db, launchId: string, set: Partial<AdLaunchRow>): Promise<void> {
+  await db.update(adLaunches)
     .set({ ...set, updatedAt: Date.now() })
     .where(eq(adLaunches.id, launchId))
     .run();
@@ -442,7 +442,7 @@ export async function performLaunch(
           objective: launch.objective,
         })
       ).externalId;
-      persist(db, launch.id, { externalCampaignId });
+      await persist(db, launch.id, { externalCampaignId });
     }
     if (!externalAdSetId) {
       externalAdSetId = (
@@ -458,7 +458,7 @@ export async function performLaunch(
           endAt: launch.endAt,
         })
       ).externalId;
-      persist(db, launch.id, { externalAdSetId });
+      await persist(db, launch.id, { externalAdSetId });
     }
     if (!externalCreativeId) {
       // Generated ad image (Sprint 41): upload once, persist the hash so a
@@ -466,7 +466,7 @@ export async function performLaunch(
       if (imageUrl && !metaImageHash) {
         metaImageHash = (await adapter.uploadAdImage(externalAccountId, { url: imageUrl }))
           .imageHash;
-        persist(db, launch.id, { metaImageHash });
+        await persist(db, launch.id, { metaImageHash });
       }
       externalCreativeId = (
         await adapter.createAdCreative(externalAccountId, {
@@ -477,7 +477,7 @@ export async function performLaunch(
           ...(metaImageHash ? { imageHash: metaImageHash } : {}),
         })
       ).externalId;
-      persist(db, launch.id, { externalCreativeId });
+      await persist(db, launch.id, { externalCreativeId });
     }
     if (!externalAdId) {
       externalAdId = (
@@ -487,19 +487,19 @@ export async function performLaunch(
           creativeExternalId: externalCreativeId,
         })
       ).externalId;
-      persist(db, launch.id, { externalAdId });
+      await persist(db, launch.id, { externalAdId });
     }
     // The chain is whole — this is the moment spend becomes possible.
     await adapter.setCampaignStatus(externalCampaignId, "ACTIVE");
   } catch (err) {
-    persist(db, launch.id, {
+    await persist(db, launch.id, {
       lastError: (err instanceof Error ? err.message : String(err)).slice(0, 500),
     });
     throw err;
   }
 
-  const adCampaignId = mirrorAdCampaign(db, launch, externalCampaignId);
-  persist(db, launch.id, {
+  const adCampaignId = await mirrorAdCampaign(db, launch, externalCampaignId);
+  await persist(db, launch.id, {
     status: "launched",
     platformStatus: "ACTIVE",
     launchedAt: Date.now(),
@@ -509,13 +509,13 @@ export async function performLaunch(
   // No decision row is written here. The launch record itself carries "it
   // launched" (`status`, `launchedAt`, `externalActionId`), and the action it
   // links to carries who authorized the spend.
-  return getLaunch(db, launch.workspaceId, launch.id)!;
+  return (await getLaunch(db, launch.workspaceId, launch.id))!;
 }
 
 /** Register the launched campaign in the Sprint 14 reporting mirror, linked
  * to the launch's Tuezday campaign — spend shows up with zero new plumbing. */
-function mirrorAdCampaign(db: Db, launch: AdLaunch, externalCampaignId: string): string {
-  const existing = db
+async function mirrorAdCampaign(db: Db, launch: AdLaunch, externalCampaignId: string): Promise<string> {
+  const existing = await db
     .select()
     .from(adCampaigns)
     .where(
@@ -527,7 +527,7 @@ function mirrorAdCampaign(db: Db, launch: AdLaunch, externalCampaignId: string):
     .get();
   if (existing) {
     if (!existing.campaignId && launch.campaignId) {
-      db.update(adCampaigns)
+      await db.update(adCampaigns)
         .set({ campaignId: launch.campaignId })
         .where(eq(adCampaigns.id, existing.id))
         .run();
@@ -544,12 +544,12 @@ function mirrorAdCampaign(db: Db, launch: AdLaunch, externalCampaignId: string):
     lastSyncedAt: Date.now(),
     createdAt: Date.now(),
   };
-  db.insert(adCampaigns).values(fresh).run();
+  await db.insert(adCampaigns).values(fresh).run();
   return fresh.id;
 }
 
-export function recordLaunchError(db: Db, launchId: string, message: string): void {
-  persist(db, launchId, { lastError: message.slice(0, 500) });
+export async function recordLaunchError(db: Db, launchId: string, message: string): Promise<void> {
+  await persist(db, launchId, { lastError: message.slice(0, 500) });
 }
 
 export async function setLaunchPlatformStatus(
@@ -559,8 +559,8 @@ export async function setLaunchPlatformStatus(
   status: "ACTIVE" | "PAUSED",
 ): Promise<AdLaunch> {
   await adapter.setCampaignStatus(launch.externalCampaignId!, status);
-  persist(db, launch.id, { platformStatus: status });
-  return getLaunch(db, launch.workspaceId, launch.id)!;
+  await persist(db, launch.id, { platformStatus: status });
+  return (await getLaunch(db, launch.workspaceId, launch.id))!;
 }
 
 /**
@@ -574,7 +574,7 @@ export async function syncLaunchStatuses(
   adAccountId: string,
   externalAccountId: string,
 ): Promise<void> {
-  const launched = db
+  const launched = await db
     .select()
     .from(adLaunches)
     .where(
@@ -592,7 +592,7 @@ export async function syncLaunchStatuses(
   for (const row of launched) {
     const status = row.externalCampaignId ? byExternalId.get(row.externalCampaignId) : undefined;
     if (status && status !== row.platformStatus) {
-      persist(db, row.id, { platformStatus: status });
+      await persist(db, row.id, { platformStatus: status });
     }
   }
 }

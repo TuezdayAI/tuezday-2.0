@@ -109,13 +109,13 @@ async function providerGet(
   return { status: response.status, json: response.json };
 }
 
-function persistResolutionSuccess(
+async function persistResolutionSuccess(
   db: Db,
   account: TrackedSocialAccount,
   externalId: string,
-): TrackedSocialAccount {
+): Promise<TrackedSocialAccount> {
   const now = Date.now();
-  db.update(trackedSocialAccounts)
+  await db.update(trackedSocialAccounts)
     .set({
       externalId,
       lastResolvedAt: now,
@@ -129,19 +129,19 @@ function persistResolutionSuccess(
       ),
     )
     .run();
-  return getTrackedSocialAccount(
+  return (await getTrackedSocialAccount(
     db,
     account.workspaceId,
     account.id,
-  )!;
+  ))!;
 }
 
-function persistResolutionFailure(
+async function persistResolutionFailure(
   db: Db,
   account: TrackedSocialAccount,
   error: ProviderCapabilityError,
-): void {
-  db.update(trackedSocialAccounts)
+): Promise<void> {
+  await db.update(trackedSocialAccounts)
     .set({
       lastError: `${error.code}: ${error.message}`.slice(0, 500),
       updatedAt: Date.now(),
@@ -165,7 +165,7 @@ export async function resolveTrackedSocialAccount(
     runtime?: TrackedResolutionRuntime;
   },
 ): Promise<TrackedSocialAccount> {
-  const account = getTrackedSocialAccount(
+  const account = await getTrackedSocialAccount(
     deps.db,
     input.workspaceId,
     input.accountId,
@@ -173,7 +173,7 @@ export async function resolveTrackedSocialAccount(
   if (!account) throw new TrackedAccountNotFoundError();
   if (!account.enabled) throw new TrackedAccountConnectionError();
 
-  const connection = getConnection(
+  const connection = await getConnection(
     deps.db,
     input.workspaceId,
     input.connectionId,
@@ -192,8 +192,8 @@ export async function resolveTrackedSocialAccount(
     if (account.platform === "x") {
       externalId = await resolveXUserId({
         handle: account.handle,
-        get: (path) =>
-          providerGet(
+        get: async (path) =>
+          await providerGet(
             deps,
             connection,
             path,
@@ -204,8 +204,8 @@ export async function resolveTrackedSocialAccount(
     } else if (account.platform === "linkedin") {
       externalId = await resolveLinkedInOrganizationUrn({
         target: account.handle,
-        get: (path) =>
-          providerGet(
+        get: async (path) =>
+          await providerGet(
             deps,
             connection,
             path,
@@ -244,10 +244,10 @@ export async function resolveTrackedSocialAccount(
       }
       externalId = connection.externalAccountId;
     }
-    return persistResolutionSuccess(deps.db, account, externalId);
+    return await persistResolutionSuccess(deps.db, account, externalId);
   } catch (error) {
     if (error instanceof ProviderCapabilityError) {
-      persistResolutionFailure(deps.db, account, error);
+      await persistResolutionFailure(deps.db, account, error);
     }
     throw error;
   }

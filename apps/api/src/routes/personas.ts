@@ -30,8 +30,8 @@ import {
 } from "../services/persona-social-accounts";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -40,7 +40,7 @@ function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
 
 export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: EvidenceStore): void {
   app.post<{ Params: { id: string } }>("/workspaces/:id/personas", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = upsertPersonaInputSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({
@@ -48,18 +48,18 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
         message: parsed.error.issues.map((i) => i.message).join("; "),
       });
     }
-    return reply.status(201).send(createPersona(db, request.params.id, parsed.data));
+    return reply.status(201).send(await createPersona(db, request.params.id, parsed.data));
   });
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/personas", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return listPersonas(db, request.params.id);
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return await listPersonas(db, request.params.id);
   });
 
   app.put<{ Params: { id: string; personaId: string } }>(
     "/workspaces/:id/personas/:personaId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = upsertPersonaInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -67,7 +67,7 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      const updated = updatePersona(db, request.params.id, request.params.personaId, parsed.data);
+      const updated = await updatePersona(db, request.params.id, request.params.personaId, parsed.data);
       if (!updated) return reply.status(404).send({ error: "persona_not_found" });
       return updated;
     },
@@ -76,8 +76,8 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
   app.delete<{ Params: { id: string; personaId: string } }>(
     "/workspaces/:id/personas/:personaId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const deleted = deletePersona(db, request.params.id, request.params.personaId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const deleted = await deletePersona(db, request.params.id, request.params.personaId);
       if (!deleted) return reply.status(404).send({ error: "persona_not_found" });
       return reply.status(204).send();
     },
@@ -86,19 +86,19 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
   app.get<{ Params: { id: string; personaId: string } }>(
     "/workspaces/:id/personas/:personaId/social-accounts",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      if (!getPersona(db, request.params.id, request.params.personaId)) {
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await getPersona(db, request.params.id, request.params.personaId)) {
         return reply.status(404).send({ error: "persona_not_found" });
       }
-      return listPersonaSocialAccounts(db, request.params.id, request.params.personaId);
+      return await listPersonaSocialAccounts(db, request.params.id, request.params.personaId);
     },
   );
 
   app.post<{ Params: { id: string; personaId: string } }>(
     "/workspaces/:id/personas/:personaId/social-accounts",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      if (!getPersona(db, request.params.id, request.params.personaId)) {
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await getPersona(db, request.params.id, request.params.personaId)) {
         return reply.status(404).send({ error: "persona_not_found" });
       }
       const parsed = upsertPersonaSocialAccountInputSchema.safeParse(request.body);
@@ -108,7 +108,7 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      const result = createPersonaSocialAccount(
+      const result = await createPersonaSocialAccount(
         db,
         request.params.id,
         request.params.personaId,
@@ -122,8 +122,8 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
   app.patch<{ Params: { id: string; personaId: string; assignmentId: string } }>(
     "/workspaces/:id/personas/:personaId/social-accounts/:assignmentId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      if (!getPersona(db, request.params.id, request.params.personaId)) {
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await getPersona(db, request.params.id, request.params.personaId)) {
         return reply.status(404).send({ error: "persona_not_found" });
       }
       const parsed = upsertPersonaSocialAccountInputSchema.safeParse(request.body);
@@ -133,7 +133,7 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      const result = updatePersonaSocialAccount(
+      const result = await updatePersonaSocialAccount(
         db,
         request.params.id,
         request.params.personaId,
@@ -151,11 +151,11 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
   app.delete<{ Params: { id: string; personaId: string; assignmentId: string } }>(
     "/workspaces/:id/personas/:personaId/social-accounts/:assignmentId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      if (!getPersona(db, request.params.id, request.params.personaId)) {
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await getPersona(db, request.params.id, request.params.personaId)) {
         return reply.status(404).send({ error: "persona_not_found" });
       }
-      const deleted = deletePersonaSocialAccount(
+      const deleted = await deletePersonaSocialAccount(
         db,
         request.params.id,
         request.params.personaId,
@@ -167,7 +167,7 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
   );
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/resolve", async (request, reply) => {
-    const workspace = workspaceOr404(db, request.params.id, reply);
+    const workspace = await workspaceOr404(db, request.params.id, reply);
     if (!workspace) return reply;
     // The preview superset: /resolve is the only route that accepts an inline
     // plan draft (Sprint 53 Task 5). It reads and composes; it never persists.
@@ -181,13 +181,13 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
 
     let persona;
     if (parsed.data.personaId) {
-      persona = getPersona(db, request.params.id, parsed.data.personaId);
+      persona = await getPersona(db, request.params.id, parsed.data.personaId);
       if (!persona) return reply.status(404).send({ error: "persona_not_found" });
     }
 
     let campaign;
     if (parsed.data.campaignId) {
-      campaign = getCampaign(db, request.params.id, parsed.data.campaignId);
+      campaign = await getCampaign(db, request.params.id, parsed.data.campaignId);
       if (!campaign) return reply.status(404).send({ error: "campaign_not_found" });
       const campaignError = campaignExecutionError(campaign);
       if (campaignError) return reply.status(409).send({ error: campaignError });
@@ -205,9 +205,9 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
       parsed.data.useEvidence ?? true,
     );
 
-    const { docs } = getBrain(db, request.params.id);
+    const { docs } = await getBrain(db, request.params.id);
     const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
-    const channelGuidance = resolveChannelGuidance(db, request.params.id, parsed.data.channel, {
+    const channelGuidance = await resolveChannelGuidance(db, request.params.id, parsed.data.channel, {
       personaId: parsed.data.personaId ?? null,
       campaignId: parsed.data.campaignId ?? null,
     });
@@ -223,17 +223,17 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
         scope: channelGuidance.scopeLabel,
       },
       persona: persona ? toResolvePersona(persona) : undefined,
-      ...campaignResolvePreviewInputs(
+      ...await campaignResolvePreviewInputs(
         db,
         request.params.id,
         campaign,
         parsed.data.campaignPlanDraft,
       ),
-      account: resolveDraftAccount(db, request.params.id, {
+      account: await resolveDraftAccount(db, request.params.id, {
         personaId: parsed.data.personaId,
         channel: parsed.data.channel,
       }),
-      ...selectiveContextInputs(db, request.params.id),
+      ...await selectiveContextInputs(db, request.params.id),
       evidence: evidenceResolution.evidence,
       evidenceExclusionReason: evidenceResolution.exclusionReason,
       tokenBudget: parsed.data.tokenBudget,
@@ -243,7 +243,7 @@ export function registerPersonaRoutes(app: FastifyInstance, db: Db, evidence: Ev
     // making the reader infer it from section reasons.
     return {
       ...resolved,
-      knobs: knobStatesForResolve(db, request.params.id, resolved.sections, {
+      knobs: await knobStatesForResolve(db, request.params.id, resolved.sections, {
         taskType: parsed.data.taskType,
         channel: parsed.data.channel,
         campaignId: parsed.data.campaignId ?? null,

@@ -198,7 +198,7 @@ describe("teams API", () => {
 
     it("rejects an expired invite with 410", async () => {
       const inv = await invite("late@test.dev");
-      db.update(workspaceInvites)
+      await db.update(workspaceInvites)
         .set({ expiresAt: Date.now() - 1000 })
         .where(eq(workspaceInvites.id, inv.id))
         .run();
@@ -268,7 +268,7 @@ describe("teams API", () => {
     it("lists memberless workspaces so they can be reached and claimed", async () => {
       const legacyId = randomUUID();
       const now = Date.now();
-      db.insert(workspaces)
+      await db.insert(workspaces)
         .values({ id: legacyId, name: "Pre-auth Space", createdAt: now, updatedAt: now })
         .run();
 
@@ -279,7 +279,7 @@ describe("teams API", () => {
     it("first authenticated visitor claims a memberless workspace as owner", async () => {
       const legacyId = randomUUID();
       const now = Date.now();
-      db.insert(workspaces)
+      await db.insert(workspaces)
         .values({ id: legacyId, name: "Pre-auth Space", createdAt: now, updatedAt: now })
         .run();
 

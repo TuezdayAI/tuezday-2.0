@@ -7,21 +7,21 @@ import { mintActionToken } from "../notifications/tokens";
 import { sendApprovalMessage } from "../notifications/telegram";
 import type { Mailer } from "../mail/mailer";
 
-export function listChannels(db: Db, workspaceId: string): NotificationChannelRow[] {
-  return db
+export async function listChannels(db: Db, workspaceId: string): Promise<NotificationChannelRow[]> {
+  return await db
     .select()
     .from(notificationChannels)
     .where(eq(notificationChannels.workspaceId, workspaceId))
     .all();
 }
 
-export function upsertChannel(
+export async function upsertChannel(
   db: Db,
   workspaceId: string,
   input: CreateNotificationChannelInput,
-): NotificationChannelRow {
+): Promise<NotificationChannelRow> {
   // Try to find if one with same type/target exists
-  const existing = db
+  const existing = await db
     .select()
     .from(notificationChannels)
     .where(
@@ -34,7 +34,7 @@ export function upsertChannel(
     .get();
 
   if (existing) {
-    db.update(notificationChannels)
+    await db.update(notificationChannels)
       .set({ enabled: input.enabled })
       .where(eq(notificationChannels.id, existing.id))
       .run();
@@ -43,7 +43,7 @@ export function upsertChannel(
 
   const id = randomUUID();
   const now = Date.now();
-  db.insert(notificationChannels)
+  await db.insert(notificationChannels)
     .values({
       id,
       workspaceId,
@@ -64,8 +64,8 @@ export function upsertChannel(
   };
 }
 
-export function deleteChannel(db: Db, workspaceId: string, channelId: string): void {
-  db.delete(notificationChannels)
+export async function deleteChannel(db: Db, workspaceId: string, channelId: string): Promise<void> {
+  await db.delete(notificationChannels)
     .where(
       and(
         eq(notificationChannels.workspaceId, workspaceId),
@@ -87,7 +87,7 @@ export async function notifyDraftPending(
     content: string;
   },
 ): Promise<void> {
-  const channels = listChannels(db, draft.workspaceId).filter((c) => c.enabled);
+  const channels = (await listChannels(db, draft.workspaceId)).filter((c) => c.enabled);
   if (channels.length === 0) return;
 
   const baseUrl = process.env.APP_BASE_URL || "http://localhost:3000";
@@ -96,8 +96,8 @@ export async function notifyDraftPending(
   await Promise.all(
     channels.map(async (c) => {
       try {
-        const approveToken = mintActionToken(db, draft.workspaceId, draft.id, "approve");
-        const rejectToken = mintActionToken(db, draft.workspaceId, draft.id, "reject");
+        const approveToken = await mintActionToken(db, draft.workspaceId, draft.id, "approve");
+        const rejectToken = await mintActionToken(db, draft.workspaceId, draft.id, "reject");
 
         if (c.type === "telegram") {
           await sendApprovalMessage(fetcher, c.target, draft, approveToken, rejectToken);
@@ -134,7 +134,7 @@ export async function notifyReplyOutcome(
     inboxItemId: string;
   },
 ): Promise<void> {
-  const channels = listChannels(db, input.workspaceId).filter((c) => c.enabled);
+  const channels = (await listChannels(db, input.workspaceId)).filter((c) => c.enabled);
   if (channels.length === 0) return;
   const baseUrl = (process.env.APP_BASE_URL || "http://localhost:3000").replace(/\/$/, "");
   const link = `${baseUrl}/workspaces/${input.workspaceId}/review?tab=inbox`;

@@ -96,8 +96,8 @@ describe("design systems (Sprint 41 Part 2)", () => {
   }
 
   describe("seeding", () => {
-    it("workspace creation seeds exactly one org-level default system", () => {
-      const systems = listDesignSystems(db, workspaceId);
+    it("workspace creation seeds exactly one org-level default system", async () => {
+      const systems = await listDesignSystems(db, workspaceId);
       expect(systems).toHaveLength(1);
       expect(systems[0]!.name).toBe("Default");
       expect(systems[0]!.isDefault).toBe(true);
@@ -105,11 +105,11 @@ describe("design systems (Sprint 41 Part 2)", () => {
     });
 
     it("repeat reads and ensure calls never duplicate the default", async () => {
-      ensureDefaultDesignSystem(db, workspaceId);
-      ensureDefaultDesignSystem(db, workspaceId);
+      await ensureDefaultDesignSystem(db, workspaceId);
+      await ensureDefaultDesignSystem(db, workspaceId);
       await getSystem();
       await getSystem();
-      expect(listDesignSystems(db, workspaceId)).toHaveLength(1);
+      expect(await listDesignSystems(db, workspaceId)).toHaveLength(1);
     });
 
     it("GET /design-system returns the seeded default validating against contracts", async () => {
@@ -270,20 +270,20 @@ describe("design systems (Sprint 41 Part 2)", () => {
   });
 
   describe("multi-system readiness (service level)", () => {
-    it("a second system's overlays never affect default resolution; explicit id selects it", () => {
-      const second = createDesignSystem(db, workspaceId, { name: "Alt", content: "# Alt look" });
+    it("a second system's overlays never affect default resolution; explicit id selects it", async () => {
+      const second = await createDesignSystem(db, workspaceId, { name: "Alt", content: "# Alt look" });
       expect(second.isDefault).toBe(false);
-      upsertDesignOverlay(db, workspaceId, {
+      await upsertDesignOverlay(db, workspaceId, {
         designSystemId: second.id,
         channel: "instagram",
         content: "alt addendum",
       });
 
-      const viaDefault = resolveDesignSystem(db, workspaceId, { channel: "instagram" });
+      const viaDefault = await resolveDesignSystem(db, workspaceId, { channel: "instagram" });
       expect(viaDefault.trace.source).toBe("base");
       expect(viaDefault.content).not.toContain("alt addendum");
 
-      const viaSecond = resolveDesignSystem(db, workspaceId, {
+      const viaSecond = await resolveDesignSystem(db, workspaceId, {
         channel: "instagram",
         designSystemId: second.id,
       });
@@ -293,11 +293,11 @@ describe("design systems (Sprint 41 Part 2)", () => {
       expect(viaSecond.trace.designSystemId).toBe(second.id);
     });
 
-    it("names are unique per workspace and exactly one default survives a flip", () => {
-      expect(() => createDesignSystem(db, workspaceId, { name: "Default" })).toThrow();
-      const second = createDesignSystem(db, workspaceId, { name: "Alt" });
-      setDefaultDesignSystem(db, workspaceId, second.id);
-      const systems = listDesignSystems(db, workspaceId);
+    it("names are unique per workspace and exactly one default survives a flip", async () => {
+      expect(async () => await createDesignSystem(db, workspaceId, { name: "Default" })).toThrow();
+      const second = await createDesignSystem(db, workspaceId, { name: "Alt" });
+      await setDefaultDesignSystem(db, workspaceId, second.id);
+      const systems = await listDesignSystems(db, workspaceId);
       expect(systems.filter((s) => s.isDefault)).toHaveLength(1);
       expect(systems.find((s) => s.isDefault)?.id).toBe(second.id);
     });

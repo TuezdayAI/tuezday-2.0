@@ -25,8 +25,8 @@ export interface LlmUsageEventInput {
   costCentsOverride?: number;
 }
 
-export function recordLlmUsage(db: Db, event: LlmUsageEventInput): void {
-  db.insert(llmUsageEvents)
+export async function recordLlmUsage(db: Db, event: LlmUsageEventInput): Promise<void> {
+  await db.insert(llmUsageEvents)
     .values({
       id: randomUUID(),
       workspaceId: event.workspaceId,
@@ -45,8 +45,8 @@ export function recordLlmUsage(db: Db, event: LlmUsageEventInput): void {
 }
 
 /** Rolling-window spend in cents — the number the budget gate compares. */
-export function sumLlmSpendCents(db: Db, workspaceId: string, sinceMs: number): number {
-  const row = db
+export async function sumLlmSpendCents(db: Db, workspaceId: string, sinceMs: number): Promise<number> {
+  const row = await db
     .select({ total: sql<number>`coalesce(sum(${llmUsageEvents.costCents}), 0)` })
     .from(llmUsageEvents)
     .where(and(eq(llmUsageEvents.workspaceId, workspaceId), gte(llmUsageEvents.createdAt, sinceMs)))
@@ -64,8 +64,8 @@ export interface SpendRollup {
 }
 
 /** Spend + cache-hit-rate rollup for /billing, grouped by pipeline (desc cost). */
-export function spendRollup(db: Db, workspaceId: string, sinceMs: number): SpendRollup {
-  const rows = db
+export async function spendRollup(db: Db, workspaceId: string, sinceMs: number): Promise<SpendRollup> {
+  const rows = await db
     .select({
       pipeline: llmUsageEvents.pipeline,
       calls: sql<number>`count(*)`,

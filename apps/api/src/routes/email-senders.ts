@@ -14,8 +14,8 @@ import {
 } from "../services/email-senders";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply): boolean {
-  if (getWorkspace(db, id)) return true;
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply): Promise<boolean> {
+  if (await getWorkspace(db, id)) return true;
   void reply.status(404).send({ error: "workspace_not_found" });
   return false;
 }
@@ -53,12 +53,12 @@ export function registerEmailSenderRoutes(
   provider: OutboundEmailProvider | undefined,
 ): void {
   app.get<{ Params: { id: string } }>("/workspaces/:id/email-sender", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return getEmailSender(db, request.params.id);
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return await getEmailSender(db, request.params.id);
   });
 
   app.put<{ Params: { id: string } }>("/workspaces/:id/email-sender", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     if (!providerOr503(provider, reply)) return reply;
     const parsed = updateEmailSenderInputSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -77,7 +77,7 @@ export function registerEmailSenderRoutes(
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/email-sender/verify",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       if (!providerOr503(provider, reply)) return reply;
       try {
         return await verifyEmailSender(db, provider, request.params.id);
@@ -90,7 +90,7 @@ export function registerEmailSenderRoutes(
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/email-sender/refresh",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       if (!providerOr503(provider, reply)) return reply;
       try {
         return await refreshEmailSender(db, provider, request.params.id);

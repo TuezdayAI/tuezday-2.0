@@ -54,13 +54,13 @@ function rowToPlan(row: CampaignPlanRevisionRow): CampaignPlanRevision {
   });
 }
 
-function getPlanRow(
+async function getPlanRow(
   db: Db,
   workspaceId: string,
   campaignId: string,
   planRevisionId: string,
-): CampaignPlanRevisionRow | undefined {
-  return db
+): Promise<CampaignPlanRevisionRow | undefined> {
+  return await db
     .select()
     .from(campaignPlanRevisions)
     .where(
@@ -73,20 +73,20 @@ function getPlanRow(
     .get();
 }
 
-export function createPlanRevision(
+export async function createPlanRevision(
   db: Db,
   workspaceId: string,
   campaignId: string,
   input: CreateCampaignPlanRevisionInput,
   actor: PlanActor,
-): CampaignPlanRevision {
-  const campaign = db
+): Promise<CampaignPlanRevision> {
+  const campaign = await db
     .select({ id: campaigns.id, currentPlanRevisionId: campaigns.currentPlanRevisionId })
     .from(campaigns)
     .where(and(eq(campaigns.id, campaignId), eq(campaigns.workspaceId, workspaceId)))
     .get();
   if (!campaign) throw new CampaignPlanNotFoundError();
-  const previous = db
+  const previous = await db
     .select({ revision: campaignPlanRevisions.revision })
     .from(campaignPlanRevisions)
     .where(eq(campaignPlanRevisions.campaignId, campaignId))
@@ -112,16 +112,16 @@ export function createPlanRevision(
     createdAt: Date.now(),
     activatedAt: null,
   };
-  db.transaction((tx) => {
-    tx.insert(campaignPlanRevisions).values(row).run();
+  await db.transaction(async (tx) => {
+    await tx.insert(campaignPlanRevisions).values(row).run();
     if (!campaign.currentPlanRevisionId) return;
-    const sourceLanes = tx
+    const sourceLanes = await tx
       .select()
       .from(campaignLaneRevisions)
       .where(eq(campaignLaneRevisions.planRevisionId, campaign.currentPlanRevisionId))
       .all();
     for (const source of sourceLanes) {
-      tx.insert(campaignLaneRevisions)
+      await tx.insert(campaignLaneRevisions)
         .values({
           ...source,
           id: randomUUID(),
@@ -134,11 +134,11 @@ export function createPlanRevision(
   return rowToPlan(row);
 }
 
-function validateActivation(db: Db, row: CampaignPlanRevisionRow): CampaignPlanIssue[] {
+async function validateActivation(db: Db, row: CampaignPlanRevisionRow): Promise<CampaignPlanIssue[]> {
   const issues: CampaignPlanIssue[] = [];
   const audienceIds = JSON.parse(row.audienceIdsJson) as string[];
   for (const audienceId of audienceIds) {
-    const audience = db
+    const audience = await db
       .select({ id: audiences.id })
       .from(audiences)
       .where(and(eq(audiences.id, audienceId), eq(audiences.workspaceId, row.workspaceId)))
@@ -151,13 +151,13 @@ function validateActivation(db: Db, row: CampaignPlanRevisionRow): CampaignPlanI
       });
     }
   }
-  const lanes = db
+  const lanes = await db
     .select()
     .from(campaignLaneRevisions)
     .where(eq(campaignLaneRevisions.planRevisionId, row.id))
     .all();
   for (const lane of lanes.filter((candidate) => candidate.status === "active")) {
-    const persona = db
+    const persona = await db
       .select({ id: personas.id })
       .from(personas)
       .where(and(eq(personas.id, lane.personaId), eq(personas.workspaceId, row.workspaceId)))
@@ -170,7 +170,7 @@ function validateActivation(db: Db, row: CampaignPlanRevisionRow): CampaignPlanI
       });
     }
     if (lane.publishingConnectionId) {
-      const connection = db
+      const connection = await db
         .select({ id: connections.id, status: connections.status })
         .from(connections)
         .where(
@@ -192,20 +192,20 @@ function validateActivation(db: Db, row: CampaignPlanRevisionRow): CampaignPlanI
   return issues;
 }
 
-export function activatePlanRevision(
+export async function activatePlanRevision(
   db: Db,
   workspaceId: string,
   campaignId: string,
   planRevisionId: string,
-): CampaignPlanDetail {
-  const row = getPlanRow(db, workspaceId, campaignId, planRevisionId);
+): Promise<CampaignPlanDetail> {
+  const row = await getPlanRow(db, workspaceId, campaignId, planRevisionId);
   if (!row) throw new CampaignPlanNotFoundError();
   if (row.status !== "draft") throw new PlanImmutableError();
-  const issues = validateActivation(db, row);
+  const issues = await validateActivation(db, row);
   if (issues.length > 0) throw new PlanValidationError(issues);
   const activatedAt = Date.now();
-  db.transaction((tx) => {
-    const lanes = tx
+  await db.transaction(async (tx) => {
+    const lanes = await tx
       .select()
       .from(campaignLaneRevisions)
       .where(
@@ -215,7 +215,7 @@ export function activatePlanRevision(
         ),
       )
       .all();
-    tx.update(campaignPlanRevisions)
+    await tx.update(campaignPlanRevisions)
       .set({ status: "superseded" })
       .where(
         and(
@@ -224,16 +224,16 @@ export function activatePlanRevision(
         ),
       )
       .run();
-    tx.update(campaignPlanRevisions)
+    await tx.update(campaignPlanRevisions)
       .set({ status: "active", activatedAt })
       .where(eq(campaignPlanRevisions.id, planRevisionId))
       .run();
-    tx.update(campaigns)
+    await tx.update(campaigns)
       .set({ currentPlanRevisionId: planRevisionId, updatedAt: activatedAt })
       .where(and(eq(campaigns.id, campaignId), eq(campaigns.workspaceId, workspaceId)))
       .run();
     for (const lane of lanes) {
-      tx.update(campaignLanes)
+      await tx.update(campaignLanes)
         .set({
           key: lane.key,
           name: lane.name,
@@ -250,46 +250,46 @@ export function activatePlanRevision(
         .run();
     }
   });
-  return getCurrentCampaignPlan(db, workspaceId, campaignId)!;
+  return (await getCurrentCampaignPlan(db, workspaceId, campaignId))!;
 }
 
-export function getCurrentCampaignPlan(
+export async function getCurrentCampaignPlan(
   db: Db,
   workspaceId: string,
   campaignId: string,
-): CampaignPlanDetail | undefined {
-  const campaign = db
+): Promise<CampaignPlanDetail | undefined> {
+  const campaign = await db
     .select({ currentPlanRevisionId: campaigns.currentPlanRevisionId })
     .from(campaigns)
     .where(and(eq(campaigns.id, campaignId), eq(campaigns.workspaceId, workspaceId)))
     .get();
   if (!campaign?.currentPlanRevisionId) return undefined;
-  const row = getPlanRow(db, workspaceId, campaignId, campaign.currentPlanRevisionId);
+  const row = await getPlanRow(db, workspaceId, campaignId, campaign.currentPlanRevisionId);
   if (!row) return undefined;
   return {
     plan: rowToPlan(row),
-    lanes: listLaneRevisionsForPlan(db, workspaceId, row.id),
+    lanes: await listLaneRevisionsForPlan(db, workspaceId, row.id),
   };
 }
 
-export function listCampaignPlanDetails(
+export async function listCampaignPlanDetails(
   db: Db,
   workspaceId: string,
   campaignId: string,
-): CampaignPlanDetail[] {
-  return db
-    .select()
-    .from(campaignPlanRevisions)
-    .where(
-      and(
-        eq(campaignPlanRevisions.workspaceId, workspaceId),
-        eq(campaignPlanRevisions.campaignId, campaignId),
-      ),
-    )
-    .orderBy(desc(campaignPlanRevisions.revision))
-    .all()
-    .map((row) => ({
-      plan: rowToPlan(row),
-      lanes: listLaneRevisionsForPlan(db, workspaceId, row.id),
-    }));
+): Promise<CampaignPlanDetail[]> {
+  return await Promise.all((await db
+      .select()
+      .from(campaignPlanRevisions)
+      .where(
+        and(
+          eq(campaignPlanRevisions.workspaceId, workspaceId),
+          eq(campaignPlanRevisions.campaignId, campaignId),
+        ),
+      )
+      .orderBy(desc(campaignPlanRevisions.revision))
+      .all())
+      .map(async (row) => ({
+        plan: rowToPlan(row),
+        lanes: await listLaneRevisionsForPlan(db, workspaceId, row.id),
+      })));
 }

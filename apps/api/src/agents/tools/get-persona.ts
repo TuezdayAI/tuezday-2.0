@@ -17,12 +17,12 @@ export const getPersonaTool: Tool<Input, unknown> = {
   input,
   access: "read",
   async run(ctx, { personaId }) {
-    const persona = getPersona(ctx.db, ctx.workspaceId, personaId);
+    const persona = await getPersona(ctx.db, ctx.workspaceId, personaId);
     if (!persona) {
       return {
         error: "not_found",
         note: `No persona with id ${personaId} in this workspace.`,
-        availablePersonas: listPersonas(ctx.db, ctx.workspaceId).map((p) => ({
+        availablePersonas: (await listPersonas(ctx.db, ctx.workspaceId)).map((p) => ({
           id: p.id,
           name: p.name,
         })),

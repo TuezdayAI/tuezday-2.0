@@ -25,7 +25,7 @@ describe("billing gating (Task 3)", () => {
     const ws = await createWorkspace(db, { name: "ws" }, user.id);
 
     // Fill the free plan's whole budget with one ledger event.
-    recordLlmUsage(db, {
+    await recordLlmUsage(db, {
       workspaceId: ws.id,
       pipeline: "generation",
       model: "unknown-model",

@@ -177,7 +177,7 @@ export async function maybeCompact(
     ].join("\n");
   }
 
-  const message = appendMessage(db, session.workspaceId, session.id, {
+  const message = await appendMessage(db, session.workspaceId, session.id, {
     role: "compaction",
     content,
     agentRunId,
@@ -185,7 +185,7 @@ export async function maybeCompact(
     outputTokens: usage.outputTokens,
     costCents: usage.costCents,
   });
-  setCompactedThrough(db, session.id, last.id);
+  await setCompactedThrough(db, session.id, last.id);
 
   return { message, summarizedThrough: last.id, agentRunId, usage };
 }

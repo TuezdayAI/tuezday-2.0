@@ -184,24 +184,24 @@ describe("external-action messaging boundary", () => {
   }
 
   async function authorize(actionId: string) {
-    return app.inject({
+    return await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/external-actions/${actionId}/authorize`,
       payload: {},
     });
   }
 
-  function actionRows() {
-    return db.select().from(externalActions).where(eq(externalActions.workspaceId, workspaceId)).all();
+  async function actionRows() {
+    return await db.select().from(externalActions).where(eq(externalActions.workspaceId, workspaceId)).all();
   }
 
   // --- Reply fixtures ---------------------------------------------------------
 
   /** A published Reddit post (draft + publication) plus one inbound comment. */
-  function seedInboxComment(connectionId: string, campaignId: string | null): string {
+  async function seedInboxComment(connectionId: string, campaignId: string | null): Promise<string> {
     const now = Date.now();
     const draftId = randomUUID();
-    db.insert(drafts)
+    await db.insert(drafts)
       .values({
         id: draftId,
         workspaceId,
@@ -216,7 +216,7 @@ describe("external-action messaging boundary", () => {
       })
       .run();
     const publicationId = randomUUID();
-    db.insert(publications)
+    await db.insert(publications)
       .values({
         id: publicationId,
         workspaceId,
@@ -235,7 +235,7 @@ describe("external-action messaging boundary", () => {
       })
       .run();
     const itemId = randomUUID();
-    db.insert(inboxItems)
+    await db.insert(inboxItems)
       .values({
         id: itemId,
         workspaceId,
@@ -392,7 +392,7 @@ describe("external-action messaging boundary", () => {
 
   it("queues a manual reply under human policy and posts exactly once after authorization", async () => {
     const connectionId = await connectProvider("reddit");
-    const itemId = seedInboxComment(connectionId, null);
+    const itemId = await seedInboxComment(connectionId, null);
     await draftAndApproveReply(itemId);
 
     const queued = await postReply(itemId);
@@ -410,7 +410,7 @@ describe("external-action messaging boundary", () => {
     const retry = await postReply(itemId);
     expect(retry.statusCode).toBe(202);
     expect(retry.json().action.id).toBe(submission.action.id);
-    expect(actionRows()).toHaveLength(1);
+    expect(await actionRows()).toHaveLength(1);
 
     const authorized = await authorize(submission.action.id);
     expect(authorized.statusCode).toBe(200);
@@ -434,7 +434,7 @@ describe("external-action messaging boundary", () => {
   it("keeps auto-generated replies queued under human policy", async () => {
     const connectionId = await connectProvider("reddit");
     const campaignId = await createCampaign("scheduled_auto");
-    const itemId = seedInboxComment(connectionId, campaignId);
+    const itemId = await seedInboxComment(connectionId, campaignId);
     await app.inject({
       method: "PATCH",
       url: `/workspaces/${workspaceId}/automation/settings`,
@@ -449,7 +449,7 @@ describe("external-action messaging boundary", () => {
     expect(run.repliesPosted).toBe(0);
     expect(state.postedReplies).toHaveLength(0);
 
-    const rows = actionRows().filter((r) => r.kind === "reply");
+    const rows = (await actionRows()).filter((r) => r.kind === "reply");
     expect(rows).toHaveLength(1);
     expect(rows[0]?.status).toBe("authorization_required");
     expect((await getItem(itemId)).status).not.toBe("replied");
@@ -459,14 +459,14 @@ describe("external-action messaging boundary", () => {
       await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/inbox/run` })
     ).json();
     expect(rerun.repliesPosted).toBe(0);
-    expect(actionRows().filter((r) => r.kind === "reply")).toHaveLength(1);
+    expect((await actionRows()).filter((r) => r.kind === "reply")).toHaveLength(1);
   });
 
   it("posts an autonomous reply exactly once", async () => {
     const connectionId = await connectProvider("reddit");
     const campaignId = await createCampaign("scheduled_auto");
     await setPolicy("campaign", campaignId, [{ actionKind: "reply", rule: "autonomous" }]);
-    const itemId = seedInboxComment(connectionId, campaignId);
+    const itemId = await seedInboxComment(connectionId, campaignId);
     await app.inject({
       method: "PATCH",
       url: `/workspaces/${workspaceId}/automation/settings`,
@@ -487,7 +487,7 @@ describe("external-action messaging boundary", () => {
     ).json();
     expect(rerun.repliesPosted).toBe(0);
     expect(state.postedReplies).toHaveLength(1);
-    expect(actionRows().filter((r) => r.kind === "reply")).toHaveLength(1);
+    expect((await actionRows()).filter((r) => r.kind === "reply")).toHaveLength(1);
   });
 
   // --- Launch channel dispatch ------------------------------------------------
@@ -509,7 +509,7 @@ describe("external-action messaging boundary", () => {
     expect(submission.action.authorizedAt).toBeNull();
     expect(submission.action.subject.kind).toBe("launch_message");
     expect(state.linkedInPosts).toBe(0);
-    expect(db.select().from(publications).all()).toHaveLength(0);
+    expect(await db.select().from(publications).all()).toHaveLength(0);
 
     const authorized = await authorize(submission.action.id);
     expect(authorized.statusCode).toBe(200);
@@ -517,10 +517,10 @@ describe("external-action messaging boundary", () => {
     expect(authorized.json().execution.kind).toBe("launch_message");
     expect(state.linkedInPosts).toBe(1);
 
-    const pubs = db.select().from(publications).all();
+    const pubs = await db.select().from(publications).all();
     expect(pubs).toHaveLength(1);
     expect(pubs[0]?.externalActionId).toBe(submission.action.id);
-    const message = db.select().from(launchMessages).where(eq(launchMessages.launchId, launchId)).get();
+    const message = await db.select().from(launchMessages).where(eq(launchMessages.launchId, launchId)).get();
     expect(message?.status).toBe("sent");
     expect(message?.externalActionId).toBe(submission.action.id);
 
@@ -528,7 +528,7 @@ describe("external-action messaging boundary", () => {
     const again = await dispatch(launchId, "linkedin");
     expect(again.json().submissions[0].action.id).toBe(submission.action.id);
     expect(state.linkedInPosts).toBe(1);
-    expect(db.select().from(publications).all()).toHaveLength(1);
+    expect(await db.select().from(publications).all()).toHaveLength(1);
   });
 
   it("sends one autonomous X action per message with durable partial outcomes", async () => {
@@ -549,7 +549,7 @@ describe("external-action messaging boundary", () => {
     expect(statuses).toEqual(["failed", "succeeded"]);
     expect(state.dms).toBe(1);
 
-    const messages = db.select().from(launchMessages).where(eq(launchMessages.launchId, launchId)).all();
+    const messages = await db.select().from(launchMessages).where(eq(launchMessages.launchId, launchId)).all();
     const alice = messages.find((m) => m.recipientName === "Alice");
     const bob = messages.find((m) => m.recipientName === "Bob");
     expect(alice?.status).toBe("sent");
@@ -617,7 +617,7 @@ describe("external-action messaging boundary", () => {
     expect(step1.draftState).toBe("approved"); // content approval still auto in scheduled_auto
     expect(step1.status).toBe("pending"); // but no send without authorization
 
-    const sendActions = actionRows().filter((r) => r.kind === "send");
+    const sendActions = (await actionRows()).filter((r) => r.kind === "send");
     expect(sendActions).toHaveLength(1);
     expect(sendActions[0]?.status).toBe("authorization_required");
 
@@ -626,7 +626,7 @@ describe("external-action messaging boundary", () => {
       method: "POST",
       url: `/workspaces/${workspaceId}/launches/${launchId}/sequence/run`,
     });
-    expect(actionRows().filter((r) => r.kind === "send")).toHaveLength(1);
+    expect((await actionRows()).filter((r) => r.kind === "send")).toHaveLength(1);
     expect(state.dms).toBe(0);
 
     const authorized = await authorize(sendActions[0]!.id);
@@ -642,7 +642,7 @@ describe("external-action messaging boundary", () => {
       method: "POST",
       url: `/workspaces/${workspaceId}/launches/${launchId}/sequence/run`,
     });
-    const afterAdvance = actionRows().filter((r) => r.kind === "send");
+    const afterAdvance = (await actionRows()).filter((r) => r.kind === "send");
     expect(afterAdvance).toHaveLength(2);
     expect(state.dms).toBe(1); // step 2 waits for authorization too
   });
@@ -654,12 +654,12 @@ describe("external-action messaging boundary", () => {
       method: "POST",
       url: `/workspaces/${workspaceId}/launches/${launchId}/sequence/start`,
     });
-    const action = actionRows().find((r) => r.kind === "send");
+    const action = (await actionRows()).find((r) => r.kind === "send");
     expect(action?.status).toBe("authorization_required");
 
     // Alice replies before anyone authorizes the DM.
     const now = Date.now();
-    db.insert(inboxItems)
+    await db.insert(inboxItems)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -700,8 +700,8 @@ describe("external-action messaging boundary", () => {
     await approveLaunchDrafts(launchId);
     const queued = (await dispatch(launchId, "linkedin")).json().submissions[0];
 
-    const message = db.select().from(launchMessages).where(eq(launchMessages.launchId, launchId)).get();
-    db.update(drafts)
+    const message = await db.select().from(launchMessages).where(eq(launchMessages.launchId, launchId)).get();
+    await db.update(drafts)
       .set({ content: "Edited after the proposal", updatedAt: Date.now() })
       .where(eq(drafts.id, message!.draftId!))
       .run();
@@ -710,7 +710,7 @@ describe("external-action messaging boundary", () => {
     expect(authorized.statusCode).toBe(409);
     expect(authorized.json().action.status).toBe("stale");
     expect(state.linkedInPosts).toBe(0);
-    expect(db.select().from(publications).all()).toHaveLength(0);
+    expect(await db.select().from(publications).all()).toHaveLength(0);
   });
 
   // --- CSV is an export-only download, outside governance because it never sends ---
@@ -729,6 +729,6 @@ describe("external-action messaging boundary", () => {
     expect(
       d.messages.filter((m: { channel: string; status: string }) => m.channel === "email" && m.status === "pending"),
     ).toHaveLength(1);
-    expect(actionRows()).toHaveLength(0);
+    expect(await actionRows()).toHaveLength(0);
   });
 });

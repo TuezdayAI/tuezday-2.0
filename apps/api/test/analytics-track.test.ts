@@ -11,30 +11,30 @@ function recording() {
 }
 
 describe("track()", () => {
-  it("captures workspace-scoped events when opted in", () => {
+  it("captures workspace-scoped events when opted in", async () => {
     const db = createTestDb();
-    const ws = createWorkspace(db, { name: "Acme" });
+    const ws = await createWorkspace(db, { name: "Acme" });
     const { sink, calls } = recording();
-    track(db, sink, { event: "generation.created", distinctId: "u1", workspaceId: ws.id });
+    await track(db, sink, { event: "generation.created", distinctId: "u1", workspaceId: ws.id });
     expect(calls).toHaveLength(1);
   });
-  it("drops workspace-scoped events when opted out", () => {
+  it("drops workspace-scoped events when opted out", async () => {
     const db = createTestDb();
-    const ws = createWorkspace(db, { name: "Acme" });
-    setAnalyticsOptOut(db, ws.id, true);
+    const ws = await createWorkspace(db, { name: "Acme" });
+    await setAnalyticsOptOut(db, ws.id, true);
     const { sink, calls } = recording();
-    track(db, sink, { event: "generation.created", distinctId: "u1", workspaceId: ws.id });
+    await track(db, sink, { event: "generation.created", distinctId: "u1", workspaceId: ws.id });
     expect(calls).toHaveLength(0);
   });
-  it("captures user-lifecycle events (no workspace) regardless", () => {
+  it("captures user-lifecycle events (no workspace) regardless", async () => {
     const db = createTestDb();
     const { sink, calls } = recording();
-    track(db, sink, { event: "user.registered", distinctId: "u1" });
+    await track(db, sink, { event: "user.registered", distinctId: "u1" });
     expect(calls).toHaveLength(1);
   });
   it("never throws if the sink throws", () => {
     const db = createTestDb();
     const sink: AnalyticsSink = { capture: () => { throw new Error("boom"); } };
-    expect(() => track(db, sink, { event: "draft.approved", distinctId: "u1" })).not.toThrow();
+    expect(async () => await track(db, sink, { event: "draft.approved", distinctId: "u1" })).not.toThrow();
   });
 });

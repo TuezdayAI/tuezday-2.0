@@ -20,7 +20,7 @@ import {
 } from "../src/services/discovery";
 import { createTestDb } from "./helpers";
 
-function seedItem(
+async function seedItem(
   db: Db,
   input: {
     id?: string;
@@ -30,7 +30,7 @@ function seedItem(
 ) {
   const workspaceId = "11111111-1111-4111-8111-111111111111";
   const sourceId = "22222222-2222-4222-8222-222222222222";
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({
       id: workspaceId,
       name: "Matching",
@@ -39,7 +39,7 @@ function seedItem(
     })
     .onConflictDoNothing()
     .run();
-  db.insert(discoverySources)
+  await db.insert(discoverySources)
     .values({
       id: sourceId,
       workspaceId,
@@ -60,7 +60,7 @@ function seedItem(
     .onConflictDoNothing()
     .run();
   const id = input.id ?? "33333333-3333-4333-8333-333333333333";
-  db.insert(discoveredItems)
+  await db.insert(discoveredItems)
     .values({
       id,
       workspaceId,
@@ -113,21 +113,21 @@ function deferred<T>() {
 }
 
 describe("discovery matching state", () => {
-  it("reclaims expired work with a higher version and rejects the old heartbeat", () => {
+  it("reclaims expired work with a higher version and rejects the old heartbeat", async () => {
     const db = createTestDb();
-    const { workspaceId } = seedItem(db);
-    const [first] = claimMatchingBatch(db, {
+    const { workspaceId } = await seedItem(db);
+    const [first] = await claimMatchingBatch(db, {
       workspaceId,
       owner: "owner-a",
       limit: 1,
       leaseMs: 60_000,
     });
     expect(first).toBeDefined();
-    db.update(discoveredItems)
+    await db.update(discoveredItems)
       .set({ matchingLeaseExpiresAt: 0 })
       .where(eq(discoveredItems.id, first!.itemId))
       .run();
-    const [second] = claimMatchingBatch(db, {
+    const [second] = await claimMatchingBatch(db, {
       workspaceId,
       owner: "owner-b",
       limit: 1,
@@ -135,32 +135,32 @@ describe("discovery matching state", () => {
     });
 
     expect(second!.version).toBe(first!.version + 1);
-    expect(heartbeatMatchingClaim(db, first!, 60_000)).toBe(false);
-    expect(heartbeatMatchingClaim(db, second!, 60_000)).toBe(true);
+    expect(await heartbeatMatchingClaim(db, first!, 60_000)).toBe(false);
+    expect(await heartbeatMatchingClaim(db, second!, 60_000)).toBe(true);
   });
 
   it.each(["pending", "running", "retryable_error"] as const)(
     "blocks acceptance while matching is %s",
-    (state) => {
+    async (state) => {
       const db = createTestDb();
-      const { workspaceId, itemId } = seedItem(db, { state });
+      const { workspaceId, itemId } = await seedItem(db, { state });
 
-      expect(() =>
-        acceptDiscoveredItem(db, workspaceId, itemId),
+      expect(async () =>
+        await acceptDiscoveredItem(db, workspaceId, itemId),
       ).toThrow("matching_not_ready");
-      expect(db.select().from(signals).all()).toHaveLength(0);
+      expect(await db.select().from(signals).all()).toHaveLength(0);
     },
   );
 
-  it("accepts a ready zero-match item and freezes matching", () => {
+  it("accepts a ready zero-match item and freezes matching", async () => {
     const db = createTestDb();
-    const { workspaceId, itemId } = seedItem(db, { state: "ready" });
+    const { workspaceId, itemId } = await seedItem(db, { state: "ready" });
 
-    const accepted = acceptDiscoveredItem(db, workspaceId, itemId);
+    const accepted = await acceptDiscoveredItem(db, workspaceId, itemId);
 
     expect(accepted.item.status).toBe("accepted");
     expect(
-      db
+      await db
         .select()
         .from(discoveredItems)
         .where(eq(discoveredItems.id, itemId))
@@ -173,11 +173,11 @@ describe("discovery matching state", () => {
     });
   });
 
-  it("keeps matching lease internals out of the founder-visible item", () => {
+  it("keeps matching lease internals out of the founder-visible item", async () => {
     const db = createTestDb();
-    const { workspaceId, itemId } = seedItem(db, { state: "ready" });
+    const { workspaceId, itemId } = await seedItem(db, { state: "ready" });
 
-    const item = getDiscoveredItem(db, workspaceId, itemId)!;
+    const item = (await getDiscoveredItem(db, workspaceId, itemId))!;
 
     expect(item).toMatchObject({
       matchingState: "ready",
@@ -194,26 +194,26 @@ describe("discovery matching state", () => {
     }
   });
 
-  it("freezes matching when an item is skipped", () => {
+  it("freezes matching when an item is skipped", async () => {
     const db = createTestDb();
-    const { workspaceId, itemId } = seedItem(db, { state: "ready" });
-    const item = getDiscoveredItem(db, workspaceId, itemId)!;
+    const { workspaceId, itemId } = await seedItem(db, { state: "ready" });
+    const item = (await getDiscoveredItem(db, workspaceId, itemId))!;
 
-    skipDiscoveredItem(db, workspaceId, item);
+    await skipDiscoveredItem(db, workspaceId, item);
 
     expect(
-      db
+      (await db
         .select()
         .from(discoveredItems)
         .where(eq(discoveredItems.id, itemId))
-        .get()!.matchingState,
+        .get())!.matchingState,
     ).toBe("frozen");
   });
 
   it("marks malformed model output retryable instead of ready", async () => {
     const db = createTestDb();
-    const { workspaceId, itemId } = seedItem(db);
-    const claims = claimMatchingBatch(db, {
+    const { workspaceId, itemId } = await seedItem(db);
+    const claims = await claimMatchingBatch(db, {
       workspaceId,
       owner: "owner",
       limit: 1,
@@ -242,7 +242,7 @@ describe("discovery matching state", () => {
 
     expect(result).toEqual({ ready: 0, retryableErrors: 1 });
     expect(
-      db
+      await db
         .select()
         .from(discoveredItems)
         .where(eq(discoveredItems.id, itemId))
@@ -255,8 +255,8 @@ describe("discovery matching state", () => {
 
   it("does not let a delayed scorer overwrite a triaged item", async () => {
     const db = createTestDb();
-    const { workspaceId, itemId } = seedItem(db);
-    const claims = claimMatchingBatch(db, {
+    const { workspaceId, itemId } = await seedItem(db);
+    const claims = await claimMatchingBatch(db, {
       workspaceId,
       owner: "owner",
       limit: 1,
@@ -264,14 +264,14 @@ describe("discovery matching state", () => {
     });
     const started = deferred<void>();
     const release = deferred<void>();
-    const run = runMatchingBatch(
+    const run = await runMatchingBatch(
       {
         db,
         llm: {
           async generate() {
             started.resolve();
             await release.promise;
-            return validLlm.generate({ prompt: "test" });
+            return await validLlm.generate({ prompt: "test" });
           },
         },
         leaseMs: 60_000,
@@ -281,7 +281,7 @@ describe("discovery matching state", () => {
       new AbortController().signal,
     );
     await started.promise;
-    db.update(discoveredItems)
+    await db.update(discoveredItems)
       .set({
         status: "accepted",
         matchingState: "frozen",
@@ -295,7 +295,7 @@ describe("discovery matching state", () => {
     await run;
 
     expect(
-      db
+      await db
         .select()
         .from(discoveredItems)
         .where(eq(discoveredItems.id, itemId))
@@ -309,8 +309,8 @@ describe("discovery matching state", () => {
 
   it("passes cancellation to the gateway and records a stable timeout", async () => {
     const db = createTestDb();
-    const { workspaceId, itemId } = seedItem(db);
-    const claims = claimMatchingBatch(db, {
+    const { workspaceId, itemId } = await seedItem(db);
+    const claims = await claimMatchingBatch(db, {
       workspaceId,
       owner: "owner",
       limit: 1,
@@ -319,7 +319,7 @@ describe("discovery matching state", () => {
     const controller = new AbortController();
     let gatewaySignal: AbortSignal | undefined;
     const started = deferred<void>();
-    const run = runMatchingBatch(
+    const run = await runMatchingBatch(
       {
         db,
         llm: {
@@ -351,11 +351,11 @@ describe("discovery matching state", () => {
 
     expect(gatewaySignal?.aborted).toBe(true);
     expect(
-      db
+      (await db
         .select()
         .from(discoveredItems)
         .where(eq(discoveredItems.id, itemId))
-        .get()!.matchingError,
+        .get())!.matchingError,
     ).toBe("matching_timeout");
   });
 });

@@ -41,18 +41,18 @@ let db: Db;
 let workspaceId: string;
 const evidence = new NoEvidence();
 
-beforeEach(() => {
+beforeEach(async () => {
   db = createTestDb();
   workspaceId = randomUUID();
-  db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 }).run();
-  updateBrainDoc(db, workspaceId, "soul", "## Why\n\nWe make GTM legible.\n");
-  updateBrainDoc(db, workspaceId, "icp", "## Buyer\n\nSeed-stage founders selling to RevOps.\n");
-  updateBrainDoc(db, workspaceId, "history", "## Launches\n\nShipped the analytics beta in March.\n");
+  await db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 }).run();
+  await updateBrainDoc(db, workspaceId, "soul", "## Why\n\nWe make GTM legible.\n");
+  await updateBrainDoc(db, workspaceId, "icp", "## Buyer\n\nSeed-stage founders selling to RevOps.\n");
+  await updateBrainDoc(db, workspaceId, "history", "## Launches\n\nShipped the analytics beta in March.\n");
 });
 
 describe("the thread's context bundle", () => {
   it("is the resolver's bundle, carrying brain content and the conversation directive", async () => {
-    const session = createSession(db, workspaceId, null, {});
+    const session = await createSession(db, workspaceId, null, {});
     const { resolved, system } = await buildChatContext(db, evidence, session, "How do we launch?");
 
     expect(system).toContain("We make GTM legible.");
@@ -64,7 +64,7 @@ describe("the thread's context bundle", () => {
   });
 
   it("takes ICP and history in full — the gtm_conversation matrix row", async () => {
-    const session = createSession(db, workspaceId, null, {});
+    const session = await createSession(db, workspaceId, null, {});
     const { system } = await buildChatContext(db, evidence, session, "Who do we sell to?");
 
     expect(system).toContain("Seed-stage founders selling to RevOps.");
@@ -72,19 +72,19 @@ describe("the thread's context bundle", () => {
   });
 
   it("resolves against `web` when the thread binds no channel", async () => {
-    const session = createSession(db, workspaceId, null, {});
+    const session = await createSession(db, workspaceId, null, {});
     const { channel } = await buildChatContext(db, evidence, session, "Anything");
     expect(channel).toBe(DEFAULT_CHAT_CHANNEL);
   });
 
   it("uses the thread's channel when one is bound", async () => {
-    const session = createSession(db, workspaceId, null, { channel: "linkedin" });
+    const session = await createSession(db, workspaceId, null, { channel: "linkedin" });
     const { channel } = await buildChatContext(db, evidence, session, "Anything");
     expect(channel).toBe("linkedin");
   });
 
   it("pulls the campaign and its persona into the bundle when the thread is scoped", async () => {
-    const campaign = createCampaign(
+    const campaign = await createCampaign(
       db,
       workspaceId,
       upsertCampaignInputSchema.parse({
@@ -92,12 +92,12 @@ describe("the thread's context bundle", () => {
         objective: "Land 50 RevOps demos",
       }),
     );
-    const persona = createPersona(
+    const persona = await createPersona(
       db,
       workspaceId,
       upsertPersonaInputSchema.parse({ name: "Head of RevOps", tone: "pragmatic" }),
     );
-    const session = createSession(db, workspaceId, null, {
+    const session = await createSession(db, workspaceId, null, {
       campaignId: campaign.id,
       personaId: persona.id,
     });
@@ -109,11 +109,11 @@ describe("the thread's context bundle", () => {
   });
 
   it("puts the goal ahead of the bundle, and omits the line when there is none", async () => {
-    const withGoal = createSession(db, workspaceId, null, { goal: "Launch across LinkedIn" });
+    const withGoal = await createSession(db, workspaceId, null, { goal: "Launch across LinkedIn" });
     const a = await buildChatContext(db, evidence, withGoal, "Hello");
     expect(a.system.startsWith("THREAD GOAL: Launch across LinkedIn")).toBe(true);
 
-    const withoutGoal = createSession(db, workspaceId, null, {});
+    const withoutGoal = await createSession(db, workspaceId, null, {});
     const b = await buildChatContext(db, evidence, withoutGoal, "Hello");
     expect(b.system).not.toContain("THREAD GOAL:");
   });
@@ -124,22 +124,22 @@ describe("the thread's context bundle", () => {
     // getCampaign misses, and the thread degrades to unscoped rather than
     // pulling a rival workspace's objective into the prefix.
     const rival = randomUUID();
-    db.insert(workspaces).values({ id: rival, name: "Rival", createdAt: 1, updatedAt: 1 }).run();
-    const theirCampaign = createCampaign(
+    await db.insert(workspaces).values({ id: rival, name: "Rival", createdAt: 1, updatedAt: 1 }).run();
+    const theirCampaign = await createCampaign(
       db,
       rival,
       upsertCampaignInputSchema.parse({ name: "Their launch", objective: "SECRETOBJECTIVE" }),
     );
 
-    const session = createSession(db, workspaceId, null, { campaignId: theirCampaign.id });
+    const session = await createSession(db, workspaceId, null, { campaignId: theirCampaign.id });
     const { system } = await buildChatContext(db, evidence, session, "What is our objective?");
 
     expect(system).not.toContain("SECRETOBJECTIVE");
     expect(system).not.toContain("Their launch");
   });
 
-  it("composes the retrieval query from the goal and the latest message", () => {
-    const session = createSession(db, workspaceId, null, { goal: "Launch the analytics beta" });
+  it("composes the retrieval query from the goal and the latest message", async () => {
+    const session = await createSession(db, workspaceId, null, { goal: "Launch the analytics beta" });
     const query = chatRetrievalQuery(session, "Which channels performed best?");
     expect(query).toContain("Launch the analytics beta");
     expect(query).toContain("Which channels performed best?");

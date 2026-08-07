@@ -149,18 +149,18 @@ describe("variant generation & context snapshots (Sprint 63)", () => {
       })
     ).json().id;
 
-    const revision = createPlanRevision(db, workspaceId, campaignId, planInput, {
+    const revision = await createPlanRevision(db, workspaceId, campaignId, planInput, {
       userId: null,
     });
-    upsertLaneRevision(db, workspaceId, campaignId, revision.id, {
+    await upsertLaneRevision(db, workspaceId, campaignId, revision.id, {
       ...reactiveLane,
       personaId,
     });
-    activatePlanRevision(db, workspaceId, campaignId, revision.id);
+    await activatePlanRevision(db, workspaceId, campaignId, revision.id);
 
     // Story → opportunity → package → assessed ready → fanned out.
-    db.transaction((tx) => {
-      recordOccurrenceAndResolve(tx, {
+    await db.transaction(async (tx) => {
+      await recordOccurrenceAndResolve(tx, {
         workspaceId,
         source: { id: randomUUID(), type: "rss", name: "Feed" },
         fetchRunId: null,
@@ -174,12 +174,12 @@ describe("variant generation & context snapshots (Sprint 63)", () => {
         observedAt: Date.now(),
       });
     });
-    const story = db.select().from(canonicalExternalStories).all()[0]!;
-    const profile = compileRoutingProfile(db, workspaceId, campaignId)!;
-    const occurrenceIds = [...loadStoryRoutingContext(db, story).activeOccurrenceIds];
+    const story = (await db.select().from(canonicalExternalStories).all())[0]!;
+    const profile = (await compileRoutingProfile(db, workspaceId, campaignId))!;
+    const occurrenceIds = [...(await loadStoryRoutingContext(db, story)).activeOccurrenceIds];
     const opportunityId = randomUUID();
     const now = Date.now();
-    db.insert(campaignOpportunities)
+    await db.insert(campaignOpportunities)
       .values({
         id: opportunityId,
         workspaceId,
@@ -208,22 +208,22 @@ describe("variant generation & context snapshots (Sprint 63)", () => {
         updatedAt: now,
       })
       .run();
-    packageId = createPackageFromOpportunity(db, workspaceId, opportunityId, { userId });
+    packageId = await createPackageFromOpportunity(db, workspaceId, opportunityId, { userId });
     await runPackageAssessments(db, sufficiencyGateway(), { workspaceId, ...RUN_OPTS });
-    fanOutPackage(db, workspaceId, packageId, { userId });
-    deliverableId = db
+    await fanOutPackage(db, workspaceId, packageId, { userId });
+    deliverableId = (await db
       .select()
       .from(deliverables)
       .where(eq(deliverables.packageId, packageId))
-      .get()!.id;
+      .get())!.id;
   });
 
   afterEach(async () => {
     await app.close();
   });
 
-  function deliverableRow() {
-    return db.select().from(deliverables).where(eq(deliverables.id, deliverableId)).get()!;
+  async function deliverableRow() {
+    return (await db.select().from(deliverables).where(eq(deliverables.id, deliverableId)).get())!;
   }
 
   it("generates a variant with a full replayable context snapshot", async () => {
@@ -231,12 +231,12 @@ describe("variant generation & context snapshots (Sprint 63)", () => {
     const run = await runVariantGeneration(db, llm, { workspaceId, ...RUN_OPTS });
     expect(run).toMatchObject({ claimed: 1, generated: 1, failures: 0 });
 
-    const row = deliverableRow();
+    const row = await deliverableRow();
     expect(row.status).toBe("candidate_ready");
     expect(row.generationState).toBe("complete");
     expect(row.generatedAt).not.toBeNull();
 
-    const detail = getDeliverableDetail(db, workspaceId, deliverableId);
+    const detail = await getDeliverableDetail(db, workspaceId, deliverableId);
     expect(detail.variants).toHaveLength(1);
     const variant = detail.variants[0]!;
     expect(variant).toMatchObject({
@@ -248,7 +248,7 @@ describe("variant generation & context snapshots (Sprint 63)", () => {
 
     // The snapshot captures what the model saw: the resolved trace, the
     // prompt, and the grounding inputs.
-    const snapshot = getVariantSnapshot(db, workspaceId, deliverableId, variant.id);
+    const snapshot = await getVariantSnapshot(db, workspaceId, deliverableId, variant.id);
     const resolved = snapshot.resolvedContext as {
       prompt: string;
       sections: Array<{ key: string; included: boolean }>;
@@ -279,33 +279,33 @@ describe("variant generation & context snapshots (Sprint 63)", () => {
 
   it("regeneration appends the next version and never touches lineage", async () => {
     await runVariantGeneration(db, draftGateway(), { workspaceId, ...RUN_OPTS });
-    decideDeliverable(db, workspaceId, deliverableId, {
+    await decideDeliverable(db, workspaceId, deliverableId, {
       action: "regenerate",
       actorUserId: userId,
     });
-    expect(deliverableRow().generationState).toBe("pending");
+    expect((await deliverableRow()).generationState).toBe("pending");
     await runVariantGeneration(db, draftGateway(), { workspaceId, ...RUN_OPTS });
 
-    const detail = getDeliverableDetail(db, workspaceId, deliverableId);
+    const detail = await getDeliverableDetail(db, workspaceId, deliverableId);
     expect(detail.deliverable.status).toBe("candidate_ready");
     expect(detail.variants.map((variant) => variant.variantVersion)).toEqual([2, 1]);
     expect(detail.variants.every((variant) => variant.status === "candidate")).toBe(true);
     // Two snapshots, one per variant, both intact.
-    expect(db.select().from(contextSnapshots).all()).toHaveLength(2);
+    expect(await db.select().from(contextSnapshots).all()).toHaveLength(2);
     expect(detail.variants[1]!.content).toBe("Drafted post #1");
   });
 
   it("select fulfills the deliverable and supersedes sibling candidates", async () => {
     await runVariantGeneration(db, draftGateway(), { workspaceId, ...RUN_OPTS });
-    decideDeliverable(db, workspaceId, deliverableId, {
+    await decideDeliverable(db, workspaceId, deliverableId, {
       action: "regenerate",
       actorUserId: userId,
     });
     await runVariantGeneration(db, draftGateway(), { workspaceId, ...RUN_OPTS });
 
-    const before = getDeliverableDetail(db, workspaceId, deliverableId);
+    const before = await getDeliverableDetail(db, workspaceId, deliverableId);
     const winner = before.variants.find((variant) => variant.variantVersion === 2)!;
-    const detail = decideDeliverable(db, workspaceId, deliverableId, {
+    const detail = await decideDeliverable(db, workspaceId, deliverableId, {
       action: "select",
       variantId: winner.id,
       actorUserId: userId,
@@ -320,8 +320,8 @@ describe("variant generation & context snapshots (Sprint 63)", () => {
 
     // Fulfilled history is immutable: no cancel, no regenerate, no reselect.
     for (const action of ["cancel", "regenerate", "select"] as const) {
-      expect(() =>
-        decideDeliverable(db, workspaceId, deliverableId, {
+      expect(async () =>
+        await decideDeliverable(db, workspaceId, deliverableId, {
           action,
           variantId: byVersion.get(1)!.id,
           reason: "nope",
@@ -336,7 +336,7 @@ describe("variant generation & context snapshots (Sprint 63)", () => {
     for (let attempt = 1; attempt <= GENERATION_MAX_ATTEMPTS; attempt += 1) {
       const run = await runVariantGeneration(db, failing, { workspaceId, ...RUN_OPTS });
       expect(run).toMatchObject({ claimed: 1, generated: 0, failures: 1 });
-      const row = deliverableRow();
+      const row = await deliverableRow();
       expect(row.status).toBe("ready");
       expect(row.generationAttempts).toBe(attempt);
       expect(row.generationState).toBe(
@@ -346,11 +346,11 @@ describe("variant generation & context snapshots (Sprint 63)", () => {
     // Parked: nothing claims it any more.
     const idle = await runVariantGeneration(db, draftGateway(), { workspaceId, ...RUN_OPTS });
     expect(idle.claimed).toBe(0);
-    expect(db.select().from(variants).all()).toHaveLength(0);
-    expect(db.select().from(contextSnapshots).all()).toHaveLength(0);
+    expect(await db.select().from(variants).all()).toHaveLength(0);
+    expect(await db.select().from(contextSnapshots).all()).toHaveLength(0);
 
     // Operator regenerate resets the queue and generation succeeds.
-    decideDeliverable(db, workspaceId, deliverableId, {
+    await decideDeliverable(db, workspaceId, deliverableId, {
       action: "regenerate",
       actorUserId: userId,
     });
@@ -359,7 +359,7 @@ describe("variant generation & context snapshots (Sprint 63)", () => {
       ...RUN_OPTS,
     });
     expect(revived.generated).toBe(1);
-    expect(deliverableRow().status).toBe("candidate_ready");
+    expect((await deliverableRow()).status).toBe("candidate_ready");
   });
 
   it("runDeliverablePipeline reports each phase", async () => {

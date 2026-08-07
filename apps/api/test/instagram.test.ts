@@ -115,7 +115,7 @@ describe("InstagramAdapter asynchronous video finalization", () => {
 
   it("publishes a finished container once and reads its permalink", async () => {
     const state: InstagramState = { calls: [], status: "FINISHED" };
-    await expect(adapterFor(state).finalizePost("container-1")).resolves.toEqual({
+    await expect(await adapterFor(state).finalizePost("container-1")).resolves.toEqual({
       status: "published",
       externalId: "media-1",
       url: "https://instagram.test/p/media-1",
@@ -128,9 +128,9 @@ describe("InstagramAdapter asynchronous video finalization", () => {
   it("fails a provider-rejected container without trying media_publish", async () => {
     const state: InstagramState = { calls: [], status: "ERROR" };
     const adapter = adapterFor(state);
-    const finalize = vi.fn(() => adapter.finalizePost("container-1"));
+    const finalize = vi.fn(async () => await adapter.finalizePost("container-1"));
 
-    await expect(finalize()).rejects.toThrow("could not process the video");
+    await expect(await finalize()).rejects.toThrow("could not process the video");
     expect(finalize).toHaveBeenCalledTimes(1);
     expect(calls(state, "POST", "/media_publish")).toBe(0);
   });
@@ -156,7 +156,7 @@ describe("Instagram publication recovery", () => {
     const connectionId = randomUUID();
     const draftId = randomUUID();
     const now = Date.now();
-    db.insert(connections)
+    await db.insert(connections)
       .values({
         id: connectionId,
         workspaceId,
@@ -170,7 +170,7 @@ describe("Instagram publication recovery", () => {
         updatedAt: now,
       })
       .run();
-    db.insert(drafts)
+    await db.insert(drafts)
       .values({
         id: draftId,
         workspaceId,
@@ -213,7 +213,7 @@ describe("Instagram publication recovery", () => {
       action: { status: "dispatching", completedAt: null },
       execution: { status: "processing", error: null },
     });
-    const [processing] = db.select().from(publications).all();
+    const [processing] = await db.select().from(publications).all();
     expect(processing).toMatchObject({
       status: "processing",
       providerOperationId: "container-1",
@@ -252,9 +252,9 @@ describe("Instagram publication recovery", () => {
     });
     expect(pending.json().actions[0]).toMatchObject({ action: { status: "dispatching" } });
     expect(calls(state, "GET", "?fields=status_code")).toBe(1);
-    expect(db.select().from(publications).get()).toMatchObject({ processingAttempts: 1 });
+    expect(await db.select().from(publications).get()).toMatchObject({ processingAttempts: 1 });
 
-    const retryAt = db.select().from(publications).get()!.nextAttemptAt!;
+    const retryAt = (await db.select().from(publications).get())!.nextAttemptAt!;
     vi.setSystemTime(new Date(retryAt + 1));
     state.status = "FINISHED";
     const finished = await testApp.inject({
@@ -265,7 +265,7 @@ describe("Instagram publication recovery", () => {
       action: { status: "succeeded", completedAt: expect.any(Number) },
       execution: { status: "published", error: null },
     });
-    expect(db.select().from(publications).get()).toMatchObject({
+    expect(await db.select().from(publications).get()).toMatchObject({
       status: "published",
       providerOperationId: "container-1",
       externalId: "media-1",
@@ -291,7 +291,7 @@ describe("Instagram publication recovery", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-08-07T10:00:00Z"));
     const { state, db, testApp, workspaceId } = await startVideo("ERROR");
-    const processing = db.select().from(publications).get()!;
+    const processing = (await db.select().from(publications).get())!;
     vi.setSystemTime(new Date(processing.nextAttemptAt! + 1));
 
     const failed = await testApp.inject({
@@ -302,7 +302,7 @@ describe("Instagram publication recovery", () => {
       action: { status: "failed", completedAt: expect.any(Number) },
       execution: { status: "failed", error: expect.stringContaining("could not process") },
     });
-    expect(db.select().from(publications).get()).toMatchObject({
+    expect(await db.select().from(publications).get()).toMatchObject({
       status: "failed",
       providerOperationId: "container-1",
       processingAttempts: 1,

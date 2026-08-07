@@ -32,8 +32,8 @@ interface NewEmailItem {
  * allowlist. Only inbound messages on these thread ids are ever ingested;
  * unrelated mail in the connected Gmail account is never read into Tuezday.
  */
-function sentThreadDeliveries(db: Db, workspaceId: string): Map<string, { id: string; providerMessageId: string | null }> {
-  const rows = db
+async function sentThreadDeliveries(db: Db, workspaceId: string): Promise<Map<string, { id: string; providerMessageId: string | null }>> {
+  const rows = await db
     .select({
       id: emailDeliveries.id,
       providerThreadId: emailDeliveries.providerThreadId,
@@ -95,7 +95,7 @@ async function classifyNewItems(
 ): Promise<number> {
   // Budget degradation (Sprint 59): items stay unlabeled and the next poll
   // retries them once budget frees — labeling assists, it never fails the run.
-  if (llmBudgetExhausted(db, workspaceId)) return 0;
+  if (await llmBudgetExhausted(db, workspaceId)) return 0;
   const metered = meteredLlm(llm, db, { workspaceId, pipeline: "mailbox_classification" });
   let labeled = 0;
   for (let offset = 0; offset < items.length; offset += CLASSIFY_BATCH_SIZE) {
@@ -108,7 +108,7 @@ async function classifyNewItems(
       for (const entry of result.value) {
         const item = batch[entry.index];
         if (!item) continue;
-        db.update(inboxItems)
+        await db.update(inboxItems)
           .set({
             replyLabel: entry.label,
             replyLabeledAt: nowMs,
@@ -144,9 +144,9 @@ export async function runMailboxInbox(
   let newItems = 0;
   const created: NewEmailItem[] = [];
 
-  const byThread = sentThreadDeliveries(db, workspaceId);
-  for (const mailbox of listConnectedMailboxes(db, workspaceId)) {
-    const connection = getConnection(db, workspaceId, mailbox.connectionId);
+  const byThread = await sentThreadDeliveries(db, workspaceId);
+  for (const mailbox of await listConnectedMailboxes(db, workspaceId)) {
+    const connection = await getConnection(db, workspaceId, mailbox.connectionId);
     if (!connection || connection.status !== "connected") continue;
     mailboxesPolled += 1;
     try {
@@ -161,12 +161,12 @@ export async function runMailboxInbox(
         const delivery = byThread.get(meta.threadId);
         // PRIVACY INVARIANT: mail outside Tuezday-sent threads is never read in.
         if (!delivery) continue;
-        if (inboxItemExists(db, mailbox.connectionId, meta.id)) continue;
+        if (await inboxItemExists(db, mailbox.connectionId, meta.id)) continue;
         const message = await gmail.getMessage(connection.nangoConnectionId, meta.id);
         // Our own messages in the thread (the outreach itself, manual replies)
         // are not inbound items.
         if (message.fromAddress.toLowerCase() === mailbox.address.toLowerCase()) continue;
-        const inserted = insertInboxItem(db, {
+        const inserted = await insertInboxItem(db, {
           workspaceId,
           connectionId: mailbox.connectionId,
           providerKey: "gmail",
@@ -185,7 +185,7 @@ export async function runMailboxInbox(
         });
         if (inserted) {
           newItems += 1;
-          const row = db
+          const row = await db
             .select({ id: inboxItems.id })
             .from(inboxItems)
             .where(
@@ -205,14 +205,14 @@ export async function runMailboxInbox(
           }
         }
       }
-      db.update(mailboxes)
+      await db.update(mailboxes)
         .set({ lastPolledAt: nowMs, lastError: null, updatedAt: nowMs })
         .where(eq(mailboxes.id, mailbox.id))
         .run();
     } catch (err) {
       // A failing mailbox never aborts the run; the cursor stays put so the
       // next poll retries the same window.
-      db.update(mailboxes)
+      await db.update(mailboxes)
         .set({
           lastError: (err instanceof Error ? err.message : String(err)).slice(0, 500),
           updatedAt: nowMs,

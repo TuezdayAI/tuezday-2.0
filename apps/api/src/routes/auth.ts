@@ -19,8 +19,8 @@ export function registerAuthRoutes(app: FastifyInstance, db: Db, fetcher: Truste
       });
     }
     try {
-      const result = registerAccount(db, parsed.data);
-      track(db, analytics, { event: "user.registered", distinctId: result.user.id });
+      const result = await registerAccount(db, parsed.data);
+      await track(db, analytics, { event: "user.registered", distinctId: result.user.id });
       return reply.status(201).send(result);
     } catch (err) {
       if (err instanceof EmailTakenError) {
@@ -35,7 +35,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: Db, fetcher: Truste
     if (!parsed.success) {
       return reply.status(400).send({ error: "invalid_input" });
     }
-    const result = login(db, parsed.data);
+    const result = await login(db, parsed.data);
     if (!result) {
       return reply.status(401).send({ error: "invalid_credentials" });
     }
@@ -44,7 +44,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: Db, fetcher: Truste
 
   app.post("/auth/logout", async (request, reply) => {
     const token = request.headers.authorization?.split(" ")[1];
-    if (token) revokeSession(db, token);
+    if (token) await revokeSession(db, token);
     return reply.status(204).send();
   });
 
@@ -52,9 +52,9 @@ export function registerAuthRoutes(app: FastifyInstance, db: Db, fetcher: Truste
     if (request.actor.system || !request.actor.userId) {
       return reply.status(403).send({ error: "system_actor" });
     }
-    const user = getUser(db, request.actor.userId);
+    const user = await getUser(db, request.actor.userId);
     if (!user) return reply.status(401).send({ error: "unauthenticated" });
-    return { user, memberships: listUserMemberships(db, user.id) };
+    return { user, memberships: await listUserMemberships(db, user.id) };
   });
 
   app.patch("/auth/me", async (request, reply) => {
@@ -68,7 +68,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: Db, fetcher: Truste
         message: parsed.error.issues.map((i) => i.message).join("; "),
       });
     }
-    const user = updateUserName(db, request.actor.userId, parsed.data.name);
+    const user = await updateUserName(db, request.actor.userId, parsed.data.name);
     if (!user) return reply.status(401).send({ error: "unauthenticated" });
     return { user };
   });
@@ -91,7 +91,7 @@ export function registerAuthRoutes(app: FastifyInstance, db: Db, fetcher: Truste
     }
     try {
       const profile = await exchangeCodeForProfile(fetcher, parsed.data.code);
-      return upsertGoogleUser(db, profile);
+      return await upsertGoogleUser(db, profile);
     } catch (err) {
       if (err instanceof GoogleAuthError) {
         const status = err.code === "not_configured" ? 503 : 401;

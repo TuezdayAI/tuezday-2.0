@@ -21,8 +21,8 @@ import {
 import { getCampaign } from "../services/campaigns";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -39,27 +39,27 @@ function invalid(reply: FastifyReply, parsed: { error: { issues: { message: stri
 export function registerAudienceRoutes(app: FastifyInstance, db: Db): void {
   // The unified people pool — leads + CRM contacts not linked to a lead.
   app.get<{ Params: { id: string } }>("/workspaces/:id/people", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return loadPeople(db, request.params.id);
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return await loadPeople(db, request.params.id);
   });
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/audiences", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = upsertAudienceInputSchema.safeParse(request.body);
     if (!parsed.success) return invalid(reply, parsed);
-    return reply.status(201).send(createAudience(db, request.params.id, parsed.data));
+    return reply.status(201).send(await createAudience(db, request.params.id, parsed.data));
   });
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/audiences", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return listAudiences(db, request.params.id);
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return await listAudiences(db, request.params.id);
   });
 
   app.get<{ Params: { id: string; audienceId: string } }>(
     "/workspaces/:id/audiences/:audienceId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const detail = getAudienceDetail(db, request.params.id, request.params.audienceId);
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const detail = await getAudienceDetail(db, request.params.id, request.params.audienceId);
       if (!detail) return reply.status(404).send({ error: "audience_not_found" });
       return detail;
     },
@@ -68,10 +68,10 @@ export function registerAudienceRoutes(app: FastifyInstance, db: Db): void {
   app.put<{ Params: { id: string; audienceId: string } }>(
     "/workspaces/:id/audiences/:audienceId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = upsertAudienceInputSchema.safeParse(request.body);
       if (!parsed.success) return invalid(reply, parsed);
-      const updated = updateAudience(db, request.params.id, request.params.audienceId, parsed.data);
+      const updated = await updateAudience(db, request.params.id, request.params.audienceId, parsed.data);
       if (!updated) return reply.status(404).send({ error: "audience_not_found" });
       return updated;
     },
@@ -80,8 +80,8 @@ export function registerAudienceRoutes(app: FastifyInstance, db: Db): void {
   app.delete<{ Params: { id: string; audienceId: string } }>(
     "/workspaces/:id/audiences/:audienceId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      if (!deleteAudience(db, request.params.id, request.params.audienceId)) {
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await deleteAudience(db, request.params.id, request.params.audienceId)) {
         return reply.status(404).send({ error: "audience_not_found" });
       }
       return reply.status(204).send();
@@ -93,10 +93,10 @@ export function registerAudienceRoutes(app: FastifyInstance, db: Db): void {
   app.post<{ Params: { id: string; audienceId: string } }>(
     "/workspaces/:id/audiences/:audienceId/members",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = addAudienceMembersInputSchema.safeParse(request.body);
       if (!parsed.success) return invalid(reply, parsed);
-      const result = addAudienceMembers(
+      const result = await addAudienceMembers(
         db,
         request.params.id,
         request.params.audienceId,
@@ -117,8 +117,8 @@ export function registerAudienceRoutes(app: FastifyInstance, db: Db): void {
   app.delete<{ Params: { id: string; audienceId: string; memberType: string; memberId: string } }>(
     "/workspaces/:id/audiences/:audienceId/members/:memberType/:memberId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      const removed = removeAudienceMember(
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      const removed = await removeAudienceMember(
         db,
         request.params.id,
         request.params.audienceId,
@@ -135,24 +135,24 @@ export function registerAudienceRoutes(app: FastifyInstance, db: Db): void {
   app.get<{ Params: { id: string; campaignId: string } }>(
     "/workspaces/:id/campaigns/:campaignId/audiences",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      if (!getCampaign(db, request.params.id, request.params.campaignId)) {
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await getCampaign(db, request.params.id, request.params.campaignId)) {
         return reply.status(404).send({ error: "campaign_not_found" });
       }
-      return listCampaignAudiences(db, request.params.id, request.params.campaignId);
+      return await listCampaignAudiences(db, request.params.id, request.params.campaignId);
     },
   );
 
   app.post<{ Params: { id: string; campaignId: string } }>(
     "/workspaces/:id/campaigns/:campaignId/audiences",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      if (!getCampaign(db, request.params.id, request.params.campaignId)) {
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await getCampaign(db, request.params.id, request.params.campaignId)) {
         return reply.status(404).send({ error: "campaign_not_found" });
       }
       const parsed = attachAudienceInputSchema.safeParse(request.body);
       if (!parsed.success) return invalid(reply, parsed);
-      const result = attachAudience(
+      const result = await attachAudience(
         db,
         request.params.id,
         request.params.campaignId,
@@ -160,7 +160,7 @@ export function registerAudienceRoutes(app: FastifyInstance, db: Db): void {
       );
       if (!result.ok) return reply.status(404).send({ error: "audience_not_found" });
       return reply.status(201).send(
-        listCampaignAudiences(db, request.params.id, request.params.campaignId),
+        await listCampaignAudiences(db, request.params.id, request.params.campaignId),
       );
     },
   );
@@ -168,8 +168,8 @@ export function registerAudienceRoutes(app: FastifyInstance, db: Db): void {
   app.delete<{ Params: { id: string; campaignId: string; audienceId: string } }>(
     "/workspaces/:id/campaigns/:campaignId/audiences/:audienceId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      if (!detachAudience(db, request.params.id, request.params.campaignId, request.params.audienceId)) {
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await detachAudience(db, request.params.id, request.params.campaignId, request.params.audienceId)) {
         return reply.status(404).send({ error: "not_attached" });
       }
       return reply.status(204).send();

@@ -46,7 +46,7 @@ export function registerInternalBackgroundJobRoutes(
   app.post(
     "/internal/background-jobs/tick",
     { schema: { body: EMPTY_BODY_SCHEMA } },
-    async () => runBackgroundJobTick(deps),
+    async () => await runBackgroundJobTick(deps),
   );
 
   app.get("/internal/background-jobs", async (request, reply) => {
@@ -54,11 +54,11 @@ export function registerInternalBackgroundJobRoutes(
     if (!parsed.success) {
       return reply.status(400).send({ error: "invalid_input" });
     }
-    return { items: listBackgroundJobs(deps.db, parsed.data) };
+    return { items: await listBackgroundJobs(deps.db, parsed.data) };
   });
 
   app.get("/internal/background-jobs/stats", async () =>
-    getBackgroundQueueStats(deps.db, {
+    await getBackgroundQueueStats(deps.db, {
       perWorkspaceConcurrency: deps.policy.perWorkspaceConcurrency,
     }),
   );
@@ -71,7 +71,7 @@ export function registerInternalBackgroundJobRoutes(
       if (!parsed.success) {
         return reply.status(400).send({ error: "invalid_input" });
       }
-      const job = requeueDeadLetter(deps.db, parsed.data.id);
+      const job = await requeueDeadLetter(deps.db, parsed.data.id);
       if (!job) {
         return reply.status(409).send({ error: "job_not_dead_lettered" });
       }

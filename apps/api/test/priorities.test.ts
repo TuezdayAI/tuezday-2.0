@@ -62,9 +62,9 @@ describe("workspace priorities projection", () => {
     error?: string;
   }
 
-  function seedAction(over: SeedActionOptions): ExternalAction {
+  async function seedAction(over: SeedActionOptions): Promise<ExternalAction> {
     const id = randomUUID();
-    let action = insertExternalAction(db, {
+    let action = await insertExternalAction(db, {
       id,
       workspaceId,
       kind: over.kind ?? "publish",
@@ -101,15 +101,15 @@ describe("workspace priorities projection", () => {
       retryable: true,
     };
     if (over.status === "authorization_required") {
-      action = transitionExternalAction(db, workspaceId, id, "authorization_required");
+      action = await transitionExternalAction(db, workspaceId, id, "authorization_required");
     } else if (over.status === "blocked") {
-      action = transitionExternalAction(db, workspaceId, id, "blocked", { blocker });
+      action = await transitionExternalAction(db, workspaceId, id, "blocked", { blocker });
     } else if (over.status === "stale") {
-      action = transitionExternalAction(db, workspaceId, id, "stale", { blocker });
+      action = await transitionExternalAction(db, workspaceId, id, "stale", { blocker });
     } else if (over.status === "failed") {
-      transitionExternalAction(db, workspaceId, id, "authorized");
-      transitionExternalAction(db, workspaceId, id, "dispatching");
-      action = transitionExternalAction(db, workspaceId, id, "failed", {
+      await transitionExternalAction(db, workspaceId, id, "authorized");
+      await transitionExternalAction(db, workspaceId, id, "dispatching");
+      action = await transitionExternalAction(db, workspaceId, id, "failed", {
         execution: {
           kind: "publication",
           id: randomUUID(),
@@ -124,8 +124,8 @@ describe("workspace priorities projection", () => {
     return action;
   }
 
-  function seedPendingDraft(): string {
-    return submitDraft(
+  async function seedPendingDraft(): Promise<string> {
+    return (await submitDraft(
       db,
       {
         workspaceId,
@@ -137,15 +137,15 @@ describe("workspace priorities projection", () => {
         content: "Pending body.",
       },
       { userId: null, label: "test", human: true },
-    ).id;
+    )).id;
   }
 
-  function seedFailedPublication(
+  async function seedFailedPublication(
     externalActionId: string | null,
     campaignId: string | null = null,
-  ): string {
+  ): Promise<string> {
     const connectionId = randomUUID();
-    db.insert(connections)
+    await db.insert(connections)
       .values({
         id: connectionId,
         workspaceId,
@@ -155,7 +155,7 @@ describe("workspace priorities projection", () => {
         updatedAt: T0 - HOUR,
       })
       .run();
-    const draft = submitDraft(
+    const draft = await submitDraft(
       db,
       {
         workspaceId,
@@ -168,9 +168,9 @@ describe("workspace priorities projection", () => {
       },
       { userId: null, label: "test", human: true },
     );
-    applyDraftAction(db, draft, "approve", { userId: null, label: "test", human: true });
+    await applyDraftAction(db, draft, "approve", { userId: null, label: "test", human: true });
     const id = randomUUID();
-    db.insert(publications)
+    await db.insert(publications)
       .values({
         id,
         workspaceId,
@@ -202,21 +202,21 @@ describe("workspace priorities projection", () => {
   }
 
   it("ranks overdue failures, overdue authorizations, other blockers, authorizations, then reviews", async () => {
-    const overdueFailed = seedAction({ status: "failed", requestedFor: T0 - HOUR, title: "Overdue failed" });
+    const overdueFailed = await seedAction({ status: "failed", requestedFor: T0 - HOUR, title: "Overdue failed" });
     tick();
-    const overdueAuth = seedAction({
+    const overdueAuth = await seedAction({
       status: "authorization_required",
       requestedFor: T0 - 30 * 60 * 1000,
       title: "Overdue authorization",
     });
     tick();
-    const blocked = seedAction({ status: "blocked", title: "Blocked" });
+    const blocked = await seedAction({ status: "blocked", title: "Blocked" });
     tick();
-    const stale = seedAction({ status: "stale", title: "Stale" });
+    const stale = await seedAction({ status: "stale", title: "Stale" });
     tick();
-    const auth = seedAction({ status: "authorization_required", title: "Fresh authorization" });
+    const auth = await seedAction({ status: "authorization_required", title: "Fresh authorization" });
     tick();
-    const draftId = seedPendingDraft();
+    const draftId = await seedPendingDraft();
 
     const items = await fetchPriorities();
     expect(items.map((item) => item.id)).toEqual([
@@ -248,12 +248,12 @@ describe("workspace priorities projection", () => {
   });
 
   it("breaks same-tier ties by due time, then creation time", async () => {
-    const later = seedAction({
+    const later = await seedAction({
       status: "authorization_required",
       requestedFor: T0 + 2 * HOUR,
       title: "Due later",
     });
-    const sooner = seedAction({
+    const sooner = await seedAction({
       status: "authorization_required",
       requestedFor: T0 + HOUR,
       title: "Due sooner",
@@ -263,9 +263,9 @@ describe("workspace priorities projection", () => {
   });
 
   it("dedupes a failed execution already represented by its governing action", async () => {
-    const failedAction = seedAction({ status: "failed", title: "Failed publish" });
-    seedFailedPublication(failedAction.id); // linked — the action item represents it
-    const legacyPublicationId = seedFailedPublication(null); // legacy — its own item
+    const failedAction = await seedAction({ status: "failed", title: "Failed publish" });
+    await seedFailedPublication(failedAction.id); // linked — the action item represents it
+    const legacyPublicationId = await seedFailedPublication(null); // legacy — its own item
 
     const items = await fetchPriorities();
     const failures = items.filter((item) => item.kind === "execution_failure");
@@ -288,13 +288,13 @@ describe("workspace priorities projection", () => {
         payload: { name: "Summer push" },
       })
     ).json().id;
-    const auth = seedAction({
+    const auth = await seedAction({
       status: "authorization_required",
       campaignId,
       campaignName: "Summer push",
       title: "Queued post",
     });
-    const draftId = seedPendingDraft();
+    const draftId = await seedPendingDraft();
 
     const items = await fetchPriorities();
     const authItem = items.find((item) => item.id === auth.id)!;
@@ -325,28 +325,28 @@ describe("workspace priorities projection", () => {
       })
     ).json().id;
 
-    const matchedSignal = createSignal(db, workspaceId, {
+    const matchedSignal = await createSignal(db, workspaceId, {
       content: "A buyer is actively comparing launch platforms.",
       source: "other",
     });
-    insertSignalMatch(db, workspaceId, matchedSignal.id, {
+    await insertSignalMatch(db, workspaceId, matchedSignal.id, {
       personaId: null,
       campaignId: activeCampaignId,
       score: 92,
       reason: "Direct fit for the active launch.",
     });
 
-    const draftedSignal = createSignal(db, workspaceId, {
+    const draftedSignal = await createSignal(db, workspaceId, {
       content: "A second buyer asked for a comparison.",
       source: "other",
     });
-    insertSignalMatch(db, workspaceId, draftedSignal.id, {
+    await insertSignalMatch(db, workspaceId, draftedSignal.id, {
       personaId: null,
       campaignId: activeCampaignId,
       score: 88,
       reason: "Also fits the active launch.",
     });
-    submitDraft(
+    await submitDraft(
       db,
       {
         workspaceId,
@@ -362,22 +362,22 @@ describe("workspace priorities projection", () => {
     );
 
     vi.setSystemTime(new Date(T0 - 25 * HOUR));
-    const overdueSignal = createSignal(db, workspaceId, {
+    const overdueSignal = await createSignal(db, workspaceId, {
       content: "An unmatched signal has waited for a campaign decision.",
       source: "other",
     });
-    const pausedSignal = createSignal(db, workspaceId, {
+    const pausedSignal = await createSignal(db, workspaceId, {
       content: "This only belongs to a paused campaign.",
       source: "other",
     });
-    insertSignalMatch(db, workspaceId, pausedSignal.id, {
+    await insertSignalMatch(db, workspaceId, pausedSignal.id, {
       personaId: null,
       campaignId: pausedCampaignId,
       score: 99,
       reason: "The campaign is paused.",
     });
     vi.setSystemTime(new Date(T0));
-    const freshUnmatchedSignal = createSignal(db, workspaceId, {
+    const freshUnmatchedSignal = await createSignal(db, workspaceId, {
       content: "A fresh unmatched signal remains informational.",
       source: "other",
     });
@@ -411,7 +411,7 @@ describe("workspace priorities projection", () => {
     const proposedId = randomUUID();
     const acceptedId = randomUUID();
     const dismissedId = randomUUID();
-    db.insert(nowSyntheses)
+    await db.insert(nowSyntheses)
       .values([
         {
           id: proposedId,
@@ -469,9 +469,9 @@ describe("workspace priorities projection", () => {
       })
     ).json().id;
 
-    function seedConnection(status: "connected" | "error" | "disconnected"): string {
+    async function seedConnection(status: "connected" | "error" | "disconnected"): Promise<string> {
       const id = randomUUID();
-      db.insert(connections)
+      await db.insert(connections)
         .values({
           id,
           workspaceId,
@@ -487,8 +487,8 @@ describe("workspace priorities projection", () => {
       return id;
     }
 
-    function seedScheduledPublication(connectionId: string, suffix: string): void {
-      const draft = submitDraft(
+    async function seedScheduledPublication(connectionId: string, suffix: string): Promise<void> {
+      const draft = await submitDraft(
         db,
         {
           workspaceId,
@@ -501,8 +501,8 @@ describe("workspace priorities projection", () => {
         },
         { userId: null, label: "test", human: true },
       );
-      applyDraftAction(db, draft, "approve", { userId: null, label: "test", human: true });
-      db.insert(publications)
+      await applyDraftAction(db, draft, "approve", { userId: null, label: "test", human: true });
+      await db.insert(publications)
         .values({
           id: randomUUID(),
           workspaceId,
@@ -519,13 +519,13 @@ describe("workspace priorities projection", () => {
         .run();
     }
 
-    const brokenConnectionId = seedConnection("error");
-    const unusedBrokenConnectionId = seedConnection("disconnected");
-    const actionBlockedConnectionId = seedConnection("error");
-    const pendingReviewId = seedPendingDraft();
-    seedScheduledPublication(brokenConnectionId, "primary");
-    seedScheduledPublication(actionBlockedConnectionId, "deduped");
-    seedAction({
+    const brokenConnectionId = await seedConnection("error");
+    const unusedBrokenConnectionId = await seedConnection("disconnected");
+    const actionBlockedConnectionId = await seedConnection("error");
+    const pendingReviewId = await seedPendingDraft();
+    await seedScheduledPublication(brokenConnectionId, "primary");
+    await seedScheduledPublication(actionBlockedConnectionId, "deduped");
+    await seedAction({
       status: "blocked",
       title: "Blocked scheduled post",
       campaignId,
@@ -569,12 +569,12 @@ describe("workspace priorities projection", () => {
         payload: { name: "Paused launch", status: "paused" },
       })
     ).json().id;
-    seedFailedPublication(null, campaignId);
-    seedFailedPublication(null, campaignId);
-    seedFailedPublication(null, campaignId);
-    seedFailedPublication(null, pausedCampaignId);
-    seedFailedPublication(null, pausedCampaignId);
-    seedFailedPublication(null, pausedCampaignId);
+    await seedFailedPublication(null, campaignId);
+    await seedFailedPublication(null, campaignId);
+    await seedFailedPublication(null, campaignId);
+    await seedFailedPublication(null, pausedCampaignId);
+    await seedFailedPublication(null, pausedCampaignId);
+    await seedFailedPublication(null, pausedCampaignId);
 
     const items = await fetchPriorities();
     const repeatedFailures = items.find(

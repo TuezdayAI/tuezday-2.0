@@ -50,19 +50,19 @@ export const getCampaignPlanTool: Tool<Input, unknown> = {
   input,
   access: "read",
   async run(ctx, { campaignId }) {
-    const campaign = getCampaign(ctx.db, ctx.workspaceId, campaignId);
+    const campaign = await getCampaign(ctx.db, ctx.workspaceId, campaignId);
     if (!campaign) {
       return {
         error: "not_found",
         note: `No campaign with id ${campaignId} in this workspace.`,
-        availableCampaigns: listCampaigns(ctx.db, ctx.workspaceId).map((c) => ({
+        availableCampaigns: (await listCampaigns(ctx.db, ctx.workspaceId)).map((c) => ({
           id: c.id,
           name: c.name,
           status: c.status,
         })),
       };
     }
-    const detail = getCurrentCampaignPlan(ctx.db, ctx.workspaceId, campaignId);
+    const detail = await getCurrentCampaignPlan(ctx.db, ctx.workspaceId, campaignId);
     if (!detail) {
       return {
         campaign: campaignSummary(campaign),

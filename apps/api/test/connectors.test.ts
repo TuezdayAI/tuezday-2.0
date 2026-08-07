@@ -99,7 +99,7 @@ describe("connector fabric API", () => {
   });
 
   async function connect(providerKey = "smartlead", payload: Record<string, unknown> = { apiKey: "sk-live-123" }) {
-    return app.inject({
+    return await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/connectors/${providerKey}/connect`,
       payload,
@@ -440,7 +440,7 @@ describe("bounded connector JSON", () => {
     const fixture = responseWithChunks(['{"x":"', 'too-large"}']);
 
     await expect(
-      readBoundedJsonResponse(fixture.response, {
+      await readBoundedJsonResponse(fixture.response, {
         maxBytes: 8,
         signal: new AbortController().signal,
       }),

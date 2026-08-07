@@ -7,9 +7,9 @@ import { createApiKey, verifyApiKey, listApiKeys, revokeApiKey } from "../src/se
 let db: Db;
 let WS = "test-ws-api-keys";
 
-beforeAll(() => {
+beforeAll(async () => {
   db = createTestDb();
-  db.insert(workspaces).values({
+  await db.insert(workspaces).values({
     id: WS,
     name: "API Keys Workspace",
     createdAt: Date.now(),
@@ -17,9 +17,9 @@ beforeAll(() => {
   }).run();
 });
 
-test("api keys lifecycle", () => {
+test("api keys lifecycle", async () => {
   // 1. Create a key
-  const { rawKey, apiKey } = createApiKey(db, WS, {
+  const { rawKey, apiKey } = await createApiKey(db, WS, {
     name: "My First Key",
     scopes: ["ideas:write", "drafts:read"],
   });
@@ -29,17 +29,17 @@ test("api keys lifecycle", () => {
   expect(apiKey.name).toBe("My First Key");
 
   // 2. Verify it
-  const verified = verifyApiKey(db, rawKey);
+  const verified = await verifyApiKey(db, rawKey);
   expect(verified).not.toBeNull();
   expect(verified!.workspaceId).toBe(WS);
   expect(verified!.scopes).toEqual(["ideas:write", "drafts:read"]);
 
   // Verify invalid key
-  const invalid = verifyApiKey(db, "tzk_invalidkey123");
+  const invalid = await verifyApiKey(db, "tzk_invalidkey123");
   expect(invalid).toBeNull();
 
   // 3. List keys
-  const list = listApiKeys(db, WS);
+  const list = await listApiKeys(db, WS);
   expect(list.length).toBe(1);
   expect(list[0]!.id).toBe(apiKey.id);
   expect(list[0]!.name).toBe("My First Key");
@@ -47,13 +47,13 @@ test("api keys lifecycle", () => {
   expect(list[0]!.lastUsedAt).toBeGreaterThan(0);
 
   // 4. Revoke key
-  revokeApiKey(db, WS, apiKey.id);
+  await revokeApiKey(db, WS, apiKey.id);
 
   // 5. Verify revoked key fails
-  const verifiedAfterRevoke = verifyApiKey(db, rawKey);
+  const verifiedAfterRevoke = await verifyApiKey(db, rawKey);
   expect(verifiedAfterRevoke).toBeNull();
 
   // 6. List shouldn't include revoked
-  const listAfterRevoke = listApiKeys(db, WS);
+  const listAfterRevoke = await listApiKeys(db, WS);
   expect(listAfterRevoke.length).toBe(0);
 });

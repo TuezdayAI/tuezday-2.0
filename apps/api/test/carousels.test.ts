@@ -367,7 +367,7 @@ describe("carousel pipeline (Sprint 41 Part 4)", () => {
       const source = await approvedSourceDraft(CONTENT);
 
       // Fill the free plan's entire budget with one ledger event.
-      recordLlmUsage(db, {
+      await recordLlmUsage(db, {
         workspaceId,
         pipeline: "generation",
         model: "unknown-model",
@@ -383,24 +383,24 @@ describe("carousel pipeline (Sprint 41 Part 4)", () => {
 
     it("a successful run draws down exactly one generation and one flat ledger event", async () => {
       const source = await approvedSourceDraft(CONTENT);
-      const count = () =>
-        db.select().from(generations).all().filter((g) => g.workspaceId === workspaceId).length;
-      const before = count();
+      const count = async () =>
+        (await db.select().from(generations).all()).filter((g) => g.workspaceId === workspaceId).length;
+      const before = await count();
       await generateCarousel(source.id);
-      expect(count()).toBe(before + 1);
-      const recorded = db
+      expect(await count()).toBe(before + 1);
+      const recorded = (await db
         .select()
         .from(generations)
-        .all()
+        .all())
         .filter((g) => g.workspaceId === workspaceId)
         .at(-1)!;
       expect(recorded.taskType).toBe("instagram_carousel");
       expect(recorded.provider).toBe("design-pipeline");
       // Sprint 59: the design daemon's LLM is metered as a flat-cost event.
-      const event = db
+      const event = (await db
         .select()
         .from(llmUsageEvents)
-        .all()
+        .all())
         .filter((e) => e.workspaceId === workspaceId)
         .at(-1)!;
       expect(event).toMatchObject({ pipeline: "design_render", costCents: 1 });

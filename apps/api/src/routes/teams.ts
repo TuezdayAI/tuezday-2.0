@@ -26,14 +26,14 @@ function ownerOr403(request: FastifyRequest, reply: FastifyReply): boolean {
 
 export function registerTeamRoutes(app: FastifyInstance, db: Db, mailer: Mailer): void {
   app.get<{ Params: { id: string } }>("/workspaces/:id/members", async (request) =>
-    listMembers(db, request.params.id),
+    await listMembers(db, request.params.id),
   );
 
   app.delete<{ Params: { id: string; userId: string } }>(
     "/workspaces/:id/members/:userId",
     async (request, reply) => {
       if (!ownerOr403(request, reply)) return reply;
-      const result = removeMember(db, request.params.id, request.params.userId);
+      const result = await removeMember(db, request.params.id, request.params.userId);
       if (result === "not_found") return reply.status(404).send({ error: "member_not_found" });
       if (result === "last_owner") {
         return reply.status(409).send({
@@ -49,7 +49,7 @@ export function registerTeamRoutes(app: FastifyInstance, db: Db, mailer: Mailer)
     if (!ownerOr403(request, reply)) return reply;
 
     try {
-      assertWithinLimit(db, request.params.id, "seats", getUsage(db, request.params.id).seats);
+      await assertWithinLimit(db, request.params.id, "seats", (await getUsage(db, request.params.id)).seats);
     } catch (err) {
       if (err instanceof EntitlementError) {
         return reply.status(402).send({ error: "upgrade_required", key: err.key, limit: err.limit });
@@ -65,7 +65,7 @@ export function registerTeamRoutes(app: FastifyInstance, db: Db, mailer: Mailer)
       });
     }
     try {
-      const invite = createInvite(
+      const invite = await createInvite(
         db,
         request.params.id,
         parsed.data.email,
@@ -75,7 +75,7 @@ export function registerTeamRoutes(app: FastifyInstance, db: Db, mailer: Mailer)
       );
       // Email the invite link. Best-effort: a mailer failure must never fail
       // invite creation — the response still carries the token for manual share.
-      const workspace = getWorkspace(db, request.params.id);
+      const workspace = await getWorkspace(db, request.params.id);
       const link = `${appBaseUrl()}/invites/${invite.token}`;
       void mailer
         .send({
@@ -101,14 +101,14 @@ export function registerTeamRoutes(app: FastifyInstance, db: Db, mailer: Mailer)
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/invites", async (request, reply) => {
     if (!ownerOr403(request, reply)) return reply;
-    return listPendingInvites(db, request.params.id);
+    return await listPendingInvites(db, request.params.id);
   });
 
   app.delete<{ Params: { id: string; inviteId: string } }>(
     "/workspaces/:id/invites/:inviteId",
     async (request, reply) => {
       if (!ownerOr403(request, reply)) return reply;
-      if (!revokeInvite(db, request.params.id, request.params.inviteId)) {
+      if (!await revokeInvite(db, request.params.id, request.params.inviteId)) {
         return reply.status(404).send({ error: "invite_not_found" });
       }
       return reply.status(204).send();
@@ -116,9 +116,9 @@ export function registerTeamRoutes(app: FastifyInstance, db: Db, mailer: Mailer)
   );
 
   app.get<{ Params: { token: string } }>("/invites/:token", async (request, reply) => {
-    const invite = getInviteByToken(db, request.params.token);
+    const invite = await getInviteByToken(db, request.params.token);
     if (!invite) return reply.status(404).send({ error: "invite_not_found" });
-    const workspace = getWorkspace(db, invite.workspaceId);
+    const workspace = await getWorkspace(db, invite.workspaceId);
     return {
       workspaceName: workspace?.name ?? "",
       email: invite.email,
@@ -131,9 +131,9 @@ export function registerTeamRoutes(app: FastifyInstance, db: Db, mailer: Mailer)
     if (request.actor.system || !request.actor.userId) {
       return reply.status(403).send({ error: "system_actor" });
     }
-    const user = getUser(db, request.actor.userId);
+    const user = await getUser(db, request.actor.userId);
     if (!user) return reply.status(401).send({ error: "unauthenticated" });
-    const result = acceptInvite(db, request.params.token, user);
+    const result = await acceptInvite(db, request.params.token, user);
     if (!result.ok) {
       if (result.error === "not_found") {
         return reply.status(404).send({ error: "invite_not_found" });
@@ -149,7 +149,7 @@ export function registerTeamRoutes(app: FastifyInstance, db: Db, mailer: Mailer)
         message: "This invite has expired or was revoked.",
       });
     }
-    const workspace = getWorkspace(db, result.workspaceId);
+    const workspace = await getWorkspace(db, result.workspaceId);
     return {
       workspaceId: result.workspaceId,
       workspaceName: workspace?.name ?? "",

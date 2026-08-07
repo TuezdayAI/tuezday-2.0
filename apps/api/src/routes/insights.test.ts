@@ -11,8 +11,8 @@ describe("insights.routes", () => {
     const db = createTestDb();
     const wsId = randomUUID();
     const cId = randomUUID();
-    db.insert(workspaces).values({ id: wsId, name: "W", createdAt: Date.now(), updatedAt: Date.now() }).run();
-    db.insert(campaigns).values({ id: cId, workspaceId: wsId, name: "C", objective: "", kpi: "", timeframe: "", audience: "", pillarsJson: "[]", channelsJson: "[]", personaIdsJson: "[]", overlay: "", status: "active", automationMode: "manual", createdAt: Date.now(), updatedAt: Date.now() }).run();
+    await db.insert(workspaces).values({ id: wsId, name: "W", createdAt: Date.now(), updatedAt: Date.now() }).run();
+    await db.insert(campaigns).values({ id: cId, workspaceId: wsId, name: "C", objective: "", kpi: "", timeframe: "", audience: "", pillarsJson: "[]", channelsJson: "[]", personaIdsJson: "[]", overlay: "", status: "active", automationMode: "manual", createdAt: Date.now(), updatedAt: Date.now() }).run();
 
     const app = Fastify();
     registerInsightsRoutes(app, db);
@@ -30,8 +30,8 @@ describe("insights.routes", () => {
     const db = createTestDb();
     const wsId = randomUUID();
     const cId = randomUUID();
-    db.insert(workspaces).values({ id: wsId, name: "W", createdAt: Date.now(), updatedAt: Date.now() }).run();
-    db.insert(campaigns).values({ id: cId, workspaceId: wsId, name: "C", objective: "", kpi: "", timeframe: "", audience: "", pillarsJson: "[]", channelsJson: "[]", personaIdsJson: "[]", overlay: "", status: "active", automationMode: "manual", createdAt: Date.now(), updatedAt: Date.now() }).run();
+    await db.insert(workspaces).values({ id: wsId, name: "W", createdAt: Date.now(), updatedAt: Date.now() }).run();
+    await db.insert(campaigns).values({ id: cId, workspaceId: wsId, name: "C", objective: "", kpi: "", timeframe: "", audience: "", pillarsJson: "[]", channelsJson: "[]", personaIdsJson: "[]", overlay: "", status: "active", automationMode: "manual", createdAt: Date.now(), updatedAt: Date.now() }).run();
 
     const app = Fastify();
     registerInsightsRoutes(app, db);
@@ -48,7 +48,7 @@ describe("insights.routes", () => {
   it("GET /workspaces/:id/insights returns 200 JSON shaped by schema", async () => {
     const db = createTestDb();
     const wsId = randomUUID();
-    db.insert(workspaces).values({ id: wsId, name: "W", createdAt: Date.now(), updatedAt: Date.now() }).run();
+    await db.insert(workspaces).values({ id: wsId, name: "W", createdAt: Date.now(), updatedAt: Date.now() }).run();
 
     const app = Fastify();
     registerInsightsRoutes(app, db);

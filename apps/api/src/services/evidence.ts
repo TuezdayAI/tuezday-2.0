@@ -30,22 +30,22 @@ function rowToDocument(row: EvidenceDocumentRow): EvidenceDocument {
   return { ...row, status: row.status as EvidenceStatus, kind: row.kind as EvidenceKind };
 }
 
-export function listEvidence(db: Db, workspaceId: string): EvidenceDocument[] {
-  return db
+export async function listEvidence(db: Db, workspaceId: string): Promise<EvidenceDocument[]> {
+  return (await db
     .select()
     .from(evidenceDocuments)
     .where(eq(evidenceDocuments.workspaceId, workspaceId))
     .orderBy(desc(evidenceDocuments.createdAt))
-    .all()
+    .all())
     .map(rowToDocument);
 }
 
-export function getEvidenceDocument(
+export async function getEvidenceDocument(
   db: Db,
   workspaceId: string,
   documentId: string,
-): EvidenceDocument | undefined {
-  const row = db
+): Promise<EvidenceDocument | undefined> {
+  const row = await db
     .select()
     .from(evidenceDocuments)
     .where(and(eq(evidenceDocuments.workspaceId, workspaceId), eq(evidenceDocuments.id, documentId)))
@@ -70,7 +70,7 @@ export async function ensureWorkspaceCollection(
   store: EvidenceStore,
   workspaceId: string,
 ): Promise<string> {
-  const existing = db
+  const existing = await db
     .select()
     .from(evidenceCollections)
     .where(eq(evidenceCollections.workspaceId, workspaceId))
@@ -78,12 +78,12 @@ export async function ensureWorkspaceCollection(
   if (existing) return existing.r2rCollectionId;
 
   const r2rCollectionId = await store.createCollection(workspaceId);
-  db.insert(evidenceCollections)
+  await db.insert(evidenceCollections)
     .values({ workspaceId, r2rCollectionId, createdAt: Date.now() })
     .onConflictDoNothing()
     .run();
   // Re-read in case a concurrent request won the insert race.
-  const row = db
+  const row = await db
     .select()
     .from(evidenceCollections)
     .where(eq(evidenceCollections.workspaceId, workspaceId))
@@ -111,7 +111,7 @@ export async function addEvidence(
     sourceCreatedAt: provenance?.sourceCreatedAt ?? null,
     createdAt: Date.now(),
   };
-  db.insert(evidenceDocuments).values(row).run();
+  await db.insert(evidenceDocuments).values(row).run();
 
   try {
     const collectionId = await ensureWorkspaceCollection(db, store, workspaceId);
@@ -121,14 +121,14 @@ export async function addEvidence(
       collectionId,
       metadata: { workspace_id: workspaceId, kind: row.kind },
     });
-    db.update(evidenceDocuments)
+    await db.update(evidenceDocuments)
       .set({ r2rDocumentId, status: "ready" })
       .where(eq(evidenceDocuments.id, row.id))
       .run();
     return { ...rowToDocument(row), r2rDocumentId, status: "ready" };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    db.update(evidenceDocuments)
+    await db.update(evidenceDocuments)
       .set({ status: "failed", error: message.slice(0, 500) })
       .where(eq(evidenceDocuments.id, row.id))
       .run();
@@ -150,7 +150,7 @@ export async function deleteEvidence(
       // retrieval only surfaces chunks from documents we still track.
     }
   }
-  db.delete(evidenceDocuments).where(eq(evidenceDocuments.id, document.id)).run();
+  await db.delete(evidenceDocuments).where(eq(evidenceDocuments.id, document.id)).run();
 }
 
 // ---------------------------------------------------------------------------
@@ -262,11 +262,11 @@ export interface RetrievalContext {
  * beats the campaign objective, which beats the workspace's `now`/soul docs.
  * Deterministic and shown in the trace.
  */
-export function composeRetrievalQuery(
+export async function composeRetrievalQuery(
   db: Db,
   workspaceId: string,
   context: RetrievalContext,
-): string {
+): Promise<string> {
   const parts: string[] = [];
   if (context.conversation?.trim()) {
     parts.push(context.conversation.trim().slice(0, QUERY_EXCERPT_CHARS));
@@ -275,7 +275,7 @@ export function composeRetrievalQuery(
   } else if (context.campaignObjective?.trim()) {
     parts.push(context.campaignObjective.trim().slice(0, QUERY_EXCERPT_CHARS));
   } else {
-    const { docs } = getBrain(db, workspaceId);
+    const { docs } = await getBrain(db, workspaceId);
     const now = docs.find((d) => d.docType === "now")?.content.trim();
     const soul = docs.find((d) => d.docType === "soul")?.content.trim();
     if (now) parts.push(now.slice(0, QUERY_EXCERPT_CHARS));
@@ -305,7 +305,7 @@ export async function retrieveEvidence(
     return { exclusionReason: "evidence was turned off for this task." };
   }
 
-  const ready = listEvidence(db, workspaceId).filter(
+  const ready = (await listEvidence(db, workspaceId)).filter(
     (d) => d.status === "ready" && d.r2rDocumentId,
   );
   if (ready.length === 0) {
@@ -317,7 +317,7 @@ export async function retrieveEvidence(
     return { exclusionReason: health.detail ?? "evidence store is not reachable." };
   }
 
-  const query = composeRetrievalQuery(db, workspaceId, context);
+  const query = await composeRetrievalQuery(db, workspaceId, context);
   const docByR2rId = new Map(ready.map((d) => [d.r2rDocumentId!, d]));
 
   try {
@@ -363,28 +363,28 @@ function rowToCandidate(row: EvidenceCandidateRow): EvidenceCandidate {
   };
 }
 
-export function listCandidates(
+export async function listCandidates(
   db: Db,
   workspaceId: string,
   status: EvidenceCandidateStatus = "pending",
-): EvidenceCandidate[] {
-  return db
+): Promise<EvidenceCandidate[]> {
+  return (await db
     .select()
     .from(evidenceCandidates)
     .where(
       and(eq(evidenceCandidates.workspaceId, workspaceId), eq(evidenceCandidates.status, status)),
     )
     .orderBy(desc(evidenceCandidates.createdAt))
-    .all()
+    .all())
     .map(rowToCandidate);
 }
 
-export function getCandidate(
+export async function getCandidate(
   db: Db,
   workspaceId: string,
   candidateId: string,
-): EvidenceCandidate | undefined {
-  const row = db
+): Promise<EvidenceCandidate | undefined> {
+  const row = await db
     .select()
     .from(evidenceCandidates)
     .where(
@@ -405,23 +405,23 @@ export interface SweepResult {
  * decided source is never resurrected). Pure DB work — ingestion into the
  * corpus only happens when the founder accepts a candidate.
  */
-export function sweepEvidenceCandidates(db: Db, workspaceId: string): SweepResult {
+export async function sweepEvidenceCandidates(db: Db, workspaceId: string): Promise<SweepResult> {
   const seen = new Set(
-    db
+    (await db
       .select({ kind: evidenceCandidates.kind, sourceRef: evidenceCandidates.sourceRef })
       .from(evidenceCandidates)
       .where(eq(evidenceCandidates.workspaceId, workspaceId))
-      .all()
+      .all())
       .map((r) => `${r.kind}:${r.sourceRef}`),
   );
   const now = Date.now();
   let signalProposed = 0;
   let publishedProposed = 0;
 
-  for (const s of db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all()) {
+  for (const s of await db.select().from(signals).where(eq(signals.workspaceId, workspaceId)).all()) {
     if (seen.has(`signal:${s.id}`)) continue;
     const date = new Date(s.createdAt).toISOString().slice(0, 10);
-    db.insert(evidenceCandidates)
+    await db.insert(evidenceCandidates)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -437,7 +437,7 @@ export function sweepEvidenceCandidates(db: Db, workspaceId: string): SweepResul
     signalProposed++;
   }
 
-  const publishedRows = db
+  const publishedRows = await db
     .select({
       id: publications.id,
       title: publications.title,
@@ -451,7 +451,7 @@ export function sweepEvidenceCandidates(db: Db, workspaceId: string): SweepResul
     .all();
   for (const p of publishedRows) {
     if (seen.has(`published:${p.id}`)) continue;
-    db.insert(evidenceCandidates)
+    await db.insert(evidenceCandidates)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -493,7 +493,7 @@ export async function acceptCandidate(
     },
   );
   if (document.status === "ready") {
-    db.update(evidenceCandidates)
+    await db.update(evidenceCandidates)
       .set({ status: "accepted", evidenceDocumentId: document.id, decidedAt: Date.now() })
       .where(eq(evidenceCandidates.id, candidate.id))
       .run();
@@ -501,8 +501,8 @@ export async function acceptCandidate(
   return document;
 }
 
-export function dismissCandidate(db: Db, candidate: EvidenceCandidate): void {
-  db.update(evidenceCandidates)
+export async function dismissCandidate(db: Db, candidate: EvidenceCandidate): Promise<void> {
+  await db.update(evidenceCandidates)
     .set({ status: "dismissed", decidedAt: Date.now() })
     .where(eq(evidenceCandidates.id, candidate.id))
     .run();
@@ -515,11 +515,11 @@ export function dismissCandidate(db: Db, candidate: EvidenceCandidate): void {
  * never blocked. Runs on API startup; safe to re-run.
  */
 export async function backfillCollections(db: Db, store: EvidenceStore): Promise<void> {
-  const ready = db
+  const ready = (await db
     .select()
     .from(evidenceDocuments)
     .where(eq(evidenceDocuments.status, "ready"))
-    .all()
+    .all())
     .filter((d) => d.r2rDocumentId);
 
   const byWorkspace = new Map<string, EvidenceDocumentRow[]>();

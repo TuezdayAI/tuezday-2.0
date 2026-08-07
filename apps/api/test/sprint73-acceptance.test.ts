@@ -33,8 +33,8 @@ describe("Sprint 73 durable queue acceptance", () => {
 
   it("survives retries, dead letters, requeue, reclaim, and app restart fairly", async () => {
     const db = createTestDb();
-    seedWorkspace(db, FIRST, "First");
-    seedWorkspace(db, SECOND, "Second");
+    await seedWorkspace(db, FIRST, "First");
+    await seedWorkspace(db, SECOND, "Second");
     const attempts = new Map<string, number>();
     let secondRecovers = false;
     const evidence = vi.fn(async (workspaceId: string) => {
@@ -58,17 +58,17 @@ describe("Sprint 73 durable queue acceptance", () => {
       baseBackoffMs: 100,
       maxBackoffMs: 100,
     };
-    reconcileBackgroundSchedules(db, policy);
-    db.update(backgroundSchedules)
+    await reconcileBackgroundSchedules(db, policy);
+    await db.update(backgroundSchedules)
       .set({ nextRunAt: Date.now() + 86_400_000 })
       .run();
-    enqueueBackgroundJob(db, {
+    await enqueueBackgroundJob(db, {
       payload: { kind: "evidence", workspaceId: FIRST },
       idempotencyKey: "acceptance:first",
       priority: 100,
       maxAttempts: 3,
     });
-    enqueueBackgroundJob(db, {
+    await enqueueBackgroundJob(db, {
       payload: { kind: "evidence", workspaceId: SECOND },
       idempotencyKey: "acceptance:second",
       priority: 100,
@@ -87,7 +87,7 @@ describe("Sprint 73 durable queue acceptance", () => {
       SECOND,
     ]);
 
-    db.update(backgroundJobs)
+    await db.update(backgroundJobs)
       .set({ availableAt: 0 })
       .where(eq(backgroundJobs.status, "queued"))
       .run();
@@ -96,11 +96,11 @@ describe("Sprint 73 durable queue acceptance", () => {
       succeeded: 1,
       deadLettered: 1,
     });
-    const dead = db
+    const dead = (await db
       .select()
       .from(backgroundJobs)
       .where(eq(backgroundJobs.status, "dead_letter"))
-      .get()!;
+      .get())!;
 
     secondRecovers = true;
     const requeued = await app.inject({
@@ -112,30 +112,30 @@ describe("Sprint 73 durable queue acceptance", () => {
     expect(requeued.statusCode, requeued.body).toBe(201);
     expect(await tick(app)).toMatchObject({ claimed: 1, succeeded: 1 });
 
-    const reclaim = enqueueBackgroundJob(db, {
+    const reclaim = await enqueueBackgroundJob(db, {
       payload: { kind: "evidence", workspaceId: FIRST },
       idempotencyKey: "acceptance:reclaim",
       priority: 100,
     });
-    const [staleClaim] = claimBackgroundJobs(db, {
+    const [staleClaim] = await claimBackgroundJobs(db, {
       owner: "dead-process",
       leaseMs: 30_000,
       limit: 1,
       perWorkspaceLimit: 1,
     });
     expect(staleClaim?.id).toBe(reclaim.id);
-    db.update(backgroundJobs)
+    await db.update(backgroundJobs)
       .set({ leaseExpiresAt: 0 })
       .where(eq(backgroundJobs.id, reclaim.id))
       .run();
     expect(await tick(app)).toMatchObject({ claimed: 1, succeeded: 1 });
     expect(
-      db.select().from(backgroundJobs).where(eq(backgroundJobs.id, reclaim.id)).get(),
+      await db.select().from(backgroundJobs).where(eq(backgroundJobs.id, reclaim.id)).get(),
     ).toMatchObject({ status: "succeeded", attempt: 2 });
 
     await app.close();
     app = undefined;
-    const scheduleCount = db.select().from(backgroundSchedules).all().length;
+    const scheduleCount = (await db.select().from(backgroundSchedules).all()).length;
     app = await buildApp({
       db,
       workerToken: TOKEN,
@@ -143,7 +143,7 @@ describe("Sprint 73 durable queue acceptance", () => {
       backgroundJobPolicy: policy,
     });
     expect(await tick(app)).toMatchObject({ reconciled: 0, admitted: 0 });
-    expect(db.select().from(backgroundSchedules).all()).toHaveLength(scheduleCount);
+    expect(await db.select().from(backgroundSchedules).all()).toHaveLength(scheduleCount);
 
     const stats = await app.inject({
       method: "GET",
@@ -155,8 +155,8 @@ describe("Sprint 73 durable queue acceptance", () => {
   });
 });
 
-function seedWorkspace(db: Db, id: string, name: string): void {
-  db.insert(workspaces)
+async function seedWorkspace(db: Db, id: string, name: string): Promise<void> {
+  await db.insert(workspaces)
     .values({ id, name, createdAt: Date.now(), updatedAt: Date.now() })
     .run();
 }

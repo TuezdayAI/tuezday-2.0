@@ -22,7 +22,7 @@ export const searchDiscoveryItemsTool: Tool<Input, unknown> = {
   input,
   access: "read",
   async run(ctx, { query, status, limit }) {
-    const items = listDiscoveredItems(ctx.db, ctx.workspaceId, status);
+    const items = await listDiscoveredItems(ctx.db, ctx.workspaceId, status);
     const cap = limit ?? DEFAULT_LIMIT;
 
     let chosen = items;

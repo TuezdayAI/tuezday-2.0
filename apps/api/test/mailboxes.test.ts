@@ -117,10 +117,10 @@ describe("outreach mailboxes (Sprint 47)", () => {
   });
 
   /** Seed a connected Gmail connector row (tokens would live in Nango). */
-  function seedGmailConnection(providerKey = "gmail", status = "connected"): string {
+  async function seedGmailConnection(providerKey = "gmail", status = "connected"): Promise<string> {
     const id = randomUUID();
     const now = Date.now();
-    db.insert(connections)
+    await db.insert(connections)
       .values({
         id,
         workspaceId,
@@ -138,7 +138,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
   }
 
   async function createMailbox(): Promise<string> {
-    const connectionId = seedGmailConnection();
+    const connectionId = await seedGmailConnection();
     const res = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/mailboxes`,
@@ -149,9 +149,9 @@ describe("outreach mailboxes (Sprint 47)", () => {
   }
 
   /** Turn off the workspace kill switch and allow a recipient (safety layer). */
-  function enableEmail(recipient: string): void {
+  async function enableEmail(recipient: string): Promise<void> {
     const now = Date.now();
-    db.insert(workspaceEmailSenders)
+    await db.insert(workspaceEmailSenders)
       .values({
         workspaceId,
         domain: "example.com",
@@ -172,7 +172,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
       })
       .onConflictDoNothing()
       .run();
-    db.insert(emailRecipientPermissions)
+    await db.insert(emailRecipientPermissions)
       .values({
         id: randomUUID(),
         workspaceId,
@@ -209,7 +209,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
 
   async function sendFromMailbox(draftId: string, mailboxId: string) {
     await putActionPolicy(app, workspaceId, "workspace", workspaceId, { send: "autonomous" });
-    return app.inject({
+    return await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/outbound/drafts/${draftId}/send`,
       payload: { mailboxId },
@@ -220,7 +220,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
 
   describe("mailbox CRUD", () => {
     it("creates a mailbox from a gmail connection, address from the profile", async () => {
-      const connectionId = seedGmailConnection();
+      const connectionId = await seedGmailConnection();
       const res = await app.inject({
         method: "POST",
         url: `/workspaces/${workspaceId}/mailboxes`,
@@ -235,7 +235,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
     });
 
     it("rejects a non-gmail connection", async () => {
-      const connectionId = seedGmailConnection("reddit");
+      const connectionId = await seedGmailConnection("reddit");
       const res = await app.inject({
         method: "POST",
         url: `/workspaces/${workspaceId}/mailboxes`,
@@ -288,7 +288,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
         url: `/workspaces/${workspaceId}/mailboxes/${mailboxId}`,
       });
       expect(res.statusCode).toBe(204);
-      const row = db.select().from(mailboxes).where(eq(mailboxes.id, mailboxId)).get();
+      const row = await db.select().from(mailboxes).where(eq(mailboxes.id, mailboxId)).get();
       expect(row?.status).toBe("disconnected");
     });
   });
@@ -304,7 +304,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
         payload: { signature: "— Jane" },
       });
       const draftId = await approvedDraftForLead();
-      enableEmail("prospect@acme.io");
+      await enableEmail("prospect@acme.io");
 
       const send = await sendFromMailbox(draftId, mailboxId);
       expect(send.statusCode).toBe(200);
@@ -315,7 +315,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
       expect(gmail.lastSendInput?.text).toContain("— Jane");
       expect(gmail.lastSendInput?.text).toContain("Unsubscribe: https://app.test/u/");
 
-      const delivery = db
+      const delivery = await db
         .select()
         .from(emailDeliveries)
         .where(eq(emailDeliveries.workspaceId, workspaceId))
@@ -328,7 +328,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
     it("is idempotent — a duplicate send reuses the action, sends once", async () => {
       const mailboxId = await createMailbox();
       const draftId = await approvedDraftForLead();
-      enableEmail("prospect@acme.io");
+      await enableEmail("prospect@acme.io");
 
       const first = await sendFromMailbox(draftId, mailboxId);
       const second = await sendFromMailbox(draftId, mailboxId);
@@ -339,8 +339,8 @@ describe("outreach mailboxes (Sprint 47)", () => {
     it("blocks a suppressed recipient (no send)", async () => {
       const mailboxId = await createMailbox();
       const draftId = await approvedDraftForLead();
-      enableEmail("prospect@acme.io");
-      db.insert(emailSuppressions)
+      await enableEmail("prospect@acme.io");
+      await db.insert(emailSuppressions)
         .values({
           id: randomUUID(),
           workspaceId,
@@ -372,14 +372,14 @@ describe("outreach mailboxes (Sprint 47)", () => {
         payload: { dailyCap: 1 },
       });
       // A real first send consumes the cap of 1 (accepted gmail delivery).
-      enableEmail("first@acme.io");
+      await enableEmail("first@acme.io");
       const firstDraft = await approvedDraftForLead("first@acme.io");
       const first = await sendFromMailbox(firstDraft, mailboxId);
       expect(first.json().execution.status).toBe("accepted");
       expect(gmail.sendEmail).toHaveBeenCalledTimes(1);
 
       // A second send from the same mailbox is now over cap.
-      enableEmail("second@acme.io");
+      await enableEmail("second@acme.io");
       const secondDraft = await approvedDraftForLead("second@acme.io");
       const second = await sendFromMailbox(secondDraft, mailboxId);
       expect(second.json().action.status).toBe("blocked");
@@ -414,7 +414,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
 
     it("404s an unknown mailbox", async () => {
       const draftId = await approvedDraftForLead();
-      enableEmail("prospect@acme.io");
+      await enableEmail("prospect@acme.io");
       const res = await app.inject({
         method: "POST",
         url: `/workspaces/${workspaceId}/outbound/drafts/${draftId}/send`,
@@ -431,9 +431,9 @@ describe("outreach mailboxes (Sprint 47)", () => {
     async function sendAndGetThread(): Promise<{ mailboxId: string; threadId: string }> {
       const mailboxId = await createMailbox();
       const draftId = await approvedDraftForLead();
-      enableEmail("prospect@acme.io");
+      await enableEmail("prospect@acme.io");
       await sendFromMailbox(draftId, mailboxId);
-      const delivery = db
+      const delivery = await db
         .select()
         .from(emailDeliveries)
         .where(eq(emailDeliveries.provider, "gmail"))
@@ -467,7 +467,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
       expect(run.statusCode).toBe(200);
       expect(run.json().newItems).toBe(1);
 
-      const items = db.select().from(inboxItems).where(eq(inboxItems.workspaceId, workspaceId)).all();
+      const items = await db.select().from(inboxItems).where(eq(inboxItems.workspaceId, workspaceId)).all();
       expect(items).toHaveLength(1);
       expect(items[0]!.kind).toBe("email");
       expect(items[0]!.content).toContain("interested");
@@ -486,7 +486,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
         url: `/workspaces/${workspaceId}/mailbox-inbox/run`,
       });
       expect(second.json().newItems).toBe(0);
-      const items = db.select().from(inboxItems).where(eq(inboxItems.workspaceId, workspaceId)).all();
+      const items = await db.select().from(inboxItems).where(eq(inboxItems.workspaceId, workspaceId)).all();
       expect(items).toHaveLength(1); // own-address message never ingested
     });
 
@@ -499,7 +499,7 @@ describe("outreach mailboxes (Sprint 47)", () => {
         url: `/workspaces/${workspaceId}/mailbox-inbox/run`,
       });
       expect(run.json().labeled).toBe(1);
-      const item = db.select().from(inboxItems).where(eq(inboxItems.workspaceId, workspaceId)).get();
+      const item = await db.select().from(inboxItems).where(eq(inboxItems.workspaceId, workspaceId)).get();
       expect(item?.replyLabel).toBe("unsubscribe_request");
       expect(item?.emailDeliveryId).toBeTruthy();
     });
@@ -515,14 +515,14 @@ describe("outreach mailboxes (Sprint 47)", () => {
       });
       expect(run.json().newItems).toBe(1);
       expect(run.json().labeled).toBe(0);
-      const item = db.select().from(inboxItems).where(eq(inboxItems.workspaceId, workspaceId)).get();
+      const item = await db.select().from(inboxItems).where(eq(inboxItems.workspaceId, workspaceId)).get();
       expect(item?.replyLabel ?? null).toBeNull();
     });
 
     it("advances lastPolledAt", async () => {
       const { mailboxId } = await sendAndGetThread();
       await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/mailbox-inbox/run` });
-      const row = db.select().from(mailboxes).where(eq(mailboxes.id, mailboxId)).get();
+      const row = await db.select().from(mailboxes).where(eq(mailboxes.id, mailboxId)).get();
       expect(row?.lastPolledAt).toBeTruthy();
     });
 
@@ -530,14 +530,14 @@ describe("outreach mailboxes (Sprint 47)", () => {
       const { threadId } = await sendAndGetThread();
       gmail.inbound = [reply(threadId, "interested")];
       await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/mailbox-inbox/run` });
-      const item = db.select().from(inboxItems).where(eq(inboxItems.workspaceId, workspaceId)).get();
+      const item = await db.select().from(inboxItems).where(eq(inboxItems.workspaceId, workspaceId)).get();
 
       const res = await app.inject({
         method: "POST",
         url: `/workspaces/${workspaceId}/inbox/${item!.id}/reply`,
       });
       expect(res.statusCode).toBe(200);
-      const updated = db.select().from(inboxItems).where(eq(inboxItems.id, item!.id)).get();
+      const updated = await db.select().from(inboxItems).where(eq(inboxItems.id, item!.id)).get();
       expect(updated?.replyDraftId).toBeTruthy();
     });
   });

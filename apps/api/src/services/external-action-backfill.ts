@@ -26,7 +26,7 @@ function campaignRule(
   }
 }
 
-function insertPolicy(
+async function insertPolicy(
   db: DbExecutor,
   input: {
     workspaceId: string;
@@ -35,9 +35,9 @@ function insertPolicy(
     actionKind: ExternalActionKind;
     rule: ExternalActionPolicyRule;
   },
-): void {
+): Promise<void> {
   const now = Date.now();
-  db.insert(externalActionPolicyRules)
+  await db.insert(externalActionPolicyRules)
     .values({
       id: randomUUID(),
       ...input,
@@ -50,9 +50,9 @@ function insertPolicy(
 }
 
 /** Establish the conservative baseline for a workspace exactly once. */
-export function ensureWorkspaceActionPolicies(db: Db, workspaceId: string): void {
+export async function ensureWorkspaceActionPolicies(db: Db, workspaceId: string): Promise<void> {
   for (const actionKind of EXTERNAL_ACTION_KINDS) {
-    insertPolicy(db, {
+    await insertPolicy(db, {
       workspaceId,
       scope: "workspace",
       scopeId: workspaceId,
@@ -63,14 +63,14 @@ export function ensureWorkspaceActionPolicies(db: Db, workspaceId: string): void
 }
 
 /** Preserve existing campaign automation semantics while making them explicit. */
-export function ensureCampaignActionPolicies(
+export async function ensureCampaignActionPolicies(
   db: DbExecutor,
   workspaceId: string,
   campaignId: string,
   automationMode: AutomationMode,
-): void {
+): Promise<void> {
   for (const actionKind of EXTERNAL_ACTION_KINDS) {
-    insertPolicy(db, {
+    await insertPolicy(db, {
       workspaceId,
       scope: "campaign",
       scopeId: campaignId,
@@ -81,12 +81,12 @@ export function ensureCampaignActionPolicies(
 }
 
 /** Idempotently bootstrap policy rows for pre-authorization data. */
-export function backfillExternalActionPolicies(db: Db): void {
-  for (const workspace of db.select({ id: workspaces.id }).from(workspaces).all()) {
-    ensureWorkspaceActionPolicies(db, workspace.id);
+export async function backfillExternalActionPolicies(db: Db): Promise<void> {
+  for (const workspace of await db.select({ id: workspaces.id }).from(workspaces).all()) {
+    await ensureWorkspaceActionPolicies(db, workspace.id);
   }
 
-  for (const campaign of db
+  for (const campaign of await db
     .select({
       id: campaigns.id,
       workspaceId: campaigns.workspaceId,
@@ -94,7 +94,7 @@ export function backfillExternalActionPolicies(db: Db): void {
     })
     .from(campaigns)
     .all()) {
-    ensureCampaignActionPolicies(
+    await ensureCampaignActionPolicies(
       db,
       campaign.workspaceId,
       campaign.id,

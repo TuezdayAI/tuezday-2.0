@@ -64,7 +64,7 @@ describe("POST /workspaces/:id/brain/auto-draft (route)", () => {
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "W" } })
     ).json();
     const now = Date.now();
-    db.insert(brandProfiles)
+    await db.insert(brandProfiles)
       .values({
         id: randomUUID(),
         workspaceId: ws.id,

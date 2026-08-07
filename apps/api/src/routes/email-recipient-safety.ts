@@ -19,8 +19,8 @@ import {
 } from "../services/email-recipient-safety";
 import { getWorkspace } from "../services/workspaces";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply): boolean {
-  if (getWorkspace(db, id)) return true;
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply): Promise<boolean> {
+  if (await getWorkspace(db, id)) return true;
   void reply.status(404).send({ error: "workspace_not_found" });
   return false;
 }
@@ -51,11 +51,11 @@ export function registerEmailRecipientSafetyRoutes(app: FastifyInstance, db: Db)
   app.get<{ Params: { id: string; normalizedEmail: string } }>(
     "/workspaces/:id/email-permissions/:normalizedEmail",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const email = normalizedEmailOr400(request.params.normalizedEmail, reply);
       if (!email) return reply;
       return (
-        getEmailPermission(db, request.params.id, email) ?? {
+        await getEmailPermission(db, request.params.id, email) ?? {
           workspaceId: request.params.id,
           normalizedEmail: email,
           status: "unknown",
@@ -69,26 +69,26 @@ export function registerEmailRecipientSafetyRoutes(app: FastifyInstance, db: Db)
   app.put<{ Params: { id: string; normalizedEmail: string } }>(
     "/workspaces/:id/email-permissions/:normalizedEmail",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const email = normalizedEmailOr400(request.params.normalizedEmail, reply);
       if (!email) return reply;
       const parsed = updateEmailPermissionInputSchema.safeParse(request.body);
       if (!parsed.success) return reply.status(400).send({ error: "invalid_input" });
-      return updateEmailPermission(db, request.params.id, email, parsed.data);
+      return await updateEmailPermission(db, request.params.id, email, parsed.data);
     },
   );
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/email-safety", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return getEmailSafetySettings(db, request.params.id);
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return await getEmailSafetySettings(db, request.params.id);
   });
 
   app.put<{ Params: { id: string } }>("/workspaces/:id/email-safety", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = updateEmailSafetyInputSchema.safeParse(request.body);
     if (!parsed.success) return reply.status(400).send({ error: "invalid_input" });
     try {
-      return updateEmailSafetySettings(db, request.params.id, parsed.data);
+      return await updateEmailSafetySettings(db, request.params.id, parsed.data);
     } catch (error) {
       if (error instanceof EmailSafetyConfigurationError) {
         return reply.status(409).send({ error: error.code, message: error.message });
@@ -99,17 +99,17 @@ export function registerEmailRecipientSafetyRoutes(app: FastifyInstance, db: Db)
 
   // Suppression list (Sprint 49): paste a batch of emails to block up front.
   app.get<{ Params: { id: string } }>("/workspaces/:id/suppressions", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return listSuppressions(db, request.params.id);
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return await listSuppressions(db, request.params.id);
   });
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/suppressions/import", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = importSuppressionsInputSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: "invalid_input", issues: parsed.error.issues });
     }
-    return importSuppressions(db, request.params.id, parsed.data.emails);
+    return await importSuppressions(db, request.params.id, parsed.data.emails);
   });
 
   app.get<{ Params: { token: string } }>("/u/:token", async (request, reply) => {
@@ -121,10 +121,10 @@ export function registerEmailRecipientSafetyRoutes(app: FastifyInstance, db: Db)
   app.post<{ Params: { token: string } }>("/u/:token", async (request, reply) => {
     const verified = verifyUnsubscribeToken(request.params.token);
     if (!verified.ok) return reply.status(400).send({ error: verified.error });
-    if (!getWorkspace(db, verified.value.workspaceId)) {
+    if (!await getWorkspace(db, verified.value.workspaceId)) {
       return reply.status(400).send({ error: "invalid_token" });
     }
-    unsubscribeEmailRecipient(db, verified.value.workspaceId, verified.value.normalizedEmail);
+    await unsubscribeEmailRecipient(db, verified.value.workspaceId, verified.value.normalizedEmail);
     return reply.type("text/html; charset=utf-8").send(unsubscribePage(verified.value.normalizedEmail, true));
   });
 }

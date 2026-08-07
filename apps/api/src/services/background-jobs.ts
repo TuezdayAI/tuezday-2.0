@@ -129,10 +129,10 @@ function toClaim(row: BackgroundJobRow | undefined): BackgroundJobClaim | null {
   return row as BackgroundJobClaim;
 }
 
-export function enqueueBackgroundJob(
+export async function enqueueBackgroundJob(
   db: DbExecutor,
   input: EnqueueBackgroundJobInput,
-): BackgroundJobRow {
+): Promise<BackgroundJobRow> {
   const payload = backgroundJobPayloadSchema.parse(input.payload);
   const idempotencyKey = input.idempotencyKey.trim();
   if (
@@ -150,7 +150,7 @@ export function enqueueBackgroundJob(
     1,
     25,
   );
-  const now = databaseNowMs(db);
+  const now = await databaseNowMs(db);
   const availableAt = integerInRange(
     input.availableAt ?? now,
     "availableAt",
@@ -163,7 +163,7 @@ export function enqueueBackgroundJob(
   }
   const scopedActiveKey = activeKey(payload.workspaceId, idempotencyKey);
 
-  const inserted = db
+  const inserted = await db
     .insert(backgroundJobs)
     .values({
       id: randomUUID(),
@@ -193,7 +193,7 @@ export function enqueueBackgroundJob(
     .get();
   if (inserted) return inserted;
 
-  const existing = db
+  const existing = await db
     .select()
     .from(backgroundJobs)
     .where(eq(backgroundJobs.activeKey, scopedActiveKey))
@@ -216,14 +216,14 @@ function validateClaimInput(input: ClaimBackgroundJobsInput): void {
  * the concurrency boundary; a brief outer dispatcher lease further reduces
  * contention when multiple API processes receive ticks simultaneously.
  */
-export function claimBackgroundJobs(
+export async function claimBackgroundJobs(
   db: Db,
   input: ClaimBackgroundJobsInput,
-): BackgroundJobClaim[] {
+): Promise<BackgroundJobClaim[]> {
   validateClaimInput(input);
-  return db.transaction((tx) => {
-    const now = databaseNowMs(tx);
-    const liveRows = tx
+  return await db.transaction(async (tx) => {
+    const now = await databaseNowMs(tx);
+    const liveRows = await tx
       .select({ workspaceId: backgroundJobs.workspaceId })
       .from(backgroundJobs)
       .where(
@@ -238,7 +238,7 @@ export function claimBackgroundJobs(
       liveCounts.set(row.workspaceId, (liveCounts.get(row.workspaceId) ?? 0) + 1);
     }
 
-    const candidates = tx
+    const candidates = await tx
       .select()
       .from(backgroundJobs)
       .where(
@@ -264,7 +264,7 @@ export function claimBackgroundJobs(
     if (candidates.length === 0) return [];
 
     const workspaceIds = [...new Set(candidates.map((row) => row.workspaceId))];
-    const dispatchRows = tx
+    const dispatchRows = await tx
       .select()
       .from(backgroundWorkspaceDispatch)
       .where(inArray(backgroundWorkspaceDispatch.workspaceId, workspaceIds))
@@ -312,7 +312,7 @@ export function claimBackgroundJobs(
                   eq(backgroundJobs.status, "running"),
                   lte(backgroundJobs.leaseExpiresAt, now),
                 );
-          const row = tx
+          const row = await tx
             .update(backgroundJobs)
             .set({
               status: "running",
@@ -339,7 +339,7 @@ export function claimBackgroundJobs(
         }
         if (!claimed) continue;
 
-        tx.insert(backgroundWorkspaceDispatch)
+        await tx.insert(backgroundWorkspaceDispatch)
           .values({
             workspaceId,
             lastDispatchedAt: now,
@@ -371,15 +371,15 @@ function liveClaimWhere(claim: BackgroundJobClaim, now: number) {
   );
 }
 
-export function heartbeatBackgroundJob(
+export async function heartbeatBackgroundJob(
   db: Db,
   claim: BackgroundJobClaim,
   leaseMs: number,
-): BackgroundJobClaim | null {
+): Promise<BackgroundJobClaim | null> {
   integerInRange(leaseMs, "leaseMs", 1, 86_400_000);
-  const now = databaseNowMs(db);
+  const now = await databaseNowMs(db);
   return toClaim(
-    db
+    await db
       .update(backgroundJobs)
       .set({
         leaseExpiresAt: now + leaseMs,
@@ -392,13 +392,13 @@ export function heartbeatBackgroundJob(
   );
 }
 
-export function completeBackgroundJob(
+export async function completeBackgroundJob(
   db: Db,
   claim: BackgroundJobClaim,
   result: unknown,
-): boolean {
-  const now = databaseNowMs(db);
-  const updated = db
+): Promise<boolean> {
+  const now = await databaseNowMs(db);
+  const updated = await db
     .update(backgroundJobs)
     .set({
       status: "succeeded",
@@ -432,14 +432,14 @@ function deterministicBackoffMs(
   return core + (hash % (jitterRoom + 1));
 }
 
-export function deadLetterBackgroundJob(
+export async function deadLetterBackgroundJob(
   db: Db,
   claim: BackgroundJobClaim,
   error: unknown,
-): BackgroundJobRow | null {
-  const now = databaseNowMs(db);
+): Promise<BackgroundJobRow | null> {
+  const now = await databaseNowMs(db);
   return (
-    db
+    await db
       .update(backgroundJobs)
       .set({
         status: "dead_letter",
@@ -457,7 +457,7 @@ export function deadLetterBackgroundJob(
   );
 }
 
-export function retryBackgroundJob(
+export async function retryBackgroundJob(
   db: Db,
   claim: BackgroundJobClaim,
   error: unknown,
@@ -466,7 +466,7 @@ export function retryBackgroundJob(
     maxBackoffMs: number;
     availableAt?: number;
   },
-): BackgroundJobRow | null {
+): Promise<BackgroundJobRow | null> {
   const baseBackoffMs = integerInRange(
     options.baseBackoffMs,
     "baseBackoffMs",
@@ -480,15 +480,15 @@ export function retryBackgroundJob(
     7 * 86_400_000,
   );
   if (claim.attempt >= claim.maxAttempts) {
-    return deadLetterBackgroundJob(db, claim, error);
+    return await deadLetterBackgroundJob(db, claim, error);
   }
 
-  const now = databaseNowMs(db);
+  const now = await databaseNowMs(db);
   const availableAt = options.availableAt ??
     now + deterministicBackoffMs(claim, baseBackoffMs, maxBackoffMs);
   integerInRange(availableAt, "availableAt", now + 1, Number.MAX_SAFE_INTEGER);
   return (
-    db
+    await db
       .update(backgroundJobs)
       .set({
         status: "queued",
@@ -506,12 +506,12 @@ export function retryBackgroundJob(
   );
 }
 
-export function requeueDeadLetter(
+export async function requeueDeadLetter(
   db: Db,
   jobId: string,
   options: { availableAt?: number; maxAttempts?: number } = {},
-): BackgroundJobRow | null {
-  const dead = db
+): Promise<BackgroundJobRow | null> {
+  const dead = await db
     .select()
     .from(backgroundJobs)
     .where(
@@ -523,7 +523,7 @@ export function requeueDeadLetter(
     .get();
   if (!dead) return null;
   const parsed = backgroundJobPayloadSchema.parse(JSON.parse(dead.payloadJson));
-  return enqueueBackgroundJob(db, {
+  return await enqueueBackgroundJob(db, {
     payload: parsed,
     idempotencyKey: dead.idempotencyKey,
     priority: dead.priority,
@@ -532,10 +532,10 @@ export function requeueDeadLetter(
   });
 }
 
-export function listBackgroundJobs(
+export async function listBackgroundJobs(
   db: Db,
   input: BackgroundJobListInput = {},
-): BackgroundJobRow[] {
+): Promise<BackgroundJobRow[]> {
   const limit = integerInRange(input.limit ?? 50, "limit", 1, 250);
   if (input.status) backgroundJobStatusSchema.parse(input.status);
   if (input.kind && !BACKGROUND_JOB_KINDS.includes(input.kind)) {
@@ -548,7 +548,7 @@ export function listBackgroundJobs(
       : undefined,
     input.kind ? eq(backgroundJobs.kind, input.kind) : undefined,
   ].filter((condition) => condition !== undefined);
-  return db
+  return await db
     .select()
     .from(backgroundJobs)
     .where(conditions.length > 0 ? and(...conditions) : undefined)
@@ -557,18 +557,18 @@ export function listBackgroundJobs(
     .all();
 }
 
-export function getBackgroundQueueStats(
+export async function getBackgroundQueueStats(
   db: Db,
   options: { perWorkspaceConcurrency?: number } = {},
-): BackgroundQueueStats {
-  const now = databaseNowMs(db);
+): Promise<BackgroundQueueStats> {
+  const now = await databaseNowMs(db);
   const perWorkspaceConcurrency = integerInRange(
     options.perWorkspaceConcurrency ?? 1,
     "perWorkspaceConcurrency",
     1,
     100,
   );
-  const aggregate = db.get<{
+  const aggregate = await db.get<{
     total: number;
     queued: number;
     runnable: number;
@@ -596,7 +596,7 @@ export function getBackgroundQueueStats(
       END) AS average_duration_ms
     FROM background_jobs
   `);
-  const saturation = db.get<{ count: number }>(sql`
+  const saturation = await db.get<{ count: number }>(sql`
     SELECT COUNT(*) AS count
     FROM (
       SELECT workspace_id
@@ -609,7 +609,7 @@ export function getBackgroundQueueStats(
   const byKind = Object.fromEntries(
     BACKGROUND_JOB_KINDS.map((kind) => [kind, 0]),
   ) as Record<BackgroundJobKind, number>;
-  for (const row of db.all<{ kind: string; count: number }>(sql`
+  for (const row of await db.all<{ kind: string; count: number }>(sql`
     SELECT kind, COUNT(*) AS count
     FROM background_jobs
     GROUP BY kind

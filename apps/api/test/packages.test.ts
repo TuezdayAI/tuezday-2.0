@@ -106,23 +106,23 @@ describe("package routes (Sprint 62)", () => {
         payload: { name: "Category launch" },
       })
     ).json().id;
-    const revision = createPlanRevision(db, workspaceId, campaignId, planInput, {
+    const revision = await createPlanRevision(db, workspaceId, campaignId, planInput, {
       userId: null,
     });
-    upsertLaneRevision(db, workspaceId, campaignId, revision.id, {
+    await upsertLaneRevision(db, workspaceId, campaignId, revision.id, {
       ...laneInput,
       personaId,
     });
-    activatePlanRevision(db, workspaceId, campaignId, revision.id);
+    await activatePlanRevision(db, workspaceId, campaignId, revision.id);
   });
 
   afterEach(async () => {
     await app.close();
   });
 
-  function seedQualifiedOpportunity(title: string, angle: string): string {
-    db.transaction((tx) => {
-      recordOccurrenceAndResolve(tx, {
+  async function seedQualifiedOpportunity(title: string, angle: string): Promise<string> {
+    await db.transaction(async (tx) => {
+      await recordOccurrenceAndResolve(tx, {
         workspaceId,
         source: { id: randomUUID(), type: "rss", name: "Feed" },
         fetchRunId: null,
@@ -136,16 +136,16 @@ describe("package routes (Sprint 62)", () => {
         observedAt: Date.now(),
       });
     });
-    const story = db
+    const story = (await db
       .select()
       .from(canonicalExternalStories)
       .where(eq(canonicalExternalStories.title, title))
-      .get()!;
-    const profile = compileRoutingProfile(db, workspaceId, campaignId)!;
-    const occurrenceIds = [...loadStoryRoutingContext(db, story).activeOccurrenceIds];
+      .get())!;
+    const profile = (await compileRoutingProfile(db, workspaceId, campaignId))!;
+    const occurrenceIds = [...(await loadStoryRoutingContext(db, story)).activeOccurrenceIds];
     const id = randomUUID();
     const now = Date.now();
-    db.insert(campaignOpportunities)
+    await db.insert(campaignOpportunities)
       .values({
         id,
         workspaceId,
@@ -178,7 +178,7 @@ describe("package routes (Sprint 62)", () => {
   }
 
   async function createPackage(title: string, angle: string) {
-    const opportunityId = seedQualifiedOpportunity(title, angle);
+    const opportunityId = await seedQualifiedOpportunity(title, angle);
     const res = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/opportunities/${opportunityId}/package`,

@@ -92,13 +92,13 @@ type PublishActionPayload = z.infer<typeof publishActionPayloadSchema>;
 
 export { ExternalActionPreparationError } from "./external-action-preparation";
 
-function publishIntent(
+async function publishIntent(
   db: Db,
   workspaceId: string,
   payload: PublishActionPayload,
   options: { allowDueTime: boolean },
-): ExternalActionIntent {
-  const draft = getDraft(db, workspaceId, payload.draftId);
+): Promise<ExternalActionIntent> {
+  const draft = await getDraft(db, workspaceId, payload.draftId);
   if (!draft) {
     throw new ExternalActionPreparationError("draft_not_found", "Draft not found.", 404);
   }
@@ -121,7 +121,7 @@ function publishIntent(
     );
   }
 
-  const connection = getConnection(db, workspaceId, payload.connectionId);
+  const connection = await getConnection(db, workspaceId, payload.connectionId);
   if (!connection) {
     throw new ExternalActionPreparationError("connection_not_found", "Connection not found.", 404);
   }
@@ -134,7 +134,7 @@ function publishIntent(
     );
   }
   if (draft.personaId) {
-    const routed = resolvePersonaSocialConnection(db, workspaceId, {
+    const routed = await resolvePersonaSocialConnection(db, workspaceId, {
       personaId: draft.personaId,
       providerKey: connection.providerKey,
       channel: provider.key === "twitter" ? "x" : provider.key,
@@ -163,8 +163,8 @@ function publishIntent(
     );
   }
 
-  const campaign = draft.campaignId ? getCampaign(db, workspaceId, draft.campaignId) : undefined;
-  const persona = draft.personaId ? getPersona(db, workspaceId, draft.personaId) : undefined;
+  const campaign = draft.campaignId ? await getCampaign(db, workspaceId, draft.campaignId) : undefined;
+  const persona = draft.personaId ? await getPersona(db, workspaceId, draft.personaId) : undefined;
   const media = draft.media ?? null;
   return {
     subject: {
@@ -191,7 +191,7 @@ function publishIntent(
   };
 }
 
-export function preparePublicationAction(
+export async function preparePublicationAction(
   db: Db,
   workspaceId: string,
   draftId: string,
@@ -201,7 +201,7 @@ export function preparePublicationAction(
     cadenceId?: string | null;
     automated?: boolean;
   },
-): ExternalActionCommand {
+): Promise<ExternalActionCommand> {
   const payload = publishActionPayloadSchema.parse({
     draftId,
     connectionId: input.connectionId,
@@ -216,7 +216,7 @@ export function preparePublicationAction(
     workspaceId,
     kind: "publish",
     idempotencyKey: options.idempotencyKey,
-    ...publishIntent(db, workspaceId, payload, { allowDueTime: false }),
+    ...await publishIntent(db, workspaceId, payload, { allowDueTime: false }),
   };
 }
 
@@ -246,14 +246,14 @@ export function publishActionAdapter(
 ): ExternalActionAdapter {
   return {
     async revalidate(action, rawPayload) {
-      return publishIntent(db, action.workspaceId, asPublishPayload(rawPayload), {
+      return await publishIntent(db, action.workspaceId, asPublishPayload(rawPayload), {
         allowDueTime: true,
       });
     },
 
     async guard(action, rawPayload): Promise<ExternalActionBlocker | null> {
       const payload = asPublishPayload(rawPayload);
-      const connection = getConnection(db, action.workspaceId, payload.connectionId);
+      const connection = await getConnection(db, action.workspaceId, payload.connectionId);
       if (!connection || connection.status !== "connected") {
         return {
           code: "connection_unhealthy",
@@ -261,7 +261,7 @@ export function publishActionAdapter(
           retryable: true,
         };
       }
-      const existing = findLivePublication(
+      const existing = await findLivePublication(
         db,
         action.workspaceId,
         payload.draftId,
@@ -276,7 +276,7 @@ export function publishActionAdapter(
         };
       }
       if (payload.automated && action.context.campaignId) {
-        const campaign = getCampaign(db, action.workspaceId, action.context.campaignId);
+        const campaign = await getCampaign(db, action.workspaceId, action.context.campaignId);
         if (!campaign) {
           return {
             code: "campaign_unavailable",
@@ -284,9 +284,9 @@ export function publishActionAdapter(
             retryable: false,
           };
         }
-        const check = checkPostGuardrails(
+        const check = await checkPostGuardrails(
           db,
-          getSocialAutomationSettings(db, action.workspaceId),
+          await getSocialAutomationSettings(db, action.workspaceId),
           {
             campaign,
             connectionId: connection.id,
@@ -301,11 +301,11 @@ export function publishActionAdapter(
 
     async execute(action: ExternalAction, rawPayload): Promise<ExternalActionExecutionRef> {
       const payload = asPublishPayload(rawPayload);
-      const existing = getPublicationByExternalAction(db, action.workspaceId, action.id);
+      const existing = await getPublicationByExternalAction(db, action.workspaceId, action.id);
       if (existing && (existing.status === "published" || existing.status === "failed")) {
         return publicationReceipt(existing);
       }
-      const connection = getConnection(db, action.workspaceId, payload.connectionId);
+      const connection = await getConnection(db, action.workspaceId, payload.connectionId);
       if (!connection) {
         return {
           kind: "publication",
@@ -364,13 +364,13 @@ export function deriveReplyIdempotencyKey(
   }).slice(0, 32)}`;
 }
 
-function replyIntent(
+async function replyIntent(
   db: Db,
   workspaceId: string,
   itemId: string,
   automated: boolean,
-): ExternalActionIntent {
-  const item = getInboxItem(db, workspaceId, itemId);
+): Promise<ExternalActionIntent> {
+  const item = await getInboxItem(db, workspaceId, itemId);
   if (!item) {
     throw new ExternalActionPreparationError("inbox_item_not_found", "Inbox item not found.", 404);
   }
@@ -381,7 +381,7 @@ function replyIntent(
       409,
     );
   }
-  const draft = getDraft(db, workspaceId, item.replyDraftId);
+  const draft = await getDraft(db, workspaceId, item.replyDraftId);
   if (!draft || draft.state !== "approved") {
     throw new ExternalActionPreparationError(
       "reply_not_approved",
@@ -389,7 +389,7 @@ function replyIntent(
       409,
     );
   }
-  const connection = getConnection(db, workspaceId, item.connectionId);
+  const connection = await getConnection(db, workspaceId, item.connectionId);
   if (!connection) {
     throw new ExternalActionPreparationError("connection_not_found", "Connection not found.", 404);
   }
@@ -397,14 +397,14 @@ function replyIntent(
   if (item.kind === "dm") {
     target = item.authorHandle;
   } else if (item.publicationId) {
-    const pub = db
+    const pub = await db
       .select({ externalId: publications.externalId })
       .from(publications)
       .where(eq(publications.id, item.publicationId))
       .get();
     target = pub?.externalId ?? null;
   }
-  const { campaign, persona } = replyContext(db, workspaceId, item);
+  const { campaign, persona } = await replyContext(db, workspaceId, item);
   const connectionName =
     connection.displayName || connection.externalAccountName || connection.providerKey;
   const payload: ReplyActionPayload = {
@@ -441,17 +441,17 @@ function replyIntent(
   };
 }
 
-export function prepareReplyAction(
+export async function prepareReplyAction(
   db: Db,
   workspaceId: string,
   itemId: string,
   options: { idempotencyKey: string; automated: boolean },
-): ExternalActionCommand {
+): Promise<ExternalActionCommand> {
   return {
     workspaceId,
     kind: "reply",
     idempotencyKey: options.idempotencyKey,
-    ...replyIntent(db, workspaceId, itemId, options.automated),
+    ...await replyIntent(db, workspaceId, itemId, options.automated),
   };
 }
 
@@ -467,12 +467,12 @@ export function replyActionAdapter(
   return {
     async revalidate(action, rawPayload) {
       const payload = asReplyPayload(rawPayload);
-      return replyIntent(db, action.workspaceId, payload.inboxItemId, payload.automated);
+      return await replyIntent(db, action.workspaceId, payload.inboxItemId, payload.automated);
     },
 
     async guard(action, rawPayload): Promise<ExternalActionBlocker | null> {
       const payload = asReplyPayload(rawPayload);
-      const item = getInboxItem(db, action.workspaceId, payload.inboxItemId);
+      const item = await getInboxItem(db, action.workspaceId, payload.inboxItemId);
       if (!item) {
         return {
           code: "inbox_item_missing",
@@ -487,7 +487,7 @@ export function replyActionAdapter(
           retryable: false,
         };
       }
-      const connection = getConnection(db, action.workspaceId, payload.connectionId);
+      const connection = await getConnection(db, action.workspaceId, payload.connectionId);
       if (!connection || connection.status !== "connected") {
         return {
           code: "connection_unhealthy",
@@ -496,9 +496,9 @@ export function replyActionAdapter(
         };
       }
       if (payload.automated) {
-        const check = checkReplyGuardrails(
+        const check = await checkReplyGuardrails(
           db,
-          getSocialAutomationSettings(db, action.workspaceId),
+          await getSocialAutomationSettings(db, action.workspaceId),
           item.connectionId,
           Date.now(),
         );
@@ -518,7 +518,7 @@ export function replyActionAdapter(
 
     async execute(action, rawPayload): Promise<ExternalActionExecutionRef> {
       const payload = asReplyPayload(rawPayload);
-      const item = getInboxItem(db, action.workspaceId, payload.inboxItemId);
+      const item = await getInboxItem(db, action.workspaceId, payload.inboxItemId);
       if (!item) {
         return {
           kind: "inbox_reply",
@@ -537,11 +537,11 @@ export function replyActionAdapter(
           error: null,
         };
       }
-      db.update(inboxItems)
+      await db.update(inboxItems)
         .set({ externalActionId: action.id, updatedAt: Date.now() })
         .where(eq(inboxItems.id, item.id))
         .run();
-      const workspace = getWorkspace(db, action.workspaceId)!;
+      const workspace = (await getWorkspace(db, action.workspaceId))!;
       try {
         const updated = await postReplyForItem(db, fabric, fetcher, workspace, item, payload.body);
         return {
@@ -593,13 +593,13 @@ export function deriveSendIdempotencyKey(
   return `send:${messageId}:${canonicalActionFingerprint(input).slice(0, 32)}`;
 }
 
-function launchMessageRow(
+async function launchMessageRow(
   db: Db,
   workspaceId: string,
   launchId: string,
   messageId: string,
-): LaunchMessageRow | undefined {
-  return db
+): Promise<LaunchMessageRow | undefined> {
+  return await db
     .select()
     .from(launchMessages)
     .where(
@@ -612,7 +612,7 @@ function launchMessageRow(
     .get();
 }
 
-function sendIntent(
+async function sendIntent(
   db: Db,
   workspaceId: string,
   args: {
@@ -622,8 +622,8 @@ function sendIntent(
     media: unknown[] | null;
     automated: boolean;
   },
-): ExternalActionIntent {
-  const launchRow = db
+): Promise<ExternalActionIntent> {
+  const launchRow = await db
     .select()
     .from(launches)
     .where(and(eq(launches.workspaceId, workspaceId), eq(launches.id, args.launchId)))
@@ -631,7 +631,7 @@ function sendIntent(
   if (!launchRow) {
     throw new ExternalActionPreparationError("launch_not_found", "Launch not found.", 404);
   }
-  const message = launchMessageRow(db, workspaceId, args.launchId, args.messageId);
+  const message = await launchMessageRow(db, workspaceId, args.launchId, args.messageId);
   if (!message) {
     throw new ExternalActionPreparationError("message_not_found", "Launch message not found.", 404);
   }
@@ -651,7 +651,7 @@ function sendIntent(
       409,
     );
   }
-  const draft = getDraft(db, workspaceId, message.draftId);
+  const draft = await getDraft(db, workspaceId, message.draftId);
   if (!draft || draft.state !== "approved") {
     throw new ExternalActionPreparationError(
       "draft_not_approved",
@@ -659,7 +659,7 @@ function sendIntent(
       409,
     );
   }
-  const connection = getConnection(db, workspaceId, args.connectionId);
+  const connection = await getConnection(db, workspaceId, args.connectionId);
   if (!connection || connection.providerKey !== providerKey) {
     throw new ExternalActionPreparationError("no_connection", "Connection not found.", 404);
   }
@@ -703,10 +703,10 @@ function sendIntent(
   }
 
   const campaign = launchRow.campaignId
-    ? getCampaign(db, workspaceId, launchRow.campaignId)
+    ? await getCampaign(db, workspaceId, launchRow.campaignId)
     : undefined;
   const persona = launchRow.personaId
-    ? getPersona(db, workspaceId, launchRow.personaId)
+    ? await getPersona(db, workspaceId, launchRow.personaId)
     : undefined;
   const connectionName =
     connection.displayName || connection.externalAccountName || connection.providerKey;
@@ -751,7 +751,7 @@ function sendIntent(
   };
 }
 
-export function prepareSendAction(
+export async function prepareSendAction(
   db: Db,
   workspaceId: string,
   launchId: string,
@@ -762,12 +762,12 @@ export function prepareSendAction(
     media?: unknown[] | null;
     automated?: boolean;
   },
-): ExternalActionCommand {
+): Promise<ExternalActionCommand> {
   return {
     workspaceId,
     kind: "send",
     idempotencyKey: options.idempotencyKey,
-    ...sendIntent(db, workspaceId, {
+    ...await sendIntent(db, workspaceId, {
       launchId,
       messageId,
       connectionId: options.connectionId,
@@ -797,19 +797,19 @@ function launchMessageReceipt(message: {
 }
 
 /** Stop-on-reply + auto caps for a queued or dispatching send. */
-function sendGuardBlocker(
+async function sendGuardBlocker(
   db: Db,
   action: ExternalAction,
   payload: SendActionPayload,
   message: LaunchMessageRow,
-): ExternalActionBlocker | null {
+): Promise<ExternalActionBlocker | null> {
   if (message.sequenceRecipientId && payload.channel === "x") {
-    const launchRow = db
+    const launchRow = await db
       .select({ stopOnReply: launches.stopOnReply })
       .from(launches)
       .where(eq(launches.id, payload.launchId))
       .get();
-    const recipient = db
+    const recipient = await db
       .select()
       .from(sequenceRecipients)
       .where(eq(sequenceRecipients.id, message.sequenceRecipientId))
@@ -817,7 +817,7 @@ function sendGuardBlocker(
     if (
       launchRow?.stopOnReply === 1 &&
       recipient &&
-      hasInboundReply(
+      await hasInboundReply(
         db,
         action.workspaceId,
         recipient.recipientHandle,
@@ -832,7 +832,7 @@ function sendGuardBlocker(
     }
   }
   if (payload.automated && payload.channel === "x") {
-    const settings = getSocialAutomationSettings(db, action.workspaceId);
+    const settings = await getSocialAutomationSettings(db, action.workspaceId);
     if (settings.killSwitch) {
       return {
         code: "kill_switch_on",
@@ -840,7 +840,7 @@ function sendGuardBlocker(
         retryable: true,
       };
     }
-    if (countConnectionDmsForDay(db, payload.connectionId, Date.now()) >= settings.perConnectionDailyCap) {
+    if (await countConnectionDmsForDay(db, payload.connectionId, Date.now()) >= settings.perConnectionDailyCap) {
       return {
         code: "connection_cap",
         message: "This account hit its daily DM cap.",
@@ -861,7 +861,7 @@ function socialSendActionAdapter(
     payload: SendActionPayload,
     message: LaunchMessageRow,
   ): Promise<ExternalActionExecutionRef> {
-    const connection = getConnection(db, action.workspaceId, payload.connectionId);
+    const connection = await getConnection(db, action.workspaceId, payload.connectionId);
     if (!connection) {
       return {
         kind: "launch_message",
@@ -886,7 +886,7 @@ function socialSendActionAdapter(
     );
     const now = Date.now();
     if (publication.status === "published") {
-      db.update(launchMessages)
+      await db.update(launchMessages)
         .set({
           status: "sent",
           sentAt: now,
@@ -899,7 +899,7 @@ function socialSendActionAdapter(
         .where(eq(launchMessages.id, message.id))
         .run();
     } else {
-      db.update(launchMessages)
+      await db.update(launchMessages)
         .set({
           status: "failed",
           publicationId: publication.id,
@@ -910,7 +910,7 @@ function socialSendActionAdapter(
         .run();
     }
     return launchMessageReceipt(
-      launchMessageRow(db, action.workspaceId, payload.launchId, message.id)!,
+      (await launchMessageRow(db, action.workspaceId, payload.launchId, message.id))!,
     );
   }
 
@@ -919,7 +919,7 @@ function socialSendActionAdapter(
     payload: SendActionPayload,
     message: LaunchMessageRow,
   ): Promise<ExternalActionExecutionRef> {
-    const connection = getConnection(db, action.workspaceId, payload.connectionId);
+    const connection = await getConnection(db, action.workspaceId, payload.connectionId);
     const provider = connection ? providerByKey(connection.providerKey) : undefined;
     const adapter =
       connection && provider ? socialAdapterFor(fabric, provider, connection) : undefined;
@@ -929,7 +929,7 @@ function socialSendActionAdapter(
         throw new Error("The X connection is not available — reconnect it on the Integrations page.");
       }
       const res = await adapter.sendDm({ recipientHandle: payload.target ?? "", body: payload.body });
-      db.update(launchMessages)
+      await db.update(launchMessages)
         .set({
           status: "sent",
           sentAt: now,
@@ -944,27 +944,27 @@ function socialSendActionAdapter(
       // Keep the sequence's stop-on-reply window aligned with the actual send,
       // even when the send was authorized from Review rather than the engine.
       if (message.sequenceRecipientId) {
-        db.update(sequenceRecipients)
+        await db.update(sequenceRecipients)
           .set({ lastSentAt: now, updatedAt: now })
           .where(eq(sequenceRecipients.id, message.sequenceRecipientId))
           .run();
       }
     } catch (err) {
       const messageText = (err instanceof Error ? err.message : String(err)).slice(0, 500);
-      db.update(launchMessages)
+      await db.update(launchMessages)
         .set({ status: "failed", lastError: messageText, updatedAt: now })
         .where(eq(launchMessages.id, message.id))
         .run();
     }
     return launchMessageReceipt(
-      launchMessageRow(db, action.workspaceId, payload.launchId, message.id)!,
+      (await launchMessageRow(db, action.workspaceId, payload.launchId, message.id))!,
     );
   }
 
   return {
     async revalidate(action, rawPayload) {
       const payload = asSendPayload(rawPayload);
-      return sendIntent(db, action.workspaceId, {
+      return await sendIntent(db, action.workspaceId, {
         launchId: payload.launchId,
         messageId: payload.messageId,
         connectionId: payload.connectionId,
@@ -975,7 +975,7 @@ function socialSendActionAdapter(
 
     async guard(action, rawPayload): Promise<ExternalActionBlocker | null> {
       const payload = asSendPayload(rawPayload);
-      const message = launchMessageRow(db, action.workspaceId, payload.launchId, payload.messageId);
+      const message = await launchMessageRow(db, action.workspaceId, payload.launchId, payload.messageId);
       if (!message) {
         return {
           code: "message_missing",
@@ -990,7 +990,7 @@ function socialSendActionAdapter(
           retryable: false,
         };
       }
-      const connection = getConnection(db, action.workspaceId, payload.connectionId);
+      const connection = await getConnection(db, action.workspaceId, payload.connectionId);
       if (!connection || connection.status !== "connected") {
         return {
           code: "connection_unhealthy",
@@ -998,12 +998,12 @@ function socialSendActionAdapter(
           retryable: true,
         };
       }
-      return sendGuardBlocker(db, action, payload, message);
+      return await sendGuardBlocker(db, action, payload, message);
     },
 
     async execute(action, rawPayload): Promise<ExternalActionExecutionRef> {
       const payload = asSendPayload(rawPayload);
-      const message = launchMessageRow(db, action.workspaceId, payload.launchId, payload.messageId);
+      const message = await launchMessageRow(db, action.workspaceId, payload.launchId, payload.messageId);
       if (!message) {
         return {
           kind: "launch_message",
@@ -1016,7 +1016,7 @@ function socialSendActionAdapter(
       if (message.status === "sent" && message.externalActionId === action.id) {
         return launchMessageReceipt(message);
       }
-      db.update(launchMessages)
+      await db.update(launchMessages)
         .set({ externalActionId: action.id, updatedAt: Date.now() })
         .where(eq(launchMessages.id, message.id))
         .run();
@@ -1026,7 +1026,7 @@ function socialSendActionAdapter(
           : await executeXDm(action, payload, message);
       // Sequence launches complete through the sequence engine, not here.
       if (!message.sequenceRecipientId) {
-        maybeCompleteLaunch(db, action.workspaceId, payload.launchId);
+        await maybeCompleteLaunch(db, action.workspaceId, payload.launchId);
       }
       return receipt;
     },
@@ -1087,16 +1087,16 @@ const paidLaunchActionPayloadSchema = z.object({
 
 type PaidLaunchActionPayload = z.infer<typeof paidLaunchActionPayloadSchema>;
 
-function paidLaunchIntent(db: Db, workspaceId: string, launchId: string): ExternalActionIntent {
-  const launch = getAdLaunch(db, workspaceId, launchId);
+async function paidLaunchIntent(db: Db, workspaceId: string, launchId: string): Promise<ExternalActionIntent> {
+  const launch = await getAdLaunch(db, workspaceId, launchId);
   if (!launch) {
     throw new ExternalActionPreparationError("launch_not_found", "Launch not found.", 404);
   }
-  const account = getAdAccount(db, workspaceId, launch.adAccountId);
+  const account = await getAdAccount(db, workspaceId, launch.adAccountId);
   if (!account) {
     throw new ExternalActionPreparationError("account_not_found", "No such ad account.", 404);
   }
-  const draft = getDraft(db, workspaceId, launch.creativeDraftId);
+  const draft = await getDraft(db, workspaceId, launch.creativeDraftId);
   const creative = draft ? creativeFieldsFrom(draft.content) : null;
   if (!creative) {
     throw new ExternalActionPreparationError(
@@ -1105,7 +1105,7 @@ function paidLaunchIntent(db: Db, workspaceId: string, launchId: string): Extern
       400,
     );
   }
-  const campaign = launch.campaignId ? getCampaign(db, workspaceId, launch.campaignId) : undefined;
+  const campaign = launch.campaignId ? await getCampaign(db, workspaceId, launch.campaignId) : undefined;
   const payload: PaidLaunchActionPayload = {
     launchId: launch.id,
     adAccountId: account.id,
@@ -1150,12 +1150,12 @@ function paidLaunchIntent(db: Db, workspaceId: string, launchId: string): Extern
   };
 }
 
-export function preparePaidLaunchAction(
+export async function preparePaidLaunchAction(
   db: Db,
   workspaceId: string,
   launchId: string,
-): ExternalActionCommand {
-  const launch = getAdLaunch(db, workspaceId, launchId);
+): Promise<ExternalActionCommand> {
+  const launch = await getAdLaunch(db, workspaceId, launchId);
   if (!launch) {
     throw new ExternalActionPreparationError("launch_not_found", "Launch not found.", 404);
   }
@@ -1175,12 +1175,12 @@ export function preparePaidLaunchAction(
   }
   // Each terminal attempt (failed, blocked, denied, stale) frees the founder to
   // retry from the launch page with a fresh action, exactly like before.
-  const attempt = countTerminalExternalActionsForSubject(db, workspaceId, "paid_launch", launchId);
+  const attempt = await countTerminalExternalActionsForSubject(db, workspaceId, "paid_launch", launchId);
   return {
     workspaceId,
     kind: "paid_launch",
     idempotencyKey: `paid_launch:${launchId}:${attempt}`,
-    ...paidLaunchIntent(db, workspaceId, launchId),
+    ...await paidLaunchIntent(db, workspaceId, launchId),
   };
 }
 
@@ -1188,17 +1188,17 @@ function asPaidLaunchPayload(payload: unknown): PaidLaunchActionPayload {
   return paidLaunchActionPayloadSchema.parse(payload);
 }
 
-function resolveAdsExecution(
+async function resolveAdsExecution(
   db: Db,
   fabric: ConnectorFabric,
   fetcher: Fetcher,
   workspaceId: string,
   adAccountId: string,
-): { adapter: AdsExecutionAdapter; externalAccountId: string } | null {
-  const account = getAdAccount(db, workspaceId, adAccountId);
+): Promise<{ adapter: AdsExecutionAdapter; externalAccountId: string } | null> {
+  const account = await getAdAccount(db, workspaceId, adAccountId);
   if (!account) return null;
   const connection = account.connectionId
-    ? getConnection(db, workspaceId, account.connectionId)
+    ? await getConnection(db, workspaceId, account.connectionId)
     : undefined;
   const provider = connection ? providerByKey(connection.providerKey) : undefined;
   const adapter =
@@ -1216,7 +1216,7 @@ export function paidLaunchActionAdapter(
   return {
     async revalidate(action, rawPayload) {
       const payload = asPaidLaunchPayload(rawPayload);
-      return paidLaunchIntent(db, action.workspaceId, payload.launchId);
+      return await paidLaunchIntent(db, action.workspaceId, payload.launchId);
     },
 
     // Sprint 54 (D4b) — the spend guardrails are knowable the moment the launch
@@ -1227,11 +1227,11 @@ export function paidLaunchActionAdapter(
     // re-read at dispatch, where they are current.
     async guardAtProposal(action, rawPayload): Promise<ExternalActionBlocker | null> {
       const payload = asPaidLaunchPayload(rawPayload);
-      const launch = getAdLaunch(db, action.workspaceId, payload.launchId);
+      const launch = await getAdLaunch(db, action.workspaceId, payload.launchId);
       // A launch that vanished between preparation and insert is `guard`'s to
       // report — at proposal there is nothing to bound the spend of.
       if (!launch) return null;
-      const guardrails = checkSpendGuardrails(db, launch);
+      const guardrails = await checkSpendGuardrails(db, launch);
       return guardrails.ok
         ? null
         : { code: guardrails.error, message: guardrails.message, retryable: true };
@@ -1239,7 +1239,7 @@ export function paidLaunchActionAdapter(
 
     async guard(action, rawPayload): Promise<ExternalActionBlocker | null> {
       const payload = asPaidLaunchPayload(rawPayload);
-      const launch = getAdLaunch(db, action.workspaceId, payload.launchId);
+      const launch = await getAdLaunch(db, action.workspaceId, payload.launchId);
       if (!launch) {
         return {
           code: "launch_missing",
@@ -1254,7 +1254,7 @@ export function paidLaunchActionAdapter(
           retryable: false,
         };
       }
-      if (!resolveAdsExecution(db, fabric, fetcher, action.workspaceId, payload.adAccountId)) {
+      if (!await resolveAdsExecution(db, fabric, fetcher, action.workspaceId, payload.adAccountId)) {
         return {
           code: "account_not_launchable",
           message:
@@ -1262,7 +1262,7 @@ export function paidLaunchActionAdapter(
           retryable: true,
         };
       }
-      const guardrails = checkSpendGuardrails(db, launch);
+      const guardrails = await checkSpendGuardrails(db, launch);
       if (!guardrails.ok) {
         return { code: guardrails.error, message: guardrails.message, retryable: true };
       }
@@ -1271,7 +1271,7 @@ export function paidLaunchActionAdapter(
 
     async execute(action, rawPayload): Promise<ExternalActionExecutionRef> {
       const payload = asPaidLaunchPayload(rawPayload);
-      const launch = getAdLaunch(db, action.workspaceId, payload.launchId);
+      const launch = await getAdLaunch(db, action.workspaceId, payload.launchId);
       if (!launch) {
         return {
           kind: "ad_launch",
@@ -1284,11 +1284,11 @@ export function paidLaunchActionAdapter(
       if (launch.status === "launched" && launch.externalActionId === action.id) {
         return { kind: "ad_launch", id: launch.id, status: "launched", url: null, error: null };
       }
-      db.update(adLaunches)
+      await db.update(adLaunches)
         .set({ externalActionId: action.id, updatedAt: Date.now() })
         .where(eq(adLaunches.id, launch.id))
         .run();
-      const resolved = resolveAdsExecution(db, fabric, fetcher, action.workspaceId, payload.adAccountId);
+      const resolved = await resolveAdsExecution(db, fabric, fetcher, action.workspaceId, payload.adAccountId);
       if (!resolved) {
         return {
           kind: "ad_launch",
@@ -1347,7 +1347,7 @@ async function budgetChangeIntent(
   afterDailyBudgetCents: number,
   allowNoop: boolean,
 ): Promise<ExternalActionIntent> {
-  const launch = getAdLaunch(db, workspaceId, launchId);
+  const launch = await getAdLaunch(db, workspaceId, launchId);
   if (!launch) {
     throw new ExternalActionPreparationError("launch_not_found", "Launch not found.", 404);
   }
@@ -1358,11 +1358,11 @@ async function budgetChangeIntent(
       409,
     );
   }
-  const account = getAdAccount(db, workspaceId, launch.adAccountId);
+  const account = await getAdAccount(db, workspaceId, launch.adAccountId);
   if (!account) {
     throw new ExternalActionPreparationError("account_not_found", "No such ad account.", 404);
   }
-  const resolved = resolveAdsExecution(db, fabric, fetcher, workspaceId, launch.adAccountId);
+  const resolved = await resolveAdsExecution(db, fabric, fetcher, workspaceId, launch.adAccountId);
   if (!resolved) {
     throw new ExternalActionPreparationError(
       "account_not_launchable",
@@ -1392,7 +1392,7 @@ async function budgetChangeIntent(
     providerUpdatedAt: provider.updatedAt,
   };
   const payload = allowNoop ? rawPayload : budgetChangeIntentSchema.parse(rawPayload);
-  const campaign = launch.campaignId ? getCampaign(db, workspaceId, launch.campaignId) : undefined;
+  const campaign = launch.campaignId ? await getCampaign(db, workspaceId, launch.campaignId) : undefined;
   return {
     subject: {
       kind: "ad_launch",
@@ -1449,7 +1449,7 @@ export function budgetChangeActionAdapter(
   return {
     async revalidate(action, rawPayload) {
       const payload = asBudgetChangePayload(rawPayload);
-      return budgetChangeIntent(
+      return await budgetChangeIntent(
         db,
         fabric,
         fetcher,
@@ -1462,7 +1462,7 @@ export function budgetChangeActionAdapter(
 
     async guard(action, rawPayload): Promise<ExternalActionBlocker | null> {
       const payload = asBudgetChangePayload(rawPayload);
-      const launch = getAdLaunch(db, action.workspaceId, payload.launchId);
+      const launch = await getAdLaunch(db, action.workspaceId, payload.launchId);
       if (!launch || launch.status !== "launched" || !launch.externalAdSetId) {
         return {
           code: "launch_not_eligible",
@@ -1470,14 +1470,14 @@ export function budgetChangeActionAdapter(
           retryable: false,
         };
       }
-      if (!resolveAdsExecution(db, fabric, fetcher, action.workspaceId, payload.adAccountId)) {
+      if (!await resolveAdsExecution(db, fabric, fetcher, action.workspaceId, payload.adAccountId)) {
         return {
           code: "connection_unhealthy",
           message: "Reconnect the Meta ad account before changing its budget.",
           retryable: true,
         };
       }
-      const guardrails = checkSpendGuardrails(db, {
+      const guardrails = await checkSpendGuardrails(db, {
         ...launch,
         dailyBudgetCents: payload.afterDailyBudgetCents,
       });
@@ -1496,7 +1496,7 @@ export function budgetChangeActionAdapter(
 
     async execute(action, rawPayload): Promise<ExternalActionExecutionRef> {
       const payload = asBudgetChangePayload(rawPayload);
-      const resolved = resolveAdsExecution(
+      const resolved = await resolveAdsExecution(
         db,
         fabric,
         fetcher,
@@ -1521,7 +1521,7 @@ export function budgetChangeActionAdapter(
         if (updated.dailyBudgetCents !== payload.afterDailyBudgetCents) {
           throw new Error("Meta did not confirm the requested daily budget.");
         }
-        db.update(adLaunches)
+        await db.update(adLaunches)
           .set({ dailyBudgetCents: updated.dailyBudgetCents, updatedAt: Date.now() })
           .where(eq(adLaunches.id, payload.launchId))
           .run();
@@ -1574,7 +1574,7 @@ async function targetingChangeIntent(
   after: TargetingChangeIntent["after"],
   allowNoop: boolean,
 ): Promise<ExternalActionIntent> {
-  const launch = getAdLaunch(db, workspaceId, launchId);
+  const launch = await getAdLaunch(db, workspaceId, launchId);
   if (!launch) {
     throw new ExternalActionPreparationError("launch_not_found", "Launch not found.", 404);
   }
@@ -1585,11 +1585,11 @@ async function targetingChangeIntent(
       409,
     );
   }
-  const account = getAdAccount(db, workspaceId, launch.adAccountId);
+  const account = await getAdAccount(db, workspaceId, launch.adAccountId);
   if (!account) {
     throw new ExternalActionPreparationError("account_not_found", "No such ad account.", 404);
   }
-  const resolved = resolveAdsExecution(db, fabric, fetcher, workspaceId, launch.adAccountId);
+  const resolved = await resolveAdsExecution(db, fabric, fetcher, workspaceId, launch.adAccountId);
   if (!resolved) {
     throw new ExternalActionPreparationError(
       "account_not_launchable",
@@ -1623,7 +1623,7 @@ async function targetingChangeIntent(
     providerUpdatedAt: provider.updatedAt,
   };
   const payload = allowNoop ? rawPayload : targetingChangeIntentSchema.parse(rawPayload);
-  const campaign = launch.campaignId ? getCampaign(db, workspaceId, launch.campaignId) : undefined;
+  const campaign = launch.campaignId ? await getCampaign(db, workspaceId, launch.campaignId) : undefined;
   return {
     subject: {
       kind: "ad_launch",
@@ -1684,7 +1684,7 @@ export function targetingChangeActionAdapter(
   return {
     async revalidate(action, rawPayload) {
       const payload = asTargetingChangePayload(rawPayload);
-      return targetingChangeIntent(
+      return await targetingChangeIntent(
         db,
         fabric,
         fetcher,
@@ -1697,7 +1697,7 @@ export function targetingChangeActionAdapter(
 
     async guard(action, rawPayload): Promise<ExternalActionBlocker | null> {
       const payload = asTargetingChangePayload(rawPayload);
-      const launch = getAdLaunch(db, action.workspaceId, payload.launchId);
+      const launch = await getAdLaunch(db, action.workspaceId, payload.launchId);
       if (!launch || launch.status !== "launched" || !launch.externalAdSetId) {
         return {
           code: "launch_not_eligible",
@@ -1705,14 +1705,14 @@ export function targetingChangeActionAdapter(
           retryable: false,
         };
       }
-      if (!resolveAdsExecution(db, fabric, fetcher, action.workspaceId, payload.adAccountId)) {
+      if (!await resolveAdsExecution(db, fabric, fetcher, action.workspaceId, payload.adAccountId)) {
         return {
           code: "connection_unhealthy",
           message: "Reconnect the Meta ad account before changing its targeting.",
           retryable: true,
         };
       }
-      const guardrails = checkSpendGuardrails(db, launch);
+      const guardrails = await checkSpendGuardrails(db, launch);
       if (!guardrails.ok) {
         return {
           // Sprint 54 Task 1 — one blocker spelling across all three ad kinds.
@@ -1728,7 +1728,7 @@ export function targetingChangeActionAdapter(
 
     async execute(action, rawPayload): Promise<ExternalActionExecutionRef> {
       const payload = asTargetingChangePayload(rawPayload);
-      const resolved = resolveAdsExecution(
+      const resolved = await resolveAdsExecution(
         db,
         fabric,
         fetcher,
@@ -1758,7 +1758,7 @@ export function targetingChangeActionAdapter(
         if (!sameTargeting(confirmed, payload.after)) {
           throw new Error("Meta did not confirm the requested targeting.");
         }
-        persistLaunchTargeting(db, payload.launchId, confirmed);
+        await persistLaunchTargeting(db, payload.launchId, confirmed);
         return {
           kind: "ad_mutation",
           id: payload.launchId,

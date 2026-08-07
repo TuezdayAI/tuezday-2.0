@@ -24,9 +24,9 @@ describe("the unified inbox (Sprint 70)", () => {
     await app.close();
   });
 
-  function seedDraft(createdAt = 100): string {
+  async function seedDraft(createdAt = 100): Promise<string> {
     const id = randomUUID();
-    db.insert(drafts)
+    await db.insert(drafts)
       .values({
         id,
         workspaceId,
@@ -42,9 +42,9 @@ describe("the unified inbox (Sprint 70)", () => {
     return id;
   }
 
-  function seedQuestion(createdAt = 200): string {
+  async function seedQuestion(createdAt = 200): Promise<string> {
     const id = randomUUID();
-    db.insert(agentQuestions)
+    await db.insert(agentQuestions)
       .values({
         id,
         workspaceId,
@@ -64,8 +64,8 @@ describe("the unified inbox (Sprint 70)", () => {
   }
 
   it("returns one feed with three lanes and honest counts", async () => {
-    seedDraft();
-    seedQuestion();
+    await seedDraft();
+    await seedQuestion();
     const res = await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/agent-inbox` });
     expect(res.statusCode).toBe(200);
     const feed = agentInboxFeedSchema.parse(res.json());
@@ -81,8 +81,8 @@ describe("the unified inbox (Sprint 70)", () => {
   });
 
   it("carries the question on its item so answering needs no second fetch", async () => {
-    const questionId = seedQuestion();
-    const feed = buildAgentInboxFeed(db, workspaceId);
+    const questionId = await seedQuestion();
+    const feed = await buildAgentInboxFeed(db, workspaceId);
     const ask = feed.items.find((item) => item.lane === "ask")!;
     expect(ask.id).toBe(questionId);
     expect(ask.question?.options).toEqual(["Yes", "No"]);
@@ -90,10 +90,10 @@ describe("the unified inbox (Sprint 70)", () => {
     expect(ask.reason).toBe("The plan does not say.");
   });
 
-  it("ranks a stopped agent above ordinary review, and below nothing that broke", () => {
-    seedDraft();
-    seedQuestion();
-    const feed = buildAgentInboxFeed(db, workspaceId);
+  it("ranks a stopped agent above ordinary review, and below nothing that broke", async () => {
+    await seedDraft();
+    await seedQuestion();
+    const feed = await buildAgentInboxFeed(db, workspaceId);
     const kinds = feed.items.map((item) => item.kind);
     // D-70.10: the question is the cheapest thing on the list to clear and the
     // only one holding work still, so it leads.
@@ -103,9 +103,9 @@ describe("the unified inbox (Sprint 70)", () => {
     expect(kinds.indexOf("setup_task")).toBeGreaterThan(kinds.indexOf("content_review"));
   });
 
-  it("counts the whole feed, not the page", () => {
-    for (let i = 0; i < 4; i += 1) seedDraft(100 + i);
-    const feed = buildAgentInboxFeed(db, workspaceId, { limit: 1 });
+  it("counts the whole feed, not the page", async () => {
+    for (let i = 0; i < 4; i += 1) await seedDraft(100 + i);
+    const feed = await buildAgentInboxFeed(db, workspaceId, { limit: 1 });
     expect(feed.items).toHaveLength(1);
     // A lane badge that shrank with the page size would be lying about how
     // much is waiting.
@@ -113,11 +113,11 @@ describe("the unified inbox (Sprint 70)", () => {
   });
 
   it("keeps /priorities byte-identical to the feed minus ask and setup (D-70.8)", async () => {
-    seedDraft();
-    seedQuestion();
+    await seedDraft();
+    await seedQuestion();
     const res = await app.inject({ method: "GET", url: `/workspaces/${workspaceId}/priorities` });
     const queue = priorityQueueSchema.parse(res.json());
-    const feed = buildAgentInboxFeed(db, workspaceId, { limit: 100 });
+    const feed = await buildAgentInboxFeed(db, workspaceId, { limit: 100 });
     const expected = feed.items
       .filter((item) => item.lane !== "ask" && item.kind !== "setup_task")
       .map((item) => item.id);
@@ -127,15 +127,15 @@ describe("the unified inbox (Sprint 70)", () => {
     for (const item of queue.items) expect(item).not.toHaveProperty("lane");
   });
 
-  it("drops an answered question out of the ask lane", () => {
-    const questionId = seedQuestion();
-    expect(buildAgentInboxFeed(db, workspaceId).counts.ask).toBe(1);
-    db.update(agentQuestions)
+  it("drops an answered question out of the ask lane", async () => {
+    const questionId = await seedQuestion();
+    expect((await buildAgentInboxFeed(db, workspaceId)).counts.ask).toBe(1);
+    await db.update(agentQuestions)
       .set({ status: "answered", answer: "No.", answeredAt: 300, answeredByLabel: "founder" })
       .run();
-    expect(buildAgentInboxFeed(db, workspaceId).counts.ask).toBe(0);
+    expect((await buildAgentInboxFeed(db, workspaceId)).counts.ask).toBe(0);
     expect(
-      listWorkspacePriorities(db, workspaceId).items.some((item) => item.id === questionId),
+      (await listWorkspacePriorities(db, workspaceId)).items.some((item) => item.id === questionId),
     ).toBe(false);
   });
 });

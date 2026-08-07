@@ -43,24 +43,24 @@ export function rowToUser(row: UserRow): User {
   };
 }
 
-export function getUserByEmail(db: Db, email: string): UserRow | undefined {
-  return db.select().from(users).where(eq(users.email, email.toLowerCase())).get();
+export async function getUserByEmail(db: Db, email: string): Promise<UserRow | undefined> {
+  return await db.select().from(users).where(eq(users.email, email.toLowerCase())).get();
 }
 
-export function getUser(db: Db, id: string): User | undefined {
-  const row = db.select().from(users).where(eq(users.id, id)).get();
+export async function getUser(db: Db, id: string): Promise<User | undefined> {
+  const row = await db.select().from(users).where(eq(users.id, id)).get();
   return row ? rowToUser(row) : undefined;
 }
 
-export function updateUserName(db: Db, id: string, name: string): User | undefined {
-  db.update(users).set({ name, updatedAt: Date.now() }).where(eq(users.id, id)).run();
-  return getUser(db, id);
+export async function updateUserName(db: Db, id: string, name: string): Promise<User | undefined> {
+  await db.update(users).set({ name, updatedAt: Date.now() }).where(eq(users.id, id)).run();
+  return await getUser(db, id);
 }
 
-export function createSession(db: Db, userId: string): string {
+export async function createSession(db: Db, userId: string): Promise<string> {
   const token = randomBytes(32).toString("hex");
   const now = Date.now();
-  db.insert(sessions)
+  await db.insert(sessions)
     .values({
       id: randomUUID(),
       userId,
@@ -72,8 +72,8 @@ export function createSession(db: Db, userId: string): string {
   return token;
 }
 
-export function registerAccount(db: Db, input: RegisterInput): { user: User; token: string } {
-  if (getUserByEmail(db, input.email)) throw new EmailTakenError(input.email);
+export async function registerAccount(db: Db, input: RegisterInput): Promise<{ user: User; token: string }> {
+  if (await getUserByEmail(db, input.email)) throw new EmailTakenError(input.email);
   const now = Date.now();
   const row: UserRow = {
     id: randomUUID(),
@@ -84,30 +84,30 @@ export function registerAccount(db: Db, input: RegisterInput): { user: User; tok
     createdAt: now,
     updatedAt: now,
   };
-  db.insert(users).values(row).run();
-  return { user: rowToUser(row), token: createSession(db, row.id) };
+  await db.insert(users).values(row).run();
+  return { user: rowToUser(row), token: await createSession(db, row.id) };
 }
 
-export function login(db: Db, input: LoginInput): { user: User; token: string } | null {
-  const row = getUserByEmail(db, input.email);
+export async function login(db: Db, input: LoginInput): Promise<{ user: User; token: string } | null> {
+  const row = await getUserByEmail(db, input.email);
   if (!row || !row.passwordHash || !verifyPassword(input.password, row.passwordHash)) return null;
-  return { user: rowToUser(row), token: createSession(db, row.id) };
+  return { user: rowToUser(row), token: await createSession(db, row.id) };
 }
 
 /** Resolve a bearer token to its user, or null if unknown/expired. */
-export function sessionUser(db: Db, token: string): User | null {
-  const session = db
+export async function sessionUser(db: Db, token: string): Promise<User | null> {
+  const session = await db
     .select()
     .from(sessions)
     .where(eq(sessions.tokenHash, hashToken(token)))
     .get();
   if (!session || session.expiresAt <= Date.now()) return null;
-  const user = db.select().from(users).where(eq(users.id, session.userId)).get();
+  const user = await db.select().from(users).where(eq(users.id, session.userId)).get();
   return user ? rowToUser(user) : null;
 }
 
-export function revokeSession(db: Db, token: string): void {
-  db.delete(sessions).where(eq(sessions.tokenHash, hashToken(token))).run();
+export async function revokeSession(db: Db, token: string): Promise<void> {
+  await db.delete(sessions).where(eq(sessions.tokenHash, hashToken(token))).run();
 }
 
 /**
@@ -115,16 +115,16 @@ export function revokeSession(db: Db, token: string): void {
  * account if one has this email (attaching the google_sub once), else create a
  * password-less user. Always returns a fresh session — same shape as login().
  */
-export function upsertGoogleUser(db: Db, profile: GoogleProfile): { user: User; token: string } {
-  const existing = getUserByEmail(db, profile.email);
+export async function upsertGoogleUser(db: Db, profile: GoogleProfile): Promise<{ user: User; token: string }> {
+  const existing = await getUserByEmail(db, profile.email);
   if (existing) {
     if (!existing.googleSub) {
-      db.update(users)
+      await db.update(users)
         .set({ googleSub: profile.sub, updatedAt: Date.now() })
         .where(eq(users.id, existing.id))
         .run();
     }
-    return { user: rowToUser(existing), token: createSession(db, existing.id) };
+    return { user: rowToUser(existing), token: await createSession(db, existing.id) };
   }
   const now = Date.now();
   const row: UserRow = {
@@ -136,6 +136,6 @@ export function upsertGoogleUser(db: Db, profile: GoogleProfile): { user: User; 
     createdAt: now,
     updatedAt: now,
   };
-  db.insert(users).values(row).run();
-  return { user: rowToUser(row), token: createSession(db, row.id) };
+  await db.insert(users).values(row).run();
+  return { user: rowToUser(row), token: await createSession(db, row.id) };
 }

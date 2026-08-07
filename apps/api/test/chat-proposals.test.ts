@@ -90,9 +90,9 @@ function recorder(taint = createTaintTracker(), recorded: ChatProposal[] = []) {
 
 const origin = () => ({ agentRunId: runId, workspaceId });
 
-function setPublishPolicy(rule: "autonomous" | "human_required") {
-  const current = listExternalActionPolicies(db, workspaceId, "workspace", workspaceId);
-  upsertExternalActionPolicies(
+async function setPublishPolicy(rule: "autonomous" | "human_required") {
+  const current = await listExternalActionPolicies(db, workspaceId, "workspace", workspaceId);
+  await upsertExternalActionPolicies(
     db,
     workspaceId,
     {
@@ -108,9 +108,9 @@ function setPublishPolicy(rule: "autonomous" | "human_required") {
   );
 }
 
-function approvedDraft(): string {
+async function approvedDraft(): Promise<string> {
   const id = randomUUID();
-  db.insert(drafts)
+  await db.insert(drafts)
     .values({
       id,
       workspaceId,
@@ -126,12 +126,12 @@ function approvedDraft(): string {
   return id;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   db = createTestDb();
   workspaceId = randomUUID();
-  db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 }).run();
-  sessionId = createSession(db, workspaceId, null, {}).id;
-  ensureWorkspaceActionPolicies(db, workspaceId);
+  await db.insert(workspaces).values({ id: workspaceId, name: "Acme", createdAt: 1, updatedAt: 1 }).run();
+  sessionId = (await createSession(db, workspaceId, null, {})).id;
+  await ensureWorkspaceActionPolicies(db, workspaceId);
   live = createAgentProposals({
     db,
     runtime: createExternalActionRuntime({
@@ -157,11 +157,11 @@ describe("recording changes nothing", () => {
     expect(result.ok && result.status).toBe("awaiting_confirmation");
 
     // Nothing durable except the pause itself.
-    expect(db.select().from(drafts).all()).toHaveLength(0);
-    expect(db.select().from(externalActions).all()).toHaveLength(0);
-    expect(db.select().from(agentProposals).all()).toHaveLength(0);
+    expect(await db.select().from(drafts).all()).toHaveLength(0);
+    expect(await db.select().from(externalActions).all()).toHaveLength(0);
+    expect(await db.select().from(agentProposals).all()).toHaveLength(0);
 
-    const stored = listChatProposals(db, sessionId);
+    const stored = await listChatProposals(db, sessionId);
     expect(stored).toHaveLength(1);
     expect(stored[0]!.status).toBe("pending");
     expect(stored[0]!.agentRunId).toBe(runId);
@@ -169,7 +169,7 @@ describe("recording changes nothing", () => {
   });
 
   it("renders a statement of intent that says what does NOT happen", async () => {
-    const campaign = createCampaign(
+    const campaign = await createCampaign(
       db,
       workspaceId,
       upsertCampaignInputSchema.parse({ name: "Launch", objective: "Ship it" }),
@@ -182,7 +182,7 @@ describe("recording changes nothing", () => {
       rationale: "You asked for a funding post.",
     });
 
-    const intent = listChatProposals(db, sessionId)[0]!.intent;
+    const intent = (await listChatProposals(db, sessionId))[0]!.intent;
     expect(intent.title).toBe("Submit a linkedin draft for review");
     expect(intent.effect).toContain("Nothing is published");
     // The campaign is named, not shown as a uuid the founder cannot check.
@@ -199,7 +199,7 @@ describe("recording changes nothing", () => {
       channel: "linkedin",
       rationale: "x",
     });
-    const stored = listChatProposals(db, sessionId)[0]!;
+    const stored = (await listChatProposals(db, sessionId))[0]!;
     expect(stored.quarantined).toBe(true);
     expect(stored.quarantineReason).toBeTruthy();
   });
@@ -224,11 +224,11 @@ describe("caps bound asking", () => {
     expect(refused.ok).toBe(false);
     expect(!refused.ok && refused.error).toBe("chat_proposal_cap_reached");
     // And it did not record the refused one.
-    expect(listChatProposals(db, sessionId)).toHaveLength(CHAT_PROPOSALS_PER_THREAD);
+    expect(await listChatProposals(db, sessionId)).toHaveLength(CHAT_PROPOSALS_PER_THREAD);
   });
 
   it("counts the workspace's chat proposals across threads for the daily cap", async () => {
-    const other = createSession(db, workspaceId, null, {}).id;
+    const other = (await createSession(db, workspaceId, null, {})).id;
     await recorder().service.proposeDraft(origin(), {
       content: "a",
       channel: "linkedin",
@@ -240,13 +240,13 @@ describe("caps bound asking", () => {
       taint: createTaintTracker(),
     });
     await second.proposeDraft(origin(), { content: "b", channel: "linkedin", rationale: "x" });
-    expect(countChatProposalsToday(db, workspaceId)).toBe(2);
+    expect(await countChatProposalsToday(db, workspaceId)).toBe(2);
   });
 });
 
 describe("confirming runs the real gate", () => {
   it("creates an approval-gated draft attached to the campaign the founder named", async () => {
-    const campaign = createCampaign(
+    const campaign = await createCampaign(
       db,
       workspaceId,
       upsertCampaignInputSchema.parse({ name: "Launch", objective: "Land demos" }),
@@ -258,7 +258,7 @@ describe("confirming runs the real gate", () => {
       campaignId: campaign.id,
       rationale: "You asked for a funding post.",
     });
-    const pending = listChatProposals(db, sessionId)[0]!;
+    const pending = (await listChatProposals(db, sessionId))[0]!;
 
     const outcome = await confirmChatProposal(db, live, workspaceId, ACTOR, pending.id);
     expect(outcome.ok).toBe(true);
@@ -269,11 +269,11 @@ describe("confirming runs the real gate", () => {
     // action, it is the subject of one (D-69.2).
     expect(confirmed!.producedStatus).toBe("pending_review");
 
-    const draft = db.select().from(drafts).all()[0]!;
+    const draft = (await db.select().from(drafts).all())[0]!;
     expect(draft.state).toBe("pending_review");
     expect(draft.campaignId).toBe(campaign.id);
     // The Sprint 69 ledger records it, tagged with the conversation.
-    const ledger = db.select().from(agentProposals).all();
+    const ledger = await db.select().from(agentProposals).all();
     expect(ledger).toHaveLength(1);
     expect(ledger[0]!.chatSessionId).toBe(sessionId);
   });
@@ -285,20 +285,20 @@ describe("confirming runs the real gate", () => {
       channel: "linkedin",
       rationale: "x",
     });
-    const pending = listChatProposals(db, sessionId)[0]!;
+    const pending = (await listChatProposals(db, sessionId))[0]!;
     await confirmChatProposal(db, live, workspaceId, ACTOR, pending.id);
 
-    const receipt = listMessages(db, sessionId).at(-1)!;
+    const receipt = (await listMessages(db, sessionId)).at(-1)!;
     expect(receipt.role).toBe("assistant");
     expect(receipt.content).toContain("waiting for you in Review");
     expect(receipt.producedRef).toMatch(/^draft:/);
   });
 
   it("marks the action as chat-originated so the queue can say so", async () => {
-    setPublishPolicy("human_required");
-    const draftId = approvedDraft();
+    await setPublishPolicy("human_required");
+    const draftId = await approvedDraft();
     const connectionId = randomUUID();
-    db.insert(connections)
+    await db.insert(connections)
       .values({
         id: connectionId,
         workspaceId,
@@ -317,11 +317,11 @@ describe("confirming runs the real gate", () => {
       target: "test",
       rationale: "The thread is peaking.",
     });
-    const pending = listChatProposals(db, sessionId)[0]!;
+    const pending = (await listChatProposals(db, sessionId))[0]!;
     const outcome = await confirmChatProposal(db, live, workspaceId, ACTOR, pending.id);
 
     expect(outcome.ok).toBe(true);
-    const action = db.select().from(externalActions).all()[0]!;
+    const action = (await db.select().from(externalActions).all())[0]!;
     // human_required stops it dead — nothing dispatched.
     expect(action.status).toBe("authorization_required");
     expect(action.origin).toBe("agent");
@@ -335,7 +335,7 @@ describe("confirming runs the real gate", () => {
     // An unapproved draft: `publishIntent` has always refused this, and it goes
     // on refusing it for an agent that a founder confirmed.
     const unapproved = randomUUID();
-    db.insert(drafts)
+    await db.insert(drafts)
       .values({
         id: unapproved,
         workspaceId,
@@ -355,36 +355,36 @@ describe("confirming runs the real gate", () => {
       target: "test",
       rationale: "x",
     });
-    const pending = listChatProposals(db, sessionId)[0]!;
+    const pending = (await listChatProposals(db, sessionId))[0]!;
     const outcome = await confirmChatProposal(db, live, workspaceId, ACTOR, pending.id);
 
     expect(outcome.ok).toBe(true);
     const failed = outcome.ok ? outcome.proposal : null;
     expect(failed!.status).toBe("failed");
     expect(failed!.error).toBeTruthy();
-    expect(db.select().from(externalActions).all()).toHaveLength(0);
+    expect(await db.select().from(externalActions).all()).toHaveLength(0);
     // The model sees the real reason on its next turn and can correct itself.
-    expect(listMessages(db, sessionId).at(-1)!.content).toContain("couldn't go through");
+    expect((await listMessages(db, sessionId)).at(-1)!.content).toContain("couldn't go through");
   });
 
   it("refuses a second confirmation of the same proposal", async () => {
     const { service } = recorder();
     await service.proposeDraft(origin(), { content: "Post", channel: "linkedin", rationale: "x" });
-    const pending = listChatProposals(db, sessionId)[0]!;
+    const pending = (await listChatProposals(db, sessionId))[0]!;
 
     await confirmChatProposal(db, live, workspaceId, ACTOR, pending.id);
     const again = await confirmChatProposal(db, live, workspaceId, ACTOR, pending.id);
     expect(again.ok).toBe(false);
     expect(!again.ok && again.error).toBe("already_resolved");
-    expect(db.select().from(drafts).all()).toHaveLength(1);
+    expect(await db.select().from(drafts).all()).toHaveLength(1);
   });
 
   it("does not reach across workspaces", async () => {
     const rival = randomUUID();
-    db.insert(workspaces).values({ id: rival, name: "Rival", createdAt: 1, updatedAt: 1 }).run();
+    await db.insert(workspaces).values({ id: rival, name: "Rival", createdAt: 1, updatedAt: 1 }).run();
     const { service } = recorder();
     await service.proposeDraft(origin(), { content: "Post", channel: "linkedin", rationale: "x" });
-    const pending = listChatProposals(db, sessionId)[0]!;
+    const pending = (await listChatProposals(db, sessionId))[0]!;
 
     const outcome = await confirmChatProposal(db, live, rival, ACTOR, pending.id);
     expect(outcome.ok).toBe(false);
@@ -396,35 +396,35 @@ describe("declining", () => {
   it("resolves the card and creates nothing, quietly", async () => {
     const { service } = recorder();
     await service.proposeDraft(origin(), { content: "Post", channel: "linkedin", rationale: "x" });
-    const pending = listChatProposals(db, sessionId)[0]!;
-    const before = listMessages(db, sessionId).length;
+    const pending = (await listChatProposals(db, sessionId))[0]!;
+    const before = (await listMessages(db, sessionId)).length;
 
-    const outcome = declineChatProposal(db, workspaceId, ACTOR, pending.id);
+    const outcome = await declineChatProposal(db, workspaceId, ACTOR, pending.id);
     expect(outcome.ok && outcome.proposal.status).toBe("declined");
-    expect(db.select().from(drafts).all()).toHaveLength(0);
+    expect(await db.select().from(drafts).all()).toHaveLength(0);
     // No message: the struck-through card says it, and a transcript line
     // saying "you declined" is noise the next turn does not need spelled out.
-    expect(listMessages(db, sessionId)).toHaveLength(before);
+    expect(await listMessages(db, sessionId)).toHaveLength(before);
   });
 
   it("cannot decline what is already resolved", async () => {
     const { service } = recorder();
     await service.proposeDraft(origin(), { content: "Post", channel: "linkedin", rationale: "x" });
-    const pending = listChatProposals(db, sessionId)[0]!;
-    declineChatProposal(db, workspaceId, ACTOR, pending.id);
-    expect(declineChatProposal(db, workspaceId, ACTOR, pending.id).ok).toBe(false);
+    const pending = (await listChatProposals(db, sessionId))[0]!;
+    await declineChatProposal(db, workspaceId, ACTOR, pending.id);
+    expect((await declineChatProposal(db, workspaceId, ACTOR, pending.id)).ok).toBe(false);
   });
 });
 
 describe("the row survives what it points at", () => {
-  it("keeps the record when the thread is deleted only by cascade, not by proposal state", () => {
+  it("keeps the record when the thread is deleted only by cascade, not by proposal state", async () => {
     // chat_proposals cascades with its session (a deleted conversation takes
     // its cards), but the Sprint 69 ledger row does NOT — it has no FK to the
     // thread, so what was actually proposed outlives the conversation.
-    const columns = db.select().from(chatProposals).all();
+    const columns = await db.select().from(chatProposals).all();
     expect(columns).toEqual([]);
     expect(
-      db.select().from(agentProposals).where(eq(agentProposals.workspaceId, workspaceId)).all(),
+      await db.select().from(agentProposals).where(eq(agentProposals.workspaceId, workspaceId)).all(),
     ).toEqual([]);
   });
 });

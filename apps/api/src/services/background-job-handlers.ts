@@ -65,7 +65,8 @@ export type BackgroundJobOutcome =
 export interface BackgroundJobHandlerContext {
   claim: BackgroundJobClaim;
   signal: AbortSignal;
-  heartbeat: () => boolean;
+  /** Renews the lease; a false result means the lease was lost. */
+  heartbeat: () => Promise<boolean>;
 }
 
 export type BackgroundJobHandler = (
@@ -175,9 +176,9 @@ async function syncWorkspaceAds(
     truncated?: boolean;
   }> = [];
 
-  for (const account of listAdAccounts(deps.db, workspaceId)) {
+  for (const account of await listAdAccounts(deps.db, workspaceId)) {
     if (!account.connectionId) continue;
-    const connection = getConnection(deps.db, workspaceId, account.connectionId);
+    const connection = await getConnection(deps.db, workspaceId, account.connectionId);
     const provider = connection ? providerByKey(connection.providerKey) : undefined;
     const adapter =
       connection && provider
@@ -249,10 +250,10 @@ async function synthesizeWorkspaceLearning(
   deps: BackgroundJobHandlerDependencies,
   workspaceId: string,
 ) {
-  if (llmBudgetExhausted(deps.db, workspaceId)) {
+  if (await llmBudgetExhausted(deps.db, workspaceId)) {
     return { skipped: "llm_budget_exhausted" };
   }
-  const syntheses = listSyntheses(deps.db, workspaceId);
+  const syntheses = await listSyntheses(deps.db, workspaceId);
   if (syntheses.some((synthesis) => synthesis.status === "proposed")) {
     return { skipped: "proposal_open" };
   }
@@ -263,7 +264,7 @@ async function synthesizeWorkspaceLearning(
   ) {
     return { skipped: "not_due" };
   }
-  const workspace = getWorkspace(deps.db, workspaceId);
+  const workspace = await getWorkspace(deps.db, workspaceId);
   if (!workspace) return { skipped: "workspace_missing" };
   try {
     return await synthesizeNow(deps.db, deps.llm, workspaceId, workspace.name);
@@ -281,8 +282,8 @@ export function createBackgroundJobHandlers(
   launchGenerate?: BackgroundJobHandler,
 ): BackgroundJobHandlers {
   const operations: BackgroundJobOperations = {
-    discovery: (workspaceId, context) =>
-      runDiscoveryScheduler(
+    discovery: async (workspaceId, context) =>
+      await runDiscoveryScheduler(
         {
           db: deps.db,
           llm: deps.llm,
@@ -296,8 +297,8 @@ export function createBackgroundJobHandlers(
         },
         { workspaceId },
       ),
-    automation: (workspaceId, context) =>
-      runAutomationWithLease(
+    automation: async (workspaceId, context) =>
+      await runAutomationWithLease(
         {
           db: deps.db,
           llm: deps.llm,
@@ -308,8 +309,8 @@ export function createBackgroundJobHandlers(
         workspaceId,
         `${deps.instanceId}:background-automation:${context.claim.id}`,
       ),
-    pipelines: (workspaceId) =>
-      runPipelinesTick(
+    pipelines: async (workspaceId) =>
+      await runPipelinesTick(
         deps.db,
         {
           llm: deps.llm,
@@ -320,12 +321,12 @@ export function createBackgroundJobHandlers(
         },
         { workspaceId },
       ),
-    preferences: (workspaceId) =>
-      runPreferenceExtraction(deps.db, deps.llm, workspaceId),
-    learning: (workspaceId) => synthesizeWorkspaceLearning(deps, workspaceId),
-    ads: (workspaceId) => syncWorkspaceAds(deps, workspaceId),
-    cadence: (workspaceId) =>
-      fillActiveCadences(deps.db, deps.runtime, workspaceId, Date.now()),
+    preferences: async (workspaceId) =>
+      await runPreferenceExtraction(deps.db, deps.llm, workspaceId),
+    learning: async (workspaceId) => await synthesizeWorkspaceLearning(deps, workspaceId),
+    ads: async (workspaceId) => await syncWorkspaceAds(deps, workspaceId),
+    cadence: async (workspaceId) =>
+      await fillActiveCadences(deps.db, deps.runtime, workspaceId, Date.now()),
     publish: async (workspaceId) => ({
       actions: await deps.runtime.run(workspaceId),
       results: await runDuePublications(
@@ -335,8 +336,8 @@ export function createBackgroundJobHandlers(
         workspaceId,
       ),
     }),
-    inbox: (workspaceId) =>
-      runInbox(
+    inbox: async (workspaceId) =>
+      await runInbox(
         deps.db,
         deps.llm,
         deps.evidence,
@@ -344,10 +345,10 @@ export function createBackgroundJobHandlers(
         deps.runtime,
         workspaceId,
       ),
-    mailbox_inbox: (workspaceId) =>
-      runMailboxInbox(deps.db, deps.llm, deps.gmail, workspaceId),
-    outreach: (workspaceId) =>
-      runOutreach(
+    mailbox_inbox: async (workspaceId) =>
+      await runMailboxInbox(deps.db, deps.llm, deps.gmail, workspaceId),
+    outreach: async (workspaceId) =>
+      await runOutreach(
         deps.db,
         {
           llm: deps.llm,
@@ -359,8 +360,8 @@ export function createBackgroundJobHandlers(
         },
         workspaceId,
       ),
-    sequence: (workspaceId) =>
-      runSequences(
+    sequence: async (workspaceId) =>
+      await runSequences(
         deps.db,
         deps.llm,
         deps.evidence,
@@ -368,7 +369,7 @@ export function createBackgroundJobHandlers(
         workspaceId,
       ),
     evidence: async (workspaceId) =>
-      sweepEvidenceCandidates(deps.db, workspaceId),
+      await sweepEvidenceCandidates(deps.db, workspaceId),
   };
   const launchGenerateHandler: BackgroundJobHandler = launchGenerate ?? (async (payload, context) => {
     if (payload.kind !== "launch_generate") {

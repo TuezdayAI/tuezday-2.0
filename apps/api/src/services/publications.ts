@@ -35,15 +35,15 @@ export interface PublicationWithDraft extends Publication {
   metrics: PublicationMetric[];
 }
 
-export function listPublications(db: Db, workspaceId: string): PublicationWithDraft[] {
-  const rows = db
+export async function listPublications(db: Db, workspaceId: string): Promise<PublicationWithDraft[]> {
+  const rows = await db
     .select({ publication: publications, draft: drafts })
     .from(publications)
     .leftJoin(drafts, eq(publications.draftId, drafts.id))
     .where(eq(publications.workspaceId, workspaceId))
     .orderBy(desc(publications.createdAt))
     .all();
-  const metrics = metricsByPublication(db, workspaceId);
+  const metrics = await metricsByPublication(db, workspaceId);
   return rows.map(({ publication, draft }) => ({
     ...rowToPublication(publication),
     draft: draft
@@ -54,26 +54,26 @@ export function listPublications(db: Db, workspaceId: string): PublicationWithDr
 }
 
 /** Every receipt a cadence has created, soonest scheduled first. */
-export function listCadencePublications(
+export async function listCadencePublications(
   db: Db,
   workspaceId: string,
   cadenceId: string,
-): Publication[] {
-  return db
+): Promise<Publication[]> {
+  return (await db
     .select()
     .from(publications)
     .where(and(eq(publications.workspaceId, workspaceId), eq(publications.cadenceId, cadenceId)))
     .orderBy(publications.scheduledFor)
-    .all()
+    .all())
     .map(rowToPublication);
 }
 
-export function getPublication(
+export async function getPublication(
   db: Db,
   workspaceId: string,
   publicationId: string,
-): Publication | undefined {
-  const row = db
+): Promise<Publication | undefined> {
+  const row = await db
     .select()
     .from(publications)
     .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, publicationId)))
@@ -81,12 +81,12 @@ export function getPublication(
   return row ? rowToPublication(row) : undefined;
 }
 
-export function getPublicationByExternalAction(
+export async function getPublicationByExternalAction(
   db: Db,
   workspaceId: string,
   externalActionId: string,
-): Publication | undefined {
-  const row = db
+): Promise<Publication | undefined> {
+  const row = await db
     .select()
     .from(publications)
     .where(
@@ -100,14 +100,14 @@ export function getPublicationByExternalAction(
 }
 
 /** A live (scheduled, provider-processing, or published) receipt blocks a dupe. */
-export function findLivePublication(
+export async function findLivePublication(
   db: Db,
   workspaceId: string,
   draftId: string,
   connectionId: string,
   target: string,
-): Publication | undefined {
-  const row = db
+): Promise<Publication | undefined> {
+  const row = await db
     .select()
     .from(publications)
     .where(
@@ -123,8 +123,8 @@ export function findLivePublication(
   return row ? rowToPublication(row) : undefined;
 }
 
-export function deletePublication(db: Db, workspaceId: string, publicationId: string): void {
-  db.delete(publications)
+export async function deletePublication(db: Db, workspaceId: string, publicationId: string): Promise<void> {
+  await db.delete(publications)
     .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, publicationId)))
     .run();
 }
@@ -148,13 +148,13 @@ export async function createPublication(
 ): Promise<Publication> {
   const now = Date.now();
   if (externalActionId) {
-    const existing = getPublicationByExternalAction(db, workspaceId, externalActionId);
+    const existing = await getPublicationByExternalAction(db, workspaceId, externalActionId);
     if (existing) {
       if (
         (existing.status === "scheduled" && existing.scheduledFor <= now) ||
         existing.status === "processing"
       ) {
-        return attemptPublication(db, fabric, fetcher, workspaceId, existing.id);
+        return await attemptPublication(db, fabric, fetcher, workspaceId, existing.id);
       }
       return existing;
     }
@@ -183,11 +183,11 @@ export async function createPublication(
     createdAt: now,
     updatedAt: now,
   };
-  db.insert(publications).values(row).run();
+  await db.insert(publications).values(row).run();
   if (input.scheduledFor && input.scheduledFor > now) {
     return rowToPublication(row);
   }
-  return attemptPublication(db, fabric, fetcher, workspaceId, row.id);
+  return await attemptPublication(db, fabric, fetcher, workspaceId, row.id);
 }
 
 /**
@@ -217,10 +217,10 @@ interface PublicationAttemptResult {
  * The durable action payload is the strongest automation signal. Cadence and
  * campaign lineage keeps pre-action receipts protected during the migration.
  */
-function automatedPublication(db: Db, row: PublicationRow): boolean {
+async function automatedPublication(db: Db, row: PublicationRow): Promise<boolean> {
   let campaignId: string | null = null;
   if (row.externalActionId) {
-    const action = db
+    const action = await db
       .select({ payloadJson: externalActions.payloadJson, campaignId: externalActions.campaignId })
       .from(externalActions)
       .where(
@@ -242,7 +242,7 @@ function automatedPublication(db: Db, row: PublicationRow): boolean {
   }
   if (!campaignId && row.cadenceId) {
     campaignId =
-      db
+      (await db
         .select({ campaignId: postingCadences.campaignId })
         .from(postingCadences)
         .where(
@@ -251,15 +251,15 @@ function automatedPublication(db: Db, row: PublicationRow): boolean {
             eq(postingCadences.id, row.cadenceId),
           ),
         )
-        .get()?.campaignId ?? null;
+        .get())?.campaignId ?? null;
   }
   if (!campaignId) return false;
   return (
-    db
+    (await db
       .select({ automationMode: campaigns.automationMode })
       .from(campaigns)
       .where(and(eq(campaigns.workspaceId, row.workspaceId), eq(campaigns.id, campaignId)))
-      .get()?.automationMode === "scheduled_auto"
+      .get())?.automationMode === "scheduled_auto"
   );
 }
 
@@ -271,11 +271,11 @@ async function attemptPublicationDetailed(
   workspaceId: string,
   publicationId: string,
 ): Promise<PublicationAttemptResult> {
-  const row = db
+  const row = (await db
     .select()
     .from(publications)
     .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, publicationId)))
-    .get()!;
+    .get())!;
   if (row.status === "published") {
     return { publication: rowToPublication(row), state: "published" };
   }
@@ -286,8 +286,8 @@ async function attemptPublicationDetailed(
   ) {
     return { publication: rowToPublication(row), state: "processing" };
   }
-  const draft = db.select().from(drafts).where(eq(drafts.id, row.draftId)).get();
-  const connection = getConnection(db, workspaceId, row.connectionId);
+  const draft = await db.select().from(drafts).where(eq(drafts.id, row.draftId)).get();
+  const connection = await getConnection(db, workspaceId, row.connectionId);
   const provider = connection ? providerByKey(connection.providerKey) : undefined;
   const adapter =
     connection && provider && connection.status === "connected"
@@ -304,7 +304,7 @@ async function attemptPublicationDetailed(
     }
     // This is deliberately the final synchronous check before the adapter.
     // Earlier scheduling/action guards can race with an emergency stop.
-    if (automatedPublication(db, row) && getSocialAutomationSettings(db, workspaceId).killSwitch) {
+    if (await automatedPublication(db, row) && (await getSocialAutomationSettings(db, workspaceId)).killSwitch) {
       return {
         publication: rowToPublication(row),
         state: "blocked",
@@ -317,7 +317,7 @@ async function attemptPublicationDetailed(
             throw new Error(`${row.providerKey} cannot resume this provider operation.`);
           }
           finalizeAttempted = true;
-          return adapter.finalizePost(row.providerOperationId!);
+          return await adapter.finalizePost(row.providerOperationId!);
         })()
       : await adapter.publishPost({
           target: row.target,
@@ -336,7 +336,7 @@ async function attemptPublicationDetailed(
           ? result.retryAfterMs
           : 5_000;
       const retryAfterMs = Math.max(1_000, Math.min(requestedRetryMs, 60 * 60 * 1_000));
-      db.update(publications)
+      await db.update(publications)
         .set({
           status: "processing",
           providerOperationId: result.operationId,
@@ -349,11 +349,11 @@ async function attemptPublicationDetailed(
         .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, row.id)))
         .run();
       return {
-        publication: getPublication(db, workspaceId, row.id)!,
+        publication: (await getPublication(db, workspaceId, row.id))!,
         state: "processing",
       };
     }
-    db.update(publications)
+    await db.update(publications)
       .set({
         status: "published",
         publishedAt: attemptedAt,
@@ -374,10 +374,10 @@ async function attemptPublicationDetailed(
       title: row.title,
       url: result.url,
     });
-    return { publication: getPublication(db, workspaceId, row.id)!, state: "published" };
+    return { publication: (await getPublication(db, workspaceId, row.id))!, state: "published" };
   } catch (err) {
     const error = (err instanceof Error ? err.message : String(err)).slice(0, 500);
-    db.update(publications)
+    await db.update(publications)
       .set({
         status: "failed",
         nextAttemptAt: null,
@@ -388,7 +388,7 @@ async function attemptPublicationDetailed(
       .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, row.id)))
       .run();
     return {
-      publication: getPublication(db, workspaceId, row.id)!,
+      publication: (await getPublication(db, workspaceId, row.id))!,
       state: "failed",
       error,
     };
@@ -413,7 +413,7 @@ export async function runDuePublications(
   fetcher: Fetcher,
   workspaceId: string,
 ): Promise<PublishRunResult[]> {
-  const due = db
+  const due = await db
     .select()
     .from(publications)
     .where(

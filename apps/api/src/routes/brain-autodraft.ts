@@ -20,8 +20,8 @@ export function registerBrainAutoDraftRoutes(
   app.post<{ Params: { id: string } }>(
     "/workspaces/:id/brain/auto-draft",
     async (request) => {
-      assertLlmBudget(db, request.params.id);
-      return runBrainAutoDraft(db, llm, fabric, request.params.id);
+      await assertLlmBudget(db, request.params.id);
+      return await runBrainAutoDraft(db, llm, fabric, request.params.id);
     },
   );
 }

@@ -89,9 +89,9 @@ interface EvidenceDocumentLookup {
   sourceRef: string | null;
 }
 
-function evidenceDocumentLookup(db: Db, workspaceId: string) {
+async function evidenceDocumentLookup(db: Db, workspaceId: string) {
   return new Map(
-    db
+    (await db
       .select({
         r2rDocumentId: evidenceDocuments.r2rDocumentId,
         title: evidenceDocuments.title,
@@ -100,7 +100,7 @@ function evidenceDocumentLookup(db: Db, workspaceId: string) {
       })
       .from(evidenceDocuments)
       .where(eq(evidenceDocuments.workspaceId, workspaceId))
-      .all()
+      .all())
       .flatMap((row) =>
         row.r2rDocumentId
           ? [
@@ -171,18 +171,18 @@ function planStaleness(
   };
 }
 
-export function getDraftEditorContext(
+export async function getDraftEditorContext(
   db: Db,
   workspaceId: string,
   draftId: string,
-): DraftEditorContext | undefined {
-  const draft = getDraft(db, workspaceId, draftId);
+): Promise<DraftEditorContext | undefined> {
+  const draft = await getDraft(db, workspaceId, draftId);
   if (!draft) return undefined;
 
-  const decisions = listDecisions(db, draft.id);
-  const turns = listRevisionTurns(db, workspaceId, draft.id);
+  const decisions = await listDecisions(db, draft.id);
+  const turns = await listRevisionTurns(db, workspaceId, draft.id);
   const sourceGeneration = draft.sourceGenerationId
-    ? db
+    ? await db
         .select()
         .from(generations)
         .where(
@@ -193,7 +193,7 @@ export function getDraftEditorContext(
         )
         .get()
     : undefined;
-  const evidenceByR2rId = evidenceDocumentLookup(db, workspaceId);
+  const evidenceByR2rId = await evidenceDocumentLookup(db, workspaceId);
   const latestCompletedTurn = turns.filter((turn) => turn.status === "completed").at(-1);
   const contextSections = latestCompletedTurn
     ? latestCompletedTurn.contextSections
@@ -206,14 +206,14 @@ export function getDraftEditorContext(
   const contextResolvedAt =
     latestCompletedTurn?.completedAt ?? sourceGeneration?.createdAt ?? draft.createdAt;
 
-  const campaign = draft.campaignId ? getCampaign(db, workspaceId, draft.campaignId) : undefined;
+  const campaign = draft.campaignId ? await getCampaign(db, workspaceId, draft.campaignId) : undefined;
   const currentPlan = campaign
-    ? getCurrentCampaignPlan(db, workspaceId, campaign.id)
+    ? await getCurrentCampaignPlan(db, workspaceId, campaign.id)
     : undefined;
-  const persona = draft.personaId ? getPersona(db, workspaceId, draft.personaId) : undefined;
+  const persona = draft.personaId ? await getPersona(db, workspaceId, draft.personaId) : undefined;
 
   const siblings = draft.sourceSignalId
-    ? db
+    ? (await db
         .select({ id: drafts.id, channel: drafts.channel, state: drafts.state })
         .from(drafts)
         .where(
@@ -224,7 +224,7 @@ export function getDraftEditorContext(
           ),
         )
         .orderBy(asc(drafts.createdAt))
-        .all()
+        .all())
         .map((row) => ({
           draftId: row.id,
           channel: row.channel as DraftEditorContext["siblings"][number]["channel"],
@@ -236,7 +236,7 @@ export function getDraftEditorContext(
   let destination = null;
   if (providerKey) {
     const routed = draft.personaId
-      ? resolvePersonaSocialConnection(db, workspaceId, {
+      ? await resolvePersonaSocialConnection(db, workspaceId, {
           personaId: draft.personaId,
           providerKey,
           channel: draft.channel,
@@ -244,7 +244,7 @@ export function getDraftEditorContext(
       : null;
     const connection = routed?.ok
       ? routed.connection
-      : listConnections(db, workspaceId).find((item) => item.providerKey === providerKey);
+      : (await listConnections(db, workspaceId)).find((item) => item.providerKey === providerKey);
     if (connection) {
       destination = {
         providerKey: connection.providerKey,
@@ -255,14 +255,14 @@ export function getDraftEditorContext(
     }
   }
 
-  const publications = listPublications(db, workspaceId)
+  const publications = (await listPublications(db, workspaceId))
     .filter((publication) => publication.draftId === draft.id)
     .map((publication) => publicationSchema.parse(publication));
-  const executions = listExecutionResults(db, workspaceId, {
+  const executions = (await listExecutionResults(db, workspaceId, {
     campaignId: draft.campaignId ?? undefined,
     limit: 200,
-  }).filter((execution) => execution.draftId === draft.id);
-  const actions = listExternalActionsForDraft(db, workspaceId, draft.id);
+  })).filter((execution) => execution.draftId === draft.id);
+  const actions = await listExternalActionsForDraft(db, workspaceId, draft.id);
   const evidenceCitations = contextSections.flatMap(
     (section) => section.evidence?.chunks ?? [],
   );
@@ -330,25 +330,25 @@ export async function reviseDraft(
   { db, llm, evidence }: ReviseDraftDeps,
   input: ReviseDraftServiceInput,
 ): Promise<ReviseDraftResult> {
-  const existing = getTurnByRequest(db, input.workspaceId, input.draftId, input.requestId);
+  const existing = await getTurnByRequest(db, input.workspaceId, input.draftId, input.requestId);
   if (existing) {
     if (existing.status === "running") throw new RevisionInProgressError();
     if (existing.status === "failed") throw new RevisionFailedError(existing.error ?? "Revision failed.");
-    const storedDraft = getDraft(db, input.workspaceId, input.draftId);
+    const storedDraft = await getDraft(db, input.workspaceId, input.draftId);
     if (!storedDraft) throw new Error("draft_not_found");
     return { draft: storedDraft, turn: existing };
   }
 
-  const workspace = getWorkspace(db, input.workspaceId);
-  const draft = getDraft(db, input.workspaceId, input.draftId);
+  const workspace = await getWorkspace(db, input.workspaceId);
+  const draft = await getDraft(db, input.workspaceId, input.draftId);
   if (!workspace || !draft) throw new Error("draft_not_found");
   if (draft.updatedAt !== input.expectedDraftUpdatedAt) throw new DraftChangedError();
   if (!transitionTo(draft.state, "edit")) {
     throw new InvalidTransitionError(draft.state, "edit");
   }
-  assertLlmBudget(db, input.workspaceId);
+  await assertLlmBudget(db, input.workspaceId);
 
-  const running = createRunningTurn(db, {
+  const running = await createRunningTurn(db, {
     requestId: input.requestId,
     workspaceId: input.workspaceId,
     draftId: input.draftId,
@@ -359,13 +359,13 @@ export async function reviseDraft(
 
   try {
     const campaign = draft.campaignId
-      ? getCampaign(db, input.workspaceId, draft.campaignId)
+      ? await getCampaign(db, input.workspaceId, draft.campaignId)
       : undefined;
     const persona = draft.personaId
-      ? getPersona(db, input.workspaceId, draft.personaId)
+      ? await getPersona(db, input.workspaceId, draft.personaId)
       : undefined;
     const signal = draft.sourceSignalId
-      ? getSignal(db, input.workspaceId, draft.sourceSignalId)
+      ? await getSignal(db, input.workspaceId, draft.sourceSignalId)
       : undefined;
     const evidenceResolution = await retrieveEvidence(
       db,
@@ -378,11 +378,11 @@ export async function reviseDraft(
       },
       true,
     );
-    const { docs } = getBrain(db, input.workspaceId);
+    const { docs } = await getBrain(db, input.workspaceId);
     const contents = Object.fromEntries(
       docs.map((document) => [document.docType, document.content]),
     ) as BrainContents;
-    const channelGuidance = resolveChannelGuidance(db, input.workspaceId, draft.channel, {
+    const channelGuidance = await resolveChannelGuidance(db, input.workspaceId, draft.channel, {
       personaId: draft.personaId,
       campaignId: draft.campaignId,
     });
@@ -397,21 +397,21 @@ export async function reviseDraft(
         scope: channelGuidance.scopeLabel,
       },
       persona: persona ? toResolvePersona(persona) : undefined,
-      ...campaignResolveInputs(db, input.workspaceId, campaign),
-      account: resolveDraftAccount(db, input.workspaceId, {
+      ...await campaignResolveInputs(db, input.workspaceId, campaign),
+      account: await resolveDraftAccount(db, input.workspaceId, {
         personaId: draft.personaId,
         channel: draft.channel,
       }),
       signal: signal
         ? { content: signal.content, source: signal.source, sourceUrl: signal.sourceUrl }
         : undefined,
-      ...selectiveContextInputs(db, input.workspaceId),
+      ...await selectiveContextInputs(db, input.workspaceId),
       evidence: evidenceResolution.evidence,
       evidenceExclusionReason: evidenceResolution.exclusionReason,
     });
     const contextSections = normalizeContextSections(
       resolved.sections,
-      evidenceDocumentLookup(db, input.workspaceId),
+      await evidenceDocumentLookup(db, input.workspaceId),
     );
     const result = await meteredLlm(llm, db, {
       workspaceId: input.workspaceId,
@@ -420,7 +420,7 @@ export async function reviseDraft(
     }).generate({
       prompt: revisionPrompt(
         resolved.prompt,
-        listRevisionTurns(db, input.workspaceId, input.draftId),
+        await listRevisionTurns(db, input.workspaceId, input.draftId),
         draft.content,
         input.instruction,
       ),
@@ -439,18 +439,18 @@ export async function reviseDraft(
       }
     }
 
-    const current = getDraft(db, input.workspaceId, input.draftId);
+    const current = await getDraft(db, input.workspaceId, input.draftId);
     if (!current || current.updatedAt !== draft.updatedAt || current.state !== draft.state) {
       throw new DraftChangedError();
     }
-    return db.transaction((tx) => {
+    return await db.transaction(async (tx) => {
       // Sprint 68: the founder's instruction travels with the edit, so the
       // captured correction carries the *why* in their own words — the single
       // richest preference signal the product has.
-      const updated = applyDraftActionInTransaction(tx, current, "edit", input.actor, content, undefined, {
+      const updated = await applyDraftActionInTransaction(tx, current, "edit", input.actor, content, undefined, {
         instruction: input.instruction,
       });
-      const turn = completeTurn(
+      const turn = await completeTurn(
         tx,
         input.workspaceId,
         running.id,
@@ -465,7 +465,7 @@ export async function reviseDraft(
       return { draft: updated, turn };
     });
   } catch (error) {
-    failTurn(
+    await failTurn(
       db,
       input.workspaceId,
       running.id,

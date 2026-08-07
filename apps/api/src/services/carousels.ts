@@ -159,9 +159,9 @@ export async function generateCarousel(
   const started = Date.now();
 
   // Entitlement gate (umbrella Decision 10) — the exact seam text generations use.
-  assertLlmBudget(db, workspaceId);
+  await assertLlmBudget(db, workspaceId);
 
-  const source = getDraft(db, workspaceId, draftId);
+  const source = await getDraft(db, workspaceId, draftId);
   if (!source) throw new CarouselSourceError("draft_not_found");
   if (source.state !== "approved") {
     throw new CarouselSourceError("Only an approved draft can become a carousel.");
@@ -169,7 +169,7 @@ export async function generateCarousel(
 
   const slides = splitIntoSlides(source.content);
 
-  const resolved = resolveDesignSystem(db, workspaceId, {
+  const resolved = await resolveDesignSystem(db, workspaceId, {
     channel: "instagram",
     personaId: source.personaId,
     campaignId: source.campaignId,
@@ -238,7 +238,7 @@ export async function generateCarousel(
     prompt: `Deterministic carousel render for draft ${draftId}: ${slides.length} slides (${slides.map((s) => s.archetype).join(", ")}). No LLM call on this path.`,
     resolveMode: "draft",
   };
-  const generation = storeGeneration(db, {
+  const generation = await storeGeneration(db, {
     workspaceId,
     taskType: "instagram_carousel",
     channel: "instagram",
@@ -252,7 +252,7 @@ export async function generateCarousel(
   });
   // The design daemon's LLM runs outside our gateway — meter a flat ledger
   // event so design generations stay inside the workspace budget (Sprint 59).
-  recordLlmUsage(db, {
+  await recordLlmUsage(db, {
     workspaceId,
     pipeline: "design_render",
     campaignId: source.campaignId,
@@ -262,7 +262,7 @@ export async function generateCarousel(
     costCentsOverride: DESIGN_RENDER_FLAT_CENTS,
   });
 
-  return submitDraft(
+  return await submitDraft(
     db,
     {
       workspaceId,

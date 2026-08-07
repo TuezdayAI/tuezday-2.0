@@ -24,9 +24,9 @@ import { createTestDb } from "./helpers";
 
 const WORKSPACE_ID = "workspace-agents";
 
-function fixture(script: ScriptedStep[]) {
+async function fixture(script: ScriptedStep[]) {
   const db = createTestDb();
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({ id: WORKSPACE_ID, name: "Agents", createdAt: 1, updatedAt: 1 })
     .run();
   const gateway = new ScriptedGateway(script);
@@ -66,9 +66,9 @@ function lookupTool(): { tool: AgentTool; received: unknown[] } {
   };
 }
 
-function runRows(db: Db, runId: string) {
-  const run = db.select().from(agentRuns).where(eq(agentRuns.id, runId)).get()!;
-  const steps = db
+async function runRows(db: Db, runId: string) {
+  const run = (await db.select().from(agentRuns).where(eq(agentRuns.id, runId)).get())!;
+  const steps = await db
     .select()
     .from(agentRunSteps)
     .where(eq(agentRunSteps.runId, runId))
@@ -79,7 +79,7 @@ function runRows(db: Db, runId: string) {
 
 describe("AgentRunner", () => {
   it("drives a three-step tool-using loop and persists the full transcript", async () => {
-    const { db, gateway, runner } = fixture([
+    const { db, gateway, runner } = await fixture([
       { toolCalls: [{ name: "lookup", arguments: { q: "alpha" } }] },
       { text: "Need one more.", toolCalls: [{ name: "lookup", arguments: { q: "beta" } }] },
       { text: "Final answer.", usage: { inputTokens: 40, outputTokens: 20 } },
@@ -118,7 +118,7 @@ describe("AgentRunner", () => {
     });
 
     // Persisted trace: run totals plus interleaved model/tool steps in order.
-    const { run, steps } = runRows(db, result.runId);
+    const { run, steps } = await runRows(db, result.runId);
     expect(run.status).toBe("done");
     expect(run.stopReason).toBe("complete");
     expect(run.workspaceId).toBe(WORKSPACE_ID);
@@ -151,7 +151,7 @@ describe("AgentRunner", () => {
   });
 
   it("records max_steps as the stop reason when the loop never finishes", async () => {
-    const { db, runner } = fixture([
+    const { db, runner } = await fixture([
       { toolCalls: [{ name: "lookup", arguments: { q: "a" } }] },
       { toolCalls: [{ name: "lookup", arguments: { q: "b" } }] },
       { toolCalls: [{ name: "lookup", arguments: { q: "c" } }] },
@@ -161,13 +161,13 @@ describe("AgentRunner", () => {
     const result = await runner.run(baseParams({ tools: [tool], maxSteps: 2 }));
 
     expect(result.stopReason).toBe("max_steps");
-    const { run } = runRows(db, result.runId);
+    const { run } = await runRows(db, result.runId);
     expect(run.stopReason).toBe("max_steps");
     expect(run.status).toBe("done");
   });
 
   it("records max_tokens when cumulative usage crosses the budget", async () => {
-    const { db, runner } = fixture([
+    const { db, runner } = await fixture([
       { toolCalls: [{ name: "lookup", arguments: { q: "a" } }], usage: { inputTokens: 600 } },
       { toolCalls: [{ name: "lookup", arguments: { q: "b" } }], usage: { inputTokens: 600 } },
     ]);
@@ -177,22 +177,22 @@ describe("AgentRunner", () => {
 
     expect(result.stopReason).toBe("max_tokens");
     expect(result.usage.inputTokens).toBe(1_200);
-    expect(runRows(db, result.runId).run.stopReason).toBe("max_tokens");
+    expect((await runRows(db, result.runId)).run.stopReason).toBe("max_tokens");
   });
 
   it("records timeout when the deadline passes mid-call", async () => {
-    const { db, runner } = fixture([{ text: "too slow", delayMs: 100 }]);
+    const { db, runner } = await fixture([{ text: "too slow", delayMs: 100 }]);
 
     const result = await runner.run(baseParams({ timeoutMs: 25 }));
 
     expect(result.stopReason).toBe("timeout");
-    const { run } = runRows(db, result.runId);
+    const { run } = await runRows(db, result.runId);
     expect(run.stopReason).toBe("timeout");
     expect(run.status).toBe("done"); // never left stuck "running"
   });
 
   it("feeds tool errors back to the model instead of crashing the run", async () => {
-    const { db, runner } = fixture([
+    const { db, runner } = await fixture([
       { toolCalls: [{ name: "explode", arguments: {} }] },
       { text: "Recovered without the tool." },
     ]);
@@ -208,14 +208,14 @@ describe("AgentRunner", () => {
     expect(result.stopReason).toBe("complete");
     const toolMessage = result.messages.find((m) => m.role === "tool")!;
     expect(toolMessage.content).toBe("Error: boom");
-    const { steps } = runRows(db, result.runId);
+    const { steps } = await runRows(db, result.runId);
     const toolStep = steps.find((s) => s.kind === "tool_call")!;
     expect(toolStep.toolError).toBe("boom");
     expect(toolStep.toolResultJson).toBeNull();
   });
 
   it("answers unknown tool calls with an error result and keeps going", async () => {
-    const { runner } = fixture([
+    const { runner } = await fixture([
       { toolCalls: [{ name: "no_such_tool", arguments: {} }] },
       { text: "Done anyway." },
     ]);
@@ -229,7 +229,7 @@ describe("AgentRunner", () => {
   });
 
   it("stops with needs_human when a tool raises the signal", async () => {
-    const { db, runner } = fixture([{ toolCalls: [{ name: "spend", arguments: { cents: 500 } }] }]);
+    const { db, runner } = await fixture([{ toolCalls: [{ name: "spend", arguments: { cents: 500 } }] }]);
     const tool: AgentTool = {
       definition: { name: "spend", description: "Spend money.", inputSchema: { type: "object" } },
       handler: async () => {
@@ -241,7 +241,7 @@ describe("AgentRunner", () => {
 
     expect(result.stopReason).toBe("needs_human");
     expect(result.error).toBe("budget approval required");
-    const { run, steps } = runRows(db, result.runId);
+    const { run, steps } = await runRows(db, result.runId);
     expect(run.stopReason).toBe("needs_human");
     expect(run.error).toBe("budget approval required");
     expect(steps.find((s) => s.kind === "tool_call")!.toolError).toBe(
@@ -250,20 +250,20 @@ describe("AgentRunner", () => {
   });
 
   it("finalizes the run with stop reason error on a gateway failure", async () => {
-    const { db, runner } = fixture([]); // exhausted script throws GatewayError
+    const { db, runner } = await fixture([]); // exhausted script throws GatewayError
 
     const result = await runner.run(baseParams());
 
     expect(result.stopReason).toBe("error");
     expect(result.error).toContain("script exhausted");
-    const { run } = runRows(db, result.runId);
+    const { run } = await runRows(db, result.runId);
     expect(run.status).toBe("done");
     expect(run.stopReason).toBe("error");
     expect(run.error).toContain("script exhausted");
   });
 
   it("parses structured output when a responseSchema is given", async () => {
-    const { db, runner } = fixture([{ text: '{"score": 7, "verdict": "good"}' }]);
+    const { db, runner } = await fixture([{ text: '{"score": 7, "verdict": "good"}' }]);
     const responseSchema = {
       type: "object",
       properties: { score: { type: "integer" }, verdict: { type: "string" } },
@@ -273,14 +273,14 @@ describe("AgentRunner", () => {
 
     expect(result.stopReason).toBe("complete");
     expect(result.output).toEqual({ score: 7, verdict: "good" });
-    expect(JSON.parse(runRows(db, result.runId).run.outputJson!)).toEqual({
+    expect(JSON.parse((await runRows(db, result.runId)).run.outputJson!)).toEqual({
       score: 7,
       verdict: "good",
     });
   });
 
   it("stops with error when structured output is not valid JSON", async () => {
-    const { runner } = fixture([{ text: "definitely not json" }]);
+    const { runner } = await fixture([{ text: "definitely not json" }]);
 
     const result = await runner.run(
       baseParams({ responseSchema: { type: "object", properties: {} } }),
@@ -292,20 +292,20 @@ describe("AgentRunner", () => {
 
   it("throws (not a run result) when the gateway lacks agentStep", async () => {
     const db = createTestDb();
-    db.insert(workspaces)
+    await db.insert(workspaces)
       .values({ id: WORKSPACE_ID, name: "Agents", createdAt: 1, updatedAt: 1 })
       .run();
     const runner = new AgentRunner(db, {
       generate: async () => ({ text: "x", model: "m", provider: "p", durationMs: 0 }),
     });
 
-    await expect(runner.run(baseParams())).rejects.toThrow(/agentStep/);
+    await expect(await runner.run(baseParams())).rejects.toThrow(/agentStep/);
   });
 });
 
 describe("AgentRunner streaming", () => {
   it("emits deltas, tool boundaries, step boundaries and the stop reason in order", async () => {
-    const { runner } = fixture([
+    const { runner } = await fixture([
       { text: "Hello", toolCalls: [{ name: "lookup", arguments: { q: "x" } }] },
       { text: "Done" },
     ]);
@@ -350,15 +350,15 @@ describe("AgentRunner streaming", () => {
 
   it("degrades to one whole-text delta when the gateway cannot stream", async () => {
     const db = createTestDb();
-    db.insert(workspaces)
+    await db.insert(workspaces)
       .values({ id: WORKSPACE_ID, name: "Agents", createdAt: 1, updatedAt: 1 })
       .run();
     const scripted = new ScriptedGateway([{ text: "All at once" }]);
     // agentStep only — no agentStepStream.
     const runner = new AgentRunner(db, {
       generate: scripted.generate.bind(scripted),
-      agentStep: (params: AgentStepParams): Promise<AgentStepResult> =>
-        scripted.agentStep(params),
+      agentStep: async (params: AgentStepParams): Promise<AgentStepResult> =>
+        await scripted.agentStep(params),
     });
     const events: AgentRunEvent[] = [];
 
@@ -417,7 +417,7 @@ describe("search_evidence proof tool", () => {
 
   async function seededEvidence() {
     const db = createTestDb();
-    db.insert(workspaces)
+    await db.insert(workspaces)
       .values({ id: WORKSPACE_ID, name: "Agents", createdAt: 1, updatedAt: 1 })
       .run();
     const store = new FakeEvidenceStore();
@@ -430,7 +430,7 @@ describe("search_evidence proof tool", () => {
     });
     // evidence_collections is created lazily by ensureWorkspaceCollection; the
     // document row is what marks it ready and workspace-owned.
-    db.insert(evidenceDocuments)
+    await db.insert(evidenceDocuments)
       .values({
         id: "doc-1",
         workspaceId: WORKSPACE_ID,
@@ -469,7 +469,7 @@ describe("search_evidence proof tool", () => {
 
   it("reports an empty corpus instead of failing", async () => {
     const db = createTestDb();
-    db.insert(workspaces)
+    await db.insert(workspaces)
       .values({ id: WORKSPACE_ID, name: "Agents", createdAt: 1, updatedAt: 1 })
       .run();
     const store = new FakeEvidenceStore();

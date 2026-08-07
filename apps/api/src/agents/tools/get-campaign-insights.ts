@@ -18,12 +18,12 @@ export const getCampaignInsightsTool: Tool<Input, unknown> = {
   input,
   access: "read",
   async run(ctx, { campaignId }) {
-    const campaign = getCampaign(ctx.db, ctx.workspaceId, campaignId);
+    const campaign = await getCampaign(ctx.db, ctx.workspaceId, campaignId);
     if (!campaign) {
       return {
         error: "not_found",
         note: `No campaign with id ${campaignId} in this workspace.`,
-        availableCampaigns: listCampaigns(ctx.db, ctx.workspaceId).map((c) => ({
+        availableCampaigns: (await listCampaigns(ctx.db, ctx.workspaceId)).map((c) => ({
           id: c.id,
           name: c.name,
           status: c.status,
@@ -32,7 +32,7 @@ export const getCampaignInsightsTool: Tool<Input, unknown> = {
     }
     return {
       campaign: { id: campaign.id, name: campaign.name, status: campaign.status },
-      insights: getCampaignInsights(ctx.db, campaign),
+      insights: await getCampaignInsights(ctx.db, campaign),
     };
   },
 };

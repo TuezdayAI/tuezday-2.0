@@ -35,13 +35,13 @@ import { createTestDb } from "./helpers";
 
 const ACTOR = { userId: null, label: "Founder", human: true };
 
-function setWorkspacePolicies(
+async function setWorkspacePolicies(
   db: Db,
   workspaceId: string,
   overrides: Partial<Record<ExternalActionKind, "autonomous" | "human_required">>,
 ) {
-  const current = listExternalActionPolicies(db, workspaceId, "workspace", workspaceId);
-  return upsertExternalActionPolicies(
+  const current = await listExternalActionPolicies(db, workspaceId, "workspace", workspaceId);
+  return await upsertExternalActionPolicies(
     db,
     workspaceId,
     {
@@ -141,14 +141,14 @@ describe("external action lifecycle", () => {
   let db: Db;
   let workspaceId: string;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createTestDb();
     workspaceId = randomUUID();
     const now = Date.now();
-    db.insert(workspaces)
+    await db.insert(workspaces)
       .values({ id: workspaceId, name: "Action Lab", createdAt: now, updatedAt: now })
       .run();
-    ensureWorkspaceActionPolicies(db, workspaceId);
+    await ensureWorkspaceActionPolicies(db, workspaceId);
   });
 
   it("canonicalizes object keys recursively while preserving array order", () => {
@@ -172,7 +172,7 @@ describe("external action lifecycle", () => {
     expect(fake.execute).not.toHaveBeenCalled();
 
     await expect(
-      runtime.propose(
+      await runtime.propose(
         { ...input, payload: { body: "Changed", target: "feed" } },
         ACTOR,
       ),
@@ -180,7 +180,7 @@ describe("external action lifecycle", () => {
   });
 
   it("dispatches autonomous work once and preserves its execution receipt", async () => {
-    setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
+    await setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
     const input = command(workspaceId);
     const fake = fakeAdapter(input);
     const runtime = createExternalActionRuntime({ db, adapters: { publish: fake.adapter } });
@@ -203,7 +203,7 @@ describe("external action lifecycle", () => {
     const queued = await runtime.propose(authorizedInput, ACTOR);
     const authorized = await runtime.authorize(queued.action.id, workspaceId, ACTOR);
     expect(authorized.action.status).toBe("succeeded");
-    expect(getExternalActionDetail(db, workspaceId, queued.action.id)?.decisions[0]?.decision).toBe(
+    expect((await getExternalActionDetail(db, workspaceId, queued.action.id))?.decisions[0]?.decision).toBe(
       "authorize",
     );
 
@@ -222,7 +222,7 @@ describe("external action lifecycle", () => {
     );
     expect(denied.action.status).toBe("cancelled");
     expect(deniedFake.execute).not.toHaveBeenCalled();
-    expect(getExternalActionDetail(db, workspaceId, toDeny.action.id)?.decisions[0]?.reason).toBe(
+    expect((await getExternalActionDetail(db, workspaceId, toDeny.action.id))?.decisions[0]?.reason).toBe(
       "Wrong destination",
     );
   });
@@ -230,7 +230,7 @@ describe("external action lifecycle", () => {
   it("emits authorization analytics only after the durable decision commits", async () => {
     const now = Date.now();
     const userId = randomUUID();
-    db.insert(users)
+    await db.insert(users)
       .values({
         id: userId,
         email: "founder@action.test",
@@ -241,8 +241,8 @@ describe("external action lifecycle", () => {
       .run();
     const input = command(workspaceId);
     const fake = fakeAdapter(input);
-    const capture = vi.fn(() => {
-      expect(db.select().from(externalActionDecisions).all()).toHaveLength(1);
+    const capture = vi.fn(async () => {
+      expect(await db.select().from(externalActionDecisions).all()).toHaveLength(1);
     });
     const analytics: AnalyticsSink = { capture };
     const runtime = createExternalActionRuntime({
@@ -275,10 +275,10 @@ describe("external action lifecycle", () => {
       requestedFor: null,
     });
 
-    await expect(runtime.authorize(queued.action.id, workspaceId, ACTOR)).rejects.toBeInstanceOf(
+    await expect(await runtime.authorize(queued.action.id, workspaceId, ACTOR)).rejects.toBeInstanceOf(
       StaleExternalActionError,
     );
-    expect(getExternalAction(db, workspaceId, queued.action.id)?.status).toBe("stale");
+    expect((await getExternalAction(db, workspaceId, queued.action.id))?.status).toBe("stale");
     expect(fake.execute).not.toHaveBeenCalled();
   });
 
@@ -286,7 +286,7 @@ describe("external action lifecycle", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-07-14T10:00:00Z"));
     try {
-      setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
+      await setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
       const dueAt = Date.now() + 60_000;
       const input = command(workspaceId, { requestedFor: dueAt });
       const fake = fakeAdapter(input);
@@ -305,7 +305,7 @@ describe("external action lifecycle", () => {
   });
 
   it("persists guardrail blockers and failed adapter receipts", async () => {
-    setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
+    await setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
     const blockedInput = command(workspaceId);
     const blockedFake = fakeAdapter(blockedInput);
     blockedFake.setBlocker({ code: "connection_unhealthy", message: "Reconnect it.", retryable: true });
@@ -338,7 +338,7 @@ describe("external action lifecycle", () => {
       payload: { body: "Corrected", target: "feed" },
       requestedFor: null,
     });
-    await expect(runtime.authorize(first.action.id, workspaceId, ACTOR)).rejects.toBeInstanceOf(
+    await expect(await runtime.authorize(first.action.id, workspaceId, ACTOR)).rejects.toBeInstanceOf(
       StaleExternalActionError,
     );
     const successor = await runtime.repropose(
@@ -348,7 +348,7 @@ describe("external action lifecycle", () => {
       ACTOR,
     );
     expect(successor.action.supersedesActionId).toBe(first.action.id);
-    expect(getExternalAction(db, workspaceId, first.action.id)?.supersededByActionId).toBe(
+    expect((await getExternalAction(db, workspaceId, first.action.id))?.supersededByActionId).toBe(
       successor.action.id,
     );
 
@@ -385,19 +385,19 @@ describe("external action lifecycle", () => {
       expect(queued.action.status).toBe("authorization_required");
 
       fake.setRevalidateError(refusal());
-      await expect(runtime.authorize(queued.action.id, workspaceId, ACTOR)).rejects.toBeInstanceOf(
+      await expect(await runtime.authorize(queued.action.id, workspaceId, ACTOR)).rejects.toBeInstanceOf(
         StaleExternalActionError,
       );
-      const durable = getExternalAction(db, workspaceId, queued.action.id);
+      const durable = await getExternalAction(db, workspaceId, queued.action.id);
       expect(durable?.status).toBe("stale");
       expect(durable?.blocker?.code).toBe("subject_changed");
       expect(fake.execute).not.toHaveBeenCalled();
       // No authorization was granted, so nothing false is on the record.
-      expect(getExternalActionDetail(db, workspaceId, queued.action.id)?.decisions).toEqual([]);
+      expect((await getExternalActionDetail(db, workspaceId, queued.action.id))?.decisions).toEqual([]);
     });
 
     it("stales at propose time instead of throwing out of the dispatching branch", async () => {
-      setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
+      await setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
       const input = command(workspaceId);
       const fake = fakeAdapter(input);
       fake.setRevalidateError(refusal());
@@ -412,7 +412,7 @@ describe("external action lifecycle", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(new Date("2026-07-14T10:00:00Z"));
       try {
-        setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
+        await setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
         const dueAt = Date.now() + 60_000;
         const input = command(workspaceId, { requestedFor: dueAt });
         const fake = fakeAdapter(input);
@@ -435,18 +435,18 @@ describe("external action lifecycle", () => {
       const runtime = createExternalActionRuntime({ db, adapters: { publish: fake.adapter } });
       const queued = await runtime.propose(input, ACTOR);
       fake.setRevalidateError(refusal());
-      await expect(runtime.authorize(queued.action.id, workspaceId, ACTOR)).rejects.toBeInstanceOf(
+      await expect(await runtime.authorize(queued.action.id, workspaceId, ACTOR)).rejects.toBeInstanceOf(
         StaleExternalActionError,
       );
 
       await expect(
-        runtime.repropose(queued.action.id, workspaceId, "publish:retry", ACTOR),
+        await runtime.repropose(queued.action.id, workspaceId, "publish:retry", ACTOR),
       ).rejects.toBeInstanceOf(StaleExternalActionError);
-      expect(getExternalAction(db, workspaceId, queued.action.id)?.status).toBe("stale");
+      expect((await getExternalAction(db, workspaceId, queued.action.id))?.status).toBe("stale");
     });
 
     it("does not call a blocked action stale when its repropose cannot be prepared", async () => {
-      setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
+      await setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
       const input = command(workspaceId);
       const fake = fakeAdapter(input);
       fake.setBlocker({ code: "connection_unhealthy", message: "Reconnect it.", retryable: true });
@@ -465,7 +465,7 @@ describe("external action lifecycle", () => {
       expect(failure).not.toBeInstanceOf(StaleExternalActionError);
       expect((failure as ExternalActionPreparationError).code).toBe("draft_not_approved");
       // Still blocked — `blocked → proposed` stays open once the cause is fixed.
-      expect(getExternalAction(db, workspaceId, blocked.action.id)?.status).toBe("blocked");
+      expect((await getExternalAction(db, workspaceId, blocked.action.id))?.status).toBe("blocked");
     });
   });
 
@@ -480,7 +480,7 @@ describe("external action lifecycle", () => {
       const runtime = createExternalActionRuntime({ db, adapters: { publish: fake.adapter } });
       const queued = await runtime.propose(input, ACTOR);
       // The collapsed shape: authorized without ever entering the queue.
-      transitionExternalAction(db, workspaceId, queued.action.id, "authorized", {
+      await transitionExternalAction(db, workspaceId, queued.action.id, "authorized", {
         authorizedAt: Date.now(),
       });
 
@@ -494,7 +494,7 @@ describe("external action lifecycle", () => {
       expect(cancelled.action.completedAt).not.toBeNull();
       expect(fake.execute).not.toHaveBeenCalled();
 
-      const decisions = getExternalActionDetail(db, workspaceId, queued.action.id)!.decisions;
+      const decisions = (await getExternalActionDetail(db, workspaceId, queued.action.id))!.decisions;
       expect(decisions).toHaveLength(1);
       // The projected actor is the persisted identity; humanity is recorded on
       // the row (see the cadence tests) but is not part of the wire shape.
@@ -503,7 +503,7 @@ describe("external action lifecycle", () => {
         actor: { userId: ACTOR.userId, label: ACTOR.label },
       });
       expect(
-        db.select().from(externalActionDecisions).all().map((d) => d.actorHuman),
+        (await db.select().from(externalActionDecisions).all()).map((d) => d.actorHuman),
       ).toEqual([true]);
       // The founder's own words survive…
       expect(decisions[0]?.reason).toContain("Changed my mind");
@@ -523,15 +523,15 @@ describe("external action lifecycle", () => {
       await runtime.deny(toDeny.action.id, workspaceId, ACTOR, sameWords);
 
       const toWithdraw = await runtime.propose(command(workspaceId), ACTOR);
-      transitionExternalAction(db, workspaceId, toWithdraw.action.id, "authorized", {
+      await transitionExternalAction(db, workspaceId, toWithdraw.action.id, "authorized", {
         authorizedAt: Date.now(),
       });
       await runtime.cancel(toWithdraw.action.id, workspaceId, ACTOR, sameWords);
 
       // Both end `cancelled` with `decision: "deny"`, so the persisted reason is
       // the whole of the difference. A denial is never dressed up as one.
-      const denial = getExternalActionDetail(db, workspaceId, toDeny.action.id)!.decisions[0]!;
-      const withdrawal = getExternalActionDetail(db, workspaceId, toWithdraw.action.id)!
+      const denial = (await getExternalActionDetail(db, workspaceId, toDeny.action.id))!.decisions[0]!;
+      const withdrawal = (await getExternalActionDetail(db, workspaceId, toWithdraw.action.id))!
         .decisions[0]!;
       expect(denial.reason).toBe(sameWords);
       expect(withdrawal.reason).not.toBe(denial.reason);
@@ -539,7 +539,7 @@ describe("external action lifecycle", () => {
     });
 
     it("never records 'before it was dispatched' against something that dispatched", async () => {
-      setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
+      await setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
       const input = command(workspaceId);
       const fake = fakeAdapter(input);
       fake.setResult(execution("Provider unavailable"));
@@ -551,7 +551,7 @@ describe("external action lifecycle", () => {
       // legal edge — and a reason on the record must not be a lie.
       const cancelled = await runtime.cancel(failed.action.id, workspaceId, ACTOR, null);
       expect(cancelled.action.status).toBe("cancelled");
-      const reason = getExternalActionDetail(db, workspaceId, failed.action.id)!.decisions[0]
+      const reason = (await getExternalActionDetail(db, workspaceId, failed.action.id))!.decisions[0]
         ?.reason;
       expect(reason).not.toContain(WITHDRAWN_BEFORE_DISPATCH);
       expect(reason).toContain("failed");
@@ -561,7 +561,7 @@ describe("external action lifecycle", () => {
       vi.useFakeTimers({ toFake: ["Date"] });
       vi.setSystemTime(new Date("2026-07-14T10:00:00Z"));
       try {
-        setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
+        await setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
         const dueAt = Date.now() + 60_000;
         const input = command(workspaceId, { requestedFor: dueAt });
         const fake = fakeAdapter(input);
@@ -571,7 +571,7 @@ describe("external action lifecycle", () => {
 
         const cancelled = await runtime.cancel(scheduled.action.id, workspaceId, ACTOR, null);
         expect(cancelled.action.status).toBe("cancelled");
-        expect(getExternalActionDetail(db, workspaceId, scheduled.action.id)!.decisions[0]?.reason)
+        expect((await getExternalActionDetail(db, workspaceId, scheduled.action.id))!.decisions[0]?.reason)
           .toBe(WITHDRAWN_BEFORE_DISPATCH);
 
         vi.setSystemTime(dueAt + 1);
@@ -583,7 +583,7 @@ describe("external action lifecycle", () => {
     });
 
     it("refuses to cancel an action that already left the building", async () => {
-      setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
+      await setWorkspacePolicies(db, workspaceId, { publish: "autonomous" });
       const input = command(workspaceId);
       const fake = fakeAdapter(input);
       const runtime = createExternalActionRuntime({ db, adapters: { publish: fake.adapter } });
@@ -591,10 +591,10 @@ describe("external action lifecycle", () => {
       expect(done.action.status).toBe("succeeded");
 
       await expect(
-        runtime.cancel(done.action.id, workspaceId, ACTOR, null),
+        await runtime.cancel(done.action.id, workspaceId, ACTOR, null),
       ).rejects.toBeInstanceOf(InvalidExternalActionTransitionError);
-      expect(getExternalAction(db, workspaceId, done.action.id)?.status).toBe("succeeded");
-      expect(getExternalActionDetail(db, workspaceId, done.action.id)?.decisions).toEqual([]);
+      expect((await getExternalAction(db, workspaceId, done.action.id))?.status).toBe("succeeded");
+      expect((await getExternalActionDetail(db, workspaceId, done.action.id))?.decisions).toEqual([]);
     });
   });
 });

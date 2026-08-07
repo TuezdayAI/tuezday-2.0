@@ -13,21 +13,21 @@ import { createTestDb } from "./helpers";
 
 const WS = "11111111-1111-4111-8111-111111111111";
 
-function seedWorkspace(db: Db): void {
+async function seedWorkspace(db: Db): Promise<void> {
   (db as unknown as { $client: import("better-sqlite3").Database }).$client
     .prepare(`INSERT INTO workspaces (id, name, created_at, updated_at) VALUES (?, 'W', 1, 1)`)
     .run(WS);
-  db.insert(evidenceCollections)
+  await db.insert(evidenceCollections)
     .values({ workspaceId: WS, r2rCollectionId: "r2r-col-1", createdAt: 1 })
     .run();
 }
 
-function seedDoc(
+async function seedDoc(
   db: Db,
   over: Partial<typeof evidenceDocuments.$inferInsert> = {},
-): string {
+): Promise<string> {
   const id = randomUUID();
-  db.insert(evidenceDocuments)
+  await db.insert(evidenceDocuments)
     .values({
       id,
       workspaceId: WS,
@@ -63,15 +63,15 @@ describe("migrateEvidence", () => {
   let db: Db;
   let store: DbEvidenceStore;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     db = createTestDb();
     store = new DbEvidenceStore(db);
-    seedWorkspace(db);
+    await seedWorkspace(db);
   });
 
   it("re-ingests candidate-backed documents from local content without touching R2R", async () => {
-    const docId = seedDoc(db, { kind: "signal" });
-    db.insert(evidenceCandidates)
+    const docId = await seedDoc(db, { kind: "signal" });
+    await db.insert(evidenceCandidates)
       .values({
         id: randomUUID(),
         workspaceId: WS,
@@ -92,18 +92,18 @@ describe("migrateEvidence", () => {
     expect(summary.migrated).toBe(1);
     expect(summary.failed).toBe(0);
     expect(fetcher).not.toHaveBeenCalled();
-    const doc = db.select().from(evidenceDocuments).all()[0]!;
-    const chunks = db.select().from(evidenceChunks).all();
+    const doc = (await db.select().from(evidenceDocuments).all())[0]!;
+    const chunks = await db.select().from(evidenceChunks).all();
     expect(chunks.length).toBeGreaterThan(0);
     expect(chunks[0]!.documentId).toBe(doc.r2rDocumentId);
     // Collection remapped to a native id and chunks scoped to it.
-    const col = db.select().from(evidenceCollections).all()[0]!;
+    const col = (await db.select().from(evidenceCollections).all())[0]!;
     expect(col.r2rCollectionId).not.toBe("r2r-col-1");
     expect(chunks[0]!.collectionId).toBe(col.r2rCollectionId);
   });
 
   it("pulls manual documents' chunks from R2R and re-ingests them", async () => {
-    seedDoc(db, { r2rDocumentId: "r2r-manual-1", title: "Manual" });
+    await seedDoc(db, { r2rDocumentId: "r2r-manual-1", title: "Manual" });
     const fetcher = fakeR2rFetcher({
       "r2r-manual-1": ["First chunk about pricing.", "Second chunk about plans."],
     });
@@ -113,7 +113,7 @@ describe("migrateEvidence", () => {
     expect(summary.migrated).toBe(1);
     const results = await store.search(
       "pricing plans",
-      db.select().from(evidenceCollections).all()[0]!.r2rCollectionId,
+      (await db.select().from(evidenceCollections).all())[0]!.r2rCollectionId,
       5,
     );
     expect(results.length).toBeGreaterThan(0);
@@ -121,18 +121,18 @@ describe("migrateEvidence", () => {
   });
 
   it("marks documents failed when R2R has no content for them", async () => {
-    seedDoc(db, { r2rDocumentId: "r2r-gone" });
+    await seedDoc(db, { r2rDocumentId: "r2r-gone" });
     const summary = await migrateEvidence(db, store, fakeR2rFetcher({}), "http://r2r.local");
 
     expect(summary.migrated).toBe(0);
     expect(summary.failed).toBe(1);
-    const doc = db.select().from(evidenceDocuments).all()[0]!;
+    const doc = (await db.select().from(evidenceDocuments).all())[0]!;
     expect(doc.status).toBe("failed");
     expect(doc.error).toBeTruthy();
   });
 
   it("skips already-migrated documents on a second run", async () => {
-    seedDoc(db, { r2rDocumentId: "r2r-manual-1" });
+    await seedDoc(db, { r2rDocumentId: "r2r-manual-1" });
     const fetcher = fakeR2rFetcher({ "r2r-manual-1": ["Chunk one."] });
 
     await migrateEvidence(db, store, fetcher, "http://r2r.local");
@@ -140,11 +140,11 @@ describe("migrateEvidence", () => {
 
     expect(second.migrated).toBe(0);
     expect(second.skipped).toBe(1);
-    expect(db.select().from(evidenceChunks).all()).toHaveLength(1);
+    expect(await db.select().from(evidenceChunks).all()).toHaveLength(1);
   });
 
   it("ignores documents that never made it into the store", async () => {
-    seedDoc(db, { status: "failed", r2rDocumentId: null });
+    await seedDoc(db, { status: "failed", r2rDocumentId: null });
     const summary = await migrateEvidence(db, store, fakeR2rFetcher({}), "http://r2r.local");
     expect(summary.migrated + summary.failed + summary.skipped).toBe(0);
   });

@@ -194,12 +194,12 @@ export function parseExamplesSection(content: string): TraceExample[] {
  * the store uses, so the panel can link to the live rule — or say plainly that
  * the rule has since been retired.
  */
-export function parsePreferencesSection(
+export async function parsePreferencesSection(
   db: Db,
   workspaceId: string,
   content: string,
-): TracePreference[] {
-  const live = db
+): Promise<TracePreference[]> {
+  const live = await db
     .select({
       id: preferenceRules.id,
       rule: preferenceRules.rule,
@@ -231,20 +231,20 @@ export function parsePreferencesSection(
 // Blocks
 // ---------------------------------------------------------------------------
 
-function planFor(
+async function planFor(
   db: Db,
   workspaceId: string,
   campaignId: string | null,
   artifactText: string,
-): TracePlan | null {
+): Promise<TracePlan | null> {
   if (!campaignId) return null;
-  const campaign = db
+  const campaign = await db
     .select({ name: campaigns.name })
     .from(campaigns)
     .where(and(eq(campaigns.workspaceId, workspaceId), eq(campaigns.id, campaignId)))
     .get();
   if (!campaign) return null;
-  const plan = getCurrentCampaignPlan(db, workspaceId, campaignId)?.plan;
+  const plan = (await getCurrentCampaignPlan(db, workspaceId, campaignId))?.plan;
   const pillars: string[] = plan?.pillars ?? [];
   // D-71.4: a wording match, not a recorded intent. The platform has never
   // stored which pillar a draft was written to serve, and inventing one would
@@ -268,11 +268,11 @@ function planFor(
   };
 }
 
-function originForDraft(
+async function originForDraft(
   db: Db,
   workspaceId: string,
   signalId: string | null,
-): TraceOrigin | null {
+): Promise<TraceOrigin | null> {
   if (!signalId) {
     return {
       kind: "manual",
@@ -283,7 +283,7 @@ function originForDraft(
       at: null,
     };
   }
-  const signal = db
+  const signal = await db
     .select({ content: signals.content, source: signals.source, createdAt: signals.createdAt })
     .from(signals)
     .where(and(eq(signals.workspaceId, workspaceId), eq(signals.id, signalId)))
@@ -320,8 +320,8 @@ interface RunFacts {
  * the metered cost. Absent for legacy-path drafts, which is not the same as
  * zero — see `costFromGeneration`.
  */
-function runFactsForDraft(db: Db, workspaceId: string, draftId: string): RunFacts {
-  const run = db
+async function runFactsForDraft(db: Db, workspaceId: string, draftId: string): Promise<RunFacts> {
+  const run = await db
     .select()
     .from(pipelineRuns)
     .where(and(eq(pipelineRuns.workspaceId, workspaceId), eq(pipelineRuns.draftId, draftId)))
@@ -329,12 +329,12 @@ function runFactsForDraft(db: Db, workspaceId: string, draftId: string): RunFact
     .get();
   if (!run) return { runId: null, critic: null, cost: null };
 
-  const critiqueSteps = db
+  const critiqueSteps = (await db
     .select()
     .from(pipelineRunSteps)
     .where(eq(pipelineRunSteps.runId, run.id))
     .orderBy(pipelineRunSteps.createdAt)
-    .all()
+    .all())
     .filter((step) => step.stepKey.includes("critique") && step.outputJson);
 
   let critic: TraceCritic | null = null;
@@ -353,7 +353,7 @@ function runFactsForDraft(db: Db, workspaceId: string, draftId: string): RunFact
     }
   }
 
-  const model = db
+  const model = await db
     .select({ model: generations.model, provider: generations.provider })
     .from(generations)
     .where(eq(generations.id, run.generationId ?? ""))
@@ -401,8 +401,8 @@ function costFromGeneration(
   };
 }
 
-function revisionsFor(db: Db, workspaceId: string, draftId: string): TraceRevision[] {
-  return db
+async function revisionsFor(db: Db, workspaceId: string, draftId: string): Promise<TraceRevision[]> {
+  return (await db
     .select()
     .from(draftRevisionTurns)
     .where(
@@ -410,7 +410,7 @@ function revisionsFor(db: Db, workspaceId: string, draftId: string): TraceRevisi
     )
     .orderBy(draftRevisionTurns.createdAt)
     .limit(REVISION_LIMIT)
-    .all()
+    .all())
     .map((turn) => ({
       id: turn.id,
       instruction: turn.instruction,
@@ -458,7 +458,7 @@ interface TraceCore {
   campaignId: string | null;
 }
 
-function assemble(
+async function assemble(
   db: Db,
   workspaceId: string,
   subject: ArtifactTrace["subject"],
@@ -471,35 +471,35 @@ function assemble(
     cost: TraceCost | null;
   },
   now: number,
-): ArtifactTrace {
+): Promise<ArtifactTrace> {
   const examplesSection = core.sections.find((s) => s.key === "examples" && s.included);
   const preferencesSection = core.sections.find((s) => s.key === "preferences" && s.included);
   return {
     subject,
     origin: parts.origin,
-    plan: planFor(db, workspaceId, core.campaignId, parts.artifactText),
+    plan: await planFor(db, workspaceId, core.campaignId, parts.artifactText),
     context: toTraceSections(workspaceId, core.sections, core.campaignId),
     contextReason: core.sections.length === 0 ? core.contextReason : null,
     examples: examplesSection ? parseExamplesSection(examplesSection.content) : [],
     preferences: preferencesSection
-      ? parsePreferencesSection(db, workspaceId, preferencesSection.content)
+      ? await parsePreferencesSection(db, workspaceId, preferencesSection.content)
       : [],
     critic: parts.critic,
     revisions: parts.revisions,
     cost: parts.cost,
-    knobs: knobStatesForResolve(db, workspaceId, core.sections, core.meta),
+    knobs: await knobStatesForResolve(db, workspaceId, core.sections, core.meta),
     generatedAt: now,
   };
 }
 
-function draftTrace(
+async function draftTrace(
   db: Db,
   workspaceId: string,
   draftId: string,
   subjectOverride: ArtifactTrace["subject"] | null,
   now: number,
-): ArtifactTrace | undefined {
-  const draft = db
+): Promise<ArtifactTrace | undefined> {
+  const draft = await db
     .select()
     .from(drafts)
     .where(and(eq(drafts.workspaceId, workspaceId), eq(drafts.id, draftId)))
@@ -507,13 +507,13 @@ function draftTrace(
   if (!draft) return undefined;
 
   const generation = draft.sourceGenerationId
-    ? db.select().from(generations).where(eq(generations.id, draft.sourceGenerationId)).get()
+    ? await db.select().from(generations).where(eq(generations.id, draft.sourceGenerationId)).get()
     : undefined;
 
   // The latest completed revision replaced the context the model saw, so it —
   // not the original generation — is the honest answer to "why did it write
   // this?" for the words currently on screen.
-  const latestTurn = db
+  const latestTurn = await db
     .select()
     .from(draftRevisionTurns)
     .where(
@@ -530,7 +530,7 @@ function draftTrace(
     ? parseSections(latestTurn.sectionsJson)
     : parseSections(generation?.sectionsJson);
 
-  const runFacts = runFactsForDraft(db, workspaceId, draftId);
+  const runFacts = await runFactsForDraft(db, workspaceId, draftId);
   const cost =
     runFacts.cost ??
     (generation
@@ -543,7 +543,7 @@ function draftTrace(
         })
       : null);
 
-  return assemble(
+  return await assemble(
     db,
     workspaceId,
     subjectOverride ?? {
@@ -567,37 +567,37 @@ function draftTrace(
       campaignId: draft.campaignId,
     },
     {
-      origin: originForDraft(db, workspaceId, draft.sourceSignalId),
+      origin: await originForDraft(db, workspaceId, draft.sourceSignalId),
       artifactText: draft.content,
       critic: runFacts.critic ?? legacyCritic(workspaceId, generation?.reviewJson ?? null),
-      revisions: revisionsFor(db, workspaceId, draftId),
+      revisions: await revisionsFor(db, workspaceId, draftId),
       cost,
     },
     now,
   );
 }
 
-function deliverableTrace(
+async function deliverableTrace(
   db: Db,
   workspaceId: string,
   deliverableId: string,
   now: number,
-): ArtifactTrace | undefined {
-  const deliverable = db
+): Promise<ArtifactTrace | undefined> {
+  const deliverable = await db
     .select()
     .from(deliverables)
     .where(and(eq(deliverables.workspaceId, workspaceId), eq(deliverables.id, deliverableId)))
     .get();
   if (!deliverable) return undefined;
 
-  const variant = db
+  const variant = await db
     .select()
     .from(variants)
     .where(eq(variants.deliverableId, deliverableId))
     .orderBy(desc(variants.variantVersion))
     .get();
   const snapshot = variant
-    ? db.select().from(contextSnapshots).where(eq(contextSnapshots.id, variant.contextSnapshotId)).get()
+    ? await db.select().from(contextSnapshots).where(eq(contextSnapshots.id, variant.contextSnapshotId)).get()
     : undefined;
 
   let sections: ContextSection[] = [];
@@ -611,7 +611,7 @@ function deliverableTrace(
   }
 
   const pkg = deliverable.packageId
-    ? db
+    ? await db
         .select({ angle: contentPackages.angle, createdAt: contentPackages.createdAt })
         .from(contentPackages)
         .where(eq(contentPackages.id, deliverable.packageId))
@@ -636,7 +636,7 @@ function deliverableTrace(
         at: deliverable.createdAt,
       };
 
-  return assemble(
+  return await assemble(
     db,
     workspaceId,
     {
@@ -688,19 +688,19 @@ function deliverableTrace(
   );
 }
 
-function publicationTrace(
+async function publicationTrace(
   db: Db,
   workspaceId: string,
   publicationId: string,
   now: number,
-): ArtifactTrace | undefined {
-  const publication = db
+): Promise<ArtifactTrace | undefined> {
+  const publication = await db
     .select()
     .from(publications)
     .where(and(eq(publications.workspaceId, workspaceId), eq(publications.id, publicationId)))
     .get();
   if (!publication) return undefined;
-  return draftTrace(db, workspaceId, publication.draftId, {
+  return await draftTrace(db, workspaceId, publication.draftId, {
     kind: "publication",
     id: publication.id,
     title: publication.title,
@@ -710,13 +710,13 @@ function publicationTrace(
   }, now);
 }
 
-function externalActionTrace(
+async function externalActionTrace(
   db: Db,
   workspaceId: string,
   actionId: string,
   now: number,
-): ArtifactTrace | undefined {
-  const action = db
+): Promise<ArtifactTrace | undefined> {
+  const action = await db
     .select()
     .from(externalActions)
     .where(and(eq(externalActions.workspaceId, workspaceId), eq(externalActions.id, actionId)))
@@ -733,13 +733,13 @@ function externalActionTrace(
   };
 
   if (action.draftId) {
-    const traced = draftTrace(db, workspaceId, action.draftId, subject, now);
+    const traced = await draftTrace(db, workspaceId, action.draftId, subject, now);
     if (traced) return traced;
   }
 
   // D-71.9: a budget or targeting change was never generated, so there is no
   // resolve to show. The panel names the gap rather than rendering blank.
-  return assemble(
+  return await assemble(
     db,
     workspaceId,
     subject,
@@ -769,21 +769,21 @@ function externalActionTrace(
 }
 
 /** The one entry point. Returns undefined when the subject does not exist. */
-export function buildArtifactTrace(
+export async function buildArtifactTrace(
   db: Db,
   workspaceId: string,
   kind: TraceSubjectKind,
   id: string,
   now = Date.now(),
-): ArtifactTrace | undefined {
+): Promise<ArtifactTrace | undefined> {
   switch (kind) {
     case "draft":
-      return draftTrace(db, workspaceId, id, null, now);
+      return await draftTrace(db, workspaceId, id, null, now);
     case "deliverable":
-      return deliverableTrace(db, workspaceId, id, now);
+      return await deliverableTrace(db, workspaceId, id, now);
     case "publication":
-      return publicationTrace(db, workspaceId, id, now);
+      return await publicationTrace(db, workspaceId, id, now);
     case "external_action":
-      return externalActionTrace(db, workspaceId, id, now);
+      return await externalActionTrace(db, workspaceId, id, now);
   }
 }

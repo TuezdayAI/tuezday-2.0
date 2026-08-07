@@ -19,7 +19,7 @@ export function registerTrackingRoutes(app: FastifyInstance, db: Db): void {
   app.get<{ Params: { token: string } }>("/t/o/:token", async (request, reply) => {
     const verified = verifyTrackingToken(request.params.token);
     if (!verified.ok) return reply.status(400).send({ error: verified.error });
-    recordOpen(db, verified.value.deliveryId, Date.now());
+    await recordOpen(db, verified.value.deliveryId, Date.now());
     return reply
       .header("content-type", "image/gif")
       .header("cache-control", "no-store")
@@ -31,7 +31,7 @@ export function registerTrackingRoutes(app: FastifyInstance, db: Db): void {
     if (!verified.ok || !verified.value.url) {
       return reply.status(400).send({ error: "invalid_token" });
     }
-    recordClick(db, verified.value.deliveryId, verified.value.url, Date.now());
+    await recordClick(db, verified.value.deliveryId, verified.value.url, Date.now());
     return reply.redirect(verified.value.url);
   });
 }

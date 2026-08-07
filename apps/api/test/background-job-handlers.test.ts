@@ -36,7 +36,7 @@ describe("background job handler registry", () => {
     const handlers = unavailableBackgroundJobHandlers();
     for (const kind of BACKGROUND_JOB_KINDS) {
       await expect(
-        handlers[kind](
+        await handlers[kind](
           kind === "launch_generate"
             ? {
                 kind,

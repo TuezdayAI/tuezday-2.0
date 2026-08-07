@@ -138,19 +138,19 @@ function rowToMessage(row: LaunchMessageRow, draft: DraftRow | null): LaunchMess
 // CRUD
 // ---------------------------------------------------------------------------
 
-function getLaunchRow(db: Db, workspaceId: string, launchId: string): LaunchRow | undefined {
-  return db
+async function getLaunchRow(db: Db, workspaceId: string, launchId: string): Promise<LaunchRow | undefined> {
+  return await db
     .select()
     .from(launches)
     .where(and(eq(launches.workspaceId, workspaceId), eq(launches.id, launchId)))
     .get();
 }
 
-function countMessages(db: Db, launchId: string): number {
-  return db.select().from(launchMessages).where(eq(launchMessages.launchId, launchId)).all().length;
+async function countMessages(db: Db, launchId: string): Promise<number> {
+  return (await db.select().from(launchMessages).where(eq(launchMessages.launchId, launchId)).all()).length;
 }
 
-export function createLaunch(db: Db, workspaceId: string, input: CreateLaunchInput): Launch {
+export async function createLaunch(db: Db, workspaceId: string, input: CreateLaunchInput): Promise<Launch> {
   const now = Date.now();
   const row: LaunchRow = {
     id: randomUUID(),
@@ -167,33 +167,33 @@ export function createLaunch(db: Db, workspaceId: string, input: CreateLaunchInp
     createdAt: now,
     updatedAt: now,
   };
-  db.insert(launches).values(row).run();
+  await db.insert(launches).values(row).run();
   return rowToLaunch(row, 0);
 }
 
-export function listLaunches(db: Db, workspaceId: string): Launch[] {
-  return db
-    .select()
-    .from(launches)
-    .where(eq(launches.workspaceId, workspaceId))
-    .orderBy(desc(launches.createdAt))
-    .all()
-    .map((row) => rowToLaunch(row, countMessages(db, row.id)));
+export async function listLaunches(db: Db, workspaceId: string): Promise<Launch[]> {
+  return await Promise.all((await await db
+      .select()
+      .from(launches)
+      .where(eq(launches.workspaceId, workspaceId))
+      .orderBy(desc(launches.createdAt))
+      .all())
+      .map(async (row) => rowToLaunch(row, await countMessages(db, row.id))));
 }
 
-export function getLaunch(db: Db, workspaceId: string, launchId: string): Launch | undefined {
-  const row = getLaunchRow(db, workspaceId, launchId);
-  return row ? rowToLaunch(row, countMessages(db, row.id)) : undefined;
+export async function getLaunch(db: Db, workspaceId: string, launchId: string): Promise<Launch | undefined> {
+  const row = await getLaunchRow(db, workspaceId, launchId);
+  return row ? rowToLaunch(row, await countMessages(db, row.id)) : undefined;
 }
 
-export function getLaunchDetail(
+export async function getLaunchDetail(
   db: Db,
   workspaceId: string,
   launchId: string,
-): LaunchDetail | undefined {
-  const row = getLaunchRow(db, workspaceId, launchId);
+): Promise<LaunchDetail | undefined> {
+  const row = await getLaunchRow(db, workspaceId, launchId);
   if (!row) return undefined;
-  const joined = db
+  const joined = await db
     .select({ message: launchMessages, draft: drafts })
     .from(launchMessages)
     .leftJoin(drafts, eq(launchMessages.draftId, drafts.id))
@@ -207,33 +207,33 @@ export function getLaunchDetail(
   return {
     launch: rowToLaunch(row, messages.length),
     messages,
-    steps: listSequenceSteps(db, launchId),
-    sequenceRecipients: listSequenceRecipients(db, launchId),
+    steps: await listSequenceSteps(db, launchId),
+    sequenceRecipients: await listSequenceRecipients(db, launchId),
     recipientCount,
   };
 }
 
 /** Patch the launch's sequence config (mode / stop-on-reply / X connection) without
  * touching anything else — a name edit never resets automation (the S28 pattern). */
-export function updateLaunchSequenceConfig(
+export async function updateLaunchSequenceConfig(
   db: Db,
   workspaceId: string,
   launchId: string,
   input: UpdateLaunchSequenceConfigInput,
-): Launch | undefined {
-  const row = getLaunchRow(db, workspaceId, launchId);
+): Promise<Launch | undefined> {
+  const row = await getLaunchRow(db, workspaceId, launchId);
   if (!row) return undefined;
   const set: Partial<LaunchRow> = { updatedAt: Date.now() };
   if (input.automationMode !== undefined) set.automationMode = input.automationMode;
   if (input.stopOnReply !== undefined) set.stopOnReply = input.stopOnReply ? 1 : 0;
   if (input.xConnectionId !== undefined) set.xConnectionId = input.xConnectionId;
-  db.update(launches).set(set).where(eq(launches.id, launchId)).run();
-  return getLaunch(db, workspaceId, launchId);
+  await db.update(launches).set(set).where(eq(launches.id, launchId)).run();
+  return await getLaunch(db, workspaceId, launchId);
 }
 
-export function deleteLaunch(db: Db, workspaceId: string, launchId: string): boolean {
-  if (!getLaunchRow(db, workspaceId, launchId)) return false;
-  db.delete(launches).where(eq(launches.id, launchId)).run();
+export async function deleteLaunch(db: Db, workspaceId: string, launchId: string): Promise<boolean> {
+  if (!await getLaunchRow(db, workspaceId, launchId)) return false;
+  await db.delete(launches).where(eq(launches.id, launchId)).run();
   return true;
 }
 
@@ -268,14 +268,14 @@ function launchGenerationUnitId(input: {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function insertMessage(db: DbExecutor, id: string, fields: Partial<LaunchMessageRow> & {
+async function insertMessage(db: DbExecutor, id: string, fields: Partial<LaunchMessageRow> & {
   workspaceId: string;
   launchId: string;
   channel: LaunchChannel;
   kind: LaunchMessageKind;
-}): boolean {
+}): Promise<boolean> {
   const now = Date.now();
-  return Boolean(db.insert(launchMessages)
+  return Boolean(await db.insert(launchMessages)
     .values({
       id,
       recipientType: null,
@@ -300,8 +300,8 @@ function insertMessage(db: DbExecutor, id: string, fields: Partial<LaunchMessage
     .get());
 }
 
-function setStatus(db: Db, launchId: string, status: Launch["status"]): void {
-  db.update(launches).set({ status, updatedAt: Date.now() }).where(eq(launches.id, launchId)).run();
+async function setStatus(db: Db, launchId: string, status: Launch["status"]): Promise<void> {
+  await db.update(launches).set({ status, updatedAt: Date.now() }).where(eq(launches.id, launchId)).run();
 }
 
 export type EnqueueLaunchGenerationResult =
@@ -317,25 +317,25 @@ export type EnqueueLaunchGenerationResult =
  */
 const LAUNCH_GENERATION_PRIORITY = 10;
 
-export function enqueueLaunchGeneration(
+export async function enqueueLaunchGeneration(
   db: Db,
   workspaceId: string,
   launchId: string,
   input: GenerateLaunchInput,
   actor: DraftActor,
-): EnqueueLaunchGenerationResult {
-  const launchRow = getLaunchRow(db, workspaceId, launchId);
+): Promise<EnqueueLaunchGenerationResult> {
+  const launchRow = await getLaunchRow(db, workspaceId, launchId);
   if (!launchRow) return { ok: false, error: "launch_not_found" };
-  if (hasSequence(db, launchId)) return { ok: false, error: "is_sequence" };
+  if (await hasSequence(db, launchId)) return { ok: false, error: "is_sequence" };
   if (launchRow.status !== "draft") return { ok: false, error: "not_draft" };
   const audience = launchRow.audienceId
-    ? getAudienceDetail(db, workspaceId, launchRow.audienceId)
+    ? await getAudienceDetail(db, workspaceId, launchRow.audienceId)
     : undefined;
   if (!audience) return { ok: false, error: "audience_not_found" };
 
-  return db.transaction((tx): EnqueueLaunchGenerationResult => {
+  return await db.transaction(async (tx): Promise<EnqueueLaunchGenerationResult> => {
     const now = Date.now();
-    const generating = tx
+    const generating = await tx
       .update(launches)
       .set({ status: "generating", updatedAt: now })
       .where(and(
@@ -346,7 +346,7 @@ export function enqueueLaunchGeneration(
       .returning()
       .get();
     if (!generating) return { ok: false, error: "not_draft" };
-    const job = enqueueBackgroundJob(tx, {
+    const job = await enqueueBackgroundJob(tx, {
       payload: { kind: "launch_generate", workspaceId, launchId, input, actor },
       idempotencyKey: `launch-generate:v1:${launchId}`,
       priority: LAUNCH_GENERATION_PRIORITY,
@@ -361,7 +361,7 @@ export type GenerateLaunchResult =
 
 export interface ResumeLaunchGenerationOptions {
   signal?: AbortSignal;
-  heartbeat?: () => boolean;
+  heartbeat?: () => boolean | Promise<boolean>;
 }
 
 interface LaunchGenerationUnit {
@@ -378,9 +378,11 @@ interface LaunchGenerationUnit {
 
 class LaunchGenerationUnitConflict extends Error {}
 
-function assertLaunchGenerationActive(options: ResumeLaunchGenerationOptions): void {
+async function assertLaunchGenerationActive(
+  options: ResumeLaunchGenerationOptions,
+): Promise<void> {
   if (options.signal?.aborted) throw new Error("launch_generation_aborted");
-  if (options.heartbeat && !options.heartbeat()) {
+  if (options.heartbeat && !(await options.heartbeat())) {
     throw new Error("launch_generation_lease_lost");
   }
 }
@@ -400,28 +402,28 @@ export async function resumeLaunchGeneration(
   actor: DraftActor,
   options: ResumeLaunchGenerationOptions = {},
 ): Promise<GenerateLaunchResult> {
-  const launchRow = getLaunchRow(db, workspaceId, launchId);
+  const launchRow = await getLaunchRow(db, workspaceId, launchId);
   if (!launchRow) return { ok: false, error: "launch_not_found" };
-  if (hasSequence(db, launchId)) return { ok: false, error: "is_sequence" };
+  if (await hasSequence(db, launchId)) return { ok: false, error: "is_sequence" };
   if (launchRow.status !== "draft" && launchRow.status !== "generating") {
     return { ok: false, error: "not_draft" };
   }
   const audience = launchRow.audienceId
-    ? getAudienceDetail(db, workspaceId, launchRow.audienceId)
+    ? await getAudienceDetail(db, workspaceId, launchRow.audienceId)
     : undefined;
   if (!audience) return { ok: false, error: "audience_not_found" };
 
-  if (launchRow.status === "draft") setStatus(db, launchId, "generating");
+  if (launchRow.status === "draft") await setStatus(db, launchId, "generating");
 
-  const workspace = getWorkspace(db, workspaceId)!;
+  const workspace = (await getWorkspace(db, workspaceId))!;
   const channels = parseChannels(launchRow);
-  const campaign = launchRow.campaignId ? getCampaign(db, workspaceId, launchRow.campaignId) : undefined;
-  const persona = launchRow.personaId ? getPersona(db, workspaceId, launchRow.personaId) : undefined;
+  const campaign = launchRow.campaignId ? await getCampaign(db, workspaceId, launchRow.campaignId) : undefined;
+  const persona = launchRow.personaId ? await getPersona(db, workspaceId, launchRow.personaId) : undefined;
   const personaArg = persona ? toResolvePersona(persona) : undefined;
-  const campaignArgs = campaignResolveInputs(db, workspaceId, campaign);
-  const { docs } = getBrain(db, workspaceId);
+  const campaignArgs = await campaignResolveInputs(db, workspaceId, campaign);
+  const { docs } = await getBrain(db, workspaceId);
   const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
-  const selective = selectiveContextInputs(db, workspaceId);
+  const selective = await selectiveContextInputs(db, workspaceId);
   const recipients = audience.members;
   const requiredUnitIds: string[] = [];
 
@@ -473,15 +475,15 @@ export async function resumeLaunchGeneration(
     requiredUnitIds.push(...units.map((unit) => unit.id));
 
     const storedIds = new Set(
-      db.select({ id: launchMessages.id })
+      (await db.select({ id: launchMessages.id })
         .from(launchMessages)
         .where(eq(launchMessages.launchId, launchId))
-        .all()
+        .all())
         .map((row) => row.id),
     );
     const missing = units.filter((unit) => !storedIds.has(unit.id));
     for (const unit of missing.filter((candidate) => candidate.skipReason)) {
-      insertMessage(db, unit.id, {
+      await insertMessage(db, unit.id, {
         ...unit.message,
         status: "skipped",
         skipReason: unit.skipReason,
@@ -490,15 +492,15 @@ export async function resumeLaunchGeneration(
     const draftUnits = missing.filter((unit) => !unit.skipReason);
     if (draftUnits.length === 0) continue;
 
-    assertLaunchGenerationActive(options);
+    await assertLaunchGenerationActive(options);
     // Sprint 43: pass the workspace's channel guidance — this path previously
     // fell back to the built-in default even when an override existed.
     // Sprint 44: scoped to the launch's persona/campaign, most-specific-wins.
-    const channelGuidance = resolveChannelGuidance(db, workspaceId, gen.channel, {
+    const channelGuidance = await resolveChannelGuidance(db, workspaceId, gen.channel, {
       personaId: launchRow.personaId,
       campaignId: launchRow.campaignId,
     });
-    const account = resolveDraftAccount(db, workspaceId, {
+    const account = await resolveDraftAccount(db, workspaceId, {
       personaId: launchRow.personaId,
       channel: gen.channel,
     });
@@ -537,10 +539,10 @@ export async function resumeLaunchGeneration(
           pipeline: "launch",
           campaignId: launchRow.campaignId ?? null,
         }).generate({ prompt: resolved.prompt });
-        assertLaunchGenerationActive(options);
+        await assertLaunchGenerationActive(options);
         try {
-          db.transaction((tx) => {
-            const generation = storeGeneration(tx, {
+          await db.transaction(async (tx) => {
+            const generation = await storeGeneration(tx, {
               workspaceId,
               taskType: gen.taskType,
               channel: gen.channel,
@@ -553,7 +555,7 @@ export async function resumeLaunchGeneration(
               provider: result.provider,
               durationMs: result.durationMs,
             });
-            const draft = submitDraftInTransaction(tx, {
+            const draft = await submitDraftInTransaction(tx, {
               workspaceId,
               sourceGenerationId: generation.id,
               campaignId: launchRow.campaignId,
@@ -563,7 +565,7 @@ export async function resumeLaunchGeneration(
               personaId: launchRow.personaId,
               content: result.text,
             }, actor);
-            if (!insertMessage(tx, unit.id, {
+            if (!await insertMessage(tx, unit.id, {
               ...unit.message,
               draftId: draft.id,
               status: "pending",
@@ -576,7 +578,7 @@ export async function resumeLaunchGeneration(
         }
       } catch (err) {
         if (err instanceof GatewayError) {
-          insertMessage(db, unit.id, {
+          await insertMessage(db, unit.id, {
             ...unit.message,
             status: "failed",
             lastError: err.message,
@@ -593,43 +595,43 @@ export async function resumeLaunchGeneration(
   }
 
   const terminalIds = new Set(
-    db.select({ id: launchMessages.id })
+    (await db.select({ id: launchMessages.id })
       .from(launchMessages)
       .where(eq(launchMessages.launchId, launchId))
-      .all()
+      .all())
       .map((row) => row.id),
   );
   if (!requiredUnitIds.every((id) => terminalIds.has(id))) {
     throw new Error("launch_generation_incomplete");
   }
-  setStatus(db, launchId, "ready");
-  return { ok: true, detail: getLaunchDetail(db, workspaceId, launchId)! };
+  await setStatus(db, launchId, "ready");
+  return { ok: true, detail: (await getLaunchDetail(db, workspaceId, launchId))! };
 }
 
 // ---------------------------------------------------------------------------
 // Dispatch helpers
 // ---------------------------------------------------------------------------
 
-function draftRow(db: Db, draftId: string | null): DraftRow | undefined {
+async function draftRow(db: Db, draftId: string | null): Promise<DraftRow | undefined> {
   if (!draftId) return undefined;
-  return db.select().from(drafts).where(eq(drafts.id, draftId)).get();
+  return await db.select().from(drafts).where(eq(drafts.id, draftId)).get();
 }
 
-function isApproved(db: Db, draftId: string | null): boolean {
-  return draftRow(db, draftId)?.state === "approved";
+async function isApproved(db: Db, draftId: string | null): Promise<boolean> {
+  return (await draftRow(db, draftId))?.state === "approved";
 }
 
 type ConnResolution =
   | { ok: true; connection: Connection }
   | { ok: false; error: "no_connection" | "ambiguous_connection" };
 
-function resolveConnection(
+async function resolveConnection(
   db: Db,
   workspaceId: string,
   providerKey: string,
   connectionId: string | undefined,
-): ConnResolution {
-  const candidates = listConnections(db, workspaceId).filter(
+): Promise<ConnResolution> {
+  const candidates = (await listConnections(db, workspaceId)).filter(
     (c) => c.providerKey === providerKey && c.status === "connected",
   );
   if (connectionId) {
@@ -641,16 +643,16 @@ function resolveConnection(
   return { ok: true, connection: candidates[0]! };
 }
 
-function resolveLaunchConnection(
+async function resolveLaunchConnection(
   db: Db,
   workspaceId: string,
   launchRow: LaunchRow,
   channel: LaunchChannel,
   connectionId: string | undefined,
-): ConnResolution {
+): Promise<ConnResolution> {
   const providerKey = LAUNCH_CHANNEL_PROVIDER[channel];
   if (!providerKey) return { ok: false, error: "no_connection" };
-  const routed = resolvePersonaSocialConnection(db, workspaceId, {
+  const routed = await resolvePersonaSocialConnection(db, workspaceId, {
     personaId: launchRow.personaId,
     providerKey,
     channel,
@@ -658,7 +660,7 @@ function resolveLaunchConnection(
   });
   if (routed.ok) return { ok: true, connection: routed.connection };
   if (routed.error === "persona_account_missing" && !launchRow.personaId) {
-    return resolveConnection(db, workspaceId, providerKey, connectionId);
+    return await resolveConnection(db, workspaceId, providerKey, connectionId);
   }
   return {
     ok: false,
@@ -689,19 +691,19 @@ export type ExportEmailResult =
   | { ok: true; export: OutboundExport }
   | { ok: false; error: "launch_not_found" | "channel_not_selected" };
 
-export function exportLaunchEmail(
+export async function exportLaunchEmail(
   db: Db,
   exporter: OutboundExporter,
   workspaceId: string,
   launchId: string,
-): ExportEmailResult {
-  const launchRow = getLaunchRow(db, workspaceId, launchId);
+): Promise<ExportEmailResult> {
+  const launchRow = await getLaunchRow(db, workspaceId, launchId);
   if (!launchRow) return { ok: false, error: "launch_not_found" };
   if (!parseChannels(launchRow).includes("email")) {
     return { ok: false, error: "channel_not_selected" };
   }
-  const pool = new Map(loadPeople(db, workspaceId).map((p) => [`${p.type}:${p.id}`, p]));
-  const rows = db
+  const pool = new Map((await loadPeople(db, workspaceId)).map((p) => [`${p.type}:${p.id}`, p]));
+  const rows = await db
     .select()
     .from(launchMessages)
     .where(and(eq(launchMessages.launchId, launchId), eq(launchMessages.channel, "email")))
@@ -709,7 +711,7 @@ export function exportLaunchEmail(
 
   const messages = [];
   for (const row of rows) {
-    const draft = draftRow(db, row.draftId);
+    const draft = await draftRow(db, row.draftId);
     if (draft?.state !== "approved" || row.status === "sent" || row.status === "skipped") continue;
     const person = pool.get(`${row.recipientType}:${row.recipientId}`);
     messages.push({
@@ -738,14 +740,14 @@ export async function dispatchChannel(
   input: DispatchChannelInput,
   actor: ExternalActionRuntimeActor,
 ): Promise<DispatchResult> {
-  const launchRow = getLaunchRow(db, workspaceId, launchId);
+  const launchRow = await getLaunchRow(db, workspaceId, launchId);
   if (!launchRow) return { ok: false, error: "launch_not_found" };
   if (!parseChannels(launchRow).includes(channel)) {
     return { ok: false, error: "channel_not_selected" };
   }
   if (launchRow.status === "draft") return { ok: false, error: "not_generated" };
 
-  const rows = db
+  const rows = await db
     .select()
     .from(launchMessages)
     .where(and(eq(launchMessages.launchId, launchId), eq(launchMessages.channel, channel)))
@@ -755,17 +757,17 @@ export async function dispatchChannel(
   // out: pending or failed, never skipped. Already-sent messages report their
   // governing action instead of being re-proposed.
   const eligible = rows.filter(
-    (row) =>
+    async (row) =>
       row.status !== "skipped" &&
       (channel === "linkedin" || channel === "instagram" ? row.kind === "broadcast" : true) &&
-      isApproved(db, row.draftId),
+      await isApproved(db, row.draftId),
   );
 
   const submissions: ExternalActionSubmission[] = [];
 
   if (channel === "email") {
     for (const row of eligible) {
-      const draft = draftRow(db, row.draftId)!;
+      const draft = (await draftRow(db, row.draftId))!;
       const idempotencyKey = input.idempotencyKey
         ? `${input.idempotencyKey}:${row.id}`
         : deriveEmailSendIdempotencyKey(row.id, {
@@ -774,7 +776,7 @@ export async function dispatchChannel(
             stepNumber: row.stepNumber,
           });
       const existing = row.externalActionId
-        ? getExternalAction(db, workspaceId, row.externalActionId)
+        ? await getExternalAction(db, workspaceId, row.externalActionId)
         : undefined;
       let submission: ExternalActionSubmission;
       if (existing && (existing.status === "blocked" || existing.status === "stale")) {
@@ -789,7 +791,7 @@ export async function dispatchChannel(
         continue;
       } else {
         submission = await runtime.propose(
-          prepareEmailAction(db, workspaceId, {
+          await prepareEmailAction(db, workspaceId, {
             origin: "launch_message",
             originId: row.id,
             idempotencyKey,
@@ -797,7 +799,7 @@ export async function dispatchChannel(
           actor,
         );
       }
-      db.update(launchMessages)
+      await db.update(launchMessages)
         .set({ externalActionId: submission.action.id, updatedAt: Date.now() })
         .where(eq(launchMessages.id, row.id))
         .run();
@@ -806,7 +808,7 @@ export async function dispatchChannel(
     return { ok: true, submissions };
   }
 
-  const conn = resolveLaunchConnection(db, workspaceId, launchRow, channel, input.connectionId);
+  const conn = await resolveLaunchConnection(db, workspaceId, launchRow, channel, input.connectionId);
   if (!conn.ok) return { ok: false, error: conn.error };
   const connection = conn.connection;
   const media = input.media?.map((m) => ({ url: m.url, type: m.type })) ?? null;
@@ -814,12 +816,12 @@ export async function dispatchChannel(
   for (const row of eligible) {
     if (row.status === "sent") {
       const existing = row.externalActionId
-        ? getExternalAction(db, workspaceId, row.externalActionId)
+        ? await getExternalAction(db, workspaceId, row.externalActionId)
         : undefined;
       if (existing) submissions.push({ action: existing, execution: existing.execution });
       continue;
     }
-    const draft = draftRow(db, row.draftId)!;
+    const draft = (await draftRow(db, row.draftId))!;
     const idempotencyKey = input.idempotencyKey
       ? `${input.idempotencyKey}:${row.id}`
       : deriveSendIdempotencyKey(row.id, {
@@ -828,7 +830,7 @@ export async function dispatchChannel(
           content: draft.content,
         });
     try {
-      const command = prepareSendAction(db, workspaceId, launchId, row.id, {
+      const command = await prepareSendAction(db, workspaceId, launchId, row.id, {
         idempotencyKey,
         connectionId: connection.id,
         media,
@@ -851,12 +853,12 @@ export async function dispatchChannel(
 
 /** Flip a launch to completed once no message is still pending. Coarse — the
  * per-message status is the real detail. Also called by the send adapter. */
-export function maybeCompleteLaunch(db: Db, workspaceId: string, launchId: string): void {
-  if (!getLaunchRow(db, workspaceId, launchId)) return;
-  const pending = db
+export async function maybeCompleteLaunch(db: Db, workspaceId: string, launchId: string): Promise<void> {
+  if (!await getLaunchRow(db, workspaceId, launchId)) return;
+  const pending = await db
     .select()
     .from(launchMessages)
     .where(and(eq(launchMessages.launchId, launchId), eq(launchMessages.status, "pending")))
     .all();
-  if (pending.length === 0) setStatus(db, launchId, "completed");
+  if (pending.length === 0) await setStatus(db, launchId, "completed");
 }

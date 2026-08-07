@@ -16,10 +16,10 @@ import { createTestDb } from "./helpers";
 
 const MAX_EVENT_PAYLOAD_CHARS = 1_000_000;
 
-function seedWorkspace(db: Db, name = "Email Lab"): string {
+async function seedWorkspace(db: Db, name = "Email Lab"): Promise<string> {
   const id = randomUUID();
   const now = Date.now();
-  db.insert(workspaces)
+  await db.insert(workspaces)
     .values({
       id,
       name,
@@ -33,10 +33,10 @@ function seedWorkspace(db: Db, name = "Email Lab"): string {
   return id;
 }
 
-function seedAction(db: Db, workspaceId: string): string {
+async function seedAction(db: Db, workspaceId: string): Promise<string> {
   const id = randomUUID();
   const now = Date.now();
-  db.insert(externalActions)
+  await db.insert(externalActions)
     .values({
       id,
       workspaceId,
@@ -172,7 +172,7 @@ function eventRow(workspaceId: string, deliveryId: string, providerEventId = "ev
 }
 
 describe("governed outbound email persistence", () => {
-  it("declares exactly the five email tables and safe sender defaults", () => {
+  it("declares exactly the five email tables and safe sender defaults", async () => {
     expect([
       workspaceEmailSenders,
       emailRecipientPermissions,
@@ -188,67 +188,67 @@ describe("governed outbound email persistence", () => {
     ]);
 
     const db = createTestDb();
-    const workspaceId = seedWorkspace(db);
-    db.insert(workspaceEmailSenders).values(senderRow(workspaceId)).run();
-    expect(db.select().from(workspaceEmailSenders).get()).toMatchObject({
+    const workspaceId = await seedWorkspace(db);
+    await db.insert(workspaceEmailSenders).values(senderRow(workspaceId)).run();
+    expect(await db.select().from(workspaceEmailSenders).get()).toMatchObject({
       workspaceId,
       killSwitch: true,
       dailyCap: 100,
     });
-    expect(() => db.insert(workspaceEmailSenders).values(senderRow(workspaceId)).run()).toThrow();
+    expect(async () => await db.insert(workspaceEmailSenders).values(senderRow(workspaceId)).run()).toThrow();
   });
 
-  it("enforces one normalized permission and suppression per workspace", () => {
+  it("enforces one normalized permission and suppression per workspace", async () => {
     const db = createTestDb();
-    const workspaceId = seedWorkspace(db);
-    const otherWorkspaceId = seedWorkspace(db, "Other Email Lab");
+    const workspaceId = await seedWorkspace(db);
+    const otherWorkspaceId = await seedWorkspace(db, "Other Email Lab");
 
     const permission = permissionRow(workspaceId);
-    db.insert(emailRecipientPermissions).values(permission).run();
-    expect(() =>
-      db.insert(emailRecipientPermissions)
+    await db.insert(emailRecipientPermissions).values(permission).run();
+    expect(async () =>
+      await db.insert(emailRecipientPermissions)
         .values({ ...permissionRow(workspaceId), normalizedEmail: permission.normalizedEmail })
         .run(),
     ).toThrow();
-    expect(() =>
-      db.insert(emailRecipientPermissions)
+    expect(async () =>
+      await db.insert(emailRecipientPermissions)
         .values(permissionRow(otherWorkspaceId, permission.normalizedEmail))
         .run(),
     ).not.toThrow();
 
     const suppression = suppressionRow(workspaceId);
-    db.insert(emailSuppressions).values(suppression).run();
-    expect(db.select().from(emailSuppressions).get()).toMatchObject({
+    await db.insert(emailSuppressions).values(suppression).run();
+    expect(await db.select().from(emailSuppressions).get()).toMatchObject({
       reason: "unsubscribe",
       createdAt: 1_800_000_000_000,
     });
-    expect(() =>
-      db.insert(emailSuppressions)
+    expect(async () =>
+      await db.insert(emailSuppressions)
         .values({ ...suppressionRow(workspaceId), normalizedEmail: suppression.normalizedEmail })
         .run(),
     ).toThrow();
   });
 
-  it("links deliveries to actions and preserves immutable message snapshots", () => {
+  it("links deliveries to actions and preserves immutable message snapshots", async () => {
     const db = createTestDb();
-    const workspaceId = seedWorkspace(db);
-    const actionId = seedAction(db, workspaceId);
+    const workspaceId = await seedWorkspace(db);
+    const actionId = await seedAction(db, workspaceId);
     const delivery = deliveryRow(workspaceId, actionId, {
       idempotencyKey: "send/action-1",
       providerMessageId: "email_123",
     });
 
-    expect(() =>
-      db.insert(emailDeliveries)
+    expect(async () =>
+      await db.insert(emailDeliveries)
         .values(deliveryRow(workspaceId, randomUUID()))
         .run(),
     ).toThrow();
-    db.insert(emailDeliveries).values(delivery).run();
-    db.update(emailDeliveries)
+    await db.insert(emailDeliveries).values(delivery).run();
+    await db.update(emailDeliveries)
       .set({ status: "accepted", acceptedAt: 1_800_000_000_000, updatedAt: 1_800_000_000_000 })
       .where(eq(emailDeliveries.id, delivery.id))
       .run();
-    expect(db.select().from(emailDeliveries).get()).toMatchObject({
+    expect(await db.select().from(emailDeliveries).get()).toMatchObject({
       externalActionId: actionId,
       subject: delivery.subject,
       text: delivery.text,
@@ -259,41 +259,41 @@ describe("governed outbound email persistence", () => {
       status: "accepted",
     });
 
-    expect(() =>
-      db.insert(emailDeliveries)
+    expect(async () =>
+      await db.insert(emailDeliveries)
         .values(deliveryRow(workspaceId, actionId, { idempotencyKey: delivery.idempotencyKey }))
         .run(),
     ).toThrow();
-    expect(() =>
-      db.insert(emailDeliveries)
+    expect(async () =>
+      await db.insert(emailDeliveries)
         .values(deliveryRow(workspaceId, actionId, { providerMessageId: "email_123" }))
         .run(),
     ).toThrow();
-    expect(() =>
-      db.insert(emailDeliveries).values(deliveryRow(workspaceId, actionId)).run(),
+    expect(async () =>
+      await db.insert(emailDeliveries).values(deliveryRow(workspaceId, actionId)).run(),
     ).not.toThrow();
-    expect(() =>
-      db.insert(emailDeliveries).values(deliveryRow(workspaceId, actionId)).run(),
+    expect(async () =>
+      await db.insert(emailDeliveries).values(deliveryRow(workspaceId, actionId)).run(),
     ).not.toThrow();
   });
 
-  it("deduplicates immutable provider events and bounds their raw JSON payload", () => {
+  it("deduplicates immutable provider events and bounds their raw JSON payload", async () => {
     const db = createTestDb();
-    const workspaceId = seedWorkspace(db);
-    const actionId = seedAction(db, workspaceId);
+    const workspaceId = await seedWorkspace(db);
+    const actionId = await seedAction(db, workspaceId);
     const delivery = deliveryRow(workspaceId, actionId);
-    db.insert(emailDeliveries).values(delivery).run();
+    await db.insert(emailDeliveries).values(delivery).run();
     const event = eventRow(workspaceId, delivery.id);
-    db.insert(emailDeliveryEvents).values(event).run();
+    await db.insert(emailDeliveryEvents).values(event).run();
 
-    expect(db.select().from(emailDeliveryEvents).get()).toEqual(event);
-    expect(() =>
-      db.insert(emailDeliveryEvents)
+    expect(await db.select().from(emailDeliveryEvents).get()).toEqual(event);
+    expect(async () =>
+      await db.insert(emailDeliveryEvents)
         .values({ ...eventRow(workspaceId, delivery.id, event.providerEventId), id: randomUUID() })
         .run(),
     ).toThrow();
-    expect(() =>
-      db.insert(emailDeliveryEvents)
+    expect(async () =>
+      await db.insert(emailDeliveryEvents)
         .values({
           ...eventRow(workspaceId, delivery.id, "event_too_large"),
           payloadJson: JSON.stringify({ data: "x".repeat(MAX_EVENT_PAYLOAD_CHARS) }),
@@ -302,22 +302,22 @@ describe("governed outbound email persistence", () => {
     ).toThrow();
   });
 
-  it("cascades every governed email record when its workspace is deleted", () => {
+  it("cascades every governed email record when its workspace is deleted", async () => {
     const db = createTestDb();
-    const workspaceId = seedWorkspace(db);
-    const actionId = seedAction(db, workspaceId);
+    const workspaceId = await seedWorkspace(db);
+    const actionId = await seedAction(db, workspaceId);
     const delivery = deliveryRow(workspaceId, actionId);
-    db.insert(workspaceEmailSenders).values(senderRow(workspaceId)).run();
-    db.insert(emailRecipientPermissions).values(permissionRow(workspaceId)).run();
-    db.insert(emailSuppressions).values(suppressionRow(workspaceId)).run();
-    db.insert(emailDeliveries).values(delivery).run();
-    db.insert(emailDeliveryEvents).values(eventRow(workspaceId, delivery.id)).run();
+    await db.insert(workspaceEmailSenders).values(senderRow(workspaceId)).run();
+    await db.insert(emailRecipientPermissions).values(permissionRow(workspaceId)).run();
+    await db.insert(emailSuppressions).values(suppressionRow(workspaceId)).run();
+    await db.insert(emailDeliveries).values(delivery).run();
+    await db.insert(emailDeliveryEvents).values(eventRow(workspaceId, delivery.id)).run();
 
-    db.delete(workspaces).where(eq(workspaces.id, workspaceId)).run();
-    expect(db.select().from(workspaceEmailSenders).all()).toEqual([]);
-    expect(db.select().from(emailRecipientPermissions).all()).toEqual([]);
-    expect(db.select().from(emailSuppressions).all()).toEqual([]);
-    expect(db.select().from(emailDeliveries).all()).toEqual([]);
-    expect(db.select().from(emailDeliveryEvents).all()).toEqual([]);
+    await db.delete(workspaces).where(eq(workspaces.id, workspaceId)).run();
+    expect(await db.select().from(workspaceEmailSenders).all()).toEqual([]);
+    expect(await db.select().from(emailRecipientPermissions).all()).toEqual([]);
+    expect(await db.select().from(emailSuppressions).all()).toEqual([]);
+    expect(await db.select().from(emailDeliveries).all()).toEqual([]);
+    expect(await db.select().from(emailDeliveryEvents).all()).toEqual([]);
   });
 });

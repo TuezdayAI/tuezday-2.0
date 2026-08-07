@@ -42,8 +42,8 @@ import { runPreReview, setGenerationReview } from "../services/review";
 import { getWorkspace } from "../services/workspaces";
 import { externalActionError } from "./external-actions";
 
-function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
-  const workspace = getWorkspace(db, id);
+async function workspaceOr404(db: Db, id: string, reply: FastifyReply) {
+  const workspace = await getWorkspace(db, id);
   if (!workspace) {
     void reply.status(404).send({ error: "workspace_not_found" });
   }
@@ -58,7 +58,7 @@ export function registerOutboundRoutes(
   runtime: ExternalActionRuntime,
 ): void {
   app.post<{ Params: { id: string } }>("/workspaces/:id/leads", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = createLeadInputSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({
@@ -66,18 +66,18 @@ export function registerOutboundRoutes(
         message: parsed.error.issues.map((i) => i.message).join("; "),
       });
     }
-    return reply.status(201).send(createLead(db, request.params.id, parsed.data));
+    return reply.status(201).send(await createLead(db, request.params.id, parsed.data));
   });
 
   app.get<{ Params: { id: string } }>("/workspaces/:id/leads", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    return listLeads(db, request.params.id);
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+    return await listLeads(db, request.params.id);
   });
 
   app.patch<{ Params: { id: string; leadId: string } }>(
     "/workspaces/:id/leads/:leadId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const parsed = updateLeadInputSchema.safeParse(request.body);
       if (!parsed.success) {
         return reply.status(400).send({
@@ -85,7 +85,7 @@ export function registerOutboundRoutes(
           message: parsed.error.issues.map((i) => i.message).join("; "),
         });
       }
-      const updated = updateLead(db, request.params.id, request.params.leadId, parsed.data);
+      const updated = await updateLead(db, request.params.id, request.params.leadId, parsed.data);
       if (!updated) return reply.status(404).send({ error: "lead_not_found" });
       return updated;
     },
@@ -94,8 +94,8 @@ export function registerOutboundRoutes(
   app.delete<{ Params: { id: string; leadId: string } }>(
     "/workspaces/:id/leads/:leadId",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
-      if (!deleteLead(db, request.params.id, request.params.leadId)) {
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await deleteLead(db, request.params.id, request.params.leadId)) {
         return reply.status(404).send({ error: "lead_not_found" });
       }
       return reply.status(204).send();
@@ -103,7 +103,7 @@ export function registerOutboundRoutes(
   );
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/leads/import", async (request, reply) => {
-    if (!workspaceOr404(db, request.params.id, reply)) return reply;
+    if (!await workspaceOr404(db, request.params.id, reply)) return reply;
     const parsed = importLeadsInputSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({
@@ -111,11 +111,11 @@ export function registerOutboundRoutes(
         message: parsed.error.issues.map((i) => i.message).join("; "),
       });
     }
-    return importLeadsCsv(db, request.params.id, parsed.data.csv);
+    return await importLeadsCsv(db, request.params.id, parsed.data.csv);
   });
 
   app.post<{ Params: { id: string } }>("/workspaces/:id/outbound/draft", async (request, reply) => {
-    const workspace = workspaceOr404(db, request.params.id, reply);
+    const workspace = await workspaceOr404(db, request.params.id, reply);
     if (!workspace) return reply;
     const parsed = outboundDraftRequestSchema.safeParse(request.body);
     if (!parsed.success) {
@@ -127,26 +127,26 @@ export function registerOutboundRoutes(
 
     let persona;
     if (parsed.data.personaId) {
-      persona = getPersona(db, request.params.id, parsed.data.personaId);
+      persona = await getPersona(db, request.params.id, parsed.data.personaId);
       if (!persona) return reply.status(404).send({ error: "persona_not_found" });
     }
     let campaign;
     if (parsed.data.campaignId) {
-      campaign = getCampaign(db, request.params.id, parsed.data.campaignId);
+      campaign = await getCampaign(db, request.params.id, parsed.data.campaignId);
       if (!campaign) return reply.status(404).send({ error: "campaign_not_found" });
       const campaignError = campaignExecutionError(campaign);
       if (campaignError) return reply.status(409).send({ error: campaignError });
     }
     const leadRecords = [];
     for (const leadId of parsed.data.leadIds) {
-      const lead = getLead(db, request.params.id, leadId);
+      const lead = await getLead(db, request.params.id, leadId);
       if (!lead) return reply.status(404).send({ error: "lead_not_found", message: leadId });
       leadRecords.push(lead);
     }
 
-    const { docs } = getBrain(db, request.params.id);
+    const { docs } = await getBrain(db, request.params.id);
     const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
-    const settings = getGenerationSettings(db, request.params.id);
+    const settings = await getGenerationSettings(db, request.params.id);
     const evidenceResolution = await retrieveEvidence(
       db,
       evidence,
@@ -159,12 +159,12 @@ export function registerOutboundRoutes(
       parsed.data.useEvidence ?? true,
     );
 
-    const channelGuidance = resolveChannelGuidance(db, request.params.id, "email", {
+    const channelGuidance = await resolveChannelGuidance(db, request.params.id, "email", {
       personaId: parsed.data.personaId ?? null,
       campaignId: parsed.data.campaignId ?? null,
     });
-    const selective = selectiveContextInputs(db, request.params.id);
-    assertLlmBudget(db, request.params.id); // 402 before any model call (Sprint 59)
+    const selective = await selectiveContextInputs(db, request.params.id);
+    await assertLlmBudget(db, request.params.id); // 402 before any model call (Sprint 59)
     const draftLlm = meteredLlm(llm, db, {
       workspaceId: request.params.id,
       pipeline: "outbound_draft",
@@ -175,7 +175,7 @@ export function registerOutboundRoutes(
       pipeline: "review",
       campaignId: parsed.data.campaignId ?? null,
     });
-    const campaignInputs = campaignResolveInputs(db, request.params.id, campaign);
+    const campaignInputs = await campaignResolveInputs(db, request.params.id, campaign);
     const results = [];
     for (const lead of leadRecords) {
       const resolved = resolveContext({
@@ -199,7 +199,7 @@ export function registerOutboundRoutes(
 
       try {
         const result = await draftLlm.generate({ prompt: resolved.prompt });
-        const generation = storeGeneration(db, {
+        const generation = await storeGeneration(db, {
           workspaceId: request.params.id,
           taskType: "outbound_email",
           channel: "email",
@@ -230,9 +230,9 @@ export function registerOutboundRoutes(
             result.text,
             settings.flagThreshold,
           );
-          setGenerationReview(db, request.params.id, generation.id, review);
+          await setGenerationReview(db, request.params.id, generation.id, review);
         }
-        const draft = submitDraft(db, {
+        const draft = await submitDraft(db, {
           workspaceId: request.params.id,
           sourceGenerationId: generation.id,
           campaignId: parsed.data.campaignId ?? null,
@@ -257,7 +257,7 @@ export function registerOutboundRoutes(
   app.post<{ Params: { id: string; draftId: string } }>(
     "/workspaces/:id/outbound/drafts/:draftId/send",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       // Body is optional: an absent mailboxId sends via the Resend path
       // (unchanged); a present one sends from that connected Gmail mailbox
       // (Sprint 47) and must be a valid id.
@@ -271,7 +271,7 @@ export function registerOutboundRoutes(
         mailboxId = parsed.data.mailboxId;
       }
       try {
-        const command = prepareOutboundDraftEmailAction(
+        const command = await prepareOutboundDraftEmailAction(
           db,
           request.params.id,
           request.params.draftId,
@@ -292,14 +292,14 @@ export function registerOutboundRoutes(
   app.get<{ Params: { id: string }; Querystring: { state?: string } }>(
     "/workspaces/:id/outbound/export.csv",
     async (request, reply) => {
-      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      if (!await workspaceOr404(db, request.params.id, reply)) return reply;
       const state = (request.query.state ?? "approved") as ApprovalState;
       if (!(APPROVAL_STATES as readonly string[]).includes(state)) {
         return reply.status(400).send({ error: "invalid_state" });
       }
-      const leadById = new Map(listLeads(db, request.params.id).map((l) => [l.id, l]));
+      const leadById = new Map((await listLeads(db, request.params.id)).map((l) => [l.id, l]));
       const nativeDeliveryDraftIds = new Set(
-        db.select({ originId: emailDeliveries.originId })
+        (await db.select({ originId: emailDeliveries.originId })
           .from(emailDeliveries)
           .where(
             and(
@@ -307,10 +307,10 @@ export function registerOutboundRoutes(
               eq(emailDeliveries.origin, "outbound_draft"),
             ),
           )
-          .all()
+          .all())
           .map((delivery) => delivery.originId),
       );
-      const rows = db
+      const rows = await db
         .select()
         .from(drafts)
         .where(

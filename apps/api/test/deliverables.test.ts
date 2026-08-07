@@ -151,23 +151,23 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
     await app.close();
   });
 
-  function activatePlan(lanes: Array<typeof plannedLane | typeof reactiveLane>): string {
-    const revision = createPlanRevision(db, workspaceId, campaignId, planInput, {
+  async function activatePlan(lanes: Array<typeof plannedLane | typeof reactiveLane>): Promise<string> {
+    const revision = await createPlanRevision(db, workspaceId, campaignId, planInput, {
       userId: null,
     });
     for (const lane of lanes) {
-      upsertLaneRevision(db, workspaceId, campaignId, revision.id, {
+      await upsertLaneRevision(db, workspaceId, campaignId, revision.id, {
         ...lane,
         personaId,
       });
     }
-    activatePlanRevision(db, workspaceId, campaignId, revision.id);
+    await activatePlanRevision(db, workspaceId, campaignId, revision.id);
     return revision.id;
   }
 
-  function seedStory(title: string): string {
-    db.transaction((tx) => {
-      recordOccurrenceAndResolve(tx, {
+  async function seedStory(title: string): Promise<string> {
+    await db.transaction(async (tx) => {
+      await recordOccurrenceAndResolve(tx, {
         workspaceId,
         source: { id: randomUUID(), type: "rss", name: "Feed" },
         fetchRunId: null,
@@ -181,24 +181,24 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
         observedAt: Date.now(),
       });
     });
-    return db
+    return (await db
       .select({ id: canonicalExternalStories.id })
       .from(canonicalExternalStories)
       .where(eq(canonicalExternalStories.title, title))
-      .get()!.id;
+      .get())!.id;
   }
 
-  function seedOpportunity(storyId: string, angle: string): string {
-    const profile = compileRoutingProfile(db, workspaceId, campaignId)!;
-    const story = db
+  async function seedOpportunity(storyId: string, angle: string): Promise<string> {
+    const profile = (await compileRoutingProfile(db, workspaceId, campaignId))!;
+    const story = (await db
       .select()
       .from(canonicalExternalStories)
       .where(eq(canonicalExternalStories.id, storyId))
-      .get()!;
-    const occurrenceIds = [...loadStoryRoutingContext(db, story).activeOccurrenceIds];
+      .get())!;
+    const occurrenceIds = [...(await loadStoryRoutingContext(db, story)).activeOccurrenceIds];
     const id = randomUUID();
     const now = Date.now();
-    db.insert(campaignOpportunities)
+    await db.insert(campaignOpportunities)
       .values({
         id,
         workspaceId,
@@ -236,10 +236,10 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
     angle: string,
     eligibleFormats: string[],
   ): Promise<string> {
-    const packageId = createPackageFromOpportunity(
+    const packageId = await createPackageFromOpportunity(
       db,
       workspaceId,
-      seedOpportunity(seedStory(title), angle),
+      await seedOpportunity(await seedStory(title), angle),
       { userId },
     );
     const run = await runPackageAssessments(db, sufficiencyGateway(eligibleFormats), {
@@ -248,18 +248,18 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
     });
     expect(run.assessed).toBe(1);
     expect(
-      db.select().from(contentPackages).where(eq(contentPackages.id, packageId)).get()!
+      (await db.select().from(contentPackages).where(eq(contentPackages.id, packageId)).get())!
         .status,
     ).toBe("ready");
     return packageId;
   }
 
-  it("materializes at most plannedQuantity slots per week within the horizon, idempotently", () => {
-    activatePlan([{ ...plannedLane, plannedQuantity: 1 }]);
-    const created = materializePlannedSlots(db, { workspaceId, now: NOW });
+  it("materializes at most plannedQuantity slots per week within the horizon, idempotently", async () => {
+    await activatePlan([{ ...plannedLane, plannedQuantity: 1 }]);
+    const created = await materializePlannedSlots(db, { workspaceId, now: NOW });
     // Two Tue/Thu weeks in the 14-day horizon, capped at 1/week.
     expect(created).toBe(2);
-    const rows = db
+    const rows = await db
       .select()
       .from(deliverables)
       .orderBy(asc(deliverables.originalScheduledFor))
@@ -274,13 +274,13 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
       (rows[1]!.originalScheduledFor ?? 0) - (rows[0]!.originalScheduledFor ?? 0),
     ).toBeGreaterThan(5 * DAY_MS);
     // Idempotent re-run.
-    expect(materializePlannedSlots(db, { workspaceId, now: NOW })).toBe(0);
+    expect(await materializePlannedSlots(db, { workspaceId, now: NOW })).toBe(0);
   });
 
-  it("materializes the full schedule when quantity covers it, with creation events", () => {
-    activatePlan([plannedLane]);
-    expect(materializePlannedSlots(db, { workspaceId, now: NOW })).toBe(4);
-    const events = db.select().from(deliverableEvents).all();
+  it("materializes the full schedule when quantity covers it, with creation events", async () => {
+    await activatePlan([plannedLane]);
+    expect(await materializePlannedSlots(db, { workspaceId, now: NOW })).toBe(4);
+    const events = await db.select().from(deliverableEvents).all();
     expect(events).toHaveLength(4);
     expect(events.every((event) => event.fromStatus === null && event.toStatus === "planned")).toBe(
       true,
@@ -288,17 +288,17 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
   });
 
   it("fan-out fills the oldest planned slot first and copies the angle", async () => {
-    activatePlan([plannedLane]);
-    materializePlannedSlots(db, { workspaceId, now: NOW });
+    await activatePlan([plannedLane]);
+    await materializePlannedSlots(db, { workspaceId, now: NOW });
     const packageId = await readyPackage("Slot story", "A grounded angle", [
       "linkedin_post",
     ]);
 
-    const result = fanOutPackage(db, workspaceId, packageId, { userId });
+    const result = await fanOutPackage(db, workspaceId, packageId, { userId });
     expect(result.deliverablesCreated).toBe(1);
     expect(result.skipped).toHaveLength(0);
 
-    const rows = db
+    const rows = await db
       .select()
       .from(deliverables)
       .orderBy(asc(deliverables.originalScheduledFor))
@@ -312,35 +312,35 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
     expect(assigned[0]!.angle).toBe("A grounded angle");
     // The package is stamped as fanned out.
     expect(
-      db.select().from(contentPackages).where(eq(contentPackages.id, packageId)).get()!
+      (await db.select().from(contentPackages).where(eq(contentPackages.id, packageId)).get())!
         .fannedOutAt,
     ).not.toBeNull();
   });
 
   it("never gives one package two deliverables on one lane thread", async () => {
-    activatePlan([plannedLane]);
-    materializePlannedSlots(db, { workspaceId, now: NOW });
+    await activatePlan([plannedLane]);
+    await materializePlannedSlots(db, { workspaceId, now: NOW });
     const packageId = await readyPackage("Repeat story", "A repeat angle", [
       "linkedin_post",
     ]);
-    expect(fanOutPackage(db, workspaceId, packageId, { userId }).deliverablesCreated).toBe(1);
-    const second = fanOutPackage(db, workspaceId, packageId, { userId });
+    expect((await fanOutPackage(db, workspaceId, packageId, { userId })).deliverablesCreated).toBe(1);
+    const second = await fanOutPackage(db, workspaceId, packageId, { userId });
     expect(second.deliverablesCreated).toBe(0);
     expect(second.skipped.map((entry) => entry.reason)).toEqual(["already_delivered"]);
   });
 
   it("falls back to a reactive deliverable and enforces the rolling cap", async () => {
-    activatePlan([reactiveLane]);
+    await activatePlan([reactiveLane]);
     const first = await readyPackage("Reactive one", "First reactive angle", [
       "instagram_post",
     ]);
-    const fanned = fanOutPackage(db, workspaceId, first, { userId });
+    const fanned = await fanOutPackage(db, workspaceId, first, { userId });
     expect(fanned.deliverablesCreated).toBe(1);
-    const reactive = db
+    const reactive = (await db
       .select()
       .from(deliverables)
       .where(eq(deliverables.packageId, first))
-      .get()!;
+      .get())!;
     expect(reactive.kind).toBe("reactive");
     expect(reactive.status).toBe("ready");
     expect(reactive.originalScheduledFor).toBeNull();
@@ -349,51 +349,51 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
     const second = await readyPackage("Reactive two", "Second reactive angle", [
       "instagram_post",
     ]);
-    const capped = fanOutPackage(db, workspaceId, second, { userId });
+    const capped = await fanOutPackage(db, workspaceId, second, { userId });
     expect(capped.deliverablesCreated).toBe(0);
     expect(capped.skipped.map((entry) => entry.reason)).toEqual(["reactive_cap"]);
   });
 
   it("rejects fan-out of a package that is not ready", async () => {
-    activatePlan([plannedLane]);
-    const packageId = createPackageFromOpportunity(
+    await activatePlan([plannedLane]);
+    const packageId = await createPackageFromOpportunity(
       db,
       workspaceId,
-      seedOpportunity(seedStory("Unassessed"), "An unassessed angle"),
+      await seedOpportunity(await seedStory("Unassessed"), "An unassessed angle"),
       { userId },
     );
-    expect(() => fanOutPackage(db, workspaceId, packageId, { userId })).toThrow(
+    expect(async () => await fanOutPackage(db, workspaceId, packageId, { userId })).toThrow(
       InvalidPackageStateError,
     );
   });
 
   it("fanOutDuePackages consumes only unfanned ready packages", async () => {
-    activatePlan([plannedLane]);
-    materializePlannedSlots(db, { workspaceId, now: NOW });
+    await activatePlan([plannedLane]);
+    await materializePlannedSlots(db, { workspaceId, now: NOW });
     const packageId = await readyPackage("Due story", "A due angle", ["linkedin_post"]);
-    const run = fanOutDuePackages(db, { workspaceId, limit: 10 });
+    const run = await fanOutDuePackages(db, { workspaceId, limit: 10 });
     expect(run).toEqual({ packagesFannedOut: 1, deliverablesCreated: 1 });
     // Already stamped: nothing due on the second pass.
-    expect(fanOutDuePackages(db, { workspaceId, limit: 10 })).toEqual({
+    expect(await fanOutDuePackages(db, { workspaceId, limit: 10 })).toEqual({
       packagesFannedOut: 0,
       deliverablesCreated: 0,
     });
     expect(
-      db.select().from(deliverables).where(eq(deliverables.packageId, packageId)).all(),
+      await db.select().from(deliverables).where(eq(deliverables.packageId, packageId)).all(),
     ).toHaveLength(1);
   });
 
-  it("sweeps passed planned slots to stale after the grace window", () => {
-    activatePlan([{ ...plannedLane, plannedQuantity: 1 }]);
-    materializePlannedSlots(db, { workspaceId, now: NOW });
+  it("sweeps passed planned slots to stale after the grace window", async () => {
+    await activatePlan([{ ...plannedLane, plannedQuantity: 1 }]);
+    await materializePlannedSlots(db, { workspaceId, now: NOW });
     // Within grace: nothing happens.
-    expect(sweepStaleDeliverables(db, { workspaceId, now: NOW })).toBe(0);
-    const staled = sweepStaleDeliverables(db, { workspaceId, now: NOW + 20 * DAY_MS });
+    expect(await sweepStaleDeliverables(db, { workspaceId, now: NOW })).toBe(0);
+    const staled = await sweepStaleDeliverables(db, { workspaceId, now: NOW + 20 * DAY_MS });
     expect(staled).toBe(2);
-    const rows = db.select().from(deliverables).all();
+    const rows = await db.select().from(deliverables).all();
     expect(rows.every((row) => row.status === "stale")).toBe(true);
     // Terminal-ish: a stale deliverable cannot be cancelled without reason… it can, with one.
-    const detail = decideDeliverable(db, workspaceId, rows[0]!.id, {
+    const detail = await decideDeliverable(db, workspaceId, rows[0]!.id, {
       action: "cancel",
       reason: "missed the window",
       actorUserId: userId,
@@ -402,26 +402,26 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
   });
 
   it("blocks ready deliverables when their package is cancelled", async () => {
-    activatePlan([plannedLane]);
-    materializePlannedSlots(db, { workspaceId, now: NOW });
+    await activatePlan([plannedLane]);
+    await materializePlannedSlots(db, { workspaceId, now: NOW });
     const packageId = await readyPackage("Cancelled story", "A cancelled angle", [
       "linkedin_post",
     ]);
-    fanOutPackage(db, workspaceId, packageId, { userId });
+    await fanOutPackage(db, workspaceId, packageId, { userId });
 
-    decidePackage(db, workspaceId, packageId, {
+    await decidePackage(db, workspaceId, packageId, {
       action: "cancel",
       reason: "withdrawn",
       actorUserId: userId,
     });
 
-    const assigned = db
+    const assigned = (await db
       .select()
       .from(deliverables)
       .where(eq(deliverables.packageId, packageId))
-      .get()!;
+      .get())!;
     expect(assigned.status).toBe("blocked");
-    const events = db
+    const events = await db
       .select()
       .from(deliverableEvents)
       .where(eq(deliverableEvents.deliverableId, assigned.id))
@@ -433,19 +433,19 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
     });
   });
 
-  it("gates decisions through the machine: no cancel on fulfilled, no select on planned", () => {
-    activatePlan([{ ...plannedLane, plannedQuantity: 1 }]);
-    materializePlannedSlots(db, { workspaceId, now: NOW });
-    const row = db.select().from(deliverables).all()[0]!;
-    expect(() =>
-      decideDeliverable(db, workspaceId, row.id, {
+  it("gates decisions through the machine: no cancel on fulfilled, no select on planned", async () => {
+    await activatePlan([{ ...plannedLane, plannedQuantity: 1 }]);
+    await materializePlannedSlots(db, { workspaceId, now: NOW });
+    const row = (await db.select().from(deliverables).all())[0]!;
+    expect(async () =>
+      await decideDeliverable(db, workspaceId, row.id, {
         action: "select",
         variantId: randomUUID(),
         actorUserId: userId,
       }),
     ).toThrow(InvalidDeliverableTransitionError);
-    expect(() =>
-      decideDeliverable(db, workspaceId, row.id, {
+    expect(async () =>
+      await decideDeliverable(db, workspaceId, row.id, {
         action: "regenerate",
         actorUserId: userId,
       }),
@@ -453,9 +453,9 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
   });
 
   it("lists with status filters and projects lane/campaign context", async () => {
-    activatePlan([plannedLane]);
-    materializePlannedSlots(db, { workspaceId, now: NOW });
-    const listed = listDeliverables(db, workspaceId, { status: "planned" });
+    await activatePlan([plannedLane]);
+    await materializePlannedSlots(db, { workspaceId, now: NOW });
+    const listed = await listDeliverables(db, workspaceId, { status: "planned" });
     expect(listed.total).toBe(4);
     expect(listed.deliverables[0]).toMatchObject({
       laneName: "Founder LinkedIn",
@@ -465,7 +465,7 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
       variantCount: 0,
       latestVariantStatus: null,
     });
-    const detail = getDeliverableDetail(db, workspaceId, listed.deliverables[0]!.id);
+    const detail = await getDeliverableDetail(db, workspaceId, listed.deliverables[0]!.id);
     expect(detail.events).toHaveLength(1);
     expect(detail.variants).toHaveLength(0);
   });

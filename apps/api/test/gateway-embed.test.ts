@@ -63,7 +63,7 @@ describe("GeminiGateway.embed", () => {
     const fetcher = vi.fn();
     vi.stubGlobal("fetch", fetcher);
 
-    await expect(new GeminiGateway().embed({ texts: ["x"] })).rejects.toMatchObject({
+    await expect(await new GeminiGateway().embed({ texts: ["x"] })).rejects.toMatchObject({
       code: "missing_api_key",
     });
     expect(fetcher).not.toHaveBeenCalled();
@@ -114,7 +114,7 @@ describe("GeminiGateway.embed", () => {
     controller.abort(new Error("cancelled_by_test"));
 
     await expect(
-      gateway.generate({
+      await gateway.generate({
         prompt: "cancel me",
         signal: controller.signal,
       }),

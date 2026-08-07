@@ -68,7 +68,7 @@ const REACTIVE_WINDOW_MS: Record<string, number> = {
   month: 30 * DAY_MS,
 };
 
-export function insertDeliverableEvent(
+export async function insertDeliverableEvent(
   tx: DbExecutor,
   input: {
     workspaceId: string;
@@ -79,8 +79,8 @@ export function insertDeliverableEvent(
     reason?: string | null;
     createdAt: number;
   },
-): void {
-  tx.insert(deliverableEvents)
+): Promise<void> {
+  await tx.insert(deliverableEvents)
     .values({
       id: randomUUID(),
       workspaceId: input.workspaceId,
@@ -111,12 +111,12 @@ function weekStartUtc(timezone: string, ms: number): number {
  * most `plannedQuantity` slots per local calendar week (existing slots in the
  * week count toward the cap). The partial unique makes re-runs no-ops.
  */
-export function materializePlannedSlots(
+export async function materializePlannedSlots(
   db: Db,
   input: { workspaceId: string; now?: number },
-): number {
+): Promise<number> {
   const now = input.now ?? Date.now();
-  const lanes = db
+  const lanes = await db
     .select({
       laneId: campaignLanes.id,
       laneRevisionId: campaignLaneRevisions.id,
@@ -165,7 +165,7 @@ export function materializePlannedSlots(
     }
     for (const [week, weekSlots] of byWeek) {
       const existing =
-        db
+        (await db
           .select({ n: sql<number>`COUNT(*)` })
           .from(deliverables)
           .where(
@@ -175,12 +175,12 @@ export function materializePlannedSlots(
               lt(deliverables.originalScheduledFor, week + WEEK_MS),
             ),
           )
-          .get()?.n ?? 0;
+          .get())?.n ?? 0;
       let room = lane.plannedQuantity - existing;
       for (const slot of weekSlots) {
         if (room <= 0) break;
         const id = randomUUID();
-        const inserted = db
+        const inserted = await db
           .insert(deliverables)
           .values({
             id,
@@ -199,7 +199,7 @@ export function materializePlannedSlots(
           .onConflictDoNothing()
           .run();
         if (inserted.changes !== 1) continue;
-        insertDeliverableEvent(db, {
+        await insertDeliverableEvent(db, {
           workspaceId: input.workspaceId,
           deliverableId: id,
           fromStatus: null,
@@ -223,16 +223,16 @@ export function materializePlannedSlots(
  * package two deliverables on one lane thread. One transaction; fences plus
  * the partial uniques make concurrent fan-outs lose cleanly.
  */
-export function fanOutPackage(
+export async function fanOutPackage(
   db: Db,
   workspaceId: string,
   packageId: string,
   actor: { userId: string | null },
   options: { now?: number } = {},
-): FanOutResult {
+): Promise<FanOutResult> {
   const now = options.now ?? Date.now();
-  return db.transaction((tx) => {
-    const pkg = tx
+  return await db.transaction(async (tx) => {
+    const pkg = await tx
       .select()
       .from(contentPackages)
       .where(
@@ -245,7 +245,7 @@ export function fanOutPackage(
     if (!pkg) throw new PackageNotFoundError();
     if (pkg.status !== "ready") throw new InvalidPackageStateError(pkg.status);
     // Stamp the attempt first — the fence for concurrent fan-outs.
-    const fenced = tx
+    const fenced = await tx
       .update(contentPackages)
       .set({ fannedOutAt: now, updatedAt: now })
       .where(
@@ -258,7 +258,7 @@ export function fanOutPackage(
       .run();
     if (fenced.changes !== 1) throw new InvalidPackageStateError(pkg.status);
 
-    const latestAssessment = tx
+    const latestAssessment = await tx
       .select({ id: sufficiencyAssessments.id })
       .from(sufficiencyAssessments)
       .where(eq(sufficiencyAssessments.packageId, packageId))
@@ -268,7 +268,7 @@ export function fanOutPackage(
     const result: FanOutResult = { deliverablesCreated: 0, skipped: [] };
     if (!latestAssessment) return result;
 
-    const eligibleLanes = tx
+    const eligibleLanes = await tx
       .select({
         laneId: laneEligibilityDecisions.laneId,
         laneRevisionId: laneEligibilityDecisions.laneRevisionId,
@@ -298,7 +298,7 @@ export function fanOutPackage(
 
     for (const lane of eligibleLanes) {
       // Invariant 3: one deliverable per package per lane thread.
-      const delivered = tx
+      const delivered = await tx
         .select({ id: deliverables.id })
         .from(deliverables)
         .where(
@@ -318,7 +318,7 @@ export function fanOutPackage(
 
       // Planned first (§9.5 rule 2): oldest open slot on this lane revision.
       if (lane.deliveryMode !== "reactive") {
-        const slot = tx
+        const slot = await tx
           .select()
           .from(deliverables)
           .where(
@@ -332,7 +332,7 @@ export function fanOutPackage(
           .limit(1)
           .get();
         if (slot && canTransitionDeliverable("planned", "ready")) {
-          const assigned = tx
+          const assigned = await tx
             .update(deliverables)
             .set({
               packageId,
@@ -353,7 +353,7 @@ export function fanOutPackage(
             )
             .run();
           if (assigned.changes === 1) {
-            insertDeliverableEvent(tx, {
+            await insertDeliverableEvent(tx, {
               workspaceId,
               deliverableId: slot.id,
               fromStatus: "planned",
@@ -376,7 +376,7 @@ export function fanOutPackage(
       ) {
         const window = REACTIVE_WINDOW_MS[lane.reactivePeriod] ?? WEEK_MS;
         const recent =
-          tx
+          (await tx
             .select({ n: sql<number>`COUNT(*)` })
             .from(deliverables)
             .where(
@@ -387,7 +387,7 @@ export function fanOutPackage(
                 gte(deliverables.createdAt, now - window),
               ),
             )
-            .get()?.n ?? 0;
+            .get())?.n ?? 0;
         if (recent >= lane.reactiveCap) {
           result.skipped.push({
             laneRevisionId: lane.laneRevisionId,
@@ -396,7 +396,7 @@ export function fanOutPackage(
           continue;
         }
         const id = randomUUID();
-        tx.insert(deliverables)
+        await tx.insert(deliverables)
           .values({
             id,
             workspaceId,
@@ -416,7 +416,7 @@ export function fanOutPackage(
             updatedAt: now,
           })
           .run();
-        insertDeliverableEvent(tx, {
+        await insertDeliverableEvent(tx, {
           workspaceId,
           deliverableId: id,
           fromStatus: null,
@@ -439,13 +439,13 @@ export function fanOutPackage(
 }
 
 /** Ready packages whose §9.5 fan-out has not been attempted yet. */
-export function fanOutDuePackages(
+export async function fanOutDuePackages(
   db: Db,
   input: { workspaceId: string; limit: number; now?: number },
-): { packagesFannedOut: number; deliverablesCreated: number } {
+): Promise<{ packagesFannedOut: number; deliverablesCreated: number }> {
   const result = { packagesFannedOut: 0, deliverablesCreated: 0 };
   if (input.limit <= 0) return result;
-  const due = db
+  const due = await db
     .select({ id: contentPackages.id })
     .from(contentPackages)
     .where(
@@ -460,7 +460,7 @@ export function fanOutDuePackages(
     .all();
   for (const pkg of due) {
     try {
-      const fanned = fanOutPackage(
+      const fanned = await fanOutPackage(
         db,
         input.workspaceId,
         pkg.id,
@@ -487,12 +487,12 @@ export function fanOutDuePackages(
  * D-63.10: planned slots that passed unfulfilled go stale after the grace
  * window. In-flight generation is left to finish (no generating→stale edge).
  */
-export function sweepStaleDeliverables(
+export async function sweepStaleDeliverables(
   db: Db,
   input: { workspaceId: string; now?: number },
-): number {
+): Promise<number> {
   const now = input.now ?? Date.now();
-  const due = db
+  const due = await db
     .select()
     .from(deliverables)
     .where(
@@ -508,14 +508,14 @@ export function sweepStaleDeliverables(
   for (const row of due) {
     const from = row.status as DeliverableProductionStatus;
     if (!canTransitionDeliverable(from, "stale")) continue;
-    const changed = db.transaction((tx) => {
-      const fenced = tx
+    const changed = await db.transaction(async (tx) => {
+      const fenced = await tx
         .update(deliverables)
         .set({ status: "stale", updatedAt: now })
         .where(and(eq(deliverables.id, row.id), eq(deliverables.status, from)))
         .run();
       if (fenced.changes !== 1) return false;
-      insertDeliverableEvent(tx, {
+      await insertDeliverableEvent(tx, {
         workspaceId: input.workspaceId,
         deliverableId: row.id,
         fromStatus: from,
@@ -534,13 +534,13 @@ export function sweepStaleDeliverables(
  * D-63.9: cancelling a package blocks its undelivered (`ready`) deliverables.
  * Runs inside the package-decision transaction.
  */
-export function blockDeliverablesForCancelledPackage(
+export async function blockDeliverablesForCancelledPackage(
   tx: DbExecutor,
   workspaceId: string,
   packageId: string,
   now: number,
-): void {
-  const rows = tx
+): Promise<void> {
+  const rows = await tx
     .select()
     .from(deliverables)
     .where(
@@ -552,13 +552,13 @@ export function blockDeliverablesForCancelledPackage(
     .all();
   for (const row of rows) {
     if (!canTransitionDeliverable("ready", "blocked")) continue;
-    const fenced = tx
+    const fenced = await tx
       .update(deliverables)
       .set({ status: "blocked", updatedAt: now })
       .where(and(eq(deliverables.id, row.id), eq(deliverables.status, "ready")))
       .run();
     if (fenced.changes !== 1) continue;
-    insertDeliverableEvent(tx, {
+    await insertDeliverableEvent(tx, {
       workspaceId,
       deliverableId: row.id,
       fromStatus: "ready",
@@ -659,7 +659,7 @@ export function projectVariant(row: VariantRow): Variant {
   });
 }
 
-export function listDeliverables(
+export async function listDeliverables(
   db: Db,
   workspaceId: string,
   options: {
@@ -669,7 +669,7 @@ export function listDeliverables(
     limit?: number;
     offset?: number;
   } = {},
-): { deliverables: Deliverable[]; total: number } {
+): Promise<{ deliverables: Deliverable[]; total: number }> {
   const limit = Math.min(
     Math.max(options.limit ?? DELIVERABLE_LIST_DEFAULT_LIMIT, 1),
     DELIVERABLE_LIST_MAX_LIMIT,
@@ -683,23 +683,23 @@ export function listDeliverables(
       : undefined,
     options.laneId ? eq(deliverables.laneId, options.laneId) : undefined,
   );
-  const rows = joinedSelect(db)
+  const rows = await joinedSelect(db)
     .where(where)
     .orderBy(desc(deliverables.createdAt), asc(deliverables.id))
     .limit(limit)
     .offset(offset)
     .all();
   const total =
-    db
+    (await db
       .select({ n: sql<number>`COUNT(*)` })
       .from(deliverables)
       .where(where)
-      .get()?.n ?? 0;
+      .get())?.n ?? 0;
   return { deliverables: rows.map(projectDeliverable), total };
 }
 
-function eventRows(db: DbExecutor, deliverableId: string): DeliverableEvent[] {
-  return db
+async function eventRows(db: DbExecutor, deliverableId: string): Promise<DeliverableEvent[]> {
+  return (await db
     .select()
     .from(deliverableEvents)
     .where(eq(deliverableEvents.deliverableId, deliverableId))
@@ -709,7 +709,7 @@ function eventRows(db: DbExecutor, deliverableId: string): DeliverableEvent[] {
       sql`${deliverableEvents.fromStatus} IS NOT NULL`,
       asc(deliverableEvents.id),
     )
-    .all()
+    .all())
     .map((row) =>
       deliverableEventSchema.parse({
         id: row.id,
@@ -722,12 +722,12 @@ function eventRows(db: DbExecutor, deliverableId: string): DeliverableEvent[] {
     );
 }
 
-export function getDeliverableDetail(
+export async function getDeliverableDetail(
   db: Db,
   workspaceId: string,
   deliverableId: string,
-): DeliverableDetail {
-  const row = joinedSelect(db)
+): Promise<DeliverableDetail> {
+  const row = await joinedSelect(db)
     .where(
       and(
         eq(deliverables.id, deliverableId),
@@ -736,27 +736,27 @@ export function getDeliverableDetail(
     )
     .get();
   if (!row) throw new DeliverableNotFoundError();
-  const variantRows = db
+  const variantRows = (await db
     .select()
     .from(variants)
     .where(eq(variants.deliverableId, deliverableId))
     .orderBy(desc(variants.variantVersion))
-    .all()
+    .all())
     .map(projectVariant);
   return {
     deliverable: projectDeliverable(row),
     variants: variantRows,
-    events: eventRows(db, deliverableId),
+    events: await eventRows(db, deliverableId),
   };
 }
 
-export function getVariantSnapshot(
+export async function getVariantSnapshot(
   db: Db,
   workspaceId: string,
   deliverableId: string,
   variantId: string,
-): ContextSnapshot {
-  const variant = db
+): Promise<ContextSnapshot> {
+  const variant = await db
     .select()
     .from(variants)
     .where(
@@ -768,7 +768,7 @@ export function getVariantSnapshot(
     )
     .get();
   if (!variant) throw new VariantNotFoundError();
-  const snapshot = db
+  const snapshot = await db
     .select()
     .from(contextSnapshots)
     .where(eq(contextSnapshots.id, variant.contextSnapshotId))
@@ -792,7 +792,7 @@ export function getVariantSnapshot(
  * deliverable and supersedes sibling candidates; `cancel` is terminal via the
  * machine. Variant rows and snapshots stay immutable (invariant 4).
  */
-export function decideDeliverable(
+export async function decideDeliverable(
   db: Db,
   workspaceId: string,
   deliverableId: string,
@@ -802,9 +802,9 @@ export function decideDeliverable(
     reason?: string;
     actorUserId: string | null;
   },
-): DeliverableDetail {
-  db.transaction((tx) => {
-    const row = tx
+): Promise<DeliverableDetail> {
+  await db.transaction(async (tx) => {
+    const row = await tx
       .select()
       .from(deliverables)
       .where(
@@ -824,7 +824,7 @@ export function decideDeliverable(
       if (from !== "ready" && from !== "candidate_ready") {
         throw new InvalidDeliverableTransitionError(from, "regenerate");
       }
-      tx.update(deliverables)
+      await tx.update(deliverables)
         .set({
           generationState: "pending",
           generationAttempts: 0,
@@ -840,7 +840,7 @@ export function decideDeliverable(
       if (!canTransitionDeliverable(from, "fulfilled")) {
         throw new InvalidDeliverableTransitionError(from, "select");
       }
-      const variant = tx
+      const variant = await tx
         .select()
         .from(variants)
         .where(
@@ -854,11 +854,11 @@ export function decideDeliverable(
       if (!canTransitionVariant(variant.status as VariantStatus, "selected")) {
         throw new InvalidDeliverableTransitionError(from, "select");
       }
-      tx.update(variants)
+      await tx.update(variants)
         .set({ status: "selected", selectedAt: now })
         .where(and(eq(variants.id, variant.id), eq(variants.status, "candidate")))
         .run();
-      tx.update(variants)
+      await tx.update(variants)
         .set({ status: "superseded" })
         .where(
           and(
@@ -868,11 +868,11 @@ export function decideDeliverable(
           ),
         )
         .run();
-      tx.update(deliverables)
+      await tx.update(deliverables)
         .set({ status: "fulfilled", updatedAt: now })
         .where(and(eq(deliverables.id, deliverableId), eq(deliverables.status, from)))
         .run();
-      insertDeliverableEvent(tx, {
+      await insertDeliverableEvent(tx, {
         workspaceId,
         deliverableId,
         fromStatus: from,
@@ -888,11 +888,11 @@ export function decideDeliverable(
     if (!canTransitionDeliverable(from, "cancelled")) {
       throw new InvalidDeliverableTransitionError(from, "cancel");
     }
-    tx.update(deliverables)
+    await tx.update(deliverables)
       .set({ status: "cancelled", updatedAt: now })
       .where(and(eq(deliverables.id, deliverableId), eq(deliverables.status, from)))
       .run();
-    insertDeliverableEvent(tx, {
+    await insertDeliverableEvent(tx, {
       workspaceId,
       deliverableId,
       fromStatus: from,
@@ -902,5 +902,5 @@ export function decideDeliverable(
       createdAt: now,
     });
   });
-  return getDeliverableDetail(db, workspaceId, deliverableId);
+  return await getDeliverableDetail(db, workspaceId, deliverableId);
 }
