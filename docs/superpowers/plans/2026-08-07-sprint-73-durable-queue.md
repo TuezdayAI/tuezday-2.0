@@ -560,20 +560,40 @@ still executed on every run, so nothing is bypassed. This replaced an
 uncommitted `maxWorkers: 2` in `vitest.config.ts`, which was measured not to
 prevent the timeouts while costing ~21 minutes per run.
 
-- [ ] **Step 3: Run fresh final verification**
+- [x] **Step 3: Run fresh final verification**
 
 Run: `npm test && npm run typecheck && npm run build && git diff --check`
 
 Expected: exit 0; record exact test counts and any intentional warnings.
 
-- [ ] **Step 4: Commit audit fixes if any**
+Result — every command exited 0:
+
+- `npm test` — **309 files / 3105 tests passed**, 112.23s (was 1255.32s).
+- `npm run typecheck` — clean across all workspaces.
+- `npm run build` — clean.
+- `git diff --check` — clean.
+
+- [x] **Step 4: Commit audit fixes if any**
 
 Stage each audited production file together with the exact regression test added
 in Step 2, then commit them as `fix(queue): close Sprint 73 acceptance gaps`.
 If Step 1 finds no gap, make no empty commit.
 
-- [ ] **Step 5: Update Plane**
+Two commits, ordered so each is green on its own (verified by re-running every
+file either commit touches at the intermediate commit — 7 files, 123 tests):
+
+- `d1a76e1 fix(queue): close Sprint 73 acceptance gaps` — findings 1–5.
+- `994d216 test: build the api schema once per worker, not once per test` — the
+  fixture prerequisite plus the `maxWorkers: 2` removal, kept separate so it can
+  be dropped or cherry-picked independently of the sprint.
+
+- [x] **Step 5: Update Plane**
 
 Move every TAP-32 implementation child to Done with verification evidence, post
 the branch/commit/test summary to TAP-32, and mark TAP-32 Done only after the
 fresh verification gate passes.
+
+TAP-32 is Done with a full branch/commit/verification comment. The epic has no
+implementation children in Plane, so there were none to move alongside it. The
+comment records merge status as on-branch and **not yet pushed** — the founder
+merges, and the push is their call.
