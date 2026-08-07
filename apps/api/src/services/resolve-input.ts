@@ -1,16 +1,25 @@
-import type { ResolveCampaign, ResolveCampaignPlan } from "@tuezday/brain";
+import type {
+  ResolveCampaign,
+  ResolveCampaignPlan,
+  ResolveExamples,
+  ResolvePreferences,
+} from "@tuezday/brain";
 import type {
   BrainDocType,
   Campaign,
+  Channel,
   CreateCampaignPlanRevisionInput,
   DocOutline,
   ResolvedTaskDocMatrix,
+  TaskType,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { getBrainOutlines } from "./brain";
 import { getCurrentCampaignPlan } from "./campaign-plans";
 import { composeResolveCampaign } from "./campaigns";
 import { resolveTaskDocMatrix } from "./context-matrix";
+import { retrievePreferenceRules } from "./preference-rules";
+import { retrievePriorExamples } from "./prior-examples";
 
 export interface SelectiveContextInputs {
   matrix: ResolvedTaskDocMatrix;
@@ -123,6 +132,61 @@ export function campaignResolveInputs(
  * composed is the unsaved draft rather than the stored active revision. Same
  * pairing guarantee: one plan value feeds both outputs.
  */
+/**
+ * The Sprint 66 few-shot resolver inputs: prior approved/rejected examples
+ * retrieved from approval history, or an exclusion reason when the workspace
+ * has no usable history yet. Always returns one or the other, so every
+ * participating call site's trace states honestly why examples are(n't) there.
+ * Spread it straight into the `resolveContext` argument.
+ */
+export interface PriorExampleInputs {
+  examples: ResolveExamples | undefined;
+  examplesExclusionReason: string | undefined;
+}
+
+export function priorExampleInputs(
+  db: Db,
+  workspaceId: string,
+  input: { query: string; channel?: Channel; taskType?: TaskType },
+): PriorExampleInputs {
+  const examples = retrievePriorExamples(db, workspaceId, input) ?? undefined;
+  return {
+    examples,
+    examplesExclusionReason: examples
+      ? undefined
+      : "no approved or rejected prior outputs match this task yet.",
+  };
+}
+
+/**
+ * The Sprint 68 preference-memory resolver inputs: the top-N active rules the
+ * founder's own edits taught us, or an exclusion reason when none apply. Same
+ * shape and same guarantee as `priorExampleInputs` — always one or the other,
+ * so a participating trace states honestly why rules are(n't) there.
+ *
+ * Read-only (D-68.6). Recording that a rule was *applied* is a separate,
+ * explicit call from the generation paths, so a preview or an eval replay
+ * cannot inflate the hit count that promotion and retirement both read.
+ */
+export interface PreferenceRuleInputs {
+  preferences: ResolvePreferences | undefined;
+  preferencesExclusionReason: string | undefined;
+}
+
+export function preferenceRuleInputs(
+  db: Db,
+  workspaceId: string,
+  input: { channel?: Channel; taskType?: TaskType },
+): PreferenceRuleInputs {
+  const preferences = retrievePreferenceRules(db, workspaceId, input) ?? undefined;
+  return {
+    preferences,
+    preferencesExclusionReason: preferences
+      ? undefined
+      : "no active learned rules apply to this task yet.",
+  };
+}
+
 export function campaignResolvePreviewInputs(
   db: Db,
   workspaceId: string,

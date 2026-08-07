@@ -19,6 +19,7 @@ const RESULT_SIZE_LIMIT = 40_000;
  */
 export function toAgentTools(tools: readonly AnyTool[], ctx: ToolContext): AgentTool[] {
   let totalCalls = 0;
+  let proposalCalls = 0;
   const perToolCalls = new Map<string, number>();
 
   return tools.map((tool) => ({
@@ -48,8 +49,24 @@ export function toAgentTools(tools: readonly AnyTool[], ctx: ToolContext): Agent
           note: `No more ${tool.name} calls in this run. Answer with what you have.`,
         };
       }
+      // Sprint 69 (D-69.8): the shared proposal budget. Checked before the
+      // counters move so a refused proposal does not consume one, and returned
+      // as data like every other budget here — the model wraps up instead of
+      // the step crashing.
+      const proposalCap = ctx.budget.maxProposals;
+      if (tool.access === "propose" && proposalCap !== undefined && proposalCalls >= proposalCap) {
+        return {
+          error: "proposal_cap_reached",
+          tool: tool.name,
+          proposalsUsed: proposalCalls,
+          maxProposals: proposalCap,
+          note: "This run has proposed everything it is allowed to. Summarise what is left for a human.",
+        };
+      }
+
       totalCalls += 1;
       perToolCalls.set(tool.name, used + 1);
+      if (tool.access === "propose") proposalCalls += 1;
 
       const parsed = tool.input.safeParse(args ?? {});
       if (!parsed.success) {

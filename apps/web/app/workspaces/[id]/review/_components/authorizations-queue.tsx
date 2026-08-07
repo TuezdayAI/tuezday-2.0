@@ -24,10 +24,13 @@ import {
 } from "@/lib/authorization-batch";
 import {
   actionKindLabel,
+  actionOriginHref,
+  actionOriginLabel,
   actionRecoveryHref,
   actionTimingLabel,
   externalActionWorkflowStatus,
   impactSummary,
+  isAgentOriginated,
   policyExplanation,
   secondGateExplanation,
 } from "@/lib/external-actions";
@@ -580,6 +583,9 @@ export function AuthorizationsQueue({
                     <Link href={hrefFor({ action: action.id })}>{action.subject.title}</Link>
                   </span>
                   <span className="layer-badge">{actionKindLabel(action.kind)}</span>
+                  {/* Sprint 69: an agent proposal is gated identically to a
+                      human one, so this is a fact, not a warning. */}
+                  {isAgentOriginated(action) && <span className="layer-badge">agent</span>}
                 </div>
                 <p className="section-reason">
                   {action.subject.destination ?? "No destination"} · {actionTimingLabel(action)}
@@ -611,7 +617,15 @@ export function AuthorizationsQueue({
                 <dd>{selected.context.laneName ?? "—"}</dd>
                 <dt>Proposed by</dt>
                 <dd>
-                  {selected.proposedBy.label} · {new Date(selected.createdAt).toLocaleString()}
+                  {actionOriginLabel(selected)} · {new Date(selected.createdAt).toLocaleString()}
+                  {actionOriginHref(id, selected) && (
+                    <>
+                      {" · "}
+                      <Link href={actionOriginHref(id, selected)!}>
+                        see what the agent was doing
+                      </Link>
+                    </>
+                  )}
                 </dd>
               </dl>
 

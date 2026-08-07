@@ -8,7 +8,13 @@ export interface WorkspaceSummary {
 export interface WorkerClient {
   request(path: string, init?: RequestInit): Promise<Response>;
   listWorkspaces(): Promise<WorkspaceSummary[]>;
-  runInternal(path: "/internal/discovery/tick" | "/internal/automation/tick"): Promise<unknown>;
+  runInternal(
+    path:
+      | "/internal/discovery/tick"
+      | "/internal/automation/tick"
+      | "/internal/pipelines/tick"
+      | "/internal/preferences/tick",
+  ): Promise<unknown>;
 }
 
 export interface WorkerClientOptions {

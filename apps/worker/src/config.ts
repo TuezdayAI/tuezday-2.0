@@ -8,6 +8,8 @@ export interface WorkerConfig {
   intervals: {
     discoveryMs: number;
     automationMs: number;
+    pipelinesMs: number;
+    preferencesMs: number;
     learningMs: number;
     adsMs: number;
     publishMs: number;
@@ -125,6 +127,28 @@ export function parseWorkerConfig(
         env,
         "AUTOMATION_INTERVAL_MIN",
         5,
+        60_000,
+        60_000,
+        86_400_000,
+      ),
+      // Sprint 65: executes queued pipeline runs (live + shadow). Faster than
+      // automation so a queued run rests before the next automation pass.
+      pipelinesMs: duration(
+        env,
+        "PIPELINES_INTERVAL_MIN",
+        2,
+        60_000,
+        60_000,
+        86_400_000,
+      ),
+      // Sprint 68: extracts learned preference rules from captured founder
+      // edits. Ten minutes is the "learns inside a day, not inside a week"
+      // requirement met with room to spare — the LLM cost is one small call
+      // per scope group, and only when there is a backlog to digest.
+      preferencesMs: duration(
+        env,
+        "PREFERENCES_INTERVAL_MIN",
+        10,
         60_000,
         60_000,
         86_400_000,

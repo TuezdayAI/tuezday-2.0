@@ -68,14 +68,16 @@ describe("next-action API", () => {
     expect(body.state.draftCount).toBe(0);
   });
 
-  it("a pending_review draft wins over everything else", async () => {
+  it("counts a pending draft but no longer ranks it (Sprint 70, D-70.9)", async () => {
     await submitDraft();
     const body = await fetchNextAction();
+    // The count is still real state the UI shows.
     expect(body.state.draftCount).toBe(1);
+    // But the draft is the inbox's item to rank, not this engine's. Setup is
+    // still incomplete here, so the setup answer stands.
     expect(body.nextAction).toMatchObject({
-      kind: "review",
-      module: "/review",
-      reason: "1 draft waiting for review",
+      kind: "checklist",
+      checklistItem: "brain_reviewed",
     });
   });
 
@@ -143,11 +145,16 @@ describe("next-action API", () => {
     });
     expect(body.checklist).toEqual({ done: 5, total: 6, complete: false });
 
-    // No pending drafts, nothing blocked — the active campaign with zero
-    // attached content is now the next action (priority 3 beats checklist).
+    // The campaign-without-content count is still real state, but Sprint 70
+    // stopped this engine ranking it (D-70.9): the remaining unmet setup step
+    // is the only thing left for it to answer, and the campaign shows up in
+    // the inbox as a campaign risk instead.
     expect(body.state.draftCount).toBe(0);
     expect(body.state.liveCampaignsWithoutContent).toBe(1);
-    expect(body.nextAction).toMatchObject({ kind: "campaign_content", module: "/campaigns" });
+    expect(body.nextAction).toMatchObject({
+      kind: "checklist",
+      checklistItem: "insights_live",
+    });
   });
 
   it("returns 404 for an unknown workspace", async () => {

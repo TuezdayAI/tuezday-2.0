@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import type { Db } from "../db";
-import { listWorkspacePriorities } from "../services/priorities";
+import { listWorkspacePriorities } from "../services/agent-inbox";
 import { getWorkspace } from "../services/workspaces";
 
 function workspaceOr404(db: Db, id: string, reply: FastifyReply) {

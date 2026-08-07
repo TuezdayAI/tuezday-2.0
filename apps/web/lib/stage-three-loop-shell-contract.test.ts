@@ -14,11 +14,14 @@ const results = read(
 );
 
 describe("Stage 3 operating loop shell contract", () => {
-  it("drives Home from the ranked priority projection and its exact recovery links", () => {
-    expect(home).toContain("/priorities");
-    expect(home).toContain("priorityView(");
-    expect(home).toContain("priorityQueueState(");
-    expect(home).toContain("priority.href");
+  it("drives Home from the one ranked feed and its exact recovery links", () => {
+    // Sprint 70 replaced /priorities here with the unified agent inbox. The
+    // guarantee is unchanged and now stronger: Home renders a server-ranked
+    // projection and owns no vocabulary of its own.
+    expect(home).toContain("/agent-inbox");
+    expect(home).toContain("inboxItemView(");
+    expect(home).toContain("itemsInLane(");
+    expect(home).toContain("item.href");
     expect(home).toContain("WorkflowStatusBadge");
     expect(home).not.toContain("const PRIORITY_STATUS");
   });

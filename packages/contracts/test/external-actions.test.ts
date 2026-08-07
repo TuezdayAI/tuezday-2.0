@@ -80,6 +80,8 @@ function actionFixture(status = "authorization_required") {
     supersededByActionId: null,
     execution: null,
     proposedBy: { userId: null, label: "Founder" },
+    origin: "human",
+    originRunId: null,
     createdAt: 100,
     updatedAt: 100,
     authorizedAt: null,

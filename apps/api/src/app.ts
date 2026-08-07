@@ -52,6 +52,8 @@ import { registerPackageRoutes } from "./routes/packages";
 import { registerDeliverableRoutes } from "./routes/deliverables";
 import { registerPipelineRoutes } from "./routes/pipelines";
 import { registerDraftRoutes } from "./routes/drafts";
+import { registerEvalRoutes } from "./routes/evals";
+import { registerPreferenceRoutes } from "./routes/preferences";
 import { registerEvidenceRoutes } from "./routes/evidence";
 import { registerExecutionRoutes } from "./routes/executions";
 import { registerExternalActionRoutes } from "./routes/external-actions";
@@ -76,6 +78,7 @@ import { registerComplianceRoutes } from "./routes/compliance";
 import { registerTrackingRoutes } from "./routes/tracking";
 import { registerPrRoutes } from "./routes/pr";
 import { registerPriorityRoutes } from "./routes/priorities";
+import { registerQuestionRoutes } from "./routes/questions";
 import { registerPublicationRoutes } from "./routes/publications";
 import { registerGenerationRoutes } from "./routes/generations";
 import { registerPersonaRoutes } from "./routes/personas";
@@ -93,6 +96,8 @@ import { registerPublicApiRoutes } from "./routes/public-api";
 import { backfillMissingCampaignPlans } from "./services/campaign-plan-backfill";
 import { backfillMetrics } from "./services/metrics-backfill";
 import { backfillExternalActionPolicies } from "./services/external-action-backfill";
+import { createAgentProposals } from "./services/agent-proposals";
+import { createAgentQuestions } from "./services/agent-questions";
 import { createExternalActionAdapters } from "./services/external-action-adapters";
 import { createExternalActionRuntime } from "./services/external-action-coordinator";
 import { repairDanglingDuplicateGroups } from "./services/discovery-dedupe";
@@ -233,6 +238,17 @@ export async function buildApp({
     adapters: createExternalActionAdapters(db, connectors, fetcher, outboundEmail, gmail),
     analytics,
   });
+  // Sprint 69: the propose seam. Built once here, where the runtime already
+  // exists, and injected into the engine — the agent tools themselves stay
+  // leaves and never import any of this (D-69.5).
+  const agentProposals = createAgentProposals({
+    db,
+    runtime: externalActionRuntime,
+    fabric: connectors,
+    fetcher,
+  });
+  // Sprint 70: the ask seam, built once for the same reason.
+  const agentQuestions = createAgentQuestions({ db });
 
   // The design renderer keeps one shared headless browser per process.
   app.addHook("preClose", async () => {
@@ -284,6 +300,8 @@ export async function buildApp({
     llm,
     evidence,
     safeFetch: guardedFetch,
+    proposals: agentProposals,
+    questions: agentQuestions,
     intentProvider: intent,
     fabric: connectors,
     policy: operatorPolicy,
@@ -333,7 +351,24 @@ export async function buildApp({
   registerOpportunityRoutes(app, db, llm);
   registerPackageRoutes(app, db, llm);
   registerDeliverableRoutes(app, db, llm);
-  registerPipelineRoutes(app, db, { llm, evidence, safeFetch: guardedFetch });
+  registerPipelineRoutes(app, db, {
+    llm,
+    evidence,
+    safeFetch: guardedFetch,
+    proposals: agentProposals,
+    questions: agentQuestions,
+  });
+  registerQuestionRoutes(app, db, {
+    engine: {
+      llm,
+      evidence,
+      safeFetch: guardedFetch,
+      proposals: agentProposals,
+      questions: agentQuestions,
+    },
+  });
+  registerEvalRoutes(app, db, { llm, evidence, safeFetch: guardedFetch });
+  registerPreferenceRoutes(app, db, { llm });
   registerCampaignRoutes(app, db);
   registerCampaignPlanRoutes(app, db);
   registerAudienceRoutes(app, db);

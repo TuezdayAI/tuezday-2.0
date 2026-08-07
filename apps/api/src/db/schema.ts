@@ -318,6 +318,9 @@ export const approvalDecisions = sqliteTable("approval_decisions", {
   actor: text("actor").notNull(),
   // Nullable: decisions logged before auth existed, or by the system actor.
   actorId: text("actor_id"),
+  // Sprint 66: the human's stated rationale, captured optionally at the gate.
+  // Today only rejections offer the input; null wherever it wasn't given.
+  reason: text("reason"),
   createdAt: integer("created_at").notNull(),
 });
 
@@ -1879,6 +1882,12 @@ export const externalActions = sqliteTable(
       onDelete: "set null",
     }),
     proposedByLabel: text("proposed_by_label").notNull(),
+    // Sprint 69: who proposed it, as a typed fact rather than a label
+    // convention — the authorization queue has to be able to say "an agent
+    // asked for this" without parsing `proposed_by_label`. Not part of the
+    // fingerprint (D-69.3): the gate is origin-blind on purpose.
+    origin: text("origin").notNull().default("human"),
+    originRunId: text("origin_run_id"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
     authorizedAt: integer("authorized_at"),
@@ -2627,6 +2636,9 @@ export const socialAutomationSettings = sqliteTable("social_automation_settings"
   // Sprint 45: minimum signal-match score (0-100) for runAutomation to route a
   // signal to a campaign.
   matchThreshold: integer("match_threshold").notNull().default(50),
+  // Sprint 65 (D-65.1): AUTOMATION_GENERATION_PATHS — which path automation
+  // uses for signal → social post. Default legacy: merging changes nothing.
+  generationPath: text("generation_path").notNull().default("legacy"),
   updatedAt: integer("updated_at").notNull(),
 });
 
@@ -3392,3 +3404,381 @@ export const pipelineRunSteps = sqliteTable(
 );
 
 export type PipelineRunStepRow = typeof pipelineRunSteps.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Sprint 65 — shadow A/B pairs + rollout decisions
+// ---------------------------------------------------------------------------
+
+// One legacy automation draft paired with its engine shadow run (D-65.7).
+// pair_key is the shadow run's idempotency key (shadow:v1:ws:signal:campaign:
+// channel) so a pair, like a run, exists at most once per work item.
+export const pipelineShadowPairs = sqliteTable(
+  "pipeline_shadow_pairs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    pairKey: text("pair_key").notNull(),
+    signalId: text("signal_id").references(() => signals.id, {
+      onDelete: "set null",
+    }),
+    campaignId: text("campaign_id").references(() => campaigns.id, {
+      onDelete: "set null",
+    }),
+    channel: text("channel").notNull(),
+    draftId: text("draft_id").references(() => drafts.id, {
+      onDelete: "set null",
+    }),
+    runId: text("run_id")
+      .notNull()
+      .references(() => pipelineRuns.id, { onDelete: "cascade" }),
+    verdict: text("verdict"), // SHADOW_VERDICTS, null until reviewed
+    verdictNotes: text("verdict_notes").notNull().default(""),
+    verdictByUserId: text("verdict_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    verdictAt: integer("verdict_at"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("pipeline_shadow_pairs_key").on(t.pairKey),
+    index("pipeline_shadow_pairs_workspace").on(t.workspaceId, t.createdAt),
+  ],
+);
+
+export type PipelineShadowPairRow = typeof pipelineShadowPairs.$inferSelect;
+
+// Append-only founder calls on the A/B (D-65.9). metrics_json freezes the
+// comparison snapshot the decision was made on; recording one also applies
+// the matching generation_path on social_automation_settings.
+export const pipelineRolloutDecisions = sqliteTable(
+  "pipeline_rollout_decisions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    taskKey: text("task_key").notNull(),
+    decision: text("decision").notNull(), // ROLLOUT_DECISION_KINDS
+    rationale: text("rationale").notNull(),
+    metricsJson: text("metrics_json").notNull(),
+    decidedByUserId: text("decided_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("pipeline_rollout_decisions_workspace").on(t.workspaceId, t.createdAt)],
+);
+
+export type PipelineRolloutDecisionRow = typeof pipelineRolloutDecisions.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Sprint 67 — Eval & replay harness
+// ---------------------------------------------------------------------------
+
+// D-67.5: machine-checkable claims the workspace will not publish. Channel
+// guidance is prose an LLM interprets; this list is a hard check, and it is
+// handed to the critic so a finding can cite the exact phrase it tripped on.
+export const workspaceBannedClaims = sqliteTable(
+  "workspace_banned_claims",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    phrase: text("phrase").notNull(),
+    note: text("note").notNull().default(""),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("workspace_banned_claims_phrase").on(t.workspaceId, t.phrase)],
+);
+
+export type WorkspaceBannedClaimRow = typeof workspaceBannedClaims.$inferSelect;
+
+// D-67.2: a suite is frozen at build time so a trend line means something.
+export const evalSuites = sqliteTable(
+  "eval_suites",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    taskKey: text("task_key").notNull(), // PIPELINE_TASK_KEYS
+    channel: text("channel").notNull(),
+    ctaExpectation: text("cta_expectation").notNull().default("any"), // CTA_EXPECTATIONS
+    caseCount: integer("case_count").notNull().default(0),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("eval_suites_workspace").on(t.workspaceId, t.createdAt)],
+);
+
+export type EvalSuiteRow = typeof evalSuites.$inferSelect;
+
+// One historical tuple, snapshotted. The source FKs are set-null on purpose:
+// deleting the draft a case was built from must not rewrite eval history.
+export const evalCases = sqliteTable(
+  "eval_cases",
+  {
+    id: text("id").primaryKey(),
+    suiteId: text("suite_id")
+      .notNull()
+      .references(() => evalSuites.id, { onDelete: "cascade" }),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    signalId: text("signal_id").references(() => signals.id, { onDelete: "set null" }),
+    signalContent: text("signal_content").notNull(),
+    signalSource: text("signal_source").notNull(),
+    channel: text("channel").notNull(),
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+    personaId: text("persona_id").references(() => personas.id, { onDelete: "set null" }),
+    sourceDraftId: text("source_draft_id").references(() => drafts.id, { onDelete: "set null" }),
+    generatedContent: text("generated_content").notNull(),
+    finalContent: text("final_content").notNull(),
+    outcome: text("outcome").notNull(), // EVAL_CASE_OUTCOMES
+    rejectionReason: text("rejection_reason"),
+    decidedAt: integer("decided_at").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("eval_cases_suite").on(t.suiteId, t.createdAt)],
+);
+
+export type EvalCaseRow = typeof evalCases.$inferSelect;
+
+// D-67.3: a baseline is a labelled run, not a second table. The partial unique
+// index is what makes a label point at exactly one run per workspace.
+export const evalRuns = sqliteTable(
+  "eval_runs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    suiteId: text("suite_id")
+      .notNull()
+      .references(() => evalSuites.id, { onDelete: "cascade" }),
+    definitionId: text("definition_id").references(() => pipelineDefinitions.id, {
+      onDelete: "set null",
+    }),
+    definitionVersion: integer("definition_version"),
+    status: text("status").notNull().default("running"), // EVAL_RUN_STATUSES
+    judgeEnabled: integer("judge_enabled", { mode: "boolean" }).notNull().default(false),
+    metricsJson: text("metrics_json").notNull(),
+    baselineLabel: text("baseline_label"),
+    failureReason: text("failure_reason"),
+    createdByUserId: text("created_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    createdAt: integer("created_at").notNull(),
+    finishedAt: integer("finished_at"),
+  },
+  (t) => [
+    uniqueIndex("eval_runs_baseline_label")
+      .on(t.workspaceId, t.baselineLabel)
+      .where(sql`${t.baselineLabel} IS NOT NULL`),
+    index("eval_runs_workspace").on(t.workspaceId, t.createdAt),
+  ],
+);
+
+export type EvalRunRow = typeof evalRuns.$inferSelect;
+
+export const evalCaseResults = sqliteTable(
+  "eval_case_results",
+  {
+    id: text("id").primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => evalRuns.id, { onDelete: "cascade" }),
+    caseId: text("case_id")
+      .notNull()
+      .references(() => evalCases.id, { onDelete: "cascade" }),
+    pipelineRunId: text("pipeline_run_id").references(() => pipelineRuns.id, {
+      onDelete: "set null",
+    }),
+    producedContent: text("produced_content"),
+    checksJson: text("checks_json").notNull().default("[]"),
+    judgeJson: text("judge_json"),
+    verdict: text("verdict"), // EVAL_VERDICTS
+    editDistanceToFinal: real("edit_distance_to_final"),
+    costCents: real("cost_cents").notNull().default(0),
+    durationMs: integer("duration_ms").notNull().default(0),
+    failureReason: text("failure_reason"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("eval_case_results_run").on(t.runId, t.createdAt)],
+);
+
+export type EvalCaseResultRow = typeof evalCaseResults.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Preference memory (Sprint 68) — the fast learning layer.
+//
+// A human correction is captured verbatim and deterministically (no LLM in the
+// request path, D-68.3); an extraction pass turns groups of same-scope edits
+// into learned rules; the rules are injected as a traced resolver section and
+// promoted into the brain docs only through the existing founder-accepts gate.
+// ---------------------------------------------------------------------------
+
+export const preferenceEdits = sqliteTable(
+  "preference_edits",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    source: text("source").notNull(), // PREFERENCE_EDIT_SOURCES
+    /** Decision id or revision-turn id — the unique key that makes capture idempotent. */
+    sourceId: text("source_id").notNull(),
+    // Set null, not cascade: deleting a draft removes the link, never the
+    // correction it taught us (the Sprint 67 freeze rule).
+    draftId: text("draft_id").references(() => drafts.id, { onDelete: "set null" }),
+    taskType: text("task_type").notNull(),
+    channel: text("channel").notNull(),
+    beforeContent: text("before_content").notNull(),
+    afterContent: text("after_content").notNull(),
+    instruction: text("instruction"),
+    editDistance: real("edit_distance").notNull().default(0),
+    digestedAt: integer("digested_at"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("preference_edit_source").on(t.workspaceId, t.source, t.sourceId),
+    index("preference_edit_undigested").on(t.workspaceId, t.digestedAt, t.createdAt),
+  ],
+);
+
+export type PreferenceEditRow = typeof preferenceEdits.$inferSelect;
+
+export const preferenceRules = sqliteTable(
+  "preference_rules",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    rule: text("rule").notNull(),
+    polarity: text("polarity").notNull(), // PREFERENCE_POLARITIES
+    scopeTaskType: text("scope_task_type"),
+    scopeChannel: text("scope_channel"),
+    status: text("status").notNull(), // PREFERENCE_RULE_STATUSES
+    origin: text("origin").notNull(), // PREFERENCE_RULE_ORIGINS
+    confidence: integer("confidence").notNull().default(0),
+    observationCount: integer("observation_count").notNull().default(0),
+    appliedCount: integer("applied_count").notNull().default(0),
+    lastObservedAt: integer("last_observed_at"),
+    lastAppliedAt: integer("last_applied_at"),
+    promotedAt: integer("promoted_at"),
+    retiredAt: integer("retired_at"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("preference_rule_workspace").on(t.workspaceId, t.status, t.confidence)],
+);
+
+export type PreferenceRuleRow = typeof preferenceRules.$inferSelect;
+
+export const preferenceRuleEvidence = sqliteTable(
+  "preference_rule_evidence",
+  {
+    id: text("id").primaryKey(),
+    ruleId: text("rule_id")
+      .notNull()
+      .references(() => preferenceRules.id, { onDelete: "cascade" }),
+    editId: text("edit_id")
+      .notNull()
+      .references(() => preferenceEdits.id, { onDelete: "cascade" }),
+    excerpt: text("excerpt").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [uniqueIndex("preference_rule_evidence_pair").on(t.ruleId, t.editId)],
+);
+
+export type PreferenceRuleEvidenceRow = typeof preferenceRuleEvidence.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Agent proposals (Sprint 69, PRD §8 / direction Move 7)
+//
+// One row per successful propose-tool call. `external_actions.origin` already
+// says who proposed a given action; this says what a given *run* proposed, and
+// it is the only place drafts (which are not external actions) and actions can
+// be counted together — which is what the per-workspace daily cap needs.
+//
+// Both target links are `set null`: deleting the draft an agent wrote must not
+// erase the fact that it wrote one.
+// ---------------------------------------------------------------------------
+
+export const agentProposals = sqliteTable(
+  "agent_proposals",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    agentRunId: text("agent_run_id").notNull(),
+    tool: text("tool").notNull(),
+    targetKind: text("target_kind").notNull(),
+    draftId: text("draft_id").references(() => drafts.id, { onDelete: "set null" }),
+    externalActionId: text("external_action_id").references(() => externalActions.id, {
+      onDelete: "set null",
+    }),
+    summary: text("summary").notNull(),
+    rationale: text("rationale").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("agent_proposals_workspace_created").on(t.workspaceId, t.createdAt),
+    index("agent_proposals_run").on(t.agentRunId),
+  ],
+);
+
+export type AgentProposalRow = typeof agentProposals.$inferSelect;
+
+/**
+ * Sprint 70: the ask lane. One row per question an agent stopped to ask.
+ *
+ * `pipeline_run_id` is what makes suspend/resume work: the run itself is
+ * suspended by `pipeline_runs.status = 'escalated'` (Sprint 64), and this row
+ * is the only thing that knows *why* and can carry the answer back. Null on a
+ * one-shot agent run, which has no resume point.
+ */
+export const agentQuestions = sqliteTable(
+  "agent_questions",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    agentRunId: text("agent_run_id").notNull(),
+    pipelineRunId: text("pipeline_run_id").references(() => pipelineRuns.id, {
+      onDelete: "set null",
+    }),
+    stepKey: text("step_key"),
+    type: text("type").notNull(),
+    question: text("question").notNull(),
+    why: text("why").notNull(),
+    optionsJson: text("options_json"),
+    /** sha256(type + normalized question) — the re-ask check (D-70.3). */
+    fingerprint: text("fingerprint").notNull(),
+    status: text("status").notNull().default("open"),
+    answer: text("answer"),
+    answeredByUserId: text("answered_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    answeredByLabel: text("answered_by_label"),
+    answeredAt: integer("answered_at"),
+    ruleId: text("rule_id").references(() => preferenceRules.id, { onDelete: "set null" }),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("agent_questions_workspace_status").on(t.workspaceId, t.status, t.createdAt),
+    index("agent_questions_pipeline_run").on(t.pipelineRunId),
+    index("agent_questions_run").on(t.agentRunId),
+  ],
+);
+
+export type AgentQuestionRow = typeof agentQuestions.$inferSelect;

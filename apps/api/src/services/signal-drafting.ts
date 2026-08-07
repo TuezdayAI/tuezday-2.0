@@ -11,7 +11,13 @@ import { storeGeneration } from "./generations";
 import { resolveChannelGuidance } from "./guidance";
 import { toResolvePersona } from "./personas";
 import { resolveDraftAccount } from "./resolve-account";
-import { campaignResolveInputs, selectiveContextInputs } from "./resolve-input";
+import { recordRuleApplications } from "./preference-rules";
+import {
+  campaignResolveInputs,
+  preferenceRuleInputs,
+  priorExampleInputs,
+  selectiveContextInputs,
+} from "./resolve-input";
 import { runPreReview, setGenerationReview } from "./review";
 import {
   submitAutomaticDraft,
@@ -104,6 +110,10 @@ export async function generateSignalDraft(
   const personaInput = opts.persona ? toResolvePersona(opts.persona) : undefined;
   const campaignInputs = campaignResolveInputs(db, workspace.id, opts.campaign);
   const selective = selectiveContextInputs(db, workspace.id);
+  const preferences = preferenceRuleInputs(db, workspace.id, {
+    channel: opts.channel,
+    taskType: "signal_response",
+  });
   const resolved = resolveContext({
     workspaceName: workspace.name,
     docs: contents,
@@ -124,6 +134,16 @@ export async function generateSignalDraft(
     ...selective,
     evidence: evidenceResolution.evidence,
     evidenceExclusionReason: evidenceResolution.exclusionReason,
+    // Sprint 66: few-shot from approval history — a traced section, so the
+    // "why this" panel can show exactly which prior examples shaped the draft.
+    ...priorExampleInputs(db, workspace.id, {
+      query: signal.content,
+      channel: opts.channel,
+      taskType: "signal_response",
+    }),
+    // Sprint 68: rules learned from this workspace's own edits, injected the
+    // same day the correction was made.
+    ...preferences,
     tokenBudget: opts.tokenBudget,
   });
 
@@ -144,6 +164,9 @@ export async function generateSignalDraft(
     provider: result.provider,
     durationMs: result.durationMs,
   });
+  // Sprint 68 (D-68.6): the hit count moves here — after a real generation —
+  // and nowhere else. Promotion and retirement both read it.
+  recordRuleApplications(db, (preferences.preferences?.rules ?? []).map((rule) => rule.id));
 
   const settings = getGenerationSettings(db, workspace.id);
   if (settings.reviewEnabled) {

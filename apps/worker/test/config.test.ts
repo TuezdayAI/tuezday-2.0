@@ -14,6 +14,8 @@ const BASE_ENV = {
 const intervalCases = [
   ["discoveryMs", "DISCOVERY_INTERVAL_MIN", 1, 1_440, 1_800_000],
   ["automationMs", "AUTOMATION_INTERVAL_MIN", 1, 1_440, 300_000],
+  ["pipelinesMs", "PIPELINES_INTERVAL_MIN", 1, 1_440, 120_000],
+  ["preferencesMs", "PREFERENCES_INTERVAL_MIN", 1, 1_440, 600_000],
   ["learningMs", "LEARNING_SYNTHESIS_DAYS", 1, 365, 604_800_000],
   ["adsMs", "ADS_SYNC_HOURS", 1, 168, 21_600_000],
   ["publishMs", "PUBLISH_INTERVAL_MIN", 1, 1_440, 60_000],
@@ -53,6 +55,8 @@ describe("worker configuration", () => {
     expect(config.intervals).toMatchObject({
       discoveryMs: 30 * 60_000,
       automationMs: 5 * 60_000,
+      pipelinesMs: 2 * 60_000,
+      preferencesMs: 10 * 60_000,
       learningMs: 7 * 86_400_000,
       adsMs: 6 * 3_600_000,
       publishMs: 60_000,

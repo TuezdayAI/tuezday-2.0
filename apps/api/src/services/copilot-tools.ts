@@ -13,7 +13,7 @@ import { getSequenceFunnel } from "./outreach-funnel";
 import { listAudiences } from "./audiences";
 import { listLeads } from "./leads";
 import { getNextActionView } from "./next-action";
-import { listWorkspacePriorities } from "./priorities";
+import { listWorkspacePriorities } from "./agent-inbox";
 
 // ---------------------------------------------------------------------------
 // Read-only tool registry (Sprint 42, Part 1).

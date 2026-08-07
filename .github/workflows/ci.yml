@@ -17,3 +17,17 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+
+  # Sprint 67 (D-67.8): the replay harness's golden suite. Blocks the merge on a
+  # metric regression, a broken context invariant, or a moved prompt/resolver
+  # digest. Intentional prompt changes are accepted with `npm run eval:record`.
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run eval

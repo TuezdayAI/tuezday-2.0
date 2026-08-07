@@ -19,14 +19,25 @@ import {
   type PipelineStepStatus,
   type PipelineTaskKey,
   type ProposalOutput,
+  type AgentQuestion,
   type AgentStopReason,
 } from "@tuezday/contracts";
 import type { z } from "zod";
-import { estimateTokens, type ContextSection, type ResolvedContext } from "@tuezday/brain";
+import {
+  estimateTokens,
+  renderExamples,
+  renderPreferences,
+  type ContextSection,
+  type ResolvedContext,
+  type ResolveExamples,
+  type ResolvePreferences,
+} from "@tuezday/brain";
 import { toAgentTools } from "../agents/adapter";
 import { DEFAULT_TOOL_BUDGET, type ToolContext } from "../agents/registry";
 import { AgentRunner } from "../agents/runner";
-import { READ_TOOLS } from "../agents/tools/index";
+import { simulatedAgentProposals, type AgentProposalService } from "../agents/proposals";
+import { simulatedAgentQuestions, type AgentQuestionService } from "../agents/questions";
+import { ALL_TOOLS } from "../agents/tools/index";
 import type { Db } from "../db";
 import {
   pipelineDefinitions,
@@ -41,11 +52,28 @@ import type { LlmGateway } from "../llm/gateway";
 import { jsonSchemaFor } from "../llm/json-schema";
 import { meteredLlm } from "../llm/metered";
 import type { SafeFetchService } from "../safe-fetch/index";
+import { listAnsweredQuestionsForPipelineRun } from "./agent-questions";
 import { submitDraft } from "./drafts";
 import { llmBudgetExhausted } from "./entitlements";
 import { storeGeneration } from "./generations";
+import {
+  PipelineSignalNotFoundError,
+  rowToRun,
+  startPipelineRun,
+} from "./pipeline-runs";
+import { recordRuleApplications, retrievePreferenceRules } from "./preference-rules";
+import { retrievePriorExamples } from "./prior-examples";
 import { getSignal, listSignals } from "./signals";
 import { getWorkspace } from "./workspaces";
+
+// Queue-only creation lives in pipeline-runs.ts (leaf, no agent imports) so
+// enqueuing services never load the engine. Re-exported for existing callers.
+export {
+  DuplicatePipelineRunError,
+  PipelineSignalNotFoundError,
+  startPipelineRun,
+  type StartPipelineRunInput,
+} from "./pipeline-runs";
 
 // Engine bounds (D-64.6). Constants until Sprint 65 gives the engine a
 // worker loop and operator-policy knobs.
@@ -57,6 +85,20 @@ export interface PipelineEngineDeps {
   llm: LlmGateway;
   evidence: EvidenceStore;
   safeFetch: SafeFetchService;
+  /**
+   * Sprint 69: the gated write seam for the propose tools. Absent means they
+   * are not offered at all (D-69.7) — there is no ungoverned fallback. A
+   * non-live run gets the simulating implementation instead of this one, so a
+   * dry run, a shadow run or an eval replay sees the same tools and mints
+   * nothing (D-69.6).
+   */
+  proposals?: AgentProposalService;
+  /**
+   * Sprint 70: the ask seam. Same rule — absent means `ask_founder` is not
+   * offered, and a non-live run gets the simulating one so a dry run never
+   * suspends waiting for an answer nobody is going to give (D-70.5).
+   */
+  questions?: AgentQuestionService;
 }
 
 export class PipelineRunNotFoundError extends Error {
@@ -66,57 +108,11 @@ export class PipelineRunNotFoundError extends Error {
   }
 }
 
-export class DuplicatePipelineRunError extends Error {
-  constructor(key: string) {
-    super(`A run with idempotency key "${key}" already exists.`);
-    this.name = "DuplicatePipelineRunError";
-  }
-}
-
 export class InvalidPipelineRunTransitionError extends Error {
   constructor(from: PipelineRunStatus, to: PipelineRunStatus) {
     super(`Cannot move a pipeline run from "${from}" to "${to}".`);
     this.name = "InvalidPipelineRunTransitionError";
   }
-}
-
-export class PipelineSignalNotFoundError extends Error {
-  constructor(id: string) {
-    super(`Signal "${id}" not found.`);
-    this.name = "PipelineSignalNotFoundError";
-  }
-}
-
-function rowToRun(row: PipelineRunRow): PipelineRun {
-  return {
-    id: row.id,
-    workspaceId: row.workspaceId,
-    definitionId: row.definitionId,
-    definitionVersion: row.definitionVersion,
-    taskKey: row.taskKey as PipelineTaskKey,
-    mode: row.mode as PipelineRunMode,
-    dryRunBatchId: row.dryRunBatchId,
-    signalId: row.signalId,
-    campaignId: row.campaignId,
-    laneId: row.laneId,
-    personaId: row.personaId,
-    channel: row.channel as Channel,
-    status: row.status as PipelineRunStatus,
-    pausedAtStepKey: row.pausedAtStepKey,
-    escalationReason: row.escalationReason,
-    failureReason: row.failureReason,
-    checklist: JSON.parse(row.checklistJson) as PipelineChecklistEntry[],
-    result: row.resultJson ? (JSON.parse(row.resultJson) as ProposalOutput) : null,
-    generationId: row.generationId,
-    draftId: row.draftId,
-    inputTokens: row.inputTokens,
-    outputTokens: row.outputTokens,
-    costCents: row.costCents,
-    createdBy: row.createdBy,
-    createdAt: row.createdAt,
-    startedAt: row.startedAt,
-    finishedAt: row.finishedAt,
-  };
 }
 
 function rowToStep(row: PipelineRunStepRow): PipelineRunStep {
@@ -139,72 +135,6 @@ function rowToStep(row: PipelineRunStepRow): PipelineRunStep {
     finishedAt: row.finishedAt,
     createdAt: row.createdAt,
   };
-}
-
-export interface StartPipelineRunInput {
-  workspaceId: string;
-  definition: PipelineDefinition;
-  signalId: string;
-  channel: Channel;
-  campaignId?: string | null;
-  laneId?: string | null;
-  personaId?: string | null;
-  mode: PipelineRunMode;
-  dryRunBatchId?: string | null;
-  idempotencyKey?: string | null;
-  createdBy: string;
-}
-
-/** Insert a queued run frozen against the definition's current version. */
-export function startPipelineRun(db: Db, input: StartPipelineRunInput): PipelineRun {
-  const signal = getSignal(db, input.workspaceId, input.signalId);
-  if (!signal) throw new PipelineSignalNotFoundError(input.signalId);
-  const now = Date.now();
-  const row: PipelineRunRow = {
-    id: randomUUID(),
-    workspaceId: input.workspaceId,
-    definitionId: input.definition.id,
-    definitionVersion: input.definition.currentVersion,
-    taskKey: input.definition.taskKey,
-    mode: input.mode,
-    dryRunBatchId: input.dryRunBatchId ?? null,
-    signalId: input.signalId,
-    campaignId: input.campaignId ?? null,
-    laneId: input.laneId ?? null,
-    personaId: input.personaId ?? null,
-    channel: input.channel,
-    status: "queued",
-    pausedAtStepKey: null,
-    escalationReason: null,
-    failureReason: null,
-    checklistJson: "[]",
-    resultJson: null,
-    generationId: null,
-    draftId: null,
-    inputTokens: 0,
-    outputTokens: 0,
-    costCents: 0,
-    idempotencyKey: input.idempotencyKey ?? null,
-    leaseOwner: null,
-    leaseExpiresAt: null,
-    createdBy: input.createdBy,
-    createdAt: now,
-    startedAt: null,
-    finishedAt: null,
-  };
-  try {
-    db.insert(pipelineRuns).values(row).run();
-  } catch (err) {
-    if (
-      input.idempotencyKey &&
-      err instanceof Error &&
-      err.message.includes("UNIQUE")
-    ) {
-      throw new DuplicatePipelineRunError(input.idempotencyKey);
-    }
-    throw err;
-  }
-  return rowToRun(row);
 }
 
 interface StepPassResult {
@@ -314,6 +244,10 @@ function composeStepUserMessage(
   signal: { content: string; source: string; sourceUrl: string | null },
   spec: PipelineSpec,
   outputs: Map<string, unknown>,
+  step: PipelineStepSpec,
+  priorExamples: ResolveExamples | null,
+  preferences: ResolvePreferences | null,
+  answers: AgentQuestion[],
 ): string {
   const lines: string[] = [
     "## Triggering signal",
@@ -323,14 +257,35 @@ function composeStepUserMessage(
     `## Target channel`,
     run.channel,
   ];
-  const prior = spec.steps.filter((step) => outputs.has(step.key));
+  // Sprint 70 (D-70.3): what this run already asked and was told. First in the
+  // message, before anything the model might re-derive from — an answer the
+  // founder gave outranks every other input in the bundle, and putting it here
+  // is what stops the resumed step from asking the same thing again.
+  if (answers.length > 0) {
+    lines.push("", "## Answers you already have");
+    for (const answered of answers) {
+      lines.push(`- You asked: “${answered.question}” — the founder answered: “${answered.answer}”`);
+    }
+    lines.push("", "Treat those answers as settled. Do not ask them again.");
+  }
+  // Sprint 68 (Move 5): rules before examples — the instruction, then the
+  // illustrations. Same guarantee as few-shot below: every draft step sees them.
+  if (step.output === "draft" && preferences) {
+    lines.push("", "## Learned preferences from your edits", renderPreferences(preferences));
+  }
+  // Sprint 66 (D-66.5): few-shot is a guarantee for drafting steps, not a
+  // tool the model may skip — injected into every draft-output step's context.
+  if (step.output === "draft" && priorExamples) {
+    lines.push("", "## Prior examples from approval history", renderExamples(priorExamples));
+  }
+  const prior = spec.steps.filter((candidate) => outputs.has(candidate.key));
   if (prior.length > 0) {
     lines.push("", "## Prior step outputs");
-    for (const step of prior) {
+    for (const priorStep of prior) {
       lines.push(
         "",
-        `### ${step.key} (${step.output})`,
-        JSON.stringify(outputs.get(step.key), null, 2),
+        `### ${priorStep.key} (${priorStep.output})`,
+        JSON.stringify(outputs.get(priorStep.key), null, 2),
       );
     }
   }
@@ -349,21 +304,58 @@ async function runAgentStepPass(
   step: PipelineStepSpec,
   iteration: number,
   state: EngineState,
+  priorExamples: ResolveExamples | null,
+  preferences: ResolvePreferences | null,
+  answers: AgentQuestion[],
 ): Promise<StepPassResult> {
   const cached = state.cache.get(`${step.key}#${iteration}`);
   if (cached) return { ...cached, fromCache: true };
 
   const outputSchema = stepOutputSchemaFor(step.output);
-  const tools = READ_TOOLS.filter((tool) => step.tools.includes(tool.name));
+  // Sprint 69: a live run gets the real propose seam, every other mode the
+  // simulating one, and a deps object without either gets no propose tools at
+  // all rather than an ungoverned write path.
+  const proposals: AgentProposalService | null =
+    run.mode === "live" ? (deps.proposals ?? null) : simulatedAgentProposals();
+  const questions: AgentQuestionService | null =
+    run.mode === "live" ? (deps.questions ?? null) : simulatedAgentQuestions();
+  const tools = ALL_TOOLS.filter(
+    (tool) =>
+      step.tools.includes(tool.name) &&
+      (tool.access !== "propose" || proposals !== null) &&
+      (tool.access !== "ask" || questions !== null),
+  );
   const runner = new AgentRunner(db, metered);
 
+  // Attempts continue where the last execution left off. A pass that failed
+  // (or, since Sprint 70, stopped to ask) leaves its attempt rows behind, and
+  // the run's step history is keyed by (step, iteration, attempt) — so resuming
+  // at attempt 1 would collide with the row that recorded why it stopped. The
+  // per-execution bound below is unchanged; only the numbering carries over.
+  const priorAttempts =
+    db
+      .select({ used: sql<number>`coalesce(max(${pipelineRunSteps.attempt}), 0)` })
+      .from(pipelineRunSteps)
+      .where(
+        and(
+          eq(pipelineRunSteps.runId, run.id),
+          eq(pipelineRunSteps.stepKey, step.key),
+          eq(pipelineRunSteps.iteration, iteration),
+        ),
+      )
+      .get()?.used ?? 0;
+
   let lastFailure = "unknown";
-  for (let attempt = 1; attempt <= STEP_MAX_ATTEMPTS; attempt += 1) {
+  for (let pass = 1; pass <= STEP_MAX_ATTEMPTS; pass += 1) {
+    const attempt = priorAttempts + pass;
     const rowId = insertStepRow(db, run, {
       stepKey: step.key,
       iteration,
       attempt,
     });
+    // Minted here, not by the runner: a propose tool has to be able to name
+    // the run it is acting for while that run is still going.
+    const agentRunId = randomUUID();
     const ctx: ToolContext = {
       db,
       evidence: deps.evidence,
@@ -371,16 +363,31 @@ async function runAgentStepPass(
       workspaceId: run.workspaceId,
       actor: { userId: null, label: run.createdBy },
       budget: DEFAULT_TOOL_BUDGET,
+      ...(proposals ? { proposals } : {}),
+      ...(questions ? { questions } : {}),
+      agentRunId,
+      pipelineRunId: run.id,
+      stepKey: step.key,
     };
     const result = await runner.run({
       workspaceId: run.workspaceId,
+      runId: agentRunId,
       task: `pipeline:${step.key}`,
       createdBy: run.createdBy,
       system: composeStepSystem(definitionName, workspaceName, step),
       messages: [
         {
           role: "user",
-          content: composeStepUserMessage(run, signal, spec, state.outputs),
+          content: composeStepUserMessage(
+            run,
+            signal,
+            spec,
+            state.outputs,
+            step,
+            priorExamples,
+            preferences,
+            answers,
+          ),
         },
       ],
       tools: toAgentTools(tools, ctx),
@@ -553,11 +560,15 @@ function executePropose(
   spec: PipelineSpec,
   step: PipelineStepSpec,
   state: EngineState,
+  priorExamples: ResolveExamples | null,
+  preferences: ResolvePreferences | null,
 ): { proposal: ProposalOutput; generationId: string | null; draftId: string | null } | null {
   const finalDraft = state.latestDraft;
   if (!finalDraft) return null;
   const taskType = "signal_response" as const;
-  if (run.mode === "dry_run") {
+  // Sprint 65 (D-65.2): every non-live mode ends simulated — dry runs and
+  // shadow runs never touch the gate.
+  if (run.mode !== "live") {
     return {
       proposal: {
         content: finalDraft,
@@ -589,6 +600,34 @@ function executePropose(
         tokens: estimateTokens(content),
       };
     });
+  // Sprint 68: same rule for the learned-preference block. Unshifted after the
+  // examples block so the stored provenance reads in bundle order: rules first.
+  if (preferences) {
+    const preferencesContent = renderPreferences(preferences);
+    sections.unshift({
+      key: "preferences",
+      layer: "preferences",
+      title: "Learned preferences from your edits",
+      content: preferencesContent,
+      included: true,
+      reason: `Applied ${preferences.rules.length} rule(s) learned from this workspace's own edits; injected into every draft step. Each is reversible on the Preferences page.`,
+      tokens: estimateTokens(preferencesContent),
+    });
+  }
+  // Sprint 66: the few-shot block injected into draft steps is a real input —
+  // provenance says so, in the same layer the resolver traces it under.
+  if (priorExamples) {
+    const examplesContent = renderExamples(priorExamples);
+    sections.unshift({
+      key: "examples",
+      layer: "examples",
+      title: "Prior examples from your approval history",
+      content: examplesContent,
+      included: true,
+      reason: `Retrieved ${priorExamples.approved.length} approved and ${priorExamples.rejected.length} rejected/corrected prior output(s) for query: "${priorExamples.query}"; injected into every draft step.`,
+      tokens: estimateTokens(examplesContent),
+    });
+  }
   const draftStep = spec.steps.find(
     (candidate) => candidate.kind === "agent" && candidate.output === "draft",
   );
@@ -614,6 +653,11 @@ function executePropose(
     provider: "pipeline",
     durationMs: 0,
   });
+  // Sprint 68 (D-68.6): only a live run that actually produced a generation
+  // counts as a rule application. Dry and shadow runs returned above, so an
+  // eval replay of eighty historical cases cannot inflate the hit count that
+  // promotion and retirement read.
+  recordRuleApplications(db, (preferences?.rules ?? []).map((rule) => rule.id));
   const draft = submitDraft(
     db,
     {
@@ -719,6 +763,19 @@ export async function executePipelineRun(
   }
   const workspace = getWorkspace(db, workspaceId);
   const workspaceName = workspace?.name ?? "workspace";
+  // Sprint 66: retrieved once per run — every draft-output step sees the same
+  // few-shot bundle, and the propose step traces exactly what was injected.
+  const priorExamples = retrievePriorExamples(db, workspaceId, {
+    query: signal.content,
+    channel: run.channel as Channel,
+    taskType: "signal_response",
+  });
+  // Sprint 68: the same treatment for learned preference rules — retrieved
+  // once per run, injected into every draft step, traced on the propose step.
+  const preferences = retrievePreferenceRules(db, workspaceId, {
+    channel: run.channel as Channel,
+    taskType: "signal_response",
+  });
   const definitionRow = db
     .select({ name: pipelineDefinitions.name })
     .from(pipelineDefinitions)
@@ -730,6 +787,10 @@ export async function executePipelineRun(
     pipeline: "pipeline_run",
     campaignId: run.campaignId,
   });
+  // Sprint 70: everything this run has already asked and been told. Read once
+  // per execution — a question asked mid-execution suspends the run, so no
+  // later step in *this* pass can ever see a newer answer than these.
+  const answeredQuestions = listAnsweredQuestionsForPipelineRun(db, run.id);
   const deadline = now + RUN_MAX_DURATION_MS;
   // Escalation checks fire only on freshly executed passes: cached passes
   // were either checked before pausing or are the acknowledged pause point.
@@ -759,6 +820,9 @@ export async function executePipelineRun(
       step,
       iteration,
       state,
+      priorExamples,
+      preferences,
+      answeredQuestions,
     );
     if (pass.failure) {
       if (pass.failure.escalate) {
@@ -808,7 +872,7 @@ export async function executePipelineRun(
     const step = spec.steps[index]!;
 
     if (step.kind === "propose") {
-      const handoff = executePropose(db, run, spec, step, state);
+      const handoff = executePropose(db, run, spec, step, state, priorExamples, preferences);
       if (!handoff) {
         return { run: finishRun(db, run, "failed", state, { failureReason: "no_draft_produced" }) };
       }

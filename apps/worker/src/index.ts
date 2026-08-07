@@ -182,6 +182,59 @@ async function runAutomationForAllWorkspaces(): Promise<void> {
   );
 }
 
+interface PipelinesTickResponse {
+  busy?: boolean;
+  processed?: number;
+  succeeded?: number;
+  failed?: number;
+  escalated?: number;
+  blocked?: number;
+  autoApproved?: number;
+}
+
+/** Sprint 65: drive queued pipeline runs (live drafts on the engine path,
+ * shadow runs for the A/B) to a resting state, then auto-approve any
+ * scheduled_auto live results. */
+async function runPipelinesTickForAllWorkspaces(): Promise<void> {
+  const result = (await worker.runInternal(
+    "/internal/pipelines/tick",
+  )) as PipelinesTickResponse;
+  if (result.busy) {
+    console.log("[pipelines] busy");
+    return;
+  }
+  if ((result.processed ?? 0) === 0) return; // nothing queued — stay quiet
+  console.log(
+    `[pipelines] ${result.processed} run(s): ${result.succeeded ?? 0} succeeded, ${result.escalated ?? 0} escalated, ${result.failed ?? 0} failed, ${result.blocked ?? 0} blocked, ${result.autoApproved ?? 0} auto-approved`,
+  );
+}
+
+interface PreferencesTickResponse {
+  busy?: boolean;
+  workspaces?: number;
+  edits?: number;
+  created?: number;
+  merged?: number;
+  retired?: number;
+}
+
+/** Sprint 68: turn the founder's captured edits into learned preference rules,
+ * and retire the ones that stopped firing. The fast half of the learning loop —
+ * the weekly synthesis below is still the only path into the brain docs. */
+async function runPreferencesTickForAllWorkspaces(): Promise<void> {
+  const result = (await worker.runInternal(
+    "/internal/preferences/tick",
+  )) as PreferencesTickResponse;
+  if (result.busy) {
+    console.log("[preferences] busy");
+    return;
+  }
+  if ((result.edits ?? 0) === 0 && (result.retired ?? 0) === 0) return; // nothing to digest
+  console.log(
+    `[preferences] ${result.edits ?? 0} edit(s) digested: ${result.created ?? 0} new rule(s), ${result.merged ?? 0} reinforced, ${result.retired ?? 0} retired`,
+  );
+}
+
 interface InboxRunResponse {
   newItems: number;
   metricsCaptured: number;
@@ -368,6 +421,16 @@ const loopSpecs = [
     name: "automation",
     intervalMs: config.intervals.automationMs,
     run: runAutomationForAllWorkspaces,
+  },
+  {
+    name: "pipelines",
+    intervalMs: config.intervals.pipelinesMs,
+    run: runPipelinesTickForAllWorkspaces,
+  },
+  {
+    name: "preferences",
+    intervalMs: config.intervals.preferencesMs,
+    run: runPreferencesTickForAllWorkspaces,
   },
   {
     name: "learning",

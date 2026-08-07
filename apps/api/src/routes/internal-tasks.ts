@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { FastifyInstance } from "fastify";
+import type { AgentProposalService } from "../agents/proposals";
+import type { AgentQuestionService } from "../agents/questions";
 import type { ConnectorFabric } from "../connectors/fabric";
 import type { Db } from "../db";
 import type { IntentProvider } from "../discovery/intent";
@@ -12,6 +14,8 @@ import {
   runDiscoveryScheduler,
   type DiscoveryOperatorEvent,
 } from "../services/discovery-scheduler";
+import { runPipelinesTick } from "../services/pipeline-tick";
+import { runPreferenceExtraction } from "../services/preference-extraction";
 import { withTaskLease } from "../services/task-leases";
 import { listWorkspaces } from "../services/workspaces";
 
@@ -20,6 +24,12 @@ export interface InternalTaskDependencies {
   llm: LlmGateway;
   evidence: EvidenceStore;
   safeFetch: SafeFetchService;
+  /** Sprint 69: the propose seam for live pipeline runs. This tick is the only
+   * place a live run executes, so it is the only place the real one is used. */
+  proposals?: AgentProposalService;
+  /** Sprint 70: the ask seam, for the same reason — a live run is the only
+   * kind that can genuinely suspend on a question. */
+  questions?: AgentQuestionService;
   intentProvider: IntentProvider;
   fabric: ConnectorFabric;
   policy: DiscoveryOperatorPolicy;
@@ -94,6 +104,80 @@ export function registerInternalTaskRoutes(
       return leased.busy
         ? { busy: true, processed: 0 }
         : { busy: false, processed: leased.value.processed };
+    },
+  );
+
+  // Sprint 65 (D-65.3): drive queued live/shadow pipeline runs to a resting
+  // state. One global lease — executePipelineRun's own claim fence handles
+  // any per-run race with a synchronous route execution.
+  app.post(
+    "/internal/pipelines/tick",
+    { schema: { body: EMPTY_BODY_SCHEMA } },
+    async () => {
+      const leased = await withTaskLease(
+        deps.db,
+        {
+          key: "pipelines:scheduler",
+          owner: `${deps.instanceId}:pipelines-scheduler:${randomUUID()}`,
+          leaseMs: deps.policy.leaseMs,
+          heartbeatMs: deps.policy.heartbeatMs,
+        },
+        () =>
+          runPipelinesTick(deps.db, {
+            llm: deps.llm,
+            evidence: deps.evidence,
+            safeFetch: deps.safeFetch,
+            ...(deps.proposals ? { proposals: deps.proposals } : {}),
+            ...(deps.questions ? { questions: deps.questions } : {}),
+          }),
+      );
+      return leased.busy
+        ? {
+            busy: true,
+            processed: 0,
+            succeeded: 0,
+            failed: 0,
+            escalated: 0,
+            blocked: 0,
+            autoApproved: 0,
+          }
+        : { busy: false, ...leased.value };
+    },
+  );
+
+  // Sprint 68 (D-68.3): turn captured founder edits into learned rules, and
+  // retire the ones that stopped firing. Runs far more often than the weekly
+  // synthesis — the whole point of the fast layer is that a correction made
+  // this morning is in effect this afternoon.
+  app.post(
+    "/internal/preferences/tick",
+    { schema: { body: EMPTY_BODY_SCHEMA } },
+    async () => {
+      const leased = await withTaskLease(
+        deps.db,
+        {
+          key: "preferences:extraction",
+          owner: `${deps.instanceId}:preferences-extraction:${randomUUID()}`,
+          leaseMs: deps.policy.leaseMs,
+          heartbeatMs: deps.policy.heartbeatMs,
+        },
+        async ({ signal }) => {
+          const totals = { workspaces: 0, edits: 0, created: 0, merged: 0, retired: 0 };
+          for (const workspace of listWorkspaces(deps.db)) {
+            if (signal.aborted || deps.shutdownSignal.aborted) break;
+            const result = await runPreferenceExtraction(deps.db, deps.llm, workspace.id);
+            totals.workspaces += 1;
+            totals.edits += result.edits;
+            totals.created += result.created;
+            totals.merged += result.merged;
+            totals.retired += result.retired;
+          }
+          return totals;
+        },
+      );
+      return leased.busy
+        ? { busy: true, workspaces: 0, edits: 0, created: 0, merged: 0, retired: 0 }
+        : { busy: false, ...leased.value };
     },
   );
 }

@@ -24,6 +24,7 @@ import {
 import type { LlmGateway } from "../llm/gateway";
 import { meteredLlm } from "../llm/metered";
 import { getBrain, updateBrainDoc, type BrainActor } from "./brain";
+import { listPromotableRules, markRulesPromoted } from "./preference-rules";
 import { getSequenceFunnel } from "./outreach-funnel";
 
 // ---------------------------------------------------------------------------
@@ -319,12 +320,25 @@ export async function synthesizeNow(
   // + persona + step, so the synthesis can say which outreach actually converts.
   const outreach = gatherOutreachSignal(db, workspaceId);
 
+  // Sprint 68 (Move 5): the weekly synthesis changes job. The fast layer has
+  // been learning rules from the founder's edits all week; this pass is where
+  // the ones that proved stable get folded into the brain — through the same
+  // founder-accepts gate as everything else. The set is computed here, before
+  // the model runs, and recorded on the synthesis (D-68.7), so promotion never
+  // depends on parsing ids back out of prose.
+  const promotable = listPromotableRules(db, workspaceId);
+  const promotableLines = promotable.map(
+    (rule) =>
+      `- ${rule.polarity === "avoid" ? "Avoid" : "Do"}: ${rule.rule} (observed in ${rule.observationCount} edits, applied ${rule.appliedCount} times)`,
+  );
+
   const prompt = [
     `You synthesize GTM learnings for ${workspaceName}. Review the human decisions, edits, and engagement metrics below and synthesize what is actually working and what should change. Be specific and grounded only in the data shown — no generic advice.`,
     `DECISION STATS: accepted: ${stats.ratings.accepted}, needs_edit: ${stats.ratings.needs_edit}, rejected ratings: ${stats.ratings.rejected}; approved drafts: ${stats.decisions.approved}, rejected drafts: ${stats.decisions.rejected}, edited before decision: ${stats.editedCount}.`,
     `EXAMPLES:\n${exampleLines.join("\n") || "(none)"}`,
     `ENGAGEMENT METRICS:\n${metricLines.join("\n") || "(none)"}`,
     `OUTREACH OUTCOMES:\n${outreach.lines.join("\n") || "(none)"}`,
+    `STABLE LEARNED PREFERENCES (extracted from the founder's own edits, each re-derived more than once and already shaping generations — restate these in the founder's voice as part of your proposal so they become permanent):\n${promotableLines.join("\n") || "(none)"}`,
     `CURRENT NOW DOC:\n${nowDoc || "(empty)"}`,
     `Respond in EXACTLY this format (no code fences, no other text):\nPROPOSAL:\n<markdown bullet list of 2-6 concrete learnings, max ~250 words, written so it can be appended to the now doc>\nRATIONALE:\n<one short paragraph explaining what in the data supports these learnings>`,
   ].join("\n\n");
@@ -345,6 +359,9 @@ export async function synthesizeNow(
       metrics: metrics.length,
       stats,
       outreach: outreach.totals,
+      // Sprint 68: exactly which rules this proposal is carrying into the brain.
+      // Accepting the synthesis promotes these and nothing else.
+      promotableRuleIds: promotable.map((rule) => rule.id),
     }),
     status: "proposed",
     createdAt: Date.now(),
@@ -352,6 +369,21 @@ export async function synthesizeNow(
   };
   db.insert(nowSyntheses).values(row).run();
   return rowToSynthesis(row);
+}
+
+/**
+ * The promotion set recorded when the synthesis was proposed. Tolerant by
+ * design: a synthesis written before Sprint 68 has no such key, and a
+ * malformed blob must not stop a founder from accepting their proposal.
+ */
+export function promotableRuleIdsOf(synthesis: NowSynthesis): string[] {
+  try {
+    const based = JSON.parse(synthesis.basedOnJson) as { promotableRuleIds?: unknown };
+    if (!Array.isArray(based.promotableRuleIds)) return [];
+    return based.promotableRuleIds.filter((id): id is string => typeof id === "string");
+  } catch {
+    return [];
+  }
 }
 
 export class SynthesisAlreadyDecidedError extends Error {
@@ -376,6 +408,12 @@ export function acceptSynthesis(
   const updated = current.trim() ? `${current.trimEnd()}\n\n${block}` : block;
   // Through the standard brain update path: creates a version like any edit.
   const doc = updateBrainDoc(db, workspaceId, "now", updated, actor);
+
+  // Sprint 68: the founder just accepted the proposal that carries these rules
+  // into the `now` doc, so they stop being fast-layer rules — the resolver
+  // already reads the doc. This is the only place a rule becomes `promoted`,
+  // and it sits behind the same gate it always did.
+  markRulesPromoted(db, promotableRuleIdsOf(synthesis));
 
   const decidedAt = Date.now();
   db.update(nowSyntheses)

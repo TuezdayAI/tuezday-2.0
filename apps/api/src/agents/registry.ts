@@ -1,17 +1,20 @@
 import type { z } from "zod";
-import type { AgentToolName, ToolAccessLevel } from "@tuezday/contracts";
+import { AGENT_PROPOSALS_PER_RUN, type AgentToolName, type ToolAccessLevel } from "@tuezday/contracts";
 import type { Db } from "../db/index";
 import type { EvidenceStore } from "../evidence/store";
 import type { SafeFetchService } from "../safe-fetch/index";
+import type { AgentProposalService } from "./proposals";
+import type { AgentQuestionService } from "./questions";
 
 // ---------------------------------------------------------------------------
 // Internal tool registry (Sprint 57) — the platform's capability surface for
 // the model. Distinct from apps/mcp (a customer-facing shim over the public
-// API). Two access tiers only: `read` tools are unrestricted inside the
+// API). Three access tiers: `read` tools are unrestricted inside the
 // workspace — the same membership rule that scopes HTTP routes; `propose`
-// tools never execute, they mint a gated item and return its id (none ship
-// until Phase L). There is deliberately no "execute" tier: an agent cannot
-// do anything ungoverned, by construction.
+// tools never execute, they mint a gated item and return its id (Sprint 69);
+// `ask` tools write nothing at all — they record a question and suspend the
+// run until a human answers (Sprint 70). There is deliberately no "execute"
+// tier: an agent cannot do anything ungoverned, by construction.
 //
 // The tool implementations and the READ_TOOLS whitelist live in
 // ./tools/index.ts; ./adapter.ts wraps them into the runner's AgentTool.
@@ -35,6 +38,11 @@ export interface ToolBudget {
   maxCalls: number;
   /** Per-tool caps overriding the shared pool (e.g. safe_fetch_url). */
   perTool?: Partial<Record<string, number>>;
+  /** Sprint 69 (D-69.8): max calls to `propose`-tier tools per run, counted
+   * across all of them. A per-tool cap would let one run make three
+   * publications *and* three ad mutations — not what "three proposals" means
+   * to the founder reading the queue. */
+  maxProposals?: number;
 }
 
 export const DEFAULT_TOOL_BUDGET: ToolBudget = {
@@ -42,6 +50,7 @@ export const DEFAULT_TOOL_BUDGET: ToolBudget = {
   // The one tool that leaves the tenant and burns wall-clock (20s deadline
   // per call) — and the obvious probe vector for a prompt-injected model.
   perTool: { safe_fetch_url: 3 },
+  maxProposals: AGENT_PROPOSALS_PER_RUN,
 };
 
 export interface ToolContext {
@@ -51,6 +60,18 @@ export interface ToolContext {
   workspaceId: string;
   actor: ToolActor;
   budget: ToolBudget;
+  /** Sprint 69: the gated write seam. Absent means the propose tools are not
+   * offered at all (D-69.7) — there is no "propose without a gate" state. */
+  proposals?: AgentProposalService;
+  /** Sprint 70: the ask seam. Absent means `ask_founder` is not offered — a
+   * question nobody can answer is worse than no question. */
+  questions?: AgentQuestionService;
+  /** The run a propose tool attributes its proposal to. Set by the engine. */
+  agentRunId?: string;
+  /** What a question suspends (Sprint 70). Absent for a one-shot run: it
+   * records the question but there is no resume point to carry an answer to. */
+  pipelineRunId?: string;
+  stepKey?: string;
 }
 
 export interface Tool<I = unknown, O = unknown> {

@@ -1,8 +1,8 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { z } from "zod";
 import { toolInputSchemas } from "@tuezday/contracts";
 import { rankTexts } from "@tuezday/brain";
-import { draftRevisionTurns } from "../../db/schema";
+import { approvalDecisions, draftRevisionTurns } from "../../db/schema";
 import { listTrainingExamples, type TrainingExample } from "../../services/learning";
 import { compactText, type Tool } from "../registry";
 
@@ -26,11 +26,12 @@ function instructiveExamples(examples: TrainingExample[]): TrainingExample[] {
 }
 
 /**
- * What humans rejected or corrected, and why — the "why" reconstructed from
- * what the schema actually holds: approval_decisions has no reason column,
- * so the signals are (a) the original-vs-final content delta on edited
+ * What humans rejected or corrected, and why. Since Sprint 66 a rejection
+ * can carry an explicit written reason (approval_decisions.reason) —
+ * surfaced first when present. Otherwise the "why" is reconstructed from
+ * what the schema holds: (a) the original-vs-final content delta on edited
  * drafts and (b) the human's conversational-editor instructions
- * (draft_revision_turns.instruction), the only written rationale that exists.
+ * (draft_revision_turns.instruction).
  */
 export const findInstructiveRejectionsTool: Tool<Input, unknown> = {
   name: "find_instructive_rejections",
@@ -62,8 +63,35 @@ export const findInstructiveRejectionsTool: Tool<Input, unknown> = {
     }
     const kept = chosen.slice(0, limit ?? DEFAULT_LIMIT);
 
-    // The human's written editing instructions, where any exist.
     const draftIds = kept.filter((e) => e.kind === "decision").map((e) => e.id);
+
+    // Sprint 66: explicit reject reasons, newest first per draft.
+    const reasonByDraft = new Map<string, string>();
+    if (draftIds.length > 0) {
+      const decisionRows = ctx.db
+        .select({
+          draftId: approvalDecisions.draftId,
+          reason: approvalDecisions.reason,
+        })
+        .from(approvalDecisions)
+        .where(
+          and(
+            eq(approvalDecisions.workspaceId, ctx.workspaceId),
+            inArray(approvalDecisions.draftId, draftIds),
+            eq(approvalDecisions.action, "reject"),
+            isNotNull(approvalDecisions.reason),
+          ),
+        )
+        .orderBy(desc(approvalDecisions.createdAt))
+        .all();
+      for (const row of decisionRows) {
+        if (!reasonByDraft.has(row.draftId) && row.reason) {
+          reasonByDraft.set(row.draftId, compactText(row.reason, INSTRUCTION_CHARS));
+        }
+      }
+    }
+
+    // The human's written editing instructions, where any exist.
     const turnsByDraft = new Map<string, string[]>();
     if (draftIds.length > 0) {
       const turns = ctx.db
@@ -99,6 +127,9 @@ export const findInstructiveRejectionsTool: Tool<Input, unknown> = {
         ...(e.originalContent
           ? { originalContent: compactText(e.originalContent, CONTENT_CHARS) }
           : {}),
+        // Sprint 66: the human's explicit reject rationale, when one was given.
+        rejectionReason:
+          e.kind === "decision" ? (reasonByDraft.get(e.id) ?? null) : null,
         humanInstructions: e.kind === "decision" ? (turnsByDraft.get(e.id) ?? []) : [],
         createdAt: e.createdAt,
       })),

@@ -12,6 +12,7 @@ import {
   type ExternalActionExecutionRef,
   type ExternalActionKind,
   type ExternalActionListFilters,
+  type ExternalActionOrigin,
   type ExternalActionStatus,
   type ExternalActionSubject,
   type ExternalActionContext,
@@ -48,6 +49,10 @@ export interface NewExternalActionRecord {
   fingerprint: string;
   policy: EffectiveExternalActionPolicy;
   actor: ExternalActionActor;
+  /** Sprint 69: who proposed it, as a typed fact. Defaults to the honest read
+   * of the actor — a user id means a person, its absence means the platform. */
+  origin?: ExternalActionOrigin;
+  originRunId?: string | null;
   supersedesActionId: string | null;
   draftId: string | null;
 }
@@ -97,6 +102,8 @@ export function rowToExternalAction(row: ExternalActionRow): ExternalAction {
     supersededByActionId: row.supersededByActionId,
     execution,
     proposedBy: { userId: row.proposedByUserId, label: row.proposedByLabel },
+    origin: row.origin as ExternalActionOrigin,
+    originRunId: row.originRunId,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     authorizedAt: row.authorizedAt,
@@ -151,6 +158,8 @@ export function insertExternalAction(db: Db, input: NewExternalActionRecord): Ex
     executionReceiptJson: null,
     proposedByUserId: input.actor.userId,
     proposedByLabel: input.actor.label,
+    origin: input.origin ?? (input.actor.userId ? "human" : "system"),
+    originRunId: input.originRunId ?? null,
     createdAt: now,
     updatedAt: now,
     authorizedAt: null,

@@ -1084,6 +1084,16 @@ export type ExternalActionEffectivePolicy =
 export const EXTERNAL_ACTION_DECISIONS = ["authorize", "deny"] as const;
 export type ExternalActionDecisionValue = (typeof EXTERNAL_ACTION_DECISIONS)[number];
 
+/**
+ * Who proposed an action (Sprint 69). Distinct from `proposedBy`, which names
+ * the actor: two system-actor proposals can come from a cadence and from an
+ * agent's propose tool, and the authorization queue has to be able to say
+ * which. Deliberately absent from the action fingerprint (D-69.3) — the gate
+ * must treat an agent-originated action exactly as a human-originated one.
+ */
+export const EXTERNAL_ACTION_ORIGINS = ["human", "system", "agent"] as const;
+export type ExternalActionOrigin = (typeof EXTERNAL_ACTION_ORIGINS)[number];
+
 export const EXTERNAL_ACTION_SUBJECT_KINDS = [
   "draft",
   "inbox_item",
@@ -1223,6 +1233,9 @@ export const externalActionSchema = z
     supersededByActionId: z.string().uuid().nullable(),
     execution: externalActionExecutionRefSchema.nullable(),
     proposedBy: externalActionActorSchema,
+    origin: z.enum(EXTERNAL_ACTION_ORIGINS),
+    /** The agent run whose propose tool minted this — `agent` origin only. */
+    originRunId: z.string().uuid().nullable(),
     createdAt: z.number().int(),
     updatedAt: z.number().int(),
     authorizedAt: z.number().int().nullable(),
@@ -1242,6 +1255,22 @@ export const externalActionSchema = z
         code: z.ZodIssueCode.custom,
         path: ["execution"],
         message: "Succeeded actions require an execution receipt.",
+      });
+    }
+    // An agent-originated action that cannot name the run that proposed it is
+    // unattributable, which is the one thing Sprint 69 owed the queue.
+    if (value.origin === "agent" && !value.originRunId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["originRunId"],
+        message: "Agent-originated actions must name the agent run that proposed them.",
+      });
+    }
+    if (value.origin !== "agent" && value.originRunId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["originRunId"],
+        message: "Only agent-originated actions carry an agent run id.",
       });
     }
   });
@@ -3666,9 +3695,19 @@ export const approvalDecisionSchema = z.object({
   actor: z.string(),
   // Nullable: decisions logged before auth existed (Sprint 19), or by the worker.
   actorId: z.string().uuid().nullable(),
+  // Sprint 66: the human's stated rationale — today only rejections capture
+  // one (optional at the gate). Null everywhere it wasn't given.
+  reason: z.string().nullable(),
   createdAt: z.number().int(),
 });
 export type ApprovalDecision = z.infer<typeof approvalDecisionSchema>;
+
+/** Sprint 66: an optional reject rationale — every provided reason compounds
+ * (few-shot retrieval, critique grounding, preference memory). */
+export const rejectDraftInputSchema = z.object({
+  reason: z.string().trim().min(1).max(500).optional(),
+});
+export type RejectDraftInput = z.infer<typeof rejectDraftInputSchema>;
 
 export const editDraftInputSchema = z.object({
   content: z
@@ -5207,6 +5246,17 @@ export type UpdateAdSettingsInput = z.infer<typeof updateAdSettingsInputSchema>;
 // ---------------------------------------------------------------------------
 
 /**
+ * Sprint 65 (D-65.1): which path automation uses to turn a matched signal into
+ * a draft. `legacy` — the single-prompt `generateSignalDraft` path. `shadow` —
+ * legacy still produces the live draft, and the pipeline engine replays the
+ * same (signal, campaign, channel) as a paired `shadow`-mode run for the A/B.
+ * `pipeline` — the engine produces the live draft; legacy generation is skipped
+ * (with a legacy fallback when no active pipeline definition resolves, D-65.6).
+ */
+export const AUTOMATION_GENERATION_PATHS = ["legacy", "shadow", "pipeline"] as const;
+export type AutomationGenerationPath = (typeof AUTOMATION_GENERATION_PATHS)[number];
+
+/**
  * Per-workspace guardrails for `scheduled_auto` campaigns — the safety net that
  * replaces the human gate. The kill switch is the hard stop; the caps bound how
  * many auto-posts land per UTC day. Mirrors `ad_settings`.
@@ -5222,6 +5272,9 @@ export const socialAutomationSettingsSchema = z.object({
   // Sprint 45: minimum persona×campaign match score (0–100) a signal needs
   // before automation generates for that campaign. Default DEFAULT_MATCH_THRESHOLD.
   matchThreshold: z.number().int().min(0).max(100),
+  // Sprint 65: legacy | shadow | pipeline. Default legacy — flipping is a
+  // founder action, normally recorded through a rollout decision.
+  generationPath: z.enum(AUTOMATION_GENERATION_PATHS),
   updatedAt: z.number().int(),
 });
 export type SocialAutomationSettings = z.infer<typeof socialAutomationSettingsSchema>;
@@ -5232,6 +5285,7 @@ export const updateSocialAutomationSettingsInputSchema = z.object({
   perCampaignDailyCap: z.number().int().positive().max(1000).optional(),
   autoReplyEnabled: z.boolean().optional(),
   matchThreshold: z.number().int().min(0).max(100).optional(),
+  generationPath: z.enum(AUTOMATION_GENERATION_PATHS).optional(),
 });
 export type UpdateSocialAutomationSettingsInput = z.infer<
   typeof updateSocialAutomationSettingsInputSchema
@@ -5245,6 +5299,11 @@ export const automationCampaignResultSchema = z.object({
   generated: z.number().int(),
   autoApproved: z.number().int(),
   skipped: z.number().int(),
+  // Sprint 65: engine runs queued this tick — live runs replacing legacy
+  // generation (pipeline path) and paired shadow runs (shadow path). Zero on
+  // the legacy path or when no active pipeline definition resolves (D-65.6).
+  engineQueued: z.number().int(),
+  shadowQueued: z.number().int(),
   blocked: z.string().nullable(),
 });
 export type AutomationCampaignResult = z.infer<typeof automationCampaignResultSchema>;
@@ -6000,6 +6059,8 @@ export const LLM_PIPELINES = [
   "agent_run",
   // Sprint 64: every LLM step of a pipeline_runs execution.
   "pipeline_run",
+  // Sprint 68: turning a batch of founder edits into learned preference rules.
+  "preference_extraction",
 ] as const;
 export type LlmPipeline = (typeof LLM_PIPELINES)[number];
 
@@ -6823,42 +6884,21 @@ export function checklistProgress(state: NextActionState): { done: number; total
   return { done, total, complete: done === total };
 }
 
+/**
+ * The setup answer: which activation step is still missing.
+ *
+ * Sprint 70 (D-70.9) deleted the four branches that ranked *work* — pending
+ * drafts, blocked publishes, live campaigns without content, unconnected
+ * insights. Each re-derived, from raw counts, something the inbox already
+ * computes as a ranked item with a reason and a consequence, and the two could
+ * disagree in front of the founder. The inbox now answers "what needs you";
+ * this answers "what setup step is left", and the answers no longer overlap.
+ *
+ * The `review` / `connect_blocked` / `campaign_content` / `connect_insights`
+ * kinds remain in `NextActionKind` for stored/legacy payloads; nothing returns
+ * them any more.
+ */
 export function nextActionFor(state: NextActionState): NextAction {
-  if (state.draftCount > 0) {
-    const n = state.draftCount;
-    return {
-      kind: "review",
-      module: "/review",
-      label: "Review drafts",
-      reason: `${n} draft${n === 1 ? "" : "s"} waiting for review`,
-    };
-  }
-  if (state.blockedPublishCount > 0) {
-    const n = state.blockedPublishCount;
-    return {
-      kind: "connect_blocked",
-      module: "/connectors",
-      label: "Connect a channel",
-      reason: `${n} approved post${n === 1 ? "" : "s"} can't publish without a connected channel`,
-    };
-  }
-  if (state.liveCampaignsWithoutContent > 0) {
-    const n = state.liveCampaignsWithoutContent;
-    return {
-      kind: "campaign_content",
-      module: "/campaigns",
-      label: "Add campaign content",
-      reason: `${n} live campaign${n === 1 ? "" : "s"} with no content generating`,
-    };
-  }
-  if (state.insightsAvailableUnconnected) {
-    return {
-      kind: "connect_insights",
-      module: "/connectors",
-      label: "Connect insights",
-      reason: "Connect a channel to see what worked",
-    };
-  }
   for (const item of SETUP_CHECKLIST_ITEMS) {
     if (!state.checklist[item]) {
       const target = CHECKLIST_TARGETS[item];
@@ -7611,19 +7651,19 @@ export type AgentUsage = z.infer<typeof agentUsageSchema>;
 // Internal tool registry (Sprint 57)
 //
 // The registry (apps/api/src/agents/registry.ts) exposes platform
-// capabilities as model-callable tools. Two access tiers only: `read` tools
+// capabilities as model-callable tools. Three access tiers: `read` tools
 // are unrestricted inside the workspace (the same membership rule that
 // scopes HTTP routes); `propose` tools never execute — they mint a gated
-// item and return its id (none ship until Phase L). There is deliberately
-// no "execute" tier.
+// item and return its id (Sprint 69 shipped the five of them); `ask` tools
+// write nothing at all — they record a question and stop the run until a
+// human answers it (Sprint 70). There is deliberately no "execute" tier.
 // ---------------------------------------------------------------------------
 
-export const TOOL_ACCESS_LEVELS = ["read", "propose"] as const;
+export const TOOL_ACCESS_LEVELS = ["read", "propose", "ask"] as const;
 export type ToolAccessLevel = (typeof TOOL_ACCESS_LEVELS)[number];
 
-/** The Sprint 57 read-tool surface. The registry registers exactly this set;
- * tests assert registry and contracts stay in lockstep. */
-export const AGENT_TOOL_NAMES = [
+/** The Sprint 57 read-tool surface: unrestricted inside the workspace. */
+export const READ_TOOL_NAMES = [
   "search_evidence",
   "get_brain_section",
   "get_campaign_plan",
@@ -7636,7 +7676,89 @@ export const AGENT_TOOL_NAMES = [
   "get_prior_posts_on_topic",
   "safe_fetch_url",
 ] as const;
+
+/**
+ * The Sprint 69 propose surface. Each hands its intent to a gate that already
+ * governs that write: four mint a `proposed` external action and let the policy
+ * tree decide, and `propose_draft` submits to the approval gate, because a
+ * draft is the subject of an external action rather than one itself (D-69.2).
+ */
+export const PROPOSE_TOOL_NAMES = [
+  "propose_draft",
+  "propose_publication",
+  "propose_reply",
+  "propose_sequence_step",
+  "propose_ad_mutation",
+] as const;
+
+/**
+ * The Sprint 70 ask surface. The only tool that produces no artefact at all: it
+ * records a question, suspends the run, and waits. One tool, because "ask the
+ * founder something" is one capability — the *type* of question is an argument,
+ * not a separate tool the model has to choose between.
+ */
+export const ASK_TOOL_NAMES = ["ask_founder"] as const;
+
+/** The whole registry. Tests assert registry and contracts stay in lockstep. */
+export const AGENT_TOOL_NAMES = [
+  ...READ_TOOL_NAMES,
+  ...PROPOSE_TOOL_NAMES,
+  ...ASK_TOOL_NAMES,
+] as const;
 export type AgentToolName = (typeof AGENT_TOOL_NAMES)[number];
+export type ReadToolName = (typeof READ_TOOL_NAMES)[number];
+export type ProposeToolName = (typeof PROPOSE_TOOL_NAMES)[number];
+export type AskToolName = (typeof ASK_TOOL_NAMES)[number];
+
+export function isProposeToolName(name: string): name is ProposeToolName {
+  return (PROPOSE_TOOL_NAMES as readonly string[]).includes(name);
+}
+
+export function isAskToolName(name: string): name is AskToolName {
+  return (ASK_TOOL_NAMES as readonly string[]).includes(name);
+}
+
+/**
+ * Proposal caps (Sprint 69, D-69.8). The per-run one is shared across all five
+ * tools — a per-tool cap would let one run make three publications *and* three
+ * ad mutations, which is not what "three proposals" means to a founder. The
+ * daily one is per workspace across every run.
+ */
+export const AGENT_PROPOSALS_PER_RUN = 3;
+export const AGENT_PROPOSALS_PER_DAY = 20;
+export const PROPOSAL_RATIONALE_MAX_CHARS = 500;
+
+/**
+ * What an agent can be stuck on (Sprint 70). Four kinds, because they are
+ * answered differently and mean different things about the workspace:
+ * `disambiguation` — several readings of the same instruction;
+ * `missing_permission` — the plan does not say whether this is allowed;
+ * `missing_fact` — the platform does not hold something it needs;
+ * `policy_escalation` — it would be acting outside what it was configured for.
+ */
+export const AGENT_QUESTION_TYPES = [
+  "disambiguation",
+  "missing_permission",
+  "missing_fact",
+  "policy_escalation",
+] as const;
+export type AgentQuestionType = (typeof AGENT_QUESTION_TYPES)[number];
+
+export const AGENT_QUESTION_STATUSES = ["open", "answered", "dismissed"] as const;
+export type AgentQuestionStatus = (typeof AGENT_QUESTION_STATUSES)[number];
+
+/**
+ * Question caps (D-70.4, D-70.6). The per-run one is counted over the *pipeline*
+ * run, so it survives the resumes that asking causes — an agent-run-scoped cap
+ * would reset every time a question suspended the run, and bound nothing. The
+ * open cap is per workspace: the ask lane's value is that a question there is
+ * worth reading, and twenty of them is a queue.
+ */
+export const AGENT_QUESTIONS_PER_RUN = 2;
+export const AGENT_QUESTIONS_OPEN_MAX = 10;
+export const QUESTION_TEXT_MAX_CHARS = 300;
+export const QUESTION_WHY_MAX_CHARS = 500;
+export const QUESTION_ANSWER_MAX_CHARS = 1_000;
 
 /** Content profiles `safe_fetch_url` accepts — mirrors the Sprint 48
  * safe-fetch policy's MIME allowlists (apps/api/src/safe-fetch/policy.ts,
@@ -7701,7 +7823,244 @@ export const toolInputSchemas = {
     url: z.string().url(),
     profile: z.enum(SAFE_FETCH_PROFILES).optional(),
   }),
+
+  // -------------------------------------------------------------------------
+  // Propose tools (Sprint 69). Every one takes a `rationale`: it is written to
+  // the proposal ledger and is what the authorization queue shows a founder who
+  // asks why the agent wanted this. Routing (connection, target, recipient) is
+  // resolved by the platform rather than asked of the model (D-69.9).
+  // -------------------------------------------------------------------------
+  propose_draft: z.object({
+    content: z.string().min(1).max(20_000),
+    channel: z.enum(CHANNELS),
+    taskType: z.enum(TASK_TYPES).optional(),
+    campaignId: z.string().min(1).optional(),
+    personaId: z.string().min(1).optional(),
+    rationale: z.string().min(1).max(PROPOSAL_RATIONALE_MAX_CHARS),
+  }),
+  propose_publication: z.object({
+    draftId: z.string().min(1),
+    /** Epoch ms; omit to publish as soon as the gate clears. */
+    scheduledFor: z.number().int().positive().optional(),
+    /** Channel-specific destination (e.g. a subreddit). Defaults to the last
+     * destination this workspace successfully published to on this account. */
+    target: z.string().trim().min(1).max(300).optional(),
+    connectionId: z.string().min(1).optional(),
+    rationale: z.string().min(1).max(PROPOSAL_RATIONALE_MAX_CHARS),
+  }),
+  propose_reply: z.object({
+    inboxItemId: z.string().min(1),
+    rationale: z.string().min(1).max(PROPOSAL_RATIONALE_MAX_CHARS),
+  }),
+  propose_sequence_step: z.object({
+    launchMessageId: z.string().min(1),
+    rationale: z.string().min(1).max(PROPOSAL_RATIONALE_MAX_CHARS),
+  }),
+  propose_ad_mutation: z.object({
+    launchId: z.string().min(1),
+    /** Exactly one of a budget change or a targeting change per call. A
+     * targeting change needs all three fields: the ads API replaces the whole
+     * targeting spec, so a partial change would silently reset the rest. */
+    dailyBudgetCents: z.number().int().positive().optional(),
+    countries: z.array(z.string().trim().min(2).max(2)).min(1).max(25).optional(),
+    ageMin: z.number().int().min(18).max(65).optional(),
+    ageMax: z.number().int().min(18).max(65).optional(),
+    rationale: z.string().min(1).max(PROPOSAL_RATIONALE_MAX_CHARS),
+  }),
+
+  // -------------------------------------------------------------------------
+  // Ask tool (Sprint 70). `why` is not decoration: a question without the
+  // reason it is being asked is unanswerable in one click, which is the only
+  // form of asking worth building. `options` are advisory (D-70.12) — they
+  // become one-click answers, and the free-text answer always remains open.
+  // -------------------------------------------------------------------------
+  ask_founder: z.object({
+    type: z.enum(AGENT_QUESTION_TYPES),
+    question: z.string().trim().min(1).max(QUESTION_TEXT_MAX_CHARS),
+    why: z.string().trim().min(1).max(QUESTION_WHY_MAX_CHARS),
+    options: z.array(z.string().trim().min(1).max(80)).min(2).max(4).optional(),
+  }),
 } as const satisfies Record<AgentToolName, z.ZodType<Record<string, unknown>>>;
+
+// ---------------------------------------------------------------------------
+// Agent proposals (Sprint 69)
+//
+// One durable row per successful propose-tool call. It answers two questions a
+// column on `external_actions` cannot: "what did this run propose" (across
+// kinds, including drafts, which are not external actions) and "how many
+// proposals has this workspace made today" — the daily cap's only honest
+// source (D-69.4).
+// ---------------------------------------------------------------------------
+
+export const AGENT_PROPOSAL_TARGET_KINDS = ["draft", "external_action"] as const;
+export type AgentProposalTargetKind = (typeof AGENT_PROPOSAL_TARGET_KINDS)[number];
+
+export const agentProposalSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    agentRunId: z.string().uuid(),
+    tool: z.enum(PROPOSE_TOOL_NAMES),
+    targetKind: z.enum(AGENT_PROPOSAL_TARGET_KINDS),
+    /** Null once the thing proposed has been deleted; the record of the
+     * proposal survives it. */
+    draftId: z.string().uuid().nullable(),
+    externalActionId: z.string().uuid().nullable(),
+    summary: z.string().trim().min(1),
+    rationale: z.string().trim().min(1),
+    createdAt: z.number().int(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.targetKind === "draft" && value.externalActionId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["externalActionId"],
+        message: "A draft proposal does not point at an external action.",
+      });
+    }
+    if (value.targetKind === "external_action" && value.draftId && !value.externalActionId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["externalActionId"],
+        message: "An external-action proposal must name its action.",
+      });
+    }
+  });
+export type AgentProposal = z.infer<typeof agentProposalSchema>;
+
+// ---------------------------------------------------------------------------
+// Agent questions — the ask lane (Sprint 70)
+//
+// A question is durable state, not a message (D-70.2): the run that asked it is
+// gone from memory long before the answer arrives, and the row is the only
+// thing that survives to reconnect the two. It carries what it blocks
+// (`pipelineRunId` + `stepKey`) and what it needs, so the queue and the run
+// point at each other without reading a transcript.
+//
+// The answer input lives further down — it re-uses the preference vocabulary,
+// which is declared after this.
+// ---------------------------------------------------------------------------
+
+export const agentQuestionSchema = z
+  .object({
+    id: z.string().uuid(),
+    workspaceId: z.string().uuid(),
+    agentRunId: z.string().uuid(),
+    /** Null when nothing is suspended — a one-shot run has no resume point. */
+    pipelineRunId: z.string().uuid().nullable(),
+    stepKey: z.string().nullable(),
+    type: z.enum(AGENT_QUESTION_TYPES),
+    question: z.string().trim().min(1).max(QUESTION_TEXT_MAX_CHARS),
+    why: z.string().trim().min(1).max(QUESTION_WHY_MAX_CHARS),
+    options: z.array(z.string()).max(4),
+    status: z.enum(AGENT_QUESTION_STATUSES),
+    answer: z.string().nullable(),
+    answeredByUserId: z.string().uuid().nullable(),
+    answeredByLabel: z.string().nullable(),
+    answeredAt: z.number().int().nullable(),
+    /** The preference rule this answer minted, if the founder kept it. */
+    ruleId: z.string().uuid().nullable(),
+    createdAt: z.number().int(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.status === "answered" && (value.answer === null || value.answer.trim() === "")) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["answer"],
+        message: "An answered question carries the answer.",
+      });
+    }
+    if (value.status === "open" && value.answeredAt !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["answeredAt"],
+        message: "An open question has not been answered.",
+      });
+    }
+  });
+export type AgentQuestion = z.infer<typeof agentQuestionSchema>;
+
+// ---------------------------------------------------------------------------
+// The agent inbox (Sprint 70) — one ranked feed, three lanes.
+//
+// Closes atlas conflict #7. `priorities` and `next-action` both answered "what
+// should you look at", read the same tables, and could disagree in front of the
+// founder. There is now one ranker (apps/api/src/services/agent-inbox.ts) and
+// both of those endpoints are projections of it (D-70.8, D-70.9).
+//
+// The lanes come from the ambient-agent triad: `notify` — something happened
+// you should know; `ask` — the agent is stopped and only you can start it;
+// `review` — something is waiting on your judgment.
+// ---------------------------------------------------------------------------
+
+export const AGENT_INBOX_LANES = ["notify", "ask", "review"] as const;
+export type AgentInboxLane = (typeof AGENT_INBOX_LANES)[number];
+
+/** The nine priority kinds plus the two the merge brings in. */
+export const AGENT_INBOX_ITEM_KINDS = [
+  ...PRIORITY_ITEM_KINDS,
+  /** An open agent question (the ask lane's only kind). */
+  "agent_question",
+  /** An unmet setup checklist item, folded in from the next-action engine. */
+  "setup_task",
+] as const;
+export type AgentInboxItemKind = (typeof AGENT_INBOX_ITEM_KINDS)[number];
+
+const AGENT_INBOX_LANE_BY_KIND: Record<AgentInboxItemKind, AgentInboxLane> = {
+  // Waiting on the founder's judgment.
+  agent_question: "ask",
+  authorization: "review",
+  content_review: "review",
+  signal_triage: "review",
+  learning_review: "review",
+  // Statements of fact about the system: true whether or not anyone decides.
+  execution_failure: "notify",
+  policy_block: "notify",
+  stale_action: "notify",
+  connection_health: "notify",
+  campaign_risk: "notify",
+  setup_task: "notify",
+};
+
+/** Total over the kinds, so the API and the UI can never lane an item differently. */
+export function agentInboxLaneFor(kind: AgentInboxItemKind): AgentInboxLane {
+  return AGENT_INBOX_LANE_BY_KIND[kind];
+}
+
+export const agentInboxItemSchema = z.object({
+  id: z.string().min(1),
+  lane: z.enum(AGENT_INBOX_LANES),
+  kind: z.enum(AGENT_INBOX_ITEM_KINDS),
+  status: workflowStatusSchema,
+  title: z.string().trim().min(1),
+  reason: z.string().trim().min(1),
+  consequence: z.string().trim().min(1),
+  href: z.string().startsWith("/"),
+  campaignId: z.string().uuid().nullable(),
+  campaignName: z.string().nullable(),
+  dueAt: z.number().int().nullable(),
+  createdAt: z.number().int(),
+  /** Carried on ask-lane items so the answer form needs no second fetch. */
+  question: agentQuestionSchema.nullable(),
+});
+export type AgentInboxItem = z.infer<typeof agentInboxItemSchema>;
+
+export const agentInboxFeedSchema = z.object({
+  items: z.array(agentInboxItemSchema),
+  counts: z.object({
+    notify: z.number().int().min(0),
+    ask: z.number().int().min(0),
+    review: z.number().int().min(0),
+  }),
+  /** Activation state, unchanged — displayed, never ranked against the feed. */
+  checklist: z.object({
+    done: z.number().int().min(0),
+    total: z.number().int().min(0),
+    complete: z.boolean(),
+  }),
+  generatedAt: z.number().int(),
+});
+export type AgentInboxFeed = z.infer<typeof agentInboxFeedSchema>;
 
 // ---------------------------------------------------------------------------
 // Agent Inspector API (Sprint 57)
@@ -7750,6 +8109,12 @@ export const agentRunDetailSchema = agentRunSummarySchema.extend({
   inputMessages: z.array(agentMessageSchema),
   output: z.unknown(),
   steps: z.array(agentRunStepSchema),
+  /** What this run actually proposed (Sprint 69) — the durable ledger, not a
+   * re-read of the transcript, so a deleted draft still leaves its proposal. */
+  proposals: z.array(agentProposalSchema),
+  /** What this run asked (Sprint 70), with the answers it got. A run that
+   * stopped at `needs_human` is unreadable without the question that stopped it. */
+  questions: z.array(agentQuestionSchema),
 });
 export type AgentRunDetail = z.infer<typeof agentRunDetailSchema>;
 
@@ -7843,7 +8208,10 @@ export type PipelineStepStatus = (typeof PIPELINE_STEP_STATUSES)[number];
 export const PIPELINE_STEP_KINDS = ["agent", "propose"] as const;
 export type PipelineStepKind = (typeof PIPELINE_STEP_KINDS)[number];
 
-export const PIPELINE_RUN_MODES = ["live", "dry_run"] as const;
+// "shadow" (Sprint 65, D-65.2): a dry run with a pairing identity — queued by
+// automation alongside the legacy path's live draft so both can be compared.
+// Only "live" runs touch the gate; every other mode ends in a simulated proposal.
+export const PIPELINE_RUN_MODES = ["live", "dry_run", "shadow"] as const;
 export type PipelineRunMode = (typeof PIPELINE_RUN_MODES)[number];
 
 // Step output kinds (D-64.3): a registered vocabulary, not arbitrary JSON
@@ -7888,14 +8256,19 @@ export const draftOutputSchema = z.object({
 });
 export type DraftOutput = z.infer<typeof draftOutputSchema>;
 
-/** Critique findings — a score plus cited issues, feeding the revise loop. */
+/**
+ * Critique findings. Sprint 66 (D-66.3): every finding cites the specific
+ * retrieved artifact it rests on — a guardrail line, a prior post, a voice-doc
+ * passage, a plan pillar. The score is the engine's revise-loop control
+ * signal (D-64.7), not the human-facing product; the cited findings are.
+ */
 export const findingsOutputSchema = z.object({
   score: z.number().int().min(0).max(100),
   findings: z
     .array(
       z.object({
         issue: z.string().min(1),
-        citation: z.string().optional(),
+        citation: z.string().min(1),
       }),
     )
     .max(10)
@@ -8101,7 +8474,9 @@ export const REFERENCE_SIGNAL_SOCIAL_POST_SPEC: PipelineSpec =
         goal:
           "Write the post for the requested channel using the leading angle " +
           "and the Brief. Consult the brain (voice, ICP, now) before " +
-          "writing. Stay strictly inside the Brief's facts.",
+          "writing. Study the provided prior examples from approval history: " +
+          "imitate what got approved, avoid what got rejected and why. Stay " +
+          "strictly inside the Brief's facts.",
         kind: "agent",
         tools: ["get_brain_section"],
         tier: "frontier",
@@ -8113,19 +8488,27 @@ export const REFERENCE_SIGNAL_SOCIAL_POST_SPEC: PipelineSpec =
         key: "critique",
         title: "Critique",
         goal:
-          "Judge the current draft against the voice doc, channel " +
-          "guardrails, and what approved drafts look like. Return findings " +
-          "with citations and a 0-100 score. Set guardrailUncertain when a " +
-          "guardrail's applicability is unclear.",
+          "Retrieve before you judge — never critique from memory. Pull the " +
+          "voice doc's actual examples, the channel guardrail list, the " +
+          "campaign plan's pillars, the last ten posts on this channel, and " +
+          "the most similar approved drafts and instructive rejections. " +
+          "Judge the current draft against what you retrieved. Every finding " +
+          "must cite the specific artifact it rests on — the exact guardrail " +
+          "line, the specific prior post, the voice-doc passage, the plan " +
+          "pillar. Also return a 0-100 score for the revise loop. Set " +
+          "guardrailUncertain when a guardrail's applicability is unclear.",
         kind: "agent",
         tools: [
           "find_similar_approved_drafts",
+          "find_instructive_rejections",
           "list_channel_guardrails",
+          "get_campaign_plan",
+          "list_recent_publications_with_metrics",
           "get_brain_section",
         ],
         tier: "frontier",
         output: "findings",
-        maxSteps: 4,
+        maxSteps: 6,
         maxTokens: 12_000,
       },
       {
@@ -8602,3 +8985,609 @@ export const metricSchema = z.object({
   createdAt: z.number().int(),
 });
 export type Metric = z.infer<typeof metricSchema>;
+
+// ---------------------------------------------------------------------------
+// Sprint 65 — first agent-executed pipeline, measured (shadow A/B + rollout)
+// ---------------------------------------------------------------------------
+
+/**
+ * The founder's side-by-side call on one shadow pair (D-65.7). Shadow proposals
+ * never enter the approval gate, so this explicit verdict is the shadow-side
+ * approval signal the comparison aggregates.
+ */
+export const SHADOW_VERDICTS = ["engine", "legacy", "tie"] as const;
+export type ShadowVerdict = (typeof SHADOW_VERDICTS)[number];
+
+/**
+ * One legacy draft paired with its engine shadow run — the unit of the
+ * founder-visible A/B. `draftContent`/`proposalContent` are joined in at read
+ * time (the proposal from the run's stored result; null until the run reaches
+ * a terminal state).
+ */
+export const pipelineShadowPairSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  signalId: z.string().uuid().nullable(),
+  campaignId: z.string().uuid().nullable(),
+  channel: z.enum(CHANNELS),
+  draftId: z.string().uuid().nullable(),
+  runId: z.string().uuid(),
+  draftContent: z.string().nullable(),
+  draftState: z.enum(APPROVAL_STATES).nullable(),
+  proposalContent: z.string().nullable(),
+  runStatus: z.enum(PIPELINE_RUN_STATUSES),
+  verdict: z.enum(SHADOW_VERDICTS).nullable(),
+  verdictNotes: z.string(),
+  verdictAt: z.number().int().nullable(),
+  createdAt: z.number().int(),
+});
+export type PipelineShadowPair = z.infer<typeof pipelineShadowPairSchema>;
+
+export const shadowVerdictInputSchema = z.object({
+  verdict: z.enum(SHADOW_VERDICTS),
+  notes: z.string().max(2000).default(""),
+});
+export type ShadowVerdictInput = z.infer<typeof shadowVerdictInputSchema>;
+
+/**
+ * Gate outcomes for one path's automation drafts (D-65.8). `approvalRate` and
+ * `avgEditDistance` are null until at least one draft has been decided —
+ * "no data yet" must be distinguishable from 0.
+ */
+export const automationPathMetricsSchema = z.object({
+  drafts: z.number().int().min(0),
+  decided: z.number().int().min(0),
+  approved: z.number().int().min(0),
+  rejected: z.number().int().min(0),
+  /** approved / decided, percent 0–100. */
+  approvalRate: z.number().min(0).max(100).nullable(),
+  /** Mean normalized Levenshtein between original and final content, 0–100. */
+  avgEditDistance: z.number().min(0).max(100).nullable(),
+  costCents: z.number().int().min(0),
+});
+export type AutomationPathMetrics = z.infer<typeof automationPathMetricsSchema>;
+
+export const engineRunHealthSchema = z.object({
+  runs: z.number().int().min(0),
+  succeeded: z.number().int().min(0),
+  failed: z.number().int().min(0),
+  escalated: z.number().int().min(0),
+});
+export type EngineRunHealth = z.infer<typeof engineRunHealthSchema>;
+
+export const shadowSummarySchema = z.object({
+  pairs: z.number().int().min(0),
+  reviewed: z.number().int().min(0),
+  engineWins: z.number().int().min(0),
+  legacyWins: z.number().int().min(0),
+  ties: z.number().int().min(0),
+});
+export type ShadowSummary = z.infer<typeof shadowSummarySchema>;
+
+/**
+ * The A/B panel's payload. Cost sides are measured differently and readers
+ * must say so: engine cost is the exact per-run metered sum; legacy cost is
+ * the workspace's signal_draft + review usage for the window, which includes
+ * founder-triggered manual drafts (D-65.8).
+ */
+export const automationComparisonSchema = z.object({
+  workspaceId: z.string().uuid(),
+  generationPath: z.enum(AUTOMATION_GENERATION_PATHS),
+  windowDays: z.number().int().positive(),
+  legacy: automationPathMetricsSchema,
+  engine: automationPathMetricsSchema.extend({ health: engineRunHealthSchema }),
+  shadow: shadowSummarySchema,
+});
+export type AutomationComparison = z.infer<typeof automationComparisonSchema>;
+
+/**
+ * D-65.9: the founder's recorded call on the A/B. Append-only; recording one
+ * freezes the comparison snapshot into the record and atomically applies the
+ * matching generationPath (adopt_engine → pipeline, keep_legacy → legacy,
+ * extend_shadow → shadow). Deleting the legacy path is a later sprint, only
+ * after adopt_engine has held up in production.
+ */
+export const ROLLOUT_DECISION_KINDS = [
+  "adopt_engine",
+  "keep_legacy",
+  "extend_shadow",
+] as const;
+export type RolloutDecisionKind = (typeof ROLLOUT_DECISION_KINDS)[number];
+
+export const rolloutDecisionSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  taskKey: z.enum(PIPELINE_TASK_KEYS),
+  decision: z.enum(ROLLOUT_DECISION_KINDS),
+  rationale: z.string(),
+  metrics: automationComparisonSchema,
+  decidedByUserId: z.string().uuid().nullable(),
+  createdAt: z.number().int(),
+});
+export type RolloutDecision = z.infer<typeof rolloutDecisionSchema>;
+
+export const recordRolloutDecisionInputSchema = z.object({
+  decision: z.enum(ROLLOUT_DECISION_KINDS),
+  rationale: z.string().min(1).max(2000),
+});
+export type RecordRolloutDecisionInput = z.infer<typeof recordRolloutDecisionInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Sprint 67 — Eval & replay harness (PRD §7, direction doc Move 6)
+// ---------------------------------------------------------------------------
+
+/**
+ * Ground truth for one replayed case: what the founder actually did with the
+ * draft this signal produced the first time round. `edited` means approved but
+ * not as written — the content changed between generation and approval.
+ */
+export const EVAL_CASE_OUTCOMES = ["approved", "rejected", "edited"] as const;
+export type EvalCaseOutcome = (typeof EVAL_CASE_OUTCOMES)[number];
+
+/** Deterministic checks — no LLM, no network. These are what gate CI (D-67.4). */
+export const EVAL_CHECK_KINDS = [
+  "length_bounds",
+  "banned_claims",
+  "placeholder_leak",
+  "cta_presence",
+  "citation_validity",
+] as const;
+export type EvalCheckKind = (typeof EVAL_CHECK_KINDS)[number];
+
+export const EVAL_CHECK_STATUSES = ["pass", "fail", "skipped"] as const;
+export type EvalCheckStatus = (typeof EVAL_CHECK_STATUSES)[number];
+
+export const EVAL_RUN_STATUSES = ["running", "succeeded", "failed"] as const;
+export type EvalRunStatus = (typeof EVAL_RUN_STATUSES)[number];
+
+/** The harness's own call on a replayed draft, compared against ground truth. */
+export const EVAL_VERDICTS = ["pass", "flag"] as const;
+export type EvalVerdict = (typeof EVAL_VERDICTS)[number];
+
+/** Whether a suite's channel expects a call to action. `any` skips the check. */
+export const CTA_EXPECTATIONS = ["any", "required", "forbidden"] as const;
+export type CtaExpectation = (typeof CTA_EXPECTATIONS)[number];
+
+/** Below this a "draft" is a stub, whatever the channel. */
+export const EVAL_MIN_BODY_CHARS = 40;
+
+/** Judge overall score at or above which the harness's verdict is `pass`. */
+export const EVAL_JUDGE_PASS = 70;
+
+/**
+ * Upper length bounds per channel. Sourced from SOCIAL_POST_CONSTRAINTS where a
+ * publish path exists; `x` is the platform's own limit. A channel with no entry
+ * skips the upper bound (the minimum still applies) rather than inventing one.
+ */
+export const EVAL_MAX_BODY_CHARS: Partial<Record<Channel, number>> = {
+  linkedin: SOCIAL_POST_CONSTRAINTS.linkedin.bodyMaxChars,
+  instagram: SOCIAL_POST_CONSTRAINTS.instagram.bodyMaxChars,
+  x: 280,
+};
+
+export const evalCheckResultSchema = z.object({
+  kind: z.enum(EVAL_CHECK_KINDS),
+  status: z.enum(EVAL_CHECK_STATUSES),
+  /** Human-readable: what was checked and, on a failure, what tripped it. */
+  detail: z.string(),
+});
+export type EvalCheckResult = z.infer<typeof evalCheckResultSchema>;
+
+const rubricDimensionSchema = z.object({
+  score: z.number().int().min(0).max(5),
+  justification: z.string().min(1).max(400),
+});
+
+/** The rubric judge's verdict. Reported and trended; never gates CI (D-67.4). */
+export const evalRubricSchema = z.object({
+  voiceFit: rubricDimensionSchema,
+  specificity: rubricDimensionSchema,
+  channelFit: rubricDimensionSchema,
+  brandSafety: rubricDimensionSchema,
+  actionability: rubricDimensionSchema,
+  overall: z.number().int().min(0).max(100),
+});
+export type EvalRubric = z.infer<typeof evalRubricSchema>;
+
+export const evalCaseSchema = z.object({
+  id: z.string().uuid(),
+  suiteId: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  signalId: z.string().uuid().nullable(),
+  signalContent: z.string(),
+  signalSource: z.string(),
+  channel: z.enum(CHANNELS),
+  campaignId: z.string().uuid().nullable(),
+  personaId: z.string().uuid().nullable(),
+  sourceDraftId: z.string().uuid().nullable(),
+  /** What the model produced the first time (drafts.originalContent). */
+  generatedContent: z.string(),
+  /** What the founder actually shipped or last saw (drafts.content). */
+  finalContent: z.string(),
+  outcome: z.enum(EVAL_CASE_OUTCOMES),
+  rejectionReason: z.string().nullable(),
+  decidedAt: z.number().int(),
+  createdAt: z.number().int(),
+});
+export type EvalCase = z.infer<typeof evalCaseSchema>;
+
+export const evalSuiteSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  name: z.string(),
+  taskKey: z.enum(PIPELINE_TASK_KEYS),
+  channel: z.enum(CHANNELS),
+  ctaExpectation: z.enum(CTA_EXPECTATIONS),
+  caseCount: z.number().int().nonnegative(),
+  createdAt: z.number().int(),
+});
+export type EvalSuite = z.infer<typeof evalSuiteSchema>;
+
+export const buildEvalSuiteInputSchema = z.object({
+  name: z.string().trim().min(1).max(120),
+  channel: z.enum(CHANNELS).default("linkedin"),
+  ctaExpectation: z.enum(CTA_EXPECTATIONS).default("any"),
+  limit: z.number().int().min(1).max(50).default(20),
+});
+export type BuildEvalSuiteInput = z.infer<typeof buildEvalSuiteInputSchema>;
+
+export const evalCaseResultSchema = z.object({
+  id: z.string().uuid(),
+  runId: z.string().uuid(),
+  caseId: z.string().uuid(),
+  pipelineRunId: z.string().uuid().nullable(),
+  producedContent: z.string().nullable(),
+  checks: z.array(evalCheckResultSchema),
+  judge: evalRubricSchema.nullable(),
+  verdict: z.enum(EVAL_VERDICTS).nullable(),
+  /** 0–100 normalized distance from what the founder actually shipped. */
+  editDistanceToFinal: z.number().nullable(),
+  costCents: z.number(),
+  durationMs: z.number().int(),
+  failureReason: z.string().nullable(),
+});
+export type EvalCaseResult = z.infer<typeof evalCaseResultSchema>;
+
+/**
+ * One run's aggregate. Every rate is null when its denominator is zero — a
+ * missing number is never silently rendered as a zero, and a null on either
+ * side of a comparison is skipped rather than counted as a regression.
+ */
+export const evalRunMetricsSchema = z.object({
+  cases: z.number().int().nonnegative(),
+  completed: z.number().int().nonnegative(),
+  failed: z.number().int().nonnegative(),
+  hardCheckPassRate: z.number().nullable(),
+  /** Failure count per check kind; a kind that never failed is simply absent. */
+  violations: z.record(z.string(), z.number().int()),
+  judged: z.number().int().nonnegative(),
+  avgJudgeScore: z.number().nullable(),
+  avgEditDistanceToFinal: z.number().nullable(),
+  /** Harness verdict matched the founder's outcome. */
+  agreementRate: z.number().nullable(),
+  /** Of founder-rejected cases, the share the harness also flagged. */
+  rejectRecall: z.number().nullable(),
+  /** Of founder-approved cases, the share the harness passed. */
+  approvePassRate: z.number().nullable(),
+  costCents: z.number(),
+  avgDurationMs: z.number().int(),
+  /** The §1.3 production snapshot, frozen alongside the replay numbers. */
+  production: automationComparisonSchema.nullable(),
+});
+export type EvalRunMetrics = z.infer<typeof evalRunMetricsSchema>;
+
+export const evalRunSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  suiteId: z.string().uuid(),
+  definitionId: z.string().uuid().nullable(),
+  definitionVersion: z.number().int().nullable(),
+  status: z.enum(EVAL_RUN_STATUSES),
+  judgeEnabled: z.boolean(),
+  metrics: evalRunMetricsSchema,
+  /** Non-null makes this run the named baseline for its workspace (D-67.3). */
+  baselineLabel: z.string().nullable(),
+  failureReason: z.string().nullable(),
+  createdAt: z.number().int(),
+  finishedAt: z.number().int().nullable(),
+});
+export type EvalRun = z.infer<typeof evalRunSchema>;
+
+export const evalRunDetailSchema = evalRunSchema.extend({
+  results: z.array(evalCaseResultSchema),
+});
+export type EvalRunDetail = z.infer<typeof evalRunDetailSchema>;
+
+export const runEvalSuiteInputSchema = z.object({
+  suiteId: z.string().uuid(),
+  /** Defaults to the active definition for the suite's task key. */
+  definitionId: z.string().uuid().optional(),
+  /** Off by default — the judge costs money and never gates CI. */
+  judge: z.boolean().default(false),
+  /** Labelling at creation is how a baseline gets captured in one call. */
+  baselineLabel: z.string().trim().min(1).max(60).optional(),
+});
+export type RunEvalSuiteInput = z.infer<typeof runEvalSuiteInputSchema>;
+
+export const labelBaselineInputSchema = z.object({
+  baselineLabel: z.string().trim().min(1).max(60),
+});
+export type LabelBaselineInput = z.infer<typeof labelBaselineInputSchema>;
+
+/**
+ * How far a metric may move before the gate calls it a regression (D-67.9).
+ * `higher` metrics regress by dropping, `lower` metrics regress by rising.
+ * Judge-derived metrics are absent here on purpose — CI cannot compute them.
+ */
+export const EVAL_REGRESSION_THRESHOLDS = {
+  hardCheckPassRate: { better: "higher", tolerance: 2 },
+  rejectRecall: { better: "higher", tolerance: 5 },
+  approvePassRate: { better: "higher", tolerance: 5 },
+  agreementRate: { better: "higher", tolerance: 5 },
+  avgEditDistanceToFinal: { better: "lower", tolerance: 5 },
+} as const satisfies Record<string, { better: "higher" | "lower"; tolerance: number }>;
+
+export type EvalGatedMetric = keyof typeof EVAL_REGRESSION_THRESHOLDS;
+
+export const evalMetricDeltaSchema = z.object({
+  metric: z.string(),
+  baseline: z.number(),
+  current: z.number(),
+  delta: z.number(),
+  tolerance: z.number(),
+});
+export type EvalMetricDelta = z.infer<typeof evalMetricDeltaSchema>;
+
+export const evalComparisonSchema = z.object({
+  ok: z.boolean(),
+  baselineLabel: z.string().nullable(),
+  baselineRunId: z.string().uuid().nullable(),
+  currentRunId: z.string().uuid(),
+  regressions: z.array(evalMetricDeltaSchema),
+  improvements: z.array(evalMetricDeltaSchema),
+  /** Metrics that could not be compared (null on one side). */
+  skipped: z.array(z.string()),
+});
+export type EvalComparison = z.infer<typeof evalComparisonSchema>;
+
+/**
+ * D-67.5: a machine-checkable claim the workspace never wants to publish.
+ * Channel guidance is prose an LLM interprets; this list is a hard check and
+ * is also handed to the critic through list_channel_guardrails so a finding
+ * can cite the exact phrase it tripped on.
+ */
+export const bannedClaimSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  phrase: z.string(),
+  note: z.string(),
+  createdAt: z.number().int(),
+});
+export type BannedClaim = z.infer<typeof bannedClaimSchema>;
+
+export const bannedClaimInputSchema = z.object({
+  phrase: z.string().trim().min(2).max(120),
+  note: z.string().trim().max(300).default(""),
+});
+export type BannedClaimInput = z.infer<typeof bannedClaimInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Preference memory (Sprint 68, PRD §7 Sprint 68 / direction doc Move 5)
+//
+// The fast layer under the weekly `now` synthesis: a founder edit becomes a
+// captured diff, the diff becomes a learned rule, and the rule is injected as
+// a traced resolver section the same afternoon. The slow layer keeps its job —
+// promoting stable rules into the brain docs behind the founder-accepts gate.
+// ---------------------------------------------------------------------------
+
+/** Where a captured correction came from (D-68.1: edits only). */
+export const PREFERENCE_EDIT_SOURCES = ["draft_edit", "editor_turn"] as const;
+export type PreferenceEditSource = (typeof PREFERENCE_EDIT_SOURCES)[number];
+
+export const PREFERENCE_POLARITIES = ["do", "avoid"] as const;
+export type PreferencePolarity = (typeof PREFERENCE_POLARITIES)[number];
+
+/**
+ * `candidate` — extracted below the activation confidence; visible, not
+ * injected. `active` — injected. `disabled` — the founder switched it off.
+ * `promoted` — folded into a brain doc by an accepted synthesis, so the
+ * resolver already reads it. `retired` — neither re-observed nor applied
+ * inside the retirement window (D-68.8).
+ */
+export const PREFERENCE_RULE_STATUSES = [
+  "candidate",
+  "active",
+  "disabled",
+  "promoted",
+  "retired",
+] as const;
+export type PreferenceRuleStatus = (typeof PREFERENCE_RULE_STATUSES)[number];
+
+/**
+ * Where a rule came from. `answered_question` (Sprint 70) is a rule the founder
+ * chose to keep while answering an agent's question — it is not inferred from
+ * the prose of the answer (D-70.11); the founder supplies the rule text, and the
+ * origin exists so the Preferences page can say where it came from.
+ */
+export const PREFERENCE_RULE_ORIGINS = ["extracted", "manual", "answered_question"] as const;
+export type PreferenceRuleOrigin = (typeof PREFERENCE_RULE_ORIGINS)[number];
+
+/** A rule is one imperative line. Longer than this is a paragraph, not a rule. */
+export const PREFERENCE_RULE_MAX_CHARS = 160;
+/** Top-N injected per resolve (PRD: "top-N *relevant* rules"). */
+export const PREFERENCE_RULE_LIMIT = 5;
+/** The section's own budget, enforced inside the resolver before the global ladder. */
+export const PREFERENCE_MAX_TOKENS = 300;
+/** Below this normalized edit distance a "correction" is whitespace, not taste. */
+export const PREFERENCE_MIN_EDIT_DISTANCE = 2;
+/** Normalized distance at or below which two rules are the same rule restated. */
+export const PREFERENCE_MERGE_DISTANCE = 20;
+/** At or above this confidence an extracted rule is `active`; below it, `candidate` (D-68.9). */
+export const PREFERENCE_ACTIVATE_CONFIDENCE = 65;
+/** Promotion needs a rule the founder's edits re-derived at least this often. */
+export const PROMOTE_MIN_OBSERVATIONS = 2;
+export const PROMOTE_MIN_CONFIDENCE = 70;
+/** Neither observed nor applied within this window ⇒ retired. */
+export const RETIRE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
+
+export const preferenceEditSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  source: z.enum(PREFERENCE_EDIT_SOURCES),
+  /** Stable id of the originating row — the decision id, or the revision turn id. */
+  sourceId: z.string(),
+  draftId: z.string().uuid().nullable(),
+  taskType: z.enum(TASK_TYPES),
+  channel: z.enum(CHANNELS),
+  beforeContent: z.string(),
+  afterContent: z.string(),
+  /** The founder's own words for the correction; only the editor path has them. */
+  instruction: z.string().nullable(),
+  /** Normalized Levenshtein, 0–100 (Sprint 65's `edit-distance.ts`). */
+  editDistance: z.number(),
+  /** Null until an extraction pass has read it. */
+  digestedAt: z.number().int().nullable(),
+  createdAt: z.number().int(),
+});
+export type PreferenceEdit = z.infer<typeof preferenceEditSchema>;
+
+export const preferenceRuleSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  rule: z.string(),
+  polarity: z.enum(PREFERENCE_POLARITIES),
+  /** Scope is derived from the edit group, never asked of the model (D-68.4). */
+  scopeTaskType: z.enum(TASK_TYPES).nullable(),
+  scopeChannel: z.enum(CHANNELS).nullable(),
+  status: z.enum(PREFERENCE_RULE_STATUSES),
+  origin: z.enum(PREFERENCE_RULE_ORIGINS),
+  confidence: z.number().int().min(0).max(100),
+  /** How many distinct founder edits produced or restated this rule. */
+  observationCount: z.number().int(),
+  /** How many real generations it has shaped — never moved by a preview (D-68.6). */
+  appliedCount: z.number().int(),
+  lastObservedAt: z.number().int().nullable(),
+  lastAppliedAt: z.number().int().nullable(),
+  promotedAt: z.number().int().nullable(),
+  retiredAt: z.number().int().nullable(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type PreferenceRule = z.infer<typeof preferenceRuleSchema>;
+
+export const preferenceRuleEvidenceSchema = z.object({
+  id: z.string().uuid(),
+  ruleId: z.string().uuid(),
+  editId: z.string().uuid(),
+  excerpt: z.string(),
+  createdAt: z.number().int(),
+  /** The originating edit, when it still exists — what makes a rule attributable. */
+  edit: preferenceEditSchema.nullable(),
+});
+export type PreferenceRuleEvidence = z.infer<typeof preferenceRuleEvidenceSchema>;
+
+export const preferenceRuleDetailSchema = z.object({
+  rule: preferenceRuleSchema,
+  evidence: z.array(preferenceRuleEvidenceSchema),
+});
+export type PreferenceRuleDetail = z.infer<typeof preferenceRuleDetailSchema>;
+
+export const createPreferenceRuleInputSchema = z.object({
+  rule: z.string().trim().min(8).max(PREFERENCE_RULE_MAX_CHARS),
+  polarity: z.enum(PREFERENCE_POLARITIES).default("avoid"),
+  scopeTaskType: z.enum(TASK_TYPES).nullish(),
+  scopeChannel: z.enum(CHANNELS).nullish(),
+});
+export type CreatePreferenceRuleInput = z.infer<typeof createPreferenceRuleInputSchema>;
+
+export const updatePreferenceRuleInputSchema = z.object({
+  /** The founder's four levers: activate, switch off, switch back on, retire by hand. */
+  status: z.enum(["candidate", "active", "disabled", "retired"]),
+});
+export type UpdatePreferenceRuleInput = z.infer<typeof updatePreferenceRuleInputSchema>;
+
+/** The extraction step's structured output — one group of same-scope edits in. */
+export const extractedPreferenceRuleSchema = z.object({
+  rule: z.string().min(8).max(PREFERENCE_RULE_MAX_CHARS),
+  polarity: z.enum(PREFERENCE_POLARITIES),
+  confidence: z.number().int().min(0).max(100),
+  /** Quoted from the diffs — what makes the rule auditable rather than asserted. */
+  evidence: z.string().max(300),
+});
+export type ExtractedPreferenceRule = z.infer<typeof extractedPreferenceRuleSchema>;
+
+export const EXTRACTION_MAX_RULES = 3;
+
+export const preferenceExtractionSchema = z.object({
+  rules: z.array(extractedPreferenceRuleSchema).max(EXTRACTION_MAX_RULES),
+});
+export type PreferenceExtraction = z.infer<typeof preferenceExtractionSchema>;
+
+export const preferenceExtractionResultSchema = z.object({
+  /** Scope groups processed this pass. */
+  groups: z.number().int(),
+  /** Edits digested this pass, including ones that taught nothing. */
+  edits: z.number().int(),
+  created: z.number().int(),
+  merged: z.number().int(),
+  retired: z.number().int(),
+});
+export type PreferenceExtractionResult = z.infer<typeof preferenceExtractionResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Answering an agent question (Sprint 70). Declared here rather than beside
+// `agentQuestionSchema` because `remember` re-uses the preference vocabulary
+// above it.
+// ---------------------------------------------------------------------------
+
+/**
+ * Answering. `remember` is explicit and complete (D-70.11): the platform never
+ * infers a durable rule from the prose of an answer, so if a rule is to be kept
+ * the caller says what the rule is. `resume: false` records the answer without
+ * restarting the blocked run — for an answer given long after the fact.
+ */
+export const answerAgentQuestionInputSchema = z
+  .object({
+    action: z.enum(["answer", "dismiss"]).default("answer"),
+    answer: z.string().trim().min(1).max(QUESTION_ANSWER_MAX_CHARS).optional(),
+    resume: z.boolean().default(true),
+    remember: z
+      .object({
+        rule: z.string().trim().min(8).max(PREFERENCE_RULE_MAX_CHARS),
+        polarity: z.enum(PREFERENCE_POLARITIES).default("do"),
+        scopeTaskType: z.enum(TASK_TYPES).nullish(),
+        scopeChannel: z.enum(CHANNELS).nullish(),
+      })
+      .optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.action === "answer" && !value.answer) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["answer"],
+        message: "Answering requires an answer.",
+      });
+    }
+    if (value.action === "dismiss" && value.remember) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["remember"],
+        message: "A dismissed question teaches nothing to remember.",
+      });
+    }
+  });
+export type AnswerAgentQuestionInput = z.infer<typeof answerAgentQuestionInputSchema>;
+
+export const answerAgentQuestionResultSchema = z.object({
+  question: agentQuestionSchema,
+  /** The rule the answer minted, when `remember` was given. */
+  rule: preferenceRuleSchema.nullable(),
+  /** The blocked run's status after answering — the proof it continued. */
+  resumedRun: z
+    .object({
+      id: z.string().uuid(),
+      status: z.enum(PIPELINE_RUN_STATUSES),
+    })
+    .nullable(),
+});
+export type AnswerAgentQuestionResult = z.infer<typeof answerAgentQuestionResultSchema>;

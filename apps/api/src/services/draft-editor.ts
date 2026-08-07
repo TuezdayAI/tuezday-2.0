@@ -444,7 +444,12 @@ export async function reviseDraft(
       throw new DraftChangedError();
     }
     return db.transaction((tx) => {
-      const updated = applyDraftActionInTransaction(tx, current, "edit", input.actor, content);
+      // Sprint 68: the founder's instruction travels with the edit, so the
+      // captured correction carries the *why* in their own words — the single
+      // richest preference signal the product has.
+      const updated = applyDraftActionInTransaction(tx, current, "edit", input.actor, content, undefined, {
+        instruction: input.instruction,
+      });
       const turn = completeTurn(
         tx,
         input.workspaceId,
