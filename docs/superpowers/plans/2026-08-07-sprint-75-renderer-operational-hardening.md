@@ -406,11 +406,11 @@ Run: `git diff c028e8a --stat`
 
 Expected: renderer, operational hardening, tests, generated migration, and documentation only.
 
-- [ ] **Step 5: Update Plane and the progress log**
+- [x] **Step 5: Update Plane and the progress log**
 
 Move the TAP Sprint 75 epic and all of its subtasks together to Done only after verification. Comment with branch `sprint-75-renderer-operational-hardening`, final HEAD, push status, test counts, and “awaiting founder merge.” If Plane tooling is unavailable, record that limitation explicitly without fabricating an update.
 
-- [ ] **Step 6: Commit final records and push**
+- [x] **Step 6: Commit final records and push**
 
 ```bash
 git add docs CLAUDE.md
@@ -418,6 +418,6 @@ git commit -m "docs(sprint-75): record operational hardening acceptance" -m "Co-
 git push -u origin sprint-75-renderer-operational-hardening
 ```
 
-- [ ] **Step 7: Handoff**
+- [x] **Step 7: Handoff**
 
 Report the worktree path, branch, final HEAD, commits, exact test/typecheck evidence, migration, Plane state, push state, and required founder merge. Do not merge into `main`.
