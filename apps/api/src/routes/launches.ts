@@ -24,8 +24,8 @@ import {
   createLaunch,
   deleteLaunch,
   dispatchChannel,
+  enqueueLaunchGeneration,
   exportLaunchEmail,
-  generateLaunch,
   getLaunchDetail,
   listLaunches,
   updateLaunchSequenceConfig,
@@ -124,10 +124,8 @@ export function registerLaunchRoutes(
         });
       }
       assertLlmBudget(db, request.params.id);
-      const result = await generateLaunch(
+      const result = enqueueLaunchGeneration(
         db,
-        llm,
-        evidence,
         request.params.id,
         request.params.launchId,
         parsed.data,
@@ -138,7 +136,7 @@ export function registerLaunchRoutes(
           result.error === "not_draft" || result.error === "is_sequence" ? 409 : 404;
         return reply.status(status).send({ error: result.error });
       }
-      return result.detail;
+      return reply.status(202).send({ launch: result.launch, jobId: result.jobId });
     },
   );
 

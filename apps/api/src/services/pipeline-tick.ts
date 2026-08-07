@@ -37,7 +37,7 @@ export interface PipelinesTickResult {
 export async function runPipelinesTick(
   db: Db,
   deps: PipelineEngineDeps,
-  options: { batch?: number } = {},
+  options: { batch?: number; workspaceId?: string } = {},
 ): Promise<PipelinesTickResult> {
   const queued = db
     .select({
@@ -52,6 +52,9 @@ export async function runPipelinesTick(
       and(
         eq(pipelineRuns.status, "queued"),
         inArray(pipelineRuns.mode, ["live", "shadow"]),
+        options.workspaceId
+          ? eq(pipelineRuns.workspaceId, options.workspaceId)
+          : undefined,
       ),
     )
     .orderBy(asc(pipelineRuns.createdAt))

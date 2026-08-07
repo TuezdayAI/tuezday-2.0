@@ -49,6 +49,11 @@ import {
 } from "@/lib/external-actions";
 import { launchChannelReady } from "@/lib/persona-social-routing";
 import { reviewHref } from "@/lib/review-workspace";
+import {
+  LAUNCH_GENERATION_POLL_MS,
+  mergeLaunchAdmission,
+  shouldPollLaunchGeneration,
+} from "@/lib/launch-generation-view";
 
 const DRAFT_STATE_TONE: Record<ApprovalState, "approved" | "pending" | "edited" | "rejected" | "draft"> = {
   draft: "draft",
@@ -167,6 +172,34 @@ export default function LaunchesPage() {
     void load();
   }, [load]);
 
+  useEffect(() => {
+    if (!shouldPollLaunchGeneration(openId, detail)) return;
+    let cancelled = false;
+    let inFlight = false;
+    const poll = async () => {
+      if (inFlight) return;
+      inFlight = true;
+      try {
+        const res = await apiFetch(`/workspaces/${id}/launches/${openId}`);
+        if (!res.ok || cancelled) return;
+        const next = (await res.json()) as LaunchDetail;
+        if (cancelled) return;
+        setDetail(next);
+        setLaunches((current) => mergeLaunchAdmission(current, next.launch));
+      } catch {
+        // A transient read failure should not replace the admitted state; the
+        // next interval retries while the panel remains open and generating.
+      } finally {
+        inFlight = false;
+      }
+    };
+    const timer = window.setInterval(() => void poll(), LAUNCH_GENERATION_POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [detail, id, openId]);
+
   function channelReadyForPersona(
     channel: LaunchChannel,
     personaId: string | null | undefined,
@@ -256,7 +289,20 @@ export default function LaunchesPage() {
         const body = await res.json().catch(() => null);
         throw new Error(body?.error ?? `API returned ${res.status}`);
       }
-      await refreshDetail(launchId);
+      const admitted = (await res.json()) as { launch: Launch; jobId: string };
+      setLaunches((current) => mergeLaunchAdmission(current, admitted.launch));
+      setOpenId(launchId);
+      setDispatchNote(null);
+      setDispatchSubmissions([]);
+      setDetail((current) => current?.launch.id === launchId
+        ? { ...current, launch: admitted.launch }
+        : {
+            launch: admitted.launch,
+            messages: [],
+            steps: [],
+            sequenceRecipients: [],
+            recipientCount: 0,
+          });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Generation failed");
     } finally {

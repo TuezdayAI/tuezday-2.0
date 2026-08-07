@@ -9,7 +9,12 @@ export type Db = BetterSQLite3Database<typeof schema>;
 export type DbTransaction = Parameters<Parameters<Db["transaction"]>[0]>[0];
 export type DbExecutor = Db | DbTransaction;
 
-const migrationsFolder = path.join(
+/**
+ * The checked-in migration folder. Exported so the test suite can apply these
+ * exact migrations once and clone the resulting schema per test, instead of
+ * re-running all of them for every database it builds.
+ */
+export const migrationsFolder = path.join(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
   "..",

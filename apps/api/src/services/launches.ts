@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import {
   type Channel,
@@ -19,7 +19,7 @@ import {
   type UpdateLaunchSequenceConfigInput,
 } from "@tuezday/contracts";
 import { resolveContext, type BrainContents } from "@tuezday/brain";
-import type { Db } from "../db";
+import type { Db, DbExecutor } from "../db";
 import {
   drafts,
   launchMessages,
@@ -52,7 +52,7 @@ import { resolveChannelGuidance } from "./guidance";
 import { campaignResolveInputs, selectiveContextInputs } from "./resolve-input";
 import { listConnections } from "./connections";
 import type { DraftActor } from "./drafts";
-import { submitDraft } from "./drafts";
+import { submitDraftInTransaction } from "./drafts";
 import { retrieveEvidence } from "./evidence";
 import { storeGeneration } from "./generations";
 import type { OutboundExporter, OutboundExport } from "../outbound/exporter";
@@ -61,6 +61,7 @@ import { resolveDraftAccount } from "./resolve-account";
 import { resolvePersonaSocialConnection } from "./persona-social-accounts";
 import { hasSequence, listSequenceRecipients, listSequenceSteps } from "./launch-sequences";
 import { getWorkspace } from "./workspaces";
+import { enqueueBackgroundJob } from "./background-jobs";
 
 /** Channel → connector provider key. Native email uses the outbound provider. */
 export const LAUNCH_CHANNEL_PROVIDER: Record<LaunchChannel, string | null> = {
@@ -240,16 +241,43 @@ export function deleteLaunch(db: Db, workspaceId: string, launchId: string): boo
 // Generation
 // ---------------------------------------------------------------------------
 
-function insertMessage(db: Db, fields: Partial<LaunchMessageRow> & {
+function launchGenerationUnitId(input: {
+  launchId: string;
+  channel: LaunchChannel;
+  kind: LaunchMessageKind;
+  recipientType?: string | null;
+  recipientId?: string | null;
+}): string {
+  const hash = createHash("sha256")
+    .update([
+      "launch-generation:v1",
+      input.launchId,
+      input.channel,
+      input.kind,
+      input.recipientType ?? "broadcast",
+      input.recipientId ?? "broadcast",
+    ].join(":"))
+    .digest("hex")
+    .slice(0, 32)
+    .split("");
+  // A stable RFC-4122-shaped id remains compatible with every existing
+  // launch-message path while the primary key acts as the replay fence.
+  hash[12] = "5";
+  hash[16] = ["8", "9", "a", "b"][Number.parseInt(hash[16]!, 16) % 4]!;
+  const hex = hash.join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+function insertMessage(db: DbExecutor, id: string, fields: Partial<LaunchMessageRow> & {
   workspaceId: string;
   launchId: string;
   channel: LaunchChannel;
   kind: LaunchMessageKind;
-}): void {
+}): boolean {
   const now = Date.now();
-  db.insert(launchMessages)
+  return Boolean(db.insert(launchMessages)
     .values({
-      id: randomUUID(),
+      id,
       recipientType: null,
       recipientId: null,
       recipientName: "",
@@ -267,31 +295,35 @@ function insertMessage(db: Db, fields: Partial<LaunchMessageRow> & {
       updatedAt: now,
       ...fields,
     })
-    .run();
+    .onConflictDoNothing({ target: launchMessages.id })
+    .returning({ id: launchMessages.id })
+    .get());
 }
 
 function setStatus(db: Db, launchId: string, status: Launch["status"]): void {
   db.update(launches).set({ status, updatedAt: Date.now() }).where(eq(launches.id, launchId)).run();
 }
 
-export type GenerateLaunchResult =
-  | { ok: true; detail: LaunchDetail }
+export type EnqueueLaunchGenerationResult =
+  | { ok: true; launch: Launch; jobId: string }
   | { ok: false; error: "launch_not_found" | "not_draft" | "audience_not_found" | "is_sequence" };
 
+/** Validate and admit launch generation without doing any LLM work. */
 /**
- * Resolve the audience to recipients, then per channel: a brain-resolved,
- * approval-gated draft per recipient (email, X DM) or one broadcast draft
- * (LinkedIn, Instagram). X recipients without a handle are skipped, no LLM call.
+ * Someone is waiting on this one. Recurring scans are admitted at the default
+ * priority, and timestamps only resolve to the millisecond, so a launch queued
+ * just before a tick would otherwise be ordered against thirteen scans by a
+ * random uuid — and lose often enough to be noticed.
  */
-export async function generateLaunch(
+const LAUNCH_GENERATION_PRIORITY = 10;
+
+export function enqueueLaunchGeneration(
   db: Db,
-  llm: LlmGateway,
-  evidence: EvidenceStore,
   workspaceId: string,
   launchId: string,
   input: GenerateLaunchInput,
   actor: DraftActor,
-): Promise<GenerateLaunchResult> {
+): EnqueueLaunchGenerationResult {
   const launchRow = getLaunchRow(db, workspaceId, launchId);
   if (!launchRow) return { ok: false, error: "launch_not_found" };
   if (hasSequence(db, launchId)) return { ok: false, error: "is_sequence" };
@@ -301,7 +333,85 @@ export async function generateLaunch(
     : undefined;
   if (!audience) return { ok: false, error: "audience_not_found" };
 
-  setStatus(db, launchId, "generating");
+  return db.transaction((tx): EnqueueLaunchGenerationResult => {
+    const now = Date.now();
+    const generating = tx
+      .update(launches)
+      .set({ status: "generating", updatedAt: now })
+      .where(and(
+        eq(launches.workspaceId, workspaceId),
+        eq(launches.id, launchId),
+        eq(launches.status, "draft"),
+      ))
+      .returning()
+      .get();
+    if (!generating) return { ok: false, error: "not_draft" };
+    const job = enqueueBackgroundJob(tx, {
+      payload: { kind: "launch_generate", workspaceId, launchId, input, actor },
+      idempotencyKey: `launch-generate:v1:${launchId}`,
+      priority: LAUNCH_GENERATION_PRIORITY,
+    });
+    return { ok: true, launch: rowToLaunch(generating, 0), jobId: job.id };
+  });
+}
+
+export type GenerateLaunchResult =
+  | { ok: true; detail: LaunchDetail }
+  | { ok: false; error: "launch_not_found" | "not_draft" | "audience_not_found" | "is_sequence" };
+
+export interface ResumeLaunchGenerationOptions {
+  signal?: AbortSignal;
+  heartbeat?: () => boolean;
+}
+
+interface LaunchGenerationUnit {
+  id: string;
+  lead?: Person;
+  message: Partial<LaunchMessageRow> & {
+    workspaceId: string;
+    launchId: string;
+    channel: LaunchChannel;
+    kind: LaunchMessageKind;
+  };
+  skipReason?: string;
+}
+
+class LaunchGenerationUnitConflict extends Error {}
+
+function assertLaunchGenerationActive(options: ResumeLaunchGenerationOptions): void {
+  if (options.signal?.aborted) throw new Error("launch_generation_aborted");
+  if (options.heartbeat && !options.heartbeat()) {
+    throw new Error("launch_generation_lease_lost");
+  }
+}
+
+/**
+ * Resolve the audience to recipients, then per channel: a brain-resolved,
+ * approval-gated draft per recipient (email, X DM) or one broadcast draft
+ * (LinkedIn, Instagram). X recipients without a handle are skipped, no LLM call.
+ */
+export async function resumeLaunchGeneration(
+  db: Db,
+  llm: LlmGateway,
+  evidence: EvidenceStore,
+  workspaceId: string,
+  launchId: string,
+  input: GenerateLaunchInput,
+  actor: DraftActor,
+  options: ResumeLaunchGenerationOptions = {},
+): Promise<GenerateLaunchResult> {
+  const launchRow = getLaunchRow(db, workspaceId, launchId);
+  if (!launchRow) return { ok: false, error: "launch_not_found" };
+  if (hasSequence(db, launchId)) return { ok: false, error: "is_sequence" };
+  if (launchRow.status !== "draft" && launchRow.status !== "generating") {
+    return { ok: false, error: "not_draft" };
+  }
+  const audience = launchRow.audienceId
+    ? getAudienceDetail(db, workspaceId, launchRow.audienceId)
+    : undefined;
+  if (!audience) return { ok: false, error: "audience_not_found" };
+
+  if (launchRow.status === "draft") setStatus(db, launchId, "generating");
 
   const workspace = getWorkspace(db, workspaceId)!;
   const channels = parseChannels(launchRow);
@@ -313,9 +423,74 @@ export async function generateLaunch(
   const contents = Object.fromEntries(docs.map((d) => [d.docType, d.content])) as BrainContents;
   const selective = selectiveContextInputs(db, workspaceId);
   const recipients = audience.members;
+  const requiredUnitIds: string[] = [];
 
   for (const channel of channels) {
     const gen = CHANNEL_GEN[channel];
+    const units: LaunchGenerationUnit[] = gen.kind === "personalized"
+      ? recipients.map((recipient) => {
+          const id = launchGenerationUnitId({
+            launchId,
+            channel,
+            kind: gen.kind,
+            recipientType: recipient.type,
+            recipientId: recipient.id,
+          });
+          const handle = channel === "x" ? recipient.xHandle?.trim() : undefined;
+          return {
+            id,
+            lead: recipient,
+            message: {
+              workspaceId,
+              launchId,
+              channel,
+              kind: gen.kind,
+              recipientType: recipient.type,
+              recipientId: recipient.id,
+              recipientName: recipient.name,
+              recipientEmail: recipient.email,
+              ...(handle ? { recipientHandle: handle } : {}),
+            },
+            ...(channel === "x" && !handle
+              ? {
+                  skipReason: recipient.type === "contact"
+                    ? "No X handle (CRM contact)."
+                    : "No X handle on this lead.",
+                }
+              : {}),
+          };
+        })
+      : [{
+          id: launchGenerationUnitId({ launchId, channel, kind: gen.kind }),
+          message: {
+            workspaceId,
+            launchId,
+            channel,
+            kind: gen.kind,
+            recipientName: campaign?.name ?? launchRow.name,
+          },
+        }];
+    requiredUnitIds.push(...units.map((unit) => unit.id));
+
+    const storedIds = new Set(
+      db.select({ id: launchMessages.id })
+        .from(launchMessages)
+        .where(eq(launchMessages.launchId, launchId))
+        .all()
+        .map((row) => row.id),
+    );
+    const missing = units.filter((unit) => !storedIds.has(unit.id));
+    for (const unit of missing.filter((candidate) => candidate.skipReason)) {
+      insertMessage(db, unit.id, {
+        ...unit.message,
+        status: "skipped",
+        skipReason: unit.skipReason,
+      });
+    }
+    const draftUnits = missing.filter((unit) => !unit.skipReason);
+    if (draftUnits.length === 0) continue;
+
+    assertLaunchGenerationActive(options);
     // Sprint 43: pass the workspace's channel guidance — this path previously
     // fell back to the built-in default even when an override existed.
     // Sprint 44: scoped to the launch's persona/campaign, most-specific-wins.
@@ -335,7 +510,8 @@ export async function generateLaunch(
       input.useEvidence ?? true,
     );
 
-    const draftFrom = async (lead: Person | undefined): Promise<string | { error: string }> => {
+    const persistDraftUnit = async (unit: LaunchGenerationUnit): Promise<void> => {
+      const lead = unit.lead;
       const resolved = resolveContext({
         workspaceName: workspace.name,
         docs: contents,
@@ -361,94 +537,71 @@ export async function generateLaunch(
           pipeline: "launch",
           campaignId: launchRow.campaignId ?? null,
         }).generate({ prompt: resolved.prompt });
-        const generation = storeGeneration(db, {
-          workspaceId,
-          taskType: gen.taskType,
-          channel: gen.channel,
-          personaId: launchRow.personaId,
-          campaignId: launchRow.campaignId,
-          leadId: lead?.type === "lead" ? lead.id : null,
-          resolved,
-          output: result.text,
-          model: result.model,
-          provider: result.provider,
-          durationMs: result.durationMs,
-        });
-        const draft = submitDraft(
-          db,
-          {
-            workspaceId,
-            sourceGenerationId: generation.id,
-            campaignId: launchRow.campaignId,
-            leadId: lead?.type === "lead" ? lead.id : null,
-            taskType: gen.taskType,
-            channel: gen.channel,
-            personaId: launchRow.personaId,
-            content: result.text,
-          },
-          actor,
-        );
-        return draft.id;
+        assertLaunchGenerationActive(options);
+        try {
+          db.transaction((tx) => {
+            const generation = storeGeneration(tx, {
+              workspaceId,
+              taskType: gen.taskType,
+              channel: gen.channel,
+              personaId: launchRow.personaId,
+              campaignId: launchRow.campaignId,
+              leadId: lead?.type === "lead" ? lead.id : null,
+              resolved,
+              output: result.text,
+              model: result.model,
+              provider: result.provider,
+              durationMs: result.durationMs,
+            });
+            const draft = submitDraftInTransaction(tx, {
+              workspaceId,
+              sourceGenerationId: generation.id,
+              campaignId: launchRow.campaignId,
+              leadId: lead?.type === "lead" ? lead.id : null,
+              taskType: gen.taskType,
+              channel: gen.channel,
+              personaId: launchRow.personaId,
+              content: result.text,
+            }, actor);
+            if (!insertMessage(tx, unit.id, {
+              ...unit.message,
+              draftId: draft.id,
+              status: "pending",
+            })) {
+              throw new LaunchGenerationUnitConflict();
+            }
+          });
+        } catch (error) {
+          if (!(error instanceof LaunchGenerationUnitConflict)) throw error;
+        }
       } catch (err) {
-        if (err instanceof GatewayError) return { error: err.message };
+        if (err instanceof GatewayError) {
+          insertMessage(db, unit.id, {
+            ...unit.message,
+            status: "failed",
+            lastError: err.message,
+          });
+          return;
+        }
         throw err;
       }
     };
 
-    if (gen.kind === "personalized") {
-      for (const r of recipients) {
-        const base = {
-          workspaceId,
-          launchId,
-          channel,
-          kind: gen.kind,
-          recipientType: r.type,
-          recipientId: r.id,
-          recipientName: r.name,
-          recipientEmail: r.email,
-        };
-        if (channel === "x") {
-          const handle = r.xHandle?.trim();
-          if (!handle) {
-            insertMessage(db, {
-              ...base,
-              status: "skipped",
-              skipReason: r.type === "contact" ? "No X handle (CRM contact)." : "No X handle on this lead.",
-            });
-            continue;
-          }
-          const made = await draftFrom(r);
-          if (typeof made === "string") {
-            insertMessage(db, { ...base, recipientHandle: handle, draftId: made, status: "pending" });
-          } else {
-            insertMessage(db, { ...base, recipientHandle: handle, status: "failed", lastError: made.error });
-          }
-        } else {
-          const made = await draftFrom(r);
-          if (typeof made === "string") {
-            insertMessage(db, { ...base, draftId: made, status: "pending" });
-          } else {
-            insertMessage(db, { ...base, status: "failed", lastError: made.error });
-          }
-        }
-      }
-    } else {
-      const made = await draftFrom(undefined);
-      const base = {
-        workspaceId,
-        launchId,
-        channel,
-        kind: gen.kind,
-        recipientName: campaign?.name ?? launchRow.name,
-      };
-      if (typeof made === "string") {
-        insertMessage(db, { ...base, draftId: made, status: "pending" });
-      } else {
-        insertMessage(db, { ...base, status: "failed", lastError: made.error });
-      }
+    for (const unit of draftUnits) {
+      await persistDraftUnit(unit);
     }
   }
 
+  const terminalIds = new Set(
+    db.select({ id: launchMessages.id })
+      .from(launchMessages)
+      .where(eq(launchMessages.launchId, launchId))
+      .all()
+      .map((row) => row.id),
+  );
+  if (!requiredUnitIds.every((id) => terminalIds.has(id))) {
+    throw new Error("launch_generation_incomplete");
+  }
   setStatus(db, launchId, "ready");
   return { ok: true, detail: getLaunchDetail(db, workspaceId, launchId)! };
 }

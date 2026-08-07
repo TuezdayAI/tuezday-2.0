@@ -18,6 +18,8 @@ import {
 } from "../src/connectors/fabric";
 import type { Db } from "../src/db";
 import {
+  backgroundJobs,
+  drafts,
   emailDeliveries,
   emailRecipientPermissions,
   launchMessages,
@@ -32,13 +34,18 @@ import type {
   OutboundEmailMessage,
   OutboundEmailProvider,
 } from "../src/outbound-email/provider";
+import { resumeLaunchGeneration } from "../src/services/launches";
 import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
-const fakeLlm: LlmGateway = {
-  async generate() {
-    return { text: "Generated first-touch message.", model: "fake", provider: "fake", durationMs: 3 };
-  },
-};
+const generatedMessage = () => ({
+  text: "Generated first-touch message.",
+  model: "fake",
+  provider: "fake",
+  durationMs: 3,
+});
+const generateMock = vi.fn(async () => generatedMessage());
+const fakeLlm: LlmGateway = { generate: generateMock };
+const WORKER_TOKEN = "launch-generation-worker-token";
 
 class FakeOutboundEmailProvider implements OutboundEmailProvider {
   send = vi.fn(async (_message: OutboundEmailMessage) => ({
@@ -319,6 +326,8 @@ describe("targeted launch API", () => {
   let emailProvider: FakeOutboundEmailProvider;
 
   beforeEach(async () => {
+    generateMock.mockReset();
+    generateMock.mockImplementation(async () => generatedMessage());
     for (const k of ["LINKEDIN", "INSTAGRAM", "TWITTER"]) {
       vi.stubEnv(`${k}_CLIENT_ID`, "cid");
       vi.stubEnv(`${k}_CLIENT_SECRET`, "csecret");
@@ -331,6 +340,7 @@ describe("targeted launch API", () => {
       llm: fakeLlm,
       connectors: fakeFabric(state),
       outboundEmail: emailProvider,
+      workerToken: WORKER_TOKEN,
     });
     workspaceId = (
       await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Launcher" } })
@@ -476,6 +486,15 @@ describe("targeted launch API", () => {
       .then((r) => r.json());
   }
 
+  async function runBackgroundJobs() {
+    return app.inject({
+      method: "POST",
+      url: "/internal/background-jobs/tick",
+      headers: { authorization: `Bearer ${WORKER_TOKEN}` },
+      payload: {},
+    });
+  }
+
   async function readyLaunch(opts: { personaId?: string; channels: string[] }): Promise<{ id: string }> {
     const alice = await createLead("Alice", "alice");
     const audienceId = await staticAudience([alice]);
@@ -496,7 +515,8 @@ describe("targeted launch API", () => {
       url: `/workspaces/${workspaceId}/launches/${launch.id}/generate`,
       payload: {},
     });
-    expect(generated.statusCode).toBe(200);
+    expect(generated.statusCode).toBe(202);
+    expect((await runBackgroundJobs()).json()).toMatchObject({ succeeded: 1 });
     return launch;
   }
 
@@ -526,9 +546,166 @@ describe("targeted launch API", () => {
         payload: { name: "Spring", audienceId, channels: ["email", "linkedin", "instagram", "x"] },
       })
     ).json().id;
-    await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/launches/${launchId}/generate`, payload: {} });
+    const generated = await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/launches/${launchId}/generate`, payload: {} });
+    expect(generated.statusCode).toBe(202);
+    expect((await runBackgroundJobs()).json()).toMatchObject({ succeeded: 1 });
     return { launchId };
   }
+
+  it("queues launch generation without calling the LLM on the request path", async () => {
+    const alice = await createLead("Alice", "alice");
+    const audienceId = await staticAudience([alice]);
+    const launch = (
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/launches`,
+        payload: {
+          name: "Async launch",
+          audienceId,
+          channels: ["email"],
+        },
+      })
+    ).json();
+
+    const queued = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/launches/${launch.id}/generate`,
+      payload: { useEvidence: false, tokenBudget: 800 },
+    });
+
+    expect(queued.statusCode).toBe(202);
+    expect(queued.json()).toMatchObject({
+      launch: { id: launch.id, status: "generating" },
+      jobId: expect.any(String),
+    });
+    expect(generateMock).not.toHaveBeenCalled();
+    const job = db
+      .select()
+      .from(backgroundJobs)
+      .where(eq(backgroundJobs.id, queued.json().jobId))
+      .get()!;
+    expect(JSON.parse(job.payloadJson)).toMatchObject({
+      kind: "launch_generate",
+      workspaceId,
+      launchId: launch.id,
+      input: { useEvidence: false, tokenBudget: 800 },
+      actor: { label: "founder", human: true, userId: expect.any(String) },
+    });
+
+    // Someone is waiting on this, so it must outrank the recurring scans a
+    // tick admits alongside it — timestamps alone tie at the millisecond.
+    expect(job.priority).toBeGreaterThan(0);
+
+    const duplicate = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/launches/${launch.id}/generate`,
+      payload: {},
+    });
+    expect(duplicate.statusCode).toBe(409);
+
+    const tick = await runBackgroundJobs();
+    expect(tick.statusCode).toBe(200);
+    expect(tick.json()).toMatchObject({ claimed: 1, succeeded: 1 });
+    expect((await detail(launch.id)).launch.status).toBe("ready");
+  });
+
+  it("resumes launch generation after a stored unit without duplicate messages or drafts", async () => {
+    const alice = await createLead("Alice", "alice");
+    const bob = await createLead("Bob", "bob");
+    const audienceId = await staticAudience([alice, bob]);
+    const launch = (
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/launches`,
+        payload: { name: "Resumable launch", audienceId, channels: ["email"] },
+      })
+    ).json();
+    const queued = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/launches/${launch.id}/generate`,
+      payload: {},
+    });
+    expect(queued.statusCode).toBe(202);
+
+    generateMock
+      .mockResolvedValueOnce(generatedMessage())
+      .mockRejectedValueOnce(new Error("simulated interruption after first stored unit"))
+      .mockResolvedValue(generatedMessage());
+
+    const interrupted = await runBackgroundJobs();
+    expect(interrupted.json()).toMatchObject({ claimed: 1, retried: 1 });
+    expect((await detail(launch.id)).launch.status).toBe("generating");
+    expect(db.select().from(launchMessages).all()).toHaveLength(1);
+    expect(db.select().from(drafts).all()).toHaveLength(1);
+
+    db.update(backgroundJobs)
+      .set({ availableAt: 0 })
+      .where(eq(backgroundJobs.id, queued.json().jobId))
+      .run();
+    const resumed = await runBackgroundJobs();
+    expect(resumed.json()).toMatchObject({ claimed: 1, succeeded: 1 });
+    expect((await detail(launch.id)).launch.status).toBe("ready");
+    expect(db.select().from(launchMessages).all()).toHaveLength(2);
+    expect(db.select().from(drafts).all()).toHaveLength(2);
+    expect(generateMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("refuses a forged job that carries another workspace's launch id", async () => {
+    const otherWorkspaceId = (
+      await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Neighbour" } })
+    ).json().id;
+    const neighbourLead = (
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${otherWorkspaceId}/leads`,
+        payload: { name: "Mallory", email: "mallory@other.com", company: "Other", role: "VP" },
+      })
+    ).json().id;
+    const neighbourAudienceId = (
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${otherWorkspaceId}/audiences`,
+        payload: { name: "Neighbour targets", kind: "static" },
+      })
+    ).json().id;
+    await app.inject({
+      method: "POST",
+      url: `/workspaces/${otherWorkspaceId}/audiences/${neighbourAudienceId}/members`,
+      payload: { members: [{ type: "lead", id: neighbourLead }] },
+    });
+    const neighbourLaunch = (
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${otherWorkspaceId}/launches`,
+        payload: { name: "Neighbour launch", audienceId: neighbourAudienceId, channels: ["email"] },
+      })
+    ).json();
+
+    // A payload whose tenant is this workspace but whose target belongs to
+    // another one must not resolve, even though both ids are real.
+    await expect(
+      resumeLaunchGeneration(
+        db,
+        fakeLlm,
+        {} as never,
+        workspaceId,
+        neighbourLaunch.id,
+        {},
+        { userId: null, label: "forged", human: false },
+      ),
+    ).resolves.toEqual({ ok: false, error: "launch_not_found" });
+    expect(generateMock).not.toHaveBeenCalled();
+
+    const neighbourDetail = (
+      await app.inject({
+        method: "GET",
+        url: `/workspaces/${otherWorkspaceId}/launches/${neighbourLaunch.id}`,
+      })
+    ).json();
+    expect(neighbourDetail.launch.status).toBe("draft");
+    expect(neighbourDetail.launch.messageCount).toBe(0);
+    expect(db.select().from(launchMessages).all()).toHaveLength(0);
+  });
 
   it("creates, generates, and shapes messages per channel", async () => {
     const { launchId } = await fullLaunch();
@@ -816,7 +993,9 @@ describe("targeted launch API", () => {
         payload: { name: "Email only", audienceId, channels: ["email"] },
       })
     ).json().id;
-    await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/launches/${launchId}/generate`, payload: {} });
+    const generated = await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/launches/${launchId}/generate`, payload: {} });
+    expect(generated.statusCode).toBe(202);
+    expect((await runBackgroundJobs()).json()).toMatchObject({ succeeded: 1 });
     const res = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/launches/${launchId}/channels/linkedin/dispatch`,

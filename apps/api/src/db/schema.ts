@@ -390,6 +390,97 @@ export const taskLeases = sqliteTable("task_leases", {
 
 export type TaskLeaseRow = typeof taskLeases.$inferSelect;
 
+// Durable application job queue (Sprint 73). The generic rows own admission,
+// leases, retries and observability; domain ledgers remain the source of truth
+// for the work itself.
+export const backgroundJobs = sqliteTable(
+  "background_jobs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    payloadJson: text("payload_json").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    // Equal to idempotencyKey while queued/running and cleared at terminal
+    // state. A normal nullable unique index is portable to PostgreSQL.
+    activeKey: text("active_key"),
+    priority: integer("priority").notNull().default(0),
+    status: text("status").notNull().default("queued"),
+    availableAt: integer("available_at").notNull(),
+    attempt: integer("attempt").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(5),
+    leaseOwner: text("lease_owner"),
+    leaseVersion: integer("lease_version").notNull().default(0),
+    leaseExpiresAt: integer("lease_expires_at"),
+    heartbeatAt: integer("heartbeat_at"),
+    startedAt: integer("started_at"),
+    finishedAt: integer("finished_at"),
+    lastError: text("last_error"),
+    resultJson: text("result_json"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("background_jobs_active_key_unique").on(t.activeKey),
+    index("background_jobs_status_available").on(
+      t.status,
+      t.availableAt,
+      t.priority,
+      t.createdAt,
+    ),
+    index("background_jobs_workspace_status").on(
+      t.workspaceId,
+      t.status,
+      t.availableAt,
+    ),
+    index("background_jobs_lease_expiry").on(t.status, t.leaseExpiresAt),
+  ],
+);
+
+export type BackgroundJobRow = typeof backgroundJobs.$inferSelect;
+
+export const backgroundSchedules = sqliteTable(
+  "background_schedules",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    intervalMs: integer("interval_ms").notNull(),
+    nextRunAt: integer("next_run_at").notNull(),
+    lastEnqueuedAt: integer("last_enqueued_at"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("background_schedules_workspace_kind_unique").on(
+      t.workspaceId,
+      t.kind,
+    ),
+    index("background_schedules_due").on(t.enabled, t.nextRunAt),
+  ],
+);
+
+export type BackgroundScheduleRow = typeof backgroundSchedules.$inferSelect;
+
+export const backgroundWorkspaceDispatch = sqliteTable(
+  "background_workspace_dispatch",
+  {
+    workspaceId: text("workspace_id")
+      .primaryKey()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    lastDispatchedAt: integer("last_dispatched_at"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+);
+
+export type BackgroundWorkspaceDispatchRow =
+  typeof backgroundWorkspaceDispatch.$inferSelect;
+
 export const discoverySources = sqliteTable("discovery_sources", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id")

@@ -1,20 +1,18 @@
 import type { WorkerConfig } from "./config";
 
-export interface WorkspaceSummary {
-  id: string;
-  name: string;
+export interface BackgroundJobsTickResult {
+  busy: boolean;
+  reconciled: number;
+  admitted: number;
+  claimed: number;
+  succeeded: number;
+  retried: number;
+  deadLettered: number;
+  lost: number;
 }
 
 export interface WorkerClient {
-  request(path: string, init?: RequestInit): Promise<Response>;
-  listWorkspaces(): Promise<WorkspaceSummary[]>;
-  runInternal(
-    path:
-      | "/internal/discovery/tick"
-      | "/internal/automation/tick"
-      | "/internal/pipelines/tick"
-      | "/internal/preferences/tick",
-  ): Promise<unknown>;
+  runBackgroundJobsTick(): Promise<BackgroundJobsTickResult>;
 }
 
 export interface WorkerClientOptions {
@@ -30,52 +28,35 @@ export function createWorkerClient(
   const fetcher = options.fetcher ?? fetch;
   const maxAttempts = options.maxAttempts ?? 20;
   const retryDelayMs = options.retryDelayMs ?? 250;
-  const request = async (
-    path: string,
-    init?: RequestInit,
-  ): Promise<Response> => {
-    const headers = new Headers(init?.headers);
-    headers.set("Authorization", `Bearer ${config.token}`);
-    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-      try {
-        return await fetcher(`${config.internalApiUrl}${path}`, {
-          ...init,
-          headers,
-        });
-      } catch (error) {
-        if (
-          attempt === maxAttempts ||
-          init?.signal?.aborted
-        ) {
-          throw error;
-        }
-        await new Promise<void>((resolve) => {
-          setTimeout(resolve, retryDelayMs);
-        });
-      }
-    }
-    throw new Error("worker_request_attempts_exhausted");
-  };
 
   return {
-    request,
-    async listWorkspaces() {
-      const response = await request("/workspaces");
-      if (!response.ok) {
-        throw new Error(`GET /workspaces returned ${response.status}`);
+    async runBackgroundJobsTick() {
+      const path = "/internal/background-jobs/tick";
+      for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+          const response = await fetcher(`${config.internalApiUrl}${path}`, {
+            method: "POST",
+            headers: {
+              Authorization: `Bearer ${config.token}`,
+              "Content-Type": "application/json",
+            },
+            body: "{}",
+          });
+          if (!response.ok) {
+            throw new Error(`POST ${path} returned ${response.status}`);
+          }
+          return (await response.json()) as BackgroundJobsTickResult;
+        } catch (error) {
+          const isHttpError =
+            error instanceof Error &&
+            error.message.startsWith(`POST ${path} returned `);
+          if (isHttpError || attempt === maxAttempts) throw error;
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, retryDelayMs);
+          });
+        }
       }
-      return (await response.json()) as WorkspaceSummary[];
-    },
-    async runInternal(path) {
-      const response = await request(path, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: "{}",
-      });
-      if (!response.ok) {
-        throw new Error(`POST ${path} returned ${response.status}`);
-      }
-      return response.json();
+      throw new Error("worker_request_attempts_exhausted");
     },
   };
 }

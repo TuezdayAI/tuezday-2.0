@@ -55,29 +55,24 @@ describe("internal task boundary", () => {
   });
 
   it("runs both API-owned scheduler entrypoints with the worker token", async () => {
-    const discovery = await app.inject({
-      method: "POST",
-      url: "/internal/discovery/tick",
-      payload: {},
-      headers: workerHeaders(),
-    });
-    const automation = await app.inject({
-      method: "POST",
-      url: "/internal/automation/tick",
-      payload: {},
-      headers: workerHeaders(),
-    });
-
-    expect(discovery.statusCode, discovery.body).toBe(200);
-    expect(automation.statusCode, automation.body).toBe(200);
-    expect(discovery.json()).toMatchObject({ busy: false, processed: 0 });
-    expect(automation.json()).toMatchObject({ busy: false, processed: 0 });
+    for (const url of [
+      "/internal/discovery/tick",
+      "/internal/automation/tick",
+      "/internal/pipelines/tick",
+      "/internal/preferences/tick",
+    ]) {
+      const response = await app.inject({
+        method: "POST",
+        url,
+        payload: {},
+        headers: workerHeaders(),
+      });
+      expect(response.statusCode, url).toBe(404);
+    }
   });
 
-  it.each([
-    "/internal/discovery/tick",
-    "/internal/automation/tick",
-  ])("accepts only an empty body on %s", async (url) => {
+  it("accepts only an empty body on the consolidated queue tick", async () => {
+    const url = "/internal/background-jobs/tick";
     const accepted = await app.inject({
       method: "POST",
       url,
@@ -123,7 +118,7 @@ describe("internal task boundary", () => {
     expect(response.json()).toEqual({ error: "forbidden" });
   });
 
-  it("permits only the exact existing maintenance allowlist", async () => {
+  it("does not let the worker credential call founder maintenance routes", async () => {
     const user = await registerUser(app, "allowlist-owner@test.dev");
     const created = await app.inject({
       method: "POST",
@@ -132,7 +127,7 @@ describe("internal task boundary", () => {
       headers: { authorization: `Bearer ${user.token}` },
     });
     const workspaceId = created.json().id as string;
-    const allowed = [
+    const retiredAllowlist = [
       ["GET", "/workspaces"],
       ["GET", `/workspaces/${workspaceId}/learning/syntheses`],
       ["POST", `/workspaces/${workspaceId}/learning/synthesize`],
@@ -146,18 +141,16 @@ describe("internal task boundary", () => {
       ["POST", `/workspaces/${workspaceId}/evidence/candidates/sweep`],
     ] as const;
 
-    for (const [method, url] of allowed) {
+    for (const [method, url] of retiredAllowlist) {
       const response = await app.inject({
         method,
         url,
         payload: method === "POST" ? {} : undefined,
         headers: workerHeaders(),
       });
-      expect(
-        [401, 403].includes(response.statusCode),
-        `${method} ${url}: ${response.body}`,
-      ).toBe(false);
-      expect(response.statusCode).toBeLessThan(500);
+      expect(response.statusCode, `${method} ${url}: ${response.body}`).toBe(
+        403,
+      );
     }
   });
 
