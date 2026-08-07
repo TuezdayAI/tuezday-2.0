@@ -9591,3 +9591,311 @@ export const answerAgentQuestionResultSchema = z.object({
     .nullable(),
 });
 export type AnswerAgentQuestionResult = z.infer<typeof answerAgentQuestionResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Sprint 71 — show the work (PRD §8, direction move 7b)
+//
+// The platform computes a complete reasoning trace on every generation and
+// discards it at the UI boundary. This block is the vocabulary for handing it
+// back: one `ArtifactTrace` shape assembled server-side for four artifact
+// kinds, and the nine context-customization knobs named once so that atlas
+// conflict #4 can be settled with data rather than argument.
+//
+// Read-only by construction. Nothing here describes a write.
+// ---------------------------------------------------------------------------
+
+/** The four things a founder can ask "why did it write this?" about. */
+export const TRACE_SUBJECT_KINDS = [
+  "draft",
+  "deliverable",
+  "publication",
+  "external_action",
+] as const;
+export type TraceSubjectKind = (typeof TRACE_SUBJECT_KINDS)[number];
+
+export function isTraceSubjectKind(value: string): value is TraceSubjectKind {
+  return (TRACE_SUBJECT_KINDS as readonly string[]).includes(value);
+}
+
+/** Where the words came from before the resolver ever ran. */
+export const TRACE_ORIGIN_KINDS = [
+  "signal",
+  "story",
+  "package",
+  "opportunity",
+  "inbox_item",
+  "manual",
+] as const;
+export type TraceOriginKind = (typeof TRACE_ORIGIN_KINDS)[number];
+
+/**
+ * A knob's relationship to one specific resolve.
+ * - `absent` — nothing configured and nothing applied.
+ * - `configured` — set in this workspace, but it did not touch this bundle.
+ * - `applied` — it demonstrably shaped this bundle.
+ *
+ * The gap between `configured` and `applied` is the entire point: a knob that
+ * is always configured and never applied is the knob to delete.
+ */
+export const TRACE_KNOB_STATES = ["absent", "configured", "applied"] as const;
+export type TraceKnobState = (typeof TRACE_KNOB_STATES)[number];
+
+/**
+ * The nine context-customization knobs, in **precedence order** — earlier
+ * entries are the base, later entries override them. Atlas conflict #4 is the
+ * observation that these were each added for a good reason and have never been
+ * looked at together.
+ */
+export const CONTEXT_KNOB_KEYS = [
+  "brain_docs",
+  "channel_guidance_builtin",
+  "channel_guidance_workspace",
+  "scoped_guidance",
+  "context_matrix",
+  "generation_settings",
+  "campaign_overlay",
+  "zoom",
+  "design_overlays",
+] as const;
+export type ContextKnobKey = (typeof CONTEXT_KNOB_KEYS)[number];
+
+export interface ContextKnob {
+  key: ContextKnobKey;
+  label: string;
+  /** The question this knob answers, in the founder's words. */
+  question: string;
+  /** The surface that owns it, relative to the workspace root. */
+  surface: string;
+}
+
+export const CONTEXT_KNOBS: readonly ContextKnob[] = [
+  {
+    key: "brain_docs",
+    label: "Brain documents",
+    question: "What does the company sound like, sell, and care about?",
+    surface: "/brain",
+  },
+  {
+    key: "channel_guidance_builtin",
+    label: "Built-in channel guidance",
+    question: "How should anything on this channel be written?",
+    surface: "/guidance",
+  },
+  {
+    key: "channel_guidance_workspace",
+    label: "Your channel guidance",
+    question: "How should we write on this channel, overriding the built-in?",
+    surface: "/guidance",
+  },
+  {
+    key: "scoped_guidance",
+    label: "Scoped guidance",
+    question: "Does one persona or campaign write differently on this channel?",
+    surface: "/guidance",
+  },
+  {
+    key: "context_matrix",
+    label: "Context matrix",
+    question: "Which brain documents enter which kind of task, and how fully?",
+    surface: "/resolver",
+  },
+  {
+    key: "generation_settings",
+    label: "Generation settings",
+    question: "Should we pick an angle first, and pre-review before you see it?",
+    surface: "/automation",
+  },
+  {
+    key: "campaign_overlay",
+    label: "Campaign overlay",
+    question: "What does this campaign add on top of everything else?",
+    surface: "/campaigns",
+  },
+  {
+    key: "zoom",
+    label: "Zoom retrieval",
+    question: "Which individual brain sections are worth pulling in full?",
+    surface: "/resolver",
+  },
+  {
+    key: "design_overlays",
+    label: "Design overlays",
+    question: "How should the rendered artwork look for this channel?",
+    surface: "/design-systems",
+  },
+] as const;
+
+export function contextKnob(key: ContextKnobKey): ContextKnob {
+  return CONTEXT_KNOBS.find((knob) => knob.key === key)!;
+}
+
+/** How many recent resolves the knob-usage report replays (D-71.7). */
+export const KNOB_USAGE_SAMPLE_LIMIT = 200;
+
+/** Longest excerpt the trace carries per context section / example. */
+export const TRACE_EXCERPT_MAX_CHARS = 400;
+
+export const traceOriginSchema = z.object({
+  kind: z.enum(TRACE_ORIGIN_KINDS),
+  /** Null for `manual`: there is no row to point at. */
+  id: z.string().nullable(),
+  label: z.string(),
+  /** The triggering text itself, clipped — what the agent actually reacted to. */
+  detail: z.string().nullable(),
+  href: z.string().nullable(),
+  at: z.number().int().nullable(),
+});
+export type TraceOrigin = z.infer<typeof traceOriginSchema>;
+
+export const traceContextSectionSchema = z.object({
+  key: z.string(),
+  layer: z.string(),
+  title: z.string(),
+  /** The resolver's own written explanation for in/out. Never paraphrased. */
+  reason: z.string(),
+  tokens: z.number().int(),
+  included: z.boolean(),
+  tier: z.number().int().nullable(),
+  mode: z.string().nullable(),
+  zoomScore: z.number().nullable(),
+  zoomRank: z.number().int().nullable(),
+  excerpt: z.string(),
+  href: z.string().nullable(),
+});
+export type TraceContextSection = z.infer<typeof traceContextSectionSchema>;
+
+export const tracePlanSchema = z.object({
+  campaignId: z.string(),
+  campaignName: z.string(),
+  objective: z.string(),
+  kpi: z.string().nullable(),
+  pillars: z.array(z.string()),
+  /**
+   * The pillar whose wording is closest to the artifact (D-71.4). A match, not
+   * a recorded intent — the UI must say so.
+   */
+  closestPillar: z.string().nullable(),
+  href: z.string(),
+});
+export type TracePlan = z.infer<typeof tracePlanSchema>;
+
+export const traceExampleSchema = z.object({
+  kind: z.enum(["approved", "rejected"]),
+  label: z.string(),
+  excerpt: z.string(),
+  /** Why it was rejected, when a reason was ever written down. */
+  why: z.string().nullable(),
+  href: z.string().nullable(),
+});
+export type TraceExample = z.infer<typeof traceExampleSchema>;
+
+export const tracePreferenceSchema = z.object({
+  /** Null when the rule text no longer matches a live rule (it was retired). */
+  ruleId: z.string().nullable(),
+  rule: z.string(),
+  polarity: z.enum(PREFERENCE_POLARITIES),
+  confidence: z.number().int().nullable(),
+  href: z.string(),
+});
+export type TracePreference = z.infer<typeof tracePreferenceSchema>;
+
+export const traceCriticSchema = z.object({
+  score: z.number().int().nullable(),
+  findings: z.array(z.object({ issue: z.string(), citation: z.string() })),
+  /** How many critique passes ran before the draft cleared the threshold. */
+  iterations: z.number().int(),
+  source: z.enum(["engine", "legacy"]),
+  href: z.string().nullable(),
+});
+export type TraceCritic = z.infer<typeof traceCriticSchema>;
+
+export const traceRevisionSchema = z.object({
+  id: z.string(),
+  instruction: z.string(),
+  status: z.string(),
+  at: z.number().int(),
+  /** 0-1 normalized edit distance between the turn's input and its result. */
+  changedShare: z.number().nullable(),
+  model: z.string().nullable(),
+  provider: z.string().nullable(),
+});
+export type TraceRevision = z.infer<typeof traceRevisionSchema>;
+
+export const traceCostSchema = z.object({
+  inputTokens: z.number().int(),
+  outputTokens: z.number().int(),
+  costCents: z.number(),
+  model: z.string(),
+  provider: z.string(),
+  durationMs: z.number().int().nullable(),
+  /**
+   * True when no metered ledger row exists and the cost was priced from the
+   * model plus an estimated token count. The panel must show the difference.
+   */
+  estimated: z.boolean(),
+  href: z.string(),
+});
+export type TraceCost = z.infer<typeof traceCostSchema>;
+
+export const traceKnobSchema = z.object({
+  key: z.enum(CONTEXT_KNOB_KEYS),
+  label: z.string(),
+  question: z.string(),
+  state: z.enum(TRACE_KNOB_STATES),
+  detail: z.string(),
+  href: z.string(),
+});
+export type TraceKnob = z.infer<typeof traceKnobSchema>;
+
+export const artifactTraceSchema = z.object({
+  subject: z.object({
+    kind: z.enum(TRACE_SUBJECT_KINDS),
+    id: z.string(),
+    title: z.string(),
+    state: z.string(),
+    href: z.string(),
+    createdAt: z.number().int(),
+  }),
+  origin: traceOriginSchema.nullable(),
+  plan: tracePlanSchema.nullable(),
+  context: z.array(traceContextSectionSchema),
+  /**
+   * Why `context` is empty, when it is — a draft that predates trace capture
+   * and a budget change that was never generated are different absences, and a
+   * blank panel cannot tell them apart (D-71.3).
+   */
+  contextReason: z.string().nullable(),
+  examples: z.array(traceExampleSchema),
+  preferences: z.array(tracePreferenceSchema),
+  critic: traceCriticSchema.nullable(),
+  revisions: z.array(traceRevisionSchema),
+  cost: traceCostSchema.nullable(),
+  knobs: z.array(traceKnobSchema),
+  generatedAt: z.number().int(),
+});
+export type ArtifactTrace = z.infer<typeof artifactTraceSchema>;
+
+export const knobUsageSchema = z.object({
+  key: z.enum(CONTEXT_KNOB_KEYS),
+  label: z.string(),
+  question: z.string(),
+  href: z.string(),
+  configured: z.boolean(),
+  /** Rows the workspace has set for this knob (0 for always-on knobs). */
+  configuredCount: z.number().int(),
+  lastConfiguredAt: z.number().int().nullable(),
+  /** Sampled resolves this knob demonstrably shaped. */
+  appliedResolves: z.number().int(),
+  /** 0-1 over `sampledResolves`, not over all history (D-71.7). */
+  appliedShare: z.number(),
+});
+export type KnobUsage = z.infer<typeof knobUsageSchema>;
+
+export const knobUsageReportSchema = z.object({
+  knobs: z.array(knobUsageSchema),
+  /** The denominator behind every `appliedShare`. Shown, never implied. */
+  sampledResolves: z.number().int(),
+  sampleLimit: z.number().int(),
+  generatedAt: z.number().int(),
+});
+export type KnobUsageReport = z.infer<typeof knobUsageReportSchema>;

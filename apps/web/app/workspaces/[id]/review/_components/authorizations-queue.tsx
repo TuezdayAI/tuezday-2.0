@@ -16,6 +16,7 @@ import {
   type ExternalActionStatus,
 } from "@tuezday/contracts";
 import { API_URL, apiFetch } from "@/lib/api";
+import { WhyThisPanel } from "@/components/why-this-panel";
 import {
   SELECTED_AUTHORIZATION_LIMIT,
   authorizationBatchSummary,
@@ -631,6 +632,8 @@ export function AuthorizationsQueue({
 
               <h3>Exact content</h3>
               <pre className="output-text">{selected.subject.summary}</pre>
+
+              <WhyThisPanel workspaceId={id} kind="external_action" subjectId={selected.id} />
 
               <section aria-label="Policy" className={styles.region}>
                 <h3>Policy</h3>

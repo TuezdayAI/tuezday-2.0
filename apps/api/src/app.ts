@@ -79,6 +79,7 @@ import { registerTrackingRoutes } from "./routes/tracking";
 import { registerPrRoutes } from "./routes/pr";
 import { registerPriorityRoutes } from "./routes/priorities";
 import { registerQuestionRoutes } from "./routes/questions";
+import { registerTraceRoutes } from "./routes/trace";
 import { registerPublicationRoutes } from "./routes/publications";
 import { registerGenerationRoutes } from "./routes/generations";
 import { registerPersonaRoutes } from "./routes/personas";
@@ -367,6 +368,7 @@ export async function buildApp({
       questions: agentQuestions,
     },
   });
+  registerTraceRoutes(app, db);
   registerEvalRoutes(app, db, { llm, evidence, safeFetch: guardedFetch });
   registerPreferenceRoutes(app, db, { llm });
   registerCampaignRoutes(app, db);

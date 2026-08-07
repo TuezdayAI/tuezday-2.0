@@ -7,6 +7,7 @@ import { Card, CardHeader } from "@/src/components/ui/card";
 import { Badge, CountBadge } from "@/src/components/ui/badge";
 import { Icon } from "@/src/components/ui/icon";
 import { PreviewCard } from "@/src/components/ui/preview-card";
+import { WhyThisPanel } from "@/components/why-this-panel";
 import type { BrandName } from "@/src/components/ui/brand-icons";
 import { Input, Textarea, Select } from "@/src/components/ui/input";
 import styles from "./content.module.css";
@@ -758,6 +759,7 @@ export default function ContentPage() {
                     </>
                   }
                 />
+                <WhyThisPanel workspaceId={id} kind="publication" subjectId={p.id} />
                 <div className={styles.pubMeta}>
                   {p.status === "published" && p.externalUrl && (
                     <>
