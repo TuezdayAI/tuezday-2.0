@@ -97,6 +97,7 @@ import { createExternalActionAdapters } from "./services/external-action-adapter
 import { createExternalActionRuntime } from "./services/external-action-coordinator";
 import { repairDanglingDuplicateGroups } from "./services/discovery-dedupe";
 import type { DiscoveryOperatorEvent } from "./services/discovery-scheduler";
+import { resolveCorsOrigin } from "./runtime/cors-origin";
 import {
   DEFAULT_DISCOVERY_POLICY,
   type DiscoveryOperatorPolicy,
@@ -165,6 +166,8 @@ export interface BuildAppOptions {
   operatorLog?: (event: DiscoveryOperatorEvent) => void;
   /** Process shutdown signal; tests may inject one directly. */
   shutdownSignal?: AbortSignal;
+  /** Allowed browser origins; defaults from WEB_ORIGIN, `true` reflects any origin (dev). */
+  corsOrigin?: true | string[];
 }
 
 export async function buildApp({
@@ -189,6 +192,7 @@ export async function buildApp({
   instanceId = `${process.env.HOSTNAME?.trim() || hostname()}:${randomUUID()}`,
   operatorLog = logDiscoveryOperatorEvent,
   shutdownSignal,
+  corsOrigin = resolveCorsOrigin(),
 }: BuildAppOptions): Promise<TuezdayApp> {
   assertProviderConfiguration();
   const guardedFetch =
@@ -240,9 +244,11 @@ export async function buildApp({
   });
 
   // @fastify/cors only allows GET/HEAD/POST by default — the brain editor
-  // saves with PUT, and later slices use PATCH/DELETE.
+  // saves with PUT, and later slices use PATCH/DELETE. origin defaults to
+  // WEB_ORIGIN's allowlist (see resolveCorsOrigin); unset, it reflects any
+  // origin, matching this app's behavior before the allowlist existed.
   await app.register(cors, {
-    origin: true,
+    origin: corsOrigin,
     methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   });
 
