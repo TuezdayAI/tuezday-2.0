@@ -22,15 +22,6 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
   starts timing out.
 - **Origin:** Sprint 26.
 
-### 3. Instagram video/reel finalize uses a bounded in-request poll, not async worker finalize
-- **What we shipped (Sprint 26):** `InstagramAdapter` publishes images and carousels synchronously;
-  for a video/reel it polls the container `status_code` a bounded number of times, then errors with
-  "still processing — retry" (the existing publication **retry** route finishes it). No fake success.
-- **The better version:** A worker-driven async finalize — create the container, return immediately,
-  and let the worker poll + publish when the reel is ready (the same scheduled-publication machinery).
-- **Trigger to revisit:** When founders publish reels regularly and the retry step becomes annoying.
-- **Origin:** Sprint 26.
-
 ### 4. Cadence fill is synchronous on a worker tick
 - **What we shipped (Sprint 27):** Each fill creates scheduled `publication` rows inline (one round
   trip per draft), bounded to a 14-day horizon and run every few minutes by the worker. Fine for modest
@@ -38,22 +29,6 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
 - **The better version:** Run fill on a dedicated scheduler with sub-minute precision and back-pressure
   for large fan-out.
 - **Trigger to revisit:** Large cadence fan-out or a need for sub-minute precision.
-- **Origin:** Sprint 27.
-
-### 5. DST-gap wall-clock times resolve to the adjacent valid instant
-- **What we shipped (Sprint 27):** The slot math handles normal DST transitions, but the ~1 hour per
-  year that *doesn't exist* locally (spring-forward gap) is mapped to the nearest valid instant rather
-  than skipped or flagged. Acceptable for a posting scheduler.
-- **The better version:** A library-backed implementation that surfaces the ambiguity.
-- **Trigger to revisit:** If a customer reports a mis-fired post around a DST boundary.
-- **Origin:** Sprint 27.
-
-### 6. Cadence doesn't pre-validate posts at fill time
-- **What we shipped (Sprint 27):** Fill derives a title from the draft's first line (covers Reddit's
-  title requirement) but doesn't run `validateSocialPost` before scheduling — an invalid post fails its
-  receipt at fire time with the platform error (the existing failed-receipt + retry path).
-- **The better version:** A pre-flight check that warns before the slot fires.
-- **Trigger to revisit:** When fire-time failures on auto-slotted posts become noisy.
 - **Origin:** Sprint 27.
 
 ### 7. Mailer is fire-and-log behind the interface
@@ -72,21 +47,6 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
 - **The better version:** Enqueue generation on a worker queue with back-pressure and progress, so a
   burst of signals across many campaigns doesn't block a single request.
 - **Trigger to revisit:** When automated campaigns × channels × signal volume makes a run slow.
-- **Origin:** Sprint 28.
-
-### 9. Auto-post guardrail caps are per UTC day
-- **What we shipped (Sprint 28):** The per-connection and per-campaign daily caps count posts in the
-  UTC calendar day of each candidate slot, ignoring the cadence's own timezone.
-- **The better version:** A timezone-aware (per-account-local) daily window.
-- **Trigger to revisit:** If a customer's posting day spans a UTC boundary in a way that surprises them.
-- **Origin:** Sprint 28.
-
-### 10. Kill switch clears pending auto-posts on the next cadence tick, not instantly
-- **What we shipped (Sprint 28):** Turning the kill switch on stops new auto-posting and cancels a
-  cadence's pending `scheduled` auto-posts the next time that cadence is filled (≤ the fill interval).
-- **The better version:** A check at the publish-fire path so a flipped kill switch halts a due
-  auto-post immediately, regardless of the fill cadence.
-- **Trigger to revisit:** If the few-minute lag between flipping the switch and a due post matters.
 - **Origin:** Sprint 28.
 
 ### 12. Inbox polls synchronously on a worker tick
@@ -139,14 +99,6 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
   recipient becomes painful — build inbound-mail ingest as its own slice, then flip email stop-on-reply
   to automatic.
 - **Origin:** Sprint 29 (gap); Sprint 30 (manual stop shipped on top of it).
-
-### 17. Per-connection reply cap counts replies + publications together per UTC day
-- **What we shipped (Sprint 29):** The per-connection daily cap on auto-replies counts posted replies
-  **plus** publications on that connection in the UTC calendar day — a coarse account-level safety net.
-- **The better version:** A timezone-aware budget that distinguishes action types (posts vs replies).
-- **Trigger to revisit:** If replies and posts need separate budgets, or the UTC boundary surprises a
-  customer (see also #9).
-- **Origin:** Sprint 29.
 
 ### 19. The sequence engine advances synchronously on the worker tick
 - **What we shipped (Sprint 30):** `runSequences` walks every active recipient inline on each
@@ -495,6 +447,80 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
   email; warmup, IP pools, and reputation arbitrage stay out of scope
   (`docs/deliverability-posture.md`, `oss-integration-recommendations.md` §11).
 - **Origin:** Sprint 26 (Targeted campaign launch).
+
+### 3. Instagram video/reel finalize uses a bounded in-request poll, not async worker finalize — **closed by Sprint 75**
+- **What we shipped (Sprint 26):** `InstagramAdapter` published images and carousels synchronously;
+  for a video/reel it polled container `status_code` inside the request and eventually asked the
+  founder to retry. It never claimed a pending video was live.
+- **The better version:** Create the provider container once, return a durable processing result,
+  and resume readiness/publish work from the background worker.
+- **Closed (Sprint 75, branch `sprint-75-renderer-operational-hardening`, 2026-08-07):** Social
+  publishing now has a tagged `published | processing` result. Instagram image-only posts remain
+  synchronous; video/reel containers return immediately and persist their operation id, next retry,
+  start time, and attempt count. The action runner resumes one status read per due tick, never
+  recreates the container, and keeps the governing action `dispatching` until `media_publish` and
+  permalink lookup succeed. Provider errors become durable failed receipts; no pending result is
+  reported as success.
+- **Origin:** Sprint 26.
+
+### 5. DST-gap wall-clock times resolve to the adjacent valid instant — **closed by Sprint 75**
+- **What we shipped (Sprint 27):** A nonexistent spring-forward wall clock could be shifted to an
+  adjacent valid instant, while fall-back ambiguity was not explicit.
+- **The better version:** Library-backed civil-time resolution that makes gaps and overlaps
+  deterministic and observable.
+- **Closed (Sprint 75, branch `sprint-75-renderer-operational-hardening`, 2026-08-07):** Temporal now
+  owns local-date and wall-clock resolution. A nonexistent time is skipped and returned as a
+  structured `nonexistent_local_time` issue; an overlap produces exactly one occurrence using the
+  earlier instant. The compatibility `slotsBetween` API remains, backed by the detailed resolver.
+- **Origin:** Sprint 27.
+
+### 6. Cadence doesn't pre-validate posts at fill time — **closed by Sprint 75**
+- **What we shipped (Sprint 27):** Cadence fill derived a title but could defer platform-shape
+  failures until fire time, aborting the fill when action preparation threw.
+- **The better version:** Run the canonical publication preparation before a slot is committed and
+  return actionable warnings without losing valid work behind a bad draft.
+- **Closed (Sprint 75, branch `sprint-75-renderer-operational-hardening`, 2026-08-07):** Every fill
+  candidate passes through `preparePublicationAction`. A bounded `publish_validation` issue consumes
+  only that candidate for the current pass; the next eligible draft is tried against the same slot.
+  No action or receipt is created for the invalid draft, and routes plus worker reporting preserve
+  the issue even when zero slots fill.
+- **Origin:** Sprint 27.
+
+### 9. Auto-post guardrail caps are per UTC day — **closed by Sprint 75**
+- **What we shipped (Sprint 28):** Per-connection and per-campaign post caps used UTC calendar-day
+  boundaries, which could split one destination account's working day.
+- **The better version:** Count against the destination account's IANA-timezone civil day.
+- **Closed (Sprint 75, branch `sprint-75-renderer-operational-hardening`, 2026-08-07):** Every social
+  connection carries an editable IANA timezone (existing rows default safely to `UTC`). Post,
+  campaign, reply, and X-DM guardrails derive the containing civil day through the shared Temporal
+  leaf. DST creates honest 23/25-hour windows, and the account—not the server or cadence—owns the
+  budget boundary.
+- **Origin:** Sprint 28.
+
+### 10. Kill switch clears pending auto-posts on the next cadence tick, not instantly — **closed by Sprint 75**
+- **What we shipped (Sprint 28):** The stop prevented new automation and cancelled queued cadence
+  work on the next fill, leaving a race if a due receipt reached the provider path first.
+- **The better version:** Re-check the switch at the last reversible point before provider I/O.
+- **Closed (Sprint 75, branch `sprint-75-renderer-operational-hardening`, 2026-08-07):** Publication
+  dispatch identifies automation from its durable external-action payload, with cadence/campaign
+  fallback for legacy receipts, and reloads settings immediately before calling the provider. A stop
+  returns stable `kill_switch_on`, leaves the receipt retryable instead of failed, and performs zero
+  provider calls. Lifting the switch publishes that same receipt once. Manual approved publishing is
+  unchanged.
+- **Origin:** Sprint 28.
+
+### 17. Per-connection reply cap counts replies + publications together per UTC day — **closed by Sprint 75**
+- **What we shipped (Sprint 29):** Automated replies shared the publication cap and both were counted
+  against a UTC day.
+- **The better version:** Separate post and reply budgets, both using the destination account's local
+  civil day.
+- **Closed (Sprint 75, branch `sprint-75-renderer-operational-hardening`, 2026-08-07):** Workspace
+  automation settings now persist an independent per-connection reply cap (safe default `10`), while
+  the original per-connection cap remains the post/DM budget. Reply guards use the destination
+  connection's IANA timezone and their own counter. Both controls are exposed in Automation, the
+  account timezone is editable in Integrations, and the agent guardrail tool reports the two budgets
+  separately.
+- **Origin:** Sprint 29.
 
 ### 11. No relevance triage — every signal fans out to every automated campaign's channels — **closed by Sprint 45**
 - **What we shipped (Sprint 28):** A new signal generates a draft for each channel of every active

@@ -14,6 +14,7 @@ The planning documents define what gets built and in what order — read the rel
 - `docs/plans/sprint-plan.md` — Sprints 1–20 execution plan
 - `docs/plans/sprint-guide-21-onward.md` — post-Sprint-20 roadmap (current sequencing source of truth)
 - `docs/specs/` — one written spec per slice, created before implementation
+- `docs/production-runbook.md` — operator reference: renderer deployment/failure modes, account-local posting budgets, the kill switch, and how a `processing` publication recovers
 
 ## Commands
 

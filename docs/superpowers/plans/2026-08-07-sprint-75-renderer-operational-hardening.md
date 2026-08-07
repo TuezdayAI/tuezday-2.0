@@ -349,7 +349,7 @@ Run: `npm test -- instagram publish external-action-publication external-actions
 
 Expected: PASS, including the acceptance sequence from create → processing → processing → published/succeeded.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add packages/contracts apps/api apps/worker
@@ -361,23 +361,28 @@ git commit -m "feat(instagram): finalize video publications asynchronously" -m "
 **Files:**
 - Modify: `docs/deferred-improvements.md`
 - Modify: `docs/specs/sprint-75-renderer-operational-hardening.md`
-- Modify: `docs/whats-actually-built.md`
+- Create: `docs/production-runbook.md`
+- Modify: `README.md`
 - Modify: `CLAUDE.md`
 
 **Interfaces:**
 - Produces: auditable closure of deferred #3/#5/#6/#9/#10/#17 and exact verification evidence.
 
-- [ ] **Step 1: Update operational documentation**
+> Deviation from the original plan: this baseline has no `docs/whats-actually-built.md`, so no
+> whole-product inventory was invented. The operator-facing record lives in a new
+> `docs/production-runbook.md`, linked from `README.md`.
+
+- [x] **Step 1: Update operational documentation**
 
 Move or annotate exactly the six closed deferred items, document renderer deployment/configuration, account timezone/budget semantics, processing status, and recovery behavior. Do not claim Sprint 73 or 74 work.
 
-- [ ] **Step 2: Run all targeted suites once more**
+- [x] **Step 2: Run all targeted suites once more**
 
 Run: `npm test -- renderer design-pipeline carousels ad-image civil-time cadences automation inbox launch-sequences publish connect-social external-action-publication external-actions`
 
 Expected: PASS.
 
-- [ ] **Step 3: Run full verification**
+- [x] **Step 3: Run full verification**
 
 Run: `npm run typecheck`
 
@@ -387,7 +392,7 @@ Run: `npm test`
 
 Expected: PASS across every project with zero failures.
 
-- [ ] **Step 4: Inspect the final diff and migration**
+- [x] **Step 4: Inspect the final diff and migration**
 
 Run: `git diff --check`
 
