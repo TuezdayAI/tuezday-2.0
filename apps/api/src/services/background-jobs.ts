@@ -73,6 +73,8 @@ export interface BackgroundQueueStats {
   deadLetter: number;
   cancelled: number;
   oldestRunnableAgeMs: number | null;
+  averageDurationMs: number | null;
+  saturatedWorkspaces: number;
   byKind: Record<BackgroundJobKind, number>;
 }
 
@@ -555,8 +557,17 @@ export function listBackgroundJobs(
     .all();
 }
 
-export function getBackgroundQueueStats(db: Db): BackgroundQueueStats {
+export function getBackgroundQueueStats(
+  db: Db,
+  options: { perWorkspaceConcurrency?: number } = {},
+): BackgroundQueueStats {
   const now = databaseNowMs(db);
+  const perWorkspaceConcurrency = integerInRange(
+    options.perWorkspaceConcurrency ?? 1,
+    "perWorkspaceConcurrency",
+    1,
+    100,
+  );
   const aggregate = db.get<{
     total: number;
     queued: number;
@@ -567,6 +578,7 @@ export function getBackgroundQueueStats(db: Db): BackgroundQueueStats {
     dead_letter: number;
     cancelled: number;
     oldest_runnable_at: number | null;
+    average_duration_ms: number | null;
   }>(sql`
     SELECT
       COUNT(*) AS total,
@@ -577,8 +589,22 @@ export function getBackgroundQueueStats(db: Db): BackgroundQueueStats {
       SUM(CASE WHEN status = 'succeeded' THEN 1 ELSE 0 END) AS succeeded,
       SUM(CASE WHEN status = 'dead_letter' THEN 1 ELSE 0 END) AS dead_letter,
       SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled,
-      MIN(CASE WHEN status = 'queued' AND available_at <= ${now} THEN created_at END) AS oldest_runnable_at
+      MIN(CASE WHEN status = 'queued' AND available_at <= ${now} THEN created_at END) AS oldest_runnable_at,
+      AVG(CASE
+        WHEN started_at IS NOT NULL AND finished_at IS NOT NULL
+        THEN finished_at - started_at
+      END) AS average_duration_ms
     FROM background_jobs
+  `);
+  const saturation = db.get<{ count: number }>(sql`
+    SELECT COUNT(*) AS count
+    FROM (
+      SELECT workspace_id
+      FROM background_jobs
+      WHERE status = 'running'
+      GROUP BY workspace_id
+      HAVING COUNT(*) >= ${perWorkspaceConcurrency}
+    ) AS saturated
   `);
   const byKind = Object.fromEntries(
     BACKGROUND_JOB_KINDS.map((kind) => [kind, 0]),
@@ -603,6 +629,8 @@ export function getBackgroundQueueStats(db: Db): BackgroundQueueStats {
     deadLetter: aggregate?.dead_letter ?? 0,
     cancelled: aggregate?.cancelled ?? 0,
     oldestRunnableAgeMs: oldest === null ? null : Math.max(0, now - oldest),
+    averageDurationMs: aggregate?.average_duration_ms ?? null,
+    saturatedWorkspaces: saturation?.count ?? 0,
     byKind,
   };
 }

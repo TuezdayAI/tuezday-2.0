@@ -264,11 +264,32 @@ describe("durable background job repository", () => {
     expect(listBackgroundJobs(db, { kind: otherKind, limit: 10 })).toHaveLength(1);
     expect(() => listBackgroundJobs(db, { limit: 0 })).toThrow("limit");
 
-    const stats = getBackgroundQueueStats(db);
+    const stats = getBackgroundQueueStats(db, { perWorkspaceConcurrency: 1 });
     expect(stats.total).toBe(2);
     expect(stats.running).toBe(1);
     expect(stats.queued).toBe(1);
+    expect(stats.saturatedWorkspaces).toBe(1);
+    expect(stats.averageDurationMs).toBeNull();
     expect(stats.byKind.ads + stats.byKind.evidence).toBe(2);
+  });
+
+  it("reports terminal execution duration without counting queued time", () => {
+    const queued = enqueue(WORKSPACE_A, "duration", { kind: "evidence" });
+    const [claim] = claimBackgroundJobs(db, {
+      owner: "worker-a",
+      leaseMs: 30_000,
+      limit: 1,
+      perWorkspaceLimit: 1,
+    });
+    db.update(backgroundJobs)
+      .set({ startedAt: sql`${backgroundJobs.startedAt} - 25` })
+      .where(eq(backgroundJobs.id, queued.id))
+      .run();
+    expect(completeBackgroundJob(db, claim!, { ok: true })).toBe(true);
+
+    const stats = getBackgroundQueueStats(db, { perWorkspaceConcurrency: 1 });
+    expect(stats.averageDurationMs).toBeGreaterThanOrEqual(25);
+    expect(stats.saturatedWorkspaces).toBe(0);
   });
 
   it("cascades queue history when its workspace is deleted", () => {

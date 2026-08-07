@@ -115,6 +115,10 @@ describe("internal background job routes", () => {
     });
     expect(stats.statusCode, stats.body).toBe(200);
     expect(stats.json().total).toBe(13);
+    expect(stats.json()).toMatchObject({
+      averageDurationMs: expect.anything(),
+      saturatedWorkspaces: expect.any(Number),
+    });
   });
 
   it("requeues only dead-letter work and preserves its history", async () => {

@@ -11,17 +11,6 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
 
 ## Open
 
-### 2. Launch generation is synchronous (one LLM call per recipient, inline)
-- **What we shipped (Sprint 26):** `generateLaunch` loops the audience and calls the LLM once per
-  recipient (email + X DM) plus once per broadcast channel, all inside the request — the same shape
-  the Sprint 11 outbound drafter uses. Fine for modest segments; a large audience makes the
-  `/generate` call slow.
-- **The better version:** Enqueue generation on `apps/worker` (the system actor already calls the API
-  cross-workspace) and stream/poll progress; the launch sits in `generating` until done.
-- **Trigger to revisit:** When a real launch targets more than a few dozen recipients, or `/generate`
-  starts timing out.
-- **Origin:** Sprint 26.
-
 ### 3. Instagram video/reel finalize uses a bounded in-request poll, not async worker finalize
 - **What we shipped (Sprint 26):** `InstagramAdapter` publishes images and carousels synchronously;
   for a video/reel it polls the container `status_code` a bounded number of times, then errors with
@@ -439,6 +428,24 @@ Each entry: **what we shipped** · **the better version** · **trigger to revisi
 ---
 
 ## Done (upgraded)
+
+### 2. Launch generation is synchronous (one LLM call per recipient, inline) — **closed by Sprint 73**
+- **What we shipped (Sprint 26):** `generateLaunch` looped the audience and called the LLM once per
+  recipient (email + X DM) plus once per broadcast channel, all inside the request. Fine for modest
+  segments; a large audience made the `/generate` call slow.
+- **Closed (Sprint 73, branch `sprint-73-durable-queue`, 2026-08-07):**
+  `POST .../launches/:launchId/generate` performs zero LLM calls. It validates
+  the launch, moves it to `generating`, and transactionally enqueues one
+  durable `launch_generate` job, returning `202` with `{ launch, jobId }`. The
+  queued job executes the generation off the request path: deterministic
+  per-launch/channel/recipient unit keys let a reclaimed attempt skip units
+  that already persisted, so a crash mid-generation resumes without duplicate
+  drafts or messages, and the launch only reaches `ready` once every required
+  unit is terminal. A second generate request while one is active is rejected.
+  The launch detail screen shows queued/generating state immediately and polls
+  until ready; retries, backoff, and dead letters are visible through the queue
+  operator endpoints.
+- **Origin:** Sprint 26.
 
 ### 4. Cadence fill is synchronous on a worker tick — **closed by Sprint 73**
 - **What we shipped (Sprint 27):** Workspace cadence fill ran inline through a

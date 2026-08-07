@@ -115,7 +115,8 @@ curl -fsS -X POST -H "Authorization: Bearer $TUEZDAY_WORKER_TOKEN" \
 
 Requeue preserves the dead-letter row and creates a fresh active job with the
 same tenant-scoped idempotency key. Watch `runnable`, `retrying`, `running`,
-`deadLetter`, `oldestRunnableAgeMs`, and `byKind` during rollout. Alert on a
+`deadLetter`, `oldestRunnableAgeMs`, `averageDurationMs`,
+`saturatedWorkspaces`, and `byKind` during rollout. Alert on a
 steadily growing runnable depth/age, non-zero dead-letter growth, repeated
 `lost` transitions, or absent `background_jobs_tick` worker events. Roll back
 the worker and API together; the database rows are forward-compatible and no

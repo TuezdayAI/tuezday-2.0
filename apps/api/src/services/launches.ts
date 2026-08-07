@@ -309,6 +309,14 @@ export type EnqueueLaunchGenerationResult =
   | { ok: false; error: "launch_not_found" | "not_draft" | "audience_not_found" | "is_sequence" };
 
 /** Validate and admit launch generation without doing any LLM work. */
+/**
+ * Someone is waiting on this one. Recurring scans are admitted at the default
+ * priority, and timestamps only resolve to the millisecond, so a launch queued
+ * just before a tick would otherwise be ordered against thirteen scans by a
+ * random uuid — and lose often enough to be noticed.
+ */
+const LAUNCH_GENERATION_PRIORITY = 10;
+
 export function enqueueLaunchGeneration(
   db: Db,
   workspaceId: string,
@@ -341,6 +349,7 @@ export function enqueueLaunchGeneration(
     const job = enqueueBackgroundJob(tx, {
       payload: { kind: "launch_generate", workspaceId, launchId, input, actor },
       idempotencyKey: `launch-generate:v1:${launchId}`,
+      priority: LAUNCH_GENERATION_PRIORITY,
     });
     return { ok: true, launch: rowToLaunch(generating, 0), jobId: job.id };
   });

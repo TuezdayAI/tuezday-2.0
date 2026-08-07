@@ -12,6 +12,10 @@ import {
 } from "../src/db/schema";
 import { DEFAULT_BACKGROUND_JOB_POLICY } from "../src/runtime/background-job-policy";
 import {
+  claimBackgroundJobs,
+  enqueueBackgroundJob,
+} from "../src/services/background-jobs";
+import {
   admitDueBackgroundSchedules,
   reconcileBackgroundSchedules,
 } from "../src/services/background-schedules";
@@ -123,6 +127,41 @@ describe("persisted background schedules", () => {
       .get()!;
     expect(advanced.nextRunAt).toBe(t0 + evidence.intervalMs * 5);
     expect(advanced.nextRunAt).toBeGreaterThan(now);
+  });
+
+  it("claims prioritised work ahead of scans admitted in the same millisecond", () => {
+    // Timestamps have millisecond resolution, so a job enqueued just before a
+    // tick admits the recurring scans leaves every row equally "old". The last
+    // tiebreaker is a random uuid, so priority is the only thing that can keep
+    // interactive work in front of the scans.
+    const launch = enqueueBackgroundJob(db, {
+      payload: {
+        kind: "launch_generate",
+        workspaceId: WORKSPACE_ID,
+        launchId: "44444444-4444-4444-8444-444444444444",
+        input: {},
+        actor: { userId: "55555555-5555-4555-8555-555555555555", label: "founder", human: true },
+      },
+      idempotencyKey: "launch-generate:v1:priority",
+      priority: 1,
+    });
+    reconcileBackgroundSchedules(db, DEFAULT_BACKGROUND_JOB_POLICY, t0);
+    admitDueBackgroundSchedules(db, t0);
+    // Collapse every admission onto one already-elapsed instant so that only
+    // priority can decide which job is claimed.
+    const collapsed = 1_700_000_000_000;
+    db.update(backgroundJobs)
+      .set({ availableAt: collapsed, createdAt: collapsed })
+      .run();
+
+    const [claim] = claimBackgroundJobs(db, {
+      owner: "worker-a",
+      leaseMs: 30_000,
+      limit: 1,
+      perWorkspaceLimit: 1,
+    });
+    expect(claim?.id).toBe(launch.id);
+    expect(claim?.kind).toBe("launch_generate");
   });
 
   it("cascades schedules when a workspace is deleted", () => {

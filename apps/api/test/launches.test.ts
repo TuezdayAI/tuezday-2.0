@@ -34,6 +34,7 @@ import type {
   OutboundEmailMessage,
   OutboundEmailProvider,
 } from "../src/outbound-email/provider";
+import { resumeLaunchGeneration } from "../src/services/launches";
 import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 const generatedMessage = () => ({
@@ -591,6 +592,10 @@ describe("targeted launch API", () => {
       actor: { label: "founder", human: true, userId: expect.any(String) },
     });
 
+    // Someone is waiting on this, so it must outrank the recurring scans a
+    // tick admits alongside it — timestamps alone tie at the millisecond.
+    expect(job.priority).toBeGreaterThan(0);
+
     const duplicate = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/launches/${launch.id}/generate`,
@@ -643,6 +648,63 @@ describe("targeted launch API", () => {
     expect(db.select().from(launchMessages).all()).toHaveLength(2);
     expect(db.select().from(drafts).all()).toHaveLength(2);
     expect(generateMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("refuses a forged job that carries another workspace's launch id", async () => {
+    const otherWorkspaceId = (
+      await app.inject({ method: "POST", url: "/workspaces", payload: { name: "Neighbour" } })
+    ).json().id;
+    const neighbourLead = (
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${otherWorkspaceId}/leads`,
+        payload: { name: "Mallory", email: "mallory@other.com", company: "Other", role: "VP" },
+      })
+    ).json().id;
+    const neighbourAudienceId = (
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${otherWorkspaceId}/audiences`,
+        payload: { name: "Neighbour targets", kind: "static" },
+      })
+    ).json().id;
+    await app.inject({
+      method: "POST",
+      url: `/workspaces/${otherWorkspaceId}/audiences/${neighbourAudienceId}/members`,
+      payload: { members: [{ type: "lead", id: neighbourLead }] },
+    });
+    const neighbourLaunch = (
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${otherWorkspaceId}/launches`,
+        payload: { name: "Neighbour launch", audienceId: neighbourAudienceId, channels: ["email"] },
+      })
+    ).json();
+
+    // A payload whose tenant is this workspace but whose target belongs to
+    // another one must not resolve, even though both ids are real.
+    await expect(
+      resumeLaunchGeneration(
+        db,
+        fakeLlm,
+        {} as never,
+        workspaceId,
+        neighbourLaunch.id,
+        {},
+        { userId: null, label: "forged", human: false },
+      ),
+    ).resolves.toEqual({ ok: false, error: "launch_not_found" });
+    expect(generateMock).not.toHaveBeenCalled();
+
+    const neighbourDetail = (
+      await app.inject({
+        method: "GET",
+        url: `/workspaces/${otherWorkspaceId}/launches/${neighbourLaunch.id}`,
+      })
+    ).json();
+    expect(neighbourDetail.launch.status).toBe("draft");
+    expect(neighbourDetail.launch.messageCount).toBe(0);
+    expect(db.select().from(launchMessages).all()).toHaveLength(0);
   });
 
   it("creates, generates, and shapes messages per channel", async () => {

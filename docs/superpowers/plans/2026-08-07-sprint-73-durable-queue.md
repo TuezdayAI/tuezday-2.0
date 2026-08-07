@@ -502,7 +502,7 @@ git commit -m "feat(worker): complete Sprint 73 durable queue cutover"
 **Interfaces:**
 - Produces verified branch handoff and completed TAP-32 child cards.
 
-- [ ] **Step 1: Audit spec coverage**
+- [x] **Step 1: Audit spec coverage**
 
 Check every requirement in
 `docs/superpowers/specs/2026-08-07-sprint-73-durable-queue-design.md` against a
@@ -510,10 +510,55 @@ test and implementation. Search for legacy worker loop names, old internal tick
 URLs, unbounded queue queries, unvalidated payload parsing, and unfenced job
 updates.
 
-- [ ] **Step 2: Fix each finding test-first**
+Findings:
+
+1. **Queue statistics were missing duration and saturation** (design §8). Added
+   `averageDurationMs` (terminal execution time only, never queued time) and
+   `saturatedWorkspaces` to `getBackgroundQueueStats`, plumbed the configured
+   per-workspace concurrency through the stats route, and documented both in
+   the README rollout list.
+2. **Deferred improvement #2 was never closed.** Task 7 Step 4 deferred it until
+   the launch event-job path existed, but Task 6 was committed after Task 7, so
+   the entry stayed under "Open" despite being delivered. Moved to Done.
+3. **No test covered design §11's forged-payload rule.** The fence itself was
+   correct — `resumeLaunchGeneration` resolves the launch through
+   `getLaunchRow(db, workspaceId, launchId)` — but nothing asserted it. Added a
+   regression test that a payload pairing this workspace with another
+   workspace's real launch id resolves to `launch_not_found` and performs no
+   generation.
+4. **Claim order was nondeterministic for user-initiated generation.** Claims
+   order by `priority DESC, availableAt ASC, createdAt ASC, id ASC`. Timestamps
+   resolve to the millisecond, so a launch enqueued just before a tick admitted
+   the thirteen recurring scans tied on every column except a random uuid. A
+   200-trial probe claimed a background scan ahead of the founder's launch in
+   roughly 5% of runs. `enqueueLaunchGeneration` now enqueues at priority 10;
+   the same probe is 200/200 after the change.
+5. **The stale worker-token assertion in `teams.test.ts`** still expected the
+   retired generic worker surface. Updated to assert the least-privilege
+   cutover: the worker may reach only the internal queue API.
+
+No legacy worker loop names, legacy internal tick URLs (outside tests asserting
+404), unbounded queue queries, or unfenced job updates remain.
+
+- [x] **Step 2: Fix each finding test-first**
 
 For every behavioral gap, add a focused failing test, witness the expected
 failure, implement the smallest correction, and rerun its neighboring suite.
+
+Finding 4 was witnessed red twice: first as an unclaimed job (the collapse
+instant sat in the future), then as a recurring scan winning the claim, before
+the priority change turned it green.
+
+**Test fixture prerequisite.** Finding 4 only became reproducible after the
+API test fixture stopped dominating wall-clock. `createTestDb()` ran all 80
+checked-in migrations per call — 1,308 times per suite at ~680ms each, roughly
+15 minutes of pure schema building — which both masked the race and timed out
+`drafts.test.ts`'s `beforeEach` against the 10s limit. `createTestDb()` now
+runs those same migrations once per worker process and clones the resulting
+schema (~15ms per database, verified copied not shared). The migrations are
+still executed on every run, so nothing is bypassed. This replaced an
+uncommitted `maxWorkers: 2` in `vitest.config.ts`, which was measured not to
+prevent the timeouts while costing ~21 minutes per run.
 
 - [ ] **Step 3: Run fresh final verification**
 
