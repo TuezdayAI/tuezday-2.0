@@ -5,7 +5,7 @@
  * so a deployment must opt in to locking the API down to specific origins.
  */
 export function resolveCorsOrigin(
-  env: Readonly<Record<string, string | undefined>> = process.env,
+  env: NodeJS.ProcessEnv = process.env,
 ): true | string[] {
   const raw = env.WEB_ORIGIN;
   if (!raw) return true;

@@ -1,3 +1,5 @@
+import { resolveCorsOrigin } from "./cors-origin";
+
 export interface ProductionEnvCheck {
   errors: string[];
   warnings: string[];
@@ -5,6 +7,28 @@ export interface ProductionEnvCheck {
 
 function isMissing(value: string | undefined): boolean {
   return value === undefined || value.trim().length === 0;
+}
+
+/** Origin strings must be exactly `scheme://host[:port]` — no path, query, or trailing slash. */
+function isValidOrigin(value: string): boolean {
+  try {
+    return new URL(value).origin === value;
+  } catch {
+    return false;
+  }
+}
+
+/** Pushes one warning naming every missing variable in a feature's group, or nothing if none are missing. */
+function warnMissingGroup(
+  warnings: string[],
+  env: NodeJS.ProcessEnv,
+  description: string,
+  names: readonly string[],
+): void {
+  const missing = names.filter((name) => isMissing(env[name]));
+  if (missing.length > 0) {
+    warnings.push(`${description} — missing ${missing.join(", ")}.`);
+  }
 }
 
 /**
@@ -15,7 +39,7 @@ function isMissing(value: string | undefined): boolean {
  * (boot proceeds, the feature stays inert) rather than errors (boot refused).
  */
 export function validateProductionEnv(
-  env: Readonly<Record<string, string | undefined>> = process.env,
+  env: NodeJS.ProcessEnv = process.env,
 ): ProductionEnvCheck {
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -25,10 +49,16 @@ export function validateProductionEnv(
   }
 
   // Must match createLlmGatewayFromEnv() in ../llm/index.ts: LLM_PROVIDER
-  // defaults to "gemini"; only "openrouter" requires OPENROUTER_API_KEY,
-  // every other value (including the default) requires GEMINI_API_KEY.
+  // defaults to "gemini"; any value other than exactly "gemini" or
+  // "openrouter" (case-sensitive) is rejected there with a thrown error, so
+  // it is rejected here too rather than falling through to the "gemini"
+  // credential check and passing validation only to crash moments later.
   const provider = env.LLM_PROVIDER?.trim() || "gemini";
-  if (provider === "openrouter") {
+  if (provider !== "gemini" && provider !== "openrouter") {
+    errors.push(
+      `LLM_PROVIDER "${provider}" is invalid — expected "gemini" or "openrouter".`,
+    );
+  } else if (provider === "openrouter") {
     if (isMissing(env.OPENROUTER_API_KEY)) {
       errors.push("OPENROUTER_API_KEY is not set.");
     }
@@ -42,29 +72,57 @@ export function validateProductionEnv(
   if (isMissing(env.APP_BASE_URL)) {
     errors.push("APP_BASE_URL is not set.");
   }
-
-  if (isMissing(env.RESEND_API_KEY)) {
-    warnings.push(
-      "RESEND_API_KEY is not set — outbound email sending is disabled.",
+  // A container must never fall back to a cwd-relative SQLite file — the
+  // cwd is an ephemeral layer, not the mounted volume path the comment in
+  // .env.example promises. See resolveDbFile in ./db-file.ts.
+  if (isMissing(env.TUEZDAY_DB)) {
+    errors.push(
+      "TUEZDAY_DB is not set — a container must not fall back to a cwd-relative database path.",
     );
   }
+
+  warnMissingGroup(
+    warnings,
+    env,
+    "Outbound email sending is disabled or will fail at send time",
+    ["RESEND_API_KEY", "MAIL_FROM", "EMAIL_UNSUBSCRIBE_SECRET"],
+  );
   if (isMissing(env.NANGO_SECRET_KEY)) {
     warnings.push("NANGO_SECRET_KEY is not set — OAuth connectors are disabled.");
   }
-  if (isMissing(env.STRIPE_SECRET_KEY)) {
-    warnings.push(
-      "STRIPE_SECRET_KEY is not set — billing and checkout are disabled.",
-    );
-  }
+  warnMissingGroup(
+    warnings,
+    env,
+    "Billing is disabled or checkout webhooks will be rejected",
+    ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"],
+  );
   if (isMissing(env.POSTHOG_API_KEY)) {
     warnings.push(
       "POSTHOG_API_KEY is not set — product analytics is disabled.",
     );
   }
-  if (isMissing(env.TELEGRAM_BOT_TOKEN)) {
+  warnMissingGroup(
+    warnings,
+    env,
+    "Mobile approvals and notifications are disabled or broken",
+    ["TELEGRAM_BOT_TOKEN", "NOTIFY_SIGNING_SECRET"],
+  );
+
+  // Closing the open CORS door is opt-in (resolveCorsOrigin's unset case
+  // preserves today's origin: true behavior on purpose) — but a production
+  // boot that never opts in gets no signal that the door is still open.
+  const corsOrigin = resolveCorsOrigin(env);
+  if (corsOrigin === true) {
     warnings.push(
-      "TELEGRAM_BOT_TOKEN is not set — mobile approvals and notifications are disabled.",
+      "WEB_ORIGIN is not set — the API accepts requests from any browser origin.",
     );
+  } else {
+    const invalid = corsOrigin.filter((origin) => !isValidOrigin(origin));
+    if (invalid.length > 0) {
+      warnings.push(
+        `WEB_ORIGIN has entries that are not valid origins (must be exactly scheme://host, e.g. https://app.example.com, with no path): ${invalid.join(", ")}.`,
+      );
+    }
   }
 
   return { errors, warnings };

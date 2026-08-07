@@ -7,7 +7,10 @@ import { DbEvidenceStore } from "./evidence/db-store";
 import { createLlmGatewayFromEnv } from "./llm";
 import { backfillCollections } from "./services/evidence";
 import { parseDiscoveryOperatorPolicy } from "./runtime/operator-policy";
+import { resolveDbFile } from "./runtime/db-file";
 import { resolveHost } from "./runtime/host";
+import { resolvePort } from "./runtime/port";
+import { createShutdownHandler } from "./runtime/shutdown";
 import { validateProductionEnv } from "./runtime/production-env";
 
 // Load a root .env (gitignored) so GEMINI_API_KEY etc. reach the dev server
@@ -26,8 +29,8 @@ if (fs.existsSync(envFile)) {
   }
 }
 
-const DB_FILE = process.env.TUEZDAY_DB ?? "tuezday.db";
-const PORT = Number(process.env.PORT ?? 3001);
+const DB_FILE = resolveDbFile(process.env);
+const PORT = resolvePort(process.env);
 const HOST = resolveHost(process.env);
 let operatorPolicy;
 try {
@@ -65,23 +68,15 @@ const app = await buildApp({ db, llm, evidence, operatorPolicy });
 // container stop is a forced kill that severs in-flight requests and orphans
 // the shared headless Chromium instance. app.close() fires app.ts's existing
 // preClose/onClose hooks, which already handle both — this just calls it.
-let shuttingDown = false;
-async function shutdown(signal: NodeJS.Signals): Promise<void> {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  console.log(`Tuezday API: received ${signal}, shutting down...`);
-  try {
-    await app.close();
-    console.log("Tuezday API: shutdown complete.");
-    process.exit(0);
-  } catch (error) {
-    console.error(
-      "Tuezday API: error during shutdown —",
-      error instanceof Error ? error.message : error,
-    );
-    process.exit(1);
-  }
-}
+const shutdown = createShutdownHandler({
+  close: () => app.close(),
+  log: (message) => console.log(message),
+  logError: (message, error) =>
+    console.error(message, error instanceof Error ? error.message : error),
+  exit: (code) => {
+    process.exitCode = code;
+  },
+});
 process.once("SIGINT", () => void shutdown("SIGINT"));
 process.once("SIGTERM", () => void shutdown("SIGTERM"));
 
