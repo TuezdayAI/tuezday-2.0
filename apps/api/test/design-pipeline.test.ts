@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { createDb, type Db } from "../src/db";
+import { type Db } from "../src/db";
 import { createWorkspace } from "../src/services/workspaces";
 import { ensureDefaultDesignSystem } from "../src/services/design-systems";
 import {
@@ -10,6 +10,7 @@ import {
 } from "../src/design/provider";
 import { OpenDesignProvider } from "../src/design/open-design";
 import { S3AssetStorage, StorageError } from "../src/design/storage";
+import { createTestDb } from "./helpers";
 import { escapeHtml, renderSlide, substituteTemplate } from "../src/design/render";
 import { designSystemFingerprint, getOrAuthorTemplate } from "../src/design/templates";
 
@@ -35,7 +36,7 @@ describe("design pipeline (Sprint 41 Part 3)", () => {
   let designSystemId: string;
 
   beforeEach(() => {
-    db = createDb(":memory:");
+    db = createTestDb();
     workspaceId = createWorkspace(db, { name: "Design Co" }).id;
     designSystemId = ensureDefaultDesignSystem(db, workspaceId).id;
   });

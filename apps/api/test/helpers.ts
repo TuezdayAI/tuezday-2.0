@@ -5,12 +5,37 @@ import {
   type ExternalActionPolicyRule,
   type ExternalActionPolicyScope,
 } from "@tuezday/contracts";
+import Database from "better-sqlite3";
+import { drizzle } from "drizzle-orm/better-sqlite3";
+import { migrate } from "drizzle-orm/better-sqlite3/migrator";
 import { buildApp, type BuildAppOptions, type TuezdayApp } from "../src/app";
-import { createDb, type Db } from "../src/db";
+import { migrationsFolder, schema, type Db } from "../src/db";
+
+/**
+ * A schema template built by running the real checked-in migrations once per
+ * worker process. Restoring a database from it costs a memory copy instead of
+ * ~80 migration statements, which is the difference between a test fixture
+ * that takes ~700ms and one that takes ~15ms. The migrations are still
+ * executed on every run — just once rather than once per test.
+ */
+let schemaTemplate: Buffer | undefined;
+
+function buildSchemaTemplate(): Buffer {
+  const seed = new Database(":memory:");
+  seed.pragma("foreign_keys = ON");
+  migrate(drizzle(seed, { schema }), { migrationsFolder });
+  const snapshot = seed.serialize();
+  seed.close();
+  return snapshot;
+}
 
 /** Fresh in-memory database with all checked-in migrations applied. */
 export function createTestDb(): Db {
-  return createDb(":memory:");
+  schemaTemplate ??= buildSchemaTemplate();
+  const sqlite = new Database(schemaTemplate);
+  // A connection pragma, not part of the serialized file — set it every time.
+  sqlite.pragma("foreign_keys = ON");
+  return drizzle(sqlite, { schema });
 }
 
 export interface TestUser {
