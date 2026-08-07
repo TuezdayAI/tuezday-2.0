@@ -13,6 +13,8 @@ import type {
 import { createDb, type Db } from "../src/db";
 import {
   approvalDecisions,
+  backgroundJobs,
+  backgroundSchedules,
   campaigns,
   connections,
   discoveredItemMatches,
@@ -30,6 +32,9 @@ import {
 } from "../src/evidence/db-store";
 import type { LlmGateway } from "../src/llm/gateway";
 import type { DiscoveryOperatorPolicy } from "../src/runtime/operator-policy";
+import { DEFAULT_BACKGROUND_JOB_POLICY } from "../src/runtime/background-job-policy";
+import { enqueueBackgroundJob } from "../src/services/background-jobs";
+import { reconcileBackgroundSchedules } from "../src/services/background-schedules";
 import { asUser, registerUser } from "./helpers";
 
 const WORKER_TOKEN = "sprint-49-acceptance-worker-token";
@@ -61,6 +66,12 @@ const acceptancePolicy: DiscoveryOperatorPolicy = {
   packageTimeoutMs: 120_000,
   maxDeliverablesPerTick: 10,
   variantTimeoutMs: 60_000,
+};
+
+const queuePolicy = {
+  ...DEFAULT_BACKGROUND_JOB_POLICY,
+  batchSize: 1,
+  perWorkspaceConcurrency: 1,
 };
 
 interface ProviderStats {
@@ -260,6 +271,7 @@ describe("Sprint 49 founder acceptance", () => {
           }),
           workerToken: WORKER_TOKEN,
           operatorPolicy: acceptancePolicy,
+          backgroundJobPolicy: queuePolicy,
           instanceId: "api-a",
         });
         const user = await registerUser(
@@ -374,9 +386,19 @@ describe("Sprint 49 founder acceptance", () => {
         expect(sourceResponse.statusCode, sourceResponse.body).toBe(201);
         const sourceId = sourceResponse.json().id as string;
 
+        reconcileBackgroundSchedules(dbA, queuePolicy);
+        dbA.update(backgroundSchedules)
+          .set({ nextRunAt: Date.now() + 86_400_000 })
+          .run();
+        enqueueBackgroundJob(dbA, {
+          payload: { kind: "discovery", workspaceId },
+          idempotencyKey: "sprint49:first-discovery",
+          priority: 100,
+        });
+
         firstTick = appA.inject({
           method: "POST",
-          url: "/internal/discovery/tick",
+          url: "/internal/background-jobs/tick",
           payload: {},
           headers: { authorization: `Bearer ${WORKER_TOKEN}` },
         });
@@ -410,6 +432,15 @@ describe("Sprint 49 founder acceptance", () => {
           .set({ expiresAt: 0 })
           .where(eq(taskLeases.key, "discovery:scheduler"))
           .run();
+        dbA.update(backgroundJobs)
+          .set({ leaseExpiresAt: 0 })
+          .where(
+            and(
+              eq(backgroundJobs.kind, "discovery"),
+              eq(backgroundJobs.status, "running"),
+            ),
+          )
+          .run();
 
         dbB = createDb(databaseFile);
         appB = await buildApp({
@@ -425,12 +456,13 @@ describe("Sprint 49 founder acceptance", () => {
           }),
           workerToken: WORKER_TOKEN,
           operatorPolicy: acceptancePolicy,
+          backgroundJobPolicy: queuePolicy,
           instanceId: "api-b",
         });
         const userB = asUser(appB, user.token);
         restartedTick = appB.inject({
           method: "POST",
-          url: "/internal/discovery/tick",
+          url: "/internal/background-jobs/tick",
           payload: {},
           headers: { authorization: `Bearer ${WORKER_TOKEN}` },
         });
@@ -446,14 +478,14 @@ describe("Sprint 49 founder acceptance", () => {
         const providerCallsAtOverlap = stats.tweetPages.length;
         const overlappingTick = await appB.inject({
           method: "POST",
-          url: "/internal/discovery/tick",
+          url: "/internal/background-jobs/tick",
           payload: {},
           headers: { authorization: `Bearer ${WORKER_TOKEN}` },
         });
         expect(overlappingTick.statusCode, overlappingTick.body).toBe(200);
         expect(overlappingTick.json()).toMatchObject({
-          busy: true,
-          processed: 0,
+          busy: false,
+          claimed: 0,
         });
         expect(stats.tweetPages).toHaveLength(providerCallsAtOverlap);
         releaseRestartedProvider.resolve(undefined);
@@ -481,16 +513,17 @@ describe("Sprint 49 founder acceptance", () => {
         expect(restartedResponse.statusCode, restartedResponse.body).toBe(200);
         expect(restartedResponse.json()).toMatchObject({
           busy: false,
-          processed: 1,
-          scored: 6,
+          claimed: 1,
+          succeeded: 1,
         });
 
         releaseFirstProvider.resolve(undefined);
         const staleResponse = await firstTick;
         expect(staleResponse.statusCode, staleResponse.body).toBe(200);
-        expect(staleResponse.json().sources[0]).toMatchObject({
-          sourceId,
-          error: "lease_lost",
+        expect(staleResponse.json()).toMatchObject({
+          claimed: 1,
+          succeeded: 0,
+          lost: 1,
         });
 
         const occurrences = dbB
@@ -575,9 +608,14 @@ describe("Sprint 49 founder acceptance", () => {
           .all();
         expect(copiedMatches).toEqual(itemMatchesBeforeAccept);
 
+        enqueueBackgroundJob(dbB, {
+          payload: { kind: "automation", workspaceId },
+          idempotencyKey: "sprint49:automation",
+          priority: 100,
+        });
         automationTick = appB.inject({
           method: "POST",
-          url: "/internal/automation/tick",
+          url: "/internal/background-jobs/tick",
           payload: {},
           headers: { authorization: `Bearer ${WORKER_TOKEN}` },
         });
@@ -596,7 +634,8 @@ describe("Sprint 49 founder acceptance", () => {
         );
         expect(automationResponse.json()).toMatchObject({
           busy: false,
-          processed: 1,
+          claimed: 1,
+          succeeded: 1,
         });
 
         const automaticDrafts = dbB

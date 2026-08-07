@@ -540,6 +540,41 @@
       "when": 1786008449993,
       "tag": "0076_sprint_70_agent_inbox",
       "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "6",
+      "when": 1786039237296,
+      "tag": "0077_sprint_76_chat_foundations",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "6",
+      "when": 1786043257293,
+      "tag": "0078_sprint_78_chat_that_acts",
+      "breakpoints": true
+    },
+    {
+      "idx": 79,
+      "version": "6",
+      "when": 1786051422986,
+      "tag": "0079_sprint_73_durable_queue",
+      "breakpoints": true
+    },
+    {
+      "idx": 80,
+      "version": "6",
+      "when": 1786128248786,
+      "tag": "0080_sprint_75_operational_hardening",
+      "breakpoints": true
+    },
+    {
+      "idx": 81,
+      "version": "6",
+      "when": 1786128947766,
+      "tag": "0081_sprint_77_generative_ui",
+      "breakpoints": true
     }
   ]
 }

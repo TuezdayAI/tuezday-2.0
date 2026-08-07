@@ -303,11 +303,11 @@ describe("teams API", () => {
   });
 
   describe("worker service token", () => {
-    it("lists workspaces but cannot read workspace product data", async () => {
+    it("cannot enumerate workspaces or read workspace product data", async () => {
       const workerApp = asUser(app, "worker-secret");
       const all = await workerApp.inject({ method: "GET", url: "/workspaces" });
-      expect(all.statusCode).toBe(200);
-      expect(all.json().map((w: { id: string }) => w.id)).toContain(workspaceId);
+      expect(all.statusCode).toBe(403);
+      expect(all.json()).toEqual({ error: "forbidden" });
       const brain = await workerApp.inject({
         method: "GET",
         url: `/workspaces/${workspaceId}/brain`,

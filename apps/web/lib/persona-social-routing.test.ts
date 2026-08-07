@@ -19,6 +19,7 @@ function connection(overrides: Partial<Connection>): Connection {
     nangoConnectionId: "nango",
     config: {},
     displayName: "LinkedIn",
+    timezone: "UTC",
     externalAccountId: null,
     externalAccountName: null,
     externalAccountHandle: null,

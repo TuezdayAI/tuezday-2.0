@@ -1,5 +1,11 @@
 import { ConnectorFabricError, type ConnectorFabric } from "../fabric";
-import type { InboundReply, SocialAdapter, SocialPostResult, SocialProfileReadRaw } from "./index";
+import type {
+  InboundReply,
+  SocialAdapter,
+  SocialPostResult,
+  SocialProfileReadRaw,
+  SocialPublishedResult,
+} from "./index";
 import type { SocialAdapterConfig } from "./linkedin";
 
 const X_API = "https://api.twitter.com";
@@ -59,7 +65,7 @@ export class XAdapter implements SocialAdapter {
     private readonly config: SocialAdapterConfig,
   ) {}
 
-  async publishPost(): Promise<SocialPostResult> {
+  async publishPost(): Promise<SocialPublishedResult> {
     throw new ConnectorFabricError("X is DM-only in a launch — posting tweets is not supported here.");
   }
 

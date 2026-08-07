@@ -8,7 +8,7 @@ import type {
   TaskType,
 } from "@tuezday/contracts";
 import type { ContextSection, ResolvedContext } from "@tuezday/brain";
-import type { Db } from "../db";
+import type { Db, DbExecutor } from "../db";
 import { generations, type GenerationRow } from "../db/schema";
 
 /** A stored generation plus its parsed resolved-section trace. */
@@ -54,7 +54,7 @@ export interface StoreGenerationInput {
   durationMs: number;
 }
 
-export function storeGeneration(db: Db, input: StoreGenerationInput): GenerationWithTrace {
+export function storeGeneration(db: DbExecutor, input: StoreGenerationInput): GenerationWithTrace {
   const row: GenerationRow = {
     id: randomUUID(),
     workspaceId: input.workspaceId,

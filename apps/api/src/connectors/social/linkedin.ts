@@ -7,6 +7,7 @@ import type {
   PublishPostInput,
   SocialAdapter,
   SocialPostResult,
+  SocialPublishedResult,
   SocialProfileReadRaw,
 } from "./index";
 
@@ -85,7 +86,7 @@ export class LinkedInAdapter implements SocialAdapter {
     return `urn:li:person:${sub}`;
   }
 
-  async publishPost(input: PublishPostInput): Promise<SocialPostResult> {
+  async publishPost(input: PublishPostInput): Promise<SocialPublishedResult> {
     const author = await this.authorUrn();
     const result = await this.fabric.proxyJson(
       "POST",
@@ -114,7 +115,11 @@ export class LinkedInAdapter implements SocialAdapter {
     }
     const id = (result.json as UgcPostResponse)?.id;
     if (!id) throw new ConnectorFabricError("LinkedIn's response had no post id.");
-    return { externalId: id, url: `https://www.linkedin.com/feed/update/${id}` };
+    return {
+      status: "published",
+      externalId: id,
+      url: `https://www.linkedin.com/feed/update/${id}`,
+    };
   }
 
   // --- Sprint 29 (engagement inbox). Real /v2/socialActions shape; needs

@@ -59,6 +59,7 @@ export const listChannelGuardrailsTool: Tool<Input, unknown> = {
       limits: {
         killSwitch: settings.killSwitch,
         perConnectionDailyCap: settings.perConnectionDailyCap,
+        perConnectionReplyDailyCap: settings.perConnectionReplyDailyCap,
         perCampaignDailyCap: settings.perCampaignDailyCap,
         autoReplyEnabled: settings.autoReplyEnabled,
         postalAddressSet: compliance.postalAddress.trim().length > 0,

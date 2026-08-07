@@ -27,8 +27,10 @@ export function rowToAgentProposal(row: AgentProposalRow): AgentProposal {
     targetKind: row.targetKind as AgentProposalTargetKind,
     draftId: row.draftId,
     externalActionId: row.externalActionId,
+    campaignId: row.campaignId,
     summary: row.summary,
     rationale: row.rationale,
+    chatSessionId: row.chatSessionId,
     createdAt: row.createdAt,
   };
 }
@@ -68,8 +70,12 @@ export interface RecordProposalInput {
   targetKind: AgentProposalTargetKind;
   draftId?: string | null;
   externalActionId?: string | null;
+  /** Sprint 77: the campaign a `propose_campaign` call created. */
+  campaignId?: string | null;
   summary: string;
   rationale: string;
+  /** Sprint 78: the thread a founder confirmed this in, when there was one. */
+  chatSessionId?: string | null;
 }
 
 export function recordAgentProposal(db: Db, input: RecordProposalInput): AgentProposal {
@@ -81,8 +87,10 @@ export function recordAgentProposal(db: Db, input: RecordProposalInput): AgentPr
     targetKind: input.targetKind,
     draftId: input.draftId ?? null,
     externalActionId: input.externalActionId ?? null,
+    campaignId: input.campaignId ?? null,
     summary: input.summary,
     rationale: input.rationale,
+    chatSessionId: input.chatSessionId ?? null,
     createdAt: Date.now(),
   };
   db.insert(agentProposals).values(row).run();

@@ -43,8 +43,23 @@ export const TASK_TYPES = [
   // Sprint 41 (design layer): a rendered multi-image carousel derived from an
   // approved content draft. Never text-generated — the pipeline renders it.
   "instagram_carousel",
+  // Sprint 76 (chat foundations): a GTM strategy conversation. Not a generated
+  // artifact — it exists so a chat thread resolves its own row of the context
+  // matrix rather than borrowing an unrelated task's cell values. Excluded from
+  // GENERATION_TASK_TYPES, so it never appears in a "generate this" picker.
+  "gtm_conversation",
 ] as const;
 export type TaskType = (typeof TASK_TYPES)[number];
+
+/**
+ * The task types a human can ask the platform to *generate* — every task type
+ * except the conversational one. Task-type pickers use this; the resolver, the
+ * context matrix and guidance still range over the full TASK_TYPES.
+ */
+export const GENERATION_TASK_TYPES = TASK_TYPES.filter(
+  (t) => t !== "gtm_conversation",
+) as readonly Exclude<TaskType, "gtm_conversation">[];
+export type GenerationTaskType = (typeof GENERATION_TASK_TYPES)[number];
 
 /** Channels a task can target. */
 export const CHANNELS = ["linkedin", "x", "email", "ads", "web", "pr", "instagram"] as const;
@@ -752,6 +767,10 @@ export const DEFAULT_TASK_DOC_MATRIX: Record<
     icp: { mode: "omit", reason: "The reply answers a specific person in a live thread — the conversation is the context." },
     history: { mode: "omit", reason: "Thread replies are voice + the conversation; company history is a distractor here." },
   },
+  gtm_conversation: {
+    icp: { mode: "full", reason: "A strategy conversation is *about* the audience — segments, pains and objections are the substance, not background." },
+    history: { mode: "full", reason: "Planning the next launch means knowing every prior one: what shipped, what worked, what was learned." },
+  },
 };
 
 /** A merged matrix cell as the API serves it (default overlaid by any workspace row). */
@@ -938,6 +957,7 @@ export type AutomationMode = (typeof AUTOMATION_MODES)[number];
 
 /** Default daily auto-post caps (Sprint 28) when a workspace hasn't set its own. */
 export const DEFAULT_PER_CONNECTION_DAILY_CAP = 10;
+export const DEFAULT_PER_CONNECTION_REPLY_DAILY_CAP = 10;
 export const DEFAULT_PER_CAMPAIGN_DAILY_CAP = 5;
 
 export const campaignSchema = z.object({
@@ -1094,6 +1114,15 @@ export type ExternalActionDecisionValue = (typeof EXTERNAL_ACTION_DECISIONS)[num
 export const EXTERNAL_ACTION_ORIGINS = ["human", "system", "agent"] as const;
 export type ExternalActionOrigin = (typeof EXTERNAL_ACTION_ORIGINS)[number];
 
+/**
+ * Which agent surface proposed an `agent`-origin action (Sprint 78, D-78.8).
+ * Derivable from `originRunId` → the run's task, but the authorization queue
+ * would need a join per row and `agent_runs` is prunable by retention while an
+ * action is not. Null for human- and system-origin actions.
+ */
+export const EXTERNAL_ACTION_ORIGIN_SURFACES = ["chat", "pipeline"] as const;
+export type ExternalActionOriginSurface = (typeof EXTERNAL_ACTION_ORIGIN_SURFACES)[number];
+
 export const EXTERNAL_ACTION_SUBJECT_KINDS = [
   "draft",
   "inbox_item",
@@ -1236,6 +1265,8 @@ export const externalActionSchema = z
     origin: z.enum(EXTERNAL_ACTION_ORIGINS),
     /** The agent run whose propose tool minted this — `agent` origin only. */
     originRunId: z.string().uuid().nullable(),
+    /** Which agent surface it came from (Sprint 78) — `agent` origin only. */
+    originSurface: z.enum(EXTERNAL_ACTION_ORIGIN_SURFACES).nullable(),
     createdAt: z.number().int(),
     updatedAt: z.number().int(),
     authorizedAt: z.number().int().nullable(),
@@ -4202,6 +4233,10 @@ export const connectionSchema = z.object({
   }),
   contentProfile: connectionContentProfileSchema,
   displayName: z.string(),
+  timezone: z
+    .string()
+    .min(1, "A time zone is required")
+    .refine(isValidTimeZone, { message: "Unknown time zone" }),
   externalAccountId: z.string().nullable(),
   externalAccountName: z.string().nullable(),
   externalAccountHandle: z.string().nullable(),
@@ -4241,9 +4276,18 @@ export type UpsertPersonaSocialAccountInput = z.infer<
   typeof upsertPersonaSocialAccountInputSchema
 >;
 
-export const updateConnectionInputSchema = z.object({
-  displayName: z.string().trim().min(1).max(120),
-});
+export const updateConnectionInputSchema = z
+  .object({
+    displayName: z.string().trim().min(1).max(120).optional(),
+    timezone: z
+      .string()
+      .min(1, "A time zone is required")
+      .refine(isValidTimeZone, { message: "Unknown time zone" })
+      .optional(),
+  })
+  .refine((input) => input.displayName !== undefined || input.timezone !== undefined, {
+    message: "Provide a display name or time zone.",
+  });
 export type UpdateConnectionInput = z.infer<typeof updateConnectionInputSchema>;
 
 /** Credential requirements are enforced per provider auth mode at the route. */
@@ -4780,7 +4824,7 @@ export function validateSocialPost(
   return { ok: violations.length === 0, violations };
 }
 
-export const PUBLICATION_STATUSES = ["scheduled", "published", "failed"] as const;
+export const PUBLICATION_STATUSES = ["scheduled", "processing", "published", "failed"] as const;
 export type PublicationStatus = (typeof PUBLICATION_STATUSES)[number];
 
 export const publicationSchema = z.object({
@@ -4800,6 +4844,12 @@ export const publicationSchema = z.object({
   externalId: z.string().nullable(),
   externalUrl: z.string().nullable(),
   lastError: z.string().nullable(),
+  /** Provider-side container/job id while an asynchronous publish is in flight. */
+  providerOperationId: z.string().nullable(),
+  /** Earliest instant at which the worker may poll the provider again. */
+  nextAttemptAt: z.number().int().nullable(),
+  processingStartedAt: z.number().int().nullable(),
+  processingAttempts: z.number().int().nonnegative(),
   /** Governing action for new receipts; absent/null on legacy rows. */
   externalActionId: z.string().uuid().nullable().optional(),
   createdAt: z.number().int(),
@@ -4905,6 +4955,7 @@ export const CALENDAR_ENTRY_STATUSES = [
   "authorization_required",
   "authorized",
   "scheduled",
+  "processing",
   "published",
   "failed",
   "blocked",
@@ -5259,12 +5310,14 @@ export type AutomationGenerationPath = (typeof AUTOMATION_GENERATION_PATHS)[numb
 /**
  * Per-workspace guardrails for `scheduled_auto` campaigns — the safety net that
  * replaces the human gate. The kill switch is the hard stop; the caps bound how
- * many auto-posts land per UTC day. Mirrors `ad_settings`.
+ * many automated actions land per destination account's local day. Original
+ * posts/X DMs and replies have independent connection budgets.
  */
 export const socialAutomationSettingsSchema = z.object({
   workspaceId: z.string().uuid(),
   killSwitch: z.boolean(),
   perConnectionDailyCap: z.number().int().positive(),
+  perConnectionReplyDailyCap: z.number().int().positive(),
   perCampaignDailyCap: z.number().int().positive(),
   // Sprint 29: master switch for auto-posting engagement replies. Off by default —
   // even scheduled_auto campaigns gate their replies until the founder opts in.
@@ -5282,6 +5335,7 @@ export type SocialAutomationSettings = z.infer<typeof socialAutomationSettingsSc
 export const updateSocialAutomationSettingsInputSchema = z.object({
   killSwitch: z.boolean().optional(),
   perConnectionDailyCap: z.number().int().positive().max(1000).optional(),
+  perConnectionReplyDailyCap: z.number().int().positive().max(1000).optional(),
   perCampaignDailyCap: z.number().int().positive().max(1000).optional(),
   autoReplyEnabled: z.boolean().optional(),
   matchThreshold: z.number().int().min(0).max(100).optional(),
@@ -5822,6 +5876,93 @@ export const generateLaunchInputSchema = z.object({
   useEvidence: z.boolean().optional(),
 });
 export type GenerateLaunchInput = z.infer<typeof generateLaunchInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Durable background jobs (Sprint 73)
+// ---------------------------------------------------------------------------
+
+/**
+ * Every recurring worker responsibility plus the first event-driven job. Keep
+ * this order stable: schedule reconciliation and operational output use it.
+ */
+export const BACKGROUND_JOB_KINDS = [
+  "discovery",
+  "automation",
+  "pipelines",
+  "preferences",
+  "learning",
+  "ads",
+  "cadence",
+  "publish",
+  "inbox",
+  "mailbox_inbox",
+  "outreach",
+  "sequence",
+  "evidence",
+  "launch_generate",
+] as const;
+export type BackgroundJobKind = (typeof BACKGROUND_JOB_KINDS)[number];
+
+export const BACKGROUND_RECURRING_JOB_KINDS = BACKGROUND_JOB_KINDS.filter(
+  (kind) => kind !== "launch_generate",
+) as readonly Exclude<BackgroundJobKind, "launch_generate">[];
+export type BackgroundRecurringJobKind =
+  (typeof BACKGROUND_RECURRING_JOB_KINDS)[number];
+
+export const BACKGROUND_JOB_STATUSES = [
+  "queued",
+  "running",
+  "succeeded",
+  "dead_letter",
+  "cancelled",
+] as const;
+export const backgroundJobStatusSchema = z.enum(BACKGROUND_JOB_STATUSES);
+export type BackgroundJobStatus = z.infer<typeof backgroundJobStatusSchema>;
+
+const backgroundDraftActorSchema = z
+  .object({
+    userId: z.string().uuid().nullable(),
+    label: z.string().trim().min(1).max(200),
+    human: z.boolean(),
+  })
+  .strict()
+  .superRefine((actor, ctx) => {
+    if (actor.human && actor.userId === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["userId"],
+        message: "A human actor must carry a user id",
+      });
+    }
+  });
+
+const recurringBackgroundJobPayloadSchema = z
+  .object({
+    kind: z.enum(BACKGROUND_RECURRING_JOB_KINDS as [
+      BackgroundRecurringJobKind,
+      ...BackgroundRecurringJobKind[],
+    ]),
+    workspaceId: z.string().uuid(),
+  })
+  .strict();
+
+const launchGenerationBackgroundJobPayloadSchema = z
+  .object({
+    kind: z.literal("launch_generate"),
+    workspaceId: z.string().uuid(),
+    launchId: z.string().uuid(),
+    input: generateLaunchInputSchema,
+    actor: backgroundDraftActorSchema,
+  })
+  .strict();
+
+export const backgroundJobPayloadSchema = z.union([
+  recurringBackgroundJobPayloadSchema,
+  launchGenerationBackgroundJobPayloadSchema,
+]);
+export type BackgroundJobPayload = z.infer<
+  typeof backgroundJobPayloadSchema
+>;
 
 export const dispatchChannelInputSchema = z.object({
   connectionId: z.string().uuid().optional(),
@@ -7465,121 +7606,87 @@ export const campaignOutreachInsightsSchema = funnelCountsSchema.extend({
 export type CampaignOutreachInsights = z.infer<typeof campaignOutreachInsightsSchema>;
 
 // ---------------------------------------------------------------------------
-// Chat copilot (Sprint 42, part 1 — grounded read-only Q&A)
+// Unified metric model (Sprint 55) — one fact table for every observed number.
+//
+// Three legacy stores measured time three different ways: a manual reading at
+// an instant, a cumulative snapshot at 24h/7d of age, and a per-day bucket.
+// These vocabularies make the differences explicit instead of implied, and the
+// classifier below is the load-bearing guard: cumulative and periodic values
+// must never be summed together. (`insights` violates that rule today —
+// spec §2.3 — and carries the one commented escape hatch while it migrates.)
 // ---------------------------------------------------------------------------
-
-export const CHAT_MESSAGE_ROLES = ["user", "assistant", "tool"] as const;
-export type ChatMessageRole = (typeof CHAT_MESSAGE_ROLES)[number];
-
-/** Where a grounded answer's claim came from — surfaced as an inspectable chip. */
-export const CHAT_CITATION_KINDS = ["brain", "evidence", "data"] as const;
-export type ChatCitationKind = (typeof CHAT_CITATION_KINDS)[number];
-
-export const chatCitationSchema = z.object({
-  kind: z.enum(CHAT_CITATION_KINDS),
-  /** Stable anchor: a brain section slug, an evidence document id, or a tool name. */
-  ref: z.string(),
-  label: z.string(),
-  detail: z.string().optional(),
-});
-export type ChatCitation = z.infer<typeof chatCitationSchema>;
-
-/** The write tools the copilot may propose (the write whitelist, Sprint 42 P2). */
-export const COPILOT_WRITE_TOOLS = ["draft_content", "draft_reply", "propose_action"] as const;
-export type CopilotWriteTool = (typeof COPILOT_WRITE_TOOLS)[number];
-
-/** The lifecycle of one copilot turn (Sprint 42 P2). */
-export const CHAT_TURN_STATUSES = ["answered", "awaiting_confirmation", "committed"] as const;
-export type ChatTurnStatus = (typeof CHAT_TURN_STATUSES)[number];
 
 /**
- * A proposed write, surfaced in the thread for confirmation. Nothing is written
- * until the user confirms with the server-issued `confirmToken`.
+ * Every metric key, defined once. No `replies`: it is derivable from
+ * `inboxItems` at any moment, so storing it as a fact would create a snapshot
+ * that silently goes stale — two answers to one question.
  */
-export const chatProposalSchema = z.object({
-  toolKind: z.enum(COPILOT_WRITE_TOOLS),
-  /** One-line description of what will be created (not executed). */
-  summary: z.string(),
-  /** The rendered content / action detail the user is confirming. */
-  preview: z.string(),
-  /** Server-issued nonce; the commit step must echo it. */
-  confirmToken: z.string(),
-  /** Present when the effective policy would block or require scheduling. */
-  policyNote: z.string().optional(),
-});
-export type ChatProposal = z.infer<typeof chatProposalSchema>;
+export const METRIC_KEYS = [
+  "impressions",
+  "clicks",
+  "likes",
+  "comments",
+  "shares",
+  "engagements",
+  "conversions",
+  "spend",
+] as const;
+export type MetricKey = (typeof METRIC_KEYS)[number];
 
-export const chatSessionSchema = z.object({
+/**
+ * point = a reading at capturedAt, covering no defined period (manual entry).
+ * 24h/7d = CUMULATIVE since the subject went live, observed at >= that age.
+ * 1d = that calendar day's total, periodStart = the day.
+ */
+export const METRIC_WINDOWS = ["point", "24h", "7d", "1d"] as const;
+export type MetricWindow = (typeof METRIC_WINDOWS)[number];
+
+/** No lane/sequence — nothing writes them. Subject-less manual rows are channel-level readings. */
+export const METRIC_SUBJECT_TYPES = ["publication", "campaign", "ad_campaign", "channel"] as const;
+export type MetricSubjectType = (typeof METRIC_SUBJECT_TYPES)[number];
+
+/** No `derived` — nothing derives in Sprint 55. `imported` covers the ads CSV path. */
+export const METRIC_SOURCES = ["manual", "captured", "synced", "imported"] as const;
+export type MetricSource = (typeof METRIC_SOURCES)[number];
+
+export type MetricWindowKindValue = "cumulative" | "periodic" | "point";
+
+/**
+ * Classify a window so a reader cannot mix incompatible time semantics by
+ * accident. Throws on unknown input rather than guessing — a wrong
+ * classification here silently corrupts every aggregate built on it.
+ */
+export function metricWindowKind(window: MetricWindow): MetricWindowKindValue {
+  switch (window) {
+    case "24h":
+    case "7d":
+      return "cumulative";
+    case "1d":
+      return "periodic";
+    case "point":
+      return "point";
+    default: {
+      const exhaustive: never = window;
+      throw new Error(`Unknown metric window: ${String(exhaustive)}`);
+    }
+  }
+}
+
+/** One observed number. `value` is an integer; money is cents, never floats. */
+export const metricSchema = z.object({
   id: z.string().uuid(),
   workspaceId: z.string().uuid(),
-  userId: z.string().uuid().nullable(),
-  title: z.string(),
-  createdAt: z.number().int(),
-  updatedAt: z.number().int(),
-});
-export type ChatSession = z.infer<typeof chatSessionSchema>;
-
-export const chatMessageSchema = z.object({
-  id: z.string().uuid(),
-  sessionId: z.string().uuid(),
-  workspaceId: z.string().uuid(),
-  role: z.enum(CHAT_MESSAGE_ROLES),
-  content: z.string(),
-  toolName: z.string().nullable(),
-  citations: z.array(chatCitationSchema),
-  /** A pending proposal offered by this assistant message (Sprint 42 P2). */
-  proposal: chatProposalSchema.nullable().optional(),
-  /** What a committed turn created, e.g. "draft:<id>" / "external_action:<id>". */
-  producedRef: z.string().nullable().optional(),
+  subjectType: z.enum(METRIC_SUBJECT_TYPES),
+  subjectId: z.string().min(1),
+  metricKey: z.enum(METRIC_KEYS),
+  value: z.number().int(),
+  window: z.enum(METRIC_WINDOWS),
+  periodStart: z.number().int(),
+  source: z.enum(METRIC_SOURCES),
+  capturedAt: z.number().int(),
   createdAt: z.number().int(),
 });
-export type ChatMessage = z.infer<typeof chatMessageSchema>;
-
-export const createChatSessionInputSchema = z.object({
-  title: z.string().max(200).optional(),
-});
-export type CreateChatSessionInput = z.infer<typeof createChatSessionInputSchema>;
-
-export const sendChatMessageInputSchema = z.object({
-  message: z.string().min(1).max(4000),
-});
-export type SendChatMessageInput = z.infer<typeof sendChatMessageInputSchema>;
-
-/** The outcome of one copilot turn: the grounded answer + its provenance. */
-export const chatTurnResultSchema = z.object({
-  answer: z.string(),
-  citations: z.array(chatCitationSchema),
-  toolCalls: z.array(z.object({ tool: z.string(), ok: z.boolean() })),
-  /** Turn lifecycle: a plain answer, a pending proposal, or a committed write. */
-  status: z.enum(CHAT_TURN_STATUSES).default("answered"),
-  /** Set when status is "awaiting_confirmation": the write awaiting a human yes. */
-  proposal: chatProposalSchema.nullable().optional(),
-  /** Set when status is "committed": the gated item that was created. */
-  producedRef: z.string().nullable().optional(),
-});
-export type ChatTurnResult = z.infer<typeof chatTurnResultSchema>;
-
-export const chatSessionDetailSchema = chatSessionSchema.extend({
-  messages: z.array(chatMessageSchema),
-});
-export type ChatSessionDetail = z.infer<typeof chatSessionDetailSchema>;
-
-// ---------------------------------------------------------------------------
-// Chat copilot (Sprint 42, part 2 — gated action execution)
-//
-// The copilot PROPOSES a write; a human CONFIRMS; the write only ever creates
-// a gated, not-yet-executed item (a draft in `pending_review`, or an external
-// action parked at `authorization_required`). Two independent gates stack:
-// the in-chat confirmation, then the existing approval/authorize gate. The
-// chat has no path to approve, authorize, or dispatch.
-// ---------------------------------------------------------------------------
-
-/** Confirm/decline a pending proposal. */
-export const confirmChatProposalInputSchema = z.object({
-  confirmToken: z.string().min(1),
-  decision: z.enum(["confirm", "discard"]),
-});
-export type ConfirmChatProposalInput = z.infer<typeof confirmChatProposalInputSchema>;
+export type Metric = z.infer<typeof metricSchema>;
 
 // ---------------------------------------------------------------------------
 // Agent runtime (Sprint 56 — Gateway v2 & AgentRunner)
@@ -7675,13 +7782,30 @@ export const READ_TOOL_NAMES = [
   "search_discovery_items",
   "get_prior_posts_on_topic",
   "safe_fetch_url",
+  // Sprint 76 — the analytics and inventory reads a strategy conversation
+  // needs. They join the shared registry rather than a chat-only list (D-76.2):
+  // a metric read is as useful to a critic or a pipeline step as it is to chat.
+  "list_campaigns",
+  "list_personas",
+  "get_campaign_insights",
+  "get_workspace_insights",
+  "get_metric_summary",
+  "get_sequence_funnel",
+  // Sprint 77 — what is waiting for a human right now. Sprint 76's two
+  // draft-shaped tools return historical *decisions* as training examples;
+  // neither can answer "what is in my approval queue", which is both the
+  // PRD's card acceptance case and the `/approve` command. A general registry
+  // read rather than a chat-only one, following D-76.2.
+  "list_drafts",
 ] as const;
 
 /**
- * The Sprint 69 propose surface. Each hands its intent to a gate that already
- * governs that write: four mint a `proposed` external action and let the policy
- * tree decide, and `propose_draft` submits to the approval gate, because a
- * draft is the subject of an external action rather than one itself (D-69.2).
+ * The propose surface. Each hands its intent to a gate that already governs
+ * that write: four mint a `proposed` external action and let the policy tree
+ * decide, `propose_draft` submits to the approval gate because a draft is the
+ * subject of an external action rather than one itself (D-69.2), and
+ * `propose_campaign` (Sprint 77) creates an inert `draft`-status campaign,
+ * whose status is its gate (D-77.7).
  */
 export const PROPOSE_TOOL_NAMES = [
   "propose_draft",
@@ -7689,6 +7813,7 @@ export const PROPOSE_TOOL_NAMES = [
   "propose_reply",
   "propose_sequence_step",
   "propose_ad_mutation",
+  "propose_campaign",
 ] as const;
 
 /**
@@ -7825,6 +7950,51 @@ export const toolInputSchemas = {
   }),
 
   // -------------------------------------------------------------------------
+  // Analytics & inventory reads (Sprint 76). The first two are how a model
+  // turns "the launch campaign" into an id it can pass to anything else; the
+  // rest answer performance questions from the Sprint 55 metric model.
+  // -------------------------------------------------------------------------
+  list_campaigns: z.object({
+    status: z.enum(CAMPAIGN_STATUSES).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
+  list_personas: z.object({
+    limit: z.number().int().min(1).max(50).optional(),
+  }),
+  get_campaign_insights: z.object({
+    campaignId: z.string().min(1),
+  }),
+  get_workspace_insights: z.object({}),
+  /**
+   * A windowed rollup over the metric fact table. `window` is required, not
+   * defaulted: the Sprint 55 classifier forbids mixing cumulative and periodic
+   * semantics in one number, so the caller must say which question it is
+   * asking rather than have one picked for it.
+   */
+  get_metric_summary: z.object({
+    subjectType: z.enum(METRIC_SUBJECT_TYPES),
+    subjectId: z.string().min(1).optional(),
+    metricKeys: z.array(z.enum(METRIC_KEYS)).min(1).max(8).optional(),
+    window: z.enum(METRIC_WINDOWS),
+    sinceDays: z.number().int().min(1).max(365).optional(),
+  }),
+  get_sequence_funnel: z.object({
+    sequenceId: z.string().min(1),
+  }),
+  /**
+   * The approval queue as data (Sprint 77). `state` defaults nowhere — a caller
+   * asking "what is waiting" and a caller asking "what did we ship" want
+   * different rows, and guessing between them is how a card offers Approve on
+   * something already approved.
+   */
+  list_drafts: z.object({
+    state: z.enum(APPROVAL_STATES).optional(),
+    campaignId: z.string().min(1).optional(),
+    channel: z.enum(CHANNELS).optional(),
+    limit: z.number().int().min(1).max(25).optional(),
+  }),
+
+  // -------------------------------------------------------------------------
   // Propose tools (Sprint 69). Every one takes a `rationale`: it is written to
   // the proposal ledger and is what the authorization queue shows a founder who
   // asks why the agent wanted this. Routing (connection, target, recipient) is
@@ -7868,6 +8038,27 @@ export const toolInputSchemas = {
     rationale: z.string().min(1).max(PROPOSAL_RATIONALE_MAX_CHARS),
   }),
 
+  /**
+   * Create a campaign (Sprint 77, D-77.7). Deliberately a SUBSET of
+   * `upsertCampaignInputSchema`: `status`, `origin`, `automationMode` and
+   * `autoDailyCap` are not the model's to choose. The campaign is created in
+   * `draft` status with manual automation whatever is passed, because that
+   * inertness is the gate — a proposed campaign runs nothing and matches
+   * nothing until a human activates it on the campaign page.
+   */
+  propose_campaign: z.object({
+    name: z.string().trim().min(1).max(200),
+    objective: z.string().trim().max(1000).optional(),
+    kpi: z.string().trim().max(500).optional(),
+    timeframe: z.string().trim().max(200).optional(),
+    audience: z.string().trim().max(1000).optional(),
+    pillars: z.array(z.string().trim().min(1).max(200)).max(10).optional(),
+    channels: z.array(z.enum(CHANNELS)).optional(),
+    personaIds: z.array(z.string().min(1)).max(10).optional(),
+    purpose: z.enum(CAMPAIGN_PURPOSES).optional(),
+    rationale: z.string().min(1).max(PROPOSAL_RATIONALE_MAX_CHARS),
+  }),
+
   // -------------------------------------------------------------------------
   // Ask tool (Sprint 70). `why` is not decoration: a question without the
   // reason it is being asked is unanswerable in one click, which is the only
@@ -7883,6 +8074,574 @@ export const toolInputSchemas = {
 } as const satisfies Record<AgentToolName, z.ZodType<Record<string, unknown>>>;
 
 // ---------------------------------------------------------------------------
+// Chat (Sprint 42 → rebuilt in Sprint 76, "chat foundations")
+//
+// A thread is a GTM strategy conversation scoped to a workspace and optionally
+// a campaign / persona / channel. Its system prefix is a resolved context
+// bundle from packages/brain — the same resolver generation uses — not a
+// hand-written preamble, which is the difference between this and a generic
+// assistant pointed at an export.
+//
+// Every assistant turn is an `agent_run` driven by the AgentRunner over the
+// Sprint 57 registry, so the Agent Inspector works for chat with no new
+// tracing code. The boundary is the registry's `access` field, not an
+// instruction in the prompt: Sprint 76 offered `read` tools only, and
+// Sprint 78 adds `propose` for actors who may write — every one of which stops
+// at a confirmation in the thread before the Sprint 69 gate sees it.
+// ---------------------------------------------------------------------------
+
+/**
+ * Transcript roles. `compaction` (Sprint 76) is a summary of older turns that
+ * replaced them in the model's message list — persisted as a visible message
+ * so a folded conversation never silently disappears.
+ */
+export const CHAT_MESSAGE_ROLES = ["user", "assistant", "tool", "compaction"] as const;
+export type ChatMessageRole = (typeof CHAT_MESSAGE_ROLES)[number];
+
+/**
+ * Hard per-thread lifetime token cap (Sprint 76, D-76.4). Enforced in chat
+ * rather than deferred to the Sprint 59 workspace budget: this is the runaway
+ * backstop for a single conversation, not the economic control.
+ */
+export const CHAT_THREAD_TOKEN_CAP = 250_000;
+
+/** Per-turn AgentRunner bounds for a chat turn. */
+export const CHAT_TURN_BOUNDS = {
+  maxSteps: 8,
+  maxTokens: 32_000,
+  timeoutMs: 120_000,
+} as const;
+
+/**
+ * Compaction fires when the estimated transcript exceeds this fraction of the
+ * per-turn token bound, and keeps this many newest messages verbatim.
+ */
+export const CHAT_COMPACTION_THRESHOLD = 0.6;
+export const CHAT_COMPACTION_KEEP_RECENT = 6;
+
+/** Bound on a thread's goal — one or two sentences of intent, not a brief. */
+export const CHAT_GOAL_MAX_CHARS = 500;
+
+/** Where a grounded answer's claim came from — surfaced as an inspectable chip. */
+export const CHAT_CITATION_KINDS = ["brain", "evidence", "data"] as const;
+export type ChatCitationKind = (typeof CHAT_CITATION_KINDS)[number];
+
+export const chatCitationSchema = z.object({
+  kind: z.enum(CHAT_CITATION_KINDS),
+  /** Stable anchor: a brain section slug, an evidence document id, or a tool name. */
+  ref: z.string(),
+  label: z.string(),
+  detail: z.string().optional(),
+});
+export type ChatCitation = z.infer<typeof chatCitationSchema>;
+
+// ---------------------------------------------------------------------------
+// Typed result cards (Sprint 77)
+//
+// A citation says "this claim came from that record". A card IS the record —
+// rendered, and actionable where the platform already has a route for the
+// action. The two are computed from the same tool call by sibling mappers and
+// share the `<kind>:<id>` ref vocabulary, so the web layer routes a card with
+// the citation router and learns no new URLs (D-77.1).
+// ---------------------------------------------------------------------------
+
+export const CHAT_CARD_KINDS = [
+  "campaign",
+  "draft",
+  "publication",
+  "persona",
+  "metric",
+  "evidence",
+  "signal",
+  "brain",
+] as const;
+export type ChatCardKind = (typeof CHAT_CARD_KINDS)[number];
+
+/**
+ * What a card's buttons may do. A closed set on purpose: every one of these
+ * maps to an HTTP route the dedicated pages already call (D-77.3), and a card
+ * carries an action only where that action is actually available — a draft
+ * card offers `approve` only while the draft is in `pending_review`.
+ */
+export const CHAT_CARD_ACTIONS = ["open", "approve", "reject", "edit"] as const;
+export type ChatCardAction = (typeof CHAT_CARD_ACTIONS)[number];
+
+export const chatCardSchema = z.object({
+  kind: z.enum(CHAT_CARD_KINDS),
+  /** The same `<kind>:<id>` anchor citations use — `campaign:9f3c…`. */
+  ref: z.string().min(1),
+  title: z.string(),
+  subtitle: z.string().nullable(),
+  /** Field/value pairs, already formatted for display by the API. */
+  fields: z.array(z.object({ label: z.string(), value: z.string() })),
+  /** Long text where the record has some — a draft's content, an evidence
+   * excerpt. Truncated server-side; the card links to the full record. */
+  body: z.string().nullable(),
+  actions: z.array(z.enum(CHAT_CARD_ACTIONS)),
+});
+export type ChatCard = z.infer<typeof chatCardSchema>;
+
+/**
+ * The render hint (D-77.2). The PRD asks for it on the tool's output schema;
+ * it lives here instead, because the registry's tools are shared with
+ * pipelines, the critic and the eval harness, none of which render anything.
+ * A tool absent from this map produces no cards — which is the right default
+ * for `safe_fetch_url` (untrusted, and already a citation) and for the propose
+ * tools (whose result is a confirmation card, not a record).
+ */
+export const TOOL_CARD_KINDS = {
+  list_campaigns: "campaign",
+  get_campaign_plan: "campaign",
+  get_campaign_insights: "campaign",
+  list_drafts: "draft",
+  find_similar_approved_drafts: "draft",
+  find_instructive_rejections: "draft",
+  list_recent_publications_with_metrics: "publication",
+  get_prior_posts_on_topic: "publication",
+  list_personas: "persona",
+  get_persona: "persona",
+  get_metric_summary: "metric",
+  get_workspace_insights: "metric",
+  get_sequence_funnel: "metric",
+  search_evidence: "evidence",
+  search_discovery_items: "signal",
+  get_brain_section: "brain",
+} as const satisfies Partial<Record<AgentToolName, ChatCardKind>>;
+
+/** Bound on how many cards one turn renders. A twenty-card answer is a list
+ * view the founder did not ask for; the citations still carry the long tail. */
+export const CHAT_CARDS_PER_TURN = 12;
+
+/**
+ * A card's long text is a preview, not the record. Past this the card links
+ * out rather than becoming the page it is supposed to summarise.
+ */
+export const CHAT_CARD_BODY_MAX_CHARS = 600;
+
+/**
+ * A thread. `campaignId` / `personaId` / `channel` are its **scope binding**:
+ * they select the context bundle the conversation runs against, exactly as a
+ * generation request would. `goal` is the standing intent (Sprint 76 D-76.12) —
+ * derived once from the opening message and thereafter user-editable, never
+ * rewritten by the model.
+ */
+export const chatSessionSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  userId: z.string().uuid().nullable(),
+  title: z.string(),
+  goal: z.string(),
+  campaignId: z.string().uuid().nullable(),
+  personaId: z.string().uuid().nullable(),
+  channel: z.enum(CHANNELS).nullable(),
+  /** Lifetime totals, for the in-thread cost display and the token cap. */
+  totalInputTokens: z.number().int(),
+  totalOutputTokens: z.number().int(),
+  totalCostCents: z.number(),
+  createdAt: z.number().int(),
+  updatedAt: z.number().int(),
+});
+export type ChatSession = z.infer<typeof chatSessionSchema>;
+
+export const chatMessageSchema = z.object({
+  id: z.string().uuid(),
+  sessionId: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  role: z.enum(CHAT_MESSAGE_ROLES),
+  content: z.string(),
+  toolName: z.string().nullable(),
+  citations: z.array(chatCitationSchema),
+  /**
+   * The records this turn surfaced, rendered as cards (Sprint 77). Persisted on
+   * the message rather than recomputed: the tool results they came from live in
+   * `agent_run_steps` and are subject to retention, and a transcript that loses
+   * its cards on a sweep would be a transcript that changes shape over time.
+   */
+  cards: z.array(chatCardSchema).default([]),
+  /** The agent_run behind this assistant turn — the Agent Inspector link. */
+  agentRunId: z.string().uuid().nullable(),
+  /** Per-turn metering, shown inline. */
+  costCents: z.number(),
+  inputTokens: z.number().int(),
+  outputTokens: z.number().int(),
+  /** Why the turn's run stopped; a turn that hit a bound says so in the UI. */
+  stopReason: z.enum(AGENT_STOP_REASONS).nullable(),
+  /**
+   * What a confirmed proposal produced — `draft:<id>` / `external_action:<id>`
+   * — set on the receipt message a confirmation appends (Sprint 78, reviving
+   * the Sprint 42 column D-76.7 deliberately kept).
+   */
+  producedRef: z.string().nullable().optional(),
+  createdAt: z.number().int(),
+});
+export type ChatMessage = z.infer<typeof chatMessageSchema>;
+
+/** Thread scope, shared by create and patch. */
+const chatScopeFields = {
+  campaignId: z.string().uuid().nullable().optional(),
+  personaId: z.string().uuid().nullable().optional(),
+  channel: z.enum(CHANNELS).nullable().optional(),
+  goal: z.string().max(CHAT_GOAL_MAX_CHARS).optional(),
+};
+
+export const createChatSessionInputSchema = z.object({
+  title: z.string().max(200).optional(),
+  ...chatScopeFields,
+});
+export type CreateChatSessionInput = z.infer<typeof createChatSessionInputSchema>;
+
+export const updateChatSessionInputSchema = z.object({
+  title: z.string().max(200).optional(),
+  ...chatScopeFields,
+});
+export type UpdateChatSessionInput = z.infer<typeof updateChatSessionInputSchema>;
+
+// ---------------------------------------------------------------------------
+// The command layer (Sprint 77)
+//
+// Two kinds, and the difference is whether a model runs at all (D-77.4).
+//
+// `instant` commands are executed by the API against the registry's read tools
+// and return cards. No LLM call, no cost, no inference — "what is waiting for
+// me" is a query, and paying a model to pick a tool for it is paying for a
+// worse answer.
+//
+// `directive` commands are ordinary model turns whose *intent* is pinned by an
+// instruction the API owns. The model still decides how; it no longer has to
+// guess what. The directive text is deliberately not client-supplied: a client
+// that could post arbitrary prose as a "command" would be a prompt-injection
+// surface with a slash in front of it.
+// ---------------------------------------------------------------------------
+
+export const CHAT_COMMAND_KINDS = ["instant", "directive"] as const;
+export type ChatCommandKind = (typeof CHAT_COMMAND_KINDS)[number];
+
+export const CHAT_COMMANDS = [
+  {
+    name: "status",
+    kind: "instant",
+    summary: "Where the workspace stands right now",
+    argumentHint: null,
+  },
+  {
+    name: "approve",
+    kind: "instant",
+    summary: "Everything waiting in your approval queue",
+    argumentHint: null,
+  },
+  {
+    name: "draft",
+    kind: "directive",
+    summary: "Write something and put it up for review",
+    argumentHint: "what to write",
+  },
+  {
+    name: "campaign",
+    kind: "directive",
+    summary: "Plan a campaign and put it forward",
+    argumentHint: "what the campaign is for",
+  },
+  {
+    name: "agent",
+    kind: "directive",
+    summary: "Work a goal end to end, proposing as it goes",
+    argumentHint: "the goal",
+  },
+] as const satisfies readonly {
+  name: string;
+  kind: ChatCommandKind;
+  summary: string;
+  argumentHint: string | null;
+}[];
+
+export const CHAT_COMMAND_NAMES = CHAT_COMMANDS.map((c) => c.name) as unknown as readonly [
+  "status",
+  "approve",
+  "draft",
+  "campaign",
+  "agent",
+];
+export type ChatCommandName = (typeof CHAT_COMMAND_NAMES)[number];
+
+export function chatCommand(name: string): (typeof CHAT_COMMANDS)[number] | undefined {
+  return CHAT_COMMANDS.find((c) => c.name === name);
+}
+
+export interface ParsedChatCommand {
+  command: ChatCommandName;
+  kind: ChatCommandKind;
+  /** Everything after the command word, trimmed. Empty when none was given. */
+  argument: string;
+}
+
+/**
+ * Parse composer text into a command. Shared by the client (which renders the
+ * palette and routes the request) and the API (which never trusts the client's
+ * parse and redoes it). Returns null for ordinary prose, for an unknown
+ * command word, and for a bare `/` — an unrecognised slash is a message the
+ * founder wrote, not a command we should guess at.
+ */
+export function parseChatCommand(text: string): ParsedChatCommand | null {
+  const trimmed = text.trimStart();
+  if (!trimmed.startsWith("/")) return null;
+  const match = /^\/([a-z_]+)(?:\s+([\s\S]*))?$/i.exec(trimmed.trim());
+  if (!match) return null;
+  const found = chatCommand(match[1]!.toLowerCase());
+  if (!found) return null;
+  return {
+    command: found.name,
+    kind: found.kind,
+    argument: (match[2] ?? "").trim(),
+  };
+}
+
+export const runChatCommandInputSchema = z.object({
+  command: z.enum(CHAT_COMMAND_NAMES),
+  argument: z.string().max(4000).optional(),
+});
+export type RunChatCommandInput = z.infer<typeof runChatCommandInputSchema>;
+
+export const sendChatMessageInputSchema = z.object({
+  message: z.string().min(1).max(4000),
+  /**
+   * Sprint 77: the directive command this message was sent under, if any. The
+   * API validates that it is a `directive` command and supplies the
+   * instruction itself; an `instant` command sent here is refused rather than
+   * quietly turned into a model turn.
+   */
+  command: z.enum(CHAT_COMMAND_NAMES).optional(),
+});
+export type SendChatMessageInput = z.infer<typeof sendChatMessageInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Pinned context — `@` mentions (Sprint 77)
+//
+// "Context that is implicit is context the user cannot debug." A pin is the
+// visible, removable form of it: the founder names an entity, sees a chip, and
+// the next turn's system prefix says so out loud.
+//
+// Campaign and persona pins WRITE THROUGH to the thread's scope columns
+// (D-77.5) — the resolver reads scope from the session, and two notions of
+// "the campaign this thread is about" would eventually disagree.
+// ---------------------------------------------------------------------------
+
+export const CHAT_PIN_KINDS = [
+  "campaign",
+  "persona",
+  "draft",
+  "signal",
+  "brain_section",
+  /** A URL the founder pasted. Fetched through Sprint 48's safe-fetch at turn
+   * time and marked untrusted in the prefix — vouching for a link is not
+   * vouching for what is on the other end of it (D-77.6). */
+  "url",
+] as const;
+export type ChatPinKind = (typeof CHAT_PIN_KINDS)[number];
+
+/** Enough to steer a conversation, few enough that the prefix stays readable. */
+export const CHAT_PINS_MAX = 8;
+
+export const chatPinSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  sessionId: z.string().uuid(),
+  kind: z.enum(CHAT_PIN_KINDS),
+  /** The entity id, or the URL for a `url` pin. */
+  refId: z.string().min(1),
+  /** What the chip says. Resolved at pin time; a renamed entity keeps the label
+   * it was pinned under until it is re-pinned, which is honest about when the
+   * founder made the choice. */
+  label: z.string(),
+  createdAt: z.number().int(),
+});
+export type ChatPin = z.infer<typeof chatPinSchema>;
+
+export const createChatPinInputSchema = z.object({
+  kind: z.enum(CHAT_PIN_KINDS),
+  refId: z.string().trim().min(1).max(2000),
+  label: z.string().trim().max(200).optional(),
+});
+export type CreateChatPinInput = z.infer<typeof createChatPinInputSchema>;
+
+// ---------------------------------------------------------------------------
+// Chat proposals — confirm-before-propose (Sprint 78)
+//
+// A propose-tool call inside a chat turn does not execute. It records one of
+// these, carrying a structured statement of intent the founder confirms in the
+// thread; confirming runs the UNCHANGED Sprint 69 service, so the policy tree,
+// the approval gate and the authorization queue decide what happens next
+// exactly as they do for a pipeline-proposed action (D-78.1, D-78.7).
+// ---------------------------------------------------------------------------
+
+/**
+ * `pending` → `confirmed` (the gate accepted it) | `failed` (the gate refused
+ * it, with the platform's own error code — D-78.2) | `declined` (the founder
+ * said no). Terminal states never transition again.
+ */
+export const CHAT_PROPOSAL_STATUSES = ["pending", "confirmed", "declined", "failed"] as const;
+export type ChatProposalStatus = (typeof CHAT_PROPOSAL_STATUSES)[number];
+
+/**
+ * Chat's own bounds on *asking* (D-78.4). Distinct from
+ * `AGENT_PROPOSALS_PER_DAY`, which bounds what is actually minted and is
+ * neither raised nor bypassed here.
+ */
+export const CHAT_PROPOSALS_PER_THREAD = 10;
+export const CHAT_PROPOSALS_PER_DAY = 20;
+
+/**
+ * The statement of intent, rendered as a card. Structured rather than prose so
+ * the founder confirms a specific, legible thing — and so Sprint 77's card
+ * registry has a contract to adopt rather than a paragraph to parse.
+ */
+export const chatProposalIntentSchema = z.object({
+  /** One line, imperative: "Submit a LinkedIn draft for review". */
+  title: z.string().trim().min(1),
+  /** Field/value pairs the founder should check before confirming. */
+  detail: z.array(z.object({ label: z.string(), value: z.string() })),
+  /** What happens on confirm, in plain language — including what does NOT. */
+  effect: z.string().trim().min(1),
+  /** Why the assistant wants to do it, in its own words. */
+  rationale: z.string(),
+});
+export type ChatProposalIntent = z.infer<typeof chatProposalIntentSchema>;
+
+export const chatProposalSchema = z.object({
+  id: z.string().uuid(),
+  workspaceId: z.string().uuid(),
+  sessionId: z.string().uuid(),
+  /** The assistant message this card renders under. */
+  messageId: z.string().uuid().nullable(),
+  /** The run that asked — the Inspector link, and the attribution the minted
+   * action carries through to the authorization queue. */
+  agentRunId: z.string().uuid().nullable(),
+  tool: z.enum(PROPOSE_TOOL_NAMES),
+  intent: chatProposalIntentSchema,
+  status: z.enum(CHAT_PROPOSAL_STATUSES),
+  /**
+   * True when this proposal's arguments derive only from untrusted content
+   * (D-78.6). The card warns; the trace records it.
+   */
+  quarantined: z.boolean(),
+  quarantineReason: z.string().nullable(),
+  /** What confirming produced: `draft:<id>` or `external_action:<id>`. */
+  producedRef: z.string().nullable(),
+  /** Where the policy tree left the minted action, when there is one. */
+  producedStatus: z.string().nullable(),
+  /** The platform's own refusal code when the gate said no. */
+  error: z.string().nullable(),
+  errorMessage: z.string().nullable(),
+  confirmedByUserId: z.string().uuid().nullable(),
+  resolvedAt: z.number().int().nullable(),
+  createdAt: z.number().int(),
+});
+export type ChatProposal = z.infer<typeof chatProposalSchema>;
+
+/** The outcome of one turn: the grounded answer, its provenance and its cost. */
+export const chatTurnResultSchema = z.object({
+  answer: z.string(),
+  citations: z.array(chatCitationSchema),
+  /** The records this turn surfaced (Sprint 77). Also on `message`; repeated
+   * here so a non-streaming client renders the turn from one object. */
+  cards: z.array(chatCardSchema),
+  toolCalls: z.array(z.object({ tool: z.string(), ok: z.boolean() })),
+  /** The persisted assistant message, so a client needs no refetch. */
+  message: chatMessageSchema,
+  /**
+   * What this turn wants to do and is waiting on the founder for (Sprint 78).
+   * Carried beside the message rather than on it: a proposal's status changes
+   * after the message is written, and a transcript row should not be rewritten
+   * because a card was clicked.
+   */
+  proposals: z.array(chatProposalSchema),
+  agentRunId: z.string().uuid().nullable(),
+  stopReason: z.enum(AGENT_STOP_REASONS),
+  costCents: z.number(),
+  /** Thread lifetime after this turn — what the cap is measured against. */
+  threadTokens: z.number().int(),
+  threadCostCents: z.number(),
+});
+export type ChatTurnResult = z.infer<typeof chatTurnResultSchema>;
+
+export const chatSessionDetailSchema = chatSessionSchema.extend({
+  messages: z.array(chatMessageSchema),
+  proposals: z.array(chatProposalSchema),
+  /** Sprint 77: the thread's pinned context, rendered as removable chips. */
+  pins: z.array(chatPinSchema),
+});
+export type ChatSessionDetail = z.infer<typeof chatSessionDetailSchema>;
+
+/**
+ * SSE frames streamed by POST .../messages (Sprint 76). The five middle kinds
+ * mirror AgentRunEvent so the client renders the runner's own step boundaries;
+ * `tool_call_end` deliberately drops the tool's result payload — results are
+ * large and the citation mapper already extracts what the client needs.
+ */
+export const CHAT_STREAM_EVENTS = [
+  "session",
+  "compaction",
+  "step_start",
+  "text_delta",
+  "tool_call_start",
+  "tool_call_end",
+  "step_end",
+  /** Sprint 78: a proposal was recorded — the card appears before the answer
+   * settles, because the founder should see what it is about to ask for. */
+  "proposal",
+  /** Sprint 77: a tool returned records worth rendering. Emitted as the tool
+   * returns, so a founder watching a six-step run sees the campaigns appear
+   * while it is still reading metrics. */
+  "card",
+  "message",
+  "done",
+  "error",
+] as const;
+export type ChatStreamEventKind = (typeof CHAT_STREAM_EVENTS)[number];
+
+export const chatStreamEventSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("session"), sessionId: z.string(), userMessageId: z.string() }),
+  z.object({
+    type: z.literal("compaction"),
+    messageId: z.string(),
+    summarizedThrough: z.string(),
+    agentRunId: z.string().nullable(),
+  }),
+  z.object({ type: z.literal("step_start"), stepIndex: z.number().int() }),
+  z.object({ type: z.literal("text_delta"), stepIndex: z.number().int(), text: z.string() }),
+  z.object({
+    type: z.literal("tool_call_start"),
+    stepIndex: z.number().int(),
+    callId: z.string(),
+    name: z.string(),
+  }),
+  z.object({
+    type: z.literal("tool_call_end"),
+    stepIndex: z.number().int(),
+    callId: z.string(),
+    ok: z.boolean(),
+    error: z.string().optional(),
+  }),
+  z.object({
+    type: z.literal("step_end"),
+    stepIndex: z.number().int(),
+    inputTokens: z.number().int(),
+    outputTokens: z.number().int(),
+  }),
+  z.object({ type: z.literal("proposal"), proposal: chatProposalSchema }),
+  z.object({ type: z.literal("card"), stepIndex: z.number().int(), cards: z.array(chatCardSchema) }),
+  z.object({ type: z.literal("message"), message: chatMessageSchema }),
+  z.object({
+    type: z.literal("done"),
+    stopReason: z.enum(AGENT_STOP_REASONS),
+    costCents: z.number(),
+    threadTokens: z.number().int(),
+    threadCostCents: z.number(),
+  }),
+  z.object({ type: z.literal("error"), error: z.string(), message: z.string() }),
+]);
+export type ChatStreamEvent = z.infer<typeof chatStreamEventSchema>;
+
+// ---------------------------------------------------------------------------
 // Agent proposals (Sprint 69)
 //
 // One durable row per successful propose-tool call. It answers two questions a
@@ -7892,7 +8651,9 @@ export const toolInputSchemas = {
 // source (D-69.4).
 // ---------------------------------------------------------------------------
 
-export const AGENT_PROPOSAL_TARGET_KINDS = ["draft", "external_action"] as const;
+/** Sprint 77 adds `campaign`: like a draft, it is a governed record rather than
+ * an external action, and its own status is what holds it back (D-77.7). */
+export const AGENT_PROPOSAL_TARGET_KINDS = ["draft", "external_action", "campaign"] as const;
 export type AgentProposalTargetKind = (typeof AGENT_PROPOSAL_TARGET_KINDS)[number];
 
 export const agentProposalSchema = z
@@ -7906,8 +8667,13 @@ export const agentProposalSchema = z
      * proposal survives it. */
     draftId: z.string().uuid().nullable(),
     externalActionId: z.string().uuid().nullable(),
+    /** The campaign a `propose_campaign` call created (Sprint 77). */
+    campaignId: z.string().uuid().nullable().optional(),
     summary: z.string().trim().min(1),
     rationale: z.string().trim().min(1),
+    /** The conversation a founder confirmed this in (Sprint 78). Null for a
+     * pipeline-proposed action, which nobody confirmed in a thread. */
+    chatSessionId: z.string().uuid().nullable().optional(),
     createdAt: z.number().int(),
   })
   .superRefine((value, ctx) => {
@@ -8904,89 +9670,6 @@ export const brainDocDraftResponseSchema = z.object({
 export type BrainDocDraftResponse = z.infer<typeof brainDocDraftResponseSchema>;
 
 // ---------------------------------------------------------------------------
-// Unified metric model (Sprint 55) — one fact table for every observed number.
-//
-// Three legacy stores measured time three different ways: a manual reading at
-// an instant, a cumulative snapshot at 24h/7d of age, and a per-day bucket.
-// These vocabularies make the differences explicit instead of implied, and the
-// classifier below is the load-bearing guard: cumulative and periodic values
-// must never be summed together. (`insights` violates that rule today —
-// spec §2.3 — and carries the one commented escape hatch while it migrates.)
-// ---------------------------------------------------------------------------
-
-/**
- * Every metric key, defined once. No `replies`: it is derivable from
- * `inboxItems` at any moment, so storing it as a fact would create a snapshot
- * that silently goes stale — two answers to one question.
- */
-export const METRIC_KEYS = [
-  "impressions",
-  "clicks",
-  "likes",
-  "comments",
-  "shares",
-  "engagements",
-  "conversions",
-  "spend",
-] as const;
-export type MetricKey = (typeof METRIC_KEYS)[number];
-
-/**
- * point = a reading at capturedAt, covering no defined period (manual entry).
- * 24h/7d = CUMULATIVE since the subject went live, observed at >= that age.
- * 1d = that calendar day's total, periodStart = the day.
- */
-export const METRIC_WINDOWS = ["point", "24h", "7d", "1d"] as const;
-export type MetricWindow = (typeof METRIC_WINDOWS)[number];
-
-/** No lane/sequence — nothing writes them. Subject-less manual rows are channel-level readings. */
-export const METRIC_SUBJECT_TYPES = ["publication", "campaign", "ad_campaign", "channel"] as const;
-export type MetricSubjectType = (typeof METRIC_SUBJECT_TYPES)[number];
-
-/** No `derived` — nothing derives in Sprint 55. `imported` covers the ads CSV path. */
-export const METRIC_SOURCES = ["manual", "captured", "synced", "imported"] as const;
-export type MetricSource = (typeof METRIC_SOURCES)[number];
-
-export type MetricWindowKindValue = "cumulative" | "periodic" | "point";
-
-/**
- * Classify a window so a reader cannot mix incompatible time semantics by
- * accident. Throws on unknown input rather than guessing — a wrong
- * classification here silently corrupts every aggregate built on it.
- */
-export function metricWindowKind(window: MetricWindow): MetricWindowKindValue {
-  switch (window) {
-    case "24h":
-    case "7d":
-      return "cumulative";
-    case "1d":
-      return "periodic";
-    case "point":
-      return "point";
-    default: {
-      const exhaustive: never = window;
-      throw new Error(`Unknown metric window: ${String(exhaustive)}`);
-    }
-  }
-}
-
-/** One observed number. `value` is an integer; money is cents, never floats. */
-export const metricSchema = z.object({
-  id: z.string().uuid(),
-  workspaceId: z.string().uuid(),
-  subjectType: z.enum(METRIC_SUBJECT_TYPES),
-  subjectId: z.string().min(1),
-  metricKey: z.enum(METRIC_KEYS),
-  value: z.number().int(),
-  window: z.enum(METRIC_WINDOWS),
-  periodStart: z.number().int(),
-  source: z.enum(METRIC_SOURCES),
-  capturedAt: z.number().int(),
-  createdAt: z.number().int(),
-});
-export type Metric = z.infer<typeof metricSchema>;
-
-// ---------------------------------------------------------------------------
 // Sprint 65 — first agent-executed pipeline, measured (shadow A/B + rollout)
 // ---------------------------------------------------------------------------
 
@@ -9591,3 +10274,374 @@ export const answerAgentQuestionResultSchema = z.object({
     .nullable(),
 });
 export type AnswerAgentQuestionResult = z.infer<typeof answerAgentQuestionResultSchema>;
+
+// ---------------------------------------------------------------------------
+// Sprint 71 — show the work (PRD §8, direction move 7b)
+//
+// The platform computes a complete reasoning trace on every generation and
+// discards it at the UI boundary. This block is the vocabulary for handing it
+// back: one `ArtifactTrace` shape assembled server-side for four artifact
+// kinds, and the nine context-customization knobs named once so that atlas
+// conflict #4 can be settled with data rather than argument.
+//
+// Read-only by construction. Nothing here describes a write.
+// ---------------------------------------------------------------------------
+
+/** The four things a founder can ask "why did it write this?" about. */
+export const TRACE_SUBJECT_KINDS = [
+  "draft",
+  "deliverable",
+  "publication",
+  "external_action",
+] as const;
+export type TraceSubjectKind = (typeof TRACE_SUBJECT_KINDS)[number];
+
+export function isTraceSubjectKind(value: string): value is TraceSubjectKind {
+  return (TRACE_SUBJECT_KINDS as readonly string[]).includes(value);
+}
+
+/** Where the words came from before the resolver ever ran. */
+export const TRACE_ORIGIN_KINDS = [
+  "signal",
+  "story",
+  "package",
+  "opportunity",
+  "inbox_item",
+  "manual",
+] as const;
+export type TraceOriginKind = (typeof TRACE_ORIGIN_KINDS)[number];
+
+/**
+ * A knob's relationship to one specific resolve.
+ * - `absent` — nothing configured and nothing applied.
+ * - `configured` — set in this workspace, but it did not touch this bundle.
+ * - `applied` — it demonstrably shaped this bundle.
+ *
+ * The gap between `configured` and `applied` is the entire point: a knob that
+ * is always configured and never applied is the knob to delete.
+ */
+export const TRACE_KNOB_STATES = ["absent", "configured", "applied"] as const;
+export type TraceKnobState = (typeof TRACE_KNOB_STATES)[number];
+
+/**
+ * The nine context-customization knobs, in **precedence order** — earlier
+ * entries are the base, later entries override them. Atlas conflict #4 is the
+ * observation that these were each added for a good reason and have never been
+ * looked at together.
+ */
+export const CONTEXT_KNOB_KEYS = [
+  "brain_docs",
+  "channel_guidance_builtin",
+  "channel_guidance_workspace",
+  "scoped_guidance",
+  "context_matrix",
+  "generation_settings",
+  "campaign_overlay",
+  "zoom",
+  "design_overlays",
+] as const;
+export type ContextKnobKey = (typeof CONTEXT_KNOB_KEYS)[number];
+
+export interface ContextKnob {
+  key: ContextKnobKey;
+  label: string;
+  /** The question this knob answers, in the founder's words. */
+  question: string;
+  /** The surface that owns it, relative to the workspace root. */
+  surface: string;
+}
+
+export const CONTEXT_KNOBS: readonly ContextKnob[] = [
+  {
+    key: "brain_docs",
+    label: "Brain documents",
+    question: "What does the company sound like, sell, and care about?",
+    surface: "/brain",
+  },
+  {
+    key: "channel_guidance_builtin",
+    label: "Built-in channel guidance",
+    question: "How should anything on this channel be written?",
+    surface: "/guidance",
+  },
+  {
+    key: "channel_guidance_workspace",
+    label: "Your channel guidance",
+    question: "How should we write on this channel, overriding the built-in?",
+    surface: "/guidance",
+  },
+  {
+    key: "scoped_guidance",
+    label: "Scoped guidance",
+    question: "Does one persona or campaign write differently on this channel?",
+    surface: "/guidance",
+  },
+  {
+    key: "context_matrix",
+    label: "Context matrix",
+    question: "Which brain documents enter which kind of task, and how fully?",
+    surface: "/resolver",
+  },
+  {
+    key: "generation_settings",
+    label: "Generation settings",
+    question: "Should we pick an angle first, and pre-review before you see it?",
+    surface: "/automation",
+  },
+  {
+    key: "campaign_overlay",
+    label: "Campaign overlay",
+    question: "What does this campaign add on top of everything else?",
+    surface: "/campaigns",
+  },
+  {
+    key: "zoom",
+    label: "Zoom retrieval",
+    question: "Which individual brain sections are worth pulling in full?",
+    surface: "/resolver",
+  },
+  {
+    key: "design_overlays",
+    label: "Design overlays",
+    question: "How should the rendered artwork look for this channel?",
+    surface: "/design-systems",
+  },
+] as const;
+
+export function contextKnob(key: ContextKnobKey): ContextKnob {
+  return CONTEXT_KNOBS.find((knob) => knob.key === key)!;
+}
+
+/** How many recent resolves the knob-usage report replays (D-71.7). */
+export const KNOB_USAGE_SAMPLE_LIMIT = 200;
+
+/** Longest excerpt the trace carries per context section / example. */
+export const TRACE_EXCERPT_MAX_CHARS = 400;
+
+export const traceOriginSchema = z.object({
+  kind: z.enum(TRACE_ORIGIN_KINDS),
+  /** Null for `manual`: there is no row to point at. */
+  id: z.string().nullable(),
+  label: z.string(),
+  /** The triggering text itself, clipped — what the agent actually reacted to. */
+  detail: z.string().nullable(),
+  href: z.string().nullable(),
+  at: z.number().int().nullable(),
+});
+export type TraceOrigin = z.infer<typeof traceOriginSchema>;
+
+export const traceContextSectionSchema = z.object({
+  key: z.string(),
+  layer: z.string(),
+  title: z.string(),
+  /** The resolver's own written explanation for in/out. Never paraphrased. */
+  reason: z.string(),
+  tokens: z.number().int(),
+  included: z.boolean(),
+  tier: z.number().int().nullable(),
+  mode: z.string().nullable(),
+  zoomScore: z.number().nullable(),
+  zoomRank: z.number().int().nullable(),
+  excerpt: z.string(),
+  href: z.string().nullable(),
+});
+export type TraceContextSection = z.infer<typeof traceContextSectionSchema>;
+
+export const tracePlanSchema = z.object({
+  campaignId: z.string(),
+  campaignName: z.string(),
+  objective: z.string(),
+  kpi: z.string().nullable(),
+  pillars: z.array(z.string()),
+  /**
+   * The pillar whose wording is closest to the artifact (D-71.4). A match, not
+   * a recorded intent — the UI must say so.
+   */
+  closestPillar: z.string().nullable(),
+  href: z.string(),
+});
+export type TracePlan = z.infer<typeof tracePlanSchema>;
+
+export const traceExampleSchema = z.object({
+  kind: z.enum(["approved", "rejected"]),
+  label: z.string(),
+  excerpt: z.string(),
+  /** Why it was rejected, when a reason was ever written down. */
+  why: z.string().nullable(),
+  href: z.string().nullable(),
+});
+export type TraceExample = z.infer<typeof traceExampleSchema>;
+
+export const tracePreferenceSchema = z.object({
+  /** Null when the rule text no longer matches a live rule (it was retired). */
+  ruleId: z.string().nullable(),
+  rule: z.string(),
+  polarity: z.enum(PREFERENCE_POLARITIES),
+  confidence: z.number().int().nullable(),
+  href: z.string(),
+});
+export type TracePreference = z.infer<typeof tracePreferenceSchema>;
+
+export const traceCriticSchema = z.object({
+  score: z.number().int().nullable(),
+  findings: z.array(z.object({ issue: z.string(), citation: z.string() })),
+  /** How many critique passes ran before the draft cleared the threshold. */
+  iterations: z.number().int(),
+  source: z.enum(["engine", "legacy"]),
+  href: z.string().nullable(),
+});
+export type TraceCritic = z.infer<typeof traceCriticSchema>;
+
+export const traceRevisionSchema = z.object({
+  id: z.string(),
+  instruction: z.string(),
+  status: z.string(),
+  at: z.number().int(),
+  /** 0-1 normalized edit distance between the turn's input and its result. */
+  changedShare: z.number().nullable(),
+  model: z.string().nullable(),
+  provider: z.string().nullable(),
+});
+export type TraceRevision = z.infer<typeof traceRevisionSchema>;
+
+export const traceCostSchema = z.object({
+  inputTokens: z.number().int(),
+  outputTokens: z.number().int(),
+  costCents: z.number(),
+  model: z.string(),
+  provider: z.string(),
+  durationMs: z.number().int().nullable(),
+  /**
+   * True when no metered ledger row exists and the cost was priced from the
+   * model plus an estimated token count. The panel must show the difference.
+   */
+  estimated: z.boolean(),
+  href: z.string(),
+});
+export type TraceCost = z.infer<typeof traceCostSchema>;
+
+export const traceKnobSchema = z.object({
+  key: z.enum(CONTEXT_KNOB_KEYS),
+  label: z.string(),
+  question: z.string(),
+  state: z.enum(TRACE_KNOB_STATES),
+  detail: z.string(),
+  href: z.string(),
+});
+export type TraceKnob = z.infer<typeof traceKnobSchema>;
+
+export const artifactTraceSchema = z.object({
+  subject: z.object({
+    kind: z.enum(TRACE_SUBJECT_KINDS),
+    id: z.string(),
+    title: z.string(),
+    state: z.string(),
+    href: z.string(),
+    createdAt: z.number().int(),
+  }),
+  origin: traceOriginSchema.nullable(),
+  plan: tracePlanSchema.nullable(),
+  context: z.array(traceContextSectionSchema),
+  /**
+   * Why `context` is empty, when it is — a draft that predates trace capture
+   * and a budget change that was never generated are different absences, and a
+   * blank panel cannot tell them apart (D-71.3).
+   */
+  contextReason: z.string().nullable(),
+  examples: z.array(traceExampleSchema),
+  preferences: z.array(tracePreferenceSchema),
+  critic: traceCriticSchema.nullable(),
+  revisions: z.array(traceRevisionSchema),
+  cost: traceCostSchema.nullable(),
+  knobs: z.array(traceKnobSchema),
+  generatedAt: z.number().int(),
+});
+export type ArtifactTrace = z.infer<typeof artifactTraceSchema>;
+
+export const knobUsageSchema = z.object({
+  key: z.enum(CONTEXT_KNOB_KEYS),
+  label: z.string(),
+  question: z.string(),
+  href: z.string(),
+  configured: z.boolean(),
+  /** Rows the workspace has set for this knob (0 for always-on knobs). */
+  configuredCount: z.number().int(),
+  lastConfiguredAt: z.number().int().nullable(),
+  /** Sampled resolves this knob demonstrably shaped. */
+  appliedResolves: z.number().int(),
+  /** 0-1 over `sampledResolves`, not over all history (D-71.7). */
+  appliedShare: z.number(),
+});
+export type KnobUsage = z.infer<typeof knobUsageSchema>;
+
+export const knobUsageReportSchema = z.object({
+  knobs: z.array(knobUsageSchema),
+  /** The denominator behind every `appliedShare`. Shown, never implied. */
+  sampledResolves: z.number().int(),
+  sampleLimit: z.number().int(),
+  generatedAt: z.number().int(),
+});
+export type KnobUsageReport = z.infer<typeof knobUsageReportSchema>;
+
+// ---------------------------------------------------------------------------
+// Internal renderer wire contract (Sprint 75)
+// ---------------------------------------------------------------------------
+
+export const RENDER_MAX_DOCUMENT_CHARS = 500_000;
+export const RENDER_MAX_VALUE_CHARS = 20_000;
+export const RENDER_MAX_PLACEHOLDERS = 100;
+export const RENDER_MIN_DIMENSION = 64;
+export const RENDER_MAX_DIMENSION = 4_096;
+export const RENDER_DEFAULT_DIMENSION = 1_080;
+
+const renderPlaceholderSchema = z.string().regex(/^[A-Za-z0-9_.-]+$/);
+
+export const renderTemplateSchema = z.object({
+  html: z.string().min(1).max(RENDER_MAX_DOCUMENT_CHARS),
+  css: z.string().max(RENDER_MAX_DOCUMENT_CHARS),
+  placeholders: z
+    .array(renderPlaceholderSchema)
+    .max(RENDER_MAX_PLACEHOLDERS)
+    .refine((values) => new Set(values).size === values.length, {
+      message: "Placeholders must be unique.",
+    }),
+});
+export type RenderTemplate = z.infer<typeof renderTemplateSchema>;
+
+export const renderRequestSchema = z.object({
+  template: renderTemplateSchema,
+  values: z
+    .record(z.string().max(RENDER_MAX_VALUE_CHARS))
+    .refine((values) => Object.keys(values).length <= RENDER_MAX_PLACEHOLDERS, {
+      message: `At most ${RENDER_MAX_PLACEHOLDERS} values are allowed.`,
+    }),
+  width: z
+    .number()
+    .int()
+    .min(RENDER_MIN_DIMENSION)
+    .max(RENDER_MAX_DIMENSION)
+    .default(RENDER_DEFAULT_DIMENSION),
+  height: z
+    .number()
+    .int()
+    .min(RENDER_MIN_DIMENSION)
+    .max(RENDER_MAX_DIMENSION)
+    .default(RENDER_DEFAULT_DIMENSION),
+});
+export type RenderRequest = z.infer<typeof renderRequestSchema>;
+
+export const RENDER_ERROR_CODES = [
+  "unauthorized",
+  "invalid_render_request",
+  "render_timeout",
+  "render_failed",
+  "renderer_unavailable",
+  "invalid_renderer_response",
+] as const;
+export type RenderErrorCode = (typeof RENDER_ERROR_CODES)[number];
+
+export const renderErrorSchema = z.object({
+  error: z.enum(RENDER_ERROR_CODES),
+  message: z.string().min(1).max(500),
+});
+export type RenderErrorResponse = z.infer<typeof renderErrorSchema>;

@@ -14,11 +14,12 @@ The planning documents define what gets built and in what order — read the rel
 - `docs/plans/sprint-plan.md` — Sprints 1–20 execution plan
 - `docs/plans/sprint-guide-21-onward.md` — post-Sprint-20 roadmap (current sequencing source of truth)
 - `docs/specs/` — one written spec per slice, created before implementation
+- `docs/production-runbook.md` — operator reference: renderer deployment/failure modes, account-local posting budgets, the kill switch, and how a `processing` publication recovers
 
 ## Commands
 
 - `npm install` — install all workspaces (npm workspaces monorepo; Node ≥ 20)
-- `npm run dev` — run API (Fastify, http://localhost:3001), web (Next.js, http://localhost:3000), and the required background worker
+- `npm run dev` — run renderer (Fastify + Playwright, http://localhost:7457), API (Fastify, http://localhost:3001), web (Next.js, http://localhost:3000), and the required background worker
 - `npm run dev:app` — run only API + web; automatic background work does not run
 - `npm test` — run all Vitest suites (api + contracts + brain). API tests use in-memory SQLite with the checked-in Drizzle migrations
 - `npm test -- <substring>` — run only test files whose path matches (e.g. `npm test -- brain`); add `-t "<name>"` to filter by test name
@@ -35,6 +36,7 @@ Copy `.env.example` to `.env` at the repo root (dev server loads it via dotenv).
 - `GEMINI_API_KEY` — Gemini 2.5 Flash (default LLM). `GEMINI_MODEL` overrides the model name.
 - `TUEZDAY_WORKER_TOKEN` — system actor token used by the worker to call the API across workspaces. Generate with: `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`
 - `TUEZDAY_INTERNAL_API_URL` — direct worker-to-API origin; production requires HTTPS, while loopback HTTP is accepted locally. Do not point it at the browser/MCP API gateway.
+- `TUEZDAY_RENDERER_TOKEN` — dedicated shared secret between the API and isolated renderer; never reuse the worker or user/API tokens. `TUEZDAY_RENDERER_URL` defaults to loopback for local development.
 - `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET` — social publishing connector (Sprint 17).
 - `LINKEDIN_CLIENT_ID/SECRET`, `TWITTER_CLIENT_ID/SECRET`, `INSTAGRAM_CLIENT_ID/SECRET` — social trio (Sprint 25+). Leave blank until those connectors are wired.
 
@@ -50,7 +52,7 @@ Tuezday's moat is the **Central Brain**: five human-readable, editable brain doc
 
 ## How the API is wired (read this before touching `apps/api`)
 
-`apps/api/src/app.ts` exports `buildApp(options)` — the single composition root. It takes injectable dependencies and registers every route group:
+`apps/api/src/app.ts` exports `buildApp(options)` — the single composition root. It takes injectable dependencies and registers every route group. Playwright belongs exclusively to `apps/renderer`; the API reaches it through the injected `render` function and never launches a browser:
 
 ```
 buildApp({ db, llm?, fetcher?, evidence?, connectors?, workerToken? })

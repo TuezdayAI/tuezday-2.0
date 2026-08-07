@@ -339,7 +339,7 @@ describe("external-action publication boundary", () => {
     vi.setSystemTime(dueAt + 1);
     const run = await app.inject({
       method: "POST",
-      url: `/workspaces/${workspaceId}/publish/run`,
+      url: `/workspaces/${workspaceId}/external-actions/run`,
     });
     expect(run.statusCode).toBe(200);
     expect(run.json().actions[0].action.status).toBe("succeeded");
@@ -584,7 +584,10 @@ describe("external-action publication boundary", () => {
       expect(withdrawal.reason).toContain(WITHDRAWN_BEFORE_DISPATCH);
 
       vi.setSystemTime(dueAt + 1);
-      await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
+      await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/external-actions/run`,
+      });
       expect(posts).toHaveLength(0);
       expect(db.select().from(publications).all()).toEqual([]);
     });
@@ -623,7 +626,10 @@ describe("external-action publication boundary", () => {
         .where(eq(connections.id, connectionId))
         .run();
       vi.setSystemTime(dueAt + 1);
-      const run = await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
+      const run = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/external-actions/run`,
+      });
       expect(run.json().actions[0].action.status).toBe("stale");
       expect(posts).toHaveLength(0);
 

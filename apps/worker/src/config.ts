@@ -5,21 +5,7 @@ import { fileURLToPath } from "node:url";
 export interface WorkerConfig {
   internalApiUrl: string;
   token: string;
-  intervals: {
-    discoveryMs: number;
-    automationMs: number;
-    pipelinesMs: number;
-    preferencesMs: number;
-    learningMs: number;
-    adsMs: number;
-    publishMs: number;
-    cadenceMs: number;
-    inboxMs: number;
-    mailboxInboxMs: number;
-    outreachMs: number;
-    sequenceMs: number;
-    evidenceMs: number;
-  };
+  queuePollMs: number;
 }
 
 const DEFAULT_ROOT_ENV = resolve(
@@ -76,155 +62,26 @@ function internalOrigin(env: NodeJS.ProcessEnv): string {
   return parsed.origin;
 }
 
-function duration(
-  env: NodeJS.ProcessEnv,
-  name: string,
-  fallbackUnits: number,
-  unitMs: number,
-  minimumMs: number,
-  maximumMs: number,
-): number {
+function queuePollMs(env: NodeJS.ProcessEnv): number {
+  const name = "BACKGROUND_JOB_POLL_MS";
   const raw = env[name];
-  const units = raw === undefined ? fallbackUnits : Number(raw.trim());
-  const value = units * unitMs;
-  if (
-    !Number.isSafeInteger(units) ||
-    !Number.isSafeInteger(value) ||
-    value < minimumMs ||
-    value > maximumMs
-  ) {
-    throw new Error(
-      `${name} must be a whole number producing ${minimumMs} through ${maximumMs} milliseconds.`,
-    );
+  const value = raw === undefined ? 1_000 : Number(raw.trim());
+  if (!Number.isSafeInteger(value) || value < 250 || value > 60_000) {
+    throw new Error(`${name} must be a whole number from 250 through 60000.`);
   }
   return value;
 }
 
-export function parseWorkerConfig(
-  env: NodeJS.ProcessEnv,
-): WorkerConfig {
+export function parseWorkerConfig(env: NodeJS.ProcessEnv): WorkerConfig {
   const suppliedToken = env.TUEZDAY_WORKER_TOKEN?.trim();
   const token =
     suppliedToken ||
     (env.NODE_ENV === "test" ? "test-worker-token" : undefined);
-  if (!token) {
-    throw new Error("TUEZDAY_WORKER_TOKEN is required.");
-  }
+  if (!token) throw new Error("TUEZDAY_WORKER_TOKEN is required.");
 
   return {
     internalApiUrl: internalOrigin(env),
     token,
-    intervals: {
-      discoveryMs: duration(
-        env,
-        "DISCOVERY_INTERVAL_MIN",
-        30,
-        60_000,
-        60_000,
-        86_400_000,
-      ),
-      automationMs: duration(
-        env,
-        "AUTOMATION_INTERVAL_MIN",
-        5,
-        60_000,
-        60_000,
-        86_400_000,
-      ),
-      // Sprint 65: executes queued pipeline runs (live + shadow). Faster than
-      // automation so a queued run rests before the next automation pass.
-      pipelinesMs: duration(
-        env,
-        "PIPELINES_INTERVAL_MIN",
-        2,
-        60_000,
-        60_000,
-        86_400_000,
-      ),
-      // Sprint 68: extracts learned preference rules from captured founder
-      // edits. Ten minutes is the "learns inside a day, not inside a week"
-      // requirement met with room to spare — the LLM cost is one small call
-      // per scope group, and only when there is a backlog to digest.
-      preferencesMs: duration(
-        env,
-        "PREFERENCES_INTERVAL_MIN",
-        10,
-        60_000,
-        60_000,
-        86_400_000,
-      ),
-      learningMs: duration(
-        env,
-        "LEARNING_SYNTHESIS_DAYS",
-        7,
-        86_400_000,
-        86_400_000,
-        31_536_000_000,
-      ),
-      adsMs: duration(
-        env,
-        "ADS_SYNC_HOURS",
-        6,
-        3_600_000,
-        3_600_000,
-        604_800_000,
-      ),
-      publishMs: duration(
-        env,
-        "PUBLISH_INTERVAL_MIN",
-        1,
-        60_000,
-        60_000,
-        86_400_000,
-      ),
-      cadenceMs: duration(
-        env,
-        "CADENCE_FILL_INTERVAL_MIN",
-        5,
-        60_000,
-        60_000,
-        86_400_000,
-      ),
-      inboxMs: duration(
-        env,
-        "INBOX_INTERVAL_MIN",
-        5,
-        60_000,
-        60_000,
-        86_400_000,
-      ),
-      mailboxInboxMs: duration(
-        env,
-        "MAILBOX_INBOX_INTERVAL_MIN",
-        5,
-        60_000,
-        60_000,
-        86_400_000,
-      ),
-      outreachMs: duration(
-        env,
-        "OUTREACH_INTERVAL_MIN",
-        5,
-        60_000,
-        60_000,
-        86_400_000,
-      ),
-      sequenceMs: duration(
-        env,
-        "SEQUENCE_INTERVAL_MIN",
-        5,
-        60_000,
-        60_000,
-        86_400_000,
-      ),
-      evidenceMs: duration(
-        env,
-        "EVIDENCE_SWEEP_MIN",
-        30,
-        60_000,
-        60_000,
-        86_400_000,
-      ),
-    },
+    queuePollMs: queuePollMs(env),
   };
 }

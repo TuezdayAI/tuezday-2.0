@@ -219,7 +219,7 @@ describe("unified execution results", () => {
   function seedPublication(over: {
     id?: string;
     draftId: string;
-    status: "scheduled" | "published" | "failed";
+    status: "scheduled" | "processing" | "published" | "failed";
     at: number;
     lastError?: string | null;
     externalUrl?: string | null;
@@ -350,7 +350,7 @@ describe("unified execution results", () => {
     return body;
   }
 
-  it("projects published and failed publications, excluding scheduled receipts", async () => {
+  it("projects processing, published, and failed publications, excluding scheduled receipts", async () => {
     const campaignDraft = approvedDraft({ campaignId });
     seedPublication({
       draftId: campaignDraft,
@@ -365,15 +365,24 @@ describe("unified execution results", () => {
       lastError: "RATELIMIT: slow down",
     });
     seedPublication({ draftId: approvedDraft(), status: "scheduled", at: T0 + 9 * HOUR });
+    seedPublication({ draftId: approvedDraft(), status: "processing", at: T0 + 4 * HOUR });
 
     const results = await fetchResults();
-    expect(results).toHaveLength(2);
-    expect(results.map((r) => r.status)).toEqual(["failed", "completed"]);
-    const failed = results[0];
+    expect(results).toHaveLength(3);
+    expect(results.map((r) => r.status)).toEqual(["running", "failed", "completed"]);
+    const running = results[0];
+    expect(running?.destinations).toEqual({
+      total: 1,
+      succeeded: 0,
+      failed: 0,
+      skipped: 0,
+      pending: 1,
+    });
+    const failed = results[1];
     expect(failed?.kind).toBe("publication");
     expect(failed?.error).toBe("RATELIMIT: slow down");
     expect(failed?.campaignId).toBeNull();
-    const completed = results[1];
+    const completed = results[2];
     expect(completed?.url).toBe("https://reddit.com/r/startups/c/p1");
     expect(completed?.campaignId).toBe(campaignId);
     expect(completed?.campaignName).toBe("Summer Launch");

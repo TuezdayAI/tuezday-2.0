@@ -1,17 +1,26 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
-import type {
-  ChatCitation,
-  ChatMessage,
-  ChatMessageRole,
-  ChatProposal,
-  ChatSession,
+import {
+  CHAT_THREAD_TOKEN_CAP,
+  type AgentStopReason,
+  type Channel,
+  type ChatCard,
+  type ChatCitation,
+  type ChatMessage,
+  type ChatMessageRole,
+  type ChatSession,
+  type CreateChatSessionInput,
+  type UpdateChatSessionInput,
 } from "@tuezday/contracts";
 import type { Db } from "../db";
 import { chatMessages, chatSessions, type ChatMessageRow, type ChatSessionRow } from "../db/schema";
 
 // ---------------------------------------------------------------------------
-// Row mappers
+// Thread + transcript persistence (Sprint 42, extended Sprint 76).
+//
+// Thin DB layer shared by the routes and the turn service. No LLM call, no
+// tool dispatch and no policy lives here — this module only reads and writes
+// rows, which is what lets the turn service stay a testable unit.
 // ---------------------------------------------------------------------------
 
 export function rowToSession(row: ChatSessionRow): ChatSession {
@@ -20,44 +29,25 @@ export function rowToSession(row: ChatSessionRow): ChatSession {
     workspaceId: row.workspaceId,
     userId: row.userId,
     title: row.title,
+    goal: row.goal,
+    campaignId: row.campaignId,
+    personaId: row.personaId,
+    channel: (row.channel as Channel | null) ?? null,
+    totalInputTokens: row.totalInputTokens,
+    totalOutputTokens: row.totalOutputTokens,
+    totalCostCents: row.totalCostCents,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
 }
 
-/** Parse the stored citations JSON defensively — a bad blob never breaks a read. */
-function parseCitations(json: string): ChatCitation[] {
+/** Parse a stored JSON array defensively — a bad blob never breaks a read. */
+function parseArray<T>(json: string): T[] {
   try {
     const parsed = JSON.parse(json);
-    return Array.isArray(parsed) ? (parsed as ChatCitation[]) : [];
+    return Array.isArray(parsed) ? (parsed as T[]) : [];
   } catch {
     return [];
-  }
-}
-
-/**
- * The stored proposal blob wraps the client-facing `ChatProposal` together with
- * the commit `args` (server-only — never surfaced in the ChatMessage contract).
- */
-interface StoredProposal {
-  proposal: ChatProposal;
-  args: Record<string, unknown>;
-}
-
-/** Parse a stored proposal blob defensively — a bad blob reads as no proposal. */
-function parseStoredProposal(json: string | null): StoredProposal | null {
-  if (!json) return null;
-  try {
-    const parsed = JSON.parse(json);
-    if (!parsed || typeof parsed !== "object") return null;
-    // Wrapper shape { proposal, args }; tolerate a legacy bare ChatProposal.
-    if ("proposal" in parsed && typeof (parsed as StoredProposal).proposal === "object") {
-      const w = parsed as StoredProposal;
-      return { proposal: w.proposal, args: w.args ?? {} };
-    }
-    return { proposal: parsed as ChatProposal, args: {} };
-  } catch {
-    return null;
   }
 }
 
@@ -69,29 +59,43 @@ export function rowToMessage(row: ChatMessageRow): ChatMessage {
     role: row.role as ChatMessageRole,
     content: row.content,
     toolName: row.toolName ?? null,
-    citations: parseCitations(row.citationsJson),
-    proposal: parseStoredProposal(row.proposalJson)?.proposal ?? null,
+    citations: parseArray<ChatCitation>(row.citationsJson),
+    // Sprint 77: the typed result cards this turn rendered.
+    cards: parseArray<ChatCard>(row.cardsJson),
+    agentRunId: row.agentRunId ?? null,
+    costCents: row.costCents,
+    inputTokens: row.inputTokens,
+    outputTokens: row.outputTokens,
+    stopReason: (row.stopReason as AgentStopReason | null) ?? null,
     producedRef: row.producedRef ?? null,
     createdAt: row.createdAt,
   };
 }
 
 // ---------------------------------------------------------------------------
-// Sessions
+// Threads
 // ---------------------------------------------------------------------------
 
 export function createSession(
   db: Db,
   workspaceId: string,
   userId: string | null,
-  title: string,
+  input: CreateChatSessionInput,
 ): ChatSession {
   const now = Date.now();
   const row: ChatSessionRow = {
     id: randomUUID(),
     workspaceId,
     userId,
-    title: title.trim(),
+    title: (input.title ?? "").trim(),
+    goal: (input.goal ?? "").trim(),
+    campaignId: input.campaignId ?? null,
+    personaId: input.personaId ?? null,
+    channel: input.channel ?? null,
+    totalInputTokens: 0,
+    totalOutputTokens: 0,
+    totalCostCents: 0,
+    compactedThroughMessageId: null,
     createdAt: now,
     updatedAt: now,
   };
@@ -99,7 +103,7 @@ export function createSession(
   return rowToSession(row);
 }
 
-/** Sessions for a workspace, newest activity first. */
+/** Threads for a workspace, newest activity first. */
 export function listSessions(db: Db, workspaceId: string): ChatSession[] {
   return db
     .select()
@@ -110,61 +114,114 @@ export function listSessions(db: Db, workspaceId: string): ChatSession[] {
     .map(rowToSession);
 }
 
-/** A single workspace-scoped session, or undefined if missing / cross-workspace. */
+/** A single workspace-scoped thread, or undefined if missing / cross-workspace. */
 export function getSession(
   db: Db,
   workspaceId: string,
   sessionId: string,
 ): ChatSession | undefined {
-  const row = db
+  const row = getSessionRow(db, workspaceId, sessionId);
+  return row ? rowToSession(row) : undefined;
+}
+
+export function getSessionRow(
+  db: Db,
+  workspaceId: string,
+  sessionId: string,
+): ChatSessionRow | undefined {
+  return db
     .select()
     .from(chatSessions)
     .where(and(eq(chatSessions.workspaceId, workspaceId), eq(chatSessions.id, sessionId)))
     .get();
-  return row ? rowToSession(row) : undefined;
 }
 
 /**
- * Ordered transcript for a session, in strict insertion order. Several messages
- * in one turn (user → tool → assistant) can share a millisecond `createdAt`, so
- * we tie-break on the implicit rowid rather than the random uuid PK.
+ * Edit a thread's title, goal or scope. Scope fields are tri-state: absent
+ * leaves them alone, `null` unbinds them. Changing scope changes which context
+ * bundle the next turn resolves — it does not rewrite the transcript.
  */
-export function listMessages(db: Db, sessionId: string): ChatMessage[] {
-  return db
-    .select()
-    .from(chatMessages)
-    .where(eq(chatMessages.sessionId, sessionId))
-    .orderBy(sql`${chatMessages}.rowid asc`)
-    .all()
-    .map(rowToMessage);
+export function updateSession(
+  db: Db,
+  workspaceId: string,
+  sessionId: string,
+  input: UpdateChatSessionInput,
+): ChatSession | undefined {
+  const existing = getSession(db, workspaceId, sessionId);
+  if (!existing) return undefined;
+
+  const patch: Partial<ChatSessionRow> = { updatedAt: Date.now() };
+  if (input.title !== undefined) patch.title = input.title.trim();
+  if (input.goal !== undefined) patch.goal = input.goal.trim();
+  if (input.campaignId !== undefined) patch.campaignId = input.campaignId;
+  if (input.personaId !== undefined) patch.personaId = input.personaId;
+  if (input.channel !== undefined) patch.channel = input.channel;
+
+  db.update(chatSessions).set(patch).where(eq(chatSessions.id, sessionId)).run();
+  return getSession(db, workspaceId, sessionId);
 }
 
-export interface PendingProposal {
-  messageId: string;
-  proposal: ChatProposal;
-  /** Server-only commit args (not part of the ChatMessage contract). */
-  args: Record<string, unknown>;
+/** Set the title once, when a thread has none — auto-titling never overwrites. */
+export function setSessionTitleIfEmpty(db: Db, sessionId: string, title: string): void {
+  const trimmed = title.trim();
+  if (!trimmed) return;
+  db.update(chatSessions)
+    .set({ title: trimmed })
+    .where(and(eq(chatSessions.id, sessionId), eq(chatSessions.title, "")))
+    .run();
+}
+
+/** Set the goal once, when a thread has none (D-76.12). */
+export function setSessionGoalIfEmpty(db: Db, sessionId: string, goal: string): void {
+  const trimmed = goal.trim();
+  if (!trimmed) return;
+  db.update(chatSessions)
+    .set({ goal: trimmed })
+    .where(and(eq(chatSessions.id, sessionId), eq(chatSessions.goal, "")))
+    .run();
+}
+
+export interface ThreadUsage {
+  inputTokens: number;
+  outputTokens: number;
+  costCents: number;
 }
 
 /**
- * The session's pending proposal, if any (Sprint 42 P2). A proposal is pending
- * iff the latest ASSISTANT message carries one. Committing or discarding, or a
- * normal answer, appends a later assistant message and thereby retires it — but
- * a trailing user message (e.g. a plain-text "yes") does NOT, so the confirm
- * can still find the proposal it is answering.
+ * Add one run's usage to the thread's lifetime totals. Every model call a turn
+ * makes — the answer, the auto-title, a compaction — passes through here, so
+ * the cap counts everything the thread cost, not just its visible answers.
  */
-export function getPendingProposal(db: Db, sessionId: string): PendingProposal | null {
-  const row = db
-    .select()
-    .from(chatMessages)
-    .where(and(eq(chatMessages.sessionId, sessionId), eq(chatMessages.role, "assistant")))
-    .orderBy(sql`${chatMessages}.rowid desc`)
-    .limit(1)
-    .get();
-  if (!row || !row.proposalJson) return null;
-  const stored = parseStoredProposal(row.proposalJson);
-  if (!stored) return null;
-  return { messageId: row.id, proposal: stored.proposal, args: stored.args };
+export function addSessionUsage(db: Db, sessionId: string, usage: ThreadUsage): void {
+  db.update(chatSessions)
+    .set({
+      totalInputTokens: sql`${chatSessions.totalInputTokens} + ${usage.inputTokens}`,
+      totalOutputTokens: sql`${chatSessions.totalOutputTokens} + ${usage.outputTokens}`,
+      totalCostCents: sql`${chatSessions.totalCostCents} + ${usage.costCents}`,
+      updatedAt: Date.now(),
+    })
+    .where(eq(chatSessions.id, sessionId))
+    .run();
+}
+
+export function threadTokens(session: Pick<ChatSession, "totalInputTokens" | "totalOutputTokens">): number {
+  return session.totalInputTokens + session.totalOutputTokens;
+}
+
+/**
+ * Whether the thread has spent its hard lifetime budget (D-76.4). Checked
+ * before a turn starts: a turn that begins is allowed to finish, because
+ * killing a run mid-flight would leave a half-answer the founder paid for.
+ */
+export function isThreadBudgetExhausted(session: ChatSession): boolean {
+  return threadTokens(session) >= CHAT_THREAD_TOKEN_CAP;
+}
+
+export function setCompactedThrough(db: Db, sessionId: string, messageId: string): void {
+  db.update(chatSessions)
+    .set({ compactedThroughMessageId: messageId })
+    .where(eq(chatSessions.id, sessionId))
+    .run();
 }
 
 export function deleteSession(db: Db, workspaceId: string, sessionId: string): boolean {
@@ -181,20 +238,60 @@ export function deleteSession(db: Db, workspaceId: string, sessionId: string): b
 // Messages
 // ---------------------------------------------------------------------------
 
+/**
+ * Ordered transcript for a thread, in strict insertion order. Several messages
+ * in one turn (user → tool → assistant) can share a millisecond `createdAt`, so
+ * we tie-break on the implicit rowid rather than the random uuid PK.
+ */
+export function listMessages(db: Db, sessionId: string): ChatMessage[] {
+  return db
+    .select()
+    .from(chatMessages)
+    .where(eq(chatMessages.sessionId, sessionId))
+    .orderBy(sql`${chatMessages}.rowid asc`)
+    .all()
+    .map(rowToMessage);
+}
+
+/**
+ * The messages a turn actually sends to the model: everything after the latest
+ * compaction, with the compaction summary itself at the head. Before any
+ * compaction this is the whole transcript.
+ */
+export function listActiveMessages(
+  db: Db,
+  sessionId: string,
+  compactedThroughMessageId: string | null,
+): ChatMessage[] {
+  const all = listMessages(db, sessionId);
+  if (!compactedThroughMessageId) return all;
+  const cutoff = all.findIndex((m) => m.id === compactedThroughMessageId);
+  // A cutoff we cannot find means the marker is stale (the message was
+  // deleted); replaying the full transcript is the safe degradation.
+  if (cutoff < 0) return all;
+  const after = all.slice(cutoff + 1);
+  const summary = all.filter((m) => m.role === "compaction").at(-1);
+  return summary ? [summary, ...after.filter((m) => m.id !== summary.id)] : after;
+}
+
 export interface AppendMessageInput {
   role: ChatMessageRole;
   content: string;
   toolName?: string | null;
   citations?: ChatCitation[];
-  /** A pending proposal offered by this message (Sprint 42 P2). */
-  proposal?: ChatProposal | null;
-  /** Server-only commit args stored alongside the proposal (never surfaced). */
-  proposalArgs?: Record<string, unknown> | null;
-  /** A ref to the gated item this message created, once committed. */
+  /** The records this turn surfaced, rendered as cards (Sprint 77). */
+  cards?: ChatCard[];
+  /** The agent_run behind this assistant turn (Sprint 76). */
+  agentRunId?: string | null;
+  costCents?: number;
+  inputTokens?: number;
+  outputTokens?: number;
+  stopReason?: AgentStopReason | null;
+  /** What a confirmed proposal produced (Sprint 78) — `draft:<id>` etc. */
   producedRef?: string | null;
 }
 
-/** Persist one message and bump the session's updatedAt so lists resort. */
+/** Persist one message and bump the thread's updatedAt so lists resort. */
 export function appendMessage(
   db: Db,
   workspaceId: string,
@@ -210,10 +307,17 @@ export function appendMessage(
     content: input.content,
     toolName: input.toolName ?? null,
     citationsJson: JSON.stringify(input.citations ?? []),
-    proposalJson: input.proposal
-      ? JSON.stringify({ proposal: input.proposal, args: input.proposalArgs ?? {} })
-      : null,
+    cardsJson: JSON.stringify(input.cards ?? []),
+    // Sprint 78 keeps `proposal_json` dormant: a chat proposal is its own row
+    // now (chat_proposals), because its status changes after the message is
+    // written and a transcript row should not be rewritten by a click.
+    proposalJson: null,
     producedRef: input.producedRef ?? null,
+    agentRunId: input.agentRunId ?? null,
+    costCents: input.costCents ?? 0,
+    inputTokens: input.inputTokens ?? 0,
+    outputTokens: input.outputTokens ?? 0,
+    stopReason: input.stopReason ?? null,
     createdAt: now,
   };
   db.insert(chatMessages).values(row).run();

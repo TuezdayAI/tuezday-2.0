@@ -11,6 +11,7 @@ import { Input, Select } from "@/src/components/ui/input";
 import styles from "./learning.module.css";
 
 import { API_URL, apiFetch } from "@/lib/api";
+import { TASK_LABELS } from "@/lib/task-labels";
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
@@ -25,22 +26,6 @@ import {
   type Workspace,
 } from "@tuezday/contracts";
 
-const TASK_LABELS: Record<TaskType, string> = {
-  linkedin_post: "LinkedIn post",
-  cold_email_opener: "Cold email opener",
-  ad_copy_variant: "Ad copy variant",
-  landing_page_hero: "Landing page hero",
-  signal_response: "Signal response",
-  outbound_email: "Outbound email",
-  meta_ad_creative: "Meta ad creative",
-  google_rsa: "Google RSA",
-  pr_pitch: "Media pitch",
-  press_boilerplate: "Press boilerplate",
-  x_dm: "X DM",
-  instagram_post: "Instagram post",
-  engagement_reply: "Reply",
-  instagram_carousel: "Instagram carousel",
-};
 
 interface TrainingExample {
   kind: "rating" | "decision";

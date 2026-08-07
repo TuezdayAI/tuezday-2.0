@@ -36,7 +36,7 @@ import { GatewayError, type LlmGateway } from "../llm/gateway";
 import { meteredLlm } from "../llm/metered";
 import { assertLlmBudget, llmBudgetExhausted } from "./entitlements";
 import { getAudienceDetail, loadPeople } from "./audiences";
-import { getSocialAutomationSettings, utcDayBounds } from "./automation";
+import { connectionDayBounds, getSocialAutomationSettings } from "./automation";
 import { getBrain } from "./brain";
 import { getCampaign } from "./campaigns";
 import {
@@ -253,10 +253,10 @@ function resolveXConnection(db: Db, launch: LaunchRow): Connection | undefined {
   return candidates.length === 1 ? candidates[0] : undefined;
 }
 
-/** Sent X DMs on this connection on the given UTC day — the per-account cap.
+/** Sent X DMs on this connection on the given account-local day.
  * Also consumed by the send action adapter as a dispatch guardrail. */
 export function countConnectionDmsForDay(db: Db, connectionId: string, dayMs: number): number {
-  const { start, end } = utcDayBounds(dayMs);
+  const { start, end } = connectionDayBounds(db, connectionId, dayMs);
   return db
     .select({ id: launchMessages.id })
     .from(launchMessages)

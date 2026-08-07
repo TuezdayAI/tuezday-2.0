@@ -345,6 +345,16 @@ h2 {
   padding: 1px 8px;
 }
 
+/* Sprint 77: the assistant's summon hint. ⌘K opens it from anywhere. */
+.ws-kbd {
+  margin-left: auto;
+  padding: 1px 5px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 10px;
+  color: var(--muted);
+}
+
 .ws-sidebar-foot {
   margin-top: auto;
   padding: 12px 2px 0;

@@ -1,6 +1,8 @@
 import type {
   AgentProposalTargetKind,
+  CampaignPurpose,
   Channel,
+  ExternalActionOriginSurface,
   ProposeToolName,
   TaskType,
 } from "@tuezday/contracts";
@@ -42,6 +44,13 @@ export interface ProposalAccepted {
   summary: string;
   /** True when this ran in a non-live mode and nothing durable happened. */
   simulated: boolean;
+  /**
+   * Sprint 78: the call was RECORDED and is waiting on a human to confirm it
+   * in the conversation — nothing has reached a gate yet. The tool wrapper
+   * uses this to tell the model the truth instead of Sprint 69's "proposed, a
+   * human sees it wherever that kind of item is governed".
+   */
+  awaitingConfirmation?: boolean;
 }
 
 export type ProposalResult = ProposalAccepted | ProposalRefusal;
@@ -50,6 +59,20 @@ export interface ProposalOrigin {
   /** The agent run that called the tool — the attribution the queue shows. */
   agentRunId: string;
   workspaceId: string;
+  /**
+   * Sprint 78 (D-78.8): which agent surface asked, carried onto the minted
+   * action so the authorization queue can say "proposed in chat" rather than
+   * the weaker "proposed by an agent". Absent means the pipeline engine.
+   */
+  surface?: ExternalActionOriginSurface;
+  /** The thread, when the surface is chat — recorded on the Sprint 69 ledger. */
+  chatSessionId?: string;
+  /**
+   * Who confirmed it in the thread. Attribution only: it does NOT make the
+   * minted action human-proposed (D-78.7), so the Sprint 52 publish gate and
+   * the policy tree behave exactly as they would for a pipeline proposal.
+   */
+  confirmedByUserId?: string | null;
 }
 
 export interface ProposeDraftArgs {
@@ -79,6 +102,25 @@ export interface ProposeSequenceStepArgs {
   rationale: string;
 }
 
+/**
+ * Sprint 77 (D-77.7). A strict subset of `UpsertCampaignInput`: `status`,
+ * `origin`, `automationMode` and `autoDailyCap` are absent because they are not
+ * the model's to choose. The implementation forces `draft` / `system` /
+ * `manual`, and that inertness is the gate.
+ */
+export interface ProposeCampaignArgs {
+  name: string;
+  objective?: string;
+  kpi?: string;
+  timeframe?: string;
+  audience?: string;
+  pillars?: string[];
+  channels?: Channel[];
+  personaIds?: string[];
+  purpose?: CampaignPurpose;
+  rationale: string;
+}
+
 export interface ProposeAdMutationArgs {
   launchId: string;
   dailyBudgetCents?: number;
@@ -103,6 +145,8 @@ export interface AgentProposalService {
     origin: ProposalOrigin,
     args: ProposeAdMutationArgs,
   ): Promise<ProposalResult>;
+  /** Sprint 77 — creates an inert `draft`-status campaign (D-77.7). */
+  proposeCampaign(origin: ProposalOrigin, args: ProposeCampaignArgs): Promise<ProposalResult>;
 }
 
 /**
@@ -119,7 +163,12 @@ export function simulatedAgentProposals(): AgentProposalService {
   const simulate = (tool: ProposeToolName, summary: string): Promise<ProposalResult> =>
     Promise.resolve({
       ok: true,
-      targetKind: tool === "propose_draft" ? "draft" : "external_action",
+      targetKind:
+        tool === "propose_draft"
+          ? "draft"
+          : tool === "propose_campaign"
+            ? "campaign"
+            : "external_action",
       id: null,
       status: "simulated",
       summary,
@@ -140,5 +189,7 @@ export function simulatedAgentProposals(): AgentProposalService {
       ),
     proposeAdMutation: (_origin, args) =>
       simulate("propose_ad_mutation", `Would propose an ad mutation on launch ${args.launchId}.`),
+    proposeCampaign: (_origin, args) =>
+      simulate("propose_campaign", `Would create the campaign "${args.name}" as a draft.`),
   };
 }

@@ -17,6 +17,14 @@ export interface SocialPostResult {
   url: string;
 }
 
+export interface SocialPublishedResult extends SocialPostResult {
+  status: "published";
+}
+
+export type SocialPublishResult =
+  | SocialPublishedResult
+  | { status: "processing"; operationId: string; retryAfterMs: number };
+
 /** Media attached to a post (Instagram). url must be publicly fetchable by the platform. */
 export interface PublishMedia {
   url: string;
@@ -66,7 +74,9 @@ export interface SocialProfileReadRaw {
 }
 
 export interface SocialAdapter {
-  publishPost(input: PublishPostInput): Promise<SocialPostResult>;
+  publishPost(input: PublishPostInput): Promise<SocialPublishResult>;
+  /** Resume a provider-side publish operation without recreating it. */
+  finalizePost?(operationId: string): Promise<SocialPublishResult>;
   /** Per-recipient direct message (X only this sprint). */
   sendDm?(input: { recipientHandle: string; body: string }): Promise<SocialPostResult>;
   // --- Sprint 29 (engagement inbox) — all optional; the poller feature-detects. ---

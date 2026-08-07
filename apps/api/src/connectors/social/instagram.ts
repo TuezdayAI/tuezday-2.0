@@ -6,6 +6,7 @@ import type {
   PublishMedia,
   PublishPostInput,
   SocialAdapter,
+  SocialPublishResult,
   SocialPostResult,
   SocialProfileReadRaw,
 } from "./index";
@@ -13,13 +14,7 @@ import type { SocialAdapterConfig } from "./linkedin";
 import { ProviderCapabilityError } from "../../discovery/provider-errors";
 
 const GRAPH = "https://graph.instagram.com";
-// Bounded in-request poll for reel/video processing. If still in progress after
-// this, we throw and the publication retry route finishes it (deferred: a
-// worker-driven async finalize — docs/deferred-improvements.md).
-const VIDEO_POLL_TRIES = 10;
-const VIDEO_POLL_DELAY_MS = 2000;
-
-const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+const VIDEO_RETRY_AFTER_MS = 5_000;
 
 interface IdResponse {
   id?: string;
@@ -52,7 +47,10 @@ export class InstagramAdapter implements SocialAdapter {
     private readonly config: SocialAdapterConfig,
   ) {}
 
-  private async post(path: string, form: Record<string, string>): Promise<IdResponse> {
+  private async post(
+    path: string,
+    form: Record<string, string>,
+  ): Promise<IdResponse & { id: string }> {
     const res = await this.fabric.proxyJson("POST", path, this.config.nangoConnectionId, this.config.integrationKey, {
       form,
       baseUrlOverride: GRAPH,
@@ -61,7 +59,10 @@ export class InstagramAdapter implements SocialAdapter {
     if (res.status < 200 || res.status >= 300 || json.error) {
       throw new ConnectorFabricError(`Instagram ${path} returned ${res.status}: ${json.error?.message ?? JSON.stringify(json).slice(0, 200)}`);
     }
-    return json;
+    if (!json.id?.trim()) {
+      throw new ConnectorFabricError(`Instagram ${path} returned no operation id.`);
+    }
+    return json as IdResponse & { id: string };
   }
 
   private igUserId(): string {
@@ -79,53 +80,19 @@ export class InstagramAdapter implements SocialAdapter {
     return item.type === "video" ? { media_type: "REELS", video_url: item.url } : { image_url: item.url };
   }
 
-  private async waitForContainer(creationId: string): Promise<void> {
-    for (let i = 0; i < VIDEO_POLL_TRIES; i++) {
-      const res = await this.fabric.proxyJson(
-        "GET",
-        `/${creationId}?fields=status_code`,
-        this.config.nangoConnectionId,
-        this.config.integrationKey,
-        { baseUrlOverride: GRAPH },
-      );
-      const status = (res.json as StatusResponse)?.status_code;
-      if (status === "FINISHED") return;
-      if (status === "ERROR") throw new ConnectorFabricError("Instagram could not process the video.");
-      await sleep(VIDEO_POLL_DELAY_MS);
-    }
-    throw new ConnectorFabricError("Instagram is still processing the video — retry this publish in a moment.");
+  private processing(creationId: string): SocialPublishResult {
+    return {
+      status: "processing",
+      operationId: creationId,
+      retryAfterMs: VIDEO_RETRY_AFTER_MS,
+    };
   }
 
-  async publishPost(input: PublishPostInput): Promise<SocialPostResult> {
-    const media = input.media ?? [];
-    if (media.length === 0) {
-      throw new ConnectorFabricError("Instagram needs at least one image or video.");
-    }
-    const igId = this.igUserId();
-    const hasVideo = media.some((m) => m.type === "video");
-
-    let creationId: string;
-    if (media.length === 1) {
-      const created = await this.post(`/${igId}/media`, { ...this.mediaParam(media[0]!), caption: input.body });
-      creationId = created.id!;
-    } else {
-      const children: string[] = [];
-      for (const item of media) {
-        const child = await this.post(`/${igId}/media`, { ...this.mediaParam(item), is_carousel_item: "true" });
-        children.push(child.id!);
-      }
-      const parent = await this.post(`/${igId}/media`, {
-        media_type: "CAROUSEL",
-        children: children.join(","),
-        caption: input.body,
-      });
-      creationId = parent.id!;
-    }
-
-    if (hasVideo) await this.waitForContainer(creationId);
-
-    const published = await this.post(`/${igId}/media_publish`, { creation_id: creationId });
-    const mediaId = published.id!;
+  private async publishContainer(creationId: string): Promise<SocialPublishResult> {
+    const published = await this.post(`/${this.igUserId()}/media_publish`, {
+      creation_id: creationId,
+    });
+    const mediaId = published.id;
 
     let url = "";
     const link = await this.fabric.proxyJson(
@@ -138,7 +105,58 @@ export class InstagramAdapter implements SocialAdapter {
     if (link.status >= 200 && link.status < 300) {
       url = (link.json as PermalinkResponse)?.permalink ?? "";
     }
-    return { externalId: mediaId, url };
+    return { status: "published", externalId: mediaId, url };
+  }
+
+  async publishPost(input: PublishPostInput): Promise<SocialPublishResult> {
+    const media = input.media ?? [];
+    if (media.length === 0) {
+      throw new ConnectorFabricError("Instagram needs at least one image or video.");
+    }
+    const igId = this.igUserId();
+    const hasVideo = media.some((m) => m.type === "video");
+
+    let creationId: string;
+    if (media.length === 1) {
+      const created = await this.post(`/${igId}/media`, { ...this.mediaParam(media[0]!), caption: input.body });
+      creationId = created.id;
+    } else {
+      const children: string[] = [];
+      for (const item of media) {
+        const child = await this.post(`/${igId}/media`, { ...this.mediaParam(item), is_carousel_item: "true" });
+        children.push(child.id);
+      }
+      const parent = await this.post(`/${igId}/media`, {
+        media_type: "CAROUSEL",
+        children: children.join(","),
+        caption: input.body,
+      });
+      creationId = parent.id;
+    }
+
+    return hasVideo ? this.processing(creationId) : this.publishContainer(creationId);
+  }
+
+  async finalizePost(operationId: string): Promise<SocialPublishResult> {
+    const res = await this.fabric.proxyJson(
+      "GET",
+      `/${operationId}?fields=status_code`,
+      this.config.nangoConnectionId,
+      this.config.integrationKey,
+      { baseUrlOverride: GRAPH },
+    );
+    if (res.status < 200 || res.status >= 300) {
+      throw new ConnectorFabricError(`Instagram container lookup returned ${res.status}.`);
+    }
+    const status = (res.json as StatusResponse)?.status_code;
+    if (status === "FINISHED") return this.publishContainer(operationId);
+    if (status === "ERROR") {
+      throw new ConnectorFabricError("Instagram could not process the video.");
+    }
+    if (status === "IN_PROGRESS" || status === "PUBLISHED") return this.processing(operationId);
+    throw new ConnectorFabricError(
+      `Instagram returned an unknown container status: ${status ?? "missing"}.`,
+    );
   }
 
   // --- Sprint 29 (engagement inbox). Real Graph shape; needs an IG Business
@@ -187,7 +205,7 @@ export class InstagramAdapter implements SocialAdapter {
 
   async postReply(input: { parentExternalId: string; body: string }): Promise<SocialPostResult> {
     const created = await this.post(`/${input.parentExternalId}/replies`, { message: input.body });
-    return { externalId: created.id!, url: "" };
+    return { externalId: created.id, url: "" };
   }
 
   // --- Sprint 36.3 (onboarding social corpus): the connected IG Business

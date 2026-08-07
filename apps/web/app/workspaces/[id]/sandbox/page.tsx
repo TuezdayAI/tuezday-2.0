@@ -19,7 +19,7 @@ import {
   DEFAULT_TOKEN_BUDGET,
   isAdCreativeTaskType,
   OUTPUT_RATINGS,
-  TASK_TYPES,
+  GENERATION_TASK_TYPES,
   type Campaign,
   type Channel,
   type GenerationReview,
@@ -30,30 +30,15 @@ import {
   type Workspace,
 } from "@tuezday/contracts";
 import type { ContextSection, ResolvedContext } from "@tuezday/brain";
+import { TASK_LABELS } from "@/lib/task-labels";
 import { ReviewPanel } from "@/components/ReviewPanel";
 import { WhyThisOutput, EvidenceRetrieval, SectionBadges } from "@/components/why-this-output";
 
-const TASK_LABELS: Record<TaskType, string> = {
-  linkedin_post: "LinkedIn post",
-  cold_email_opener: "Cold email opener",
-  ad_copy_variant: "Ad copy variant",
-  landing_page_hero: "Landing page hero",
-  signal_response: "Signal response",
-  outbound_email: "Outbound email",
-  meta_ad_creative: "Meta ad creative",
-  google_rsa: "Google RSA",
-  pr_pitch: "Media pitch",
-  press_boilerplate: "Press boilerplate",
-  x_dm: "X DM",
-  instagram_post: "Instagram post",
-  engagement_reply: "Reply",
-  instagram_carousel: "Instagram carousel",
-};
 
 /** Ad creative variant sets are generated on the Ad creatives page; a media
  * pitch without a contact is meaningless (PR page). press_boilerplate stays —
  * it is a sandbox-shaped task. */
-const SANDBOX_TASK_TYPES = TASK_TYPES.filter(
+const SANDBOX_TASK_TYPES = GENERATION_TASK_TYPES.filter(
   // engagement_reply needs an inbound conversation — it's generated from the Inbox, not here.
   (t) => !isAdCreativeTaskType(t) && t !== "pr_pitch" && t !== "engagement_reply",
 );

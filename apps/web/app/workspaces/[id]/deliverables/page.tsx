@@ -10,6 +10,7 @@ import { Input, Select } from "@/src/components/ui/input";
 import styles from "./deliverables.module.css";
 
 import { API_URL, apiFetch } from "@/lib/api";
+import { WhyThisPanel } from "@/components/why-this-panel";
 import {
   actionsFor,
   canGenerateNow,
@@ -535,6 +536,7 @@ export default function DeliverablesPage() {
                   )}
                   {detail && (
                     <div className={styles.detail}>
+                      <WhyThisPanel workspaceId={id} kind="deliverable" subjectId={item.id} />
                       <div className={styles.detailSection}>
                         <h4 className={styles.detailTitle}>Variants</h4>
                         {detail.variants.length === 0 ? (

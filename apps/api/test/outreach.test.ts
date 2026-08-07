@@ -469,11 +469,10 @@ describe("outreach sequences (Sprint 48)", () => {
     expect(gmail.sendEmail).toHaveBeenCalledTimes(1);
   });
 
-  it("runs the outreach tick as the system actor (worker token)", async () => {
-    const res = await (app as TuezdayApp).inject({
+  it("keeps founder-triggered outreach run-now available", async () => {
+    const res = await app.inject({
       method: "POST",
       url: `/workspaces/${workspaceId}/outreach/run`,
-      headers: { authorization: `Bearer ${WORKER_TOKEN}` },
     });
     expect(res.statusCode).toBe(200);
     expect(res.json().ranAt).toBeTruthy();

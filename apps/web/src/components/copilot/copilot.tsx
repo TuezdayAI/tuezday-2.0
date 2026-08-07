@@ -1,20 +1,73 @@
 "use client";
-// apps/web/src/components/copilot/copilot.tsx — Sprint 42 Part 1.
-// A global, read-only grounded copilot as a right-side slide-over. Launched
-// from the workspace nav; talks to /workspaces/:id/chat/* and degrades to a
-// friendly "unavailable" panel if those routes 404 (API not deployed yet).
+// apps/web/src/components/copilot/copilot.tsx — Sprint 42, rebuilt in Sprint 76.
+// A global GTM working conversation as a right-side slide-over. Launched from
+// the workspace nav; talks to /workspaces/:id/chat/* and degrades to a friendly
+// "unavailable" panel if those routes 404.
+//
+// Sprint 76: answers STREAM. The turn is an agent_run, so tool calls appear as
+// they run and every answer links to its trace in the Agent Inspector.
+//
+// Sprint 78: it can now ACT — but only by asking. A propose call renders a
+// confirmation card here; nothing reaches the approval gate or the action
+// policy until the founder confirms it, and the policy tree still decides what
+// happens after that.
+//
+// Sprint 77: records render as CARDS rather than prose, and a card's buttons
+// call the same routes the dedicated pages call. Plus the command layer (`/`),
+// pinned context (`@`), and a URL paste that becomes an untrusted pin.
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import type {
-  ChatCitation,
-  ChatCitationKind,
-  ChatMessage,
-  ChatProposal,
-  ChatSession,
-  ChatSessionDetail,
-  ChatTurnResult,
+import {
+  CHAT_COMMANDS,
+  parseChatCommand,
+  type AgentStopReason,
+  type ChatCard,
+  type ChatCitation,
+  type ChatCitationKind,
+  type ChatMessage,
+  type ChatPin,
+  type ChatPinKind,
+  type ChatProposal,
+  type ChatSession,
+  type ChatSessionDetail,
+  type ChatTurnResult,
 } from "@tuezday/contracts";
 import { apiFetch } from "@/lib/api";
+import {
+  cardActionRequest,
+  cardHasAction,
+  cardHref,
+  cardKindLabel,
+  clearMention,
+  commandQuery,
+  mentionQuery,
+  pastedUrl,
+  pinKindLabel,
+  pinIsUntrusted,
+  pinsSummary,
+} from "@/lib/chat-card-view";
+import { describeDiff, diffWords, hasChanges } from "@/lib/text-diff";
+import { readChatStream } from "@/lib/chat-stream";
+import {
+  isActionable,
+  mergeProposal,
+  pendingSummary,
+  producedHref,
+  proposalOutcome,
+  proposalTone,
+  proposalsForMessage,
+  quarantineWarning,
+  unattachedProposals,
+} from "@/lib/chat-proposal-view";
+import {
+  agentRunHref,
+  citationHref,
+  formatCost,
+  stopReasonNote,
+  threadBudgetView,
+  threadTitle,
+  visibleMessages as filterVisible,
+} from "@/lib/chat-thread-view";
 import { Button, IconButton } from "@/src/components/ui/button";
 import { Icon, type IconName } from "@/src/components/ui/icon";
 import { Textarea } from "@/src/components/ui/input";
@@ -27,9 +80,9 @@ interface CopilotProps {
 }
 
 const EXAMPLE_QUESTIONS = [
-  "Summarize our ICP",
-  "Which sequence has the best reply rate?",
-  "What should I focus on?",
+  "I want to launch a campaign for our new product — where do we start?",
+  "Why did our LinkedIn engagement drop last month?",
+  "Draft a LinkedIn post about our funding and queue it to the Launch campaign",
 ];
 
 /** Citation kind → icon within the shared vocabulary (brain=book, evidence=file, data=chart). */
@@ -39,16 +92,44 @@ const CITATION_ICON: Record<ChatCitationKind, IconName> = {
   data: "status-learning",
 };
 
+/** What the assistant is doing right now, assembled from the stream. */
+interface LiveTurn {
+  text: string;
+  tools: { callId: string; name: string; done: boolean; ok: boolean }[];
+  /** Cards arrive as each tool returns, so records appear mid-run. */
+  cards: ChatCard[];
+}
+
+const EMPTY_TURN: LiveTurn = { text: "", tools: [], cards: [] };
+
+/** What an `@` mention can pin, and where the picker reads its options from. */
+const MENTION_SOURCES: { kind: ChatPinKind; path: string; labelKey: "name" | "content" }[] = [
+  { kind: "campaign", path: "/campaigns", labelKey: "name" },
+  { kind: "persona", path: "/personas", labelKey: "name" },
+  { kind: "draft", path: "/drafts?state=pending_review", labelKey: "content" },
+];
+
+interface MentionOption {
+  kind: ChatPinKind;
+  refId: string;
+  label: string;
+}
+
 export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [proposals, setProposals] = useState<ChatProposal[]>([]);
+  const [pins, setPins] = useState<ChatPin[]>([]);
+  const [mentionOptions, setMentionOptions] = useState<MentionOption[]>([]);
+  const [resolving, setResolving] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [loadingSessions, setLoadingSessions] = useState(false);
   const [pending, setPending] = useState(false);
   const [showSessions, setShowSessions] = useState(false);
   const [draft, setDraft] = useState("");
-  const [confirming, setConfirming] = useState<string | null>(null);
+  const [live, setLive] = useState<LiveTurn>(EMPTY_TURN);
+  const [notice, setNotice] = useState<string | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
 
   const base = `/workspaces/${workspaceId}/chat`;
@@ -59,12 +140,18 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
         const res = await apiFetch(`${base}/sessions/${sessionId}`);
         if (!res.ok) {
           setMessages([]);
+          setProposals([]);
+          setPins([]);
           return;
         }
         const detail: ChatSessionDetail = await res.json();
         setMessages(detail.messages ?? []);
+        setProposals(detail.proposals ?? []);
+        setPins(detail.pins ?? []);
       } catch {
         setMessages([]);
+        setProposals([]);
+        setPins([]);
       }
     },
     [base],
@@ -94,15 +181,19 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
     }
   }, [base]);
 
-  // Load sessions the first time the drawer opens (and whenever the workspace changes).
+  // Load threads the first time the drawer opens (and whenever the workspace changes).
   useEffect(() => {
     if (open) void loadSessions();
   }, [open, loadSessions]);
 
-  // Load the active session's thread when it changes.
+  // Load the active thread's transcript when it changes.
   useEffect(() => {
     if (open && activeId) void loadSession(activeId);
-    if (!activeId) setMessages([]);
+    if (!activeId) {
+      setMessages([]);
+      setProposals([]);
+      setPins([]);
+    }
   }, [open, activeId, loadSession]);
 
   // Close on Escape.
@@ -115,11 +206,11 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  // Keep the thread pinned to the newest message.
+  // Keep the thread pinned to the newest content — including each delta.
   useEffect(() => {
     const el = threadRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, pending]);
+  }, [messages, live, pending]);
 
   async function createSession(): Promise<string | null> {
     try {
@@ -137,6 +228,9 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
       setSessions((prev) => [session, ...prev]);
       setActiveId(session.id);
       setMessages([]);
+      setProposals([]);
+      setPins([]);
+      setNotice(null);
       return session.id;
     } catch {
       setUnavailable(true);
@@ -147,10 +241,8 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
   async function deleteSession(sessionId: string) {
     setSessions((prev) => prev.filter((s) => s.id !== sessionId));
     if (activeId === sessionId) {
-      setActiveId((prev) => {
-        const remaining = sessions.filter((s) => s.id !== sessionId);
-        return remaining[0]?.id ?? null;
-      });
+      const remaining = sessions.filter((s) => s.id !== sessionId);
+      setActiveId(remaining[0]?.id ?? null);
     }
     try {
       await apiFetch(`${base}/sessions/${sessionId}`, { method: "DELETE" });
@@ -159,9 +251,190 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
     }
   }
 
+  /**
+   * Pin an entity to the thread (Sprint 77). Campaign and persona pins also
+   * rebind the thread's scope server-side (D-77.5), so the next turn resolves
+   * against a different bundle — which is the whole point of pinning one.
+   */
+  async function pinEntity(kind: ChatPinKind, refId: string, label?: string) {
+    if (!activeId) return;
+    try {
+      const res = await apiFetch(`${base}/sessions/${activeId}/pins`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ kind, refId, ...(label ? { label } : {}) }),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        setNotice(
+          body.error === "pin_limit_reached"
+            ? "That's as much as one conversation can hold pinned. Remove one first."
+            : body.error === "invalid_url"
+              ? "That link can't be read from here."
+              : "Couldn't pin that.",
+        );
+        return;
+      }
+      const pin: ChatPin = await res.json();
+      setPins((prev) => (prev.some((p) => p.id === pin.id) ? prev : [...prev, pin]));
+      setNotice(null);
+    } catch {
+      setNotice("Couldn't reach the assistant. Check your connection and try again.");
+    }
+  }
+
+  async function unpin(pinId: string) {
+    if (!activeId) return;
+    setPins((prev) => prev.filter((p) => p.id !== pinId));
+    try {
+      await apiFetch(`${base}/sessions/${activeId}/pins/${pinId}`, { method: "DELETE" });
+    } catch {
+      // Best effort — the chip is already gone from the UI.
+    }
+  }
+
+  /** Load what an `@` can pin. Fetched once per open, filtered client-side. */
+  const loadMentionOptions = useCallback(async () => {
+    const collected: MentionOption[] = [];
+    for (const source of MENTION_SOURCES) {
+      try {
+        const res = await apiFetch(`/workspaces/${workspaceId}${source.path}`);
+        if (!res.ok) continue;
+        const rows: Record<string, unknown>[] = await res.json();
+        for (const row of rows.slice(0, 20)) {
+          const id = typeof row.id === "string" ? row.id : null;
+          const raw = row[source.labelKey];
+          if (!id || typeof raw !== "string") continue;
+          collected.push({
+            kind: source.kind,
+            refId: id,
+            label: raw.length > 60 ? `${raw.slice(0, 59)}…` : raw,
+          });
+        }
+      } catch {
+        // A source that will not load simply offers nothing to pin.
+      }
+    }
+    setMentionOptions(collected);
+  }, [workspaceId]);
+
+  /**
+   * Run an instant command (D-77.4). No model runs: the API executes registry
+   * read tools and returns cards, so this costs nothing and cannot be wrong
+   * about what the founder meant.
+   */
+  async function runInstantCommand(command: string, argument: string): Promise<boolean> {
+    let sessionId = activeId;
+    if (!sessionId) {
+      sessionId = await createSession();
+      if (!sessionId) return false;
+    }
+    setDraft("");
+    setNotice(null);
+    setPending(true);
+    try {
+      const res = await apiFetch(`${base}/sessions/${sessionId}/command`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ command, argument }),
+      });
+      if (!res.ok) {
+        setNotice("Couldn't run that command.");
+        return false;
+      }
+      const body = (await res.json()) as { userMessage: ChatMessage; message: ChatMessage };
+      setMessages((prev) => [...prev, body.userMessage, body.message]);
+      void loadSessions();
+      return true;
+    } catch {
+      setNotice("Couldn't reach the assistant. Check your connection and try again.");
+      return false;
+    } finally {
+      setPending(false);
+    }
+  }
+
+  /**
+   * A card's button (D-77.3). It issues the SAME request /review issues, which
+   * is why the decision-log record is identical — the same route writes it.
+   * The card is then reloaded from the server rather than patched optimistically:
+   * an approval can change more than the state we guessed at.
+   */
+  async function actOnCard(card: ChatCard, action: "approve" | "reject" | "edit", content?: string) {
+    const request = cardActionRequest(card, action, workspaceId);
+    if (!request || !activeId) return;
+    setResolving(card.ref);
+    try {
+      const res = await apiFetch(request.path, {
+        method: request.method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(action === "edit" ? { content } : {}),
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { message?: string };
+        setNotice(body.message ?? "That couldn't go through.");
+        return;
+      }
+      setNotice(
+        action === "approve"
+          ? "Approved. It's recorded in the decision log exactly as it would be from Review."
+          : action === "reject"
+            ? "Rejected."
+            : "Saved.",
+      );
+      await loadSession(activeId);
+    } catch {
+      setNotice("Couldn't reach the assistant. Check your connection and try again.");
+    } finally {
+      setResolving(null);
+    }
+  }
+
+  /**
+   * Confirm or decline one proposal. The response IS the resolved proposal —
+   * including a `failed` one, because a governed refusal is an answer the
+   * founder needs to read on the card, not an HTTP error to swallow.
+   */
+  async function resolveProposalCard(proposal: ChatProposal, decision: "confirm" | "decline") {
+    if (!activeId || resolving) return;
+    setResolving(proposal.id);
+    try {
+      const res = await apiFetch(
+        `${base}/sessions/${activeId}/proposals/${proposal.id}/${decision}`,
+        { method: "POST" },
+      );
+      if (!res.ok) {
+        setNotice(
+          res.status === 409
+            ? "That was already confirmed or declined."
+            : "Couldn't complete that. Try again.",
+        );
+        await loadSession(activeId);
+        return;
+      }
+      const updated: ChatProposal = await res.json();
+      setProposals((prev) => mergeProposal(prev, updated));
+      // Confirming appends a receipt (or a refusal) to the transcript.
+      if (decision === "confirm") await loadSession(activeId);
+      void loadSessions();
+    } catch {
+      setNotice("Couldn't reach the assistant. Check your connection and try again.");
+    } finally {
+      setResolving(null);
+    }
+  }
+
   async function send(text: string) {
     const message = text.trim();
     if (!message || pending) return;
+
+    // Sprint 77: the same parser the API uses, so the client and the server
+    // agree on what is a command. An instant one never becomes a model turn.
+    const parsed = parseChatCommand(message);
+    if (parsed?.kind === "instant") {
+      await runInstantCommand(parsed.command, parsed.argument);
+      return;
+    }
 
     let sessionId = activeId;
     if (!sessionId) {
@@ -170,27 +443,35 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
     }
 
     setDraft("");
+    setNotice(null);
     // Optimistic user bubble so the composer feels instant.
-    const optimistic: ChatMessage = {
-      id: `optimistic-${Date.now()}`,
-      sessionId,
-      workspaceId,
-      role: "user",
-      content: message,
-      toolName: null,
-      citations: [],
-      createdAt: Date.now(),
-    };
-    setMessages((prev) => [...prev, optimistic]);
+    setMessages((prev) => [...prev, optimisticUser(sessionId!, workspaceId, message)]);
     setPending(true);
+    setLive(EMPTY_TURN);
+
     try {
       const res = await apiFetch(`${base}/sessions/${sessionId}/messages`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message }),
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        body: JSON.stringify({
+          message,
+          // A directive command pins the turn's intent; the INSTRUCTION comes
+          // from the API, never from here (D-77.4).
+          ...(parsed?.kind === "directive" ? { command: parsed.command } : {}),
+        }),
       });
       if (res.status === 404) {
         setUnavailable(true);
+        return;
+      }
+      if (res.status === 409 || res.status === 402) {
+        const body = (await res.json().catch(() => ({}))) as { message?: string };
+        setNotice(
+          body.message ??
+            (res.status === 402
+              ? "This workspace has reached its plan's usage limit."
+              : "This conversation has reached its limit. Start a new one."),
+        );
         return;
       }
       if (!res.ok) {
@@ -200,84 +481,128 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
         ]);
         return;
       }
-      const turn: ChatTurnResult = await res.json();
-      // Re-sync from the server so persisted tool messages + ids are authoritative.
-      await loadSession(sessionId);
-      // Refresh the session list so an auto-generated title shows up.
-      void loadSessions();
-      // Fallback: if the reload returned nothing, append the answer we have.
-      setMessages((prev) => {
-        if (prev.some((m) => m.role === "assistant" && m.content === turn.answer)) return prev;
-        if (prev[prev.length - 1]?.role === "assistant") return prev;
-        return [...prev, assistantBubble(sessionId!, workspaceId, turn.answer, turn.citations)];
+
+      // Non-streaming fallback: a proxy stripped the SSE content type.
+      if (!res.headers.get("content-type")?.includes("text/event-stream")) {
+        const turn: ChatTurnResult = await res.json();
+        setMessages((prev) => [...prev, turn.message]);
+        setProposals((prev) => turn.proposals.reduce(mergeProposal, prev));
+        void loadSessions();
+        return;
+      }
+
+      let settled = false;
+      let sawProposal = false;
+      await readChatStream(res, (event) => {
+        switch (event.type) {
+          case "text_delta":
+            setLive((prev) => ({ ...prev, text: prev.text + event.text }));
+            break;
+          case "tool_call_start":
+            setLive((prev) => ({
+              ...prev,
+              tools: [...prev.tools, { callId: event.callId, name: event.name, done: false, ok: true }],
+            }));
+            break;
+          case "tool_call_end":
+            setLive((prev) => ({
+              ...prev,
+              tools: prev.tools.map((t) =>
+                t.callId === event.callId ? { ...t, done: true, ok: event.ok } : t,
+              ),
+            }));
+            break;
+          case "card":
+            // Records appear while the run is still going, which is most of
+            // what "generative UI" means to someone watching a six-step turn.
+            setLive((prev) => ({ ...prev, cards: [...prev.cards, ...event.cards] }));
+            break;
+          case "proposal":
+            // Arrives mid-run, before the answer settles: the founder sees what
+            // it is about to ask for while it is still writing the sentence.
+            sawProposal = true;
+            setProposals((prev) => mergeProposal(prev, event.proposal));
+            break;
+          case "message":
+            settled = true;
+            // The persisted message replaces the live transcript: it carries
+            // the citations, the run id and the cost the stream did not.
+            setMessages((prev) => [...prev, event.message]);
+            setLive(EMPTY_TURN);
+            break;
+          case "error":
+            settled = true;
+            setMessages((prev) => [...prev, errorBubble(sessionId!, workspaceId, event.message)]);
+            setLive(EMPTY_TURN);
+            break;
+          default:
+            break;
+        }
       });
+
+      // A stream that dropped before its `message` frame left a fully persisted
+      // transcript on the server — refetch rather than trusting the partial.
+      // A proposal frame also needs the refetch: it is streamed before the
+      // message it belongs to exists, so the client's copy has no messageId.
+      if (!settled || sawProposal) await loadSession(sessionId);
+      // Refresh the list so an auto-generated title and the thread cost show up.
+      void loadSessions();
     } catch {
       setMessages((prev) => [
         ...prev,
-        errorBubble(sessionId!, workspaceId, "Couldn't reach the copilot. Check your connection and try again."),
+        errorBubble(sessionId!, workspaceId, "Couldn't reach the assistant. Check your connection and try again."),
       ]);
     } finally {
       setPending(false);
-    }
-  }
-
-  // Confirm or discard a pending proposal (Sprint 42 Part 2). Nothing is sent —
-  // confirm only creates the gated item (a draft in Review, or an action
-  // awaiting authorization); the human still clears the normal gate.
-  async function resolveProposal(confirmToken: string, decision: "confirm" | "discard") {
-    const sessionId = activeId;
-    if (!sessionId || confirming) return;
-    setConfirming(confirmToken);
-    try {
-      const res = await apiFetch(`${base}/sessions/${sessionId}/confirm`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirmToken, decision }),
-      });
-      if (res.status === 404) {
-        setUnavailable(true);
-        return;
-      }
-      if (!res.ok) {
-        setMessages((prev) => [
-          ...prev,
-          errorBubble(sessionId, workspaceId, "Couldn't complete that just now. Please try again."),
-        ]);
-        return;
-      }
-      await loadSession(sessionId);
-      void loadSessions();
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        errorBubble(sessionId, workspaceId, "Couldn't reach the copilot. Check your connection and try again."),
-      ]);
-    } finally {
-      setConfirming(null);
+      setLive(EMPTY_TURN);
     }
   }
 
   if (!open) return null;
 
   const activeSession = sessions.find((s) => s.id === activeId) ?? null;
-  const activeTitle = activeSession?.title?.trim() || "New chat";
-  const visibleMessages = messages.filter((m) => m.role !== "tool" || m.toolName);
+  const budget = activeSession ? threadBudgetView(activeSession) : null;
+  const shown = filterVisible(messages);
+
+  // The `/` palette and the `@` picker, both driven by what is in the composer
+  // right now. Neither is a mode the founder has to enter or leave.
+  const slash = commandQuery(draft);
+  const commandMatches =
+    slash === null ? [] : CHAT_COMMANDS.filter((c) => c.name.startsWith(slash));
+  const mention = mentionQuery(draft);
+  // Computed plainly rather than memoised: this sits AFTER the `!open` early
+  // return, where a hook would be a conditional one, and filtering a few dozen
+  // options per keystroke costs nothing.
+  const mentionMatches =
+    mention === null
+      ? []
+      : (() => {
+          const pinned = new Set(pins.map((p) => `${p.kind}:${p.refId}`));
+          return mentionOptions
+            .filter((o) => !pinned.has(`${o.kind}:${o.refId}`))
+            .filter((o) => (mention ? o.label.toLowerCase().includes(mention) : true))
+            .slice(0, 8);
+        })();
 
   return (
     <div className={styles.overlay} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <aside className={styles.drawer} role="dialog" aria-modal="true" aria-label="Copilot">
+      <aside className={styles.drawer} role="dialog" aria-modal="true" aria-label="Assistant">
         <header className={styles.head}>
           <h2 className={styles.headTitle}>
             <Icon name="brain" size="standard" />
-            Copilot
+            Assistant
           </h2>
           <div className={styles.headSpacer} />
           {!unavailable && (
-            <IconButton label="New chat" className={styles.iconBtn} onClick={() => void createSession()}>
+            <IconButton
+              label="New conversation"
+              className={styles.iconBtn}
+              onClick={() => void createSession()}
+            >
               <Icon name="add" size="compact" />
             </IconButton>
           )}
-          <IconButton label="Close copilot" className={styles.iconBtn} onClick={onClose}>
+          <IconButton label="Close assistant" className={styles.iconBtn} onClick={onClose}>
             <Icon name="close" size="compact" />
           </IconButton>
         </header>
@@ -286,8 +611,8 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
           <div className={styles.unavailable}>
             <Icon name="info" size="emphasized" />
             <p className={styles.emptyText}>
-              The copilot isn&apos;t available yet. It&apos;ll turn on once the chat service is deployed for this
-              workspace.
+              The assistant isn&apos;t available yet. It&apos;ll turn on once the chat service is deployed for
+              this workspace.
             </p>
           </div>
         ) : (
@@ -300,9 +625,13 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
                 aria-expanded={showSessions}
               >
                 <Icon name="chevron-down" size="compact" />
-                <span className={styles.sessionToggleLabel}>{activeTitle}</span>
+                <span className={styles.sessionToggleLabel}>
+                  {activeSession ? threadTitle(activeSession) : "New conversation"}
+                </span>
                 <span className={styles.sessionToggleHint}>
-                  {sessions.length} {sessions.length === 1 ? "chat" : "chats"}
+                  {activeSession && activeSession.totalCostCents > 0
+                    ? formatCost(activeSession.totalCostCents)
+                    : `${sessions.length} ${sessions.length === 1 ? "thread" : "threads"}`}
                 </span>
               </button>
               {showSessions && (
@@ -322,10 +651,10 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
                             setShowSessions(false);
                           }}
                         >
-                          {s.title?.trim() || "New chat"}
+                          {threadTitle(s)}
                         </button>
                         <IconButton
-                          label="Delete chat"
+                          label="Delete conversation"
                           size="compact"
                           className={styles.iconBtn}
                           onClick={() => void deleteSession(s.id)}
@@ -339,17 +668,59 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
               )}
             </div>
 
+            {activeSession?.goal.trim() && (
+              <div className={styles.scopeBar}>
+                <Icon name="status-learning" size="compact" />
+                <span className={styles.scopeGoal}>{activeSession.goal}</span>
+              </div>
+            )}
+
+            {pins.length > 0 && (
+              <div className={styles.pinBar}>
+                {pins.map((pin) => (
+                  <span
+                    key={pin.id}
+                    className={`${styles.pinChip} ${pinIsUntrusted(pin) ? styles.pinChipUntrusted : ""}`}
+                    title={
+                      pinIsUntrusted(pin)
+                        ? `${pinKindLabel(pin.kind)} — from outside your workspace, so the assistant treats it as data, never as instructions.`
+                        : pinKindLabel(pin.kind)
+                    }
+                  >
+                    <span className={styles.pinKind}>{pinKindLabel(pin.kind)}</span>
+                    <span className={styles.pinLabel}>{pin.label}</span>
+                    <button
+                      type="button"
+                      className={styles.pinRemove}
+                      aria-label={`Unpin ${pin.label}`}
+                      onClick={() => void unpin(pin.id)}
+                    >
+                      <Icon name="close" size="compact" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+
+            {(notice ?? budget?.warning ?? pinsSummary(pins) ?? pendingSummary(proposals)) && (
+              <p className={styles.notice}>
+                <Icon name="info" size="compact" />
+                {notice ?? budget?.warning ?? pendingSummary(proposals) ?? pinsSummary(pins)}
+              </p>
+            )}
+
             <div className={styles.thread} ref={threadRef}>
-              {visibleMessages.length === 0 && !pending ? (
+              {shown.length === 0 && !pending ? (
                 <div className={styles.empty}>
                   <span className={styles.emptyIcon}>
                     <Icon name="brain" size="emphasized" />
                   </span>
                   <div>
-                    <h3 className={styles.emptyTitle}>Ask your GTM copilot</h3>
+                    <h3 className={styles.emptyTitle}>Work through a GTM problem</h3>
                     <p className={styles.emptyText}>
-                      Grounded in your brain, evidence, and live data. It&apos;s read-only — it answers, it
-                      doesn&apos;t change anything.
+                      Grounded in your brain, evidence and live data. It asks what it needs and shows its
+                      sources. It can put work forward — a draft, a post, a send — but nothing happens
+                      until you confirm it, and your action policy still decides what comes next.
                     </p>
                   </div>
                   <div className={styles.examples}>
@@ -368,11 +739,11 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
                 </div>
               ) : (
                 <>
-                  {visibleMessages.map((m) =>
-                    m.role === "tool" ? (
-                      <div key={m.id} className={styles.toolLine}>
-                        <Icon name="status-generating" size="compact" />
-                        used {m.toolName}
+                  {shown.map((m) =>
+                    m.role === "compaction" ? (
+                      <div key={m.id} className={styles.compaction}>
+                        <Icon name="doc-history" size="compact" />
+                        <span>Earlier turns summarized to stay within the context budget.</span>
                       </div>
                     ) : (
                       <div
@@ -387,27 +758,35 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
                           >
                             {m.content}
                           </div>
-                          {m.role === "assistant" && m.citations.length > 0 && (
-                            <div className={styles.citations}>
-                              {m.citations.map((c, i) => (
-                                <CitationChip key={`${m.id}-${i}`} citation={c} />
+                          {m.role === "assistant" && m.cards.length > 0 && (
+                            <div className={styles.cards}>
+                              {m.cards.map((c) => (
+                                <ResultCard
+                                  key={`${m.id}-${c.kind}-${c.ref}`}
+                                  card={c}
+                                  workspaceId={workspaceId}
+                                  busy={resolving === c.ref}
+                                  onAct={(action, content) => void actOnCard(c, action, content)}
+                                />
                               ))}
                             </div>
                           )}
-                          {m.role === "assistant" && m.proposal && (
-                            <ProposalCard
-                              proposal={m.proposal}
-                              // Only the latest message's proposal is still live;
-                              // a committed/discarded one is followed by a later message.
-                              actionable={m.id === visibleMessages[visibleMessages.length - 1]?.id}
-                              confirming={confirming === m.proposal.confirmToken}
-                              disabled={confirming !== null}
-                              onConfirm={() => void resolveProposal(m.proposal!.confirmToken, "confirm")}
-                              onDiscard={() => void resolveProposal(m.proposal!.confirmToken, "discard")}
+                          {m.role === "assistant" &&
+                            proposalsForMessage(proposals, m).map((p) => (
+                              <ProposalCard
+                                key={p.id}
+                                proposal={p}
+                                workspaceId={workspaceId}
+                                busy={resolving === p.id}
+                                onResolve={(decision) => void resolveProposalCard(p, decision)}
+                              />
+                            ))}
+                          {m.role === "assistant" && (
+                            <AssistantFooter
+                              message={m}
+                              workspaceId={workspaceId}
+                              stopNote={stopReasonNote(m.stopReason)}
                             />
-                          )}
-                          {m.role === "assistant" && m.producedRef && (
-                            <ReviewLink workspaceId={workspaceId} producedRef={m.producedRef} />
                           )}
                         </div>
                       </div>
@@ -415,15 +794,91 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
                   )}
                   {pending && (
                     <div className={`${styles.row} ${styles.rowAssistant}`}>
-                      <div className={styles.pending}>
-                        <Icon name="status-generating" size="compact" />
-                        Thinking…
+                      <div>
+                        {/* Recorded this turn, before the answer settled. */}
+                        {unattachedProposals(proposals).map((p) => (
+                          <ProposalCard
+                            key={p.id}
+                            proposal={p}
+                            workspaceId={workspaceId}
+                            busy={resolving === p.id}
+                            onResolve={(decision) => void resolveProposalCard(p, decision)}
+                          />
+                        ))}
+                        {live.cards.length > 0 && (
+                          <div className={styles.cards}>
+                            {live.cards.map((c) => (
+                              <ResultCard
+                                key={`live-${c.kind}-${c.ref}`}
+                                card={c}
+                                workspaceId={workspaceId}
+                                busy={false}
+                                onAct={() => {}}
+                              />
+                            ))}
+                          </div>
+                        )}
+                        {live.tools.map((t) => (
+                          <div key={t.callId} className={styles.toolLine}>
+                            <Icon
+                              name={t.done ? (t.ok ? "approve" : "reject") : "status-generating"}
+                              size="compact"
+                            />
+                            {t.done ? "read" : "reading"} {t.name.replace(/_/g, " ")}
+                          </div>
+                        ))}
+                        {live.text ? (
+                          <div className={`${styles.bubble} ${styles.bubbleAssistant}`}>{live.text}</div>
+                        ) : (
+                          <div className={styles.pending}>
+                            <Icon name="status-generating" size="compact" />
+                            Thinking…
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
                 </>
               )}
             </div>
+
+            {commandMatches.length > 0 && (
+              <div className={styles.palette} role="listbox" aria-label="Commands">
+                {commandMatches.map((c) => (
+                  <button
+                    key={c.name}
+                    type="button"
+                    className={styles.paletteRow}
+                    onClick={() => setDraft(c.argumentHint ? `/${c.name} ` : `/${c.name}`)}
+                  >
+                    <span className={styles.paletteName}>/{c.name}</span>
+                    <span className={styles.paletteSummary}>{c.summary}</span>
+                    <span className={styles.paletteKind}>
+                      {c.kind === "instant" ? "runs directly" : "asks the assistant"}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {mention !== null && mentionMatches.length > 0 && (
+              <div className={styles.palette} role="listbox" aria-label="Pin something">
+                {mentionMatches.map((o) => (
+                  <button
+                    key={`${o.kind}-${o.refId}`}
+                    type="button"
+                    className={styles.paletteRow}
+                    onClick={() => {
+                      setDraft((prev) => clearMention(prev));
+                      void pinEntity(o.kind, o.refId, o.label);
+                    }}
+                  >
+                    <span className={styles.paletteName}>{pinKindLabel(o.kind)}</span>
+                    <span className={styles.paletteSummary}>{o.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
 
             <form
               className={styles.composer}
@@ -434,11 +889,28 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
             >
               <Textarea
                 className={styles.composerField}
-                placeholder="Ask about your GTM…"
+                placeholder="What are you trying to do? / for commands, @ to pin something"
                 value={draft}
                 rows={1}
-                disabled={pending}
-                onChange={(e) => setDraft(e.target.value)}
+                disabled={pending || budget?.exhausted}
+                onChange={(e) => {
+                  setDraft(e.target.value);
+                  // Loading the pickable entities on the first `@` keeps the
+                  // drawer's open cost at one request, not four.
+                  if (mentionQuery(e.target.value) !== null && mentionOptions.length === 0) {
+                    void loadMentionOptions();
+                  }
+                }}
+                onPaste={(e) => {
+                  // A pasted link becomes a pin, fetched through safe-fetch and
+                  // marked untrusted (D-77.6) — vouching for a link is not
+                  // vouching for what is on the other end of it.
+                  const url = pastedUrl(e.clipboardData.getData("text"));
+                  if (url && activeId) {
+                    e.preventDefault();
+                    void pinEntity("url", url);
+                  }
+                }}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
@@ -446,7 +918,12 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
                   }
                 }}
               />
-              <Button type="submit" variant="primary" loading={pending} disabled={!draft.trim()}>
+              <Button
+                type="submit"
+                variant="primary"
+                loading={pending}
+                disabled={!draft.trim() || budget?.exhausted}
+              >
                 <Icon name="send" size="compact" />
               </Button>
             </form>
@@ -457,89 +934,305 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
   );
 }
 
+/**
+ * A typed result card (Sprint 77). The record itself, rendered — and, where the
+ * platform already has a route for the action, actionable.
+ *
+ * The Approve button issues the identical request `/review` issues (D-77.3),
+ * which is why the decision-log record it writes is identical: the same route
+ * writes it. There is no chat-side approval service, and there must never be
+ * one.
+ */
+function ResultCard({
+  card,
+  workspaceId,
+  busy,
+  onAct,
+}: {
+  card: ChatCard;
+  workspaceId: string;
+  busy: boolean;
+  onAct: (action: "approve" | "reject" | "edit", content?: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [edited, setEdited] = useState(card.body ?? "");
+  const href = cardHref(card, workspaceId);
+  const original = card.body ?? "";
+  const spans = editing ? diffWords(original, edited) : [];
+
+  return (
+    <div className={`${styles.card} ${styles[`card_${card.kind}`] ?? ""}`}>
+      <div className={styles.cardHead}>
+        <span className={styles.cardKind}>{cardKindLabel(card.kind)}</span>
+        <span className={styles.cardTitle}>{card.title}</span>
+        {card.subtitle && <span className={styles.cardSubtitle}>{card.subtitle}</span>}
+      </div>
+
+      {card.fields.length > 0 && (
+        <dl className={styles.cardFields}>
+          {card.fields.map((f) => (
+            <div key={f.label} className={styles.cardField}>
+              <dt className={styles.cardFieldLabel}>{f.label}</dt>
+              <dd className={styles.cardFieldValue}>{f.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
+      {card.body && !editing && <p className={styles.cardBody}>{card.body}</p>}
+
+      {editing && (
+        <div className={styles.cardEditor}>
+          <Textarea
+            className={styles.cardEditorField}
+            value={edited}
+            rows={6}
+            onChange={(e) => setEdited(e.target.value)}
+          />
+          {/* The diff is the point of editing here: the box is small, the draft
+              may be long, and "I thought I only fixed the typo" is how a
+              paragraph goes missing. */}
+          <p className={styles.cardDiffSummary}>{describeDiff(spans)}</p>
+          <p className={styles.cardDiff}>
+            {spans.map((span, i) => (
+              <span
+                key={i}
+                className={
+                  span.op === "insert"
+                    ? styles.diffInsert
+                    : span.op === "delete"
+                      ? styles.diffDelete
+                      : undefined
+                }
+              >
+                {span.text}
+              </span>
+            ))}
+          </p>
+        </div>
+      )}
+
+      <div className={styles.cardActions}>
+        {editing ? (
+          <>
+            <Button
+              variant="primary"
+              loading={busy}
+              disabled={!hasChanges(original, edited)}
+              onClick={() => {
+                onAct("edit", edited);
+                setEditing(false);
+              }}
+            >
+              Save edit
+            </Button>
+            <Button variant="tertiary" disabled={busy} onClick={() => setEditing(false)}>
+              Cancel
+            </Button>
+          </>
+        ) : (
+          <>
+            {cardHasAction(card, "approve") && (
+              <Button variant="primary" loading={busy} onClick={() => onAct("approve")}>
+                Approve
+              </Button>
+            )}
+            {cardHasAction(card, "edit") && (
+              <Button variant="secondary" disabled={busy} onClick={() => setEditing(true)}>
+                Edit
+              </Button>
+            )}
+            {cardHasAction(card, "reject") && (
+              <Button variant="tertiary" disabled={busy} onClick={() => onAct("reject")}>
+                Reject
+              </Button>
+            )}
+            {href && (
+              <Link className={styles.cardLink} href={href}>
+                Open
+              </Link>
+            )}
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The statement of intent (Sprint 78). This is the whole safety story made
+ * visible: what it wants to do, what confirming actually causes, and — when the
+ * turn read anything from outside the workspace — a warning to read it twice.
+ *
+ * The buttons are never hidden on a quarantined card. The founder is the
+ * authority here, and a UI that suppressed the choice would be teaching them
+ * that warnings are obstacles to route around.
+ */
 function ProposalCard({
   proposal,
-  actionable,
-  confirming,
-  disabled,
-  onConfirm,
-  onDiscard,
+  workspaceId,
+  busy,
+  onResolve,
 }: {
   proposal: ChatProposal;
-  actionable: boolean;
-  confirming: boolean;
-  disabled: boolean;
-  onConfirm: () => void;
-  onDiscard: () => void;
+  workspaceId: string;
+  busy: boolean;
+  onResolve: (decision: "confirm" | "decline") => void;
 }) {
+  const tone = proposalTone(proposal);
+  const warning = quarantineWarning(proposal);
+  const outcome = proposalOutcome(proposal);
+  const href = producedHref(proposal, workspaceId);
+
   return (
-    <div className={styles.proposal}>
+    <div className={`${styles.proposal} ${styles[`proposal_${tone}`] ?? ""}`}>
       <div className={styles.proposalHead}>
-        <Icon name="edit" size="compact" />
-        <span className={styles.proposalSummary}>{proposal.summary}</span>
+        <Icon name={tone === "quarantined" ? "info" : "status-learning"} size="compact" />
+        <span className={styles.proposalTitle}>{proposal.intent.title}</span>
       </div>
-      <pre className={styles.proposalPreview}>{proposal.preview}</pre>
-      {proposal.policyNote && (
-        <p className={styles.proposalNote}>
+
+      {proposal.intent.detail.length > 0 && (
+        <dl className={styles.proposalDetail}>
+          {proposal.intent.detail.map((row) => (
+            <div key={row.label} className={styles.proposalRow}>
+              <dt className={styles.proposalLabel}>{row.label}</dt>
+              <dd className={styles.proposalValue}>{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+
+      <p className={styles.proposalEffect}>{proposal.intent.effect}</p>
+      {proposal.intent.rationale && (
+        <p className={styles.proposalRationale}>“{proposal.intent.rationale}”</p>
+      )}
+
+      {warning && (
+        <p className={styles.proposalWarning}>
           <Icon name="info" size="compact" />
-          {proposal.policyNote}
+          {warning}
         </p>
       )}
-      {actionable ? (
+
+      {isActionable(proposal) ? (
         <div className={styles.proposalActions}>
-          <Button variant="primary" size="compact" loading={confirming} disabled={disabled} onClick={onConfirm}>
+          <Button variant="primary" loading={busy} onClick={() => onResolve("confirm")}>
             Confirm
           </Button>
-          <Button variant="secondary" size="compact" disabled={disabled} onClick={onDiscard}>
-            Discard
+          <Button variant="secondary" disabled={busy} onClick={() => onResolve("decline")}>
+            Decline
           </Button>
         </div>
       ) : (
-        <p className={styles.proposalResolved}>This proposal has been resolved.</p>
+        <p className={styles.proposalOutcome}>
+          {outcome}
+          {href && (
+            <Link className={styles.proposalLink} href={href}>
+              Open it
+            </Link>
+          )}
+        </p>
       )}
     </div>
   );
 }
 
-/** "Opened in Review →" — both drafts and external actions land on the Review page. */
-function ReviewLink({ workspaceId, producedRef }: { workspaceId: string; producedRef: string }) {
-  const isAction = producedRef.startsWith("external_action:");
-  const label = isAction ? "View the action in Review" : "Open the draft in Review";
+/** Citations, the trace link and the per-turn cost — everything under an answer. */
+function AssistantFooter({
+  message,
+  workspaceId,
+  stopNote,
+}: {
+  message: ChatMessage;
+  workspaceId: string;
+  stopNote: string | null;
+}) {
+  const hasFooter =
+    message.citations.length > 0 || message.agentRunId !== null || stopNote !== null;
+  if (!hasFooter) return null;
+
   return (
-    <Link className={styles.reviewLink} href={`/workspaces/${workspaceId}/review`}>
-      <Icon name="review" size="compact" />
-      {label}
+    <>
+      {message.citations.length > 0 && (
+        <div className={styles.citations}>
+          {message.citations.map((c, i) => (
+            <CitationChip key={`${message.id}-${i}`} citation={c} workspaceId={workspaceId} />
+          ))}
+        </div>
+      )}
+      <div className={styles.turnMeta}>
+        {stopNote && <span className={styles.turnStop}>{stopNote}</span>}
+        {message.agentRunId && (
+          <Link className={styles.reviewLink} href={agentRunHref(workspaceId, message.agentRunId)}>
+            <Icon name="status-learning" size="compact" />
+            How it answered
+          </Link>
+        )}
+        {message.costCents > 0 && (
+          <span className={styles.turnCost}>{formatCost(message.costCents)}</span>
+        )}
+      </div>
+    </>
+  );
+}
+
+function CitationChip({ citation, workspaceId }: { citation: ChatCitation; workspaceId: string }) {
+  const href = citationHref(citation, workspaceId);
+  const title = citation.detail ?? `${citation.kind}: ${citation.ref}`;
+  const body = (
+    <>
+      <Icon name={CITATION_ICON[citation.kind]} size="compact" />
+      <span className={styles.chipLabel}>{citation.label}</span>
+    </>
+  );
+  // A chip with no route renders unlinked rather than navigating somewhere wrong.
+  if (!href) {
+    return (
+      <span className={styles.chip} title={title}>
+        {body}
+      </span>
+    );
+  }
+  const external = /^https?:\/\//.test(href);
+  return external ? (
+    <a className={styles.chip} title={title} href={href} target="_blank" rel="noreferrer noopener">
+      {body}
+    </a>
+  ) : (
+    <Link className={styles.chip} title={title} href={href}>
+      {body}
     </Link>
   );
 }
 
-function CitationChip({ citation }: { citation: ChatCitation }) {
-  return (
-    <span className={styles.chip} title={citation.detail ?? `${citation.kind}: ${citation.ref}`}>
-      <Icon name={CITATION_ICON[citation.kind]} size="compact" />
-      <span className={styles.chipLabel}>{citation.label}</span>
-    </span>
-  );
-}
-
-function assistantBubble(
+function bubble(
   sessionId: string,
   workspaceId: string,
+  role: "user" | "assistant",
   content: string,
-  citations: ChatCitation[],
 ): ChatMessage {
   return {
-    id: `answer-${Date.now()}`,
+    id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     sessionId,
     workspaceId,
-    role: "assistant",
+    role,
     content,
     toolName: null,
-    citations,
+    citations: [],
+    cards: [],
+    agentRunId: null,
+    costCents: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    stopReason: null as AgentStopReason | null,
     createdAt: Date.now(),
   };
 }
 
+function optimisticUser(sessionId: string, workspaceId: string, content: string): ChatMessage {
+  return bubble(sessionId, workspaceId, "user", content);
+}
+
 function errorBubble(sessionId: string, workspaceId: string, content: string): ChatMessage {
-  return assistantBubble(sessionId, workspaceId, content, []);
+  return bubble(sessionId, workspaceId, "assistant", content);
 }

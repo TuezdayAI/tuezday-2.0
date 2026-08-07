@@ -297,6 +297,27 @@ describe("automation on the shadow path (D-65.7)", () => {
 });
 
 describe("the pipelines tick (D-65.3/D-65.4)", () => {
+  it("does not claim a queued run from another workspace", async () => {
+    const { db, gateway, deps } = fixture(cleanRun());
+    activeDefinition(db);
+    updateSocialAutomationSettings(db, WORKSPACE_ID, { generationPath: "pipeline" });
+    await runAutomation(db, gateway, deps.evidence, WORKSPACE_ID);
+    const otherWorkspaceId = "99999999-9999-4999-8999-999999999999";
+    db.insert(workspaces)
+      .values({
+        id: otherWorkspaceId,
+        name: "Other",
+        createdAt: 1,
+        updatedAt: 1,
+      })
+      .run();
+
+    expect(
+      await runPipelinesTick(db, deps, { workspaceId: otherWorkspaceId }),
+    ).toMatchObject({ processed: 0 });
+    expect(allRuns(db)[0]).toMatchObject({ status: "queued" });
+  });
+
   it("executes a queued live run into a gate draft, auto-approving for scheduled_auto", async () => {
     const { db, gateway, deps } = fixture(cleanRun("Engine wrote this."), "scheduled_auto");
     activeDefinition(db);

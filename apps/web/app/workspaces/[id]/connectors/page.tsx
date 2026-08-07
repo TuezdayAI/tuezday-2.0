@@ -330,6 +330,27 @@ export default function ConnectorsPage() {
     await load();
   }
 
+  async function saveTimezone(connection: Connection, timezone: string) {
+    const value = timezone.trim();
+    if (!value || value === connection.timezone) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await apiFetch(`/workspaces/${id}/connections/${connection.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ timezone: value }),
+      });
+      const body = await res.json().catch(() => null);
+      if (!res.ok) throw new Error(body?.message ?? body?.error ?? `API returned ${res.status}`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save account timezone");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   function profileDraftFor(connection: Connection): { topics: string; guidance: string } {
     return (
       profileDrafts[connection.id] ?? {
@@ -636,11 +657,25 @@ export default function ConnectorsPage() {
                   provider.categories?.includes("social") && (
                     <details className="outline-preview" style={{ marginTop: 6 }}>
                       <summary style={{ cursor: "pointer", listStyle: "none" }}>
-                        Content profile
+                        Account settings
                         {connection.contentProfile.topics.length > 0 &&
                           ` — covers ${connection.contentProfile.topics.join(", ")}`}
                       </summary>
                       <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                        <label>
+                          Account timezone
+                          <Input
+                            key={`${connection.id}:${connection.timezone}`}
+                            defaultValue={connection.timezone}
+                            placeholder="Asia/Kolkata"
+                            onBlur={(event) =>
+                              void saveTimezone(connection, event.currentTarget.value)
+                            }
+                          />
+                          <span className="meta">
+                            Post, reply, and X-DM budgets reset at this account&apos;s local midnight.
+                          </span>
+                        </label>
                         <Input
                           value={profileDraftFor(connection).topics}
                           onChange={(e) =>

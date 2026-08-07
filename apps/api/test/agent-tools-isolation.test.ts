@@ -4,6 +4,8 @@ import { upsertCampaignInputSchema, upsertPersonaInputSchema } from "@tuezday/co
 import { READ_TOOLS } from "../src/agents/tools/index";
 import { getPersonaTool } from "../src/agents/tools/get-persona";
 import { getCampaignPlanTool } from "../src/agents/tools/get-campaign-plan";
+import { getMetricSummaryTool } from "../src/agents/tools/get-metric-summary";
+import { getSequenceFunnelTool } from "../src/agents/tools/get-sequence-funnel";
 import { DEFAULT_TOOL_BUDGET, type ToolContext } from "../src/agents/registry";
 import type { Db } from "../src/db";
 import type { AddDocumentInput, EvidenceStore, StoreSearchResult } from "../src/evidence/store";
@@ -19,6 +21,7 @@ import {
 import { updateBrainDoc } from "../src/services/brain";
 import { createCampaign } from "../src/services/campaigns";
 import { setChannelGuidance } from "../src/services/guidance";
+import { recordMetric } from "../src/services/metrics";
 import { createPersona } from "../src/services/personas";
 import { createTestDb } from "./helpers";
 
@@ -234,6 +237,20 @@ describe("tenant isolation across every read tool", () => {
       search_discovery_items: { query: "pricing" },
       get_prior_posts_on_topic: { topic: "pricing" },
       safe_fetch_url: null,
+      // Sprint 76 analytics + inventory reads.
+      list_campaigns: {},
+      list_personas: {},
+      get_campaign_insights: { campaignId: a.campaignId },
+      get_workspace_insights: {},
+      // These two return numbers, not names — there is no marker to find in a
+      // sum. Isolation is asserted directly in the next test instead, which is
+      // the stronger check for an aggregate: not "did it avoid B's words" but
+      // "did B's rows move the number at all".
+      get_metric_summary: null,
+      // Needs a sequence id, and the fixture seeds no outreach sequence.
+      get_sequence_funnel: null,
+      // Sprint 77 — the approval queue as data.
+      list_drafts: {},
     };
 
     for (const tool of READ_TOOLS) {
@@ -262,5 +279,46 @@ describe("tenant isolation across every read tool", () => {
     };
     expect(campaign.error).toBe("not_found");
     expect(JSON.stringify(campaign.availableCampaigns)).not.toContain(MARKER.b);
+  });
+
+  it("a metric rollup counts only its own workspace's rows, and a foreign id rolls up to nothing", async () => {
+    // The aggregate leak the marker sweep cannot catch: no name crosses the
+    // boundary, just a number that is silently too big.
+    const record = (workspaceId: string, subjectId: string, value: number) =>
+      recordMetric(db, workspaceId, {
+        subjectType: "campaign",
+        subjectId,
+        metricKey: "impressions",
+        value,
+        window: "1d",
+        periodStart: 1,
+        source: "manual",
+        capturedAt: 1,
+      });
+    record(a.workspaceId, a.campaignId, 100);
+    record(b.workspaceId, b.campaignId, 900);
+
+    const own = (await getMetricSummaryTool.run(ctxFor(a.workspaceId), {
+      subjectType: "campaign",
+      window: "1d",
+    })) as { entries: Array<{ metricKey: string; total: number }> };
+    expect(own.entries.find((e) => e.metricKey === "impressions")?.total).toBe(100);
+
+    // B's own campaign id, asked for from inside A.
+    const foreign = (await getMetricSummaryTool.run(ctxFor(a.workspaceId), {
+      subjectType: "campaign",
+      subjectId: b.campaignId,
+      window: "1d",
+    })) as { entries: unknown[]; note?: string };
+    expect(foreign.entries).toEqual([]);
+    expect(foreign.note).toBeDefined();
+  });
+
+  it("an outreach funnel for a foreign sequence is not_found and lists only this workspace's sequences", async () => {
+    const result = (await getSequenceFunnelTool.run(ctxFor(a.workspaceId), {
+      sequenceId: randomUUID(),
+    })) as { error: string; availableSequences: unknown[] };
+    expect(result.error).toBe("not_found");
+    expect(JSON.stringify(result.availableSequences)).not.toContain(MARKER.b);
   });
 });

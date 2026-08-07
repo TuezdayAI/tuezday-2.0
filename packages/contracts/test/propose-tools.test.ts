@@ -63,6 +63,7 @@ function action(overrides: Record<string, unknown> = {}) {
     proposedBy: { userId: null, label: `agent:${runId}` },
     origin: "agent",
     originRunId: runId,
+    originSurface: "pipeline" as const,
     createdAt: 1,
     updatedAt: 1,
     authorizedAt: null,

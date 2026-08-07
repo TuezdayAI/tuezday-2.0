@@ -27,3 +27,49 @@
   padding-top: 12px;
   border-top: 1px solid var(--line-soft);
 }
+
+/* Sprint 71 — the knob board: all nine context-customization knobs for one
+   resolve, in precedence order. */
+.knobBoard {
+  margin: 12px 0;
+}
+
+.knobList {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+}
+
+.knobRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr) auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-top: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.08));
+}
+
+.knobRow[data-state="absent"] {
+  opacity: 0.55;
+}
+
+.knobRow[data-state="applied"] {
+  font-weight: 600;
+}
+
+.knobName {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.knobName small {
+  font-weight: 400;
+  opacity: 0.65;
+}
+
+.knobDetail {
+  font-size: 0.83rem;
+  font-weight: 400;
+  opacity: 0.8;
+}

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import {
   AGENT_PROPOSALS_PER_DAY,
+  upsertCampaignInputSchema,
   type AgentProposalTargetKind,
   type Channel,
   type ProposeToolName,
@@ -11,6 +12,7 @@ import type {
   ProposalOrigin,
   ProposalResult,
   ProposeAdMutationArgs,
+  ProposeCampaignArgs,
   ProposeDraftArgs,
   ProposePublicationArgs,
   ProposeReplyArgs,
@@ -21,6 +23,7 @@ import type { Db } from "../db";
 import { launchMessages } from "../db/schema";
 import { estimateTokens } from "@tuezday/brain";
 import { getLaunch } from "./ad-launches";
+import { createCampaign } from "./campaigns";
 import { countProposalsToday, recordAgentProposal } from "./agent-proposal-ledger";
 import { deriveTitle } from "./cadences";
 import { getDraft, submitDraft } from "./drafts";
@@ -114,7 +117,12 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
   function record(
     origin: ProposalOrigin,
     tool: ProposeToolName,
-    target: { kind: AgentProposalTargetKind; draftId?: string; externalActionId?: string },
+    target: {
+      kind: AgentProposalTargetKind;
+      draftId?: string;
+      externalActionId?: string;
+      campaignId?: string;
+    },
     summary: string,
     rationale: string,
   ): void {
@@ -125,8 +133,10 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
       targetKind: target.kind,
       draftId: target.draftId ?? null,
       externalActionId: target.externalActionId ?? null,
+      campaignId: target.campaignId ?? null,
       summary,
       rationale,
+      chatSessionId: origin.chatSessionId ?? null,
     });
   }
 
@@ -158,10 +168,14 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
   ): Promise<ProposalResult> {
     const submission = await runtime.propose(command, {
       userId: null,
+      // Sprint 78 (D-78.7): a founder confirming in chat is attribution, not
+      // humanity — `human: false` keeps the Sprint 52 publish gate and the
+      // policy tree behaving exactly as they do for a pipeline proposal.
       label: `agent:${origin.agentRunId}`,
       human: false,
       origin: "agent",
       originRunId: origin.agentRunId,
+      originSurface: origin.surface ?? "pipeline",
     });
     record(
       origin,
@@ -410,6 +424,72 @@ export function createAgentProposals(deps: AgentProposalDeps): AgentProposalServ
       } catch (error) {
         return refuseFromError(error);
       }
+    },
+
+    /**
+     * Sprint 77 (D-77.7). The one propose tool whose gate is the created
+     * record's own status. `upsertCampaignInputSchema.parse` supplies every
+     * default, and the four fields that decide whether a campaign DOES anything
+     * — status, origin, automation mode, daily cap — are overwritten here after
+     * parsing rather than taken from the model. A campaign in `draft` runs no
+     * automation, invalidates no matching, and is refused by
+     * `campaignExecutionError`; it exists on /campaigns for a human to finish
+     * and activate, which is the whole of the guarantee.
+     */
+    async proposeCampaign(origin, args: ProposeCampaignArgs): Promise<ProposalResult> {
+      const capReached = capped(origin);
+      if (capReached) return capReached;
+
+      const parsed = upsertCampaignInputSchema.safeParse({
+        name: args.name,
+        purpose: args.purpose ?? "initiative",
+        objective: args.objective ?? "",
+        kpi: args.kpi ?? "",
+        timeframe: args.timeframe ?? "",
+        audience: args.audience ?? "",
+        pillars: args.pillars ?? [],
+        channels: args.channels ?? [],
+        // Personas are validated as uuids by the campaign contract; a model
+        // that guessed an id gets the contract's own refusal rather than a
+        // campaign silently missing the persona it was told to use.
+        personaIds: args.personaIds ?? [],
+      });
+      if (!parsed.success) {
+        return refuse(
+          "invalid_arguments",
+          parsed.error.issues.map((issue) => issue.message).join("; "),
+          "Pass a valid campaign name, and persona ids taken from list_personas.",
+        );
+      }
+
+      const campaign = createCampaign(
+        db,
+        origin.workspaceId,
+        {
+          ...parsed.data,
+          // Not negotiable, whatever was parsed: this is the gate.
+          status: "draft",
+          automationMode: "manual",
+          autoDailyCap: null,
+        },
+        { origin: "system" },
+      );
+      const summary = `Created the campaign "${campaign.name}" as a draft.`;
+      record(
+        origin,
+        "propose_campaign",
+        { kind: "campaign", campaignId: campaign.id },
+        summary,
+        args.rationale,
+      );
+      return {
+        ok: true,
+        targetKind: "campaign",
+        id: campaign.id,
+        status: campaign.status,
+        summary,
+        simulated: false,
+      };
     },
 
     async proposeAdMutation(origin, args: ProposeAdMutationArgs): Promise<ProposalResult> {

@@ -36,7 +36,14 @@ import {
   type Workspace,
 } from "@tuezday/contracts";
 import type { ContextSection, ResolvedContext } from "@tuezday/brain";
+import type { TraceKnob } from "@tuezday/contracts";
+import { knobStateLabel } from "@/lib/artifact-trace-view";
+import { TASK_LABELS } from "@/lib/task-labels";
 import { SectionBadges } from "@/components/why-this-output";
+
+/** What POST /resolve returns since Sprint 71: the bundle plus the nine knobs
+ *  that shaped it. `knobs` is optional so an older API still renders. */
+type ResolvedBundle = ResolvedContext & { knobs?: TraceKnob[] };
 import { ScopedActionPolicy } from "@/src/components/scoped-action-policy";
 import {
   connectionLabel,
@@ -44,22 +51,6 @@ import {
   providerForPersonaSocialChannel,
 } from "@/lib/persona-social-routing";
 
-const TASK_LABELS: Record<TaskType, string> = {
-  linkedin_post: "LinkedIn post",
-  cold_email_opener: "Cold email opener",
-  ad_copy_variant: "Ad copy variant",
-  landing_page_hero: "Landing page hero",
-  signal_response: "Signal response",
-  outbound_email: "Outbound email",
-  meta_ad_creative: "Meta ad creative",
-  google_rsa: "Google RSA",
-  pr_pitch: "Media pitch",
-  press_boilerplate: "Press boilerplate",
-  x_dm: "X DM",
-  instagram_post: "Instagram post",
-  engagement_reply: "Reply",
-  instagram_carousel: "Instagram carousel",
-};
 
 const MATRIX_DOC_LABELS: Record<MatrixDocType, string> = {
   icp: "ICP",
@@ -105,7 +96,7 @@ export default function ResolverPage() {
   const [campaigns, setCampaigns] = useState<Campaign[]>([]);
   const [useEvidence, setUseEvidence] = useState(true);
   const [tokenBudget, setTokenBudget] = useState(DEFAULT_TOKEN_BUDGET);
-  const [bundle, setBundle] = useState<ResolvedContext | null>(null);
+  const [bundle, setBundle] = useState<ResolvedBundle | null>(null);
   const [resolving, setResolving] = useState(false);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
 
@@ -782,6 +773,32 @@ export default function ResolverPage() {
               <p className="meta">
                 Zoom query: <em>{bundle.zoomQuery}</em>
               </p>
+            )}
+
+            {/* Sprint 71 — atlas conflict #4. All nine context-customization
+                knobs for THIS resolve, in precedence order, so the override
+                that beat the built-in is visible instead of inferred. Nine
+                rows including the ones that did nothing: the dead ones are
+                the finding. */}
+            {bundle.knobs && bundle.knobs.length > 0 && (
+              <div className={styles.knobBoard}>
+                <p className="meta">
+                  {bundle.knobs.filter((knob) => knob.state === "applied").length} of{" "}
+                  {bundle.knobs.length} context settings shaped this resolve
+                </p>
+                <ol className={styles.knobList}>
+                  {bundle.knobs.map((knob) => (
+                    <li key={knob.key} className={styles.knobRow} data-state={knob.state}>
+                      <span className={styles.knobName}>
+                        <Link href={knob.href}>{knob.label}</Link>
+                        <small>{knob.question}</small>
+                      </span>
+                      <span className={styles.knobDetail}>{knob.detail}</span>
+                      <span className="layer-badge">{knobStateLabel(knob.state)}</span>
+                    </li>
+                  ))}
+                </ol>
+              </div>
             )}
             <ol className="section-list">
               {bundle.sections.map((s: ContextSection) => (

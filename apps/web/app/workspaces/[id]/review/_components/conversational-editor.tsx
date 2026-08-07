@@ -16,7 +16,6 @@ import {
   editorRecoveryHref,
   editorVersionContent,
   editorVersionOptions,
-  groupEditorSections,
   initialPublishFields,
   publishActionPayload,
   publishEligibility,
@@ -35,6 +34,7 @@ import { connectionLabel, providerForPersonaSocialChannel } from "@/lib/persona-
 import { draftWorkflowStatus } from "@/lib/review-workspace";
 import { executionWorkflowStatus } from "@/lib/execution-results";
 import { previewKindFor } from "@/lib/preview-kind";
+import { WhyThisPanel } from "@/components/why-this-panel";
 import { Button, IconButton } from "@/src/components/ui/button";
 import { WorkflowStatusBadge } from "@/src/components/ui/badge";
 import { PreviewCard } from "@/src/components/ui/preview-card";
@@ -356,7 +356,6 @@ export function ConversationalEditor({
   }
 
   const { draft } = context;
-  const grouped = groupEditorSections(context.contextSections);
   const content = editorVersionContent(context, selectedVersion);
   const preview = previewCopy(context, content);
   const legalEdit = canTransition(draft.state, "edit");
@@ -422,46 +421,12 @@ export function ConversationalEditor({
             <p className={styles.muted}>No pre-review has been run on this version.</p>
           )}
 
-          <details className={styles.disclosure} open>
-            <summary>Sources and context ({grouped.included.length} used)</summary>
-            <div className={styles.sectionList}>
-              {grouped.included.map((section) => (
-                <details key={section.key} className={styles.sourceCard}>
-                  <summary><span>{section.title}</span><small>{section.layer}</small></summary>
-                  <p>{section.content}</p>
-                  <small>{section.reason}</small>
-                  {section.evidence?.chunks.map((citation) => (
-                    <p key={`${section.key}-${citation.documentId}`} className={styles.citation}>
-                      {citation.url ? <a href={citation.url} target="_blank" rel="noreferrer">{citation.title}</a> : citation.title}
-                      <span>{citation.kept ? "Used" : citation.exclusionReason ?? "Not used"}</span>
-                    </p>
-                  ))}
-                </details>
-              ))}
-            </div>
-          </details>
-
-          <details className={styles.disclosure}>
-            <summary>What was not used ({grouped.excluded.length})</summary>
-            <ul className={styles.excludedList}>
-              {grouped.excluded.map((section) => (
-                <li key={section.key}><strong>{section.title}</strong><span>{section.reason}</span></li>
-              ))}
-            </ul>
-          </details>
-
-          <div className={styles.conversation}>
-            <h4>Revision history</h4>
-            {context.turns.length === 0 && <p className={styles.muted}>No conversational revisions yet.</p>}
-            {context.turns.map((turn) => (
-              <article key={turn.id} className={styles.turn} data-status={turn.status}>
-                <p><strong>You</strong> {turn.instruction}</p>
-                {turn.status === "completed" && <p><strong>Tuezday</strong> Revision applied.</p>}
-                {turn.status === "failed" && <p className={styles.errorText}><strong>Failed</strong> {turn.error}</p>}
-                <small>{fmtDate(turn.createdAt)}{turn.model ? ` · ${turn.provider}/${turn.model}` : ""}</small>
-              </article>
-            ))}
-          </div>
+          {/* Sprint 71 (D-71.8): one "why" renderer, shared with deliverables,
+              publications and proposed actions. It replaces the bespoke
+              sections/excluded/revision markup that used to live here — two
+              explanations of the same draft on one screen is the thing the
+              sprint exists to stop. */}
+          <WhyThisPanel workspaceId={workspaceId} kind="draft" subjectId={draft.id} />
 
           {legalEdit && (
             <form className={styles.composer} onSubmit={(event) => { event.preventDefault(); void submitRevision(); }}>
@@ -661,7 +626,7 @@ export function ConversationalEditor({
               {context.publications.map((publication) => (
                 <Link key={publication.id} href={editorRecoveryHref(workspaceId, publication)} className={styles.activityRow}>
                   <span><strong>{publication.title}</strong><small>{fmtDate(publication.scheduledFor)} · {publication.target}</small></span>
-                  <WorkflowStatusBadge status={publication.status === "scheduled" ? "scheduled" : publication.status === "published" ? "completed" : "failed"} />
+                  <WorkflowStatusBadge status={publication.status === "scheduled" ? "scheduled" : publication.status === "processing" ? "publishing" : publication.status === "published" ? "completed" : "failed"} />
                 </Link>
               ))}
             </div>

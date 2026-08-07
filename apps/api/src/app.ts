@@ -14,7 +14,7 @@ import { assertProviderConfiguration } from "./connectors/provider-config";
 import type { Db } from "./db";
 import { OpenDesignProvider } from "./design/open-design";
 import type { DesignProvider } from "./design/provider";
-import { closeRenderer, renderSlide, type RenderInput } from "./design/render";
+import { createRendererClient, type RenderInput } from "./design/render";
 import { S3AssetStorage, type AssetStorage } from "./design/storage";
 import { NullIntentProvider, type IntentProvider } from "./discovery/intent";
 import { DbEvidenceStore } from "./evidence/db-store";
@@ -66,7 +66,7 @@ import { registerDesignSystemRoutes } from "./routes/design-systems";
 import { registerGuidanceRoutes } from "./routes/guidance";
 import { registerGenerationSettingsRoutes } from "./routes/generation-settings";
 import { registerInboxRoutes } from "./routes/inbox";
-import { registerInternalTaskRoutes } from "./routes/internal-tasks";
+import { registerInternalBackgroundJobRoutes } from "./routes/internal-background-jobs";
 import { registerLaunchRoutes } from "./routes/launches";
 import { registerLearningRoutes } from "./routes/learning";
 import { registerMailRoutes } from "./routes/mail";
@@ -79,6 +79,7 @@ import { registerTrackingRoutes } from "./routes/tracking";
 import { registerPrRoutes } from "./routes/pr";
 import { registerPriorityRoutes } from "./routes/priorities";
 import { registerQuestionRoutes } from "./routes/questions";
+import { registerTraceRoutes } from "./routes/trace";
 import { registerPublicationRoutes } from "./routes/publications";
 import { registerGenerationRoutes } from "./routes/generations";
 import { registerPersonaRoutes } from "./routes/personas";
@@ -103,6 +104,14 @@ import { createExternalActionRuntime } from "./services/external-action-coordina
 import { repairDanglingDuplicateGroups } from "./services/discovery-dedupe";
 import type { DiscoveryOperatorEvent } from "./services/discovery-scheduler";
 import { resolveCorsOrigin } from "./runtime/cors-origin";
+import {
+  createBackgroundJobHandlers,
+  type BackgroundJobHandlers,
+} from "./services/background-job-handlers";
+import {
+  parseBackgroundJobPolicy,
+  type BackgroundJobPolicy,
+} from "./runtime/background-job-policy";
 import {
   DEFAULT_DISCOVERY_POLICY,
   type DiscoveryOperatorPolicy,
@@ -155,13 +164,17 @@ export interface BuildAppOptions {
    * access to every workspace. Defaults to TUEZDAY_WORKER_TOKEN.
    */
   workerToken?: string;
+  /** Typed durable-job registry; defaults to fail-closed retry handlers. */
+  backgroundJobHandlers?: BackgroundJobHandlers;
+  /** Validated durable queue, lease, retry, and schedule policy. */
+  backgroundJobPolicy?: BackgroundJobPolicy;
   /** Product-analytics sink; defaults to PostHog-or-Noop from env. */
   analytics?: AnalyticsSink;
   /** Design template author (Sprint 41); defaults to the self-hosted Open Design client. */
   design?: DesignProvider;
   /** Public asset storage (Sprint 41); defaults to the S3-compatible client from env. */
   assetStorage?: AssetStorage;
-  /** Slide renderer (Sprint 41); defaults to the Playwright renderer — tests inject a fake. */
+  /** Slide renderer (Sprint 75); defaults to the isolated renderer client — tests inject a fake. */
   render?: (input: RenderInput) => Promise<Uint8Array>;
   /** Validated deployment-only discovery budgets. */
   operatorPolicy?: DiscoveryOperatorPolicy;
@@ -189,10 +202,12 @@ export async function buildApp({
   gmail = new FabricGmailProvider(connectors),
   resendWebhookVerifier = createResendWebhookVerifierFromEnv(),
   workerToken = process.env.TUEZDAY_WORKER_TOKEN,
+  backgroundJobHandlers,
+  backgroundJobPolicy = parseBackgroundJobPolicy(process.env),
   analytics = createAnalyticsSink(),
   design = new OpenDesignProvider(),
   assetStorage = new S3AssetStorage(),
-  render = renderSlide,
+  render = createRendererClient(),
   operatorPolicy = DEFAULT_DISCOVERY_POLICY,
   instanceId = `${process.env.HOSTNAME?.trim() || hostname()}:${randomUUID()}`,
   operatorLog = logDiscoveryOperatorEvent,
@@ -249,14 +264,32 @@ export async function buildApp({
   });
   // Sprint 70: the ask seam, built once for the same reason.
   const agentQuestions = createAgentQuestions({ db });
+  const effectiveBackgroundJobHandlers =
+    backgroundJobHandlers ??
+    createBackgroundJobHandlers({
+      db,
+      llm,
+      evidence,
+      safeFetch: guardedFetch,
+      proposals: agentProposals,
+      questions: agentQuestions,
+      intentProvider: intent,
+      fabric: connectors,
+      gmail,
+      mailer,
+      fetcher,
+      runtime: externalActionRuntime,
+      discoveryPolicy: operatorPolicy,
+      jobPolicy: backgroundJobPolicy,
+      instanceId,
+      log: operatorLog,
+    });
 
-  // The design renderer keeps one shared headless browser per process.
   app.addHook("preClose", async () => {
     ownedShutdown?.abort(new Error("app_shutdown"));
   });
   app.addHook("onClose", async () => {
     ownedShutdown?.abort(new Error("app_shutdown"));
-    await closeRenderer();
   });
 
   // @fastify/cors only allows GET/HEAD/POST by default — the brain editor
@@ -295,19 +328,12 @@ export async function buildApp({
     return { status: "ok", db: "ok" };
   });
 
-  registerInternalTaskRoutes(app, {
+  registerInternalBackgroundJobRoutes(app, {
     db,
-    llm,
-    evidence,
-    safeFetch: guardedFetch,
-    proposals: agentProposals,
-    questions: agentQuestions,
-    intentProvider: intent,
-    fabric: connectors,
-    policy: operatorPolicy,
+    handlers: effectiveBackgroundJobHandlers,
+    policy: backgroundJobPolicy,
     instanceId,
     shutdownSignal: effectiveShutdownSignal,
-    log: operatorLog,
   });
 
   registerAuthRoutes(app, db, fetcher, analytics);
@@ -330,7 +356,7 @@ export async function buildApp({
   registerCarouselRoutes(app, db, design, assetStorage, render);
   registerNotificationRoutes(app, db, mailer, fetcher);
   registerSignalRoutes(app, db, llm, evidence);
-  registerChatRoutes(app, db, llm, evidence, externalActionRuntime);
+  registerChatRoutes(app, db, llm, evidence, guardedFetch, agentProposals);
   registerAgentRunRoutes(app, db, { llm, evidence, safeFetch: guardedFetch });
   registerDiscoveryRoutes(
     app,
@@ -367,6 +393,7 @@ export async function buildApp({
       questions: agentQuestions,
     },
   });
+  registerTraceRoutes(app, db);
   registerEvalRoutes(app, db, { llm, evidence, safeFetch: guardedFetch });
   registerPreferenceRoutes(app, db, { llm });
   registerCampaignRoutes(app, db);

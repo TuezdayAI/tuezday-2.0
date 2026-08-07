@@ -5,6 +5,7 @@ import type {
   AutomationMode,
   Campaign,
   CampaignAudience,
+  CampaignOrigin,
   CampaignStatus,
   Channel,
   UpdateCampaignAutomationInput,
@@ -80,13 +81,21 @@ function inputToColumns(input: UpsertCampaignInput) {
   };
 }
 
-export function createCampaign(db: Db, workspaceId: string, input: UpsertCampaignInput): Campaign {
+export function createCampaign(
+  db: Db,
+  workspaceId: string,
+  input: UpsertCampaignInput,
+  /** Sprint 77: `propose_campaign` creates campaigns as `system` so the
+   * campaign list can tell a founder which ones an agent drew up (D-77.7).
+   * Every existing caller is a person on a route, and keeps `user`. */
+  options: { origin?: CampaignOrigin } = {},
+): Campaign {
   return db.transaction((tx) => {
     const now = Date.now();
     const row: CampaignRow = {
       id: randomUUID(),
       workspaceId,
-      origin: "user",
+      origin: options.origin ?? "user",
       ...inputToColumns(input),
       // Automation is set only via the dedicated toggle, never reset by a general
       // campaign edit; a new campaign starts from the input defaults (manual / null).

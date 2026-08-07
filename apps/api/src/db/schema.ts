@@ -390,6 +390,97 @@ export const taskLeases = sqliteTable("task_leases", {
 
 export type TaskLeaseRow = typeof taskLeases.$inferSelect;
 
+// Durable application job queue (Sprint 73). The generic rows own admission,
+// leases, retries and observability; domain ledgers remain the source of truth
+// for the work itself.
+export const backgroundJobs = sqliteTable(
+  "background_jobs",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    payloadJson: text("payload_json").notNull(),
+    idempotencyKey: text("idempotency_key").notNull(),
+    // Equal to idempotencyKey while queued/running and cleared at terminal
+    // state. A normal nullable unique index is portable to PostgreSQL.
+    activeKey: text("active_key"),
+    priority: integer("priority").notNull().default(0),
+    status: text("status").notNull().default("queued"),
+    availableAt: integer("available_at").notNull(),
+    attempt: integer("attempt").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(5),
+    leaseOwner: text("lease_owner"),
+    leaseVersion: integer("lease_version").notNull().default(0),
+    leaseExpiresAt: integer("lease_expires_at"),
+    heartbeatAt: integer("heartbeat_at"),
+    startedAt: integer("started_at"),
+    finishedAt: integer("finished_at"),
+    lastError: text("last_error"),
+    resultJson: text("result_json"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("background_jobs_active_key_unique").on(t.activeKey),
+    index("background_jobs_status_available").on(
+      t.status,
+      t.availableAt,
+      t.priority,
+      t.createdAt,
+    ),
+    index("background_jobs_workspace_status").on(
+      t.workspaceId,
+      t.status,
+      t.availableAt,
+    ),
+    index("background_jobs_lease_expiry").on(t.status, t.leaseExpiresAt),
+  ],
+);
+
+export type BackgroundJobRow = typeof backgroundJobs.$inferSelect;
+
+export const backgroundSchedules = sqliteTable(
+  "background_schedules",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(),
+    intervalMs: integer("interval_ms").notNull(),
+    nextRunAt: integer("next_run_at").notNull(),
+    lastEnqueuedAt: integer("last_enqueued_at"),
+    enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("background_schedules_workspace_kind_unique").on(
+      t.workspaceId,
+      t.kind,
+    ),
+    index("background_schedules_due").on(t.enabled, t.nextRunAt),
+  ],
+);
+
+export type BackgroundScheduleRow = typeof backgroundSchedules.$inferSelect;
+
+export const backgroundWorkspaceDispatch = sqliteTable(
+  "background_workspace_dispatch",
+  {
+    workspaceId: text("workspace_id")
+      .primaryKey()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    lastDispatchedAt: integer("last_dispatched_at"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+);
+
+export type BackgroundWorkspaceDispatchRow =
+  typeof backgroundWorkspaceDispatch.$inferSelect;
+
 export const discoverySources = sqliteTable("discovery_sources", {
   id: text("id").primaryKey(),
   workspaceId: text("workspace_id")
@@ -1612,6 +1703,8 @@ export const connections = sqliteTable("connections", {
   nangoConnectionId: text("nango_connection_id").notNull(),
   configJson: text("config_json").notNull().default("{}"),
   displayName: text("display_name").notNull().default(""),
+  // Sprint 75: account-local day boundary for social budgets.
+  timezone: text("timezone").notNull().default("UTC"),
   externalAccountId: text("external_account_id"),
   externalAccountName: text("external_account_name"),
   externalAccountHandle: text("external_account_handle"),
@@ -1888,6 +1981,10 @@ export const externalActions = sqliteTable(
     // fingerprint (D-69.3): the gate is origin-blind on purpose.
     origin: text("origin").notNull().default("human"),
     originRunId: text("origin_run_id"),
+    // Sprint 78 (D-78.8): which agent surface asked. Derivable from the run,
+    // but the queue would need a join per row and runs are prunable while
+    // actions are not. Null unless origin is `agent`.
+    originSurface: text("origin_surface"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
     authorizedAt: integer("authorized_at"),
@@ -2405,9 +2502,15 @@ export const workspaceCompliance = sqliteTable("workspace_compliance", {
 
 export type WorkspaceComplianceRow = typeof workspaceCompliance.$inferSelect;
 
-// Chat copilot (Sprint 42): a workspace+user conversation with the grounded,
-// read-only copilot. Messages are the transcript (user/assistant/tool);
-// citations_json holds the ChatCitation[] provenance for an assistant turn.
+// Chat (Sprint 42, rebuilt Sprint 76): a workspace+user GTM conversation.
+// Messages are the transcript (user/assistant/tool/compaction); citations_json
+// holds the ChatCitation[] provenance for an assistant turn.
+//
+// Sprint 76 adds the thread's SCOPE BINDING — campaign / persona / channel —
+// which selects the context bundle the conversation resolves against, exactly
+// as a generation request would, plus lifetime token and cost counters. Those
+// counters are the per-thread cap's authority; llm_usage_events remains the
+// workspace budget's authority, and the two are written from the same turn.
 export const chatSessions = sqliteTable(
   "chat_sessions",
   {
@@ -2417,6 +2520,18 @@ export const chatSessions = sqliteTable(
       .references(() => workspaces.id, { onDelete: "cascade" }),
     userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
     title: text("title").notNull().default(""),
+    // Sprint 76: standing intent, derived once from the opening message and
+    // thereafter user-editable. The model never rewrites it (D-76.12) — a
+    // model-updated goal would silently re-aim the system prefix.
+    goal: text("goal").notNull().default(""),
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+    personaId: text("persona_id").references(() => personas.id, { onDelete: "set null" }),
+    channel: text("channel"),
+    totalInputTokens: integer("total_input_tokens").notNull().default(0),
+    totalOutputTokens: integer("total_output_tokens").notNull().default(0),
+    totalCostCents: real("total_cost_cents").notNull().default(0),
+    /** Newest message folded into the latest compaction, if any. */
+    compactedThroughMessageId: text("compacted_through_message_id"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -2439,16 +2554,110 @@ export const chatMessages = sqliteTable(
     content: text("content").notNull(),
     toolName: text("tool_name"),
     citationsJson: text("citations_json").notNull().default("[]"),
-    // Sprint 42 P2: a pending proposal (with its confirm token) offered by this
-    // assistant message, and — once confirmed — a ref to the gated item created.
+    // Sprint 77: the typed result cards this turn rendered. Persisted rather
+    // than recomputed — the tool results they were derived from live in
+    // `agent_run_steps` and are subject to retention, and a transcript whose
+    // cards vanished on a sweep would change shape over time.
+    cardsJson: text("cards_json").notNull().default("[]"),
+    // Sprint 42 P2 → dormant since Sprint 76 (chat is read-only until 78, which
+    // repopulates both). Kept rather than dropped: a SQLite column drop is a
+    // table rebuild, and 78 wants them back (D-76.7).
     proposalJson: text("proposal_json"),
     producedRef: text("produced_ref"),
+    // Sprint 76: every assistant turn is an agent_run, so the Agent Inspector
+    // works for chat with no new tracing code. No FK — an agent_runs row can be
+    // pruned by retention without orphaning the transcript that referenced it.
+    agentRunId: text("agent_run_id"),
+    costCents: real("cost_cents").notNull().default(0),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    stopReason: text("stop_reason"),
     createdAt: integer("created_at").notNull(),
   },
   (t) => [index("chat_messages_session_created").on(t.sessionId, t.createdAt)],
 );
 
 export type ChatMessageRow = typeof chatMessages.$inferSelect;
+
+// Confirm-before-propose (Sprint 78). One row per propose-tool call made inside
+// a chat turn. The row IS the pause: the tool records intent here and returns,
+// the run finishes, and nothing reaches the Sprint 69 gate until a human
+// confirms (D-78.1). Kept beside the transcript rather than on it because a
+// proposal's status changes long after its message was written.
+export const chatProposals = sqliteTable(
+  "chat_proposals",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => chatSessions.id, { onDelete: "cascade" }),
+    // Set once the turn's assistant message exists; the proposal is recorded
+    // mid-run, before there is a message to hang it under.
+    messageId: text("message_id"),
+    // No FK, for the same retention reason as chat_messages.agent_run_id.
+    agentRunId: text("agent_run_id"),
+    tool: text("tool").notNull(), // PROPOSE_TOOL_NAMES
+    /** The validated tool arguments, replayed verbatim on confirmation. */
+    argsJson: text("args_json").notNull(),
+    /** The rendered ChatProposalIntent the founder confirms. */
+    intentJson: text("intent_json").notNull(),
+    status: text("status").notNull(), // CHAT_PROPOSAL_STATUSES
+    // Sprint 78 (D-78.6): the arguments derive only from untrusted content.
+    quarantined: integer("quarantined", { mode: "boolean" }).notNull().default(false),
+    quarantineReason: text("quarantine_reason"),
+    producedRef: text("produced_ref"),
+    producedStatus: text("produced_status"),
+    error: text("error"),
+    errorMessage: text("error_message"),
+    confirmedByUserId: text("confirmed_by_user_id").references(() => users.id, {
+      onDelete: "set null",
+    }),
+    resolvedAt: integer("resolved_at"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("chat_proposals_session_created").on(t.sessionId, t.createdAt),
+    // The per-day cap's read path.
+    index("chat_proposals_workspace_created").on(t.workspaceId, t.createdAt),
+  ],
+);
+
+export type ChatProposalRow = typeof chatProposals.$inferSelect;
+
+// Pinned context (Sprint 77). The `@` mention's durable form: the founder names
+// an entity, a removable chip appears, and the next turn's system prefix says
+// so out loud. Campaign and persona pins also write through to the session's
+// scope columns (D-77.5) so the resolver and the chips cannot disagree.
+export const chatPins = sqliteTable(
+  "chat_pins",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => chatSessions.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(), // CHAT_PIN_KINDS
+    /** The entity id — or the URL itself for a `url` pin. No FK: the kinds
+     * span five tables plus a bare string, and a pin to a deleted record
+     * should render as a stale chip the founder can remove, not block the
+     * delete. */
+    refId: text("ref_id").notNull(),
+    label: text("label").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("chat_pins_session").on(t.sessionId, t.createdAt),
+    // One pin per entity per thread — pinning twice is a no-op, not a second chip.
+    uniqueIndex("chat_pins_session_kind_ref").on(t.sessionId, t.kind, t.refId),
+  ],
+);
+
+export type ChatPinRow = typeof chatPins.$inferSelect;
 
 // Social publishing receipts (Sprint 17) — one row per publish attempt (now
 // or scheduled); the post lives on the platform, Tuezday keeps status + URL.
@@ -2484,6 +2693,12 @@ export const publications = sqliteTable(
     externalId: text("external_id"),
     externalUrl: text("external_url"),
     lastError: text("last_error"),
+    // Durable asynchronous-provider state (Sprint 75). The operation id is a
+    // container/job handle, never the final public media id.
+    providerOperationId: text("provider_operation_id"),
+    nextAttemptAt: integer("next_attempt_at"),
+    processingStartedAt: integer("processing_started_at"),
+    processingAttempts: integer("processing_attempts").notNull().default(0),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -2622,14 +2837,15 @@ export const generationSettings = sqliteTable("generation_settings", {
 export type GenerationSettingsRow = typeof generationSettings.$inferSelect;
 
 // Social automation guardrails (Sprint 28) — one row per workspace, like
-// ad_settings. killSwitch is the hard stop for scheduled_auto posting; the caps
-// bound auto-posts per UTC day (per connection and per campaign).
+// ad_settings. killSwitch is the hard stop for scheduled_auto posting; caps
+// use each destination account's local day, with replies budgeted separately.
 export const socialAutomationSettings = sqliteTable("social_automation_settings", {
   workspaceId: text("workspace_id")
     .primaryKey()
     .references(() => workspaces.id, { onDelete: "cascade" }),
   killSwitch: integer("kill_switch").notNull().default(0),
   perConnectionDailyCap: integer("per_connection_daily_cap").notNull().default(10),
+  perConnectionReplyDailyCap: integer("per_connection_reply_daily_cap").notNull().default(10),
   perCampaignDailyCap: integer("per_campaign_daily_cap").notNull().default(5),
   // Sprint 29: master switch for auto-posting engagement replies (off by default).
   autoReplyEnabled: integer("auto_reply_enabled").notNull().default(0),
@@ -3726,8 +3942,14 @@ export const agentProposals = sqliteTable(
     externalActionId: text("external_action_id").references(() => externalActions.id, {
       onDelete: "set null",
     }),
+    // Sprint 77: what `propose_campaign` created. Set null on delete, like the
+    // other two — the record of the proposal outlives the thing proposed.
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
     summary: text("summary").notNull(),
     rationale: text("rationale").notNull(),
+    // Sprint 78: the conversation a founder confirmed this in. No FK — a
+    // deleted thread must not take the record of what it proposed with it.
+    chatSessionId: text("chat_session_id"),
     createdAt: integer("created_at").notNull(),
   },
   (t) => [
