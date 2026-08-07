@@ -1,5 +1,6 @@
 import type {
   AgentProposalTargetKind,
+  CampaignPurpose,
   Channel,
   ExternalActionOriginSurface,
   ProposeToolName,
@@ -101,6 +102,25 @@ export interface ProposeSequenceStepArgs {
   rationale: string;
 }
 
+/**
+ * Sprint 77 (D-77.7). A strict subset of `UpsertCampaignInput`: `status`,
+ * `origin`, `automationMode` and `autoDailyCap` are absent because they are not
+ * the model's to choose. The implementation forces `draft` / `system` /
+ * `manual`, and that inertness is the gate.
+ */
+export interface ProposeCampaignArgs {
+  name: string;
+  objective?: string;
+  kpi?: string;
+  timeframe?: string;
+  audience?: string;
+  pillars?: string[];
+  channels?: Channel[];
+  personaIds?: string[];
+  purpose?: CampaignPurpose;
+  rationale: string;
+}
+
 export interface ProposeAdMutationArgs {
   launchId: string;
   dailyBudgetCents?: number;
@@ -125,6 +145,8 @@ export interface AgentProposalService {
     origin: ProposalOrigin,
     args: ProposeAdMutationArgs,
   ): Promise<ProposalResult>;
+  /** Sprint 77 — creates an inert `draft`-status campaign (D-77.7). */
+  proposeCampaign(origin: ProposalOrigin, args: ProposeCampaignArgs): Promise<ProposalResult>;
 }
 
 /**
@@ -141,7 +163,12 @@ export function simulatedAgentProposals(): AgentProposalService {
   const simulate = (tool: ProposeToolName, summary: string): Promise<ProposalResult> =>
     Promise.resolve({
       ok: true,
-      targetKind: tool === "propose_draft" ? "draft" : "external_action",
+      targetKind:
+        tool === "propose_draft"
+          ? "draft"
+          : tool === "propose_campaign"
+            ? "campaign"
+            : "external_action",
       id: null,
       status: "simulated",
       summary,
@@ -162,5 +189,7 @@ export function simulatedAgentProposals(): AgentProposalService {
       ),
     proposeAdMutation: (_origin, args) =>
       simulate("propose_ad_mutation", `Would propose an ad mutation on launch ${args.launchId}.`),
+    proposeCampaign: (_origin, args) =>
+      simulate("propose_campaign", `Would create the campaign "${args.name}" as a draft.`),
   };
 }

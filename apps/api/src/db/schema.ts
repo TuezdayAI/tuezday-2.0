@@ -2554,6 +2554,11 @@ export const chatMessages = sqliteTable(
     content: text("content").notNull(),
     toolName: text("tool_name"),
     citationsJson: text("citations_json").notNull().default("[]"),
+    // Sprint 77: the typed result cards this turn rendered. Persisted rather
+    // than recomputed — the tool results they were derived from live in
+    // `agent_run_steps` and are subject to retention, and a transcript whose
+    // cards vanished on a sweep would change shape over time.
+    cardsJson: text("cards_json").notNull().default("[]"),
     // Sprint 42 P2 → dormant since Sprint 76 (chat is read-only until 78, which
     // repopulates both). Kept rather than dropped: a SQLite column drop is a
     // table rebuild, and 78 wants them back (D-76.7).
@@ -2621,6 +2626,38 @@ export const chatProposals = sqliteTable(
 );
 
 export type ChatProposalRow = typeof chatProposals.$inferSelect;
+
+// Pinned context (Sprint 77). The `@` mention's durable form: the founder names
+// an entity, a removable chip appears, and the next turn's system prefix says
+// so out loud. Campaign and persona pins also write through to the session's
+// scope columns (D-77.5) so the resolver and the chips cannot disagree.
+export const chatPins = sqliteTable(
+  "chat_pins",
+  {
+    id: text("id").primaryKey(),
+    workspaceId: text("workspace_id")
+      .notNull()
+      .references(() => workspaces.id, { onDelete: "cascade" }),
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => chatSessions.id, { onDelete: "cascade" }),
+    kind: text("kind").notNull(), // CHAT_PIN_KINDS
+    /** The entity id — or the URL itself for a `url` pin. No FK: the kinds
+     * span five tables plus a bare string, and a pin to a deleted record
+     * should render as a stale chip the founder can remove, not block the
+     * delete. */
+    refId: text("ref_id").notNull(),
+    label: text("label").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("chat_pins_session").on(t.sessionId, t.createdAt),
+    // One pin per entity per thread — pinning twice is a no-op, not a second chip.
+    uniqueIndex("chat_pins_session_kind_ref").on(t.sessionId, t.kind, t.refId),
+  ],
+);
+
+export type ChatPinRow = typeof chatPins.$inferSelect;
 
 // Social publishing receipts (Sprint 17) — one row per publish attempt (now
 // or scheduled); the post lives on the platform, Tuezday keeps status + URL.
@@ -3905,6 +3942,9 @@ export const agentProposals = sqliteTable(
     externalActionId: text("external_action_id").references(() => externalActions.id, {
       onDelete: "set null",
     }),
+    // Sprint 77: what `propose_campaign` created. Set null on delete, like the
+    // other two — the record of the proposal outlives the thing proposed.
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
     summary: text("summary").notNull(),
     rationale: text("rationale").notNull(),
     // Sprint 78: the conversation a founder confirmed this in. No FK — a

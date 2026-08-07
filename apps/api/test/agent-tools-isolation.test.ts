@@ -249,6 +249,8 @@ describe("tenant isolation across every read tool", () => {
       get_metric_summary: null,
       // Needs a sequence id, and the fixture seeds no outreach sequence.
       get_sequence_funnel: null,
+      // Sprint 77 — the approval queue as data.
+      list_drafts: {},
     };
 
     for (const tool of READ_TOOLS) {

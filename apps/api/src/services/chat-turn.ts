@@ -4,7 +4,9 @@ import {
   CHAT_TURN_BOUNDS,
   type AgentMessage,
   type AgentToolCall,
+  type ChatCard,
   type ChatCitation,
+  type ChatCommandName,
   type ChatMessage,
   type ChatProposal,
   type ChatSession,
@@ -38,7 +40,9 @@ import {
   type ThreadUsage,
 } from "./chat";
 import { buildChatContext } from "./chat-context";
+import { cardsForToolCall, dedupeCards } from "./chat-cards";
 import { citationsForToolCall, dedupeCitations } from "./chat-citations";
+import { directiveFor } from "./chat-commands";
 import { maybeCompact } from "./chat-compaction";
 import {
   attachProposalsToMessage,
@@ -73,6 +77,16 @@ export interface ChatTurnDeps {
   llm: LlmGateway;
   evidence: EvidenceStore;
   safeFetch: SafeFetchService;
+}
+
+export interface ChatTurnOptions {
+  /**
+   * The directive command this message was sent under (Sprint 77, D-77.4). The
+   * INSTRUCTION is looked up here, never taken from the client: a request body
+   * that could supply system text would be a prompt-injection surface with a
+   * slash in front of it. An instant command never reaches this path.
+   */
+  command?: ChatCommandName;
 }
 
 export interface ChatTurnActor {
@@ -222,6 +236,7 @@ export async function runChatTurn(
   sessionId: string,
   userMessage: string,
   onEvent?: (event: ChatStreamEvent) => void,
+  options: ChatTurnOptions = {},
 ): Promise<ChatTurnResult | undefined> {
   const session = getSession(db, workspaceId, sessionId);
   if (!session) return undefined;
@@ -265,12 +280,21 @@ export async function runChatTurn(
   }
 
   const mayPropose = actorMayPropose(actor);
-  const { system } = await buildChatContext(db, deps.evidence, current, userMessage, {
+  const taint = createTaintTracker();
+  const context = await buildChatContext(db, deps.evidence, current, userMessage, {
     mayPropose,
+    safeFetch: deps.safeFetch,
   });
+  // A pinned page or discovery item is attacker-controlled text that reached
+  // the model through the PREFIX, before it took a step. The turn is tainted
+  // from the start (D-77.6), or the quarantine rule would have a hole in it
+  // exactly where a founder pasted a link somebody sent them.
+  for (const text of context.untrustedPinTexts) taint.observeUntrustedText(text);
+
+  const directive = options.command ? directiveFor(options.command) : null;
+  const system = directive ? `${context.system}\n\n${directive}` : context.system;
 
   const toolActor: ToolActor = { userId: actor.userId, label: actor.label };
-  const taint = createTaintTracker();
   const recordedProposals: ChatProposal[] = [];
   // Minted here rather than inside the runner: a propose tool attributes its
   // proposal to the run that called it, so the id has to exist before the tool
@@ -304,8 +328,12 @@ export async function runChatTurn(
   };
 
   const citations: ChatCitation[] = [];
+  const cards: ChatCard[] = [];
   const toolCalls: { tool: string; ok: boolean }[] = [];
   const callsById = new Map<string, AgentToolCall>();
+  // The runner reports step boundaries on its own events, not to the tool
+  // handler, so the card frame carries the step the client last saw start.
+  let currentStep = 0;
 
   const tools = toAgentTools(chatToolsForActor(actor), toolCtx).map((tool) => ({
     ...tool,
@@ -313,6 +341,15 @@ export async function runChatTurn(
       const result = await tool.handler(args);
       const name = tool.definition.name;
       citations.push(...citationsForToolCall(name, args, result));
+      // Cards are computed from the RAW result, before the untrusted wrapper
+      // below: the envelope is for the model, and a card rendering
+      // "--- BEGIN UNTRUSTED CONTENT ---" as its body would be absurd. The
+      // card's own kind already tells the web layer what it is looking at.
+      const produced = cardsForToolCall(name, args, result);
+      if (produced.length > 0) {
+        cards.push(...produced);
+        emit({ type: "card", stepIndex: currentStep, cards: produced });
+      }
       // The propose tools' own results are not content the model read, so they
       // neither taint the turn nor count as trusted grounding for it.
       if (tool.definition.name.startsWith("propose_")) return result;
@@ -327,6 +364,7 @@ export async function runChatTurn(
   const onRunEvent = (event: AgentRunEvent) => {
     switch (event.type) {
       case "step_start":
+        currentStep = event.stepIndex;
         emit({ type: "step_start", stepIndex: event.stepIndex });
         break;
       case "text_delta":
@@ -388,10 +426,12 @@ export async function runChatTurn(
   });
 
   const answer = answerFor(run.output, run.stopReason, run.error);
+  const dedupedCards = dedupeCards(cards);
   const message = appendMessage(db, workspaceId, sessionId, {
     role: "assistant",
     content: answer,
     citations: dedupeCitations(citations),
+    cards: dedupedCards,
     agentRunId: run.runId,
     costCents: run.usage.costCents,
     inputTokens: run.usage.inputTokens,
@@ -417,6 +457,7 @@ export async function runChatTurn(
   const result: ChatTurnResult = {
     answer,
     citations: message.citations,
+    cards: message.cards,
     toolCalls,
     message,
     proposals,

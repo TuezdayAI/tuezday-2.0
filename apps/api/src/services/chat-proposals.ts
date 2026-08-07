@@ -255,7 +255,12 @@ export function createChatProposalRecorder(
 
     return {
       ok: true,
-      targetKind: tool === "propose_draft" ? "draft" : "external_action",
+      targetKind:
+        tool === "propose_draft"
+          ? "draft"
+          : tool === "propose_campaign"
+            ? "campaign"
+            : "external_action",
       id: proposal.id,
       status: "awaiting_confirmation",
       summary: intent.title,
@@ -275,6 +280,8 @@ export function createChatProposalRecorder(
       Promise.resolve(record(origin, "propose_sequence_step", { ...args })),
     proposeAdMutation: (origin, args) =>
       Promise.resolve(record(origin, "propose_ad_mutation", { ...args })),
+    proposeCampaign: (origin, args) =>
+      Promise.resolve(record(origin, "propose_campaign", { ...args })),
   };
 }
 
@@ -354,9 +361,10 @@ export async function confirmChatProposal(
     return { ok: true, proposal: failed };
   }
 
-  const producedRef = result.id
-    ? `${result.targetKind === "draft" ? "draft" : "external_action"}:${result.id}`
-    : null;
+  // The ref's prefix IS the target kind, which is why the enum and the web
+  // router share a vocabulary — `campaign:` routes to the campaign page with
+  // no new case in either place beyond naming it.
+  const producedRef = result.id ? `${result.targetKind}:${result.id}` : null;
 
   const updated = resolveRow(db, proposalId, {
     status: "confirmed",
@@ -441,6 +449,8 @@ function dispatch(
       return live.proposeSequenceStep(origin, args);
     case "propose_ad_mutation":
       return live.proposeAdMutation(origin, args);
+    case "propose_campaign":
+      return live.proposeCampaign(origin, args);
     default: {
       const exhaustive: never = tool;
       return Promise.resolve({
@@ -457,6 +467,9 @@ function describeStatus(status: string): string {
   switch (status) {
     case "pending_review":
       return "waiting for you in Review";
+    case "draft":
+      // A proposed campaign. Says what is true: it exists and does nothing.
+      return "created as a draft campaign, inert until you activate it";
     case "authorization_required":
       return "waiting for your authorization";
     case "proposed":

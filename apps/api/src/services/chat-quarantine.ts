@@ -135,6 +135,12 @@ export interface QuarantineVerdict {
 export interface TaintTracker {
   /** Record what a tool returned. Untrusted results are kept for overlap checks. */
   observe(toolName: string, result: unknown): void;
+  /**
+   * Record untrusted text that did not come from a tool call (Sprint 77): a
+   * pinned URL or discovery item enters the system prefix before the model
+   * takes its first step, so the turn is already tainted when it starts.
+   */
+  observeUntrustedText(text: string): void;
   /** Whether any untrusted tool ran this turn. */
   readUntrusted(): boolean;
   /** Whether any suspected-injection text was read this turn. */
@@ -185,6 +191,11 @@ export function createTaintTracker(): TaintTracker {
         return;
       }
       const text = textOf(result);
+      untrustedTexts.push(text);
+      if (detectInjection(text).suspected) injectionSeen = true;
+    },
+    observeUntrustedText(text) {
+      if (!text.trim()) return;
       untrustedTexts.push(text);
       if (detectInjection(text).suspected) injectionSeen = true;
     },

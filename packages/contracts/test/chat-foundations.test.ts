@@ -127,6 +127,7 @@ describe("chat schemas", () => {
       content: "Engagement fell 22% week over week.",
       toolName: null,
       citations: [{ kind: "data" as const, ref: "publication:abc", label: "Launch post" }],
+      cards: [],
       agentRunId: "44444444-4444-4444-8444-444444444444",
       costCents: 0.2,
       inputTokens: 900,
@@ -185,6 +186,7 @@ describe("the Sprint 42 proposal surface is gone", () => {
     expect(keys).toContain("tool");
     expect(keys).toContain("quarantined");
     expect(keys).not.toContain("confirmToken");
-    expect(PROPOSE_TOOL_NAMES).toHaveLength(5);
+    // Six since Sprint 77 added propose_campaign.
+    expect(PROPOSE_TOOL_NAMES).toHaveLength(6);
   });
 });
