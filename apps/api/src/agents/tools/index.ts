@@ -3,10 +3,16 @@ import { askFounderTool } from "./ask";
 import { findInstructiveRejectionsTool } from "./find-instructive-rejections";
 import { findSimilarApprovedDraftsTool } from "./find-similar-approved-drafts";
 import { getBrainSectionTool } from "./get-brain-section";
+import { getCampaignInsightsTool } from "./get-campaign-insights";
 import { getCampaignPlanTool } from "./get-campaign-plan";
+import { getMetricSummaryTool } from "./get-metric-summary";
 import { getPersonaTool } from "./get-persona";
 import { getPriorPostsTool } from "./get-prior-posts";
+import { getSequenceFunnelTool } from "./get-sequence-funnel";
+import { getWorkspaceInsightsTool } from "./get-workspace-insights";
+import { listCampaignsTool } from "./list-campaigns";
 import { listChannelGuardrailsTool } from "./list-channel-guardrails";
+import { listPersonasTool } from "./list-personas";
 import { listRecentPublicationsTool } from "./list-recent-publications";
 import {
   proposeAdMutationTool,
@@ -43,6 +49,13 @@ export const READ_TOOLS: readonly AnyTool[] = [
   searchDiscoveryItemsTool,
   getPriorPostsTool,
   safeFetchUrlTool,
+  // Sprint 76 — analytics and inventory reads.
+  listCampaignsTool,
+  listPersonasTool,
+  getCampaignInsightsTool,
+  getWorkspaceInsightsTool,
+  getMetricSummaryTool,
+  getSequenceFunnelTool,
 ];
 
 export const PROPOSE_TOOLS: readonly AnyTool[] = [

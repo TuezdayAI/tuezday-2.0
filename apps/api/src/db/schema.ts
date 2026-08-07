@@ -2405,9 +2405,15 @@ export const workspaceCompliance = sqliteTable("workspace_compliance", {
 
 export type WorkspaceComplianceRow = typeof workspaceCompliance.$inferSelect;
 
-// Chat copilot (Sprint 42): a workspace+user conversation with the grounded,
-// read-only copilot. Messages are the transcript (user/assistant/tool);
-// citations_json holds the ChatCitation[] provenance for an assistant turn.
+// Chat (Sprint 42, rebuilt Sprint 76): a workspace+user GTM conversation.
+// Messages are the transcript (user/assistant/tool/compaction); citations_json
+// holds the ChatCitation[] provenance for an assistant turn.
+//
+// Sprint 76 adds the thread's SCOPE BINDING — campaign / persona / channel —
+// which selects the context bundle the conversation resolves against, exactly
+// as a generation request would, plus lifetime token and cost counters. Those
+// counters are the per-thread cap's authority; llm_usage_events remains the
+// workspace budget's authority, and the two are written from the same turn.
 export const chatSessions = sqliteTable(
   "chat_sessions",
   {
@@ -2417,6 +2423,18 @@ export const chatSessions = sqliteTable(
       .references(() => workspaces.id, { onDelete: "cascade" }),
     userId: text("user_id").references(() => users.id, { onDelete: "set null" }),
     title: text("title").notNull().default(""),
+    // Sprint 76: standing intent, derived once from the opening message and
+    // thereafter user-editable. The model never rewrites it (D-76.12) — a
+    // model-updated goal would silently re-aim the system prefix.
+    goal: text("goal").notNull().default(""),
+    campaignId: text("campaign_id").references(() => campaigns.id, { onDelete: "set null" }),
+    personaId: text("persona_id").references(() => personas.id, { onDelete: "set null" }),
+    channel: text("channel"),
+    totalInputTokens: integer("total_input_tokens").notNull().default(0),
+    totalOutputTokens: integer("total_output_tokens").notNull().default(0),
+    totalCostCents: real("total_cost_cents").notNull().default(0),
+    /** Newest message folded into the latest compaction, if any. */
+    compactedThroughMessageId: text("compacted_through_message_id"),
     createdAt: integer("created_at").notNull(),
     updatedAt: integer("updated_at").notNull(),
   },
@@ -2439,10 +2457,19 @@ export const chatMessages = sqliteTable(
     content: text("content").notNull(),
     toolName: text("tool_name"),
     citationsJson: text("citations_json").notNull().default("[]"),
-    // Sprint 42 P2: a pending proposal (with its confirm token) offered by this
-    // assistant message, and — once confirmed — a ref to the gated item created.
+    // Sprint 42 P2 → dormant since Sprint 76 (chat is read-only until 78, which
+    // repopulates both). Kept rather than dropped: a SQLite column drop is a
+    // table rebuild, and 78 wants them back (D-76.7).
     proposalJson: text("proposal_json"),
     producedRef: text("produced_ref"),
+    // Sprint 76: every assistant turn is an agent_run, so the Agent Inspector
+    // works for chat with no new tracing code. No FK — an agent_runs row can be
+    // pruned by retention without orphaning the transcript that referenced it.
+    agentRunId: text("agent_run_id"),
+    costCents: real("cost_cents").notNull().default(0),
+    inputTokens: integer("input_tokens").notNull().default(0),
+    outputTokens: integer("output_tokens").notNull().default(0),
+    stopReason: text("stop_reason"),
     createdAt: integer("created_at").notNull(),
   },
   (t) => [index("chat_messages_session_created").on(t.sessionId, t.createdAt)],

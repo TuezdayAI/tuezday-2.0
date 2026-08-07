@@ -222,6 +222,7 @@ describe("task types and channels", () => {
       "instagram_post",
       "engagement_reply",
       "instagram_carousel",
+      "gtm_conversation",
     ]);
   });
 

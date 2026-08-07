@@ -40,6 +40,9 @@ const TASK_LABELS: Record<TaskType, string> = {
   instagram_post: "Instagram post",
   engagement_reply: "Reply",
   instagram_carousel: "Instagram carousel",
+  // Labelled but never offered: the pickers iterate
+  // GENERATION_TASK_TYPES (Sprint 76, D-76.6).
+  gtm_conversation: "GTM conversation",
 };
 
 interface TrainingExample {

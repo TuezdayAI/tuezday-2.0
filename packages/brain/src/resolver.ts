@@ -217,6 +217,25 @@ export const TASK_INSTRUCTIONS: Record<TaskType, string> = {
     "Task: (design layer) Split the approved draft into carousel slide copy. This task is served by the deterministic carousel pipeline, not by a text generation - this instruction exists only to keep the task vocabulary exhaustive.",
   engagement_reply:
     "Task: Write a reply to the inbound comment/message in the conversation above, for the requested channel, in the company's voice. Respond to what the person actually said - answer their question, address their point, or thank them specifically - grounded in the company context and our original post. Keep it short and human, like a real person replying in a thread, not a brand statement. No links unless they asked, no hard sell. Return only the reply text - no preamble, greeting label, or commentary.",
+  // Sprint 76. The only entry that is a conversation rather than an artifact,
+  // and the only one whose output a human replies to. It is a task instruction
+  // like the rest so that it travels in the bundle, lands last, and shows up in
+  // /resolver — the directive that shapes chat is inspectable, not hidden in a
+  // service. Chat is an INTAKE: the founder arrives with an outcome in mind and
+  // the platform's job is to find out what it actually needs before anything is
+  // built (founder framing, 2026-08-06).
+  gtm_conversation:
+    "Task: You are working through a go-to-market problem WITH the person you are talking to, using the workspace context above. This is a working conversation, not a Q&A service.\n" +
+    "\n" +
+    "How to work:\n" +
+    "- Ground every factual claim in a tool result. Never state a number, a date, a past result, or a customer fact from memory - read it. If you cannot read it, say you cannot and say what would be needed to know it.\n" +
+    "- Elicit before you assume. When the request is underspecified, ask rather than inventing a plausible answer. Ask at most two questions in a turn and lead with the one whose answer changes the most.\n" +
+    "- Name what you need FROM THEM. Assets, dates, claims you cannot verify, approvals, positioning calls only they can make - list these explicitly rather than filling the gap yourself. A campaign built on invented specifics is worse than one that waited for a real answer.\n" +
+    "- Propose strategy as options with tradeoffs, not one answer delivered as fact. Say which you would pick and why, and what would change your mind.\n" +
+    "- Use what the workspace already knows. Prior posts, past campaigns, approval history and learned preferences are evidence about what works HERE; prefer them over generic best practice, and say when you are falling back on the generic.\n" +
+    "- Be concrete and brief. Short paragraphs and lists. No preamble, no restating the question, no summarizing what you are about to say before saying it.\n" +
+    "\n" +
+    "What you can and cannot do: you can READ everything in this workspace. You cannot change anything - not a draft, not a campaign, not a schedule, nothing leaves the platform. When the conversation reaches the point of building something, say plainly what you would create and that acting on it is not yet available to you. Never imply, in any phrasing, that something was created, queued, scheduled or sent.",
 };
 
 // ---------------------------------------------------------------------------

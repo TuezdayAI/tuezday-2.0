@@ -1,20 +1,35 @@
 "use client";
-// apps/web/src/components/copilot/copilot.tsx — Sprint 42 Part 1.
-// A global, read-only grounded copilot as a right-side slide-over. Launched
-// from the workspace nav; talks to /workspaces/:id/chat/* and degrades to a
-// friendly "unavailable" panel if those routes 404 (API not deployed yet).
+// apps/web/src/components/copilot/copilot.tsx — Sprint 42, rebuilt in Sprint 76.
+// A global GTM working conversation as a right-side slide-over. Launched from
+// the workspace nav; talks to /workspaces/:id/chat/* and degrades to a friendly
+// "unavailable" panel if those routes 404.
+//
+// Sprint 76: answers STREAM. The turn is an agent_run, so tool calls appear as
+// they run and every answer links to its trace in the Agent Inspector. Still
+// read-only — it answers and it plans, it changes nothing (Sprint 78 adds the
+// write half through the same governed propose-tools every other agent uses).
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type {
+  AgentStopReason,
   ChatCitation,
   ChatCitationKind,
   ChatMessage,
-  ChatProposal,
   ChatSession,
   ChatSessionDetail,
   ChatTurnResult,
 } from "@tuezday/contracts";
 import { apiFetch } from "@/lib/api";
+import { readChatStream } from "@/lib/chat-stream";
+import {
+  agentRunHref,
+  citationHref,
+  formatCost,
+  stopReasonNote,
+  threadBudgetView,
+  threadTitle,
+  visibleMessages as filterVisible,
+} from "@/lib/chat-thread-view";
 import { Button, IconButton } from "@/src/components/ui/button";
 import { Icon, type IconName } from "@/src/components/ui/icon";
 import { Textarea } from "@/src/components/ui/input";
@@ -27,9 +42,9 @@ interface CopilotProps {
 }
 
 const EXAMPLE_QUESTIONS = [
-  "Summarize our ICP",
-  "Which sequence has the best reply rate?",
-  "What should I focus on?",
+  "I want to launch a campaign for our new product — where do we start?",
+  "Why did our LinkedIn engagement drop last month?",
+  "What's working across our campaigns right now?",
 ];
 
 /** Citation kind → icon within the shared vocabulary (brain=book, evidence=file, data=chart). */
@@ -38,6 +53,14 @@ const CITATION_ICON: Record<ChatCitationKind, IconName> = {
   evidence: "blog",
   data: "status-learning",
 };
+
+/** What the assistant is doing right now, assembled from the stream. */
+interface LiveTurn {
+  text: string;
+  tools: { callId: string; name: string; done: boolean; ok: boolean }[];
+}
+
+const EMPTY_TURN: LiveTurn = { text: "", tools: [] };
 
 export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
@@ -48,7 +71,8 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
   const [pending, setPending] = useState(false);
   const [showSessions, setShowSessions] = useState(false);
   const [draft, setDraft] = useState("");
-  const [confirming, setConfirming] = useState<string | null>(null);
+  const [live, setLive] = useState<LiveTurn>(EMPTY_TURN);
+  const [notice, setNotice] = useState<string | null>(null);
   const threadRef = useRef<HTMLDivElement>(null);
 
   const base = `/workspaces/${workspaceId}/chat`;
@@ -94,12 +118,12 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
     }
   }, [base]);
 
-  // Load sessions the first time the drawer opens (and whenever the workspace changes).
+  // Load threads the first time the drawer opens (and whenever the workspace changes).
   useEffect(() => {
     if (open) void loadSessions();
   }, [open, loadSessions]);
 
-  // Load the active session's thread when it changes.
+  // Load the active thread's transcript when it changes.
   useEffect(() => {
     if (open && activeId) void loadSession(activeId);
     if (!activeId) setMessages([]);
@@ -115,11 +139,11 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [open, onClose]);
 
-  // Keep the thread pinned to the newest message.
+  // Keep the thread pinned to the newest content — including each delta.
   useEffect(() => {
     const el = threadRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, pending]);
+  }, [messages, live, pending]);
 
   async function createSession(): Promise<string | null> {
     try {
@@ -137,6 +161,7 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
       setSessions((prev) => [session, ...prev]);
       setActiveId(session.id);
       setMessages([]);
+      setNotice(null);
       return session.id;
     } catch {
       setUnavailable(true);
@@ -147,10 +172,8 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
   async function deleteSession(sessionId: string) {
     setSessions((prev) => prev.filter((s) => s.id !== sessionId));
     if (activeId === sessionId) {
-      setActiveId((prev) => {
-        const remaining = sessions.filter((s) => s.id !== sessionId);
-        return remaining[0]?.id ?? null;
-      });
+      const remaining = sessions.filter((s) => s.id !== sessionId);
+      setActiveId(remaining[0]?.id ?? null);
     }
     try {
       await apiFetch(`${base}/sessions/${sessionId}`, { method: "DELETE" });
@@ -170,27 +193,30 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
     }
 
     setDraft("");
+    setNotice(null);
     // Optimistic user bubble so the composer feels instant.
-    const optimistic: ChatMessage = {
-      id: `optimistic-${Date.now()}`,
-      sessionId,
-      workspaceId,
-      role: "user",
-      content: message,
-      toolName: null,
-      citations: [],
-      createdAt: Date.now(),
-    };
-    setMessages((prev) => [...prev, optimistic]);
+    setMessages((prev) => [...prev, optimisticUser(sessionId!, workspaceId, message)]);
     setPending(true);
+    setLive(EMPTY_TURN);
+
     try {
       const res = await apiFetch(`${base}/sessions/${sessionId}/messages`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
         body: JSON.stringify({ message }),
       });
       if (res.status === 404) {
         setUnavailable(true);
+        return;
+      }
+      if (res.status === 409 || res.status === 402) {
+        const body = (await res.json().catch(() => ({}))) as { message?: string };
+        setNotice(
+          body.message ??
+            (res.status === 402
+              ? "This workspace has reached its plan's usage limit."
+              : "This conversation has reached its limit. Start a new one."),
+        );
         return;
       }
       if (!res.ok) {
@@ -200,84 +226,93 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
         ]);
         return;
       }
-      const turn: ChatTurnResult = await res.json();
-      // Re-sync from the server so persisted tool messages + ids are authoritative.
-      await loadSession(sessionId);
-      // Refresh the session list so an auto-generated title shows up.
-      void loadSessions();
-      // Fallback: if the reload returned nothing, append the answer we have.
-      setMessages((prev) => {
-        if (prev.some((m) => m.role === "assistant" && m.content === turn.answer)) return prev;
-        if (prev[prev.length - 1]?.role === "assistant") return prev;
-        return [...prev, assistantBubble(sessionId!, workspaceId, turn.answer, turn.citations)];
+
+      // Non-streaming fallback: a proxy stripped the SSE content type.
+      if (!res.headers.get("content-type")?.includes("text/event-stream")) {
+        const turn: ChatTurnResult = await res.json();
+        setMessages((prev) => [...prev, turn.message]);
+        void loadSessions();
+        return;
+      }
+
+      let settled = false;
+      await readChatStream(res, (event) => {
+        switch (event.type) {
+          case "text_delta":
+            setLive((prev) => ({ ...prev, text: prev.text + event.text }));
+            break;
+          case "tool_call_start":
+            setLive((prev) => ({
+              ...prev,
+              tools: [...prev.tools, { callId: event.callId, name: event.name, done: false, ok: true }],
+            }));
+            break;
+          case "tool_call_end":
+            setLive((prev) => ({
+              ...prev,
+              tools: prev.tools.map((t) =>
+                t.callId === event.callId ? { ...t, done: true, ok: event.ok } : t,
+              ),
+            }));
+            break;
+          case "message":
+            settled = true;
+            // The persisted message replaces the live transcript: it carries
+            // the citations, the run id and the cost the stream did not.
+            setMessages((prev) => [...prev, event.message]);
+            setLive(EMPTY_TURN);
+            break;
+          case "error":
+            settled = true;
+            setMessages((prev) => [...prev, errorBubble(sessionId!, workspaceId, event.message)]);
+            setLive(EMPTY_TURN);
+            break;
+          default:
+            break;
+        }
       });
+
+      // A stream that dropped before its `message` frame left a fully persisted
+      // transcript on the server — refetch rather than trusting the partial.
+      if (!settled) await loadSession(sessionId);
+      // Refresh the list so an auto-generated title and the thread cost show up.
+      void loadSessions();
     } catch {
       setMessages((prev) => [
         ...prev,
-        errorBubble(sessionId!, workspaceId, "Couldn't reach the copilot. Check your connection and try again."),
+        errorBubble(sessionId!, workspaceId, "Couldn't reach the assistant. Check your connection and try again."),
       ]);
     } finally {
       setPending(false);
-    }
-  }
-
-  // Confirm or discard a pending proposal (Sprint 42 Part 2). Nothing is sent —
-  // confirm only creates the gated item (a draft in Review, or an action
-  // awaiting authorization); the human still clears the normal gate.
-  async function resolveProposal(confirmToken: string, decision: "confirm" | "discard") {
-    const sessionId = activeId;
-    if (!sessionId || confirming) return;
-    setConfirming(confirmToken);
-    try {
-      const res = await apiFetch(`${base}/sessions/${sessionId}/confirm`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ confirmToken, decision }),
-      });
-      if (res.status === 404) {
-        setUnavailable(true);
-        return;
-      }
-      if (!res.ok) {
-        setMessages((prev) => [
-          ...prev,
-          errorBubble(sessionId, workspaceId, "Couldn't complete that just now. Please try again."),
-        ]);
-        return;
-      }
-      await loadSession(sessionId);
-      void loadSessions();
-    } catch {
-      setMessages((prev) => [
-        ...prev,
-        errorBubble(sessionId, workspaceId, "Couldn't reach the copilot. Check your connection and try again."),
-      ]);
-    } finally {
-      setConfirming(null);
+      setLive(EMPTY_TURN);
     }
   }
 
   if (!open) return null;
 
   const activeSession = sessions.find((s) => s.id === activeId) ?? null;
-  const activeTitle = activeSession?.title?.trim() || "New chat";
-  const visibleMessages = messages.filter((m) => m.role !== "tool" || m.toolName);
+  const budget = activeSession ? threadBudgetView(activeSession) : null;
+  const shown = filterVisible(messages);
 
   return (
     <div className={styles.overlay} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <aside className={styles.drawer} role="dialog" aria-modal="true" aria-label="Copilot">
+      <aside className={styles.drawer} role="dialog" aria-modal="true" aria-label="Assistant">
         <header className={styles.head}>
           <h2 className={styles.headTitle}>
             <Icon name="brain" size="standard" />
-            Copilot
+            Assistant
           </h2>
           <div className={styles.headSpacer} />
           {!unavailable && (
-            <IconButton label="New chat" className={styles.iconBtn} onClick={() => void createSession()}>
+            <IconButton
+              label="New conversation"
+              className={styles.iconBtn}
+              onClick={() => void createSession()}
+            >
               <Icon name="add" size="compact" />
             </IconButton>
           )}
-          <IconButton label="Close copilot" className={styles.iconBtn} onClick={onClose}>
+          <IconButton label="Close assistant" className={styles.iconBtn} onClick={onClose}>
             <Icon name="close" size="compact" />
           </IconButton>
         </header>
@@ -286,8 +321,8 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
           <div className={styles.unavailable}>
             <Icon name="info" size="emphasized" />
             <p className={styles.emptyText}>
-              The copilot isn&apos;t available yet. It&apos;ll turn on once the chat service is deployed for this
-              workspace.
+              The assistant isn&apos;t available yet. It&apos;ll turn on once the chat service is deployed for
+              this workspace.
             </p>
           </div>
         ) : (
@@ -300,9 +335,13 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
                 aria-expanded={showSessions}
               >
                 <Icon name="chevron-down" size="compact" />
-                <span className={styles.sessionToggleLabel}>{activeTitle}</span>
+                <span className={styles.sessionToggleLabel}>
+                  {activeSession ? threadTitle(activeSession) : "New conversation"}
+                </span>
                 <span className={styles.sessionToggleHint}>
-                  {sessions.length} {sessions.length === 1 ? "chat" : "chats"}
+                  {activeSession && activeSession.totalCostCents > 0
+                    ? formatCost(activeSession.totalCostCents)
+                    : `${sessions.length} ${sessions.length === 1 ? "thread" : "threads"}`}
                 </span>
               </button>
               {showSessions && (
@@ -322,10 +361,10 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
                             setShowSessions(false);
                           }}
                         >
-                          {s.title?.trim() || "New chat"}
+                          {threadTitle(s)}
                         </button>
                         <IconButton
-                          label="Delete chat"
+                          label="Delete conversation"
                           size="compact"
                           className={styles.iconBtn}
                           onClick={() => void deleteSession(s.id)}
@@ -339,17 +378,31 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
               )}
             </div>
 
+            {activeSession?.goal.trim() && (
+              <div className={styles.scopeBar}>
+                <Icon name="status-learning" size="compact" />
+                <span className={styles.scopeGoal}>{activeSession.goal}</span>
+              </div>
+            )}
+
+            {(notice ?? budget?.warning) && (
+              <p className={styles.notice}>
+                <Icon name="info" size="compact" />
+                {notice ?? budget?.warning}
+              </p>
+            )}
+
             <div className={styles.thread} ref={threadRef}>
-              {visibleMessages.length === 0 && !pending ? (
+              {shown.length === 0 && !pending ? (
                 <div className={styles.empty}>
                   <span className={styles.emptyIcon}>
                     <Icon name="brain" size="emphasized" />
                   </span>
                   <div>
-                    <h3 className={styles.emptyTitle}>Ask your GTM copilot</h3>
+                    <h3 className={styles.emptyTitle}>Work through a GTM problem</h3>
                     <p className={styles.emptyText}>
-                      Grounded in your brain, evidence, and live data. It&apos;s read-only — it answers, it
-                      doesn&apos;t change anything.
+                      Grounded in your brain, evidence and live data. It asks what it needs and shows its
+                      sources — and it&apos;s read-only, so it changes nothing.
                     </p>
                   </div>
                   <div className={styles.examples}>
@@ -368,11 +421,11 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
                 </div>
               ) : (
                 <>
-                  {visibleMessages.map((m) =>
-                    m.role === "tool" ? (
-                      <div key={m.id} className={styles.toolLine}>
-                        <Icon name="status-generating" size="compact" />
-                        used {m.toolName}
+                  {shown.map((m) =>
+                    m.role === "compaction" ? (
+                      <div key={m.id} className={styles.compaction}>
+                        <Icon name="doc-history" size="compact" />
+                        <span>Earlier turns summarized to stay within the context budget.</span>
                       </div>
                     ) : (
                       <div
@@ -387,27 +440,12 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
                           >
                             {m.content}
                           </div>
-                          {m.role === "assistant" && m.citations.length > 0 && (
-                            <div className={styles.citations}>
-                              {m.citations.map((c, i) => (
-                                <CitationChip key={`${m.id}-${i}`} citation={c} />
-                              ))}
-                            </div>
-                          )}
-                          {m.role === "assistant" && m.proposal && (
-                            <ProposalCard
-                              proposal={m.proposal}
-                              // Only the latest message's proposal is still live;
-                              // a committed/discarded one is followed by a later message.
-                              actionable={m.id === visibleMessages[visibleMessages.length - 1]?.id}
-                              confirming={confirming === m.proposal.confirmToken}
-                              disabled={confirming !== null}
-                              onConfirm={() => void resolveProposal(m.proposal!.confirmToken, "confirm")}
-                              onDiscard={() => void resolveProposal(m.proposal!.confirmToken, "discard")}
+                          {m.role === "assistant" && (
+                            <AssistantFooter
+                              message={m}
+                              workspaceId={workspaceId}
+                              stopNote={stopReasonNote(m.stopReason)}
                             />
-                          )}
-                          {m.role === "assistant" && m.producedRef && (
-                            <ReviewLink workspaceId={workspaceId} producedRef={m.producedRef} />
                           )}
                         </div>
                       </div>
@@ -415,9 +453,24 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
                   )}
                   {pending && (
                     <div className={`${styles.row} ${styles.rowAssistant}`}>
-                      <div className={styles.pending}>
-                        <Icon name="status-generating" size="compact" />
-                        Thinking…
+                      <div>
+                        {live.tools.map((t) => (
+                          <div key={t.callId} className={styles.toolLine}>
+                            <Icon
+                              name={t.done ? (t.ok ? "approve" : "reject") : "status-generating"}
+                              size="compact"
+                            />
+                            {t.done ? "read" : "reading"} {t.name.replace(/_/g, " ")}
+                          </div>
+                        ))}
+                        {live.text ? (
+                          <div className={`${styles.bubble} ${styles.bubbleAssistant}`}>{live.text}</div>
+                        ) : (
+                          <div className={styles.pending}>
+                            <Icon name="status-generating" size="compact" />
+                            Thinking…
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -434,10 +487,10 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
             >
               <Textarea
                 className={styles.composerField}
-                placeholder="Ask about your GTM…"
+                placeholder="What are you trying to do?"
                 value={draft}
                 rows={1}
-                disabled={pending}
+                disabled={pending || budget?.exhausted}
                 onChange={(e) => setDraft(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
@@ -446,7 +499,12 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
                   }
                 }}
               />
-              <Button type="submit" variant="primary" loading={pending} disabled={!draft.trim()}>
+              <Button
+                type="submit"
+                variant="primary"
+                loading={pending}
+                disabled={!draft.trim() || budget?.exhausted}
+              >
                 <Icon name="send" size="compact" />
               </Button>
             </form>
@@ -457,89 +515,101 @@ export function Copilot({ workspaceId, open, onClose }: CopilotProps) {
   );
 }
 
-function ProposalCard({
-  proposal,
-  actionable,
-  confirming,
-  disabled,
-  onConfirm,
-  onDiscard,
+/** Citations, the trace link and the per-turn cost — everything under an answer. */
+function AssistantFooter({
+  message,
+  workspaceId,
+  stopNote,
 }: {
-  proposal: ChatProposal;
-  actionable: boolean;
-  confirming: boolean;
-  disabled: boolean;
-  onConfirm: () => void;
-  onDiscard: () => void;
+  message: ChatMessage;
+  workspaceId: string;
+  stopNote: string | null;
 }) {
+  const hasFooter =
+    message.citations.length > 0 || message.agentRunId !== null || stopNote !== null;
+  if (!hasFooter) return null;
+
   return (
-    <div className={styles.proposal}>
-      <div className={styles.proposalHead}>
-        <Icon name="edit" size="compact" />
-        <span className={styles.proposalSummary}>{proposal.summary}</span>
-      </div>
-      <pre className={styles.proposalPreview}>{proposal.preview}</pre>
-      {proposal.policyNote && (
-        <p className={styles.proposalNote}>
-          <Icon name="info" size="compact" />
-          {proposal.policyNote}
-        </p>
-      )}
-      {actionable ? (
-        <div className={styles.proposalActions}>
-          <Button variant="primary" size="compact" loading={confirming} disabled={disabled} onClick={onConfirm}>
-            Confirm
-          </Button>
-          <Button variant="secondary" size="compact" disabled={disabled} onClick={onDiscard}>
-            Discard
-          </Button>
+    <>
+      {message.citations.length > 0 && (
+        <div className={styles.citations}>
+          {message.citations.map((c, i) => (
+            <CitationChip key={`${message.id}-${i}`} citation={c} workspaceId={workspaceId} />
+          ))}
         </div>
-      ) : (
-        <p className={styles.proposalResolved}>This proposal has been resolved.</p>
       )}
-    </div>
+      <div className={styles.turnMeta}>
+        {stopNote && <span className={styles.turnStop}>{stopNote}</span>}
+        {message.agentRunId && (
+          <Link className={styles.reviewLink} href={agentRunHref(workspaceId, message.agentRunId)}>
+            <Icon name="status-learning" size="compact" />
+            How it answered
+          </Link>
+        )}
+        {message.costCents > 0 && (
+          <span className={styles.turnCost}>{formatCost(message.costCents)}</span>
+        )}
+      </div>
+    </>
   );
 }
 
-/** "Opened in Review →" — both drafts and external actions land on the Review page. */
-function ReviewLink({ workspaceId, producedRef }: { workspaceId: string; producedRef: string }) {
-  const isAction = producedRef.startsWith("external_action:");
-  const label = isAction ? "View the action in Review" : "Open the draft in Review";
-  return (
-    <Link className={styles.reviewLink} href={`/workspaces/${workspaceId}/review`}>
-      <Icon name="review" size="compact" />
-      {label}
+function CitationChip({ citation, workspaceId }: { citation: ChatCitation; workspaceId: string }) {
+  const href = citationHref(citation, workspaceId);
+  const title = citation.detail ?? `${citation.kind}: ${citation.ref}`;
+  const body = (
+    <>
+      <Icon name={CITATION_ICON[citation.kind]} size="compact" />
+      <span className={styles.chipLabel}>{citation.label}</span>
+    </>
+  );
+  // A chip with no route renders unlinked rather than navigating somewhere wrong.
+  if (!href) {
+    return (
+      <span className={styles.chip} title={title}>
+        {body}
+      </span>
+    );
+  }
+  const external = /^https?:\/\//.test(href);
+  return external ? (
+    <a className={styles.chip} title={title} href={href} target="_blank" rel="noreferrer noopener">
+      {body}
+    </a>
+  ) : (
+    <Link className={styles.chip} title={title} href={href}>
+      {body}
     </Link>
   );
 }
 
-function CitationChip({ citation }: { citation: ChatCitation }) {
-  return (
-    <span className={styles.chip} title={citation.detail ?? `${citation.kind}: ${citation.ref}`}>
-      <Icon name={CITATION_ICON[citation.kind]} size="compact" />
-      <span className={styles.chipLabel}>{citation.label}</span>
-    </span>
-  );
-}
-
-function assistantBubble(
+function bubble(
   sessionId: string,
   workspaceId: string,
+  role: "user" | "assistant",
   content: string,
-  citations: ChatCitation[],
 ): ChatMessage {
   return {
-    id: `answer-${Date.now()}`,
+    id: `${role}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     sessionId,
     workspaceId,
-    role: "assistant",
+    role,
     content,
     toolName: null,
-    citations,
+    citations: [],
+    agentRunId: null,
+    costCents: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    stopReason: null as AgentStopReason | null,
     createdAt: Date.now(),
   };
 }
 
+function optimisticUser(sessionId: string, workspaceId: string, content: string): ChatMessage {
+  return bubble(sessionId, workspaceId, "user", content);
+}
+
 function errorBubble(sessionId: string, workspaceId: string, content: string): ChatMessage {
-  return assistantBubble(sessionId, workspaceId, content, []);
+  return bubble(sessionId, workspaceId, "assistant", content);
 }
