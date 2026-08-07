@@ -211,21 +211,44 @@ describe("citations", () => {
     expect(citationsForToolCall("list_campaigns", {}, { campaigns: [], note: "none" })).toEqual([]);
   });
 
-  it("produces nothing for the two tools whose output carries no record id", () => {
-    // Deliberate (see chat-citations.ts): a chip that cannot be opened is worse
-    // than no chip, and these are style anchors rather than factual sources.
+  it("cites prior approvals and corrections back to their draft (Sprint 78)", () => {
+    // Sprint 76 shipped these two uncitable, because their output carried no
+    // record id. It does now.
     expect(
       citationsForToolCall(
         "find_similar_approved_drafts",
         { query: "pricing" },
-        { drafts: [{ taskType: "linkedin_post", content: "..." }] },
+        {
+          drafts: [
+            { draftId: "d-1", taskType: "linkedin_post", content: "Our pricing post", wasEdited: true },
+          ],
+        },
       ),
-    ).toEqual([]);
+    ).toEqual([
+      { kind: "data", ref: "draft:d-1", label: "Our pricing post", detail: "approved after edits" },
+    ]);
+
     expect(
       citationsForToolCall(
         "find_instructive_rejections",
         {},
-        { rejections: [{ taskType: "linkedin_post", content: "..." }] },
+        {
+          rejections: [
+            { draftId: "d-2", taskType: "linkedin_post", content: "Too salesy", outcome: "rejected" },
+          ],
+        },
+      ),
+    ).toEqual([{ kind: "data", ref: "draft:d-2", label: "Too salesy", detail: "rejected" }]);
+  });
+
+  it("skips an example drawn from a rated generation, which is not a draft", () => {
+    // The honest remainder: a rating example has no page to open, so it says
+    // `draftId: null` rather than being silently uncitable.
+    expect(
+      citationsForToolCall(
+        "find_similar_approved_drafts",
+        {},
+        { drafts: [{ draftId: null, taskType: "linkedin_post", content: "..." }] },
       ),
     ).toEqual([]);
   });

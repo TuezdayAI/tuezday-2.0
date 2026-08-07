@@ -38,6 +38,7 @@ import {
 import type { ContextSection, ResolvedContext } from "@tuezday/brain";
 import type { TraceKnob } from "@tuezday/contracts";
 import { knobStateLabel } from "@/lib/artifact-trace-view";
+import { TASK_LABELS } from "@/lib/task-labels";
 import { SectionBadges } from "@/components/why-this-output";
 
 /** What POST /resolve returns since Sprint 71: the bundle plus the nine knobs
@@ -50,25 +51,6 @@ import {
   providerForPersonaSocialChannel,
 } from "@/lib/persona-social-routing";
 
-const TASK_LABELS: Record<TaskType, string> = {
-  linkedin_post: "LinkedIn post",
-  cold_email_opener: "Cold email opener",
-  ad_copy_variant: "Ad copy variant",
-  landing_page_hero: "Landing page hero",
-  signal_response: "Signal response",
-  outbound_email: "Outbound email",
-  meta_ad_creative: "Meta ad creative",
-  google_rsa: "Google RSA",
-  pr_pitch: "Media pitch",
-  press_boilerplate: "Press boilerplate",
-  x_dm: "X DM",
-  instagram_post: "Instagram post",
-  engagement_reply: "Reply",
-  instagram_carousel: "Instagram carousel",
-  // Labelled but never offered: the pickers iterate
-  // GENERATION_TASK_TYPES (Sprint 76, D-76.6).
-  gtm_conversation: "GTM conversation",
-};
 
 const MATRIX_DOC_LABELS: Record<MatrixDocType, string> = {
   icp: "ICP",

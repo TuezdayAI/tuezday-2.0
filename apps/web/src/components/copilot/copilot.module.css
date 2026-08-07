@@ -336,3 +336,106 @@
   font-size: 11.5px;
   font-variant-numeric: tabular-nums;
 }
+
+/* ---------------------------------------------------------------------------
+   Confirmation cards (Sprint 78). Weighted deliberately heavier than a chat
+   bubble: this is the one thing in the drawer that changes the workspace, and
+   it should not be skimmable.
+   --------------------------------------------------------------------------- */
+.proposal {
+  margin-top: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent, var(--border));
+  border-radius: 10px;
+  background: var(--panel-2);
+}
+.proposal_quarantined {
+  border-left-color: var(--warning, #b45309);
+}
+.proposal_confirmed {
+  border-left-color: var(--success, #15803d);
+  opacity: 0.85;
+}
+.proposal_declined,
+.proposal_failed {
+  border-left-color: var(--muted);
+  opacity: 0.7;
+}
+.proposalHead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.proposalTitle {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.proposalDetail {
+  margin: 10px 0 0;
+  display: grid;
+  gap: 4px;
+}
+.proposalRow {
+  display: grid;
+  grid-template-columns: 92px 1fr;
+  gap: 10px;
+  align-items: start;
+}
+.proposalLabel {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding-top: 1px;
+}
+.proposalValue {
+  margin: 0;
+  font-size: 12.5px;
+  color: var(--text);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.proposalEffect {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.45;
+}
+.proposalRationale {
+  margin: 6px 0 0;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--muted);
+}
+.proposalWarning {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--warning-bg, rgba(180, 83, 9, 0.12));
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.proposalActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.proposalOutcome {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+.proposalLink {
+  color: var(--text);
+  text-decoration: underline;
+}

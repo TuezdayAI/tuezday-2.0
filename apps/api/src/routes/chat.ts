@@ -11,6 +11,7 @@ import type { Db } from "../db";
 import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
 import type { SafeFetchService } from "../safe-fetch/index";
+import type { AgentProposalService } from "../agents/proposals";
 import {
   createSession,
   deleteSession,
@@ -20,6 +21,11 @@ import {
   listSessions,
   updateSession,
 } from "../services/chat";
+import {
+  confirmChatProposal,
+  declineChatProposal,
+  listChatProposals,
+} from "../services/chat-proposals";
 import { runChatTurn } from "../services/chat-turn";
 import { EntitlementError, assertLlmBudget } from "../services/entitlements";
 import { getWorkspace } from "../services/workspaces";
@@ -82,6 +88,12 @@ export function registerChatRoutes(
   llm: LlmGateway,
   evidence: EvidenceStore,
   safeFetch: SafeFetchService,
+  /**
+   * Sprint 78: the LIVE Sprint 69 propose service, used only when a founder
+   * confirms. A chat turn never sees it — the turn is given the recorder
+   * instead — so there is no path from a model call to this object.
+   */
+  proposals?: AgentProposalService,
 ): void {
   app.post<{ Params: { id: string } }>("/workspaces/:id/chat/sessions", async (request, reply) => {
     if (!workspaceOr404(db, request.params.id, reply)) return reply;
@@ -114,6 +126,7 @@ export function registerChatRoutes(
       const detail: ChatSessionDetail = {
         ...session,
         messages: listMessages(db, session.id),
+        proposals: listChatProposals(db, session.id),
       };
       return detail;
     },
@@ -188,7 +201,10 @@ export function registerChatRoutes(
       }
 
       const deps = { llm, evidence, safeFetch };
-      const actor = actorOf(request);
+      // The role rides along: it is what decides whether this turn is offered
+      // the propose tools at all (D-78.3), and it is set by the same guard
+      // that already proved membership.
+      const actor = { ...actorOf(request), role: request.actor.role };
 
       if (!wantsStream(request)) {
         const result = await runChatTurn(
@@ -226,6 +242,88 @@ export function registerChatRoutes(
         stream.close();
       }
       return reply;
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // Confirm-before-propose (Sprint 78).
+  //
+  // These are the only routes in chat that can change anything, and they are
+  // reachable only by a signed-in member of the workspace clicking a card. The
+  // model has no path to them: it holds the recorder, which writes a pending
+  // row and returns.
+  // -------------------------------------------------------------------------
+
+  app.get<{ Params: { id: string; sessionId: string } }>(
+    "/workspaces/:id/chat/sessions/:sessionId/proposals",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const session = getSession(db, request.params.id, request.params.sessionId);
+      if (!session) return reply.status(404).send({ error: "chat_session_not_found" });
+      return listChatProposals(db, session.id);
+    },
+  );
+
+  app.post<{ Params: { id: string; sessionId: string; proposalId: string } }>(
+    "/workspaces/:id/chat/sessions/:sessionId/proposals/:proposalId/confirm",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const session = getSession(db, request.params.id, request.params.sessionId);
+      if (!session) return reply.status(404).send({ error: "chat_session_not_found" });
+      if (!proposals) {
+        // No live gate wired means no confirmation path — refusing is the only
+        // honest answer, since the alternative is writing a second one here.
+        return reply.status(503).send({ error: "proposals_unavailable" });
+      }
+      const actor = actorOf(request);
+      if (!actor.human) {
+        // Confirmation is the human step. A machine credential confirming its
+        // own agent's proposal would empty the mechanism of meaning.
+        return reply.status(403).send({ error: "confirmation_requires_a_person" });
+      }
+
+      const outcome = await confirmChatProposal(
+        db,
+        proposals,
+        request.params.id,
+        actor,
+        request.params.proposalId,
+      );
+      if (!outcome.ok) {
+        return outcome.error === "not_found"
+          ? reply.status(404).send({ error: "chat_proposal_not_found" })
+          : reply
+              .status(409)
+              .send({ error: "already_resolved", proposal: outcome.proposal });
+      }
+      // A refusal from the gate is a 200 with a `failed` proposal, not an HTTP
+      // error: the request succeeded, and the answer is a governed "no" the
+      // founder needs to read on the card.
+      return reply.status(200).send(outcome.proposal);
+    },
+  );
+
+  app.post<{ Params: { id: string; sessionId: string; proposalId: string } }>(
+    "/workspaces/:id/chat/sessions/:sessionId/proposals/:proposalId/decline",
+    async (request, reply) => {
+      if (!workspaceOr404(db, request.params.id, reply)) return reply;
+      const session = getSession(db, request.params.id, request.params.sessionId);
+      if (!session) return reply.status(404).send({ error: "chat_session_not_found" });
+
+      const outcome = declineChatProposal(
+        db,
+        request.params.id,
+        actorOf(request),
+        request.params.proposalId,
+      );
+      if (!outcome.ok) {
+        return outcome.error === "not_found"
+          ? reply.status(404).send({ error: "chat_proposal_not_found" })
+          : reply
+              .status(409)
+              .send({ error: "already_resolved", proposal: outcome.proposal });
+      }
+      return reply.status(200).send(outcome.proposal);
     },
   );
 }

@@ -47,9 +47,15 @@ async function propose(
     status: result.status,
     summary: result.summary,
     simulated: result.simulated,
-    note: result.simulated
-      ? "This run is not live, so nothing was created. Continue as if it had been."
-      : "Proposed. A human sees it wherever that kind of item is governed; do not propose it again.",
+    ...(result.awaitingConfirmation ? { awaitingConfirmation: true } : {}),
+    // Sprint 78: in a conversation the call is recorded, not executed, and the
+    // person decides. Saying "proposed" there would be a lie the model would
+    // repeat to them.
+    note: result.awaitingConfirmation
+      ? "Recorded and shown to the person as something to confirm. NOTHING has happened yet and nothing will until they confirm it. Tell them plainly what you are asking for and why; do not call this again for the same thing, and do not describe it as done."
+      : result.simulated
+        ? "This run is not live, so nothing was created. Continue as if it had been."
+        : "Proposed. A human sees it wherever that kind of item is governed; do not propose it again.",
   };
 }
 

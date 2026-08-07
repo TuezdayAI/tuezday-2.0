@@ -119,6 +119,9 @@ export const findInstructiveRejectionsTool: Tool<Input, unknown> = {
 
     return {
       rejections: kept.map((e) => ({
+        // Sprint 78: citable back to the draft it happened to. Already in hand
+        // — the reason and instruction lookups above key on exactly this id.
+        draftId: e.kind === "decision" ? e.id : null,
         taskType: e.taskType,
         channel: e.channel,
         outcome: e.decision ?? e.rating,

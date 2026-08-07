@@ -53,44 +53,73 @@ describe("chat drawer shell contract (Sprint 76)", () => {
   it("refetches the server transcript when a stream drops mid-turn", () => {
     const drawer = read(DRAWER);
     // The partial we streamed is not authoritative; the persisted rows are.
-    expect(drawer).toContain("if (!settled) await loadSession(sessionId)");
+    // Sprint 78 adds a second trigger: a proposal frame arrives before the
+    // message it belongs to, so the client's copy has no messageId until the
+    // refetch.
+    expect(drawer).toContain("if (!settled || sawProposal) await loadSession(sessionId)");
   });
 
-  it("has no trace of the Sprint 42 propose/confirm surface", () => {
+  it("renders the confirmation card and both of its decisions (Sprint 78)", () => {
     const drawer = read(DRAWER);
-    expect(drawer).not.toContain("ProposalCard");
-    expect(drawer).not.toContain("confirmToken");
-    expect(drawer).not.toContain("/confirm");
-    expect(drawer).not.toContain("resolveProposal");
+    expect(drawer).toContain("ProposalCard");
+    expect(drawer).toContain("proposalsForMessage");
+    expect(drawer).toContain('onResolve("confirm")');
+    expect(drawer).toContain('onResolve("decline")');
+    // The card's own copy comes from the typed intent, not from prose the
+    // component invents.
+    expect(drawer).toContain("proposal.intent.effect");
   });
 
-  it("tells the founder plainly that it cannot change anything", () => {
+  it("warns on a quarantined card without hiding the choice", () => {
     const drawer = read(DRAWER);
-    expect(drawer).toContain("read-only");
+    expect(drawer).toContain("quarantineWarning");
+    // The buttons are gated on `isActionable` — the proposal's status — never
+    // on whether it was quarantined.
+    expect(drawer).toContain("isActionable(proposal)");
+    expect(drawer).not.toMatch(/!proposal\.quarantined\s*&&[\s\S]{0,80}Confirm/);
+  });
+
+  it("no longer claims chat cannot change anything", () => {
+    const drawer = read(DRAWER);
+    expect(drawer).not.toContain("it changes nothing");
+    // What replaced it is the honest version: it can ask, and you decide.
+    expect(drawer).toContain("nothing happens");
+    expect(drawer).toContain("until you confirm");
   });
 });
 
-describe("task-type pickers exclude the conversational task (D-76.6)", () => {
-  const PICKERS = [
+describe("task labels live in one place (Sprint 78, closing D-76.6)", () => {
+  const SURFACES = [
     "app/workspaces/[id]/sandbox/page.tsx",
     "app/workspaces/[id]/campaigns/[campaignId]/_components/campaign-plan-form.tsx",
+    "app/workspaces/[id]/learning/page.tsx",
+    "app/workspaces/[id]/resolver/page.tsx",
   ] as const;
 
-  it("iterate GENERATION_TASK_TYPES, never the full list", () => {
-    for (const file of PICKERS) {
+  it("none of them declares its own label map any more", () => {
+    for (const file of SURFACES) {
       const source = read(file);
-      expect(source, file).toContain("GENERATION_TASK_TYPES");
-      // A picker offering "gtm_conversation" would invite a founder to
-      // generate a conversation, which is not a thing.
-      expect(source, file).not.toMatch(/\{TASK_TYPES\.map/);
+      expect(source, file).toContain('from "@/lib/task-labels"');
+      expect(source, file).not.toMatch(/const TASK_LABELS: Record<TaskType, string> = \{/);
     }
   });
 
-  it("still label the conversational task, for surfaces that display stored data", () => {
-    // /learning and /resolver read a taskType off a row; an unlabelled value
-    // renders as undefined.
-    for (const file of ["app/workspaces/[id]/learning/page.tsx", "app/workspaces/[id]/resolver/page.tsx"]) {
-      expect(read(file), file).toContain("gtm_conversation:");
+  it("the shared map is total over TaskType, including the conversational one", () => {
+    // /learning and /resolver index it with a task type read off a stored row;
+    // an unlabelled value renders as undefined.
+    const source = read("lib/task-labels.ts");
+    expect(source).toContain("Record<TaskType, string>");
+    expect(source).toContain("gtm_conversation:");
+  });
+
+  it("pickers still iterate GENERATION_TASK_TYPES, never the full list", () => {
+    for (const file of [
+      "app/workspaces/[id]/sandbox/page.tsx",
+      "app/workspaces/[id]/campaigns/[campaignId]/_components/campaign-plan-form.tsx",
+    ]) {
+      const source = read(file);
+      expect(source, file).toContain("GENERATION_TASK_TYPES");
+      expect(source, file).not.toMatch(/\{TASK_TYPES\.map/);
     }
   });
 });

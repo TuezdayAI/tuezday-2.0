@@ -38,10 +38,30 @@ export const DEFAULT_CHAT_CHANNEL: Channel = "web";
 
 export interface ChatContext {
   resolved: ResolvedContext;
-  /** The full system string handed to the runner: bundle + the thread's goal. */
+  /** The full system string handed to the runner: bundle + goal + capability. */
   system: string;
   channel: Channel;
 }
+
+export interface ChatContextOptions {
+  /** Whether this turn's actor may put things forward for confirmation. */
+  mayPropose?: boolean;
+}
+
+/**
+ * The capability clause (Sprint 78, D-78.5).
+ *
+ * It lives here and not in `TASK_INSTRUCTIONS` because what a conversation may
+ * DO is a property of this turn's actor, not of the task type: the same thread
+ * read by two people with different roles has two different answers, and a
+ * static map keyed on task type can only hold one. It still lands in
+ * `agent_runs.system`, so it stays fully inspectable in the trace.
+ */
+export const CHAT_CAPABILITY_PROPOSE =
+  "What you can do in this conversation: you can READ everything in this workspace, and you can PUT THINGS FORWARD for the person to confirm — a draft for review, publishing an approved draft, a reply, a sequence step, an ad change. Putting something forward does nothing on its own. It shows them a card; they confirm or decline; only then does it reach the workspace's approval gate and action policy, which decide what actually happens. So: never say something is done, created, queued, scheduled or sent when you have only proposed it. Say what you are asking them to confirm and why. Propose one thing at a time, only when the conversation has actually reached it, and only with details they have given you or you have read — never with invented specifics.";
+
+export const CHAT_CAPABILITY_READ_ONLY =
+  "What you can do in this conversation: you can READ everything in this workspace. You cannot change anything — not a draft, not a campaign, not a schedule, and nothing leaves the platform. When the conversation reaches the point of building something, say plainly what you would create and that acting on it is not available to you here. Never imply, in any phrasing, that something was created, queued, scheduled or sent.";
 
 /**
  * The retrieval query a thread's evidence, examples and preference lookups run
@@ -58,6 +78,7 @@ export async function buildChatContext(
   evidence: EvidenceStore,
   session: ChatSession,
   latestUserMessage: string,
+  options: ChatContextOptions = {},
 ): Promise<ChatContext> {
   const workspace = getWorkspace(db, session.workspaceId);
   if (!workspace) throw new Error(`Unknown workspace ${session.workspaceId}`);
@@ -124,9 +145,16 @@ export async function buildChatContext(
   // standing intent for this thread, not workspace context, and the resolver
   // has no layer that means "what this conversation is for".
   const goal = session.goal.trim();
-  const system = goal
-    ? `THREAD GOAL: ${goal}\n\n${resolved.prompt}`
-    : resolved.prompt;
+  const capability = options.mayPropose
+    ? CHAT_CAPABILITY_PROPOSE
+    : CHAT_CAPABILITY_READ_ONLY;
+  const system = [
+    goal ? `THREAD GOAL: ${goal}` : "",
+    resolved.prompt,
+    capability,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 
   return { resolved, system, channel };
 }

@@ -13,6 +13,7 @@ import {
   type ExternalActionKind,
   type ExternalActionListFilters,
   type ExternalActionOrigin,
+  type ExternalActionOriginSurface,
   type ExternalActionStatus,
   type ExternalActionSubject,
   type ExternalActionContext,
@@ -53,6 +54,8 @@ export interface NewExternalActionRecord {
    * of the actor — a user id means a person, its absence means the platform. */
   origin?: ExternalActionOrigin;
   originRunId?: string | null;
+  /** Sprint 78: which agent surface asked (chat vs pipeline). */
+  originSurface?: ExternalActionOriginSurface | null;
   supersedesActionId: string | null;
   draftId: string | null;
 }
@@ -104,6 +107,7 @@ export function rowToExternalAction(row: ExternalActionRow): ExternalAction {
     proposedBy: { userId: row.proposedByUserId, label: row.proposedByLabel },
     origin: row.origin as ExternalActionOrigin,
     originRunId: row.originRunId,
+    originSurface: (row.originSurface as ExternalActionOriginSurface | null) ?? null,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     authorizedAt: row.authorizedAt,
@@ -160,6 +164,7 @@ export function insertExternalAction(db: Db, input: NewExternalActionRecord): Ex
     proposedByLabel: input.actor.label,
     origin: input.origin ?? (input.actor.userId ? "human" : "system"),
     originRunId: input.originRunId ?? null,
+    originSurface: input.originSurface ?? null,
     createdAt: now,
     updatedAt: now,
     authorizedAt: null,

@@ -282,6 +282,8 @@ export interface AppendMessageInput {
   inputTokens?: number;
   outputTokens?: number;
   stopReason?: AgentStopReason | null;
+  /** What a confirmed proposal produced (Sprint 78) — `draft:<id>` etc. */
+  producedRef?: string | null;
 }
 
 /** Persist one message and bump the thread's updatedAt so lists resort. */
@@ -300,9 +302,11 @@ export function appendMessage(
     content: input.content,
     toolName: input.toolName ?? null,
     citationsJson: JSON.stringify(input.citations ?? []),
-    // Dormant since Sprint 76 — chat is read-only until Sprint 78 (D-76.7).
+    // Sprint 78 keeps `proposal_json` dormant: a chat proposal is its own row
+    // now (chat_proposals), because its status changes after the message is
+    // written and a transcript row should not be rewritten by a click.
     proposalJson: null,
-    producedRef: null,
+    producedRef: input.producedRef ?? null,
     agentRunId: input.agentRunId ?? null,
     costCents: input.costCents ?? 0,
     inputTokens: input.inputTokens ?? 0,
