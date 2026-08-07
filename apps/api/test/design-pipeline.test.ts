@@ -11,7 +11,6 @@ import {
 import { OpenDesignProvider } from "../src/design/open-design";
 import { S3AssetStorage, StorageError } from "../src/design/storage";
 import { createTestDb } from "./helpers";
-import { escapeHtml, renderSlide, substituteTemplate } from "../src/design/render";
 import { designSystemFingerprint, getOrAuthorTemplate } from "../src/design/templates";
 
 type Fetcher = typeof fetch;
@@ -238,70 +237,4 @@ describe("design pipeline (Sprint 41 Part 3)", () => {
     });
   });
 
-  describe("renderer — pure substitution", () => {
-    const template = { html: TEMPLATE_HTML, css: TEMPLATE_CSS, placeholders: ["title", "body", "page"] };
-
-    it("substitutes and HTML-escapes values", () => {
-      const doc = substituteTemplate(template, {
-        title: "Ship <fast> & safe",
-        body: 'Quote: "yes"',
-        page: "2/8",
-      });
-      expect(doc).toContain("Ship &lt;fast&gt; &amp; safe");
-      expect(doc).toContain("Quote: &quot;yes&quot;");
-      expect(doc).toContain("2/8");
-      expect(doc).not.toContain("{{");
-      expect(doc).toContain(TEMPLATE_CSS);
-    });
-
-    it("throws on a missing placeholder value — never renders half-filled art", () => {
-      expect(() => substituteTemplate(template, { title: "t", body: "b" })).toThrow(/page/);
-    });
-
-    it("escapeHtml covers the five metacharacters", () => {
-      expect(escapeHtml(`&<>"'`)).toBe("&amp;&lt;&gt;&quot;&#39;");
-    });
-  });
-});
-
-// Browser-backed render test — auto-skips where chromium isn't installed
-// (e.g. CI without `playwright install`), per the part spec. The substitution
-// and escaping logic above is covered without a browser either way.
-const chromiumAvailable = await (async () => {
-  try {
-    const { chromium } = await import("playwright");
-    const { existsSync } = await import("node:fs");
-    // executablePath() returns the *expected* path even when the browser was
-    // never downloaded (e.g. CI without `playwright install`), so check the
-    // binary actually exists on disk — otherwise the test runs and dies at launch.
-    const path = chromium.executablePath();
-    return Boolean(path) && existsSync(path);
-  } catch {
-    return false;
-  }
-})();
-
-describe.runIf(chromiumAvailable)("renderer — headless chromium", () => {
-  it("renders a PNG at the requested dimensions", async () => {
-    const { closeRenderer } = await import("../src/design/render");
-    try {
-      const png = await renderSlide({
-        template: {
-          html: `<div style="display:flex;width:100%;height:100%;align-items:center;justify-content:center"><h1>{{title}}</h1></div>`,
-          css: "body{background:#123;} h1{color:#fff;font-size:80px;}",
-          placeholders: ["title"],
-        },
-        values: { title: "Hello Tuezday" },
-        width: 640,
-        height: 400,
-      });
-      expect(png.length).toBeGreaterThan(1000);
-      // PNG header: bytes 16-19 width, 20-23 height (big-endian).
-      const view = new DataView(png.buffer, png.byteOffset, png.byteLength);
-      expect(view.getUint32(16)).toBe(640);
-      expect(view.getUint32(20)).toBe(400);
-    } finally {
-      await closeRenderer();
-    }
-  }, 60_000);
 });

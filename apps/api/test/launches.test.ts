@@ -253,7 +253,7 @@ describe("social adapters", () => {
       integrationKey: "tuezday-instagram",
       ...instagramIdentity,
     }).publishPost({ target: "feed", title: "", body: "Caption", media: [{ url: "https://img/1.jpg", type: "image" }] });
-    expect(result.externalId).toBe("ig-media-1");
+    expect(result).toMatchObject({ status: "published", externalId: "ig-media-1" });
     expect(state.igContainers).toBe(1);
     expect(state.igPublished).toBe(1);
   });

@@ -100,6 +100,7 @@ function metricSummary(m: PublicationMetric): string {
 
 const PUBLICATION_BADGE_TONES: Record<Publication["status"], "edited" | "approved" | "rejected"> = {
   scheduled: "edited",
+  processing: "edited",
   published: "approved",
   failed: "rejected",
 };

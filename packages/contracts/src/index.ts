@@ -957,6 +957,7 @@ export type AutomationMode = (typeof AUTOMATION_MODES)[number];
 
 /** Default daily auto-post caps (Sprint 28) when a workspace hasn't set its own. */
 export const DEFAULT_PER_CONNECTION_DAILY_CAP = 10;
+export const DEFAULT_PER_CONNECTION_REPLY_DAILY_CAP = 10;
 export const DEFAULT_PER_CAMPAIGN_DAILY_CAP = 5;
 
 export const campaignSchema = z.object({
@@ -4232,6 +4233,10 @@ export const connectionSchema = z.object({
   }),
   contentProfile: connectionContentProfileSchema,
   displayName: z.string(),
+  timezone: z
+    .string()
+    .min(1, "A time zone is required")
+    .refine(isValidTimeZone, { message: "Unknown time zone" }),
   externalAccountId: z.string().nullable(),
   externalAccountName: z.string().nullable(),
   externalAccountHandle: z.string().nullable(),
@@ -4271,9 +4276,18 @@ export type UpsertPersonaSocialAccountInput = z.infer<
   typeof upsertPersonaSocialAccountInputSchema
 >;
 
-export const updateConnectionInputSchema = z.object({
-  displayName: z.string().trim().min(1).max(120),
-});
+export const updateConnectionInputSchema = z
+  .object({
+    displayName: z.string().trim().min(1).max(120).optional(),
+    timezone: z
+      .string()
+      .min(1, "A time zone is required")
+      .refine(isValidTimeZone, { message: "Unknown time zone" })
+      .optional(),
+  })
+  .refine((input) => input.displayName !== undefined || input.timezone !== undefined, {
+    message: "Provide a display name or time zone.",
+  });
 export type UpdateConnectionInput = z.infer<typeof updateConnectionInputSchema>;
 
 /** Credential requirements are enforced per provider auth mode at the route. */
@@ -4810,7 +4824,7 @@ export function validateSocialPost(
   return { ok: violations.length === 0, violations };
 }
 
-export const PUBLICATION_STATUSES = ["scheduled", "published", "failed"] as const;
+export const PUBLICATION_STATUSES = ["scheduled", "processing", "published", "failed"] as const;
 export type PublicationStatus = (typeof PUBLICATION_STATUSES)[number];
 
 export const publicationSchema = z.object({
@@ -4830,6 +4844,12 @@ export const publicationSchema = z.object({
   externalId: z.string().nullable(),
   externalUrl: z.string().nullable(),
   lastError: z.string().nullable(),
+  /** Provider-side container/job id while an asynchronous publish is in flight. */
+  providerOperationId: z.string().nullable(),
+  /** Earliest instant at which the worker may poll the provider again. */
+  nextAttemptAt: z.number().int().nullable(),
+  processingStartedAt: z.number().int().nullable(),
+  processingAttempts: z.number().int().nonnegative(),
   /** Governing action for new receipts; absent/null on legacy rows. */
   externalActionId: z.string().uuid().nullable().optional(),
   createdAt: z.number().int(),
@@ -4935,6 +4955,7 @@ export const CALENDAR_ENTRY_STATUSES = [
   "authorization_required",
   "authorized",
   "scheduled",
+  "processing",
   "published",
   "failed",
   "blocked",
@@ -5289,12 +5310,14 @@ export type AutomationGenerationPath = (typeof AUTOMATION_GENERATION_PATHS)[numb
 /**
  * Per-workspace guardrails for `scheduled_auto` campaigns — the safety net that
  * replaces the human gate. The kill switch is the hard stop; the caps bound how
- * many auto-posts land per UTC day. Mirrors `ad_settings`.
+ * many automated actions land per destination account's local day. Original
+ * posts/X DMs and replies have independent connection budgets.
  */
 export const socialAutomationSettingsSchema = z.object({
   workspaceId: z.string().uuid(),
   killSwitch: z.boolean(),
   perConnectionDailyCap: z.number().int().positive(),
+  perConnectionReplyDailyCap: z.number().int().positive(),
   perCampaignDailyCap: z.number().int().positive(),
   // Sprint 29: master switch for auto-posting engagement replies. Off by default —
   // even scheduled_auto campaigns gate their replies until the founder opts in.
@@ -5312,6 +5335,7 @@ export type SocialAutomationSettings = z.infer<typeof socialAutomationSettingsSc
 export const updateSocialAutomationSettingsInputSchema = z.object({
   killSwitch: z.boolean().optional(),
   perConnectionDailyCap: z.number().int().positive().max(1000).optional(),
+  perConnectionReplyDailyCap: z.number().int().positive().max(1000).optional(),
   perCampaignDailyCap: z.number().int().positive().max(1000).optional(),
   autoReplyEnabled: z.boolean().optional(),
   matchThreshold: z.number().int().min(0).max(100).optional(),
@@ -10250,3 +10274,66 @@ export const knobUsageReportSchema = z.object({
   generatedAt: z.number().int(),
 });
 export type KnobUsageReport = z.infer<typeof knobUsageReportSchema>;
+
+// ---------------------------------------------------------------------------
+// Internal renderer wire contract (Sprint 75)
+// ---------------------------------------------------------------------------
+
+export const RENDER_MAX_DOCUMENT_CHARS = 500_000;
+export const RENDER_MAX_VALUE_CHARS = 20_000;
+export const RENDER_MAX_PLACEHOLDERS = 100;
+export const RENDER_MIN_DIMENSION = 64;
+export const RENDER_MAX_DIMENSION = 4_096;
+export const RENDER_DEFAULT_DIMENSION = 1_080;
+
+const renderPlaceholderSchema = z.string().regex(/^[A-Za-z0-9_.-]+$/);
+
+export const renderTemplateSchema = z.object({
+  html: z.string().min(1).max(RENDER_MAX_DOCUMENT_CHARS),
+  css: z.string().max(RENDER_MAX_DOCUMENT_CHARS),
+  placeholders: z
+    .array(renderPlaceholderSchema)
+    .max(RENDER_MAX_PLACEHOLDERS)
+    .refine((values) => new Set(values).size === values.length, {
+      message: "Placeholders must be unique.",
+    }),
+});
+export type RenderTemplate = z.infer<typeof renderTemplateSchema>;
+
+export const renderRequestSchema = z.object({
+  template: renderTemplateSchema,
+  values: z
+    .record(z.string().max(RENDER_MAX_VALUE_CHARS))
+    .refine((values) => Object.keys(values).length <= RENDER_MAX_PLACEHOLDERS, {
+      message: `At most ${RENDER_MAX_PLACEHOLDERS} values are allowed.`,
+    }),
+  width: z
+    .number()
+    .int()
+    .min(RENDER_MIN_DIMENSION)
+    .max(RENDER_MAX_DIMENSION)
+    .default(RENDER_DEFAULT_DIMENSION),
+  height: z
+    .number()
+    .int()
+    .min(RENDER_MIN_DIMENSION)
+    .max(RENDER_MAX_DIMENSION)
+    .default(RENDER_DEFAULT_DIMENSION),
+});
+export type RenderRequest = z.infer<typeof renderRequestSchema>;
+
+export const RENDER_ERROR_CODES = [
+  "unauthorized",
+  "invalid_render_request",
+  "render_timeout",
+  "render_failed",
+  "renderer_unavailable",
+  "invalid_renderer_response",
+] as const;
+export type RenderErrorCode = (typeof RENDER_ERROR_CODES)[number];
+
+export const renderErrorSchema = z.object({
+  error: z.enum(RENDER_ERROR_CODES),
+  message: z.string().min(1).max(500),
+});
+export type RenderErrorResponse = z.infer<typeof renderErrorSchema>;

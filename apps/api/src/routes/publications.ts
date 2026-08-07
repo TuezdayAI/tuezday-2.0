@@ -124,16 +124,16 @@ export function registerPublicationRoutes(
           message: "Only scheduled publications can be canceled.",
         });
       }
-      deletePublication(db, publication.id);
+      deletePublication(db, request.params.id, publication.id);
       return reply.status(204).send();
     },
   );
 
-  // Worker entry point: fire everything due.
+  // Legacy-receipt worker entry point. Governed receipts run through the
+  // external-action route first so their action cannot finish prematurely.
   app.post<{ Params: { id: string } }>("/workspaces/:id/publish/run", async (request, reply) => {
     if (!workspaceOr404(db, request.params.id, reply)) return reply;
-    const actions = await runtime.run(request.params.id);
     const results = await runDuePublications(db, fabric, fetcher, request.params.id);
-    return { actions, results };
+    return { results };
   });
 }

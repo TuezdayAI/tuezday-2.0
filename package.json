@@ -8,7 +8,7 @@
     "packages/*"
   ],
   "scripts": {
-    "dev": "concurrently -n api,web,worker -c blue,magenta,green \"npm run dev -w apps/api\" \"npm run dev -w apps/web\" \"npm run dev -w apps/worker\"",
+    "dev": "concurrently -n renderer,api,web,worker -c cyan,blue,magenta,green \"npm run dev -w apps/renderer\" \"npm run dev -w apps/api\" \"npm run dev -w apps/web\" \"npm run dev -w apps/worker\"",
     "dev:app": "concurrently -n api,web -c blue,magenta \"npm run dev -w apps/api\" \"npm run dev -w apps/web\"",
     "test": "vitest run",
     "test:desktop": "playwright test --config=playwright.config.ts",

@@ -14,7 +14,7 @@ import { assertProviderConfiguration } from "./connectors/provider-config";
 import type { Db } from "./db";
 import { OpenDesignProvider } from "./design/open-design";
 import type { DesignProvider } from "./design/provider";
-import { closeRenderer, renderSlide, type RenderInput } from "./design/render";
+import { createRendererClient, type RenderInput } from "./design/render";
 import { S3AssetStorage, type AssetStorage } from "./design/storage";
 import { NullIntentProvider, type IntentProvider } from "./discovery/intent";
 import { DbEvidenceStore } from "./evidence/db-store";
@@ -174,7 +174,7 @@ export interface BuildAppOptions {
   design?: DesignProvider;
   /** Public asset storage (Sprint 41); defaults to the S3-compatible client from env. */
   assetStorage?: AssetStorage;
-  /** Slide renderer (Sprint 41); defaults to the Playwright renderer — tests inject a fake. */
+  /** Slide renderer (Sprint 75); defaults to the isolated renderer client — tests inject a fake. */
   render?: (input: RenderInput) => Promise<Uint8Array>;
   /** Validated deployment-only discovery budgets. */
   operatorPolicy?: DiscoveryOperatorPolicy;
@@ -207,7 +207,7 @@ export async function buildApp({
   analytics = createAnalyticsSink(),
   design = new OpenDesignProvider(),
   assetStorage = new S3AssetStorage(),
-  render = renderSlide,
+  render = createRendererClient(),
   operatorPolicy = DEFAULT_DISCOVERY_POLICY,
   instanceId = `${process.env.HOSTNAME?.trim() || hostname()}:${randomUUID()}`,
   operatorLog = logDiscoveryOperatorEvent,
@@ -285,13 +285,11 @@ export async function buildApp({
       log: operatorLog,
     });
 
-  // The design renderer keeps one shared headless browser per process.
   app.addHook("preClose", async () => {
     ownedShutdown?.abort(new Error("app_shutdown"));
   });
   app.addHook("onClose", async () => {
     ownedShutdown?.abort(new Error("app_shutdown"));
-    await closeRenderer();
   });
 
   // @fastify/cors only allows GET/HEAD/POST by default — the brain editor

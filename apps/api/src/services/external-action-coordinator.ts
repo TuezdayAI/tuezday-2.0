@@ -32,6 +32,7 @@ import {
   linkExternalActionSuccessor,
   listRunnableExternalActions,
   transitionExternalAction,
+  updateExternalActionExecution,
 } from "./external-actions";
 import { eq } from "drizzle-orm";
 
@@ -353,6 +354,10 @@ export function createExternalActionRuntime({
     const payload = getExternalActionPayload(db, action.id);
     const blocker = await adapter.guard(action, payload);
     if (blocker) {
+      // An in-flight provider operation cannot truthfully move backward to
+      // blocked. Keep it dispatching and retry after the reversible condition
+      // (for example the kill switch) clears.
+      if (action.status === "dispatching") return submission(action);
       action = transitionExternalAction(db, workspaceId, action.id, "blocked", {
         blocker,
         completedAt: Date.now(),
@@ -373,13 +378,19 @@ export function createExternalActionRuntime({
     }
     try {
       const receipt = await adapter.execute(action, payload);
-      action = transitionExternalAction(
-        db,
-        workspaceId,
-        action.id,
-        receipt.error ? "failed" : "succeeded",
-        { execution: receipt, completedAt: Date.now() },
-      );
+      const inFlightPublication =
+        receipt.kind === "publication" &&
+        !receipt.error &&
+        (receipt.status === "processing" || receipt.status === "scheduled");
+      action = inFlightPublication
+        ? updateExternalActionExecution(db, workspaceId, action.id, receipt)
+        : transitionExternalAction(
+            db,
+            workspaceId,
+            action.id,
+            receipt.error ? "failed" : "succeeded",
+            { execution: receipt, completedAt: Date.now() },
+          );
     } catch {
       // A thrown adapter error has an unknown outcome. Keep the action dispatching
       // so the durable adapter can recover or retry with the same idempotency key.

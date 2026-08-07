@@ -765,13 +765,17 @@ describe("social publishing API", () => {
       expect(early.json().results).toEqual([]);
 
       vi.setSystemTime(new Date(due + 1000));
+      const actions = await app.inject({
+        method: "POST",
+        url: `/workspaces/${workspaceId}/external-actions/run`,
+      });
+      expect(actions.json().actions).toEqual([
+        expect.objectContaining({ action: expect.objectContaining({ id: res.json().action.id, status: "succeeded" }) }),
+      ]);
       const run = await app.inject({
         method: "POST",
         url: `/workspaces/${workspaceId}/publish/run`,
       });
-      expect(run.json().actions).toEqual([
-        expect.objectContaining({ action: expect.objectContaining({ id: res.json().action.id, status: "succeeded" }) }),
-      ]);
       expect(run.json().results).toEqual([]);
       expect(state.reddit.posts).toHaveLength(1);
       const [publication] = await listPublications();
@@ -806,7 +810,7 @@ describe("social publishing API", () => {
       vi.setSystemTime(new Date(due + 1000));
       const run = await app.inject({
         method: "POST",
-        url: `/workspaces/${workspaceId}/publish/run`,
+        url: `/workspaces/${workspaceId}/external-actions/run`,
       });
       expect(run.statusCode).toBe(200);
       expect(run.json().actions[0]).toMatchObject({

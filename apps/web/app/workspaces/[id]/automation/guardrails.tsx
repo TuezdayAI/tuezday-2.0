@@ -97,9 +97,9 @@ export function AutomationGuardrails({ workspaceId, framed = false }: Automation
         <>
           <p className="subtitle">
             When on, inbox replies on <strong>scheduled-auto</strong> campaigns are auto-approved
-            and posted automatically — within the kill switch and per-connection cap. When off
-            (the default), every reply waits for your approval on Review, whatever the campaign's
-            mode.
+            and posted automatically — within the kill switch and the account&apos;s separate reply
+            cap. When off (the default), every reply waits for your approval on Review, whatever
+            the campaign&apos;s mode.
           </p>
           <label className="checkbox-label" style={{ fontSize: "1rem" }}>
             <input
@@ -119,12 +119,13 @@ export function AutomationGuardrails({ workspaceId, framed = false }: Automation
         "Daily caps",
         <>
           <p className="subtitle">
-            Maximum auto-posts per UTC day. The per-connection cap protects an account's posting
-            limit; the per-campaign cap is the default a campaign can override on its card.
+            Maximum automation per account-local day. The connection cap protects original posts
+            and X DMs; replies have their own budget. Campaign caps use the destination account&apos;s
+            local day and can be overridden on a campaign card.
           </p>
           <div className="resolve-controls">
             <label style={{ flex: 1 }}>
-              Per connection / day
+              Posts + X DMs / account / day
               <Input
                 type="number"
                 min={1}
@@ -133,6 +134,21 @@ export function AutomationGuardrails({ workspaceId, framed = false }: Automation
                 onBlur={(e) => {
                   const v = Math.max(1, Math.min(1000, Number(e.target.value)));
                   if (v !== loaded.perConnectionDailyCap) void patch({ perConnectionDailyCap: v });
+                }}
+              />
+            </label>
+            <label style={{ flex: 1 }}>
+              Replies / account / day
+              <Input
+                type="number"
+                min={1}
+                max={1000}
+                defaultValue={loaded.perConnectionReplyDailyCap}
+                onBlur={(e) => {
+                  const v = Math.max(1, Math.min(1000, Number(e.target.value)));
+                  if (v !== loaded.perConnectionReplyDailyCap) {
+                    void patch({ perConnectionReplyDailyCap: v });
+                  }
                 }}
               />
             </label>

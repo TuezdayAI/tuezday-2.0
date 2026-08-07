@@ -5,6 +5,7 @@ import type {
   PostRef,
   SocialAdapter,
   SocialPostResult,
+  SocialPublishedResult,
   SocialProfileReadRaw,
 } from "./index";
 
@@ -56,7 +57,9 @@ export class RedditAdapter implements SocialAdapter {
     private readonly config: RedditAdapterConfig,
   ) {}
 
-  async publishPost(input: { target: string; title: string; body: string }): Promise<SocialPostResult> {
+  async publishPost(
+    input: { target: string; title: string; body: string },
+  ): Promise<SocialPublishedResult> {
     const result = await this.fabric.proxyJson(
       "POST",
       "/api/submit",
@@ -92,7 +95,7 @@ export class RedditAdapter implements SocialAdapter {
     if (!name || !url) {
       throw new ConnectorFabricError("Reddit's submit response had no post id/url.");
     }
-    return { externalId: name, url };
+    return { status: "published", externalId: name, url };
   }
 
   /** Top-level comments on our submission. `externalId` is the t3_ fullname. */

@@ -8,7 +8,7 @@ Planning docs: `product-strategy-and-positioning.md`, `greenfield-rebuild-plan.m
 
 ```bash
 npm install
-npm run dev      # API :3001, web :3000, and the required background worker
+npm run dev      # renderer :7457, API :3001, web :3000, and the required background worker
 npm run dev:app  # API + web only (no automatic background processing)
 npm test         # run all tests
 npm run typecheck
@@ -18,6 +18,16 @@ Copy `.env.example` to `.env` and set `TUEZDAY_WORKER_TOKEN` before starting
 the complete stack. The API and worker are both required production processes:
 the worker runs one validated, non-overlapping queue poll; the API owns durable
 schedules, fair admission, database access, leases, retries, and domain work.
+Copy `.env.example` to `.env` and set `TUEZDAY_WORKER_TOKEN` and
+`TUEZDAY_RENDERER_TOKEN` before starting the complete stack. The renderer, API,
+and worker are all required production processes: the renderer owns Chromium and
+deterministic PNG rendering, the worker wakes validated, non-overlapping loops,
+and the API owns scheduler leases, database access, and discovery/automation
+task identity.
+
+`docs/production-runbook.md` is the operator reference — renderer deployment and
+failure modes, account-local posting budgets, the emergency stop, and how a
+publication waiting on a provider recovers.
 
 ## Layout
 
@@ -26,6 +36,8 @@ apps/
   web/        # Next.js dashboard (port 3000)
   api/        # Fastify API + services + Drizzle/SQLite (port 3001)
   worker/     # one validated, non-overlapping durable-queue poll
+  worker/     # validated, non-overlapping background task loops
+  renderer/   # isolated Fastify + Playwright PNG renderer (port 7457)
 packages/
   contracts/  # shared zod schemas and types
   testing/    # shared test fixtures
@@ -53,6 +65,13 @@ owns data, schedules, leases, bounds, and task identity; the worker only calls
 `POST /internal/background-jobs/tick` from one settled loop. Restarting either
 process is safe: schedules survive, expired leases are reclaimed, and domain
 receipts/checkpoints prevent duplicate completed writes.
+In production, run the renderer, API, and worker as separate, required
+processes. The API owns data, leases, bounds, and task identity; the worker only
+wakes settled loops and calls the scoped routes; the renderer owns Chromium
+behind its own dedicated `TUEZDAY_RENDERER_TOKEN` and needs no public ingress.
+Restarting any of them is safe: expired leases, persisted discovery checkpoints,
+and persisted provider operation ids resume work without duplicating completed
+writes.
 
 Sprint 73 stores recurring schedules in the application database and runs them
 through one durable queue. The worker only wakes the queue; the API owns fair

@@ -21,9 +21,13 @@ import {
   getSocialAutomationSettings,
 } from "./automation";
 import { getCampaign } from "./campaigns";
+import { localDateAt, resolveWallClock, zonedDateBounds } from "./civil-time";
 import { getConnection } from "./connections";
 import { listDrafts } from "./drafts";
-import { preparePublicationAction } from "./external-action-adapters";
+import {
+  ExternalActionPreparationError,
+  preparePublicationAction,
+} from "./external-action-adapters";
 import type {
   ExternalActionRuntime,
   ExternalActionRuntimeActor,
@@ -49,8 +53,8 @@ export const CADENCE_HORIZON_DAYS = 14;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 // ---------------------------------------------------------------------------
-// Timezone-correct slot math — no date library (the stack ships none). Uses
-// Intl to read/derive zone offsets so DST is handled.
+// Timezone-correct slot math. Temporal is owned by the civil-time leaf so DST
+// gaps and overlaps have one explicit policy across scheduling and guardrails.
 // ---------------------------------------------------------------------------
 
 interface LocalDate {
@@ -62,40 +66,7 @@ interface LocalDate {
 }
 
 export function localDate(timeZone: string, ms: number): LocalDate {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).formatToParts(new Date(ms));
-  let year = 1970;
-  let month = 1;
-  let day = 1;
-  for (const p of parts) {
-    if (p.type === "year") year = Number(p.value);
-    else if (p.type === "month") month = Number(p.value);
-    else if (p.type === "day") day = Number(p.value);
-  }
-  const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
-  return { year, month, day, weekday };
-}
-
-/** Offset (zone − UTC, ms) in effect at the given instant for the zone. */
-function zoneOffsetMs(timeZone: string, utcMs: number): number {
-  const parts = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    hourCycle: "h23",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).formatToParts(new Date(utcMs));
-  const map: Record<string, number> = {};
-  for (const p of parts) if (p.type !== "literal") map[p.type] = Number(p.value);
-  const asUtc = Date.UTC(map.year!, map.month! - 1, map.day!, map.hour!, map.minute!, map.second!);
-  return asUtc - utcMs;
+  return localDateAt(ms, timeZone);
 }
 
 /** The UTC instant of a wall-clock time in a given zone (DST-aware). */
@@ -107,29 +78,44 @@ export function zonedWallClockToUtc(
   minute: number,
   timeZone: string,
 ): number {
-  const guess = Date.UTC(year, month - 1, day, hour, minute, 0);
-  const offset = zoneOffsetMs(timeZone, guess);
-  let utc = guess - offset;
-  // Refine once: near a DST boundary the offset at the guess differs from the
-  // offset at the corrected instant.
-  const refined = zoneOffsetMs(timeZone, utc);
-  if (refined !== offset) utc = guess - refined;
-  return utc;
+  const resolved = resolveWallClock({ year, month, day, hour, minute, timeZone });
+  if (!resolved.ok) {
+    const localDate = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    const timeOfDay = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+    throw new RangeError(
+      `${timeOfDay} does not exist on ${localDate} in ${timeZone}.`,
+    );
+  }
+  return resolved.instantMs;
+}
+
+export interface CadenceSlotIssue {
+  code: "nonexistent_local_time";
+  localDate: string;
+  timeOfDay: string;
+  timezone: string;
+  message: string;
+}
+
+export interface DetailedSlots {
+  slots: number[];
+  issues: CadenceSlotIssue[];
 }
 
 /**
  * Every cadence slot instant in (fromMs, toMs]. Walks the window in 12h steps
  * (well under any DST day length) and considers each distinct local date once.
  */
-export function slotsBetween(
+export function slotsBetweenDetailed(
   cadence: Pick<PostingCadence, "daysOfWeek" | "timeOfDay" | "timezone">,
   fromMs: number,
   toMs: number,
-): number[] {
-  if (toMs <= fromMs || cadence.daysOfWeek.length === 0) return [];
+): DetailedSlots {
+  if (toMs <= fromMs || cadence.daysOfWeek.length === 0) return { slots: [], issues: [] };
   const days = new Set(cadence.daysOfWeek);
   const [hh, mm] = cadence.timeOfDay.split(":").map(Number);
   const result: number[] = [];
+  const issues: CadenceSlotIssue[] = [];
   const seen = new Set<string>();
   const STEP = 12 * 60 * 60 * 1000;
   for (let cursor = fromMs; cursor <= toMs + DAY_MS; cursor += STEP) {
@@ -138,10 +124,44 @@ export function slotsBetween(
     if (seen.has(key)) continue;
     seen.add(key);
     if (!days.has(lp.weekday)) continue;
-    const at = zonedWallClockToUtc(lp.year, lp.month, lp.day, hh!, mm!, cadence.timezone);
-    if (at > fromMs && at <= toMs) result.push(at);
+    const resolved = resolveWallClock({
+      year: lp.year,
+      month: lp.month,
+      day: lp.day,
+      hour: hh!,
+      minute: mm!,
+      timeZone: cadence.timezone,
+    });
+    if (!resolved.ok) {
+      const bounds = zonedDateBounds(lp, cadence.timezone);
+      if (bounds.end > fromMs && bounds.start <= toMs) {
+        const localDate = `${lp.year}-${String(lp.month).padStart(2, "0")}-${String(lp.day).padStart(2, "0")}`;
+        issues.push({
+          code: "nonexistent_local_time",
+          localDate,
+          timeOfDay: cadence.timeOfDay,
+          timezone: cadence.timezone,
+          message: `${cadence.timeOfDay} does not exist on ${localDate} in ${cadence.timezone}.`,
+        });
+      }
+      continue;
+    }
+    if (resolved.instantMs > fromMs && resolved.instantMs <= toMs) {
+      result.push(resolved.instantMs);
+    }
   }
-  return [...new Set(result)].sort((a, b) => a - b);
+  return {
+    slots: [...new Set(result)].sort((a, b) => a - b),
+    issues,
+  };
+}
+
+export function slotsBetween(
+  cadence: Pick<PostingCadence, "daysOfWeek" | "timeOfDay" | "timezone">,
+  fromMs: number,
+  toMs: number,
+): number[] {
+  return slotsBetweenDetailed(cadence, fromMs, toMs).slots;
 }
 
 /** First line of the draft, the post title for platforms that need one (Reddit). */
@@ -372,6 +392,13 @@ export function eligibleDrafts(db: Db, workspaceId: string, cadence: PostingCade
 
 export interface FillResult {
   filled: number;
+  issues: Array<{
+    code: "nonexistent_local_time" | "publish_validation";
+    cadenceId: string;
+    draftId: string | null;
+    slot: number | null;
+    message: string;
+  }>;
 }
 
 /** Pair this cadence's open upcoming slots with queued approved drafts. */
@@ -382,9 +409,9 @@ export async function fillCadence(
   cadence: PostingCadence,
   nowMs: number,
 ): Promise<FillResult> {
-  if (cadence.status !== "active" || !cadence.campaignId) return { filled: 0 };
+  if (cadence.status !== "active" || !cadence.campaignId) return { filled: 0, issues: [] };
   const connection = getConnection(db, workspaceId, cadence.connectionId);
-  if (!connection || connection.status !== "connected") return { filled: 0 };
+  if (!connection || connection.status !== "connected") return { filled: 0, issues: [] };
 
   // scheduled_auto cadences post without a human gate, so they run under the
   // social-automation guardrails. manual/human_in_the_loop cadences only ever
@@ -401,14 +428,24 @@ export async function fillCadence(
       cadence.id,
       KILL_SWITCH_STOP_REASON,
     );
-    return { filled: 0 };
+    return { filled: 0, issues: [] };
   }
 
   const taken = takenSlots(db, workspaceId, cadence.id);
-  const openSlots = slotsBetween(cadence, nowMs, nowMs + CADENCE_HORIZON_DAYS * DAY_MS).filter(
-    (s) => !taken.has(s),
+  const detailed = slotsBetweenDetailed(
+    cadence,
+    nowMs,
+    nowMs + CADENCE_HORIZON_DAYS * DAY_MS,
   );
-  if (openSlots.length === 0) return { filled: 0 };
+  const issues: FillResult["issues"] = detailed.issues.map((issue) => ({
+    code: issue.code,
+    cadenceId: cadence.id,
+    draftId: null,
+    slot: null,
+    message: issue.message.slice(0, 500),
+  }));
+  const openSlots = detailed.slots.filter((slot) => !taken.has(slot));
+  if (openSlots.length === 0) return { filled: 0, issues };
 
   const queue = eligibleDrafts(db, workspaceId, cadence);
   let qi = 0;
@@ -425,27 +462,46 @@ export async function fillCadence(
       });
       if (!check.ok) continue;
     }
-    const draft = queue[qi++]!;
-    const command = preparePublicationAction(
-      db,
-      workspaceId,
-      draft.id,
-      {
-        connectionId: connection.id,
-        target: cadence.target,
-        title: deriveTitle(draft.content),
-        scheduledFor: slot,
-      },
-      {
-        idempotencyKey: `cadence:${cadence.id}:${slot}:${draft.id}`,
-        cadenceId: cadence.id,
-        automated: isAuto,
-      },
-    );
-    await runtime.propose(command, SYSTEM_ACTOR);
-    filled += 1;
+    while (qi < queue.length) {
+      const draft = queue[qi++]!;
+      try {
+        const command = preparePublicationAction(
+          db,
+          workspaceId,
+          draft.id,
+          {
+            connectionId: connection.id,
+            target: cadence.target,
+            title: deriveTitle(draft.content),
+            scheduledFor: slot,
+          },
+          {
+            idempotencyKey: `cadence:${cadence.id}:${slot}:${draft.id}`,
+            cadenceId: cadence.id,
+            automated: isAuto,
+          },
+        );
+        await runtime.propose(command, SYSTEM_ACTOR);
+        filled += 1;
+        break;
+      } catch (error) {
+        if (
+          !(error instanceof ExternalActionPreparationError) ||
+          error.code !== "publish_validation"
+        ) {
+          throw error;
+        }
+        issues.push({
+          code: "publish_validation",
+          cadenceId: cadence.id,
+          draftId: draft.id,
+          slot,
+          message: error.message.slice(0, 500),
+        });
+      }
+    }
   }
-  return { filled };
+  return { filled, issues };
 }
 
 /** Delete a cadence's not-yet-published (`scheduled`) publications — used to
@@ -501,6 +557,7 @@ function cancelPendingActionsForCadence(
 export interface CadenceFillRun {
   cadenceId: string;
   filled: number;
+  issues: FillResult["issues"];
 }
 
 /** Fill every active cadence (worker entry point). */
@@ -513,8 +570,8 @@ export async function fillActiveCadences(
   const results: CadenceFillRun[] = [];
   for (const cadence of listCadenceRows(db, workspaceId)) {
     if (cadence.status !== "active") continue;
-    const { filled } = await fillCadence(db, runtime, workspaceId, cadence, nowMs);
-    results.push({ cadenceId: cadence.id, filled });
+    const result = await fillCadence(db, runtime, workspaceId, cadence, nowMs);
+    results.push({ cadenceId: cadence.id, ...result });
   }
   return results;
 }

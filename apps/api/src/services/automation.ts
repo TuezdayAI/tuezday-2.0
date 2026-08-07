@@ -1,4 +1,4 @@
-import { and, asc, eq, gte, inArray, lt, ne } from "drizzle-orm";
+import { and, asc, eq, gte, inArray, isNull, lt, ne, or } from "drizzle-orm";
 import {
   type AutomationCampaignResult,
   type AutomationRunResult,
@@ -10,6 +10,7 @@ import {
 } from "@tuezday/contracts";
 import type { Db } from "../db";
 import {
+  connections,
   drafts,
   externalActions,
   postingCadences,
@@ -20,6 +21,7 @@ import type { EvidenceStore } from "../evidence/store";
 import type { LlmGateway } from "../llm/gateway";
 import { getSocialAutomationSettings } from "./automation-settings";
 import { listAutomatedCampaigns } from "./campaigns";
+import { zonedDayBounds } from "./civil-time";
 import { llmBudgetExhausted } from "./entitlements";
 import {
   automaticDraftKey,
@@ -36,8 +38,6 @@ import { createShadowPair, shadowPairKey } from "./pipeline-shadow";
 import { generateSignalDraft } from "./signal-drafting";
 import { withTaskLease } from "./task-leases";
 import { getWorkspace } from "./workspaces";
-
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** Automation always acts as the system identity — the gate transition for an
  * auto-approval is attributed to `system` no matter who triggered the run. */
@@ -59,22 +59,37 @@ export {
 // Guardrails (the safety net for scheduled_auto posting)
 // ---------------------------------------------------------------------------
 
-/** UTC-day window containing `ms` — [start, end). The cap is a coarse safety net
- * measured per UTC day (it ignores the cadence's own timezone — see deferred #9). */
-export function utcDayBounds(ms: number): { start: number; end: number } {
-  const start = Math.floor(ms / DAY_MS) * DAY_MS;
-  return { start, end: start + DAY_MS };
+export function connectionTimeZone(db: Db, connectionId: string): string {
+  return (
+    db
+      .select({ timezone: connections.timezone })
+      .from(connections)
+      .where(eq(connections.id, connectionId))
+      .get()?.timezone ?? "UTC"
+  );
 }
 
-/** Non-failed publications already on this connection on the slot's UTC day —
+/** Account-local civil-day window containing `ms` — [start, end). */
+export function connectionDayBounds(
+  db: Db,
+  connectionId: string,
+  ms: number,
+): { start: number; end: number } {
+  return zonedDayBounds(ms, connectionTimeZone(db, connectionId));
+}
+
+/** Non-failed publications already on this connection on the slot's local day —
  * the platform posting limit is per account, regardless of who created the post. */
 export function countConnectionPublicationsForDay(
   db: Db,
   connectionId: string,
   dayMs: number,
   excludeActionId?: string,
+  timeZone?: string,
 ): number {
-  const { start, end } = utcDayBounds(dayMs);
+  const { start, end } = timeZone
+    ? zonedDayBounds(dayMs, timeZone)
+    : connectionDayBounds(db, connectionId, dayMs);
   const receipts = db
     .select({ id: publications.id })
     .from(publications)
@@ -82,6 +97,12 @@ export function countConnectionPublicationsForDay(
       and(
         eq(publications.connectionId, connectionId),
         ne(publications.status, "failed"),
+        excludeActionId
+          ? or(
+              isNull(publications.externalActionId),
+              ne(publications.externalActionId, excludeActionId),
+            )
+          : undefined,
         gte(publications.scheduledFor, start),
         lt(publications.scheduledFor, end),
       ),
@@ -110,14 +131,15 @@ export function countConnectionPublicationsForDay(
   return receipts + pendingActions;
 }
 
-/** Non-failed publications for this campaign (via its cadences) on the slot's UTC day. */
+/** Non-failed publications for this campaign on the candidate account's local day. */
 export function countCampaignPublicationsForDay(
   db: Db,
   campaignId: string,
   dayMs: number,
   excludeActionId?: string,
+  timeZone = "UTC",
 ): number {
-  const { start, end } = utcDayBounds(dayMs);
+  const { start, end } = zonedDayBounds(dayMs, timeZone);
   const receipts = db
     .select({ id: publications.id })
     .from(publications)
@@ -126,6 +148,12 @@ export function countCampaignPublicationsForDay(
       and(
         eq(postingCadences.campaignId, campaignId),
         ne(publications.status, "failed"),
+        excludeActionId
+          ? or(
+              isNull(publications.externalActionId),
+              ne(publications.externalActionId, excludeActionId),
+            )
+          : undefined,
         gte(publications.scheduledFor, start),
         lt(publications.scheduledFor, end),
       ),
@@ -160,7 +188,8 @@ export type PostGuardrailCheck =
 
 /**
  * The guardrail run before committing each auto-post (a scheduled_auto cadence
- * slot). The kill switch is the hard stop; the caps bound posts per UTC day.
+ * slot). The kill switch is the hard stop; caps use the destination account's
+ * civil day, independently of the cadence wall-clock timezone.
  */
 export function checkPostGuardrails(
   db: Db,
@@ -174,11 +203,13 @@ export function checkPostGuardrails(
       message: "The workspace kill switch is on — turn it off in Automation settings to auto-post.",
     };
   }
+  const timeZone = connectionTimeZone(db, args.connectionId);
   const connCount = countConnectionPublicationsForDay(
     db,
     args.connectionId,
     args.slotMs,
     args.excludeActionId,
+    timeZone,
   );
   if (connCount >= settings.perConnectionDailyCap) {
     return {
@@ -193,6 +224,7 @@ export function checkPostGuardrails(
     args.campaign.id,
     args.slotMs,
     args.excludeActionId,
+    timeZone,
   );
   if (campCount >= campCap) {
     return {

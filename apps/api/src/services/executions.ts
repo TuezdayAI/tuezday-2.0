@@ -169,23 +169,24 @@ function publicationResults(db: Db, workspaceId: string, campaignOf: CampaignOf)
     .all();
   return rows.map(({ publication, draft }) => {
     const failed = publication.status === "failed";
+    const processing = publication.status === "processing";
     return {
       kind: "publication" as const,
       id: publication.id,
       title: publication.title,
       channel: publication.providerKey,
       ...campaignOf(draft?.campaignId),
-      status: failed ? ("failed" as const) : ("completed" as const),
-      at: publication.publishedAt ?? publication.scheduledFor,
+      status: failed ? ("failed" as const) : processing ? ("running" as const) : ("completed" as const),
+      at: publication.publishedAt ?? (processing ? publication.updatedAt : publication.scheduledFor),
       url: publication.externalUrl,
       error: failed ? publication.lastError : null,
       platformStatus: null,
       destinations: {
         total: 1,
-        succeeded: failed ? 0 : 1,
+        succeeded: failed || processing ? 0 : 1,
         failed: failed ? 1 : 0,
         skipped: 0,
-        pending: 0,
+        pending: processing ? 1 : 0,
       },
       draftId: publication.draftId,
       externalActionIds: publication.externalActionId ? [publication.externalActionId] : [],

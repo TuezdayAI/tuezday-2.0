@@ -11,12 +11,13 @@ import {
 import type { TuezdayApp } from "../src/app";
 import type { ConnectorFabric, ProxyJsonResult } from "../src/connectors/fabric";
 import type { Db } from "../src/db";
-import { externalActionDecisions, taskLeases } from "../src/db/schema";
+import { externalActionDecisions, publications, taskLeases } from "../src/db/schema";
 import type { EvidenceStore } from "../src/evidence/store";
 import type { LlmGateway } from "../src/llm/gateway";
 import { runAutomationWithLease } from "../src/services/automation";
 import { applyDraftAction, listDecisions, listDrafts, submitDraft } from "../src/services/drafts";
 import { insertSignalMatch } from "../src/services/matching";
+import { getPublication } from "../src/services/publications";
 import { buildAuthedApp, createTestDb, putActionPolicy } from "./helpers";
 
 const fakeLlm: LlmGateway = {
@@ -253,6 +254,7 @@ describe("social automation", () => {
           workspaceId: randomUUID(),
           killSwitch: false,
           perConnectionDailyCap: 10,
+          perConnectionReplyDailyCap: 10,
           perCampaignDailyCap: 5,
           autoReplyEnabled: false,
           matchThreshold: 50,
@@ -301,6 +303,7 @@ describe("social automation", () => {
       expect(initial).toMatchObject({
         killSwitch: false,
         perConnectionDailyCap: 10,
+        perConnectionReplyDailyCap: 10,
         perCampaignDailyCap: 5,
         matchThreshold: 50,
       });
@@ -309,12 +312,19 @@ describe("social automation", () => {
         await app.inject({
           method: "PATCH",
           url: `/workspaces/${workspaceId}/automation/settings`,
-          payload: { killSwitch: true, perConnectionDailyCap: 3, perCampaignDailyCap: 2, matchThreshold: 40 },
+          payload: {
+            killSwitch: true,
+            perConnectionDailyCap: 3,
+            perConnectionReplyDailyCap: 4,
+            perCampaignDailyCap: 2,
+            matchThreshold: 40,
+          },
         })
       ).json();
       expect(updated).toMatchObject({
         killSwitch: true,
         perConnectionDailyCap: 3,
+        perConnectionReplyDailyCap: 4,
         perCampaignDailyCap: 2,
         matchThreshold: 40,
       });
@@ -497,7 +507,10 @@ describe("social automation", () => {
     expect(fill.json().filled).toBe(1);
 
     vi.setSystemTime(new Date("2026-07-06T13:05:00Z")); // past the 09:00 EDT (13:00Z) slot
-    const published = await app.inject({ method: "POST", url: `/workspaces/${workspaceId}/publish/run` });
+    const published = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/external-actions/run`,
+    });
     expect(
       published
         .json()
@@ -701,6 +714,124 @@ describe("social automation", () => {
     expect(manualFill.json().filled).toBe(1);
   });
 
+  it("re-checks the kill switch at provider dispatch and resumes the same receipt once", async () => {
+    const connectionId = await connectReddit();
+
+    const autoCampaignId = await createCampaign(["linkedin"], "Auto dispatch");
+    await setAutomation(autoCampaignId, "scheduled_auto");
+    const autoDraftId = seedApprovedDraft(autoCampaignId);
+    const autoCadence = (
+      await createCadence({
+        campaignId: autoCampaignId,
+        connectionId,
+        name: "Auto dispatch cadence",
+      })
+    ).json();
+
+    const manualCampaignId = await createCampaign(["linkedin"], "Manual dispatch");
+    const manualDraftId = seedApprovedDraft(manualCampaignId);
+    const manualCadence = (
+      await createCadence({
+        campaignId: manualCampaignId,
+        connectionId,
+        name: "Manual dispatch cadence",
+      })
+    ).json();
+
+    const autoPublicationId = randomUUID();
+    const manualPublicationId = randomUUID();
+    const now = Date.now();
+    db.insert(publications)
+      .values([
+        {
+          id: autoPublicationId,
+          workspaceId,
+          draftId: autoDraftId,
+          externalActionId: null,
+          connectionId,
+          providerKey: "reddit",
+          target: "test",
+          title: "Auto receipt",
+          mediaJson: null,
+          cadenceId: autoCadence.id,
+          status: "scheduled",
+          scheduledFor: now,
+          publishedAt: null,
+          externalId: null,
+          externalUrl: null,
+          lastError: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+        {
+          id: manualPublicationId,
+          workspaceId,
+          draftId: manualDraftId,
+          externalActionId: null,
+          connectionId,
+          providerKey: "reddit",
+          target: "test",
+          title: "Manual receipt",
+          mediaJson: null,
+          cadenceId: manualCadence.id,
+          status: "scheduled",
+          scheduledFor: now,
+          publishedAt: null,
+          externalId: null,
+          externalUrl: null,
+          lastError: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      ])
+      .run();
+
+    // The receipts already exist: this is the scheduling/dispatch race the
+    // earlier guardrails cannot close. Manual publishing remains available.
+    await app.inject({
+      method: "PATCH",
+      url: `/workspaces/${workspaceId}/automation/settings`,
+      payload: { killSwitch: true },
+    });
+    const stopped = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/publish/run`,
+    });
+    expect(stopped.statusCode).toBe(200);
+    expect(stopped.json().results).toEqual(
+      expect.arrayContaining([
+        { id: autoPublicationId, ok: false, state: "blocked", error: "kill_switch_on" },
+        { id: manualPublicationId, ok: true, state: "published" },
+      ]),
+    );
+    expect(state.posts.map((post) => post.title)).toEqual(["Manual receipt"]);
+    expect(getPublication(db, workspaceId, autoPublicationId)).toMatchObject({
+      status: "scheduled",
+      lastError: null,
+    });
+
+    await app.inject({
+      method: "PATCH",
+      url: `/workspaces/${workspaceId}/automation/settings`,
+      payload: { killSwitch: false },
+    });
+    const resumed = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/publish/run`,
+    });
+    expect(resumed.json().results).toEqual([
+      { id: autoPublicationId, ok: true, state: "published" },
+    ]);
+    expect(state.posts.map((post) => post.title)).toEqual(["Manual receipt", "Auto receipt"]);
+
+    const idempotent = await app.inject({
+      method: "POST",
+      url: `/workspaces/${workspaceId}/publish/run`,
+    });
+    expect(idempotent.json().results).toEqual([]);
+    expect(state.posts).toHaveLength(2);
+  });
+
   // Sprint 52 follow-up — the kill switch is a *reversible* emergency stop. It
   // cancels this cadence's pending publish actions, and Sprint 52 made a
   // `cancelled` action keep its draft out of the cadence so a human withdrawal
@@ -799,5 +930,41 @@ describe("social automation", () => {
     await createCadence({ campaignId, connectionId, name: "10am", timeOfDay: "10:00" });
 
     expect(await runCadences()).toBe(2); // one per Monday on this connection
+  });
+
+  it("treats two UTC dates in one account-local day as one cap window", async () => {
+    const connectionId = await connectReddit();
+    await app.inject({
+      method: "PATCH",
+      url: `/workspaces/${workspaceId}/connections/${connectionId}`,
+      payload: { timezone: "America/New_York" },
+    });
+    const campaignId = await createCampaign(["linkedin"]);
+    await setAutomation(campaignId, "scheduled_auto", 50);
+    await setPublishPolicy(campaignId, "autonomous");
+    await app.inject({
+      method: "PATCH",
+      url: `/workspaces/${workspaceId}/automation/settings`,
+      payload: { perConnectionDailyCap: 1 },
+    });
+    for (let i = 0; i < 4; i++) seedApprovedDraft(campaignId);
+    await createCadence({
+      campaignId,
+      connectionId,
+      name: "Sunday UTC",
+      daysOfWeek: [0],
+      timeOfDay: "23:30",
+      timezone: "UTC",
+    });
+    await createCadence({
+      campaignId,
+      connectionId,
+      name: "Monday UTC",
+      daysOfWeek: [1],
+      timeOfDay: "00:30",
+      timezone: "UTC",
+    });
+
+    expect(await runCadences()).toBe(2);
   });
 });

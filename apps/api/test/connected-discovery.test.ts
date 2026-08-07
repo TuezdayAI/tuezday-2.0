@@ -161,6 +161,7 @@ function paginationConnection(providerKey: string): Connection {
       ? { authArchitecture: "instagram_login" }
       : {},
     displayName: providerKey,
+    timezone: "UTC",
     externalAccountId: directInstagram ? "ig-user" : null,
     externalAccountName: null,
     externalAccountHandle: directInstagram ? "rival" : null,
