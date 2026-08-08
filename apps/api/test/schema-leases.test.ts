@@ -8,7 +8,8 @@
  */
 import { describe, expect, it } from "vitest";
 import { createTestDb } from "./helpers";
-import { columnNames, indexes, PG_ERROR, expectPgError } from "./schema-introspection";
+import { columnNames, indexes } from "./schema-introspection";
+import { PG_ERROR, expectPgError } from "./postgres";
 import { discoveredItems, discoveryJobs, discoverySources, drafts, workspaces } from "../src/db/schema";
 
 const WS = "ws-1";

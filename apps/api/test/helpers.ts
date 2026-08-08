@@ -5,90 +5,17 @@ import {
   type ExternalActionPolicyRule,
   type ExternalActionPolicyScope,
 } from "@tuezday/contracts";
-import type pg from "pg";
 import { buildApp, type BuildAppOptions, type TuezdayApp } from "../src/app";
-import { closeDb, createDb, type Db } from "../src/db";
-import {
-  adminClient,
-  cloneTemplate,
-  fixtureDatabaseName,
-  quoteIdent,
-  urlFor,
+
+// The fixture registry lives in ./postgres so the per-file setup hook can
+// reach it without importing the app — a setup file that loads src/services
+// defeats every vi.mock() in every test file that mocks one.
+export {
+  closeTestAdmin,
+  connectTestDbAgain,
+  createTestDb,
+  dropTestDbs,
 } from "./postgres";
-
-/**
- * One maintenance connection per worker, opened on first use. Fixtures are
- * created constantly, and a fresh connect() per fixture would cost more than
- * the CREATE DATABASE it issues.
- */
-let admin: Promise<pg.Client> | undefined;
-
-/** Every fixture this worker opened, so the setup file can drop them per test file. */
-const fixtures: { name: string; url: string; db: Db }[] = [];
-
-/**
- * Fresh Postgres database with all checked-in migrations applied.
- *
- * Cloned from the template the global setup built, so this costs a directory
- * copy rather than replaying the baseline. The pool is small and drops idle
- * connections quickly: a full run opens hundreds of fixtures, and the server's
- * connection limit is the binding constraint, not throughput.
- */
-export async function createTestDb(): Promise<Db> {
-  const name = fixtureDatabaseName();
-  admin ??= adminClient();
-  await cloneTemplate(await admin, name);
-  const url = urlFor(name);
-  // Small pool with a short idle timeout: a run opens hundreds of fixtures and
-  // holds each until its file ends, so the binding constraint is the server's
-  // connection slots rather than per-fixture throughput.
-  const db = await createDb(url, {
-    migrated: true,
-    max: 2,
-    idleTimeoutMillis: 1_000,
-    allowExitOnIdle: true,
-  });
-  fixtures.push({ name, url, db });
-  return db;
-}
-
-/**
- * A second, independent pool onto an existing fixture: the Postgres equivalent
- * of two API processes opening the same database file. Restart and
- * two-instance-contention tests need genuinely separate connections, not a
- * second handle on the same one.
- */
-export async function connectTestDbAgain(db: Db): Promise<Db> {
-  const fixture = fixtures.find((f) => f.db === db);
-  if (!fixture) throw new Error("connectTestDbAgain: not a fixture from createTestDb()");
-  const second = await createDb(fixture.url, { migrated: true, max: 4 });
-  // Same name: the drop below is IF EXISTS, so the repeat is a no-op.
-  fixtures.push({ name: fixture.name, url: fixture.url, db: second });
-  return second;
-}
-
-/**
- * Close and drop every fixture this worker opened. Called from the setup file's
- * afterAll, which runs once per test file.
- */
-export async function dropTestDbs(): Promise<void> {
-  const taken = fixtures.splice(0, fixtures.length);
-  if (taken.length === 0) return;
-  await Promise.all(taken.map(({ db }) => closeDb(db)));
-  const client = await (admin ??= adminClient());
-  for (const { name } of taken) {
-    // FORCE: a test that leaked a connection should not wedge the whole run.
-    await client.query(`DROP DATABASE IF EXISTS ${quoteIdent(name)} WITH (FORCE)`);
-  }
-}
-
-/** Close this worker's maintenance connection. */
-export async function closeTestAdmin(): Promise<void> {
-  if (!admin) return;
-  const client = await admin;
-  admin = undefined;
-  await client.end().catch(() => {});
-}
 
 export interface TestUser {
   id: string;

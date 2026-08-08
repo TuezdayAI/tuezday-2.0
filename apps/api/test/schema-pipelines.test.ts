@@ -10,7 +10,7 @@
 import { count, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { createTestDb } from "./helpers";
-import { PG_ERROR, expectPgError } from "./schema-introspection";
+import { PG_ERROR, expectPgError } from "./postgres";
 import {
   drafts,
   pipelineDefinitionVersions,

@@ -747,12 +747,16 @@ export async function dispatchChannel(
   // A message is dispatchable while its human-approved content has not gone
   // out: pending or failed, never skipped. Already-sent messages report their
   // governing action instead of being re-proposed.
-  const eligible = rows.filter(
-    async (row) =>
+  // `isApproved` is a query, so the predicate cannot be inline: a filter given
+  // an async callback keeps every row, because a Promise is always truthy.
+  const approval = await Promise.all(
+    rows.map(async (row) =>
       row.status !== "skipped" &&
       (channel === "linkedin" || channel === "instagram" ? row.kind === "broadcast" : true) &&
-      await isApproved(db, row.draftId),
+      (await isApproved(db, row.draftId)),
+    ),
   );
+  const eligible = rows.filter((_row, index) => approval[index]);
 
   const submissions: ExternalActionSubmission[] = [];
 

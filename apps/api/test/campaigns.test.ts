@@ -483,8 +483,8 @@ describe("campaigns API", () => {
 
     it("keeps that helper the only producer of both", () => {
       const source = readFileSync(PAIRING_MODULE, "utf8");
-      expect(source).toContain("export function campaignResolveInputs(");
-      expect(source).toContain("export function campaignResolvePreviewInputs(");
+      expect(source).toContain("export async function campaignResolveInputs(");
+      expect(source).toContain("export async function campaignResolvePreviewInputs(");
     });
   });
 });

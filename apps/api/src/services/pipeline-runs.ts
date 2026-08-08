@@ -16,7 +16,7 @@ import type {
   PipelineTaskKey,
   ProposalOutput,
 } from "@tuezday/contracts";
-import type { Db } from "../db";
+import { isUniqueViolation, type Db } from "../db";
 import { pipelineRuns, type PipelineRunRow } from "../db/schema";
 import { getSignal } from "./signals";
 
@@ -120,11 +120,7 @@ export async function startPipelineRun(db: Db, input: StartPipelineRunInput): Pr
   try {
     await db.insert(pipelineRuns).values(row);
   } catch (err) {
-    if (
-      input.idempotencyKey &&
-      err instanceof Error &&
-      err.message.includes("UNIQUE")
-    ) {
+    if (input.idempotencyKey && isUniqueViolation(err)) {
       throw new DuplicatePipelineRunError(input.idempotencyKey);
     }
     throw err;

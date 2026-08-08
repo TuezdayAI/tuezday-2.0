@@ -717,7 +717,7 @@ describe("sprint 55 — insights reads one table", () => {
 
   it("the paid read (getCampaignAdMetrics) is fact-backed", () => {
     const src = read("services/ads.ts");
-    const fn = src.slice(src.indexOf("export function getCampaignAdMetrics"));
+    const fn = src.slice(src.indexOf("export async function getCampaignAdMetrics"));
     const body = fn.slice(0, fn.indexOf("\n}\n") + 3);
     expect(body).not.toContain("adCampaignMetrics");
     expect(body).toContain("metrics");

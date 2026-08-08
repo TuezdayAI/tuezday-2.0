@@ -11,7 +11,8 @@
 import { count, eq } from "drizzle-orm";
 import { describe, expect, it } from "vitest";
 import { createTestDb } from "./helpers";
-import { indexes, PG_ERROR, expectPgError } from "./schema-introspection";
+import { indexes } from "./schema-introspection";
+import { PG_ERROR, expectPgError } from "./postgres";
 import type { Db } from "../src/db";
 import {
   agentProposals,

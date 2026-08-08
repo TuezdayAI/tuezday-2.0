@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { createTestDb } from "./helpers";
-import { PG_ERROR, expectPgError } from "./schema-introspection";
+import { PG_ERROR, expectPgError } from "./postgres";
 import { CAMPAIGN, PLAN_REVISION, ROUTING_PROFILE, STORY, WS, seedCampaignGraph } from "./schema-seed";
 import type { Db } from "../src/db";
 import { campaignOpportunities, signals } from "../src/db/schema";

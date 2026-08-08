@@ -30,6 +30,7 @@ import {
   updatePersona,
 } from "../src/services/personas";
 import { createTestDb } from "./helpers";
+import { driverError } from "./postgres";
 
 const personaInput = (
   name: string,
@@ -582,7 +583,9 @@ describe("incremental matching invalidation", () => {
           topics: ["changed"],
         }),
       ))(),
-    ).rejects.toThrow("reject_matching_invalidation");
+    ).rejects.toSatisfy(
+      (error: unknown) => driverError(error).message?.includes("reject_matching_invalidation") ?? false,
+    );
 
     expect(
       (await fixture.db
@@ -623,7 +626,9 @@ describe("incremental matching invalidation", () => {
           { objective: "Changed objective" },
         ),
       ))(),
-    ).rejects.toThrow("reject_campaign_invalidation");
+    ).rejects.toSatisfy(
+      (error: unknown) => driverError(error).message?.includes("reject_campaign_invalidation") ?? false,
+    );
 
     expect(
       (await fixture.db

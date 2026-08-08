@@ -87,6 +87,18 @@ export function rowsAffected(result: { rowCount: number | null }): number {
   return result.rowCount ?? 0;
 }
 
+/**
+ * True when a write was refused by a unique index.
+ *
+ * Postgres reports SQLSTATE 23505, and drizzle wraps every driver error as
+ * "Failed query: …" with the real one on `cause` — so matching the message,
+ * which is what the SQLite version did, finds nothing.
+ */
+export function isUniqueViolation(error: unknown): boolean {
+  const driver = (error as { cause?: unknown })?.cause ?? error;
+  return (driver as { code?: string } | null)?.code === "23505";
+}
+
 /** Close the pool behind a Db. Safe to call more than once. */
 export async function closeDb(db: Db): Promise<void> {
   await db.$pool.end().catch(() => {});

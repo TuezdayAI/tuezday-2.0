@@ -199,12 +199,14 @@ describe("authorization batches", () => {
     const db = await createTestDb();
     const workspaceId = await seedWorkspace(db);
     const campaignId = await seedCampaign(db, workspaceId);
-    const ids = await Array.from({ length: 112 }, async (_, index) =>
-      await seedAction(db, workspaceId, {
-        campaignId,
-        requestedFor: 1_000 + index,
-        createdAt: 2_000 + index,
-      }),
+    const ids = await Promise.all(
+      Array.from({ length: 112 }, (_, index) =>
+        seedAction(db, workspaceId, {
+          campaignId,
+          requestedFor: 1_000 + index,
+          createdAt: 2_000 + index,
+        }),
+      ),
     );
     await seedAction(db, workspaceId, { campaignId, kind: "reply" });
 
@@ -219,7 +221,7 @@ describe("authorization batches", () => {
     );
 
     expect(preview.items).toHaveLength(100);
-    expect(preview.items.map((item) => item.actionId)).toEqual(await ids.slice(0, 100));
+    expect(preview.items.map((item) => item.actionId)).toEqual(ids.slice(0, 100));
     expect(preview.batch.continuationCount).toBe(12);
     expect(preview.batch.includedCount).toBe(100);
     expect(authorizationBatchDetailSchema.parse(preview)).toEqual(preview);
