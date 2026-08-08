@@ -133,13 +133,17 @@ export async function runBrandProfile(
   workspaceId: string,
   websiteUrl: string,
 ): Promise<BrandProfileView> {
-  await upsertRow(db, workspaceId, {
-    sourceUrl: websiteUrl,
-    status: "scraping",
-    error: null,
-    profileJson: null,
-  });
   try {
+    // Inside the guard, not before it: the caller fire-and-forgets this, so a
+    // write that rejects here becomes an unhandled rejection rather than a
+    // "failed" row. The first write could not realistically fail on SQLite;
+    // against a real server it can (connection dropped, server restarting).
+    await upsertRow(db, workspaceId, {
+      sourceUrl: websiteUrl,
+      status: "scraping",
+      error: null,
+      profileJson: null,
+    });
     const { corpus } = await scrapeWebsite(websiteUrl, safeFetch);
     await upsertRow(db, workspaceId, { status: "extracting", corpusChars: corpus.length });
     const profile = await extractBrandProfile(

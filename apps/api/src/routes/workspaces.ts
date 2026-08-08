@@ -42,9 +42,13 @@ export function registerWorkspaceRoutes(
     }
     const workspace = await createWorkspace(db, parsed.data, request.actor.userId);
     if (workspace.websiteUrl) {
-      // Onboarding Step 2: reading starts the moment the URL lands. The run
-      // never throws; failures land in the brand_profiles row.
-      void runBrandProfile(db, llm, safeFetch, workspace.id, workspace.websiteUrl);
+      // Onboarding Step 2: reading starts the moment the URL lands. Scrape and
+      // extraction failures land in the brand_profiles row; the catch is for
+      // the one thing that cannot — the database itself being unreachable,
+      // which on an un-awaited promise would otherwise take the process down.
+      void runBrandProfile(db, llm, safeFetch, workspace.id, workspace.websiteUrl).catch(
+        (err: unknown) => request.log.error({ err }, "brand profile run failed"),
+      );
     }
     return reply.status(201).send(workspace);
   });

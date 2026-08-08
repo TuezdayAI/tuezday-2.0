@@ -427,3 +427,29 @@ SQLite can no longer host it.
   skipped every column named `seq`, but `evidence_chunks.seq` is an ordinary
   integer holding a chunk's position in its document — only *serial* columns
   may be skipped, so the filter keys on the column type.
+
+- **2026-08-08** — **Green.** `npm run typecheck` clean across every workspace.
+  `npm test` passes: **203 API files / 2,292 tests** against a real Postgres 17
+  with pgvector 0.8.6, plus **58 files / 620 tests** in the contracts, brain,
+  worker, web and renderer projects. `npm run dev` boots the API against
+  Postgres and `/health` reports `db: "ok"`.
+
+  *One unhandled rejection was worth keeping.* `runBrandProfile` is documented
+  "never throws… so callers can safely fire-and-forget", and every caller does
+  `void runBrandProfile(…)` — but its first write sat *outside* the try. On
+  SQLite that write could not realistically fail; against a server it can, and
+  it did (a fixture dropped while the fire-and-forget was still running). The
+  write moved inside the guard so a transient failure lands in the row as
+  designed, and the call site now logs rather than letting a database outage
+  take the process down.
+
+  *Suite duration: ~25 minutes* (2,292 tests), against ~2.5 minutes on
+  in-process SQLite. That is the cost of D-74.2 and it is mostly unavoidable —
+  a request that made fifty in-process calls now makes fifty round trips.
+  Two harness decisions took the worst of it off: `STRATEGY = FILE_COPY` for
+  the fixture clone, and dropping each fixture when its test ends rather than
+  when its file does (at ~140 live databases the server spent more time on
+  catalog and autovacuum bookkeeping than on queries; that change alone was
+  worth 25–30%). The remaining lever, untried, is `maxWorkers` — this machine
+  has 8 cores and runs ten vitest workers alongside a Postgres that peaks over
+  400% CPU.
