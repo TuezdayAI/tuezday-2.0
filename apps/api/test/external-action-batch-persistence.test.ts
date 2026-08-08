@@ -197,10 +197,10 @@ describe("external action batch persistence", () => {
     const requestId = randomUUID();
     const batch = batchRow(workspaceId, requestId);
     await db.insert(externalActionBatches).values(batch);
-    expect(async () =>
+    await expect((async () =>
       await db.insert(externalActionBatches)
-        .values({ ...batchRow(workspaceId, requestId), id: randomUUID() }),
-    ).toThrow();
+        .values({ ...batchRow(workspaceId, requestId), id: randomUUID() }))(),
+    ).rejects.toThrow();
     expect(async () =>
       await db.insert(externalActionBatches).values(batchRow(otherWorkspaceId, requestId)),
     ).not.toThrow();
@@ -208,10 +208,10 @@ describe("external action batch persistence", () => {
     const actionId = await seedAction(db, workspaceId);
     const item = itemRow(workspaceId, batch.id, actionId);
     await db.insert(externalActionBatchItems).values(item);
-    expect(async () =>
+    await expect((async () =>
       await db.insert(externalActionBatchItems)
-        .values({ ...item, id: randomUUID() }),
-    ).toThrow();
+        .values({ ...item, id: randomUUID() }))(),
+    ).rejects.toThrow();
   });
 
   it("cascades batch deletion but restricts deletion of audited actions", async () => {
@@ -222,9 +222,9 @@ describe("external action batch persistence", () => {
     await db.insert(externalActionBatches).values(batch);
     await db.insert(externalActionBatchItems).values(itemRow(workspaceId, batch.id, actionId));
 
-    expect(async () =>
-      await db.delete(externalActions).where(eq(externalActions.id, actionId)),
-    ).toThrow();
+    await expect((async () =>
+      await db.delete(externalActions).where(eq(externalActions.id, actionId)))(),
+    ).rejects.toThrow();
     await db.delete(externalActionBatches).where(eq(externalActionBatches.id, batch.id));
     expect(await db.select().from(externalActionBatchItems)).toEqual([]);
     expect(async () =>

@@ -180,7 +180,7 @@ describe("ResendOutboundEmailProvider", () => {
     const { calls, fetcher } = recordingFetcher([]);
     const provider = new ResendOutboundEmailProvider("re_platform", fetcher);
 
-    await expect(await provider.send(message({ idempotencyKey: "x".repeat(257) }))).rejects.toMatchObject({
+    await expect(provider.send(message({ idempotencyKey: "x".repeat(257) }))).rejects.toMatchObject({
       name: "OutboundEmailProviderError",
       status: 400,
       code: "invalid_idempotency_key",
@@ -198,7 +198,7 @@ describe("ResendOutboundEmailProvider", () => {
     ]);
 
     await expect(
-      await new ResendOutboundEmailProvider("re_platform", fetcher).send(message()),
+      new ResendOutboundEmailProvider("re_platform", fetcher).send(message()),
     ).rejects.toMatchObject({
       name: "OutboundEmailProviderError",
       status: 409,
@@ -211,7 +211,7 @@ describe("ResendOutboundEmailProvider", () => {
     const { fetcher } = recordingFetcher([{ status: 200, body: {} }]);
 
     await expect(
-      await new ResendOutboundEmailProvider("re_platform", fetcher).send(message()),
+      new ResendOutboundEmailProvider("re_platform", fetcher).send(message()),
     ).rejects.toMatchObject({
       name: "OutboundEmailProviderError",
       status: 200,

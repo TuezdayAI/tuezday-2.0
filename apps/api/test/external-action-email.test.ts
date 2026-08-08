@@ -187,7 +187,7 @@ describe("governed email external actions", () => {
   it("detects origin edits before authorization", async () => {
     const proposed = await runtime().propose(await command(), actor);
     await db.update(drafts).set({ content: "Changed subject\nChanged body", updatedAt: Date.now() }).where(eq(drafts.id, draftId));
-    await expect(await runtime().authorize(proposed.action.id, workspaceId, actor)).rejects.toBeInstanceOf(
+    await expect(runtime().authorize(proposed.action.id, workspaceId, actor)).rejects.toBeInstanceOf(
       StaleExternalActionError,
     );
     expect(provider.send).not.toHaveBeenCalled();

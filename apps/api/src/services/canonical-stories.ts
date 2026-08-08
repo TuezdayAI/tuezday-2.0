@@ -222,8 +222,8 @@ export async function recordOccurrenceAndResolve(
     relationship = RELATIONSHIP_BY_KEY_KIND[matchedKind]!;
     await tx.update(canonicalExternalStories)
       .set({
-        firstObservedAt: sql`MIN(${canonicalExternalStories.firstObservedAt}, ${input.observedAt})`,
-        lastObservedAt: sql`MAX(${canonicalExternalStories.lastObservedAt}, ${input.observedAt})`,
+        firstObservedAt: sql`LEAST(${canonicalExternalStories.firstObservedAt}, ${input.observedAt})`,
+        lastObservedAt: sql`GREATEST(${canonicalExternalStories.lastObservedAt}, ${input.observedAt})`,
         updatedAt: now,
       })
       .where(eq(canonicalExternalStories.id, storyId));
@@ -445,8 +445,8 @@ export async function mergeStories(
 
     await tx.update(canonicalExternalStories)
       .set({
-        firstObservedAt: sql`MIN(${canonicalExternalStories.firstObservedAt}, ${from.firstObservedAt})`,
-        lastObservedAt: sql`MAX(${canonicalExternalStories.lastObservedAt}, ${from.lastObservedAt})`,
+        firstObservedAt: sql`LEAST(${canonicalExternalStories.firstObservedAt}, ${from.firstObservedAt})`,
+        lastObservedAt: sql`GREATEST(${canonicalExternalStories.lastObservedAt}, ${from.lastObservedAt})`,
         updatedAt: now,
       })
       .where(eq(canonicalExternalStories.id, into.id));

@@ -93,3 +93,49 @@ export async function constraints(db: Db, table: string): Promise<ConstraintInfo
 export async function constraintText(db: Db, table: string): Promise<string> {
   return (await constraints(db, table)).map((c) => c.definition).join("\n");
 }
+
+/** Postgres SQLSTATEs the schema tests assert on. */
+export const PG_ERROR = {
+  uniqueViolation: "23505",
+  foreignKeyViolation: "23503",
+  checkViolation: "23514",
+  notNullViolation: "23502",
+} as const;
+
+/**
+ * Assert a write was refused by the database with a specific SQLSTATE.
+ *
+ * `.rejects.toThrow(/duplicate key/)` does not work here: drizzle wraps driver
+ * errors, so the message is "Failed query: …" and the driver's message and
+ * code live on `cause`. Matching the code is also stricter than matching
+ * prose — "duplicate key" appears in messages for constraints this was not
+ * asserting about.
+ */
+export async function expectPgError(
+  work: Promise<unknown>,
+  code: (typeof PG_ERROR)[keyof typeof PG_ERROR],
+  constraint?: string,
+): Promise<void> {
+  let thrown: unknown;
+  try {
+    await work;
+  } catch (error) {
+    thrown = error;
+  }
+  if (thrown === undefined) {
+    throw new Error(`expected the database to refuse this write with SQLSTATE ${code}`);
+  }
+  const driver = ((thrown as { cause?: unknown }).cause ?? thrown) as {
+    code?: string;
+    constraint?: string;
+    message?: string;
+  };
+  if (driver.code !== code) {
+    throw new Error(
+      `expected SQLSTATE ${code}, got ${driver.code ?? "(none)"}: ${driver.message ?? String(thrown)}`,
+    );
+  }
+  if (constraint !== undefined && driver.constraint !== constraint) {
+    throw new Error(`expected constraint ${constraint}, got ${driver.constraint ?? "(none)"}`);
+  }
+}

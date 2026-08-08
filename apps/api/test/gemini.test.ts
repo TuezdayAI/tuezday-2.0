@@ -36,8 +36,8 @@ describe("GeminiGateway config", () => {
   it("treats an empty api key as missing and fails with a clear error", async () => {
     process.env.GEMINI_API_KEY = "";
     const gateway = new GeminiGateway();
-    await expect(await gateway.generate({ prompt: "hi" })).rejects.toThrowError(GatewayError);
-    await expect(await gateway.generate({ prompt: "hi" })).rejects.toMatchObject({
+    await expect(gateway.generate({ prompt: "hi" })).rejects.toThrowError(GatewayError);
+    await expect(gateway.generate({ prompt: "hi" })).rejects.toMatchObject({
       code: "missing_api_key",
     });
   });

@@ -107,7 +107,7 @@ describe("Sprint 73 domain cutover", () => {
     >;
     const handlers = createBackgroundJobHandlersFromOperations(operations);
     await expect(
-      await handlers.launch_generate(
+      handlers.launch_generate(
         {
           kind: "launch_generate",
           workspaceId: WORKSPACE_IDS[0],

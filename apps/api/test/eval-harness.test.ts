@@ -361,12 +361,12 @@ describe("Sprint 67 — eval & replay harness", () => {
       );
       const { deps } = depsFor([]);
       await expect(
-        await runEvalSuite(db, deps, workspaceId, { suiteId: suite.id, judge: false }, { userId: null, label: "f" }),
+        runEvalSuite(db, deps, workspaceId, { suiteId: suite.id, judge: false }, { userId: null, label: "f" }),
       ).rejects.toBeInstanceOf(EvalDefinitionUnavailableError);
 
       await activateDefinition();
       await expect(
-        await runEvalSuite(
+        runEvalSuite(
           db,
           deps,
           workspaceId,

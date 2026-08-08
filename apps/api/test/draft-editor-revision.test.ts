@@ -200,7 +200,7 @@ describe("conversational draft revision API", () => {
 
   it("does not overwrite a draft changed during the provider call", async () => {
     mode = "deferred";
-    const pending = await revise();
+    const pending = revise();
     await llmEntered.promise;
     await db.update(drafts)
       .set({ content: "Newer manual copy", updatedAt: updatedAt + 1 })

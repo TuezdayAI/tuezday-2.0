@@ -296,7 +296,7 @@ describe("AgentRunner", () => {
       generate: async () => ({ text: "x", model: "m", provider: "p", durationMs: 0 }),
     });
 
-    await expect(await runner.run(baseParams())).rejects.toThrow(/agentStep/);
+    await expect(runner.run(baseParams())).rejects.toThrow(/agentStep/);
   });
 });
 

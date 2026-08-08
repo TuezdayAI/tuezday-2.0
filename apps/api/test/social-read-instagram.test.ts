@@ -115,8 +115,8 @@ describe("InstagramAdapter.readSocialProfile", () => {
     const adapter = adapterFor({
       [PROFILE_PATH]: { status: 403, json: { error: { message: "permission denied" } } },
     });
-    await expect(await adapter.readSocialProfile()).rejects.toThrow(ConnectorFabricError);
-    await expect(await adapter.readSocialProfile()).rejects.toThrow(/403/);
+    await expect(adapter.readSocialProfile()).rejects.toThrow(ConnectorFabricError);
+    await expect(adapter.readSocialProfile()).rejects.toThrow(/403/);
   });
 
   it("throws ConnectorFabricError when the media list is non-2xx", async () => {
@@ -124,7 +124,7 @@ describe("InstagramAdapter.readSocialProfile", () => {
       [PROFILE_PATH]: { status: 200, json: { username: "tuezhq" } },
       [MEDIA_PATH]: { status: 500, json: { error: { message: "boom" } } },
     });
-    await expect(await adapter.readSocialProfile()).rejects.toThrow(ConnectorFabricError);
-    await expect(await adapter.readSocialProfile()).rejects.toThrow(/500/);
+    await expect(adapter.readSocialProfile()).rejects.toThrow(ConnectorFabricError);
+    await expect(adapter.readSocialProfile()).rejects.toThrow(/500/);
   });
 });

@@ -45,6 +45,11 @@ export interface CreateDbOptions {
  */
 export async function createDb(url: string, options: CreateDbOptions = {}): Promise<Db> {
   const pool = new pg.Pool({ connectionString: url, max: options.max ?? 10 });
+  // node-postgres emits `error` on *idle* clients — a server restart, an
+  // administrator terminating the backend, a network drop. With no listener
+  // that is an unhandled 'error' event, which takes the process down. The pool
+  // discards the client itself; there is nothing to do but not crash.
+  pool.on("error", () => {});
   // drizzle already exposes the pool as `$client`; `$pool` is the typed name
   // this codebase uses, so it is attached rather than cast over.
   const db = Object.assign(drizzle(pool, { schema }), { $pool: pool }) as Db;

@@ -328,9 +328,9 @@ describe("MetaAdsAdapter", () => {
   it("raises ConnectorFabricError on non-2xx responses", async () => {
     const state = graphState();
     state.failStatus = 401;
-    await expect(await adapterFor(state).listAdAccounts()).rejects.toThrow(ConnectorFabricError);
+    await expect(adapterFor(state).listAdAccounts()).rejects.toThrow(ConnectorFabricError);
     await expect(
-      await adapterFor(state).listDailyMetrics("act_111", "2026-06-01", "2026-06-02"),
+      adapterFor(state).listDailyMetrics("act_111", "2026-06-01", "2026-06-02"),
     ).rejects.toThrow(ConnectorFabricError);
   });
 });

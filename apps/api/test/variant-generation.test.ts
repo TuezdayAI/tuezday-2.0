@@ -318,14 +318,14 @@ describe("variant generation & context snapshots (Sprint 63)", () => {
 
     // Fulfilled history is immutable: no cancel, no regenerate, no reselect.
     for (const action of ["cancel", "regenerate", "select"] as const) {
-      expect(async () =>
+      await expect((async () =>
         await decideDeliverable(db, workspaceId, deliverableId, {
           action,
           variantId: byVersion.get(1)!.id,
           reason: "nope",
           actorUserId: userId,
-        }),
-      ).toThrow();
+        }))(),
+      ).rejects.toThrow();
     }
   });
 

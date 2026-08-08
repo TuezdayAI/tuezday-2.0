@@ -294,7 +294,7 @@ describe("design systems (Sprint 41 Part 2)", () => {
     });
 
     it("names are unique per workspace and exactly one default survives a flip", async () => {
-      expect(async () => await createDesignSystem(db, workspaceId, { name: "Default" })).toThrow();
+      await expect((async () => await createDesignSystem(db, workspaceId, { name: "Default" }))()).rejects.toThrow();
       const second = await createDesignSystem(db, workspaceId, { name: "Alt" });
       await setDefaultDesignSystem(db, workspaceId, second.id);
       const systems = await listDesignSystems(db, workspaceId);

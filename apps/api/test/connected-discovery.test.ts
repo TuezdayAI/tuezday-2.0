@@ -429,7 +429,7 @@ describe("connected provider pagination", () => {
 
   it("classifies a rejected continuation as an invalid cursor", async () => {
     await expect(
-      await connectedPage({
+      connectedPage({
         source: paginationSource("x", {
           mode: "query",
           query: "gtm",

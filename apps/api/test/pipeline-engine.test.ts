@@ -295,7 +295,7 @@ describe("pipeline engine", () => {
     expect(cancelled.run.failureReason).toBe("cancelled: not worth publishing");
 
     await expect(
-      await decidePipelineRun(db, deps, WORKSPACE_ID, run.id, { action: "resume" }),
+      decidePipelineRun(db, deps, WORKSPACE_ID, run.id, { action: "resume" }),
     ).rejects.toBeInstanceOf(InvalidPipelineRunTransitionError);
   });
 
@@ -355,7 +355,7 @@ describe("pipeline engine", () => {
     const { db } = await fixture([]);
     const definition = await definitionWith(db, miniSpec());
     await startLive(db, definition, "signal:abc");
-    expect(async () => await startLive(db, definition, "signal:abc")).toThrow(DuplicatePipelineRunError);
+    await expect((async () => await startLive(db, definition, "signal:abc"))()).rejects.toThrow(DuplicatePipelineRunError);
     // No key — repeats are allowed (manual founder re-runs).
     await startLive(db, definition);
     await startLive(db, definition);

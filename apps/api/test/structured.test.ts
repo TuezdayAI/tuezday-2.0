@@ -137,7 +137,7 @@ describe("generateStructured", () => {
         throw new GatewayError("provider_error", "down");
       },
     };
-    await expect(await generateStructured(llm, itemSchema, { prompt: "p" })).rejects.toThrow(
+    await expect(generateStructured(llm, itemSchema, { prompt: "p" })).rejects.toThrow(
       GatewayError,
     );
   });

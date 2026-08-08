@@ -168,15 +168,15 @@ describe("external action persistence", () => {
     await ensureWorkspaceActionPolicies(db, workspaceId);
     const existing = (await rule(db, workspaceId, "workspace", workspaceId, "publish"))!;
 
-    expect(async () =>
-      await db.insert(externalActionPolicyRules).values({ ...existing, id: randomUUID() }),
-    ).toThrow();
+    await expect((async () =>
+      await db.insert(externalActionPolicyRules).values({ ...existing, id: randomUUID() }))(),
+    ).rejects.toThrow();
 
     const first = actionRow(workspaceId);
     await db.insert(externalActions).values(first);
-    expect(async () =>
-      await db.insert(externalActions).values({ ...actionRow(workspaceId), idempotencyKey: first.idempotencyKey }),
-    ).toThrow();
+    await expect((async () =>
+      await db.insert(externalActions).values({ ...actionRow(workspaceId), idempotencyKey: first.idempotencyKey }))(),
+    ).rejects.toThrow();
   });
 
   it("cascades immutable decisions when their action is deleted", async () => {

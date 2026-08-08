@@ -281,7 +281,7 @@ describe("social adapters", () => {
   it("Instagram refuses to publish with no media", async () => {
     const state = platformState();
     await expect(
-      await new InstagramAdapter(fakeFabric(state), {
+      new InstagramAdapter(fakeFabric(state), {
         ...config,
         integrationKey: "tuezday-instagram",
         ...instagramIdentity,
@@ -306,7 +306,7 @@ describe("social adapters", () => {
     const state = platformState();
     state.xFailHandles.add("blocked");
     await expect(
-      await new XAdapter(fakeFabric(state), { ...config, integrationKey: "tuezday-twitter" }).sendDm({
+      new XAdapter(fakeFabric(state), { ...config, integrationKey: "tuezday-twitter" }).sendDm({
         recipientHandle: "blocked",
         body: "hey",
       }),
@@ -682,7 +682,7 @@ describe("targeted launch API", () => {
     // A payload whose tenant is this workspace but whose target belongs to
     // another one must not resolve, even though both ids are real.
     await expect(
-      await resumeLaunchGeneration(
+      resumeLaunchGeneration(
         db,
         fakeLlm,
         {} as never,
@@ -905,8 +905,8 @@ describe("targeted launch API", () => {
     });
 
     expect(res.statusCode).toBe(200);
-    await expect(await publishedConnectionIds()).resolves.toEqual([ceoLinkedIn.id]);
-    await expect(await publishedConnectionIds()).resolves.not.toContain(otherLinkedIn.id);
+    await expect(publishedConnectionIds()).resolves.toEqual([ceoLinkedIn.id]);
+    await expect(publishedConnectionIds()).resolves.not.toContain(otherLinkedIn.id);
   });
 
   it("requires media for an Instagram dispatch", async () => {

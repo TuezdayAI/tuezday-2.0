@@ -152,14 +152,14 @@ describe("design pipeline (Sprint 41 Part 3)", () => {
 
     it("wraps daemon errors and unreachability in DesignProviderError", async () => {
       const down = new OpenDesignProvider("http://od.internal", "t", daemonFetcher({ reject: true }).fetcher);
-      await expect(await down.authorTemplate(input)).rejects.toBeInstanceOf(DesignProviderError);
+      await expect(down.authorTemplate(input)).rejects.toBeInstanceOf(DesignProviderError);
 
       const failing = new OpenDesignProvider(
         "http://od.internal",
         "t",
         daemonFetcher({ chatStatus: 500 }).fetcher,
       );
-      await expect(await failing.authorTemplate(input)).rejects.toBeInstanceOf(DesignProviderError);
+      await expect(failing.authorTemplate(input)).rejects.toBeInstanceOf(DesignProviderError);
     });
 
     it("refuses to cache a template without placeholder tokens", async () => {
@@ -168,7 +168,7 @@ describe("design pipeline (Sprint 41 Part 3)", () => {
         "t",
         daemonFetcher({ htmlBody: "<div>static, no tokens</div>" }).fetcher,
       );
-      await expect(await provider.authorTemplate(input)).rejects.toThrow(/no \{\{placeholder\}\}/);
+      await expect(provider.authorTemplate(input)).rejects.toThrow(/no \{\{placeholder\}\}/);
     });
 
     it("extractPlaceholders dedupes and keeps order", () => {
@@ -225,15 +225,15 @@ describe("design pipeline (Sprint 41 Part 3)", () => {
 
     it("throws StorageError on non-2xx, unreachability, and missing config", async () => {
       const failing = new S3AssetStorage(options, (async () => new Response("denied", { status: 403 })) as Fetcher);
-      await expect(await failing.put(new Uint8Array([1]), "image/png")).rejects.toBeInstanceOf(StorageError);
+      await expect(failing.put(new Uint8Array([1]), "image/png")).rejects.toBeInstanceOf(StorageError);
 
       const down = new S3AssetStorage(options, (async () => {
         throw new Error("ECONNREFUSED");
       }) as Fetcher);
-      await expect(await down.put(new Uint8Array([1]), "image/png")).rejects.toBeInstanceOf(StorageError);
+      await expect(down.put(new Uint8Array([1]), "image/png")).rejects.toBeInstanceOf(StorageError);
 
       const unconfigured = new S3AssetStorage({ endpoint: "", bucket: "", accessKey: "", secretKey: "", publicBaseUrl: "" });
-      await expect(await unconfigured.put(new Uint8Array([1]), "image/png")).rejects.toThrow(/not configured/);
+      await expect(unconfigured.put(new Uint8Array([1]), "image/png")).rejects.toThrow(/not configured/);
     });
   });
 

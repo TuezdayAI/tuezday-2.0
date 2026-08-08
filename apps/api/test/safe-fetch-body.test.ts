@@ -188,7 +188,7 @@ describe("safe-fetch MIME policy", () => {
     for (const contentType of [undefined, "", "not-a-mime"]) {
       const body = new FixtureBody([Buffer.from("never read")]);
       await expect(
-        await readBoundedBody({
+        readBoundedBody({
           body,
           contentType,
           profile: "json",
@@ -206,7 +206,7 @@ describe("safe-fetch MIME policy", () => {
     controller.abort();
     const body = new FixtureBody([Buffer.from("never read")]);
     await expect(
-      await readBoundedBody({
+      readBoundedBody({
         body,
         contentType: "not-a-mime",
         contentEncoding: "unknown",
@@ -229,7 +229,7 @@ describe("safe-fetch MIME policy", () => {
       ],
     });
     await expect(
-      await mimeHarness.service.fetch({
+      mimeHarness.service.fetch({
         url: "https://public.example/data",
         profile: "json",
       }),
@@ -246,7 +246,7 @@ describe("safe-fetch MIME policy", () => {
       ],
     });
     await expect(
-      await encodingHarness.service.fetch({
+      encodingHarness.service.fetch({
         url: "https://public.example/data",
         profile: "json",
       }),
@@ -257,7 +257,7 @@ describe("safe-fetch MIME policy", () => {
   it("safely closes a real Readable when policy rejects before consumption", async () => {
     const body = Readable.from([Buffer.from("never read")]) as TransportBody;
     await expect(
-      await readBoundedBody({
+      readBoundedBody({
         body,
         contentType: "text/html",
         profile: "json",
@@ -291,7 +291,7 @@ describe("safe-fetch streaming decoding", () => {
     async (contentEncoding) => {
       const body = new FixtureBody([Buffer.from("never read")]);
       await expect(
-        await readBoundedBody({
+        readBoundedBody({
           body,
           contentType: "application/json",
           contentEncoding,
@@ -388,7 +388,7 @@ describe("safe-fetch streaming decoding", () => {
       new Error("socket reset by db.internal at 169.254.169.254"),
     );
     await expect(
-      await readBoundedBody({
+      readBoundedBody({
         body,
         contentType: "application/json",
         profile: "json",
@@ -407,7 +407,7 @@ describe("safe-fetch streaming decoding", () => {
       new Error("socket reset while reading https://user:secret@host"),
     );
     await expect(
-      await readBoundedBody({
+      readBoundedBody({
         body,
         contentType: "application/json",
         contentEncoding: "gzip",
@@ -478,7 +478,7 @@ describe("DefaultSafeFetchService resource policy", () => {
     const h = serviceHarness({ responses: [transportResponse(200, body)] });
 
     await expect(
-      await h.service.fetch({
+      h.service.fetch({
         url: "https://public.example/data",
         profile: "json",
         limits: { maxDecodedBytes: 1_000 },
@@ -493,7 +493,7 @@ describe("DefaultSafeFetchService resource policy", () => {
   ] as const)("rejects an attempt to raise %s before transport", async (limit, value, code) => {
     const h = serviceHarness({});
     await expect(
-      await h.service.fetch({
+      h.service.fetch({
         url: "https://public.example/data",
         profile: "json",
         limits: { [limit]: value },
@@ -507,7 +507,7 @@ describe("DefaultSafeFetchService resource policy", () => {
     const h = serviceHarness({ responses: [transportResponse(503, body)] });
 
     await expect(
-      await h.service.fetch({
+      h.service.fetch({
         url: "https://public.example/data",
         profile: "json",
       }),
@@ -523,7 +523,7 @@ describe("DefaultSafeFetchService resource policy", () => {
     const h = serviceHarness({ transportError: cause });
 
     await expect(
-      await h.service.fetch({
+      h.service.fetch({
         url: "https://public.example/data",
         profile: "json",
       }),
@@ -576,7 +576,7 @@ describe("DefaultSafeFetchService resource policy", () => {
       responses: [transportResponse(200, body)],
     });
 
-    const pending = await h.service
+    const pending = h.service
       .fetch({
         url: "https://public.example/data",
         profile: "json",
@@ -614,7 +614,7 @@ describe("DefaultSafeFetchService resource policy", () => {
       },
     });
 
-    const pending = await h.service
+    const pending = h.service
       .fetch({
         url: "https://public.example/data",
         profile: "json",

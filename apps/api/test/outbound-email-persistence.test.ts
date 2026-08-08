@@ -193,7 +193,7 @@ describe("governed outbound email persistence", () => {
       killSwitch: true,
       dailyCap: 100,
     });
-    expect(async () => await db.insert(workspaceEmailSenders).values(senderRow(workspaceId))).toThrow();
+    await expect((async () => await db.insert(workspaceEmailSenders).values(senderRow(workspaceId)))()).rejects.toThrow();
   });
 
   it("enforces one normalized permission and suppression per workspace", async () => {
@@ -203,10 +203,10 @@ describe("governed outbound email persistence", () => {
 
     const permission = permissionRow(workspaceId);
     await db.insert(emailRecipientPermissions).values(permission);
-    expect(async () =>
+    await expect((async () =>
       await db.insert(emailRecipientPermissions)
-        .values({ ...permissionRow(workspaceId), normalizedEmail: permission.normalizedEmail }),
-    ).toThrow();
+        .values({ ...permissionRow(workspaceId), normalizedEmail: permission.normalizedEmail }))(),
+    ).rejects.toThrow();
     expect(async () =>
       await db.insert(emailRecipientPermissions)
         .values(permissionRow(otherWorkspaceId, permission.normalizedEmail)),
@@ -218,10 +218,10 @@ describe("governed outbound email persistence", () => {
       reason: "unsubscribe",
       createdAt: 1_800_000_000_000,
     });
-    expect(async () =>
+    await expect((async () =>
       await db.insert(emailSuppressions)
-        .values({ ...suppressionRow(workspaceId), normalizedEmail: suppression.normalizedEmail }),
-    ).toThrow();
+        .values({ ...suppressionRow(workspaceId), normalizedEmail: suppression.normalizedEmail }))(),
+    ).rejects.toThrow();
   });
 
   it("links deliveries to actions and preserves immutable message snapshots", async () => {
@@ -233,10 +233,10 @@ describe("governed outbound email persistence", () => {
       providerMessageId: "email_123",
     });
 
-    expect(async () =>
+    await expect((async () =>
       await db.insert(emailDeliveries)
-        .values(deliveryRow(workspaceId, randomUUID())),
-    ).toThrow();
+        .values(deliveryRow(workspaceId, randomUUID())))(),
+    ).rejects.toThrow();
     await db.insert(emailDeliveries).values(delivery);
     await db.update(emailDeliveries)
       .set({ status: "accepted", acceptedAt: 1_800_000_000_000, updatedAt: 1_800_000_000_000 })
@@ -252,14 +252,14 @@ describe("governed outbound email persistence", () => {
       status: "accepted",
     });
 
-    expect(async () =>
+    await expect((async () =>
       await db.insert(emailDeliveries)
-        .values(deliveryRow(workspaceId, actionId, { idempotencyKey: delivery.idempotencyKey })),
-    ).toThrow();
-    expect(async () =>
+        .values(deliveryRow(workspaceId, actionId, { idempotencyKey: delivery.idempotencyKey })))(),
+    ).rejects.toThrow();
+    await expect((async () =>
       await db.insert(emailDeliveries)
-        .values(deliveryRow(workspaceId, actionId, { providerMessageId: "email_123" })),
-    ).toThrow();
+        .values(deliveryRow(workspaceId, actionId, { providerMessageId: "email_123" })))(),
+    ).rejects.toThrow();
     expect(async () =>
       await db.insert(emailDeliveries).values(deliveryRow(workspaceId, actionId)),
     ).not.toThrow();
@@ -278,17 +278,17 @@ describe("governed outbound email persistence", () => {
     await db.insert(emailDeliveryEvents).values(event);
 
     expect((await db.select().from(emailDeliveryEvents))[0]).toEqual(event);
-    expect(async () =>
+    await expect((async () =>
       await db.insert(emailDeliveryEvents)
-        .values({ ...eventRow(workspaceId, delivery.id, event.providerEventId), id: randomUUID() }),
-    ).toThrow();
-    expect(async () =>
+        .values({ ...eventRow(workspaceId, delivery.id, event.providerEventId), id: randomUUID() }))(),
+    ).rejects.toThrow();
+    await expect((async () =>
       await db.insert(emailDeliveryEvents)
         .values({
           ...eventRow(workspaceId, delivery.id, "event_too_large"),
           payloadJson: JSON.stringify({ data: "x".repeat(MAX_EVENT_PAYLOAD_CHARS) }),
-        }),
-    ).toThrow();
+        }))(),
+    ).rejects.toThrow();
   });
 
   it("cascades every governed email record when its workspace is deleted", async () => {

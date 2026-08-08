@@ -460,7 +460,7 @@ describe("bounded leased discovery scheduler", () => {
       return page(target.key);
     };
 
-    const pending = await runDiscoveryScheduler(dependencies(db, pageReader), {
+    const pending = runDiscoveryScheduler(dependencies(db, pageReader), {
       workspaceId: "workspace-1",
     });
     expect(calls).toBe(1);
@@ -814,7 +814,7 @@ describe("Fastify discovery shutdown", () => {
       url: `/workspaces/${workspaceId}/discovery/run`,
     });
     await started.promise;
-    const closing = await app.close();
+    const closing = app.close();
 
     await aborted.promise;
     expect(receivedSignal?.aborted).toBe(true);
@@ -864,7 +864,7 @@ describe("Fastify discovery shutdown", () => {
       url: `/workspaces/${workspaceId}/discovery/run`,
     });
     await started.promise;
-    const closing = await app.close();
+    const closing = app.close();
 
     await aborted.promise;
     expect(receivedSignal?.aborted).toBe(true);

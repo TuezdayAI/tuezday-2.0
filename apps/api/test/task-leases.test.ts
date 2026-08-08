@@ -61,7 +61,7 @@ describe("database-clock task leases", () => {
     const work = vi.fn(async () => "unexpected");
 
     await expect(
-      await withTaskLease(
+      withTaskLease(
         db,
         {
           key: "automation:scheduler",

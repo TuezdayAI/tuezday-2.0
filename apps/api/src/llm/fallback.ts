@@ -71,7 +71,7 @@ export class FallbackGateway implements LlmGateway {
   ): Promise<AgentStepResult> {
     let firstError: GatewayError | undefined;
     for (const provider of [this.primary, this.secondary]) {
-      const attempt = await invoke(provider);
+      const attempt = invoke(provider);
       if (!attempt) continue;
       try {
         return await attempt;

@@ -471,7 +471,7 @@ describe("evidence API", () => {
     it("is graceful when the store is unavailable", async () => {
       await seedReadyDoc("r2r-pre");
       state.healthy = false;
-      await expect(await backfillCollections(db, store)).resolves.toBeUndefined();
+      await expect(backfillCollections(db, store)).resolves.toBeUndefined();
     });
   });
 });

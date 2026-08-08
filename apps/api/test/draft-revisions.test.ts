@@ -110,7 +110,7 @@ describe("draft revision persistence", () => {
   it("enforces one request id per draft", async () => {
     const input = runningInput();
     await createRunningTurn(db, input);
-    expect(async () => await createRunningTurn(db, input)).toThrow();
+    await expect((async () => await createRunningTurn(db, input))()).rejects.toThrow();
   });
 
   it("orders turns oldest first", async () => {

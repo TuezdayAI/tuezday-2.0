@@ -88,8 +88,8 @@ describe("entitlements service", () => {
     });
 
     expect(await llmBudgetExhausted(db, ws.id)).toBe(true);
-    expect(async () => await assertLlmBudget(db, ws.id)).toThrowError(EntitlementError);
-    expect(async () => await assertLlmBudget(db, ws.id)).toThrowError(
+    await expect((async () => await assertLlmBudget(db, ws.id))()).rejects.toThrowError(EntitlementError);
+    await expect((async () => await assertLlmBudget(db, ws.id))()).rejects.toThrowError(
       "Plan limit reached for monthlyLlmCents (limit 50).",
     );
   });
@@ -102,8 +102,8 @@ describe("entitlements service", () => {
     // Free plan has limit of 1 for seats
     await assertWithinLimit(db, ws.id, "seats", 0); // under limit
 
-    expect(async () => await assertWithinLimit(db, ws.id, "seats", 1)).toThrowError(EntitlementError);
-    expect(async () => await assertWithinLimit(db, ws.id, "seats", 1)).toThrowError("Plan limit reached for seats (limit 1).");
+    await expect((async () => await assertWithinLimit(db, ws.id, "seats", 1))()).rejects.toThrowError(EntitlementError);
+    await expect((async () => await assertWithinLimit(db, ws.id, "seats", 1))()).rejects.toThrowError("Plan limit reached for seats (limit 1).");
   });
 
   test("unlimited (-1) never throws", async () => {

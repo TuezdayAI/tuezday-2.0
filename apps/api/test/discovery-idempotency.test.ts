@@ -149,7 +149,7 @@ describe("atomic discovery occurrence checkpoints", () => {
   ] as const)("rolls back the whole page when %s fails", async (hook) => {
     const { db, claim, source, cursor, page } = await claimedFixture();
 
-    expect(async () =>
+    await expect((async () =>
       await persistDiscoveryPage(db, {
         claim,
         source,
@@ -160,8 +160,8 @@ describe("atomic discovery occurrence checkpoints", () => {
             throw new Error(`fault:${hook}`);
           },
         },
-      }),
-    ).toThrow(`fault:${hook}`);
+      }))(),
+    ).rejects.toThrow(`fault:${hook}`);
 
     expect(await occurrenceCount(db)).toBe(0);
     // Sprint 60 shadow layer rolls back with the page too.
@@ -236,9 +236,9 @@ describe("atomic discovery occurrence checkpoints", () => {
     const { db, claim, source, cursor, page } = await claimedFixture();
     page.items[0]!.externalId = "";
 
-    expect(async () =>
-      await persistDiscoveryPage(db, { claim, source, page, cursor }),
-    ).toThrow("adapter_missing_external_id");
+    await expect((async () =>
+      await persistDiscoveryPage(db, { claim, source, page, cursor }))(),
+    ).rejects.toThrow("adapter_missing_external_id");
     expect(await occurrenceCount(db)).toBe(0);
   });
 

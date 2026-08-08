@@ -405,7 +405,7 @@ describe("social automation", () => {
       heartbeatMs: 30_000,
     };
 
-    const first = await runAutomationWithLease(
+    const first = runAutomationWithLease(
       deps,
       workspaceId,
       "owner-a",
@@ -454,7 +454,7 @@ describe("social automation", () => {
       heartbeatMs: 30_000,
     };
 
-    const staleRun = await runAutomationWithLease(
+    const staleRun = runAutomationWithLease(
       deps,
       workspaceId,
       "owner-stale",

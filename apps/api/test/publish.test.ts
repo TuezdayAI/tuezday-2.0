@@ -241,7 +241,7 @@ describe("NangoFabric (Sprint 17 additions)", () => {
         req.method === "PATCH" ? new Response("nope", { status: 400 }) : new Response("{}", { status: 200 }),
       ),
     );
-    await expect(await fabric.ensureIntegration("tuezday-reddit", "reddit", oauth)).resolves.toBeUndefined();
+    await expect(fabric.ensureIntegration("tuezday-reddit", "reddit", oauth)).resolves.toBeUndefined();
     const patch = recorded.find((r) => r.method === "PATCH")!;
     expect(patch.url).toBe("http://nango.test/integrations/tuezday-reddit");
     expect(JSON.parse(patch.body).credentials.client_id).toBe("cid");
@@ -341,7 +341,7 @@ describe("RedditAdapter", () => {
     const state = redditState();
     state.inBandErrors = [["SUBREDDIT_NOEXIST", "that community does not exist", "sr"]];
     await expect(
-      await adapterFor(state).publishPost({ target: "nope", title: "T", body: "B" }),
+      adapterFor(state).publishPost({ target: "nope", title: "T", body: "B" }),
     ).rejects.toThrow(/SUBREDDIT_NOEXIST/);
   });
 
@@ -349,7 +349,7 @@ describe("RedditAdapter", () => {
     const state = redditState();
     state.failStatus = 403;
     await expect(
-      await adapterFor(state).publishPost({ target: "test", title: "T", body: "B" }),
+      adapterFor(state).publishPost({ target: "test", title: "T", body: "B" }),
     ).rejects.toThrow(ConnectorFabricError);
   });
 });

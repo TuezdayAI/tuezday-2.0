@@ -115,7 +115,7 @@ describe("InstagramAdapter asynchronous video finalization", () => {
 
   it("publishes a finished container once and reads its permalink", async () => {
     const state: InstagramState = { calls: [], status: "FINISHED" };
-    await expect(await adapterFor(state).finalizePost("container-1")).resolves.toEqual({
+    await expect(adapterFor(state).finalizePost("container-1")).resolves.toEqual({
       status: "published",
       externalId: "media-1",
       url: "https://instagram.test/p/media-1",
@@ -130,7 +130,7 @@ describe("InstagramAdapter asynchronous video finalization", () => {
     const adapter = adapterFor(state);
     const finalize = vi.fn(async () => await adapter.finalizePost("container-1"));
 
-    await expect(await finalize()).rejects.toThrow("could not process the video");
+    await expect(finalize()).rejects.toThrow("could not process the video");
     expect(finalize).toHaveBeenCalledTimes(1);
     expect(calls(state, "POST", "/media_publish")).toBe(0);
   });

@@ -356,7 +356,7 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
       await seedOpportunity(await seedStory("Unassessed"), "An unassessed angle"),
       { userId },
     );
-    expect(async () => await fanOutPackage(db, workspaceId, packageId, { userId })).toThrow(
+    await expect((async () => await fanOutPackage(db, workspaceId, packageId, { userId }))()).rejects.toThrow(
       InvalidPackageStateError,
     );
   });
@@ -429,19 +429,19 @@ describe("deliverables: slots, fan-out & lifecycle (Sprint 63)", () => {
     await activatePlan([{ ...plannedLane, plannedQuantity: 1 }]);
     await materializePlannedSlots(db, { workspaceId, now: NOW });
     const row = (await db.select().from(deliverables))[0]!;
-    expect(async () =>
+    await expect((async () =>
       await decideDeliverable(db, workspaceId, row.id, {
         action: "select",
         variantId: randomUUID(),
         actorUserId: userId,
-      }),
-    ).toThrow(InvalidDeliverableTransitionError);
-    expect(async () =>
+      }))(),
+    ).rejects.toThrow(InvalidDeliverableTransitionError);
+    await expect((async () =>
       await decideDeliverable(db, workspaceId, row.id, {
         action: "regenerate",
         actorUserId: userId,
-      }),
-    ).toThrow(InvalidDeliverableTransitionError);
+      }))(),
+    ).rejects.toThrow(InvalidDeliverableTransitionError);
   });
 
   it("lists with status filters and projects lane/campaign context", async () => {

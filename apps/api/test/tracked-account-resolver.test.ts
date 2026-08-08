@@ -190,7 +190,7 @@ describe("tracked account resolver", () => {
     const account = await f.account("linkedin", "acme");
 
     await expect(
-      await resolveTrackedSocialAccount(
+      resolveTrackedSocialAccount(
         { db: f.db, fabric: f.fabric },
         { workspaceId, accountId: account.id, connectionId },
       ),
@@ -224,13 +224,13 @@ describe("tracked account resolver", () => {
     const competitor = await f.account("instagram", "@rival");
 
     await expect(
-      await resolveTrackedSocialAccount(
+      resolveTrackedSocialAccount(
         { db: f.db, fabric: f.fabric },
         { workspaceId, accountId: own.id, connectionId },
       ),
     ).resolves.toMatchObject({ externalId: "ig-direct-42" });
     await expect(
-      await resolveTrackedSocialAccount(
+      resolveTrackedSocialAccount(
         { db: f.db, fabric: f.fabric },
         { workspaceId, accountId: competitor.id, connectionId },
       ),
@@ -249,7 +249,7 @@ describe("tracked account resolver", () => {
 
     for (const connectionId of candidates) {
       await expect(
-        await resolveTrackedSocialAccount(
+        resolveTrackedSocialAccount(
           { db: f.db, fabric: f.fabric },
           { workspaceId, accountId: account.id, connectionId },
         ),
@@ -272,7 +272,7 @@ describe("tracked account resolver", () => {
 
     response = { status: 404, json: {} };
     await expect(
-      await resolveTrackedSocialAccount(
+      resolveTrackedSocialAccount(
         { db: f.db, fabric: f.fabric },
         {
           workspaceId,
@@ -295,7 +295,7 @@ describe("tracked account resolver", () => {
       json: { data: { id: "x-new" } },
     };
     await expect(
-      await resolveTrackedSocialAccount(
+      resolveTrackedSocialAccount(
         { db: f.db, fabric: f.fabric },
         {
           workspaceId,

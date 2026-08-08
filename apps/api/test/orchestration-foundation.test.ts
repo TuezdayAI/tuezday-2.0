@@ -275,19 +275,19 @@ describe("orchestration foundation persistence", () => {
       });
       await activatePlanRevision(db, workspaceId, campaignId, plan.id);
 
-      expect(async () =>
+      await expect((async () =>
         await upsertLaneRevision(db, workspaceId, campaignId, plan.id, {
           ...laneInput,
           personaId,
           plannedQuantity: 4,
-        }),
-      ).toThrow(PlanImmutableError);
+        }))(),
+      ).rejects.toThrow(PlanImmutableError);
     });
 
-    it("rejects a campaign outside the requested workspace", () => {
-      expect(async () =>
-        await createPlanRevision(db, randomUUID(), campaignId, planInput, { userId: null }),
-      ).toThrow(CampaignPlanNotFoundError);
+    it("rejects a campaign outside the requested workspace", async () => {
+      await expect((async () =>
+        await createPlanRevision(db, randomUUID(), campaignId, planInput, { userId: null }))(),
+      ).rejects.toThrow(CampaignPlanNotFoundError);
     });
   });
 

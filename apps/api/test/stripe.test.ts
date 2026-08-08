@@ -54,7 +54,7 @@ describe("stripe service", () => {
     process.env.STRIPE_SECRET_KEY = "sk_test_123";
 
     await expect(
-      await createCheckoutSession("ws-1", "free", "u@test.com", "http://s", "http://c")
+      createCheckoutSession("ws-1", "free", "u@test.com", "http://s", "http://c")
     ).rejects.toThrow(/free/i);
   });
 

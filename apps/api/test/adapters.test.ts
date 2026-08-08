@@ -122,7 +122,7 @@ describe("rss adapter", () => {
       error: safeFetchError("upstream_status"),
     }));
     await expect(
-      await fetchSourceItems("rss", { feedUrl: "https://example.com/feed.xml" }, fetcher),
+      fetchSourceItems("rss", { feedUrl: "https://example.com/feed.xml" }, fetcher),
     ).rejects.toMatchObject({ code: "upstream_status" });
   });
 });
@@ -176,7 +176,7 @@ describe("credential-gated adapters", () => {
   it("refuses x, linkedin, g2, capterra, intent until API keys exist", async () => {
     for (const type of ["x", "linkedin", "g2", "capterra", "intent"] as const) {
       await expect(
-        await fetchSourceItems(type, { query: "anything" }, fixtureFetcher("{}")),
+        fetchSourceItems(type, { query: "anything" }, fixtureFetcher("{}")),
       ).rejects.toThrow(NeedsApiKeyError);
     }
   });
@@ -239,7 +239,7 @@ describe("hacker_news adapter", () => {
   });
 
   it("needs a query", async () => {
-    await expect(await fetchSourceItems("hacker_news", {}, fixtureFetcher(HN_FIXTURE))).rejects.toThrow(
+    await expect(fetchSourceItems("hacker_news", {}, fixtureFetcher(HN_FIXTURE))).rejects.toThrow(
       /query/,
     );
   });
@@ -277,7 +277,7 @@ describe("google_trends adapter", () => {
     expect(DISCOVERY_SOURCE_STATUSES).toContain("reserved");
     expect(isReservedDiscoverySourceType("google_trends")).toBe(true);
     await expect(
-      await fetchSourceItems("google_trends", { geo: "us" }, fetcher),
+      fetchSourceItems("google_trends", { geo: "us" }, fetcher),
     ).rejects.toBeInstanceOf(NeedsApiKeyError);
     expect(requests).toEqual([]);
   });

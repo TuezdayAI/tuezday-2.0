@@ -211,9 +211,9 @@ describe("DbEvidenceStore", () => {
     });
 
     await expect(
-      await store.search('what is "pricing" AND (cost) OR plan* NOT seats?', col, 5),
+      store.search('what is "pricing" AND (cost) OR plan* NOT seats?', col, 5),
     ).resolves.toBeDefined();
-    await expect(await store.search("???", col, 5)).resolves.toEqual([]);
+    await expect(store.search("???", col, 5)).resolves.toEqual([]);
   });
 
   it("attachDocument is a compatible no-op", async () => {
@@ -225,6 +225,6 @@ describe("DbEvidenceStore", () => {
       collectionId: col,
       metadata: {},
     });
-    await expect(await store.attachDocument(col, id)).resolves.toBeUndefined();
+    await expect(store.attachDocument(col, id)).resolves.toBeUndefined();
   });
 });

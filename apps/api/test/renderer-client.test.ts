@@ -41,7 +41,7 @@ describe("renderer HTTP client", () => {
       fetcher,
     });
 
-    await expect(await render(input)).resolves.toEqual(pngSignature);
+    await expect(render(input)).resolves.toEqual(pngSignature);
     expect(fetcher).toHaveBeenCalledOnce();
     const [url, init] = fetcher.mock.calls[0]!;
     expect(url).toBe("http://127.0.0.1:7457/render");
@@ -59,7 +59,7 @@ describe("renderer HTTP client", () => {
   it("fails locally when the renderer token is absent", async () => {
     const fetcher = vi.fn<typeof fetch>();
     const render = createRendererClient({ token: "", fetcher });
-    await expect(await render(input)).rejects.toMatchObject({
+    await expect(render(input)).rejects.toMatchObject({
       name: "RendererError",
       code: "renderer_unavailable",
     });
@@ -74,7 +74,7 @@ describe("renderer HTTP client", () => {
       ),
     );
     const render = createRendererClient({ token: "secret", fetcher });
-    await expect(await render(input)).rejects.toEqual(
+    await expect(render(input)).rejects.toEqual(
       new RendererError("render_timeout", "The render exceeded its time limit."),
     );
   });
@@ -84,7 +84,7 @@ describe("renderer HTTP client", () => {
       new Response("not an image", { status: 200, headers: { "Content-Type": "text/plain" } }),
     );
     const render = createRendererClient({ token: "secret", fetcher });
-    await expect(await render(input)).rejects.toMatchObject({ code: "invalid_renderer_response" });
+    await expect(render(input)).rejects.toMatchObject({ code: "invalid_renderer_response" });
   });
 
   it("rejects an oversized response before reading it", async () => {
@@ -95,7 +95,7 @@ describe("renderer HTTP client", () => {
       }),
     );
     const render = createRendererClient({ token: "secret", fetcher });
-    await expect(await render(input)).rejects.toMatchObject({ code: "invalid_renderer_response" });
+    await expect(render(input)).rejects.toMatchObject({ code: "invalid_renderer_response" });
   });
 
   it("bounds streamed responses without relying on Content-Length", async () => {
@@ -116,7 +116,7 @@ describe("renderer HTTP client", () => {
       ),
     });
 
-    await expect(await render(input)).rejects.toMatchObject({ code: "invalid_renderer_response" });
+    await expect(render(input)).rejects.toMatchObject({ code: "invalid_renderer_response" });
     expect(cancelled).toBe(true);
   });
 
@@ -130,7 +130,7 @@ describe("renderer HTTP client", () => {
         }),
       ),
     });
-    await expect(await render(input)).rejects.toMatchObject({ code: "invalid_renderer_response" });
+    await expect(render(input)).rejects.toMatchObject({ code: "invalid_renderer_response" });
   });
 
   it("keeps the deadline active while reading the response body", async () => {
@@ -146,7 +146,7 @@ describe("renderer HTTP client", () => {
     });
     const render = createRendererClient({ token: "secret", timeoutMs: 5, fetcher });
 
-    await expect(await render(input)).rejects.toMatchObject({ code: "render_timeout" });
+    await expect(render(input)).rejects.toMatchObject({ code: "render_timeout" });
   });
 
   it("maps transport and timeout failures to stable availability errors", async () => {
@@ -156,7 +156,7 @@ describe("renderer HTTP client", () => {
         throw new TypeError("connect ECONNREFUSED 127.0.0.1");
       }),
     });
-    await expect(await unavailable(input)).rejects.toMatchObject({ code: "renderer_unavailable" });
+    await expect(unavailable(input)).rejects.toMatchObject({ code: "renderer_unavailable" });
 
     const timeout = createRendererClient({
       token: "secret",
@@ -169,6 +169,6 @@ describe("renderer HTTP client", () => {
         }),
       ),
     });
-    await expect(await timeout(input)).rejects.toMatchObject({ code: "render_timeout" });
+    await expect(timeout(input)).rejects.toMatchObject({ code: "render_timeout" });
   });
 });

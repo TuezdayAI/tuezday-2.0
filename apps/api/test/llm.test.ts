@@ -31,7 +31,7 @@ describe("OpenRouterGateway", () => {
     const gateway = new OpenRouterGateway("", undefined, () => {
       throw new Error("fetch must not be called");
     });
-    await expect(await gateway.generate({ prompt: "hi" })).rejects.toMatchObject({
+    await expect(gateway.generate({ prompt: "hi" })).rejects.toMatchObject({
       name: "GatewayError",
       code: "missing_api_key",
     });
@@ -120,25 +120,25 @@ describe("OpenRouterGateway", () => {
     const fetcher: Fetcher = (async () =>
       jsonResponse(429, { error: { message: "rate limited" } })) as Fetcher;
     const gateway = new OpenRouterGateway("or-key", undefined, fetcher);
-    await expect(await gateway.generate({ prompt: "p" })).rejects.toMatchObject({
+    await expect(gateway.generate({ prompt: "p" })).rejects.toMatchObject({
       code: "provider_error",
       message: expect.stringContaining("429"),
     });
     await expect(
-      await new OpenRouterGateway("or-key", undefined, fetcher).generate({ prompt: "p" }),
+      new OpenRouterGateway("or-key", undefined, fetcher).generate({ prompt: "p" }),
     ).rejects.toMatchObject({ message: expect.stringContaining("rate limited") });
   });
 
   it("throws provider_error on empty choices or empty content", async () => {
     const empty: Fetcher = (async () => jsonResponse(200, { choices: [] })) as Fetcher;
     await expect(
-      await new OpenRouterGateway("or-key", undefined, empty).generate({ prompt: "p" }),
+      new OpenRouterGateway("or-key", undefined, empty).generate({ prompt: "p" }),
     ).rejects.toMatchObject({ code: "provider_error" });
 
     const blank: Fetcher = (async () =>
       jsonResponse(200, { choices: [{ message: { content: "   " } }] })) as Fetcher;
     await expect(
-      await new OpenRouterGateway("or-key", undefined, blank).generate({ prompt: "p" }),
+      new OpenRouterGateway("or-key", undefined, blank).generate({ prompt: "p" }),
     ).rejects.toMatchObject({ code: "provider_error" });
   });
 
@@ -147,7 +147,7 @@ describe("OpenRouterGateway", () => {
       throw new Error("ECONNREFUSED");
     }) as Fetcher;
     await expect(
-      await new OpenRouterGateway("or-key", undefined, fetcher).generate({ prompt: "p" }),
+      new OpenRouterGateway("or-key", undefined, fetcher).generate({ prompt: "p" }),
     ).rejects.toMatchObject({
       code: "provider_error",
       message: expect.stringContaining("ECONNREFUSED"),
@@ -244,7 +244,7 @@ describe("FallbackGateway", () => {
       throw new GatewayError("provider_error", "openrouter exploded");
     });
     await expect(
-      await new FallbackGateway(primary, secondary).generate({ prompt: "p" }),
+      new FallbackGateway(primary, secondary).generate({ prompt: "p" }),
     ).rejects.toMatchObject({
       name: "GatewayError",
       code: "provider_error",
@@ -258,7 +258,7 @@ describe("FallbackGateway", () => {
       throw boom;
     });
     const secondary = fakeGateway(async () => okResult("openrouter"));
-    await expect(await new FallbackGateway(primary, secondary).generate({ prompt: "p" })).rejects.toBe(
+    await expect(new FallbackGateway(primary, secondary).generate({ prompt: "p" })).rejects.toBe(
       boom,
     );
     expect(secondary.calls).toHaveLength(0);

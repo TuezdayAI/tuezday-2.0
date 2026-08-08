@@ -263,7 +263,7 @@ describe("discovery dedupe source deletion", () => {
       matches: await f.db.select().from(discoveredItemMatches),
     };
 
-    expect(async () =>
+    await expect((async () =>
       await deleteDiscoverySourcePreservingDuplicates(
         f.db,
         f.workspaceId,
@@ -273,8 +273,8 @@ describe("discovery dedupe source deletion", () => {
             throw new Error("delete fault");
           },
         },
-      ),
-    ).toThrow("delete fault");
+      ))(),
+    ).rejects.toThrow("delete fault");
 
     expect(await f.db.select().from(discoverySources)).toEqual(
       before.sources,

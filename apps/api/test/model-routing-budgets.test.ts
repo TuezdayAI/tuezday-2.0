@@ -174,7 +174,7 @@ describe("meteredLlm + usage ledger (Sprint 59)", () => {
     const db = await createTestDb();
     const workspaceId = await workspace(db);
     await expect(
-      await meteredLlm(fakeLlm({ fail: true }), db, { workspaceId, pipeline: "review" }).generate({
+      meteredLlm(fakeLlm({ fail: true }), db, { workspaceId, pipeline: "review" }).generate({
         prompt: "x",
       }),
     ).rejects.toMatchObject({ name: "GatewayError" });

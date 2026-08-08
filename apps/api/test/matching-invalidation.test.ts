@@ -572,7 +572,7 @@ describe("incremental matching invalidation", () => {
       EXECUTE FUNCTION reject_matching_invalidation();
     `));
 
-    expect(async () =>
+    await expect((async () =>
       await updatePersona(
         fixture.db,
         fixture.workspaceId,
@@ -581,8 +581,8 @@ describe("incremental matching invalidation", () => {
           description: "Changed semantic description",
           topics: ["changed"],
         }),
-      ),
-    ).toThrow("reject_matching_invalidation");
+      ))(),
+    ).rejects.toThrow("reject_matching_invalidation");
 
     expect(
       (await fixture.db
@@ -611,7 +611,7 @@ describe("incremental matching invalidation", () => {
       EXECUTE FUNCTION reject_campaign_invalidation();
     `));
 
-    expect(async () =>
+    await expect((async () =>
       await updateCampaign(
         fixture.db,
         fixture.workspaceId,
@@ -622,8 +622,8 @@ describe("incremental matching invalidation", () => {
           "active",
           { objective: "Changed objective" },
         ),
-      ),
-    ).toThrow("reject_campaign_invalidation");
+      ))(),
+    ).rejects.toThrow("reject_campaign_invalidation");
 
     expect(
       (await fixture.db

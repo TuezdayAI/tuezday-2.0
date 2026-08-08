@@ -50,7 +50,7 @@ describe("exchangeCodeForProfile", () => {
 
   it("rejects an unverified email", async () => {
     const fetcher = fetcherFor({ access_token: "at" }, { sub: "g", email: "x@y.com", email_verified: false, name: "" });
-    await expect(await exchangeCodeForProfile(fetcher, "c")).rejects.toMatchObject({ code: "email_unverified" });
+    await expect(exchangeCodeForProfile(fetcher, "c")).rejects.toMatchObject({ code: "email_unverified" });
   });
 });
 

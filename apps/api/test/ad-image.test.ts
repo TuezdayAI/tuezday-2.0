@@ -360,7 +360,7 @@ describe("Meta ad image (Sprint 41 Part 5)", () => {
       const failingFetch = (async () => new Response("nope", { status: 404 })) as typeof fetch;
       const adapter = new MetaAdsAdapter(fakeFabric(s), opts, failingFetch);
       await expect(
-        await adapter.uploadAdImage("act_111", { url: "https://cdn.test/missing.png" }),
+        adapter.uploadAdImage("act_111", { url: "https://cdn.test/missing.png" }),
       ).rejects.toBeInstanceOf(ConnectorFabricError);
 
       const badGraph: ConnectorFabric = {
@@ -371,7 +371,7 @@ describe("Meta ad image (Sprint 41 Part 5)", () => {
       };
       const adapter2 = new MetaAdsAdapter(badGraph, opts, imageFetcher([]));
       await expect(
-        await adapter2.uploadAdImage("act_111", { bytes: new Uint8Array([1]) }),
+        adapter2.uploadAdImage("act_111", { bytes: new Uint8Array([1]) }),
       ).rejects.toBeInstanceOf(ConnectorFabricError);
     });
   });

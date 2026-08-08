@@ -114,7 +114,7 @@ describe("GeminiGateway agentStep", () => {
       ),
     );
     const gateway = new GeminiGateway("test-key", "gemini-2.5-flash");
-    await expect(await gateway.agentStep(STEP_PARAMS)).rejects.toThrow(/quota exceeded/);
+    await expect(gateway.agentStep(STEP_PARAMS)).rejects.toThrow(/quota exceeded/);
 
     vi.stubGlobal(
       "fetch",
@@ -122,7 +122,7 @@ describe("GeminiGateway agentStep", () => {
         new Response(JSON.stringify({ candidates: [{ content: { parts: [] } }] }), { status: 200 }),
       ),
     );
-    await expect(await gateway.agentStep(STEP_PARAMS)).rejects.toThrow(/empty agent response/);
+    await expect(gateway.agentStep(STEP_PARAMS)).rejects.toThrow(/empty agent response/);
   });
 });
 
@@ -172,7 +172,7 @@ describe("FallbackGateway agent steps", () => {
   it("uses the secondary when the primary does not implement agentStep", async () => {
     const secondary: LlmGateway = { ...generateOnly, agentStep: async () => step };
     const gateway = new FallbackGateway(generateOnly, secondary);
-    await expect(await gateway.agentStep(STEP_PARAMS)).resolves.toMatchObject({
+    await expect(gateway.agentStep(STEP_PARAMS)).resolves.toMatchObject({
       provider: "secondary",
     });
   });
@@ -186,7 +186,7 @@ describe("FallbackGateway agent steps", () => {
     };
     const secondary: LlmGateway = { ...generateOnly, agentStep: async () => step };
     const gateway = new FallbackGateway(primary, secondary);
-    await expect(await gateway.agentStep(STEP_PARAMS)).resolves.toMatchObject({
+    await expect(gateway.agentStep(STEP_PARAMS)).resolves.toMatchObject({
       provider: "secondary",
     });
   });
@@ -194,14 +194,14 @@ describe("FallbackGateway agent steps", () => {
   it("serves a stream request via plain agentStep when streaming is unsupported", async () => {
     const secondary: LlmGateway = { ...generateOnly, agentStep: async () => step };
     const gateway = new FallbackGateway(generateOnly, secondary);
-    await expect(await gateway.agentStepStream(STEP_PARAMS, () => {})).resolves.toMatchObject({
+    await expect(gateway.agentStepStream(STEP_PARAMS, () => {})).resolves.toMatchObject({
       provider: "secondary",
     });
   });
 
   it("throws a clear error when no provider supports agent steps", async () => {
     const gateway = new FallbackGateway(generateOnly, generateOnly);
-    await expect(await gateway.agentStep(STEP_PARAMS)).rejects.toThrow(
+    await expect(gateway.agentStep(STEP_PARAMS)).rejects.toThrow(
       /No configured LLM provider supports agent steps/,
     );
   });

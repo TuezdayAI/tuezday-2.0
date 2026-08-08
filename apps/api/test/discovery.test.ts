@@ -763,13 +763,13 @@ describe("discovery API", () => {
       await run();
       const [top] = await items();
 
-      expect(async () =>
+      await expect((async () =>
         await acceptDiscoveredItem(db, workspaceId, top.id, {
           afterSignalInsert() {
             throw new Error("fault_after_accept_signal");
           },
-        }),
-      ).toThrow("fault_after_accept_signal");
+        }))(),
+      ).rejects.toThrow("fault_after_accept_signal");
 
       const storedItem = (await items()).find(
         (candidate: { id: string }) => candidate.id === top.id,

@@ -107,7 +107,7 @@ describe("DefaultSafeFetchService DNS pinning", () => {
   it("rejects an empty DNS answer before transport", async () => {
     const h = routingHarness({ answers: { "empty.example": [] } });
     await expect(
-      await h.service.fetch({ url: "https://empty.example", profile: "website" }),
+      h.service.fetch({ url: "https://empty.example", profile: "website" }),
     ).rejects.toMatchObject({ code: "dns_failed" });
     expect(h.requests).toEqual([]);
   });
@@ -115,7 +115,7 @@ describe("DefaultSafeFetchService DNS pinning", () => {
   it("rejects resolver failures without exposing the raw failure", async () => {
     const h = routingHarness({ resolverError: new Error("lookup db.internal 10.0.0.1") });
     await expect(
-      await h.service.fetch({ url: "https://broken.example", profile: "website" }),
+      h.service.fetch({ url: "https://broken.example", profile: "website" }),
     ).rejects.toMatchObject({
       code: "dns_failed",
       message: "The destination could not be resolved safely.",
@@ -128,7 +128,7 @@ describe("DefaultSafeFetchService DNS pinning", () => {
       answers: { "malformed.example": [{ address: "not-an-ip", family: 4 }] },
     });
     await expect(
-      await h.service.fetch({ url: "https://malformed.example", profile: "website" }),
+      h.service.fetch({ url: "https://malformed.example", profile: "website" }),
     ).rejects.toMatchObject({ code: "dns_failed" });
     expect(h.requests).toEqual([]);
   });
@@ -142,7 +142,7 @@ describe("DefaultSafeFetchService DNS pinning", () => {
         },
       });
       await expect(
-        await h.service.fetch({ url: "https://malformed.example", profile: "website" }),
+        h.service.fetch({ url: "https://malformed.example", profile: "website" }),
       ).rejects.toMatchObject({ code: "dns_failed" });
       expect(h.requests).toEqual([]);
     },
@@ -153,7 +153,7 @@ describe("DefaultSafeFetchService DNS pinning", () => {
       answers: { "private.example": [{ address: "10.0.0.8", family: 4 }] },
     });
     await expect(
-      await h.service.fetch({ url: "https://private.example", profile: "website" }),
+      h.service.fetch({ url: "https://private.example", profile: "website" }),
     ).rejects.toMatchObject({ code: "destination_blocked" });
     expect(h.requests).toEqual([]);
   });
@@ -168,7 +168,7 @@ describe("DefaultSafeFetchService DNS pinning", () => {
       },
     });
     await expect(
-      await h.service.fetch({ url: "https://mixed.example", profile: "website" }),
+      h.service.fetch({ url: "https://mixed.example", profile: "website" }),
     ).rejects.toMatchObject({ code: "destination_blocked" });
     expect(h.requests).toEqual([]);
   });
@@ -222,7 +222,7 @@ describe("DefaultSafeFetchService redirects", () => {
     });
 
     await expect(
-      await h.service.fetch({ url: "https://public.example", profile: "website" }),
+      h.service.fetch({ url: "https://public.example", profile: "website" }),
     ).rejects.toMatchObject({ code: "destination_blocked" });
     expect(h.requests).toHaveLength(1);
     expect(redirect.body.destroyed).toBe(true);
@@ -234,7 +234,7 @@ describe("DefaultSafeFetchService redirects", () => {
       responses: [response(302, { location: "http://public.example/insecure" })],
     });
     await expect(
-      await blocked.service.fetch({ url: "https://public.example", profile: "website" }),
+      blocked.service.fetch({ url: "https://public.example", profile: "website" }),
     ).rejects.toMatchObject({ code: "redirect_blocked" });
     expect(blocked.requests).toHaveLength(1);
 
@@ -266,7 +266,7 @@ describe("DefaultSafeFetchService redirects", () => {
       responses: [redirect],
     });
     await expect(
-      await h.service.fetch({ url: "https://public.example", profile: "website" }),
+      h.service.fetch({ url: "https://public.example", profile: "website" }),
     ).rejects.toMatchObject({ code: "redirect_blocked" });
     expect(h.requests).toHaveLength(1);
     expect(redirect.body.destroyed).toBe(true);
@@ -279,7 +279,7 @@ describe("DefaultSafeFetchService redirects", () => {
       responses: [redirect],
     });
     await expect(
-      await h.service.fetch({ url: "https://public.example", profile: "website" }),
+      h.service.fetch({ url: "https://public.example", profile: "website" }),
     ).rejects.toMatchObject({ code: "redirect_blocked" });
     expect(h.requests).toHaveLength(1);
     expect(redirect.body.destroyed).toBe(true);
@@ -292,7 +292,7 @@ describe("DefaultSafeFetchService redirects", () => {
       responses: [missing],
     });
     await expect(
-      await h.service.fetch({ url: "https://public.example", profile: "website" }),
+      h.service.fetch({ url: "https://public.example", profile: "website" }),
     ).rejects.toMatchObject({ code: "redirect_blocked" });
     expect(missing.body.destroyed).toBe(true);
   });
@@ -306,7 +306,7 @@ describe("DefaultSafeFetchService redirects", () => {
       responses: redirects,
     });
     await expect(
-      await h.service.fetch({ url: "https://public.example/loop", profile: "website" }),
+      h.service.fetch({ url: "https://public.example/loop", profile: "website" }),
     ).rejects.toMatchObject({ code: "redirect_limit" });
     expect(h.requests).toHaveLength(6);
     expect(redirects.every((item) => item.body.destroyed)).toBe(true);
@@ -329,7 +329,7 @@ describe("DefaultSafeFetchService request headers", () => {
       answers: { "public.example": [{ address: "93.184.216.34", family: 4 }] },
     });
     await expect(
-      await h.service.fetch({
+      h.service.fetch({
         url: "https://public.example",
         profile: "website",
         headers: { [header]: "unsafe" },
@@ -342,7 +342,7 @@ describe("DefaultSafeFetchService request headers", () => {
   it("rejects headers outside the benign allowlist and newline values", async () => {
     const disallowed = routingHarness({});
     await expect(
-      await disallowed.service.fetch({
+      disallowed.service.fetch({
         url: "https://public.example",
         profile: "website",
         headers: { "x-forwarded-host": "internal.example" },
@@ -351,7 +351,7 @@ describe("DefaultSafeFetchService request headers", () => {
 
     const newline = routingHarness({});
     await expect(
-      await newline.service.fetch({
+      newline.service.fetch({
         url: "https://public.example",
         profile: "website",
         headers: { accept: "text/html\r\nhost: internal.example" },

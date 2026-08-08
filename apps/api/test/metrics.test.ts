@@ -64,24 +64,24 @@ describe("recordMetric", () => {
     expect(rows).toHaveLength(0);
   });
 
-  it("refuses vocabulary violations", () => {
+  it("refuses vocabulary violations", async () => {
     const subjectId = randomUUID();
-    expect(async () =>
-      await recordMetric(db, workspaceId, { ...grain(subjectId), metricKey: "replies" as never, value: 1 }),
-    ).toThrow();
-    expect(async () =>
-      await recordMetric(db, workspaceId, { ...grain(subjectId), window: "30d" as never, value: 1 }),
-    ).toThrow();
-    expect(async () =>
-      await recordMetric(db, workspaceId, { ...grain(subjectId), subjectType: "lane" as never, value: 1 }),
-    ).toThrow();
-    expect(async () =>
-      await recordMetric(db, workspaceId, { ...grain(subjectId), source: "derived" as never, value: 1 }),
-    ).toThrow();
+    await expect((async () =>
+      await recordMetric(db, workspaceId, { ...grain(subjectId), metricKey: "replies" as never, value: 1 }))(),
+    ).rejects.toThrow();
+    await expect((async () =>
+      await recordMetric(db, workspaceId, { ...grain(subjectId), window: "30d" as never, value: 1 }))(),
+    ).rejects.toThrow();
+    await expect((async () =>
+      await recordMetric(db, workspaceId, { ...grain(subjectId), subjectType: "lane" as never, value: 1 }))(),
+    ).rejects.toThrow();
+    await expect((async () =>
+      await recordMetric(db, workspaceId, { ...grain(subjectId), source: "derived" as never, value: 1 }))(),
+    ).rejects.toThrow();
     // Money is integer cents; no floats.
-    expect(async () =>
-      await recordMetric(db, workspaceId, { ...grain(subjectId), value: 12.5 }),
-    ).toThrow();
+    await expect((async () =>
+      await recordMetric(db, workspaceId, { ...grain(subjectId), value: 12.5 }))(),
+    ).rejects.toThrow();
   });
 
   it("recordMetrics skips null values and writes the rest in one call", async () => {

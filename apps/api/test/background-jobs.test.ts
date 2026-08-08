@@ -80,26 +80,26 @@ describe("durable background job repository", () => {
     expect(first.activeKey).toBe(`${WORKSPACE_A}:daily:evidence`);
   });
 
-  it("validates payload tenant identity and admission bounds", () => {
-    expect(async () =>
+  it("validates payload tenant identity and admission bounds", async () => {
+    await expect((async () =>
       await enqueueBackgroundJob(db, {
         payload: { kind: "evidence", workspaceId: "not-a-uuid" } as BackgroundJobPayload,
         idempotencyKey: "invalid",
-      }),
-    ).toThrow();
-    expect(async () =>
+      }))(),
+    ).rejects.toThrow();
+    await expect((async () =>
       await enqueueBackgroundJob(db, {
         payload: payload(WORKSPACE_A),
         idempotencyKey: "",
-      }),
-    ).toThrow("idempotency");
-    expect(async () =>
+      }))(),
+    ).rejects.toThrow("idempotency");
+    await expect((async () =>
       await enqueueBackgroundJob(db, {
         payload: payload(WORKSPACE_A),
         idempotencyKey: "attempts",
         maxAttempts: 0,
-      }),
-    ).toThrow("maxAttempts");
+      }))(),
+    ).rejects.toThrow("maxAttempts");
   });
 
   it("does not claim work before its database availability time", async () => {
@@ -260,7 +260,7 @@ describe("durable background job repository", () => {
 
     expect(await listBackgroundJobs(db, { status: "running", limit: 10 })).toHaveLength(1);
     expect(await listBackgroundJobs(db, { kind: otherKind, limit: 10 })).toHaveLength(1);
-    expect(async () => await listBackgroundJobs(db, { limit: 0 })).toThrow("limit");
+    await expect((async () => await listBackgroundJobs(db, { limit: 0 }))()).rejects.toThrow("limit");
 
     const stats = await getBackgroundQueueStats(db, { perWorkspaceConcurrency: 1 });
     expect(stats.total).toBe(2);

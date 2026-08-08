@@ -358,7 +358,7 @@ describe("signals API", () => {
         };
 
         await expect(
-          await createSignalWithMatching(
+          createSignalWithMatching(
             db,
             matchingGateway(refs, calls),
             wsId,
@@ -461,7 +461,7 @@ describe("signals API", () => {
         refs.personaId = personaId;
         refs.campaignId = campaignId;
 
-        const creating = await createSignalWithMatching(
+        const creating = createSignalWithMatching(
           db,
           deferredGateway,
           wsId,

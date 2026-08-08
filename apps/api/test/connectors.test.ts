@@ -440,7 +440,7 @@ describe("bounded connector JSON", () => {
     const fixture = responseWithChunks(['{"x":"', 'too-large"}']);
 
     await expect(
-      await readBoundedJsonResponse(fixture.response, {
+      readBoundedJsonResponse(fixture.response, {
         maxBytes: 8,
         signal: new AbortController().signal,
       }),

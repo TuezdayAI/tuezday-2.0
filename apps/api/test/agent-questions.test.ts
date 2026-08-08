@@ -270,8 +270,8 @@ describe("answering an agent question (Sprint 70)", () => {
   it("refuses to answer the same question twice", async () => {
     const id = await open();
     await answerAgentQuestion(db, WORKSPACE_ID, id, { action: "answer", answer: "Yes.", resume: false }, FOUNDER);
-    expect(async () =>
-      await answerAgentQuestion(db, WORKSPACE_ID, id, { action: "answer", answer: "No.", resume: false }, FOUNDER),
-    ).toThrow(AgentQuestionAlreadyClosedError);
+    await expect((async () =>
+      await answerAgentQuestion(db, WORKSPACE_ID, id, { action: "answer", answer: "No.", resume: false }, FOUNDER))(),
+    ).rejects.toThrow(AgentQuestionAlreadyClosedError);
   });
 });

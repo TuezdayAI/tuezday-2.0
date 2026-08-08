@@ -194,7 +194,7 @@ describe("external action policy", () => {
         updatedAt: now,
       });
 
-    expect(async () =>
+    await expect((async () =>
       await upsertExternalActionPolicies(
         db,
         workspaceId,
@@ -205,13 +205,13 @@ describe("external action policy", () => {
           rules: completeRules({ publish: "human_required" }),
         },
         null,
-      ),
-    ).toThrow(ExternalActionPolicyScopeNotFoundError);
+      ))(),
+    ).rejects.toThrow(ExternalActionPolicyScopeNotFoundError);
 
     const localPersonaId = randomUUID();
     await db.insert(personas)
       .values({ id: localPersonaId, workspaceId, name: "Sensitive", createdAt: now, updatedAt: now });
-    expect(async () =>
+    await expect((async () =>
       await upsertExternalActionPolicies(
         db,
         workspaceId,
@@ -222,8 +222,8 @@ describe("external action policy", () => {
           rules: completeRules({ publish: "autonomous" }),
         },
         null,
-      ),
-    ).toThrow(ExternalActionPolicyInputError);
+      ))(),
+    ).rejects.toThrow(ExternalActionPolicyInputError);
   });
 
   it("serves bounded policy reads, upserts, and deletion through authenticated routes", async () => {

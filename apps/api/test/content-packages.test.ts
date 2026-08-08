@@ -236,15 +236,15 @@ describe("content packages (Sprint 62)", () => {
     const storyId = await seedStory("Second story");
     const opportunityId = await seedOpportunity(storyId, "An angle");
     await createPackageFromOpportunity(db, workspaceId, opportunityId, { userId });
-    expect(async () =>
-      await createPackageFromOpportunity(db, workspaceId, opportunityId, { userId }),
-    ).toThrow(InvalidOpportunityTransitionError);
+    await expect((async () =>
+      await createPackageFromOpportunity(db, workspaceId, opportunityId, { userId }))(),
+    ).rejects.toThrow(InvalidOpportunityTransitionError);
 
     const reviewStory = await seedStory("Review story");
     const reviewOpportunity = await seedOpportunity(reviewStory, "Other angle", "needs_review");
-    expect(async () =>
-      await createPackageFromOpportunity(db, workspaceId, reviewOpportunity, { userId }),
-    ).toThrow(InvalidOpportunityTransitionError);
+    await expect((async () =>
+      await createPackageFromOpportunity(db, workspaceId, reviewOpportunity, { userId }))(),
+    ).rejects.toThrow(InvalidOpportunityTransitionError);
   });
 
   it("scores novelty deterministically against recent campaign angles", async () => {
@@ -280,12 +280,12 @@ describe("content packages (Sprint 62)", () => {
       actorUserId: userId,
     });
     expect(cancelled.package.status).toBe("cancelled");
-    expect(async () =>
+    await expect((async () =>
       await decidePackage(db, workspaceId, packageId, {
         action: "reassess",
         actorUserId: userId,
-      }),
-    ).toThrow(InvalidPackageTransitionError);
+      }))(),
+    ).rejects.toThrow(InvalidPackageTransitionError);
     const events = await db
       .select()
       .from(contentPackageEvents)

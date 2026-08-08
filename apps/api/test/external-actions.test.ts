@@ -171,7 +171,7 @@ describe("external action lifecycle", () => {
     expect(fake.execute).not.toHaveBeenCalled();
 
     await expect(
-      await runtime.propose(
+      runtime.propose(
         { ...input, payload: { body: "Changed", target: "feed" } },
         ACTOR,
       ),
@@ -273,7 +273,7 @@ describe("external action lifecycle", () => {
       requestedFor: null,
     });
 
-    await expect(await runtime.authorize(queued.action.id, workspaceId, ACTOR)).rejects.toBeInstanceOf(
+    await expect(runtime.authorize(queued.action.id, workspaceId, ACTOR)).rejects.toBeInstanceOf(
       StaleExternalActionError,
     );
     expect((await getExternalAction(db, workspaceId, queued.action.id))?.status).toBe("stale");
@@ -336,7 +336,7 @@ describe("external action lifecycle", () => {
       payload: { body: "Corrected", target: "feed" },
       requestedFor: null,
     });
-    await expect(await runtime.authorize(first.action.id, workspaceId, ACTOR)).rejects.toBeInstanceOf(
+    await expect(runtime.authorize(first.action.id, workspaceId, ACTOR)).rejects.toBeInstanceOf(
       StaleExternalActionError,
     );
     const successor = await runtime.repropose(
@@ -383,7 +383,7 @@ describe("external action lifecycle", () => {
       expect(queued.action.status).toBe("authorization_required");
 
       fake.setRevalidateError(refusal());
-      await expect(await runtime.authorize(queued.action.id, workspaceId, ACTOR)).rejects.toBeInstanceOf(
+      await expect(runtime.authorize(queued.action.id, workspaceId, ACTOR)).rejects.toBeInstanceOf(
         StaleExternalActionError,
       );
       const durable = await getExternalAction(db, workspaceId, queued.action.id);
@@ -433,12 +433,12 @@ describe("external action lifecycle", () => {
       const runtime = createExternalActionRuntime({ db, adapters: { publish: fake.adapter } });
       const queued = await runtime.propose(input, ACTOR);
       fake.setRevalidateError(refusal());
-      await expect(await runtime.authorize(queued.action.id, workspaceId, ACTOR)).rejects.toBeInstanceOf(
+      await expect(runtime.authorize(queued.action.id, workspaceId, ACTOR)).rejects.toBeInstanceOf(
         StaleExternalActionError,
       );
 
       await expect(
-        await runtime.repropose(queued.action.id, workspaceId, "publish:retry", ACTOR),
+        runtime.repropose(queued.action.id, workspaceId, "publish:retry", ACTOR),
       ).rejects.toBeInstanceOf(StaleExternalActionError);
       expect((await getExternalAction(db, workspaceId, queued.action.id))?.status).toBe("stale");
     });
@@ -589,7 +589,7 @@ describe("external action lifecycle", () => {
       expect(done.action.status).toBe("succeeded");
 
       await expect(
-        await runtime.cancel(done.action.id, workspaceId, ACTOR, null),
+        runtime.cancel(done.action.id, workspaceId, ACTOR, null),
       ).rejects.toBeInstanceOf(InvalidExternalActionTransitionError);
       expect((await getExternalAction(db, workspaceId, done.action.id))?.status).toBe("succeeded");
       expect((await getExternalActionDetail(db, workspaceId, done.action.id))?.decisions).toEqual([]);

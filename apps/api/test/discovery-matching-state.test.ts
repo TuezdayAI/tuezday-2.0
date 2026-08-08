@@ -141,9 +141,9 @@ describe("discovery matching state", () => {
       const db = await createTestDb();
       const { workspaceId, itemId } = await seedItem(db, { state });
 
-      expect(async () =>
-        await acceptDiscoveredItem(db, workspaceId, itemId),
-      ).toThrow("matching_not_ready");
+      await expect((async () =>
+        await acceptDiscoveredItem(db, workspaceId, itemId))(),
+      ).rejects.toThrow("matching_not_ready");
       expect(await db.select().from(signals)).toHaveLength(0);
     },
   );
@@ -257,7 +257,7 @@ describe("discovery matching state", () => {
     });
     const started = deferred<void>();
     const release = deferred<void>();
-    const run = await runMatchingBatch(
+    const run = runMatchingBatch(
       {
         db,
         llm: {
@@ -310,7 +310,7 @@ describe("discovery matching state", () => {
     const controller = new AbortController();
     let gatewaySignal: AbortSignal | undefined;
     const started = deferred<void>();
-    const run = await runMatchingBatch(
+    const run = runMatchingBatch(
       {
         db,
         llm: {

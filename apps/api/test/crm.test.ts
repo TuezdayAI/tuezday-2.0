@@ -339,9 +339,9 @@ describe("FreshsalesAdapter", () => {
   it("raises ConnectorFabricError on non-2xx responses", async () => {
     const state = freshsalesState();
     state.failStatus = 500;
-    await expect(await adapterFor(state).listContacts()).rejects.toThrow(ConnectorFabricError);
+    await expect(adapterFor(state).listContacts()).rejects.toThrow(ConnectorFabricError);
     await expect(
-      await adapterFor(state).createContact({ name: "X", email: "x@x.io" }),
+      adapterFor(state).createContact({ name: "X", email: "x@x.io" }),
     ).rejects.toThrow(ConnectorFabricError);
   });
 
